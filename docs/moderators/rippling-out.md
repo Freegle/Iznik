@@ -200,7 +200,7 @@ member's nearest town is usually somewhere they already drive to, so its posts a
 ones worth showing them - whereas in a busy area there is nearly always someone closer, and
 reaching across town mostly generates email for journeys nobody makes. So if a rural member
 and a city member both say they are set to "Further", they are correctly seeing different
-distances, and the "Max ... miles by road" note under the slider will differ between them.
+distances, and the "Up to about ... miles by road" note under the slider will differ between them.
 
 Importantly, this preference now applies in **three** ways:
 
@@ -290,6 +290,7 @@ settings for that community are set as follows:
 - **Immediate email** - downgraded to daily digest.
 - **Daily digest or no emails** - preserved exactly as-is.
 - **Community events and volunteering** - copied from their home community settings (no extra emails).
+- **No community at all** - a poster who has left every community starts with all emails off, rather than on a daily digest.
 
 The poster receives one bundled intro email explaining all of this, rather than a separate
 welcome email from each community they were joined to.
@@ -338,6 +339,14 @@ comes round.
 The poster's mail is the exception to that. They still get one "Will Repost" reminder and
 one chase-up per cycle for the item as a whole, not one per community, as above.
 
+A member reposting their own item from My Posts works differently underneath: the item
+goes back through Pending, and its copies on other communities are removed while it waits.
+Once it is approved again it picks up where it left off rather than starting from its home
+community again. The ripple is timed from when the item first went live, so it comes
+straight back to the reach it had, and nobody it had already reached is told "not yet".
+That holds as long as the item had been live in the week before the repost. An item
+reposted after being gone for longer starts rippling from scratch, like a new post.
+
 An item that has not rippled yet is not shut out by having been reposted: rippling picks
 up items that have not yet started, and reposting does not disqualify one. Equally, a
 repost cannot force an item to ripple. If the community has rippling turned off, or the
@@ -381,6 +390,10 @@ longer a live offer there - so:
    everywhere it had spread.
 2. **It stops spreading.** Its rippling is halted, so it will not appear on any further
    communities.
+
+This still applies if the post was earlier sent back to pending: while it sits in Pending on
+its home community the copies stay for each community to deal with, but once it is deleted or
+rejected at home they are all pulled within a minute.
 
 This is exactly what you want when you catch spam or a rule-breaking post on its home
 community: dealing with it once removes it everywhere, instead of leaving live copies
@@ -502,6 +515,27 @@ cannot see. As with a report, the copies are **kept** (not deleted), each commun
 or rejects its own, and **re-approving brings a copy back without re-notifying members or
 re-rippling from scratch**.
 
+If you moderate the post's **home** community, the other communities cannot approve their
+copies until you approve yours again (see above). If you only moderate a community it
+rippled into, your Back to Pending does not stop anyone else approving theirs.
+
+**There is one exception, when a moderator of the post's home community does it.** The
+home community is where the poster posted, so if one of its moderators sends the post back,
+the neighbouring communities' copies are **locked**: their moderators cannot approve them
+until the home community approves its own copy again. Their pending list says why ("The
+home community is reviewing this post, so it can't be approved here until they approve
+it"), and so does the log, which names the home community rather than just "a moderator".
+They can still reject their copy or hold it.
+
+When the home copy is approved, the locks lift and each copy goes back to ordinary
+per-community moderation: nothing is re-sent to members and the post does not ripple out
+again from scratch. If the home community deletes or rejects the post instead, every
+rippled copy is removed, even though it had been sent back to pending first.
+
+A Back to Pending by a moderator of a community the post only rippled **into**, and a
+report by members, do **not** lock anything. Those copies stay independent, as described
+above.
+
 ---
 
 ## TrashNothing posts
@@ -514,9 +548,11 @@ otherwise each copy would carry the same item further on its own account. Once t
 copies have been merged into a single post, it ripples normally. A TrashNothing item
 posted to one community ripples straight away, exactly like a member's post.
 
-TrashNothing ingestion is moving to taking a single post per item, which will make this
-exception rarer and rarer. On your own community, TrashNothing posts behave exactly as
-they always have, and replies to them follow the same reach rules as everything else.
+TrashNothing posts now arrive as a single post per item, placed on the community whose
+area contains the item, so new items never start out as several copies and ripple straight
+away. The exception only still applies to older items that already exist as several copies,
+until those are merged. On your own community, TrashNothing posts behave exactly as they
+always have, and replies to them follow the same reach rules as everything else.
 
 ---
 

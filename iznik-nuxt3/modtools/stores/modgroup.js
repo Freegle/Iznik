@@ -75,6 +75,20 @@ export const useModGroupStore = defineStore('modgroups', {
         // Batch fetch groups not yet in the store for efficiency.
         const groups = authStore.groups
         if (groups && typeof groups === 'object') {
+          const currentIds = new Set(
+            Object.values(groups)
+              .map((g) => g.groupid)
+              .filter((id) => id)
+          )
+
+          // Drop any cached group we're no longer in - otherwise a group's
+          // last-fetched role (e.g. Moderator) never gets updated once cached.
+          for (const id of Object.keys(this.list)) {
+            if (!currentIds.has(parseInt(id))) {
+              delete this.list[id]
+            }
+          }
+
           const needFetch = Object.values(groups)
             .map((g) => g.groupid)
             .filter((id) => id && !this.list[id])

@@ -12,7 +12,7 @@
 import { readFileSync } from 'node:fs'
 import type { Database as DB } from 'better-sqlite3'
 import { listOpenDiscourseBugs, markDiscourseBugFixed, kvGet, kvSet, type DiscourseBugRow } from './index.js'
-import { DISCOURSE_BASE } from '../discourse.js'
+import { DISCOURSE_BASE, PROFILE_PATH } from '../discourse.js'
 
 export const STATUS_POST_ID = 63250
 export const STATUS_TOPIC_ID = 9599
@@ -175,7 +175,7 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
 
 function getDiscourseApiKey(): string | null {
   try {
-    const profile = JSON.parse(readFileSync('/home/edward/profile.json', 'utf8')) as { auth_pairs?: Array<{ user_api_key?: string }> }
+    const profile = JSON.parse(readFileSync(PROFILE_PATH, 'utf8')) as { auth_pairs?: Array<{ user_api_key?: string }> }
     return profile.auth_pairs?.[0]?.user_api_key ?? null
   } catch {
     return null

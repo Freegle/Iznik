@@ -395,6 +395,46 @@ describe('ModMessageWorry', () => {
       expect(wrapper.text()).toContain("isn't allowed on Freegle")
     })
 
+    it('safeguarding: shows the Safeguarding heading and location guidance', () => {
+      const wrapper = mountWithReasons([
+        {
+          check: 'ConcernKeyword',
+          category: 'safeguarding',
+          keyword: 'domestic abuse',
+          detail: "Matched concern keyword 'domestic abuse'",
+        },
+      ])
+      const text = wrapper.text()
+      expect(text).toContain('Safeguarding:')
+      expect(text).toContain(
+        'This post may show where someone escaping abuse lives.'
+      )
+      expect(text).toContain('check the location')
+      expect(text).toContain('public place or just the town')
+      expect(text).toContain("doesn't name the service")
+      // It is guidance, not the generic "fine to approve" flag.
+      expect(text).not.toContain("it's fine to approve")
+      expect(text).toContain('domestic abuse')
+    })
+
+    it('safeguarding: a real-time worry word of that type gets the same guidance', () => {
+      const message = makeMessage(
+        [],
+        [
+          {
+            word: 'refuge',
+            worryword: { keyword: 'refuge', type: 'Safeguarding' },
+          },
+        ]
+      )
+      mockMessageStore.byId.mockReturnValue(message)
+      const wrapper = mount(ModMessageWorry, {
+        props: { messageid: 123 },
+        global: { stubs: STUBS },
+      })
+      expect(wrapper.text()).toContain('escaping abuse')
+    })
+
     it('scam: shows Possible scam heading', () => {
       const wrapper = mountWithReasons([
         {

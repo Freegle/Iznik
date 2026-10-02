@@ -158,6 +158,30 @@ describe('modgroup store — full behaviour', () => {
       expect(mockFetchGroupsMT).not.toHaveBeenCalled()
     })
 
+    it('drops a cached group the moderator no longer belongs to, leaving others intact', async () => {
+      const store = useModGroupStore()
+      groupSummaryList = { 5: {} }
+      store.$api = { group: { fetchWork: mockFetchWork } }
+      mockFetchWork.mockResolvedValue([])
+
+      // Previously fetched while still a moderator of both groups.
+      store.list = {
+        1: { id: 1, role: 'Moderator' },
+        2: { id: 2, role: 'Moderator' },
+      }
+
+      // The session now only lists group 1 - the moderator was removed from group 2.
+      authState = {
+        groups: { a: { groupid: 1, role: 'Moderator' } },
+        user: { id: 9 },
+      }
+
+      await store.getModGroups()
+
+      expect(store.list[2]).toBeUndefined()
+      expect(store.list[1]).toBeTruthy()
+    })
+
     it('catches and logs an unexpected top-level failure', async () => {
       const store = useModGroupStore()
       authState = { groups: [], user: null }

@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MessageOriginGroup must return the group a message was posted to rather than rippled
-// into, so only that group's rejection notifies the poster and a secondary (rippled-in)
-// group's rejection stays silent (#6). It must NOT mis-attribute origin when the true
-// origin row has been hard-deleted.
-func TestMessageOriginGroup(t *testing.T) {
+// HomeGroups must be the groups a message was posted to rather than rippled into, so
+// only those groups' rejections notify the poster and a secondary (rippled-in) group's
+// rejection stays silent (#6). It must NOT mis-attribute home when the true home row
+// has been hard-deleted.
+func TestHomeGroups(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("origin")
@@ -30,22 +30,23 @@ func TestMessageOriginGroup(t *testing.T) {
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
 		"VALUES (?, ?, NOW() + INTERVAL 1 HOUR, 'Approved', 0, 1)", mid, group2)
 
-	// Origin = the group the post was not rippled into.
-	assert.Equal(t, group1, message.MessageOriginGroup(db, mid))
+	// Home = the group the post was not rippled into.
+	assert.Equal(t, map[uint64]bool{group1: true}, message.HomeGroups(db, mid))
 
 	// A plain-delete rejection SOFT-deletes the origin row (deleted=1); it still persists
 	// and is still correctly identified as origin (so a later secondary reject stays silent).
 	db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND groupid = ?", mid, group1)
-	assert.Equal(t, group1, message.MessageOriginGroup(db, mid), "soft-deleted origin still matched")
+	assert.Equal(t, map[uint64]bool{group1: true}, message.HomeGroups(db, mid), "soft-deleted home still matched")
 
 	// HARD-deleting the origin row (handleDeleteMessage/handleMove) leaves only rippled-in
-	// rows → 0, so the caller notifies all groups rather than mis-attributing origin to a
+	// rows → empty, so the caller notifies all groups rather than mis-attributing home to a
 	// secondary group.
 	db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", mid, group1)
-	assert.Equal(t, uint64(0), message.MessageOriginGroup(db, mid), "hard-deleted origin → 0 (safe fallback)")
+	assert.Empty(t, message.HomeGroups(db, mid), "hard-deleted home → empty (safe fallback)")
+	assert.Equal(t, 1, message.NotifyPosterFlag(message.HomeGroups(db, mid), group2), "unknown home → notify")
 
-	// No group rows at all → 0.
-	assert.Equal(t, uint64(0), message.MessageOriginGroup(db, 999999999), "no rows → 0")
+	// No group rows at all → empty.
+	assert.Empty(t, message.HomeGroups(db, 999999999), "no rows → empty")
 }
 
 // ClipReachForRejectedGroup must subtract a rejecting secondary group's area from a post's

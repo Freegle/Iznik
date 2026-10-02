@@ -1,0 +1,17 @@
+{
+  "id": 440076,
+  "url": "ilovefreegle.org",
+  "website_status": "active",
+  "platform": null,
+  "banner_status": 1,
+  "is_active": true,
+  "is_banner_manually_disabled": false,
+  "is_banner_disabled_by_pageview": false,
+  "last_scan_at": "2026-09-20 20:45:02",
+  "last_scan_status": "completed",
+  "applicable_laws": [
+    "gdpr"
+  ],
+  "targeted_location": "worldwide",
+  "scan_limit": 8000
+}

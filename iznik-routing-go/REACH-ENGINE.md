@@ -2,8 +2,7 @@
 
 This is the design behind the `stage2_*.go` files (the "stage 2" of the parent plan — the only stage built, so everywhere else it is just "the reach engine"): how a post's reach is computed
 from the road network itself, why it is fast, and why the answers are exact.
-Parent design: `plans/2026-08-27-reach-cost-redesign.md`; measurements:
-`plans/active/2026-08-27-reach-stage2-connectivity.md`.
+Measurements: `plans/active/2026-08-27-reach-stage2-connectivity.md`.
 
 ## The problem
 

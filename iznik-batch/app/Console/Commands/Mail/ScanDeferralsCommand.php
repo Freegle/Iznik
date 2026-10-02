@@ -5,6 +5,7 @@ namespace App\Console\Commands\Mail;
 use App\Services\Mail\Deferrals\DeferralCatchUpService;
 use App\Services\Mail\Deferrals\DeferralProbe;
 use App\Services\Mail\Deferrals\DeferralScanService;
+use App\Services\Mail\Deferrals\RelayQueueRecorder;
 use App\Services\Mail\Deferrals\RelayQueueSnapshot;
 use App\Services\Mail\MailSuppressionService;
 use Illuminate\Console\Command;
@@ -43,6 +44,7 @@ class ScanDeferralsCommand extends Command
         DeferralProbe $probe,
         DeferralScanService $scan,
         DeferralCatchUpService $catchUp,
+        RelayQueueRecorder $queue,
     ): int {
         $cfg = (array) config('freegle.mail.deferrals', []);
 
@@ -96,6 +98,17 @@ class ScanDeferralsCommand extends Command
         }
 
         $this->reportSnapshot($snapshot);
+
+        // Record the queue itself before deciding anything about it. A
+        // provider refusing us is one reason mail is late; our own pacing is
+        // the other, and it produces no error for anything else to notice.
+        $recorded = $queue->record($snapshot, $dryRun);
+        $this->line(sprintf(
+            'Queue recorded: %d domains, %s waiting on us, %s refused by a provider.',
+            $recorded['rows'],
+            number_format($recorded['waiting']),
+            number_format($recorded['deferred'])
+        ));
 
         // Ask each suppressed provider directly whether it is taking our mail
         // again, rather than waiting to infer it from traffic we have
@@ -245,11 +258,18 @@ class ScanDeferralsCommand extends Command
             return;
         }
 
-        $ids = [];
+        // Per instance: a queue id is only unique within one postfix instance,
+        // and the relay runs more than one.
+        $byInstance = [];
         foreach ($suppressed as $group) {
-            $ids = array_merge($ids, $snapshot->queueIdsFor($group));
+            foreach ($snapshot->queueIdsFor($group) as $instance => $groupIds) {
+                foreach ($groupIds as $id) {
+                    $byInstance[$instance][$id] = true;
+                }
+            }
         }
-        $ids = array_values(array_unique($ids));
+        $byInstance = array_map(static fn ($set) => array_keys($set), $byInstance);
+        $ids = array_merge(...(array_values($byInstance) ?: [[]]));
 
         if ($ids === []) {
             $this->info('Purge: no queued messages found for the suppressed relays.');
@@ -292,7 +312,7 @@ class ScanDeferralsCommand extends Command
         }
 
         try {
-            $deleted = $probe->purge($target, $ids);
+            $deleted = $probe->purge($target, $byInstance);
         } catch (\Throwable $e) {
             // purge() raises rather than counting ids it merely sent. Anything
             // reaching here means the relay did not confirm the deletions.

@@ -51,6 +51,43 @@ class FixTNNamesCommandTest extends TestCase
         return $userId;
     }
 
+    /**
+     * The shape the old filter could not see. It narrowed on a reversed prefix of
+     * backwards, which only matches rows whose backwards came from the address. Most
+     * Trash Nothing rows hold REVERSE(canon) instead, with the -gNNNN suffix and the
+     * domain dots gone, so the command reached 20.5% of members and skipped the rest
+     * without saying so. See .claude/rules/mail-and-data.md.
+     */
+    public function test_fixes_a_member_whose_row_holds_the_canon_form(): void
+    {
+        $userId = DB::table('users')->insertGetId([
+            'firstname' => null,
+            'lastname' => null,
+            'fullname' => null,
+            'added' => now(),
+        ]);
+
+        $email = 'canonform-g4707@user.trashnothing.com';
+        $canon = 'canonform@usertrashnothingcom';
+
+        DB::table('users_emails')->insert([
+            'userid' => $userId,
+            'email' => $email,
+            'canon' => $canon,
+            'backwards' => strrev($canon),
+            'preferred' => 1,
+            'added' => now(),
+        ]);
+
+        $this->artisan('users:fix-tn-names')->assertExitCode(0);
+
+        $this->assertSame(
+            'canonform',
+            DB::table('users')->where('id', $userId)->value('fullname'),
+            'a member whose row holds the canon form must still be found'
+        );
+    }
+
     public function test_smoke_no_tn_users(): void
     {
         $this->artisan('users:fix-tn-names')

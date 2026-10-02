@@ -142,6 +142,15 @@ describe('GroupSelect', () => {
       expect(wrapper.text()).toContain('Test Group B')
       expect(wrapper.text()).toContain('Test Group C')
     })
+
+    it('filters to plain memberships when memberonly is true', () => {
+      // Used where the choice leads to leaving: a moderator or owner must not be
+      // offered a way to drop their own role.
+      const wrapper = createWrapper({ memberonly: true })
+      expect(wrapper.text()).toContain('Test Group A')
+      expect(wrapper.text()).not.toContain('Test Group B')
+      expect(wrapper.text()).not.toContain('Test Group C')
+    })
   })
 
   describe('systemwide option', () => {

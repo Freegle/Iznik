@@ -145,10 +145,6 @@ describe('members/approved/[[id]]/[[term]].vue page', () => {
           ModMergeButton: {
             template: '<div class="mod-merge-button" />',
           },
-          ModMemberExportButton: {
-            template: '<div class="mod-member-export-button" />',
-            props: ['groupid'],
-          },
           ModMembers: {
             template: '<div class="mod-members" />',
           },
@@ -211,6 +207,37 @@ describe('members/approved/[[id]]/[[term]].vue page', () => {
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.mod-member-type-select').exists()).toBe(true)
+    })
+
+    // A search that found nobody used to say only "no members to show", which reads as
+    // "this member does not exist" - two moderators on Discourse 10179 concluded the
+    // search was broken when it had simply looked everywhere it is allowed to look.
+    it('says an empty all-communities search covered only the mod-s own communities', async () => {
+      mockRouteParams.value = { id: undefined, term: '45065290' }
+      mockMembers.value = []
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      // Mounting auto-selects the community when the moderator only has one, so
+      // put it back to "all communities" - the case the moderator hit.
+      mockGroupid.value = 0
+      await wrapper.vm.$nextTick()
+      const text = wrapper.text()
+      expect(text).toContain('communities you moderate')
+      expect(text).toContain('Support access')
+    })
+
+    it('offers to widen an empty single-community search', async () => {
+      mockGroupid.value = 123
+      mockRouteParams.value = { id: '123', term: '45065290' }
+      mockMembers.value = []
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      const text = wrapper.text()
+      expect(text).toContain('this community')
+      expect(text).toContain('Please choose')
+      // It must not send them to Support before they have tried their other
+      // communities - that is the next thing to try, not the first.
+      expect(text).not.toContain('Support access')
     })
 
     it('shows please select message when no group and no term', async () => {
@@ -352,6 +379,50 @@ describe('members/approved/[[id]]/[[term]].vue page', () => {
       expect(mockSearch.value).toBe('test search')
       expect(mockContext.value).toBe(null)
       expect(mockMemberStore.clear).toHaveBeenCalled()
+    })
+
+    // Moderators read a member's id off the members list, where it is shown after a
+    // hash icon, so they type it back with the hash. Left in place the hash starts a
+    // URL fragment, the term never reaches the page, and the search silently does
+    // nothing at all. (Discourse 10179)
+    it('startsearch strips a leading hash from the term', async () => {
+      mockRouteParams.value = { id: '123', term: undefined }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      mockRouterPush.mockClear()
+
+      wrapper.vm.startsearch('#45065290')
+
+      expect(mockSearch.value).toBe('45065290')
+      expect(mockRouterPush).toHaveBeenCalledWith(
+        '/members/approved/123/45065290'
+      )
+    })
+
+    it('startsearch encodes a term containing URL punctuation', async () => {
+      mockRouteParams.value = { id: '123', term: undefined }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      mockRouterPush.mockClear()
+
+      wrapper.vm.startsearch('Derek/Bill Roberts')
+
+      expect(mockSearch.value).toBe('Derek/Bill Roberts')
+      expect(mockRouterPush).toHaveBeenCalledWith(
+        '/members/approved/123/Derek%2FBill%20Roberts'
+      )
+    })
+
+    it('startsearch keeps searching when the term is only a hash', async () => {
+      mockRouteParams.value = { id: '123', term: undefined }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      mockRouterPush.mockClear()
+
+      wrapper.vm.startsearch('#')
+
+      expect(mockSearch.value).toBe('')
+      expect(mockRouterPush).toHaveBeenCalledWith('/members/approved/123')
     })
 
     it('startsearch navigates with search term', async () => {

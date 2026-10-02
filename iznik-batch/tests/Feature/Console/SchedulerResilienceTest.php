@@ -9,6 +9,7 @@ use Illuminate\Console\Scheduling\CacheEventMutex;
 use Illuminate\Console\Scheduling\EventMutex;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Schedule as ScheduleFacade;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -47,9 +48,7 @@ class SchedulerResilienceTest extends TestCase
         $this->assertInstanceOf(FlockEventMutex::class, $this->app->make(EventMutex::class));
     }
 
-    /**
-     * @dataProvider lockStoreCases
-     */
+    #[DataProvider('lockStoreCases')]
     public function test_helper_selects_cache_store_from_config(string $configured, bool $usesFlock, ?string $cacheStore): void
     {
         config(['cache.lock_store' => $configured]);

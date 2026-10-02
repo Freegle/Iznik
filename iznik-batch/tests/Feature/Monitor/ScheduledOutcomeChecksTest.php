@@ -178,6 +178,58 @@ class ScheduledOutcomeChecksTest extends TestCase
         $this->assertTrue($result->isOk(), $result->message);
     }
 
+    public function test_backlog_check_is_skipped_while_work_is_held_off_for_the_backup(): void
+    {
+        // Same stale row as the breach case below, but batch work is deliberately held off
+        // for the nightly backup: the backlog is the drain doing its job, not a stuck
+        // worker. Skipped, never ok - nothing was assessed.
+        config()->set('freegle.backup.drain', [
+            'enabled' => true, 'start' => '03:50', 'minutes' => 45, 'always_run' => [],
+        ]);
+        Carbon::setTestNow(Carbon::create(2026, 6, 12, 4, 10, 0, config('app.timezone')));
+        $this->seedBackgroundTask(Carbon::now()->subMinutes(20));
+
+        $check = new BacklogCheck(
+            'test:backlog',
+            'background_tasks',
+            'created_at',
+            10,
+            fn ($q) => $q->whereNull('processed_at')->whereNull('failed_at')->where('attempts', '<', 3),
+        );
+
+        $during = $check->evaluate(Carbon::now());
+        $this->assertTrue($during->isSkipped(), $during->message);
+        $this->assertStringContainsString('held off for the backup', $during->message);
+
+        // Ten minutes after the window closes the workers have had their max age to catch
+        // up, and the same row is a real breach again.
+        $after = $check->evaluate(Carbon::create(2026, 6, 12, 4, 45, 0, config('app.timezone')));
+        $this->assertTrue($after->isBreach(), $after->message);
+    }
+
+    public function test_backlog_check_with_a_long_threshold_is_still_assessed_during_the_drain(): void
+    {
+        // The rippling check allows a day. A 45-minute hold cannot explain a day-old row,
+        // so the check is never skipped for the drain - a wedge that started yesterday must
+        // not hide behind tonight's backup.
+        config()->set('freegle.backup.drain', [
+            'enabled' => true, 'start' => '03:50', 'minutes' => 45, 'always_run' => [],
+        ]);
+        Carbon::setTestNow(Carbon::create(2026, 6, 12, 4, 10, 0, config('app.timezone')));
+        $this->seedBackgroundTask(Carbon::now()->subHours(25));
+
+        $check = new BacklogCheck(
+            'test:backlog',
+            'background_tasks',
+            'created_at',
+            1440,
+            fn ($q) => $q->whereNull('processed_at')->whereNull('failed_at')->where('attempts', '<', 3),
+        );
+
+        $result = $check->evaluate(Carbon::now());
+        $this->assertTrue($result->isBreach(), $result->message);
+    }
+
     public function test_backlog_check_breaches_when_stale_pending(): void
     {
         Carbon::setTestNow(Carbon::create(2026, 6, 12, 10, 0, 0));
@@ -247,5 +299,198 @@ class ScheduledOutcomeChecksTest extends TestCase
         $result = $check->evaluate(Carbon::now());
 
         $this->assertTrue($result->isBreach(), $result->message);
+    }
+
+    /**
+     * The daily-stats coverage check. Its companion ProducedSinceCheck also has a floor of 1,
+     * so it passes whenever the 02:30 run wrote a single row — against a real ~4,300 a day
+     * covering all 507 communities. Coverage is the assertion worth making, and the expected
+     * number comes from the groups table rather than from a guess.
+     */
+    private function statsCoverageCheck(): \App\Monitoring\OutcomeCheck
+    {
+        foreach ((new \App\Monitoring\ScheduledOutcomeRegistry())->checks() as $check) {
+            if ($check->slug() === 'stats:generate-daily coverage') {
+                return $check;
+            }
+        }
+
+        $this->fail('the daily-stats coverage check is not registered');
+    }
+
+    /** Give every group a stats row for $day, and return the ids seeded. */
+    private function seedStatsForAllGroups(string $day): array
+    {
+        $ids = DB::table('groups')->pluck('id')->all();
+
+        foreach ($ids as $id) {
+            DB::table('stats')->insert([
+                'date' => $day,
+                'end' => $day,
+                'groupid' => $id,
+                'type' => 'ApprovedMessageCount',
+                'count' => 1,
+            ]);
+        }
+
+        return $ids;
+    }
+
+    public function test_stats_coverage_ok_when_every_community_is_covered(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 9, 15, 7, 0, 0, 'Europe/London'));
+        $this->seedStatsForAllGroups('2026-09-14');
+
+        $result = $this->statsCoverageCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isOk(), $result->message);
+    }
+
+    public function test_stats_coverage_breaches_when_a_community_is_missed(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 9, 15, 7, 0, 0, 'Europe/London'));
+        $ids = $this->seedStatsForAllGroups('2026-09-14');
+        $this->assertNotEmpty($ids, 'there are groups to cover');
+
+        // One community's rows go missing — the 02:30 run stopped short. A floor of 1 cannot
+        // see that; coverage can.
+        DB::table('stats')->where('date', '2026-09-14')->where('groupid', end($ids))->delete();
+
+        $result = $this->statsCoverageCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isBreach(), $result->message);
+        $this->assertStringContainsString('1 missing', $result->message);
+    }
+
+    public function test_stats_coverage_ignores_a_community_founded_after_the_day(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 9, 15, 7, 0, 0, 'Europe/London'));
+        $this->seedStatsForAllGroups('2026-09-14');
+
+        // Founded after the day being checked, so it cannot have stats for it and must not
+        // count against coverage — otherwise every new community turns the check red for a day.
+        $new = $this->createTestGroup();
+        DB::table('groups')->where('id', $new->id)->update(['founded' => '2026-09-15 09:00:00']);
+
+        $result = $this->statsCoverageCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isOk(), $result->message);
+    }
+
+    /**
+     * The daily-digest window check. Its companion ProducedSinceCheck has a floor of 1, so it
+     * passes on any day at least one digest went out — which is why the 2026-09-15..17
+     * collapse (throughput down 13x, digests landing at 01:00, 40,000+ still sent) passed
+     * three days running. This one asserts the run FINISHED, not that it happened.
+     */
+    private function registeredCheck(string $slug): \App\Monitoring\OutcomeCheck
+    {
+        foreach ((new \App\Monitoring\ScheduledOutcomeRegistry())->checks() as $check) {
+            if ($check->slug() === $slug) {
+                return $check;
+            }
+        }
+
+        $this->fail("the check '{$slug}' is not registered");
+    }
+
+    private function digestWindowCheck(): \App\Monitoring\OutcomeCheck
+    {
+        return $this->registeredCheck('mail:digest:unified --mode=daily window');
+    }
+
+    /**
+     * push:daily-posts reads the SAME getPostsForUser() as the daily digest, so it shares the
+     * failure mode: if that query slows down again, this overruns too and members get push
+     * notifications at odd hours. It keeps its own cursor row (mode='push').
+     */
+    public function test_the_push_window_check_is_registered_and_scoped_to_its_own_cursor(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 9, 15, 13, 0, 0, 'Europe/London'));
+        config([
+            'freegle.posts_push_allowlist' => '*',
+            'freegle.digest.daily_allowlist' => '*',
+        ]);
+
+        // A DIGEST send after the window must not trip the PUSH check - the two share a table
+        // and are told apart only by the mode column.
+        $userid = DB::table('users')->insertGetId([
+            'firstname' => 'Push', 'lastname' => 'Window', 'added' => now(),
+        ]);
+        DB::table('users_digests')->insert([
+            'userid' => $userid, 'mode' => 'daily', 'lastsent' => '2026-09-15 12:30:00',
+        ]);
+
+        $this->assertTrue(
+            $this->registeredCheck('push:daily-posts window')->evaluate(Carbon::now())->isOk(),
+            'a late DAILY send must not be reported against the PUSH window'
+        );
+
+        // ...and a late push send does trip it.
+        $pushUser = DB::table('users')->insertGetId([
+            'firstname' => 'Push2', 'lastname' => 'Window', 'added' => now(),
+        ]);
+        DB::table('users_digests')->insert([
+            'userid' => $pushUser, 'mode' => 'push', 'lastsent' => '2026-09-15 12:30:00',
+        ]);
+
+        $result = $this->registeredCheck('push:daily-posts window')->evaluate(Carbon::now());
+        $this->assertTrue($result->isBreach(), $result->message);
+        $this->assertStringContainsString('overran', $result->message);
+    }
+
+    private function seedDailySend(string $sentAtUtc): void
+    {
+        $userid = DB::table('users')->insertGetId([
+            'firstname' => 'Digest',
+            'lastname' => 'Window',
+            'added' => now(),
+        ]);
+
+        DB::table('users_digests')->insert([
+            'userid' => $userid,
+            'mode' => 'daily',
+            'lastsent' => $sentAtUtc,
+        ]);
+    }
+
+    public function test_digest_window_check_is_quiet_when_the_run_finished_inside_its_window(): void
+    {
+        // 12:00 London on a BST day is 11:00 UTC. A healthy run's last send lands just inside
+        // it — 09-13 and 09-14 both ended at 11:59 London.
+        Carbon::setTestNow(Carbon::create(2026, 9, 14, 13, 0, 0, 'Europe/London'));
+        config(['freegle.digest.daily_allowlist' => '*']);
+        $this->seedDailySend('2026-09-14 10:59:00');
+
+        $result = $this->digestWindowCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isOk(), $result->message);
+    }
+
+    public function test_digest_window_check_breaches_when_the_run_overran(): void
+    {
+        // 09-15, the first broken day: sends carried on past the window and into the night.
+        Carbon::setTestNow(Carbon::create(2026, 9, 15, 13, 0, 0, 'Europe/London'));
+        config(['freegle.digest.daily_allowlist' => '*']);
+        $this->seedDailySend('2026-09-15 10:59:00');   // inside the window — must not count
+        $this->seedDailySend('2026-09-15 12:30:00');   // after it — must count
+
+        $result = $this->digestWindowCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isBreach(), $result->message);
+        $this->assertStringContainsString('overran', $result->message);
+    }
+
+    public function test_digest_window_check_ignores_yesterdays_late_sends(): void
+    {
+        // lastsent holds only each member's most recent send. Someone sent late YESTERDAY must
+        // not keep the check red today, or one bad day latches it on for good.
+        Carbon::setTestNow(Carbon::create(2026, 9, 16, 13, 0, 0, 'Europe/London'));
+        config(['freegle.digest.daily_allowlist' => '*']);
+        $this->seedDailySend('2026-09-15 23:30:00');
+
+        $result = $this->digestWindowCheck()->evaluate(Carbon::now());
+
+        $this->assertTrue($result->isOk(), $result->message);
     }
 }

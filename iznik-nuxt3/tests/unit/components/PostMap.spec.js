@@ -257,7 +257,14 @@ describe('PostMap', () => {
               'maxZoom',
               'style',
             ],
-            emits: ['ready', 'update:bounds', 'zoomend', 'moveend', 'dragend'],
+            emits: [
+              'ready',
+              'update:bounds',
+              'update:zoom',
+              'zoomend',
+              'moveend',
+              'dragend',
+            ],
             setup(props, { expose }) {
               const leafletObject = {
                 getBounds: vi.fn().mockReturnValue({
@@ -907,6 +914,55 @@ describe('PostMap', () => {
       expect(mockNearbyFetchMessages).not.toHaveBeenCalled()
       expect(mockMessageStore.fetchInBounds).toHaveBeenCalled()
     })
+
+    it('asks for the posts in the map bounds once when the map settles, not once per listener', async () => {
+      // LMap is wired with both v-model:bounds and @update:bounds="idle". One settled map
+      // therefore runs getMessages() twice with identical bounds, and the two fetches
+      // raced to replace the marker layer. Leaflet then removed a layer whose renderer
+      // had never attached and the browse page fell over (Sentry NUXT3-DC6 and DS0).
+      const wrapper = await createWrapper()
+      const map = wrapper.findComponent({ name: 'LMap' })
+      await map.vm.$emit('ready')
+      await flushPromises()
+      // Zoomed in far enough to show posts rather than groups.
+      await map.vm.$emit('update:zoom', 12)
+      await flushPromises()
+      mockMessageStore.fetchInBounds.mockClear()
+
+      await map.vm.$emit('update:bounds', {
+        getSouthWest: () => ({ lat: 51, lng: -2 }),
+        getNorthEast: () => ({ lat: 54, lng: 0 }),
+      })
+      await flushPromises()
+
+      expect(mockMessageStore.fetchInBounds).toHaveBeenCalledTimes(1)
+    })
+
+    it('asks again for the same bounds once the earlier fetch has settled', async () => {
+      // The guard is only against an identical fetch that is still in flight. A later
+      // ask for the same box, such as the feed reloading when the unseen count rises,
+      // must still reach the server so new posts appear.
+      const wrapper = await createWrapper()
+      const map = wrapper.findComponent({ name: 'LMap' })
+      await map.vm.$emit('ready')
+      await flushPromises()
+      // Zoomed in far enough to show posts rather than groups.
+      await map.vm.$emit('update:zoom', 12)
+      await flushPromises()
+      mockMessageStore.fetchInBounds.mockClear()
+
+      const settled = {
+        getSouthWest: () => ({ lat: 51, lng: -2 }),
+        getNorthEast: () => ({ lat: 54, lng: 0 }),
+      }
+      await map.vm.$emit('update:bounds', settled)
+      await flushPromises()
+      expect(mockMessageStore.fetchInBounds).toHaveBeenCalledTimes(1)
+
+      await map.vm.$emit('update:bounds', { ...settled })
+      await flushPromises()
+      expect(mockMessageStore.fetchInBounds).toHaveBeenCalledTimes(2)
+    })
   })
 
   describe('zoom behavior', () => {
@@ -1128,6 +1184,89 @@ describe('PostMap', () => {
       const markers = wrapper.findAllComponents({ name: 'ClusterMarker' })
       return markers.find((m) => m.props('cssClass') === 'fadedMarker')
     }
+
+    // The debounced re-fit (PostMap.vue: watch -> setTimeout(fitToShownMarkers, 200)) used to be
+    // reached only by luck. Nothing here waited for that timer, so whether its body ran before the
+    // file finished was wall-clock timing, and this file's covered-line count moved by six between
+    // two runs of the SAME code. That is enough on its own to fail a Coveralls comparison on a
+    // branch that changed nothing near the map, which is how it was found.
+    //
+    // Waiting past the debounce is deterministic rather than hopeful: our timer is scheduled after
+    // the component's and for longer, so the component's always fires first.
+    it('re-fits the map to the shown markers once the debounce settles', async () => {
+      const wrapper = await mountNearbyWithMessages(
+        [
+          { id: 1, lat: 52.0, lng: -1.0, distance: 1, groupid: 1 },
+          { id: 2, lat: 52.1, lng: -1.1, distance: 2, groupid: 1 },
+        ],
+        { selectedMaxDistance: 5 }
+      )
+      const map = wrapper.findComponent({ name: 'LMap' })
+
+      await new Promise((resolve) => setTimeout(resolve, 260))
+      await flushPromises()
+
+      // Distinguishable from the initial framing on initialBounds, which passes the bounds alone;
+      // only the re-fit passes padding.
+      const refit = map.vm.leafletObject.fitBounds.mock.calls.find(
+        (c) => c[1] && Array.isArray(c[1].padding)
+      )
+      expect(refit).toBeTruthy()
+      expect(refit[1].padding).toEqual([40, 40])
+    })
+
+    // Discourse 10091: once the member has dragged the map, a search runs within the map's
+    // bounds. Re-fitting the map to those results (with padding) widened the bounds, the wider
+    // search found posts further out, and the next re-fit widened it again - the map zoomed out
+    // in steps to the whole of England. After a drag the member owns the view, so the results
+    // it produced must not move it.
+    it('does not re-fit the map to a search within the bounds the member dragged to', async () => {
+      const wrapper = await mountNearbyWithMessages(
+        [{ id: 1, lat: 52.0, lng: -1.0, distance: 1, groupid: 1 }],
+        { search: 'bed', browseSearch: true }
+      )
+      const map = wrapper.findComponent({ name: 'LMap' })
+      await new Promise((resolve) => setTimeout(resolve, 260))
+      await flushPromises()
+
+      // Results near the edges of the dragged-to view, as a bounds search returns.
+      mockMessageStore.search.mockResolvedValue([
+        {
+          id: 11,
+          lat: 51.6,
+          lng: -1.4,
+          distance: 90,
+          groupid: 1,
+          type: 'Offer',
+        },
+        {
+          id: 12,
+          lat: 53.4,
+          lng: -0.6,
+          distance: 120,
+          groupid: 1,
+          type: 'Offer',
+        },
+      ])
+      map.vm.leafletObject.fitBounds.mockClear()
+
+      // The drag moves the view somewhere new.
+      map.vm.leafletObject.getBounds.mockReturnValue({
+        getSouthWest: () => ({ lat: 51.5, lng: -1.5 }),
+        getNorthEast: () => ({ lat: 53.5, lng: -0.5 }),
+        contains: vi.fn().mockReturnValue(true),
+        toBBoxString: vi.fn().mockReturnValue('51.5,-1.5,53.5,-0.5'),
+      })
+      await map.vm.$emit('dragend')
+      await flushPromises()
+      await new Promise((resolve) => setTimeout(resolve, 260))
+      await flushPromises()
+
+      expect(mockMessageStore.search).toHaveBeenCalledWith(
+        expect.objectContaining({ search: 'bed', swlat: 51.5, nelat: 53.5 })
+      )
+      expect(map.vm.leafletObject.fitBounds).not.toHaveBeenCalled()
+    })
 
     it('passes only within-distance posts as markers to the primary ClusterMarker', async () => {
       const wrapper = await mountNearbyWithMessages(

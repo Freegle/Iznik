@@ -292,6 +292,139 @@ class UnifiedDigestTest extends TestCase
         $this->assertStringStartsWith("What's New ({$cap} posts)", $envelope->subject);
     }
 
+    public function test_own_post_survives_body_cap_even_when_ranked_last(): void
+    {
+        // Discourse 10029/17: on a bank-holiday-busy day, enough rippled-in
+        // posts pushed the recipient's own post past DIGEST_POST_CAP and it
+        // was silently absent from the digest entirely. The cap exists to
+        // stop Gmail clipping the body, not to hide a member's own post from
+        // their own digest, so it must always be reserved a slot — even when
+        // (as here) it's the very last post in the collection, i.e. exactly
+        // where a plain take($cap) would cut it.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $fillerMessage = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (London)']);
+
+        $posts = collect(array_fill(0, $cap, [
+            'message' => $fillerMessage,
+            'postedToGroups' => [$group->id],
+        ]));
+
+        // The recipient's own post, appended last — past the cap.
+        $ownMessage = $this->createTestMessage($user, $group, [
+            'subject' => 'OFFER: RecipientsOwnUniqueSofa (London)',
+        ]);
+        $posts->push(['message' => $ownMessage, 'postedToGroups' => [$group->id]]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $html = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled digest HTML should not be empty');
+        $this->assertStringContainsString(
+            'RecipientsOwnUniqueSofa',
+            $html,
+            "The recipient's own post must survive DIGEST_POST_CAP truncation even when it sorts past the cap"
+        );
+        // Reserving the own post must not stretch the cap: one filler gave way to it.
+        $this->assertSame($cap, $this->countCards($spooled['text'] ?? ''));
+        $this->assertStringContainsString("We've limited this to {$cap} posts", $spooled['text'] ?? '');
+    }
+
+    public function test_cap_holds_when_own_posts_alone_exceed_it(): void
+    {
+        // A member with more live posts of their own than the cap (a reseller, or
+        // someone whose posts rippled into many groups) must still get a digest
+        // that fits: the first $cap own posts and none of the others. Before this
+        // the reservation kept every own post and the email grew past the cap,
+        // which is the Gmail-clipping failure the cap exists to prevent.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $posts = collect();
+        for ($i = 1; $i <= $cap + 3; $i++) {
+            $own = $this->createTestMessage($user, $group, ['subject' => "OFFER: OwnItem{$i}Zq (London)"]);
+            $posts->push(['message' => $own, 'postedToGroups' => [$group->id]]);
+        }
+        for ($i = 1; $i <= 2; $i++) {
+            $other = $this->createTestMessage($poster, $group, ['subject' => "OFFER: OtherItem{$i}Zq (London)"]);
+            $posts->push(['message' => $other, 'postedToGroups' => [$group->id]]);
+        }
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+        $text = $spooled['text'] ?? '';
+
+        $this->assertSame($cap, $this->countCards($text));
+        $this->assertStringContainsString('OwnItem1Zq', $text);
+        $this->assertStringContainsString("OwnItem{$cap}Zq", $text);
+        $this->assertStringNotContainsString('OwnItem' . ($cap + 1) . 'Zq', $text);
+        $this->assertStringNotContainsString('OtherItem1Zq', $text);
+        $this->assertStringContainsString("We've limited this to {$cap} posts", $text);
+    }
+
+    public function test_dropped_post_ids_and_tracking_describe_what_the_email_shows(): void
+    {
+        // The service stores droppedPostIds() on the member's digest tracker and offers
+        // those posts again next run, so the list must be exactly what the cap cut. The
+        // tracking record must describe the cards actually shown, not the eligible set.
+        $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $posts = collect();
+        for ($i = 1; $i <= $cap + 3; $i++) {
+            $filler = $this->createTestMessage($poster, $group, ['subject' => "OFFER: Filler{$i}Zq (London)"]);
+            $posts->push(['message' => $filler, 'postedToGroups' => [$group->id]]);
+        }
+        $ownMessage = $this->createTestMessage($user, $group, ['subject' => 'OFFER: OwnLastZq (London)']);
+        $posts->push(['message' => $ownMessage, 'postedToGroups' => [$group->id]]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $dropped = $mail->droppedPostIds();
+        $this->assertCount(4, $dropped, 'cap + 4 eligible posts, cap shown, so four left out');
+        $this->assertNotContains($ownMessage->id, $dropped);
+
+        $meta = $mail->getTracking()->metadata;
+        $this->assertSame($cap, $meta['post_count']);
+        $this->assertCount($cap, $meta['post_msgids']);
+        $this->assertContains($ownMessage->id, $meta['post_msgids']);
+        foreach ($dropped as $id) {
+            $this->assertNotContains($id, $meta['post_msgids']);
+        }
+
+        // The subject still describes the whole eligible set: over the cap, no count.
+        $this->assertStringStartsWith("What's New", $mail->envelope()->subject);
+        $this->assertStringNotContainsString('(' . ($cap + 4) . ' posts)', $mail->envelope()->subject);
+    }
+
+    /**
+     * Number of post cards in the plain-text part: one "OFFER:"/"WANTED:" line per card.
+     * The "In this digest" summary lists subjects with a leading "- ", so it is not counted.
+     */
+    private function countCards(string $text): int
+    {
+        return preg_match_all('/^(OFFER|WANTED): /m', $text);
+    }
+
     public function test_tracked_urls_contain_post_positions(): void
     {
         $user = $this->createTestUser();
@@ -1450,5 +1583,64 @@ class UnifiedDigestTest extends TestCase
             $html,
             'Immediate-mode preheader must contain the post subject location'
         );
+    }
+
+    public function test_compact_image_urls_contain_scroll_percent(): void
+    {
+        // Guards that compact image URLs (heroImageUrl, thumbImageUrl, posterAvatarUrl)
+        // carry the ?s= scroll-percent query param so the Go handler can update
+        // email_tracking.scroll_depth_percent via the same max-update logic as the
+        // long-form trackedImageUrl path. Compact URLs without s= meant scroll depth
+        // was never populated for digest recipients (Fix 15).
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $msg1 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Bicycle (London)']);
+        $msg2 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Table (London)']);
+
+        // Give msg1 an internal attachment (externaluid set, no externalurl) so
+        // prepareCard() takes the compact URL path instead of the fallback URL.
+        DB::table('messages_attachments')->insertGetId([
+            'msgid'       => $msg1->id,
+            'externaluid' => 'freegletusd-' . str_repeat('c', 32),
+            'primary'     => 1,
+            'archived'    => 0,
+        ]);
+
+        // Eager-load fromUser so prepareCard() resolves $posterUser and takes the
+        // compact 'u' avatar URL path rather than the fallback resolveAvatarUrl().
+        $msg1->load(['attachments', 'fromUser']);
+
+        $posts = collect([
+            ['message' => $msg1, 'postedToGroups' => [$group->id]],
+            ['message' => $msg2, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $ref = new \ReflectionProperty(UnifiedDigest::class, 'preparedPosts');
+        $ref->setAccessible(true);
+        $prepared = $ref->getValue($mail);
+
+        // Post 0 (msg1) has an internal attachment -> compact URL path is taken.
+        // scroll = round((0/2)*100) = 0, so s=0 must be present.
+        $card0 = $prepared->get(0);
+
+        $this->assertStringContainsString('s=0', $card0['thumbImageUrl'],
+            'thumbImageUrl for post 0 (index 0 of 2) must carry s=0');
+        $this->assertStringContainsString('s=0', $card0['heroImageUrl'],
+            'heroImageUrl for post 0 (index 0 of 2) must carry s=0');
+        $this->assertStringContainsString('s=0', $card0['posterAvatarUrl'],
+            'posterAvatarUrl for post 0 (index 0 of 2) must carry s=0');
+
+        // All three must be compact-format URLs (not the fallback direct URL).
+        foreach (['thumbImageUrl', 'heroImageUrl', 'posterAvatarUrl'] as $key) {
+            $this->assertStringContainsString('/e/d/i/', $card0[$key],
+                "{$key} must use the compact /e/d/i/ tracking route");
+        }
     }
 }

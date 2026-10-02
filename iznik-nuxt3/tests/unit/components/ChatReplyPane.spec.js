@@ -15,7 +15,7 @@ const mockMessage = {
   textbody: 'A lovely sofa.',
   attachments: [],
   promised: false,
-  promisedtome: false,
+  promisedtoyou: false,
 }
 
 const mockMessageStore = {
@@ -513,21 +513,25 @@ describe('ChatReplyPane', () => {
   })
 
   describe('promised warning', () => {
-    it('shows promised warning when promised and not promisedtome', async () => {
+    it('shows promised warning when promised and not promisedtoyou', async () => {
       mockMessageStore.byId.mockReturnValue({
         ...mockMessage,
         promised: true,
-        promisedtome: false,
+        promisedtoyou: false,
       })
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('Already promised')
     })
 
-    it('hides promised warning when promisedtome', async () => {
+    // Regression test for https://discourse.ilovefreegle.org/t/10189/1 :
+    // the API only ever sends `promisedtoyou` (see message.go), never a
+    // `promisedtome` field. A viewer the item IS promised to must not see
+    // the "already promised to someone else" warning on their own thread.
+    it('hides promised warning when promisedtoyou', async () => {
       mockMessageStore.byId.mockReturnValue({
         ...mockMessage,
         promised: true,
-        promisedtome: true,
+        promisedtoyou: true,
       })
       const wrapper = await createWrapper()
       const notices = wrapper
@@ -718,6 +722,21 @@ describe('ChatReplyPane', () => {
       expect(wrapper.text().replace(/\s+/g, ' ')).toContain(
         "we'll pass yours on in about 3 hours"
       )
+    })
+
+    it('says the reach has finished, not that it is still on its way, when the API says so', async () => {
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        replyeligible: false,
+        reachfinished: true,
+      })
+      const wrapper = await createWrapper()
+
+      const text = wrapper.text().replace(/\s+/g, ' ')
+      expect(wrapper.find('[data-testid="reach-finished"]').exists()).toBe(true)
+      expect(text).toContain('finished rippling out')
+      expect(text).toContain('straight away')
+      expect(text).not.toContain("hasn't reached your area yet")
     })
 
     it('falls back to the open-ended wording when there is no estimate', async () => {

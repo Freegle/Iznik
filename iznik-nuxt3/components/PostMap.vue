@@ -280,6 +280,9 @@ const lastBoundsFetch = ref(null)
 // same question twice in a row.
 const lastSearchKey = ref(null)
 const lastSearchResult = ref(null)
+
+// The map-bounds fetch currently in flight, keyed on its arguments. See fetchInBoundsOnce.
+const inflightBoundsFetch = { key: null, promise: null }
 const zoom = ref(5)
 const destroyed = ref(false)
 const mapIdle = ref(0)
@@ -581,8 +584,14 @@ watch(zoom, (newVal) => {
 // padding, so the map frames what's actually visible - and zooms in as the
 // distance slider is pulled in. No-op if the map isn't ready or nothing has
 // coordinates.
+//
+// Also a no-op once the view has been moved (dragged, a place searched, a community
+// chosen). From then on the posts shown come from a fetch within the map's own bounds,
+// so fitting the map to them changes the bounds and fetches again. Each padded fit
+// widened the view, and a search zoomed out in steps to the whole country
+// (Discourse 10091).
 function fitToShownMarkers() {
-  if (!mapObject.value) return
+  if (!mapObject.value || moved.value) return
   const latlngs = messagesForMap.value
     .filter((m) => m.lat != null || m.lng != null)
     .map((m) => [m.lat, m.lng])
@@ -915,6 +924,37 @@ async function searchOnce(params) {
   return results
 }
 
+// Ask the server for the posts in a bounding box, unless an identical ask is still in
+// flight - then share that one. The l-map above is wired with both v-model:bounds and
+// @update:bounds="idle", so one settled map runs getMessages() twice with the same
+// bounds: idle() synchronously, the bounds watcher on the next flush. The two fetches
+// then raced to replace the markers and the coverage hull, and Leaflet removed a layer
+// whose renderer had never attached ("_removePath of undefined", Sentry NUXT3-DC6 and
+// DS0 - the breadcrumbs show the paired "GetMessages - moved" logs right before it).
+// Only an in-flight ask is shared: a later ask for the same box, such as the feed
+// reloading when the unseen count rises, still goes to the server.
+function fetchInBoundsOnce(swlat, swlng, nelat, nelng, groupid) {
+  const key = JSON.stringify([swlat, swlng, nelat, nelng, groupid ?? null])
+
+  if (inflightBoundsFetch.key === key && inflightBoundsFetch.promise) {
+    return inflightBoundsFetch.promise
+  }
+
+  const promise = messageStore
+    .fetchInBounds(swlat, swlng, nelat, nelng, groupid)
+    .finally(() => {
+      if (inflightBoundsFetch.promise === promise) {
+        inflightBoundsFetch.key = null
+        inflightBoundsFetch.promise = null
+      }
+    })
+
+  inflightBoundsFetch.key = key
+  inflightBoundsFetch.promise = promise
+
+  return promise
+}
+
 async function getMessages() {
   let messages = []
   secondaryMessageList.value = []
@@ -974,7 +1014,7 @@ async function getMessages() {
     } else {
       // Just fetch the bounds of the map.
       console.log('GetMessages - moved, fetch within map bounds')
-      ret = await messageStore.fetchInBounds(swlat, swlng, nelat, nelng)
+      ret = await fetchInBoundsOnce(swlat, swlng, nelat, nelng)
     }
   } else if (props.groupid) {
     // We have been asked to show a specific group.
@@ -996,7 +1036,7 @@ async function getMessages() {
       if (!mapHidden.value) {
         // Fetch all the messages in the map bounds too, so that we can show others as secondary.
         // No need to bother if the map isn't showing - they don't appear in the post list.
-        secondaryMessageList.value = await messageStore.fetchInBounds(
+        secondaryMessageList.value = await fetchInBoundsOnce(
           swlat,
           swlng,
           nelat,
@@ -1087,7 +1127,7 @@ async function getMessages() {
       console.log(
         'GetMessages - no location, no groups, fetch within map bounds'
       )
-      ret = await messageStore.fetchInBounds(swlat, swlng, nelat, nelng)
+      ret = await fetchInBoundsOnce(swlat, swlng, nelat, nelng)
     }
   } else if (myGroups.value?.length) {
     if (props.search) {
@@ -1129,7 +1169,7 @@ async function getMessages() {
       ret = await messageStore.fetchMyGroups()
 
       // Get the messages in the map bounds too, so that we can show others as secondary.
-      secondaryMessageList.value = await messageStore.fetchInBounds(
+      secondaryMessageList.value = await fetchInBoundsOnce(
         swlat,
         swlng,
         nelat,
@@ -1139,7 +1179,7 @@ async function getMessages() {
   } else {
     // We have no groups, so fetch the messages in the map bounds.
     console.log('GetMessages - no groups, fetch in map bounds')
-    ret = await messageStore.fetchInBounds(swlat, swlng, nelat, nelng)
+    ret = await fetchInBoundsOnce(swlat, swlng, nelat, nelng)
   }
 
   if (ret && !destroyed.value) {

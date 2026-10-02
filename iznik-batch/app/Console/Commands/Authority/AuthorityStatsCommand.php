@@ -15,6 +15,10 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
  * breakdown, shortlink clicks, member stories and a per-postcode breakdown.
  *
  *   php artisan authority:stats --i=72467,117233 --q="3 months ago"
+ *   php artisan authority:stats --i=117233 --partnership=12
+ *
+ * With --partnership, the communities are the ones that deal covers rather than those
+ * derived from the boundary, so the spreadsheet matches the Partnerships page.
  */
 class AuthorityStatsCommand extends Command
 {
@@ -34,7 +38,8 @@ class AuthorityStatsCommand extends Command
     protected $signature = 'authority:stats
                             {--i= : Comma-separated authority IDs}
                             {--q=3 months ago : Quarter start date (any parseable date; defaults to the last full quarter)}
-                            {--output= : Directory to write spreadsheets to (default: storage/app/authority-stats)}';
+                            {--output= : Directory to write spreadsheets to (default: storage/app/authority-stats)}
+                            {--partnership= : Report on the communities this partnership covers (one authority only)}';
 
     protected $description = 'Generate the quarterly per-authority statistics spreadsheet(s)';
 
@@ -61,10 +66,16 @@ class AuthorityStatsCommand extends Command
             return Command::FAILURE;
         }
 
+        $partnershipId = $this->option('partnership') ? (int) $this->option('partnership') : null;
+        if ($partnershipId !== null && count($ids) !== 1) {
+            $this->error('--partnership reports on one deal, so give exactly one authority.');
+            return Command::FAILURE;
+        }
+
         $failed = false;
         foreach ($ids as $id) {
             $this->info("Generating statistics for authority {$id} ...");
-            $report = $service->computeReport((int) $id, $quarter);
+            $report = $service->computeReport((int) $id, $quarter, $partnershipId);
 
             if ($report === null) {
                 $this->warn("  Authority {$id} not found - skipping.");

@@ -35,6 +35,7 @@ process level**.
 | Topic | Doc |
 |-------|-----|
 | What the sysadmin job actually involves | [reference/sysadmin-duties.md](reference/sysadmin-duties.md) |
+| How an email gets from Freegle to an inbox | [reference/outbound-mail.md](reference/outbound-mail.md) |
 | Spam and abuse handling | [reference/spam-and-abuse.md](reference/spam-and-abuse.md) |
 | Logging and observability | [reference/logging.md](reference/logging.md) |
 | Database read/write split | [reference/database-read-write-split.md](reference/database-read-write-split.md) |

@@ -9,12 +9,22 @@ import OurUploadedImage from '~/components/OurUploadedImage.vue'
 // end up checking a different fn than the one the component actually
 // called — giving a confusing "Number of calls: 0" on a spy that was
 // genuinely invoked.
-const { mockCaptureMessage } = vi.hoisted(() => ({
-  mockCaptureMessage: vi.fn(),
-}))
+const { mockCaptureMessage, mockReportImageFailure, mockNoteImageLoaded } =
+  vi.hoisted(() => ({
+    mockCaptureMessage: vi.fn(),
+    mockReportImageFailure: vi.fn(),
+    mockNoteImageLoaded: vi.fn(),
+  }))
 
 vi.mock('@sentry/browser', () => ({
   captureMessage: mockCaptureMessage,
+}))
+
+// Real load failures are handed to the diagnostics composable, which probes
+// the URL and reports to Sentry itself (covered by its own spec).
+vi.mock('~/composables/useImageFailureDiagnostics', () => ({
+  reportImageFailure: mockReportImageFailure,
+  noteImageLoaded: mockNoteImageLoaded,
 }))
 
 describe('OurUploadedImage', () => {
@@ -32,7 +42,7 @@ describe('OurUploadedImage', () => {
         stubs: {
           NuxtPicture: {
             template:
-              '<img class="nuxt-picture" :src="src" :alt="alt" :class="imageClass" :data-provider="provider" :data-modifiers="modString" :width="width" :height="height" :loading="loading" @error="$emit(\'error\', $event)" />',
+              '<img class="nuxt-picture" :src="src" :alt="alt" :class="imageClass" :data-provider="provider" :data-modifiers="modString" :width="width" :height="height" :loading="loading" @error="$emit(\'error\', $event)" @load="$emit(\'load\', $event)" />',
             props: [
               'src',
               'alt',
@@ -48,7 +58,7 @@ describe('OurUploadedImage', () => {
               'sizes',
               'placeholder',
             ],
-            emits: ['error'],
+            emits: ['error', 'load'],
             computed: {
               imageClass() {
                 return this.class
@@ -197,6 +207,16 @@ describe('OurUploadedImage', () => {
     })
   })
 
+  describe('load tracking', () => {
+    it('counts a loaded image, so a later failure can tell a drop from a block', async () => {
+      const wrapper = createWrapper()
+
+      await wrapper.find('.nuxt-picture').trigger('load')
+
+      expect(mockNoteImageLoaded).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('error handling', () => {
     it('hides image on error', async () => {
       const wrapper = createWrapper()
@@ -218,18 +238,36 @@ describe('OurUploadedImage', () => {
       expect(wrapper.emitted('error')[0][0]).toBe(mockEvent)
     })
 
-    it('reports to Sentry when target is connected (real load failure)', async () => {
+    it('reports a real load failure with the URL the browser tried', async () => {
       const wrapper = createWrapper({ src: 'freegletusd-abc123' })
-      await wrapper.vm.brokenImage({ target: { isConnected: true } })
-      expect(mockCaptureMessage).toHaveBeenCalledWith(
-        'Failed to fetch image freegletusd-abc123'
-      )
+      await wrapper.vm.brokenImage({
+        target: {
+          isConnected: true,
+          currentSrc: 'https://delivery.test/?url=abc123&w=400',
+        },
+      })
+      expect(mockReportImageFailure).toHaveBeenCalledTimes(1)
+      expect(mockReportImageFailure).toHaveBeenCalledWith({
+        src: 'freegletusd-abc123',
+        url: 'https://delivery.test/?url=abc123&w=400',
+      })
+    })
+
+    it('falls back to the element src when currentSrc is not set', async () => {
+      const wrapper = createWrapper({ src: 'freegletusd-abc123' })
+      await wrapper.vm.brokenImage({
+        target: { isConnected: true, src: 'https://delivery.test/?url=abc123' },
+      })
+      expect(mockReportImageFailure).toHaveBeenCalledWith({
+        src: 'freegletusd-abc123',
+        url: 'https://delivery.test/?url=abc123',
+      })
     })
 
     it('does not report when target is detached from DOM (cancelled request)', async () => {
       const wrapper = createWrapper({ src: 'freegletusd-abc123' })
       await wrapper.vm.brokenImage({ target: { isConnected: false } })
-      expect(mockCaptureMessage).not.toHaveBeenCalled()
+      expect(mockReportImageFailure).not.toHaveBeenCalled()
     })
 
     it('does not report when component is unmounting', () => {
@@ -237,7 +275,7 @@ describe('OurUploadedImage', () => {
       const brokenImage = wrapper.vm.brokenImage
       wrapper.unmount()
       brokenImage({ target: { isConnected: true } })
-      expect(mockCaptureMessage).not.toHaveBeenCalled()
+      expect(mockReportImageFailure).not.toHaveBeenCalled()
     })
   })
 

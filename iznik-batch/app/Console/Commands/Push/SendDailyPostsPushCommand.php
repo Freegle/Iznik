@@ -312,11 +312,20 @@ class SendDailyPostsPushCommand extends Command
             return;
         }
 
-        $tracker->update([
+        // Forward only, exactly as UnifiedDigestService::updateDigestTracker does it. The
+        // push keeps its own cursor row (mode='push') and nothing writes a carryover to it
+        // today, so the backwards case cannot arise here yet - but this reads posts through
+        // the same getPostsForUser(), and the moment that row does carry anything a run with
+        // no new posts would get the carried ones alone, older than the cursor, and drag it
+        // back. Mirrored code keeps the rule; it does not get to be the exception.
+        $advance = $tracker->lastmsgdate === null
+            || $last->arrival === null
+            || $tracker->lastmsgdate <= $last->arrival;
+
+        $tracker->update(($advance ? [
             'lastmsgid'   => $last->id,
             'lastmsgdate' => $last->arrival,
-            'lastsent'    => now(),
-        ]);
+        ] : []) + ['lastsent' => now()]);
     }
 
     /**

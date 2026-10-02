@@ -212,31 +212,59 @@ class ItemClusterService
     /**
      * The name to print for a cluster.
      *
-     * Prefers a name the brand detector found no brand in, so a cluster of
-     * "Bosch dishwasher" and "Dishwasher" prints the plain one even when the
-     * branded spelling is commoner; among equals, the most used name wins.
+     * The cluster is keyed on the canonical form but labelled with one of the
+     * titles members actually wrote, so the page reads like the site rather than
+     * like a lookup table. Picking that title is a preference order, strongest
+     * first:
+     *
+     *  1. no brand was detected, so a cluster of "Bosch dishwasher" and
+     *     "Dishwasher" prints the plain one even when the branded spelling is
+     *     commoner;
+     *  2. no quantity was detected, because "2 X sanders" and "Lampshades x 2"
+     *     name a consignment rather than an item, and one member's two of a
+     *     thing should not become the name everybody else's is filed under;
+     *  3. not written in capitals, because the page is read by members and a
+     *     title that shouts is the member's emphasis and not the item's name;
+     *  4. the most used title;
+     *  5. the shortest, then alphabetical.
+     *
+     * The last step is not cosmetic. Without it the winner among equals is
+     * whichever row the database returned first, so the published label could
+     * change between runs with no change in the data.
      *
      * @param  array<string, array<int, true>>  $names  name => set of message ids
      */
     private function representative(array $names): string
     {
-        $best = '';
-        $bestRank = -1;
+        $best = null;
+        $bestRank = [];
 
         foreach ($names as $name => $msgids) {
-            $branded = $this->canonicaliseCached($name)['brand'] !== null;
-            $rank = count($msgids) + ($branded ? 0 : 1000000);
+            $c = $this->canonicaliseCached((string) $name);
+            $rank = [
+                $c['brand'] === null ? 1 : 0,
+                empty($c['counted']) ? 1 : 0,
+                $this->isShouting((string) $name) ? 0 : 1,
+                count($msgids),
+                -mb_strlen((string) $name),
+            ];
 
-            if ($rank > $bestRank) {
+            if ($best === null || $rank > $bestRank || ($rank === $bestRank && (string) $name < $best)) {
                 $bestRank = $rank;
-                $best = $name;
+                $best = (string) $name;
             }
         }
 
-        return $best;
+        return (string) $best;
     }
 
-    /** @return array{canonical:string, brand:?string} */
+    /** A title with letters in it and none of them lower case. */
+    private function isShouting(string $name): bool
+    {
+        return preg_match('~\p{Ll}~u', $name) !== 1 && preg_match('~\p{L}~u', $name) === 1;
+    }
+
+    /** @return array{canonical:string, brand:?string, counted:bool} */
     private function canonicaliseCached(string $name): array
     {
         if (! isset($this->canonicalCache[$name])) {
@@ -251,12 +279,83 @@ class ItemClusterService
             }
 
             $this->canonicalCache[$name] = [
-                'canonical' => $canonical,
+                'canonical' => $this->dropSizeAndPanelWords($this->dropProductNames($canonical)),
                 'brand'     => $result['brand'] ?? null,
+                'counted'   => ($result['qty'] ?? null) !== null || ! empty($result['is_multiple']),
             ];
         }
 
         return $this->canonicalCache[$name];
+    }
+
+    /**
+     * How big it is, and what the panel is made of, are not what it is.
+     *
+     * The shared canonicaliser strips the brand, so "Samsung TV" and "Television" both
+     * arrive as "tv". What it leaves is the screen size and the display technology, and
+     * those split one item across a dozen buckets: a year of live offers published "Tv"
+     * as the commonest electrical at 73 while 287 posts in the same sample were
+     * televisions, sitting under "21in tv", "smart tv 32in", "flat screen tv",
+     * "50in plasma tv" and so on.
+     *
+     * Only words that leave the item itself unchanged are dropped, and never the last
+     * word, so the head noun always survives: "washing machine" cannot become "machine".
+     * A model name such as "bravia tv" is left alone, because telling a model from an
+     * item needs a catalogue this does not have.
+     */
+    private const NEUTRAL_WORDS = [
+        // Display technology.
+        'plasma', 'lcd', 'led', 'oled', 'crt', 'smart', 'widescreen', 'flat', 'screen',
+        // Size and form, where the thing is the same either way.
+        'small', 'large', 'big', 'mini', 'compact', 'portable', 'slim', 'tabletop',
+        // Colour, which is never the item.
+        'colour', 'color', 'black', 'white', 'silver',
+    ];
+
+    /**
+     * Finish the debranding the page promises.
+     *
+     * The catalogue holds product names such as "bravia" and "trinitron" but does not
+     * strip them, because for "iPad" or "Kindle" the product name is the whole item and
+     * removing it would leave nothing. Here there is a test for that: take it out only
+     * when a word remains. So "bravia tv" becomes "tv", and "kindle" stays "kindle".
+     */
+    private function dropProductNames(string $canonical): string
+    {
+        foreach ($this->canonical->productNamePatterns() as $pattern) {
+            $stripped = self::squish((string) preg_replace($pattern, ' ', $canonical));
+            if ($stripped !== '' && $stripped !== $canonical) {
+                $canonical = $stripped;
+            }
+        }
+
+        return $canonical;
+    }
+
+    private static function squish(string $s): string
+    {
+        return trim((string) preg_replace('~\s+~u', ' ', $s));
+    }
+
+    private function dropSizeAndPanelWords(string $canonical): string
+    {
+        // "32in", "40 inch", "50\"" and the bare number left when a unit was already
+        // stripped, e.g. "21in tv" -> "tv".
+        $t = (string) preg_replace('~\b\d+\s*(?:in|ins|inch|inches|")\b~u', ' ', $canonical);
+
+        $words = preg_split('~\s+~u', trim($t), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        if (count($words) < 2) {
+            return trim($t) === '' ? $canonical : trim($t);
+        }
+
+        $last = array_pop($words);
+        $kept = array_values(array_filter(
+            $words,
+            fn($w) => ! in_array($w, self::NEUTRAL_WORDS, true) && ! preg_match('~^\d+$~', $w)
+        ));
+        $kept[] = $last;
+
+        return implode(' ', $kept);
     }
 
     /** @return string[] */

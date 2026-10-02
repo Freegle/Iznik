@@ -9,7 +9,6 @@ const detail = {}
 const store = reactive({
   byId: (id) => detail[id] || null,
   fetchOne: vi.fn(),
-  fetchGroups: vi.fn(),
   addGroup: vi.fn(),
   removeGroup: vi.fn(),
   redetectGroups: vi.fn(),
@@ -25,12 +24,27 @@ vi.mock('~/stores/partnerships', () => ({
 
 function setDetail(overrides = {}) {
   detail[1] = {
-    partnership: { id: 1, name: 'Northshire Council', amount: 9000 },
+    partnership: {
+      id: 1,
+      authorityid: 10,
+      name: 'Northshire Council',
+      amount: 9000,
+      paid: 4500,
+      fullprice: null,
+      status: 'Confirmed',
+      renewal: 'Unsure',
+      startdate: '2026-04-01',
+      enddate: '2028-03-31',
+    },
+    contacts: [],
+    history: [],
     groups: [
       {
         groupid: 100,
         nameshort: 'northshire',
         namedisplay: 'Northshire Freegle',
+        source: 'Boundary',
+        overlap: 1,
       },
     ],
     years: [
@@ -77,6 +91,30 @@ function mountDetail() {
           template: '<div class="notice"><slot /></div>',
           props: ['variant'],
         },
+        ExternalLink: {
+          template: '<a class="ext" :href="href"><slot /></a>',
+          props: ['href'],
+        },
+        ModPartnershipGroupPicker: {
+          template:
+            '<button class="picker" @click="$emit(\'pick\', { id: 300, namedisplay: \'Blackpool\' })" />',
+          props: ['exclude', 'label'],
+          emits: ['pick'],
+        },
+        ModPartnershipRenewal: {
+          template: '<span class="renewal">{{ renewal }}</span>',
+          props: ['renewal', 'showText'],
+        },
+        'b-badge': {
+          template: '<span class="badge"><slot /></span>',
+          props: ['variant'],
+        },
+        ConfirmModal: {
+          template:
+            '<div class="confirm">{{ title }} <button class="yes" @click="$emit(\'confirm\')">Confirm</button></div>',
+          props: ['title', 'message'],
+          emits: ['confirm', 'hidden'],
+        },
       },
     },
   })
@@ -93,31 +131,117 @@ describe('ModPartnershipDetail', () => {
     vi.clearAllMocks()
     const d = setDetail()
     store.fetchOne.mockResolvedValue(d)
-    store.fetchGroups.mockResolvedValue({
-      groups: d.groups,
-      available: d.groups,
-    })
   })
 
-  it('loads the deal and the council boundary when it opens', async () => {
+  it('loads the deal when it opens', async () => {
     mountDetail()
     await flushPromises()
 
     expect(store.fetchOne).toHaveBeenCalledWith(1)
-    expect(store.fetchGroups).toHaveBeenCalledWith(1)
   })
 
-  it('lists the communities covered', async () => {
+  it('lists the communities covered, linked to their Explore page, with their share', async () => {
     const wrapper = mountDetail()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Northshire Freegle')
+    const link = wrapper.find('a.ext')
+    expect(link.text()).toBe('Northshire Freegle')
+    expect(link.attributes('href')).toMatch(/\/explore\/northshire$/)
+    expect(wrapper.text()).toContain('100% inside')
+  })
+
+  it('marks a community added by hand', async () => {
+    store.fetchOne.mockResolvedValue(
+      setDetail({
+        groups: [
+          {
+            groupid: 300,
+            nameshort: 'blackpool',
+            namedisplay: 'Blackpool',
+            source: 'Added',
+            overlap: null,
+          },
+        ],
+      })
+    )
+    const wrapper = mountDetail()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('added by hand')
+  })
+
+  it('shows the deal length, money received against due, and renewal', async () => {
+    const wrapper = mountDetail()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('2 years')
+    expect(wrapper.text()).toContain('£4,500')
+    expect(wrapper.text()).toContain('of £9,000 due')
+    expect(wrapper.find('.renewal').text()).toBe('Unsure')
+    // Three months before the end.
+    expect(wrapper.text()).toContain('31 Dec 2027')
+  })
+
+  it('shows the bulk discount when there was one', async () => {
+    store.fetchOne.mockResolvedValue(
+      setDetail({
+        partnership: { ...setDetail().partnership, fullprice: 10000 },
+      })
+    )
+    const wrapper = mountDetail()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('10% (£1,000)')
+  })
+
+  it('lists the council contacts', async () => {
+    store.fetchOne.mockResolvedValue(
+      setDetail({
+        contacts: [
+          { id: 1, name: 'Fred', email: 'f@example.gov.uk', role: 'Finance' },
+        ],
+      })
+    )
+    const wrapper = mountDetail()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Fred')
+    expect(wrapper.text()).toContain('f@example.gov.uk')
+    expect(wrapper.text()).toContain('(Finance)')
+  })
+
+  it('lists every deal with the council', async () => {
+    store.fetchOne.mockResolvedValue(
+      setDetail({
+        history: [
+          {
+            id: 1,
+            startdate: '2026-04-01',
+            enddate: '2028-03-31',
+            amount: 9000,
+            status: 'Confirmed',
+          },
+          {
+            id: 7,
+            startdate: '2022-06-30',
+            enddate: '2023-06-29',
+            amount: 300,
+            status: 'Paid',
+          },
+        ],
+      })
+    )
+    const wrapper = mountDetail()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('History with this council')
+    expect(wrapper.text()).toContain('30 Jun 2022')
+    expect(wrapper.text()).toContain('£300')
   })
 
   it('warns when the deal covers nothing, so nothing shows to members', async () => {
     const d = setDetail({ groups: [] })
     store.fetchOne.mockResolvedValue(d)
-    store.fetchGroups.mockResolvedValue({ groups: [], available: [] })
 
     const wrapper = mountDetail()
     await flushPromises()
@@ -125,25 +249,22 @@ describe('ModPartnershipDetail', () => {
     expect(wrapper.text()).toContain('No communities are covered')
   })
 
-  it('offers groups inside the boundary that the deal has dropped', async () => {
+  it('offers back communities inside the boundary that were left out', async () => {
     const d = setDetail()
-    store.fetchOne.mockResolvedValue(d)
-    store.fetchGroups.mockResolvedValue({
-      groups: d.groups,
-      available: [
-        ...d.groups,
-        {
-          groupid: 200,
-          nameshort: 'eastborough',
-          namedisplay: 'Eastborough Freegle',
-        },
-      ],
+    d.groups.push({
+      groupid: 200,
+      nameshort: 'eastborough',
+      namedisplay: 'Eastborough Freegle',
+      source: 'Removed',
+      overlap: 0.4,
     })
+    store.fetchOne.mockResolvedValue(d)
 
     const wrapper = mountDetail()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Eastborough Freegle')
+    expect(wrapper.text()).toContain('left out')
+    expect(wrapper.findAll('a.ext')).toHaveLength(1)
 
     const add = wrapper
       .findAll('button')
@@ -157,10 +278,21 @@ describe('ModPartnershipDetail', () => {
     const wrapper = mountDetail()
     await flushPromises()
 
-    const remove = wrapper.findAll('button').find((b) => b.text() === 'Remove')
+    const remove = wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Leave out')
     await remove.trigger('click')
 
     expect(store.removeGroup).toHaveBeenCalledWith(1, 100)
+  })
+
+  it('adds a community from outside the boundary', async () => {
+    const wrapper = mountDetail()
+    await flushPromises()
+
+    await wrapper.find('button.picker').trigger('click')
+
+    expect(store.addGroup).toHaveBeenCalledWith(1, 300)
   })
 
   it('re-checks the boundary on demand', async () => {
@@ -317,6 +449,13 @@ describe('ModPartnershipDetail', () => {
 
     const del = wrapper.findAll('button').find((b) => b.text() === 'Delete')
     await del.trigger('click')
+
+    // Asks first.
+    expect(store.removePayment).not.toHaveBeenCalled()
+    expect(wrapper.find('.confirm').text()).toContain('Delete this invoice?')
+
+    await wrapper.find('button.yes').trigger('click')
+    await flushPromises()
 
     expect(store.removePayment).toHaveBeenCalledWith(1, 5)
   })

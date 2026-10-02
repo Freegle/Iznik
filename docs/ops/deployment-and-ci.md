@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-16
 owner: Freegle dev team
 covers:
   - docs/ops/reference/circleci.md
@@ -28,9 +28,12 @@ flowchart LR
 
 
 1. **Push to `master`.** CircleCI runs the full test suite (Go, PHPUnit, Laravel, Vitest,
-   Playwright) via a shared reusable orb. New raw SQL is kept out at authoring time by the
-   `.claude/check-raw-sql.sh` hook rather than by a CI gate - the ORM migration inventory
-   ratchet that used to run here was retired once the Go migration reached zero raw sites.
+   Playwright) via a shared reusable orb. Two container-free suites run first because they
+   are cheap and fail fast: `claude-agent-sdk` (node:test) and `monitor-fsm` (vitest, which
+   also needs python3 for the specs that execute the Python the FSM shells out to).
+   New raw SQL is kept out at authoring time by the `.claude/check-raw-sql.sh` hook rather
+   than by a CI gate - the ORM migration inventory ratchet that used to run here was retired
+   once the Go migration reached zero raw sites.
 2. **On green, `master` auto-merges to `production`.** This is automatic only when all
    tests pass.
 3. **`production` deploys the frontends.** Two Netlify sites build from the same

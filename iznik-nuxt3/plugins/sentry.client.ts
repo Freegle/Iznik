@@ -224,8 +224,18 @@ export default defineNuxtPlugin((nuxtApp) => {
               // Intergient ad network errors are not our problem.
               console.log('Intergient CDN - suppress exception')
               return null
-            } else if (originalExceptionStack?.includes('/gpt/')) {
-              // Google ads are not our problem.
+            } else if (
+              originalExceptionStack?.includes('/gpt/') ||
+              originalExceptionStack?.includes(
+                'pagead2.googlesyndication.com'
+              ) ||
+              originalExceptionStack?.includes('/pagead/')
+            ) {
+              // Google ads are not our problem. The pagead host is Google's own
+              // ad-rendering telemetry (rum.js); its errors reach us only because
+              // Sentry wraps every addEventListener callback on the page, and it
+              // threw "Error: int64" thousands of times against our routes
+              // (NUXT3-DQ9) with not one frame of ours in the stack.
               console.log('Google ads - suppress exception')
               return null
             } else if (

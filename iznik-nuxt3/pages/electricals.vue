@@ -57,7 +57,7 @@
                 <h3 class="green">
                   {{ headlineCo2e.toLocaleString() }}
                   <br />
-                  TONNES CO2
+                  TONNES CO2e
                 </h3>
               </b-col>
             </b-row>
@@ -115,8 +115,8 @@
               The electricals given away {{ rangeLabel }} weighed
               <template v-if="isEstimated">an estimated</template>
               {{ headlineTonnes.toLocaleString() }} tonnes. That is
-              {{ headlineCo2e.toLocaleString() }} tonnes of CO2 kept out of the
-              air, worth £{{ headlineCarbonValue.toLocaleString() }} at the
+              {{ headlineCo2e.toLocaleString() }} tonnes of CO2e saved, worth
+              £{{ headlineCarbonValue.toLocaleString() }} at the
               government's carbon value of £{{
                 stats.impact.carbon_proxy_gbp_per_tonne
               }}
@@ -202,8 +202,10 @@
               <b-card-text>
                 <h3>Most offered</h3>
                 <p>
-                  Counted by the kind of item, so the brand somebody typed in
-                  doesn't split one thing into several.
+                  Counted by the kind of item, so the brand, the screen size or
+                  the word "small" don't split one thing into several. Estimated
+                  for the whole period the same way as the figures above, from
+                  the posts we've looked at so far.
                 </p>
                 <b-list-group flush>
                   <b-list-group-item
@@ -231,7 +233,8 @@
                   here only once several different people in more than one
                   community have offered one, and a version of something common
                   is left out, so a table lamp doesn't count as unusual on a
-                  site full of lamps.
+                  site full of lamps. The count is estimated for the whole
+                  period; the people and communities are the real ones we saw.
                 </p>
                 <b-list-group v-if="stats.unusual.items.length" flush>
                   <b-list-group-item

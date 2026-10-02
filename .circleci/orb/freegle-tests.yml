@@ -1284,6 +1284,18 @@ commands:
               sleep 5
               status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/go/status || echo '{"status":"error"}')
               status=$(echo "$status_response" | jq -r '.status // "unknown"')
+              # The status API never reports "error": its states are started, running,
+              # completed, failed, idle, unknown, offline. The curl above substitutes
+              # {"status":"error"} when it cannot connect, so this is always the container
+              # being unreachable and never a test result. Say so, rather than reporting
+              # "tests failed" and printing test logs, which sends the reader into the code
+              # looking for a cause that is not there (build 36418).
+              if [ "$status" = "error" ]; then
+                echo "❌ Could not reach the status API at localhost:${PORT_STATUS:-8081}."
+                echo "   The suite was still running in the container; this is not a test failure."
+                echo "   Check the status container: docker logs ${COMPOSE_PROJECT_NAME:-freegle}-status"
+                break
+              fi
               message=$(echo "$status_response" | jq -r '.message // "No message"')
               passed=$(echo "$status_response" | jq -r '.progress.passed // 0')
               failed=$(echo "$status_response" | jq -r '.progress.failed // 0')
@@ -1296,7 +1308,7 @@ commands:
                 echo "✅ Go tests passed!"
                 echo "GO_TESTS_PASSED=true" >> $BASH_ENV
                 break
-              elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
+              elif [ "$status" = "failed" ]; then
                 echo "❌ Go tests failed!"
                 echo "Error details:"
                 echo "$status_response" | jq -r '.logs // "No logs available"' | tail -50
@@ -1573,6 +1585,56 @@ commands:
             fi
             echo "claude-agent-sdk unit tests passed"
 
+  run-monitor-fsm-tests:
+    description: "Run the monitor-fsm unit tests (vitest). Fast, no containers."
+    steps:
+      - run:
+          name: Run monitor-fsm unit tests
+          command: |
+            set -e
+            # monitor-fsm had no CI: nothing under .circleci referenced it, so its
+            # suite only ran when someone typed npm test in that directory. It is
+            # the loop that triages Discourse and Sentry and opens fix PRs, and a
+            # silently broken action there costs days before anyone notices -
+            # check_bug_feedback threw on every run for a fortnight in September
+            # 2026 and no reporter confirmation was picked up in that time.
+            FSM_DIR=""
+            for d in ./monitor-fsm "$HOME/FreegleDocker/monitor-fsm" "$HOME/project/monitor-fsm"; do
+              if [ -d "$d" ]; then FSM_DIR="$d"; break; fi
+            done
+            if [ -z "$FSM_DIR" ]; then
+              echo "Could not find monitor-fsm (cwd: $(pwd))"
+              exit 1
+            fi
+            FSM_DIR=$(cd "$FSM_DIR" && pwd)
+            echo "Using $FSM_DIR"
+
+            # Some specs execute the Python the FSM shells out to, with urlopen and
+            # sleep stubbed, so the image needs python3 as well as Node. The host has
+            # both; the fallback is node:22 (bookworm) rather than alpine for the same
+            # reason, and because better-sqlite3 needs a toolchain when no prebuild
+            # matches.
+            if command -v node >/dev/null 2>&1 \
+               && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)' 2>/dev/null \
+               && command -v python3 >/dev/null 2>&1; then
+              echo "Running with host node $(node --version) and $(python3 --version)"
+              cd "$FSM_DIR"
+              # ai-flower is a git dependency, so npm builds it on install, and its own
+              # better-sqlite3 compiles rather than taking a prebuilt binary. Without a
+              # compiler that fails as "gyp ERR! stack Error: not found: make".
+              if ! command -v make >/dev/null 2>&1; then
+                echo "No make on this runner - installing build tools for node-gyp"
+                sudo apt-get update -qq && sudo apt-get install -y -qq build-essential
+              fi
+              npm ci --no-audit --no-fund
+              npx vitest run
+            else
+              echo "No suitable host Node (need >= 20) with python3 - running in node:22"
+              docker run --rm -v "$FSM_DIR":/app -w /app node:22 \
+                sh -c 'npm ci --no-audit --no-fund && npx vitest run'
+            fi
+            echo "monitor-fsm unit tests passed"
+
   run-playwright-tests:
     description: "Run Playwright tests via the status service API and upload coverage"
     parameters:
@@ -1623,6 +1685,18 @@ commands:
 
               status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/playwright/status || echo '{"status":"error"}')
               status=$(echo "$status_response" | jq -r '.status // "unknown"')
+              # The status API never reports "error": its states are started, running,
+              # completed, failed, idle, unknown, offline. The curl above substitutes
+              # {"status":"error"} when it cannot connect, so this is always the container
+              # being unreachable and never a test result. Say so, rather than reporting
+              # "tests failed" and printing test logs, which sends the reader into the code
+              # looking for a cause that is not there (build 36418).
+              if [ "$status" = "error" ]; then
+                echo "❌ Could not reach the status API at localhost:${PORT_STATUS:-8081}."
+                echo "   The suite was still running in the container; this is not a test failure."
+                echo "   Check the status container: docker logs ${COMPOSE_PROJECT_NAME:-freegle}-status"
+                break
+              fi
               message=$(echo "$status_response" | jq -r '.message // "No message"')
               completed=$(echo "$status_response" | jq -r '.progress.completed // 0')
               total=$(echo "$status_response" | jq -r '.progress.total // 0')
@@ -1646,7 +1720,7 @@ commands:
                   echo "PLAYWRIGHT_TESTS_PASSED=false" >> $BASH_ENV
                   exit 1
                 fi
-              elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
+              elif [ "$status" = "failed" ]; then
                 echo "❌ Playwright tests failed to run!"
                 echo "Error details:"
                 echo "$status_response" | jq -r '.logs // "No logs available"' | tail -30
@@ -1753,6 +1827,18 @@ commands:
               sleep 5
               status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/laravel/status || echo '{"status":"error"}')
               status=$(echo "$status_response" | jq -r '.status // "unknown"')
+              # The status API never reports "error": its states are started, running,
+              # completed, failed, idle, unknown, offline. The curl above substitutes
+              # {"status":"error"} when it cannot connect, so this is always the container
+              # being unreachable and never a test result. Say so, rather than reporting
+              # "tests failed" and printing test logs, which sends the reader into the code
+              # looking for a cause that is not there (build 36418).
+              if [ "$status" = "error" ]; then
+                echo "❌ Could not reach the status API at localhost:${PORT_STATUS:-8081}."
+                echo "   The suite was still running in the container; this is not a test failure."
+                echo "   Check the status container: docker logs ${COMPOSE_PROJECT_NAME:-freegle}-status"
+                break
+              fi
               message=$(echo "$status_response" | jq -r '.message // "No message"')
               passed=$(echo "$status_response" | jq -r '.progress.passed // 0')
               failed=$(echo "$status_response" | jq -r '.progress.failed // 0')
@@ -1765,7 +1851,7 @@ commands:
                 echo "✅ Laravel tests passed!"
                 echo "LARAVEL_TESTS_PASSED=true" >> $BASH_ENV
                 break
-              elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
+              elif [ "$status" = "failed" ]; then
                 echo "❌ Laravel tests failed!"
                 echo "Error details:"
                 echo "$status_response" | jq -r '.logs // "No logs available"' | tail -50
@@ -2439,6 +2525,10 @@ jobs:
       # support helper - run before anything expensive starts.
       - run-agent-sdk-tests
 
+      # Same rationale: container-free, and the monitor loop is otherwise only
+      # tested on whichever machine last ran it by hand.
+      - run-monitor-fsm-tests
+
       - run:
           name: Determine changed paths
           command: |
@@ -2544,6 +2634,18 @@ jobs:
                 sleep 10
                 status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/laravel/status || echo '{"status":"error"}')
                 status=$(echo "$status_response" | jq -r '.status // "unknown"')
+                # The status API never reports "error": its states are started, running,
+                # completed, failed, idle, unknown, offline. The curl above substitutes
+                # {"status":"error"} when it cannot connect, so this is always the container
+                # being unreachable and never a test result. Say so, rather than reporting
+                # "tests failed" and printing test logs, which sends the reader into the code
+                # looking for a cause that is not there (build 36418).
+                if [ "$status" = "error" ]; then
+                  echo "❌ Could not reach the status API at localhost:${PORT_STATUS:-8081}."
+                  echo "   The suite was still running in the container; this is not a test failure."
+                  echo "   Check the status container: docker logs ${COMPOSE_PROJECT_NAME:-freegle}-status"
+                  break
+                fi
 
                 # Extract progress for display
                 completed=$(echo "$status_response" | jq -r '.progress.completed // 0')
@@ -2563,7 +2665,7 @@ jobs:
                   # Always write logs to output file for artifacts
                   echo "$status_response" | jq -r '.logs // "No logs"'
                   break
-                elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
+                elif [ "$status" = "failed" ]; then
                   echo "fail" > /tmp/laravel-result
                   echo "❌ iznik-batch tests failed!"
                   echo "$status_response" | jq -r '.logs // "No logs"'
@@ -2607,6 +2709,18 @@ jobs:
                 sleep 10
                 status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/go/status || echo '{"status":"error"}')
                 status=$(echo "$status_response" | jq -r '.status // "unknown"')
+                # The status API never reports "error": its states are started, running,
+                # completed, failed, idle, unknown, offline. The curl above substitutes
+                # {"status":"error"} when it cannot connect, so this is always the container
+                # being unreachable and never a test result. Say so, rather than reporting
+                # "tests failed" and printing test logs, which sends the reader into the code
+                # looking for a cause that is not there (build 36418).
+                if [ "$status" = "error" ]; then
+                  echo "❌ Could not reach the status API at localhost:${PORT_STATUS:-8081}."
+                  echo "   The suite was still running in the container; this is not a test failure."
+                  echo "   Check the status container: docker logs ${COMPOSE_PROJECT_NAME:-freegle}-status"
+                  break
+                fi
 
                 # Extract progress for display
                 completed=$(echo "$status_response" | jq -r '.progress.completed // 0')
@@ -2626,7 +2740,7 @@ jobs:
                   # Always write logs to output file for artifacts
                   echo "$status_response" | jq -r '.logs // "No logs"'
                   break
-                elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
+                elif [ "$status" = "failed" ]; then
                   echo "fail" > /tmp/go-result
                   echo "❌ Go tests failed!"
                   echo "$status_response" | jq -r '.logs // "No logs"'
@@ -2721,6 +2835,18 @@ jobs:
                 sleep 10
                 status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/playwright/status || echo '{"status":"error"}')
                 status=$(echo "$status_response" | jq -r '.status // "unknown"')
+                # The status API never reports "error": its states are started, running,
+                # completed, failed, idle, unknown, offline. The curl above substitutes
+                # {"status":"error"} when it cannot connect, so this is always the container
+                # being unreachable and never a test result. Say so, rather than reporting
+                # "tests failed" and printing test logs, which sends the reader into the code
+                # looking for a cause that is not there (build 36418).
+                if [ "$status" = "error" ]; then
+                  echo "❌ Could not reach the status API at localhost:${PORT_STATUS:-8081}."
+                  echo "   The suite was still running in the container; this is not a test failure."
+                  echo "   Check the status container: docker logs ${COMPOSE_PROJECT_NAME:-freegle}-status"
+                  break
+                fi
                 completed=$(echo "$status_response" | jq -r '.progress.completed // 0')
                 total=$(echo "$status_response" | jq -r '.progress.total // 0')
 
@@ -2740,7 +2866,7 @@ jobs:
                   # Always write logs to output file for artifacts
                   echo "$status_response" | jq -r '.logs // "No logs"'
                   break
-                elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
+                elif [ "$status" = "failed" ]; then
                   echo "fail" > /tmp/playwright-result
                   echo "❌ Playwright tests failed!"
                   echo "$status_response" | jq -r '.logs // "No logs"'
@@ -2999,6 +3125,18 @@ jobs:
               sleep 5
               status_response=$(curl -s "http://localhost:${PORT_STATUS:-8081}/api/tests/spatial/status" || echo '{"status":"error"}')
               status=$(echo "$status_response" | jq -r '.status // "unknown"')
+              # The status API never reports "error": its states are started, running,
+              # completed, failed, idle, unknown, offline. The curl above substitutes
+              # {"status":"error"} when it cannot connect, so this is always the container
+              # being unreachable and never a test result. Say so, rather than reporting
+              # "tests failed" and printing test logs, which sends the reader into the code
+              # looking for a cause that is not there (build 36418).
+              if [ "$status" = "error" ]; then
+                echo "❌ Could not reach the status API at localhost:${PORT_STATUS:-8081}."
+                echo "   The suite was still running in the container; this is not a test failure."
+                echo "   Check the status container: docker logs ${COMPOSE_PROJECT_NAME:-freegle}-status"
+                break
+              fi
               if [ "$status" = "completed" ]; then
                 if [ "$(echo "$status_response" | jq -r '.success // false')" = "true" ]; then
                   echo "$status_response" | jq -r '.logs // ""' | tail -30
@@ -3011,7 +3149,7 @@ jobs:
                   echo "$logs" | tail -40
                   echo "❌ Spatial tests failed"; exit 1
                 fi
-              elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
+              elif [ "$status" = "failed" ]; then
                 logs=$(echo "$status_response" | jq -r '.logs // ""')
                   echo "--- failure-relevant lines (DATA RACE / FAIL / panic, with context) ---"
                   echo "$logs" | grep -aE -B3 -A30 'WARNING: DATA RACE|--- FAIL|^FAIL|panic:|build failed|cannot find|SIGSEGV' | tail -400
@@ -3039,6 +3177,18 @@ jobs:
               sleep 5
               status_response=$(curl -s "http://localhost:${PORT_STATUS:-8081}/api/tests/routing/status" || echo '{"status":"error"}')
               status=$(echo "$status_response" | jq -r '.status // "unknown"')
+              # The status API never reports "error": its states are started, running,
+              # completed, failed, idle, unknown, offline. The curl above substitutes
+              # {"status":"error"} when it cannot connect, so this is always the container
+              # being unreachable and never a test result. Say so, rather than reporting
+              # "tests failed" and printing test logs, which sends the reader into the code
+              # looking for a cause that is not there (build 36418).
+              if [ "$status" = "error" ]; then
+                echo "❌ Could not reach the status API at localhost:${PORT_STATUS:-8081}."
+                echo "   The suite was still running in the container; this is not a test failure."
+                echo "   Check the status container: docker logs ${COMPOSE_PROJECT_NAME:-freegle}-status"
+                break
+              fi
               if [ "$status" = "completed" ]; then
                 if [ "$(echo "$status_response" | jq -r '.success // false')" = "true" ]; then
                   echo "$status_response" | jq -r '.logs // ""' | tail -30
@@ -3051,7 +3201,7 @@ jobs:
                   echo "$logs" | tail -40
                   echo "❌ Routing tests failed"; exit 1
                 fi
-              elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
+              elif [ "$status" = "failed" ]; then
                 logs=$(echo "$status_response" | jq -r '.logs // ""')
                   echo "--- failure-relevant lines (DATA RACE / FAIL / panic, with context) ---"
                   echo "$logs" | grep -aE -B3 -A30 'WARNING: DATA RACE|--- FAIL|^FAIL|panic:|build failed|cannot find|SIGSEGV' | tail -400

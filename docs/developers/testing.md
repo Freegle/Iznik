@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 covers:
   - docs/developers/reference/coding-standards.md
@@ -20,6 +20,10 @@ causes, never skip tests or make coverage optional, and never dismiss a failure 
 | **Laravel** | Batch processing | `iznik-batch/` |
 | **Vitest** | Frontend stores and components | `iznik-nuxt3/` |
 | **Playwright** | End-to-end user journeys | `iznik-nuxt3/tests/e2e/` |
+
+The Laravel run covers three PHPUnit suites: `Unit`, `Feature` and `Integration`. The
+`Integration` ones send real mail through Mailpit, so they skip themselves when it is not
+running. Pass `testsuite` in the request body to run a subset.
 
 ## Running them
 
@@ -58,6 +62,10 @@ The test database is built from committed fixtures via the setup scripts (schema
 from Laravel migrations - see [APIs and data](apis-and-data.md)). After adding a
 migration, rerun the test-database setup so the test schema matches. The seeded data is
 FreeglePlayground around Edinburgh (postcode EH3 6SS).
+
+Locally the database is in memory by default (`PERCONA_STORAGE=ram`), so it is empty
+after percona restarts, including after the idle-stack sweeper stops a worktree. Rerun
+`scripts/setup-test-database.sh`; it takes about 30 seconds.
 
 ## CI
 

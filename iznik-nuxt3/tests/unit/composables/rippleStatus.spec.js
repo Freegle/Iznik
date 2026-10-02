@@ -5,6 +5,7 @@ import {
   homeGroupId,
   homeGroupFirst,
   isHomeGroup,
+  isHomeGroupRow,
   rippledInAreaDates,
   RIPPLE_ORIGIN_WINDOW_MS,
 } from '~/composables/rippleStatus'
@@ -439,5 +440,56 @@ describe('rippledInAreaDates', () => {
     expect(rippledInAreaDates([], mine)).toBeNull()
     expect(rippledInAreaDates(groups, [])).toBeNull()
     expect(rippledInAreaDates(groups, null)).toBeNull()
+  })
+})
+
+// A TrashNothing cross-post is one post the member sent DIRECTLY to several communities.
+// Each of those copies is home - the member chose that community - even though the mails
+// land a second apart. Only a copy rippling created (rippled_in = 1) is not. Modelling
+// home as the single earliest row told a Tower Hamlets mod the member's own post had
+// "rippled in" and that rejecting it would tell them nothing (Discourse 10115).
+describe('a TrashNothing cross-post (several direct copies)', () => {
+  const groups = [
+    { groupid: 10, arrival: at(0), rippled_in: 0 }, // first mail to land
+    { groupid: 11, arrival: at(1), rippled_in: 0 }, // second direct copy, a second later
+    { groupid: 12, arrival: at(3600), rippled_in: 1 }, // rippled in an hour later
+  ]
+
+  it('isHomeGroupRow treats every direct copy as home and the rippled one as not', () => {
+    expect(isHomeGroupRow(groups, 10)).toBe(true)
+    expect(isHomeGroupRow(groups, 11)).toBe(true)
+    expect(isHomeGroupRow(groups, 12)).toBe(false)
+    expect(isHomeGroupRow(groups, '11')).toBe(true)
+  })
+
+  it('isHomeGroup (the home icon) marks both direct copies', () => {
+    expect(isHomeGroup({ groupid: 10 }, groups)).toBe(true)
+    expect(isHomeGroup({ id: 11 }, groups)).toBe(true)
+    expect(isHomeGroup({ groupid: 12 }, groups)).toBe(false)
+  })
+
+  it('still anchors homeGroupId to the first-arrived copy', () => {
+    // One group has to be picked for a reply chat to hang off; that stays the earliest.
+    expect(homeGroupId(groups)).toBe(10)
+  })
+
+  it('falls back to the earliest arrival when rows carry no rippled_in', () => {
+    const bare = [
+      { groupid: 20, arrival: at(5) },
+      { groupid: 21, arrival: at(0) },
+    ]
+    expect(isHomeGroupRow(bare, 21)).toBe(true)
+    expect(isHomeGroupRow(bare, 20)).toBe(false)
+  })
+
+  it('is home when nothing is known about the groups', () => {
+    // Fail open, as the old "origin unknown" case did: better to offer the message
+    // than to silently withhold it.
+    expect(isHomeGroupRow([], 5)).toBe(true)
+    expect(isHomeGroupRow(null, 5)).toBe(true)
+  })
+
+  it('is not home for a group the post is not on', () => {
+    expect(isHomeGroupRow(groups, 99)).toBe(false)
   })
 })

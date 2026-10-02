@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-08
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 covers:
   - .env.example
@@ -21,6 +21,10 @@ Two rules apply throughout:
   The reasoning is in
   [../../getting-started/decisions-and-rationale.md](../../getting-started/decisions-and-rationale.md).
 
+The settings that let another service run on this codebase without editing it (passwordless
+sign-in, mail tracking, the schedule overlay) are not external services; they are in
+[./deployment-switches.md](./deployment-switches.md).
+
 ## What would break the site
 
 These are load-bearing. A failure here is visible to members within minutes.
@@ -33,6 +37,7 @@ These are load-bearing. A failure here is visible to members within minutes.
 | **Facebook and Apple sign-in** | The other two social sign-in routes (`LoginModal.vue`) | As above, per provider |
 | **Stripe** | Card donations | Donations stop; ads stay on ([donations-and-gift-aid.md](donations-and-gift-aid.md)) |
 | **PayPal** | The other donation route | As above |
+| **Google Cloud Storage** | Where the nightly database backup is streamed (`gs://freegle_backup_uk`), and where the Yesterday system reads it back from | Nothing breaks that day, but there is no backup and no Yesterday environment until it returns. Worth noticing quickly, because the Yesterday restore is also the only thing that proves a backup is restorable |
 
 ## What would degrade the site
 
@@ -49,7 +54,7 @@ Visible, annoying, not fatal.
 | **MaxMind** | Turns an IP address into a rough location, used in anti-abuse |
 | **Playwire** | Advert delivery ([ads.md](ads.md)) |
 | **WhatJobs** | The job listings that fill some advert slots ([ads.md](ads.md)) |
-| **CookieYes** | The cookie consent banner |
+| **CookieYes** | The cookie consent banner, checked weekly by `cookieyes:check` ([cookieyes-watchdog.md](cookieyes-watchdog.md)) |
 | **Google Tag Manager** | Analytics tags, only when `GTM_ID` is set |
 | **Trustpilot** | Review link |
 
@@ -61,12 +66,13 @@ These look like external services on other sites. We run them.
 |---|---|---|
 | **Place search** | A paid geocoding API | Part of the spatial service. An index of named UK places built from OpenStreetMap data, held in memory and reloaded without a restart |
 | **OSM tile server** | A paid map tile service | Edge tier (`tile-server` container) |
-| **tusd** | An upload service | Edge tier. Uploads are resumable; identifiers look like `freegletusd-*` |
+| **tusd** | An upload service | Edge tier. Uploads are resumable; identifiers look like `freegletusd-*`. tusd writes to a local spool; the batch scheduler moves completed uploads to the object store below |
+| **Object store** (Katapult / any S3-compatible bucket) | S3 | Where finished uploads live, read anonymously by the edge nginx (`IMAGE_STORE_PUBLIC_URL`) and written by batch (`IMAGE_STORE_*` in the batch secrets). The dev `edge` stack uses RustFS as a stand-in. Legacy uploads are still on an NFS share while they are copied - [runbook](../../ops/runbooks/images-to-object-storage.md) |
 | **weserv** | Cloudinary or similar | Image resizing and delivery (`IMAGE_DELIVERY`) |
 | **Loki + Grafana** | A hosted log service | [../../ops/monitoring-and-logging.md](../../ops/monitoring-and-logging.md) |
 | **Discourse** | A hosted forum | `discourse.ilovefreegle.org`, the volunteers' forum |
-| **Postfix** | A bulk mail provider | About 200,000 messages a day; see [../../ops/production.md](../../ops/production.md) |
-| **Embedding sidecar** | A paid embeddings API | `embedding-sidecar` container (`EMBEDDING_SIDECAR_URL`). Turns text into vectors for moderation checks and for the item grouping on [electricals.md](electricals.md). Every caller treats it as optional and falls back when it is absent |
+| **Postfix** | A bulk mail provider | About 200,000 messages a day; see [how an email gets sent](../../ops/reference/outbound-mail.md). Its queue depth per recipient domain is read back into `mail_relay_queue` - see [mail deferrals](mail-deferrals.md) |
+| **Embedding sidecar** | A paid embeddings API | `embedding-sidecar` container (`EMBEDDING_SIDECAR_URL`). Turns text into vectors for moderation checks, for the item grouping on [electricals.md](electricals.md), and for scoring a title we have never seen before on [item-desirability.md](item-desirability.md). Every caller treats it as optional and falls back when it is absent |
 
 ## In the code but not in use
 
@@ -96,17 +102,27 @@ something or that a route works.
 ## Partner organisations
 
 Feeds and syndication with other reuse and volunteering organisations are a separate
-subject: [partner-integrations.md](partner-integrations.md).
+subject: [partner-integrations.md](partner-integrations.md). Trash Nothing is much the
+largest of them and has its own page, [trashnothing.md](trashnothing.md); its settings sit
+under `trashnothing` in `iznik-batch/config/freegle.php`, and the ones that change
+behaviour rather than name an endpoint are listed in
+[deployment-switches.md](deployment-switches.md).
 
 ## Configuration, in one place
 
 Frontend values that reach the browser are declared in `runtimeConfig.public` in
 `iznik-nuxt3/nuxt.config.ts`. Anything there is **public by definition** - it is served to
 every visitor - so only publishable keys belong in it (a Stripe *publishable* key, an
-advert publisher id). Server-side secrets go in `.env` (development, see `.env.example`) and
+advert publisher id). One of them, `ENVIRONMENT`, is what the browser and app report to
+Sentry as the environment: an explicit `ENVIRONMENT` build variable wins, otherwise CI
+builds are `ci`, production builds (including the app) are `production` and the dev
+server is `dev`. Server-side secrets go in `.env` (development, see `.env.example`) and
 `.env.background` (production batch, see `.env.background.example`), and in the batch tier
 are read through `iznik-batch/config/freegle.php` rather than `env()` at the point of use.
 
 `CHAT_FIRST_DEFAULT` (public) picks the front door for anyone who has not chosen: `chat`,
 `classic`, or a percentage of members by user id. Setting it to `classic` is the kill
 switch for the chat shell ([chat-first.md](chat-first.md)).
+
+`.env.example` also holds settings for the local stack itself that are not services, such
+as `PERCONA_STORAGE`, which keeps the development database in memory or on disk.

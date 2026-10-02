@@ -228,15 +228,14 @@
             <div class="title-row">
               <span class="title-subject"
                 >{{ subjectItemName }}
-                <b-badge
-                  v-if="message.availablenow > 1"
-                  variant="info"
-                  class="ms-1"
-                  style="font-size: 0.55em; vertical-align: middle"
-                >
-                  {{ message.availablenow }} available
-                </b-badge></span
-              >
+                <MessageAvailability
+                  :availablenow="message.availablenow"
+                  :partgone="message.partgone"
+                  :availableinitially="message.availableinitially"
+                  :bulkcount="message.bulkcount"
+                  badge-class="ms-1"
+                  badge-style="font-size: 0.55em; vertical-align: middle"
+              /></span>
             </div>
             <div class="location-row">
               <div v-if="subjectLocation" class="title-location">
@@ -415,7 +414,7 @@
               >
                 <v-icon icon="handshake" />
                 {{
-                  message.promisedtome ? 'Promised to you' : 'Already promised'
+                  message.promisedtoyou ? 'Promised to you' : 'Already promised'
                 }}
               </div>
               <NoticeMessage
@@ -425,7 +424,12 @@
                 variant="info"
                 class="mb-2"
               >
-                <span v-if="reachNotice" data-testid="reach-blocked-eta">
+                <span v-if="reachFinished" data-testid="reach-finished">
+                  This has finished rippling out and didn't get as far as your
+                  area, but go ahead and reply. We'll pass it on to the owner
+                  straight away.
+                </span>
+                <span v-else-if="reachNotice" data-testid="reach-blocked-eta">
                   This hasn't reached your area yet, but go ahead and reply.
                   {{ reachNotice }}
                 </span>
@@ -509,14 +513,18 @@
           class="promised-notice mb-2"
         >
           <v-icon icon="handshake" />
-          {{ message.promisedtome ? 'Promised to you' : 'Already promised' }}
+          {{ message.promisedtoyou ? 'Promised to you' : 'Already promised' }}
         </div>
         <NoticeMessage
           v-if="reachBlocked && replyable && !replied && !message.successful"
           variant="info"
           class="mb-2"
         >
-          <span v-if="reachNotice" data-testid="reach-blocked-eta">
+          <span v-if="reachFinished" data-testid="reach-finished">
+            This has finished rippling out and didn't get as far as your area,
+            but go ahead and reply. We'll pass it on to the owner straight away.
+          </span>
+          <span v-else-if="reachNotice" data-testid="reach-blocked-eta">
             This hasn't reached your area yet, but go ahead and reply.
             {{ reachNotice }}
           </span>
@@ -643,6 +651,7 @@
 </template>
 
 <script setup>
+import MessageAvailability from './MessageAvailability'
 import {
   ref,
   computed,
@@ -796,6 +805,13 @@ const reachNotice = computed(() =>
     message.value?.reachesyoufully
   )
 )
+
+// The reach has stopped expanding without covering this viewer, so the post is not on
+// its way at all. Say so, rather than dating an arrival that has already passed ("any
+// moment now" about a reach that ended weeks ago, Discourse 9808/797). The reply is
+// still held for a moment and released by the finished-reach sweep, so it does go
+// straight on.
+const reachFinished = computed(() => message.value?.reachfinished === true)
 
 // For a bulk offer the catalogue below (BulkItemsInterest) lists the items and
 // collection times structurally. The server also stores a plain-text summary as

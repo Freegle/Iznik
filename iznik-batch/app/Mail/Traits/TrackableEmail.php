@@ -43,6 +43,14 @@ trait TrackableEmail
         ?array $metadata = null,
         bool $hasAmp = false
     ): void {
+        // Deployment switch: with tracking off there is no EmailTracking row, so
+        // every tracked*() helper below falls through to the plain URL.
+        if (! config('freegle.mail.tracking_enabled', true)) {
+            $this->tracking = null;
+
+            return;
+        }
+
         $this->tracking = EmailTracking::createForEmail(
             $emailType,
             $recipientEmail,
@@ -148,10 +156,13 @@ trait TrackableEmail
 
     /**
      * Compact tracked image for one of our own resources (message photo,
-     * avatar). Emits /e/d/i/{ref}/{type}/{idEnc}/{preset}/{pos}. Falls back
-     * to the direct image URL when tracking is disabled.
+     * avatar). Emits /e/d/i/{ref}/{type}/{idEnc}/{preset}/{pos}[?s={scrollPercent}].
+     * Falls back to the direct image URL when tracking is disabled.
+     *
+     * Pass $scrollPercent so the Go handler can update scroll_depth_percent via
+     * the same max-update logic as the long-form Image handler.
      */
-    public function trackedResourceImageUrl(string $type, int $id, int $preset, string $position, string $fallbackUrl): string
+    public function trackedResourceImageUrl(string $type, int $id, int $preset, string $position, string $fallbackUrl, ?int $scrollPercent = null): string
     {
         if (!$this->tracking) {
             return $fallbackUrl;
@@ -161,7 +172,8 @@ trait TrackableEmail
             $type,
             \App\Models\EmailTracking::encodeId($id),
             $preset,
-            $position
+            $position,
+            $scrollPercent
         );
     }
 

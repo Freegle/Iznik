@@ -13,7 +13,7 @@ import { promisify } from 'node:util'
 import https from 'node:https'
 import { getDb, kvGet } from './db/index.js'
 import { putStatusPost } from './db/discourse-status.js'
-import { DISCOURSE_BASE, formatReplyRaw, hasNonEmptyQuote } from './discourse.js'
+import { DISCOURSE_BASE, PROFILE_PATH, formatReplyRaw, hasNonEmptyQuote } from './discourse.js'
 import type { Database as DB } from 'better-sqlite3'
 
 const execAsync = promisify(exec)
@@ -59,7 +59,7 @@ function httpsGet(url: string, headers: Record<string, string> = {}): Promise<st
 
 function getDiscourseApiKey(): string {
   try {
-    const profile = JSON.parse(readFileSync('/home/edward/profile.json', 'utf8'))
+    const profile = JSON.parse(readFileSync(PROFILE_PATH, 'utf8'))
     return profile.auth_pairs[0].user_api_key
   } catch {
     throw new Error('Cannot read Discourse API key from profile.json')

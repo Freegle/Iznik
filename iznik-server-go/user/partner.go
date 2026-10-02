@@ -3,9 +3,11 @@ package user
 import (
 	"errors"
 	"log"
+	"regexp"
 	"strings"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/emailhygiene"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -190,14 +192,23 @@ func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, erro
 	// Add email.
 	// Plain, isolated, literal single-row
 	// INSERT; no id readback needed here.
-	canon := CanonicalizeEmail(email)
+	// Observe only. None of the 32 bad addresses on file belong to a partner
+	// account, against partners being 35.7% of members - so this arm is expected
+	// to stay silent, and will say so if that is wrong.
+	emailhygiene.Report(email, "user.partnerCreate", userid)
+	// backwards is REVERSE(canon), not REVERSE(email). V1's User::addEmail writes
+	// strrev(canonMail($email)) at both its insert sites, and canonMail strips the
+	// dots out of the domain on purpose ("the format we have historically used"), so
+	// the canon-derived value is the column's definition and the majority of the
+	// table. Fixing the canon above therefore fixes this too.
+	// See .claude/rules/mail-and-data.md.
 	db.Table("users_emails").Create(map[string]interface{}{
 		"userid":    userid,
 		"email":     email,
 		"preferred": gorm.Expr("1"),
 		"added":     gorm.Expr("NOW()"),
-		"canon":     canon,
-		"backwards": reverseString(canon),
+		"canon":     CanonicalizePartnerEmail(email),
+		"backwards": reverseString(CanonicalizePartnerEmail(email)),
 	})
 
 	return userid, nil
@@ -229,14 +240,14 @@ func EnsurePartnerIdentifiers(db *gorm.DB, userid, tnuserid uint64, email string
 		var count int64
 		db.Table("users_emails").Where("userid = ? AND email = ?", userid, email).Count(&count)
 		if count == 0 {
-			canon := CanonicalizeEmail(email)
+			// See CreatePartnerUser: backwards is REVERSE(canon).
 			db.Clauses(clause.Insert{Modifier: "IGNORE"}).Table("users_emails").Create(map[string]interface{}{
 				"userid":    userid,
 				"email":     email,
 				"preferred": gorm.Expr("0"),
 				"added":     gorm.Expr("NOW()"),
-				"canon":     canon,
-				"backwards": reverseString(canon),
+				"canon":     CanonicalizePartnerEmail(email),
+				"backwards": reverseString(CanonicalizePartnerEmail(email)),
 			})
 		}
 	}
@@ -249,4 +260,138 @@ func FindPartnerByName(name string) uint64 {
 	var partnerID uint64
 	db.Table("partners_keys").Select("id").Where("partner LIKE ?", "%"+name+"%").Limit(1).Scan(&partnerID)
 	return partnerID
+}
+
+// tnPartnerDomain is the only domain whose per-group aliases iznik-batch's
+// canonicalizeEmail strips a -gNNNN suffix from, so it is the only one where Go
+// may do the same and still agree with it.
+const tnPartnerDomain = "user.trashnothing.com"
+
+// tnAliasRegexp matches a partner per-group alias, <username>-g<groupid>@<domain>.
+// Trash Nothing mints one address per TN GROUP, so a member active in several TN
+// groups presents several addresses differing only in the -g part. It mirrors
+// iznik-batch's TNSyncCommand::tnUsernameFromAddress so both stacks decide
+// "same member" by the same rule.
+var tnAliasRegexp = regexp.MustCompile(`^(.+)-g\d+@(.+)$`)
+
+// TNAliasIdentity splits a per-group alias into the TN username and the domain.
+func TNAliasIdentity(email string) (string, string, bool) {
+	m := tnAliasRegexp.FindStringSubmatch(strings.ToLower(strings.TrimSpace(email)))
+	if m == nil {
+		return "", "", false
+	}
+	return m[1], m[2], true
+}
+
+// likeEscape neutralises the LIKE wildcards in a value used as a literal prefix,
+// using MySQL's default backslash escape character.
+func likeEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, "%", `\%`)
+	s = strings.ReplaceAll(s, "_", `\_`)
+	return s
+}
+
+// FindTNSiblings returns the other live accounts holding a per-group alias of the
+// same TN member as the address given, excluding the account that address itself
+// belongs to.
+//
+// A TN member can own more than one Freegle account. Until the alias back-fill
+// landed (2026-08-11) a second TN group's alias arriving for the first time minted
+// a fresh account, and 96 such pairs are still live. A partner call carries only
+// ONE of the member's aliases, so resolving on that alias and the tnuserid alone
+// can miss the account that actually owns the post being acted on - which is how a
+// Promise came back 403 "Not your message" (TN post 47243586, 2026-09-19).
+func FindTNSiblings(db *gorm.DB, email string) []uint64 {
+	username, domain, ok := TNAliasIdentity(email)
+	if !ok {
+		return nil
+	}
+
+	// Indexed prefix scan on the address. The trailing % runs on past the end of
+	// the username, so "bibiana-g%" also matches "bibiana-gomes-g4840@...", a
+	// different member - the LIKE only narrows, the exact-identity test below
+	// decides. iznik-batch merged two unrelated members on 2026-09-13 for want of
+	// that test, so it is not theoretical.
+	like := likeEscape(username) + "-g%@" + likeEscape(domain)
+
+	var rows []struct {
+		Userid uint64 `gorm:"column:userid"`
+		Email  string `gorm:"column:email"`
+	}
+	db.Table("users_emails").
+		Select("users_emails.userid, users_emails.email").
+		Joins("INNER JOIN users ON users.id = users_emails.userid").
+		Where("users_emails.email LIKE ? AND users.deleted IS NULL", like).
+		Scan(&rows)
+
+	self := uint64(0)
+	for _, r := range rows {
+		if strings.EqualFold(strings.TrimSpace(r.Email), strings.TrimSpace(email)) {
+			self = r.Userid
+			break
+		}
+	}
+
+	var out []uint64
+	seen := map[uint64]bool{}
+	for _, r := range rows {
+		u, d, ok := TNAliasIdentity(r.Email)
+		if !ok || u != username || d != domain {
+			continue
+		}
+		if r.Userid == 0 || r.Userid == self || seen[r.Userid] {
+			continue
+		}
+		seen[r.Userid] = true
+		out = append(out, r.Userid)
+	}
+
+	return out
+}
+
+// WithTNSiblings adds the member's other accounts to the partner candidate set.
+//
+// Discovery only. The candidates are used by actAsOwnerCandidate to act as
+// whichever account owns the message; they are deliberately NOT passed to
+// HealTNDivergence, because merging the live backlog is a reviewed, one-way
+// operation belonging to tn:sync, not to an inbound partner request.
+func WithTNSiblings(db *gorm.DB, candidates []uint64, email string) []uint64 {
+	siblings := FindTNSiblings(db, email)
+	if len(siblings) == 0 {
+		return candidates
+	}
+
+	have := map[uint64]bool{}
+	for _, c := range candidates {
+		have[c] = true
+	}
+	for _, s := range siblings {
+		if have[s] {
+			continue
+		}
+		have[s] = true
+		candidates = append(candidates, s)
+	}
+
+	return candidates
+}
+
+// CanonicalizePartnerEmail returns the canon to STORE for a partner address.
+//
+// For a Trash Nothing per-group alias it reproduces iznik-batch's
+// canonicalizeEmail exactly - strip the -gNNNN suffix, strip the dots in the
+// domain - so every alias of one member canonicalises to one value and a PHP canon
+// lookup can find the row. Go's general CanonicalizeEmail does neither, so rows it
+// wrote were invisible to that lookup, which is the backstop that stops a member's
+// second address minting a second account.
+//
+// Scoped to the TN domain on purpose: donation matching and social auth also look
+// up on canon, so widening the general function would change who those match.
+func CanonicalizePartnerEmail(email string) string {
+	username, domain, ok := TNAliasIdentity(email)
+	if !ok || domain != tnPartnerDomain {
+		return CanonicalizeEmail(email)
+	}
+	return username + "@" + strings.ReplaceAll(domain, ".", "")
 }

@@ -7,7 +7,6 @@ const mockSummary = vi.fn()
 const mockAdd = vi.fn()
 const mockEdit = vi.fn()
 const mockRemove = vi.fn()
-const mockFetchGroups = vi.fn()
 const mockPatchGroups = vi.fn()
 const mockSetYears = vi.fn()
 const mockAddPayment = vi.fn()
@@ -26,7 +25,6 @@ vi.mock('~/api', () => ({
       add: mockAdd,
       edit: mockEdit,
       remove: mockRemove,
-      fetchGroups: mockFetchGroups,
       patchGroups: mockPatchGroups,
       setYears: mockSetYears,
       addPayment: mockAddPayment,
@@ -50,7 +48,7 @@ describe('partnerships store', () => {
     startdate: '2026-04-01',
     enddate: '2027-03-31',
     amount: 6000,
-    agreed: true,
+    status: 'Confirmed',
     expiring: false,
     expired: false,
     ...overrides,
@@ -163,7 +161,7 @@ describe('partnerships store', () => {
   })
 
   describe('groups', () => {
-    it('adds a group and reloads the deal', async () => {
+    it('adds a group and reloads the deal and the list', async () => {
       const store = makeStore()
 
       await store.addGroup(1, 55)
@@ -173,6 +171,8 @@ describe('partnerships store', () => {
         groupid: 55,
       })
       expect(mockFetch).toHaveBeenCalledWith(1)
+      // The list's community count changes too.
+      expect(mockList).toHaveBeenCalled()
     })
 
     it('removes a group', async () => {

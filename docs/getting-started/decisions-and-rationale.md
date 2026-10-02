@@ -18,7 +18,7 @@ Two constraints shape almost all of it:
 
 ## Why one database cluster, multi-master
 
-Production runs **Percona XtraDB Cluster**, three nodes, all of which can accept writes.
+Production runs **Percona XtraDB Cluster**: two data nodes, both of which can accept writes, and a third machine running only the arbitrator so the cluster keeps quorum when one data node is down.
 
 - **Maintenance without downtime.** This is the biggest day-to-day benefit. Schema changes,
   database upgrades and operating system patching can be done one node at a time while the
@@ -46,7 +46,7 @@ Two follow-on facts that cost people days:
   Write then immediately read and you may read a node that has not caught up. Do not
   explain a bug away as replication lag without checking; equally, do not assume a
   freshly written row is readable everywhere.
-- **Index usage counters must be summed across all three nodes.** Read one node and almost
+- **Index usage counters must be summed across both data nodes.** Read one node and almost
   every index looks unused
   ([../ops/reference/database-index-hygiene.md](../ops/reference/database-index-hygiene.md)).
 

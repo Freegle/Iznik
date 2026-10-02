@@ -3,6 +3,7 @@
 namespace App\Console\Commands\User;
 
 use Illuminate\Console\Command;
+use App\Services\Ripple\ReachMemberQueueService;
 use Illuminate\Support\Facades\DB;
 
 class AddMembershipCommand extends Command
@@ -55,6 +56,10 @@ class AddMembershipCommand extends Command
             'emailfrequency' => 24,
             'added' => now(),
         ]);
+
+        // Reach mail's member side: a new membership can put the member inside reaches
+        // that already cover their location.
+        ReachMemberQueueService::enqueue((int) $emailRow->userid, ReachMemberQueueService::REASON_JOINED);
 
         $this->info("Added user #{$emailRow->userid} to {$groupName} as {$role}");
         return self::SUCCESS;

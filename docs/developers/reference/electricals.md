@@ -1,14 +1,16 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-23
 covers:
   - iznik-batch/app/Services/EeeClassificationService.php
   - iznik-batch/app/Services/EeeComponentService.php
   - iznik-batch/app/Services/EeeProductionStore.php
+  - iznik-batch/app/Services/EeeVisionService.php
   - iznik-batch/app/Services/ElectricalsStatsService.php
   - iznik-batch/app/Services/Electricals/ItemClusterService.php
   - iznik-batch/app/Services/Desirability/TitleCanonicalService.php
   - iznik-batch/resources/desirability/**
   - iznik-batch/app/Console/Commands/Eee/EeeClassifyNewCommand.php
+  - iznik-batch/app/Console/Commands/Eee/EeeClassifyTextsCommand.php
   - iznik-batch/app/Console/Commands/ElectricalsStatsCommand.php
   - iznik-server-go/electricals/**
   - iznik-nuxt3/pages/electricals.vue
@@ -38,6 +40,32 @@ says which limb decided each row.
 `is_eee` is tri-state. NULL means "not decided" - the model saw nothing, or the
 components could not be resolved - and every statistic excludes NULL rather than
 counting it as "not electrical".
+
+## Which stream an item is in
+
+`weee_category` holds one of the seven streams a UK collection facility reports in, from
+the gov.uk "WEEE evidence and national protocols guidance": 1-7 for A large domestic
+appliances, B cooling, C display, D lamps, E solar panels, F vapes, G small mixed WEEE.
+Each stream is a fixed set of the UK's 15 reporting categories (A = 1, B = 12, C = 11,
+D = 13, E = 14, F = 15, G = 2 to 10), so partners reporting either way can convert
+without looking at the item. It replaced the EU's six categories at prompt version
+2.0.0; those split by size, which neither the UK categories nor the streams do, so they
+could not be converted. Rows at an earlier `prompt_version` hold the EU six.
+
+The stream comes from the text call, not the photo. What goes in each stream is spelled
+out in `EeeVisionService::STREAM_GUIDE`, and the lines that needed spelling out were
+found by review: microwaves are A at any size, a set-top box is G not C, a table lamp is
+G and only a bulb or tube is D.
+
+## Text-only classification
+
+`eee:classify-texts` classifies listings from title and description alone, fifty to a
+request, for history and for posts without a photo. `--google-batch` sends the whole
+file to Gemini's batch service at half price; the job name is kept beside the output so
+an interrupted run waits on the job it has already paid for. Creating a batch job is not
+idempotent, so a timeout there must be checked against Gemini's job list before retrying.
+On 400 reviewed posts it matched a human reviewer on electrical-or-not 99.2% of the time
+and on the stream 99.2%, with 17 posts too ambiguous to label excluded.
 
 ## Pipeline
 
@@ -117,10 +145,26 @@ unusual on a site where fridge freezers are among the commonest things offered.
   above the 0.78 of a pair that genuinely should merge. No threshold separates the
   right merges from the wrong ones, so published counts are never merged on an
   embedding.
+- **Size and panel words are dropped after canonicalisation**, in
+  `ItemClusterService` rather than the shared canonicaliser, so nothing else that
+  canonicalises titles changes. The brand goes but the screen size and the display
+  technology do not, and those split one item across `21in tv`, `smart tv 32in`,
+  `flat screen tv` and `50in plasma tv`. Only an explicit list is dropped, and never
+  the last word, so `washing machine` cannot become `machine`. A model name is left
+  alone: `bravia tv` stays its own item, because separating a model from an item needs
+  a catalogue this does not have.
 - **Counts are of distinct posts, members and communities**, taken from the id sets,
   because a rippled post arrives once per group and summing would multiply it.
-- **The label is a name carrying no brand** where the cluster has one, even if a
-  branded spelling is commoner.
+- **The label is one of the titles members wrote**, chosen by preference, strongest
+  first: no brand detected, no quantity detected, not written in capitals, most used,
+  then shortest and alphabetical. The brand rule rests entirely on `brands.csv`
+  recognising the brand - an unrecognised one looks like an ordinary item word, wins
+  the preference for an unbranded name, and is published as the item, which is how
+  `Corby trouser press` and `Dolce gusto coffee machine` came to be item names. The
+  quantity rule keeps a consignment (`2 X sanders`, `Lampshades x 2`) from naming
+  everybody else's item. The last step is not cosmetic: without it the winner among
+  equals is whichever row the database returned first, so the label could change
+  between runs with no change in the data.
 
 The rare list then drops anything that is a **version of a common item**. A rival
 qualifies as common at ten or more offers and at least three times the candidate's
@@ -146,6 +190,14 @@ approaches 100%, so the page gets more accurate over time with no flag day; the 
 prefers the estimates, states the coverage while they are not firm, and drops the
 caveat when they are. The stated assumption is that the classified sample is seasonally
 representative - the coverage figure is published alongside so a reader can weigh that.
+
+The item lists are scaled by the same factor. They were published raw beside a headline
+scaled from the same sample, so at 9.5% coverage the commonest electrical of the year
+read as 73 televisions. Each item carries both the scaled `count` and the `sample` it
+came from. The `users` and `groups` behind an unusual item are **not** scaled: they are
+the evidence that a rare item is real, and scaling them would assert people who were
+never seen. The qualifying thresholds run on those unscaled figures, so scaling cannot
+promote a one-off into the rare list.
 
 ## Alerting
 

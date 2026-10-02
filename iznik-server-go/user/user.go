@@ -17,9 +17,11 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/emailhygiene"
 	"github.com/freegle/iznik-server-go/location"
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/utils"
@@ -92,6 +94,10 @@ type User struct {
 	Giftaid            *UserGiftAid         `json:"giftaid,omitempty" gorm:"-"`
 	Loginlink          string               `json:"loginlink,omitempty" gorm:"-"`
 	Engagement         *string              `json:"engagement" gorm:"->"`
+
+	// Set when the name, photo and about-me were withheld (see hideTNIdentityFromAnonymous),
+	// so a client that cached this copy before logging in knows to fetch it again.
+	Redacted bool `json:"redacted,omitempty" gorm:"-"`
 }
 
 type UserGiftAid struct {
@@ -145,6 +151,7 @@ type MembershipTable struct {
 	Eventsallowed       int       `json:"eventsallowed"`
 	Volunteeringallowed int       `json:"volunteeringallowed"`
 	Role                string    `json:"role"`
+	Rippled             int       `json:"rippled"` // 1 = rippling auto-joined the poster; nobody chose this membership
 	OurPostingStatus    *string   `json:"ourpostingstatus,omitempty" gorm:"column:ourPostingStatus"`
 }
 
@@ -212,6 +219,24 @@ func hideSensitiveFields(user *User, myid uint64) {
 			user.Ljuserid = nil
 		}
 	}
+}
+
+// hideTNIdentityFromAnonymous withholds a Trash Nothing member's name, photo and about-me
+// from someone who is not logged in. Trash Nothing asked for this: its members never log in
+// to Freegle, and their details should only be visible to other members. tnuserid must be
+// read before hideSensitiveFields, which clears it for most viewers.
+func hideTNIdentityFromAnonymous(user *User, myid uint64, tnuserid *uint64) {
+	if myid != 0 || tnuserid == nil {
+		return
+	}
+
+	user.Firstname = nil
+	user.Lastname = nil
+	user.Fullname = nil
+	user.Displayname = "A freegler"
+	user.Profile = UserProfile{}
+	user.Aboutme = Aboutme{}
+	user.Redacted = true
 }
 
 func GetUserByEmail(c *fiber.Ctx) error {
@@ -284,6 +309,18 @@ func GetUser(c *fiber.Ctx) error {
 			hideSensitiveFields(&user, myid)
 			enrichUserForModtools(&user, id, myid, modtools)
 
+			isPartner := false
+			partnerKey := c.Query("partner")
+			if partnerKey != "" {
+				if _, _, _, err := ValidatePartnerKey(database.DBConn, partnerKey); err == nil {
+					isPartner = true
+				}
+			}
+
+			if !isPartner {
+				hideTNIdentityFromAnonymous(&user, myid, tnuserid)
+			}
+
 			// Mod-or-above callers (Moderator/Support/Admin systemrole) get
 			// tnuserid/ljuserid restored even when not a mod of a shared group
 			// with the target. authMiddleware sets c.Locals("userRole") only
@@ -302,12 +339,10 @@ func GetUser(c *fiber.Ctx) error {
 			// GetOrCreateInternalEmail ensures a correctly-formatted address exists
 			// even for users whose only stored internal email has the wrong user ID
 			// (e.g. after a merge), and creates one if none exists at all.
-			if partnerKey := c.Query("partner"); partnerKey != "" {
-				if _, _, _, err := ValidatePartnerKey(database.DBConn, partnerKey); err == nil {
-					user.Email = GetOrCreateInternalEmail(database.DBConn, id)
-					user.Tnuserid = tnuserid
-					user.Ljuserid = ljuserid
-				}
+			if isPartner {
+				user.Email = GetOrCreateInternalEmail(database.DBConn, id)
+				user.Tnuserid = tnuserid
+				user.Ljuserid = ljuserid
 			}
 
 			return c.JSON(user)
@@ -403,7 +438,7 @@ func GetMemberships(id uint64) []Membership {
 
 	var memberships []Membership
 	db.Table("memberships").
-		Select("memberships.id, added, role, groupid, emailfrequency, eventsallowed, volunteeringallowed, ourPostingStatus, microvolunteering AS microvolunteeringallowed, nameshort, namefull, groups.type, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
+		Select("memberships.id, added, role, groupid, emailfrequency, eventsallowed, volunteeringallowed, ourPostingStatus, memberships.rippled, microvolunteering AS microvolunteeringallowed, nameshort, namefull, groups.type, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
 		Joins("INNER JOIN `groups` ON groups.id = memberships.groupid").
 		Where("userid = ? AND collection = ?", id, "Approved").
 		Scan(&memberships)
@@ -725,6 +760,11 @@ func GetUserById(id uint64, myid uint64) User {
 					isGroupMod = true
 				}
 				isExempt := IsExemptBySystemroleAndMod(user.Systemrole, isGroupMod)
+				if !isExempt && isSuspiciousName(user.Displayname) {
+					// Only now worth the lookup: Freegle's own mailboxes keep names
+					// like "Freegle Support".
+					isExempt = IsOfficialFreegleUser(db, id)
+				}
 				user.Displayname = SanitizeDisplayName(user.Displayname, isExempt)
 			} else {
 				// Censor name for deleted user when viewed by non-mod.
@@ -907,7 +947,9 @@ func GetUsersByIds(ids []string, myid uint64, modtools bool) []User {
 			}
 
 			user := GetUserById(id, myid)
+			tnuserid := user.Tnuserid
 			hideSensitiveFields(&user, myid)
+			hideTNIdentityFromAnonymous(&user, myid, tnuserid)
 
 			if user.ID == id {
 				mu.Lock()
@@ -975,7 +1017,8 @@ func GetLatLng(id uint64) utils.LatLng {
 	var ul, ulmsg, ulgroups userLoc
 
 	// We look for the location in the following descending order:
-	// - mylocation in settings, which we need to decode
+	// - mylocation in settings, which we need to decode - except for a Trash Nothing
+	//   member, whose location TN is the master for and whose mylocation is stale V1 data
 	// - lastlocation in user
 	// - last messages posted on a group with a location
 	// - most recently joined group
@@ -985,8 +1028,8 @@ func GetLatLng(id uint64) utils.LatLng {
 	// If it doesn't give us what we need them , then fetch the others in parallel.
 	db.Table("users").
 		Select("users.id, locations.lat AS lastlat, locations.lng as lastlng, "+
-			"CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lat') AS DECIMAL(10,6)) AS mylat,"+
-			"CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lng') AS DECIMAL(10,6)) as mylng").
+			"CASE WHEN users.tnuserid IS NULL THEN CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lat') AS DECIMAL(10,6)) END AS mylat,"+
+			"CASE WHEN users.tnuserid IS NULL THEN CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lng') AS DECIMAL(10,6)) END as mylng").
 		Joins("LEFT JOIN locations ON locations.id = users.lastlocation").
 		Joins("LEFT JOIN spam_users ON spam_users.userid = users.id").
 		Where("users.id = ?", id).
@@ -1449,10 +1492,14 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 
 	// Resolve NULL ourPostingStatus → MODERATED.
 	// DEFAULT stays as DEFAULT — it's an explicit status meaning "follow group default".
+	// A membership rippling created for the poster (rippled = 1) is left unset: no
+	// moderator chose that membership, so a blank status there is not a moderation
+	// decision, and reading it as MODERATED put a "This member is Moderated" notice on
+	// every rippled-in copy (Discourse 10115).
 	if modtools {
 		for i := range memberships {
 			m := &memberships[i]
-			if m.OurPostingStatus == nil || *m.OurPostingStatus == "" {
+			if m.Rippled == 0 && (m.OurPostingStatus == nil || *m.OurPostingStatus == "") {
 				v := utils.POSTING_STATUS_MODERATED
 				m.OurPostingStatus = &v
 			}
@@ -1477,8 +1524,9 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 	if modtools {
 		if privatePos.Lat != 0 || privatePos.Lng != 0 {
 			var locNamePtr *string
+			// Not for a Trash Nothing member: their mylocation is stale V1 data.
 			db.Table("users").Select("JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.name'))").
-				Where("id = ? AND settings IS NOT NULL", id).Scan(&locNamePtr)
+				Where("id = ? AND settings IS NOT NULL AND tnuserid IS NULL", id).Scan(&locNamePtr)
 
 			locName := ""
 			if locNamePtr != nil && *locNamePtr != "null" {
@@ -1849,6 +1897,10 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 	}
 
 	email := strings.TrimSpace(req.Email)
+	// Observe only - never reject. TrimSpace does not remove the invisible
+	// formatting characters that actually get through here (U+200F, U+202C and
+	// friends), so this says so in Sentry rather than silently storing one.
+	emailhygiene.Report(email, "user.handleAddEmail", myid)
 	targetID := req.ID
 	if targetID == 0 {
 		targetID = myid
@@ -2016,6 +2068,7 @@ type UserPatchRequest struct {
 	Newslettersallowed *utils.FlexInt   `json:"newslettersallowed,omitempty"`
 	Aboutme            *string          `json:"aboutme,omitempty"`
 	Newsfeedmodstatus  *string          `json:"newsfeedmodstatus,omitempty"`
+	Chatmodstatus      *string          `json:"chatmodstatus,omitempty"`
 	Email              *string          `json:"email,omitempty"`
 	Source             *string          `json:"source,omitempty"`
 	Password           *string          `json:"password,omitempty"`
@@ -2047,6 +2100,9 @@ func PutUser(c *fiber.Ctx) error {
 	}
 
 	email := strings.TrimSpace(req.Email)
+	// Observe only - never reject. Signup is where the evidence points: the bad
+	// addresses are 75% preferred=1 primaries and none are partner-sourced.
+	emailhygiene.Report(email, "user.PutUser", 0)
 	db := database.DBConn
 
 	// Check if email already exists.
@@ -2170,6 +2226,7 @@ func PutUser(c *fiber.Ctx) error {
 			"collection": utils.COLLECTION_APPROVED,
 		})
 		if result.RowsAffected > 0 {
+			reachqueue.QueueMember(db, newUserID, reachqueue.ReasonJoined)
 			db.Table("logs").Create(map[string]interface{}{
 				"timestamp": gorm.Expr("NOW()"),
 				"type":      log2.LOG_TYPE_GROUP,
@@ -2373,6 +2430,9 @@ func ProcessSettingsUpdate(settingsJSON []byte, myid uint64, setClauses *[]strin
 				Text:    textPtr,
 			})
 
+			// A new location can put the member inside reaches that never covered them.
+			reachqueue.QueueMember(db, myid, reachqueue.ReasonMoved)
+
 			// Rippling-out: reach now follows declared location, so flag rapid location-hopping
 			// for moderator review (non-destructive).
 			CheckLocationChangeVelocity(db, myid)
@@ -2399,6 +2459,23 @@ func ProcessSettingsUpdate(settingsJSON []byte, myid uint64, setClauses *[]strin
 	return settingsJSON
 }
 
+// canModerateUser reports whether myid is a mod or owner of any group that
+// targetID is also a member of. Callers check auth.IsAdminOrSupport first.
+//
+// The two inline copies of this join inside PatchUser are deliberately left
+// alone - their comments mark them as a tracked converted pair - so this is
+// used by newer callers rather than being retrofitted onto them.
+func canModerateUser(db *gorm.DB, myid uint64, targetID uint64) bool {
+	var sharedModGroup int64
+	db.Table("memberships m1").
+		Select("COUNT(*)").
+		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
+		Where("m1.userid = ? AND m2.userid = ? AND m1.role IN (?, ?)", myid, targetID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).
+		Scan(&sharedModGroup)
+
+	return sharedModGroup > 0
+}
+
 // PatchUser updates user profile fields.
 //
 // @Summary Update user profile
@@ -2420,6 +2497,59 @@ func PatchUser(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
+
+	// Handle chatmodstatus for another user (mod action).
+	//
+	// This field was absent from UserPatchRequest until now, so BodyParser
+	// silently dropped it and the ModTools "Chat Moderation" control (the
+	// Fully/Moderated/Unmoderated dropdown in ModSupportUser.vue) was a no-op:
+	// mods set "Fully moderated", got a success response, and nothing changed.
+	// The only writes to the column were the ones setting 'Unmoderated'
+	// (ApproveAllFuture here, and FreegleUserService on first reply), so a
+	// member could be let out of moderation but never put into it.
+	//
+	// The enforcement side was always live - ChatProcessService::process()
+	// holds every User2User message from a 'Fully' member for review - so
+	// restoring the write path is all that is needed.
+	if req.Chatmodstatus != nil && req.ID > 0 && req.ID != myid {
+		// Fully-moderating someone is a shadow ban, so gate it exactly as the
+		// sibling newsfeedmodstatus control below is gated: admin/support, or a
+		// mod of a group they share with the target. A group mod can already ban
+		// a member outright, so holding their chat for review is not a greater
+		// power than they have.
+		if !auth.IsAdminOrSupport(myid) && !canModerateUser(db, myid, req.ID) {
+			return fiber.NewError(fiber.StatusForbidden, "Not authorized to moderate this user")
+		}
+
+		// chatmodstatus is an ENUM. Without this check an unrecognised value is
+		// coerced to '' by MySQL in non-strict mode, which reads back as neither
+		// Moderated nor Fully and so quietly drops the member out of the spam
+		// checks that 'Moderated' would have applied.
+		switch *req.Chatmodstatus {
+		case utils.CHATMODSTATUS_MODERATED, utils.CHATMODSTATUS_UNMODERATED, utils.CHATMODSTATUS_FULLY:
+		default:
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid chatmodstatus")
+		}
+
+		if err := db.Table("users").Where("id = ?", req.ID).
+			Update("chatmodstatus", *req.Chatmodstatus).Error; err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to update chatmodstatus")
+		}
+
+		// Leave an audit trail - putting a member under full moderation is not
+		// visible to them, so the record of who did it needs to survive.
+		text := "chatmodstatus set to " + *req.Chatmodstatus
+		target := req.ID
+		log2.Log(log2.LogEntry{
+			Type:    log2.LOG_TYPE_USER,
+			Subtype: log2.LOG_SUBTYPE_EDIT,
+			User:    &target,
+			Byuser:  &myid,
+			Text:    &text,
+		})
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+	}
 
 	// Handle newsfeedmodstatus for another user (mod action).
 	if req.Newsfeedmodstatus != nil && req.ID > 0 && req.ID != myid {
@@ -2724,8 +2854,16 @@ func LimboUser(c *fiber.Ctx) error {
 		})
 	}
 
+	// Signal the auth middleware to skip the post-handler session check —
+	// matching handleForget (session/session.go) which does the same.
+	c.Locals("skipPostAuthCheck", true)
+
 	// Soft, recoverable limbo (shared with the Unsubscribe action).
 	softLimboUser(db, targetID, myid)
+
+	// Destroy the session so the user is logged out immediately — matching
+	// handleForget which does the same DELETE FROM sessions after soft-delete.
+	db.Exec("DELETE FROM sessions WHERE userid = ?", targetID)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2928,13 +3066,32 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 
 	// ── SECTION A: emails, memberships ──────────────────────────────────────────
 
-	// Email merge: move id1's emails to id2.
-	// If id2 already has a preferred email, demote id1's preferred before moving.
+	// Email merge: move id1's emails to id2. id2's own dominant email must
+	// survive the merge (UI: "the second user's preferred email will be the
+	// preferred email of the merged user"), so id1's preferred flag is always
+	// demoted first. If id2 had no preferred=1 row of its own - e.g. it was
+	// never (re)set - promote id2's best candidate so id1's email cannot
+	// become dominant merely by inheriting an unset flag.
+	if err := tx.Table("users_emails").Where("userid = ? AND preferred = 1", id1).Update("preferred", gorm.Expr("0")).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to demote id1 preferred email")
+	}
 	var id2HasPreferred int64
 	tx.Table("users_emails").Where("userid = ? AND preferred = 1", id2).Count(&id2HasPreferred)
-	if id2HasPreferred > 0 {
-		if err := tx.Table("users_emails").Where("userid = ? AND preferred = 1", id1).Update("preferred", gorm.Expr("0")).Error; err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "Failed to demote id1 preferred email")
+	if id2HasPreferred == 0 {
+		var bestEmailID uint64
+		tx.Table("users_emails").Select("id").Where("userid = ?", id2).
+			Order("preferred DESC, id ASC").Limit(1).Scan(&bestEmailID)
+		if bestEmailID == 0 {
+			// id2 has no email of its own (only reachable via merge-by-id).
+			// Fall back to id1's best so the merged account isn't left with
+			// zero preferred emails.
+			tx.Table("users_emails").Select("id").Where("userid = ?", id1).
+				Order("preferred DESC, id ASC").Limit(1).Scan(&bestEmailID)
+		}
+		if bestEmailID > 0 {
+			if err := tx.Table("users_emails").Where("id = ?", bestEmailID).Update("preferred", gorm.Expr("1")).Error; err != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, "Failed to promote preferred email")
+			}
 		}
 	}
 	if err := tx.Table("users_emails").Where("userid = ?", id1).Update("userid", id2).Error; err != nil {

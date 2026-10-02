@@ -3,6 +3,7 @@
 namespace App\Console\Commands\Partnerships;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Throwable;
@@ -86,11 +87,18 @@ class StatsJobRunnerCommand extends Command
             // One authority at a time so each spreadsheet can be filed against the council it
             // belongs to, and one bad authority does not lose the whole batch.
             try {
-                $exit = Artisan::call('authority:stats', [
+                $args = [
                     '--i' => (string) $authorityId,
                     '--q' => $job->quarter,
                     '--output' => $outputDir,
-                ]);
+                ];
+
+                $partnershipId = $this->partnershipFor($authorityId, (string) $job->quarter);
+                if ($partnershipId !== null) {
+                    $args['--partnership'] = (string) $partnershipId;
+                }
+
+                $exit = Artisan::call('authority:stats', $args);
 
                 if ($exit !== 0) {
                     $problems[] = sprintf('Authority %d: %s', $authorityId, trim(Artisan::output()));
@@ -123,6 +131,29 @@ class StatsJobRunnerCommand extends Command
         ]);
 
         $this->info(sprintf('Job %d: stored %d spreadsheet%s.', $job->id, $stored, $stored === 1 ? '' : 's'));
+    }
+
+    /**
+     * The deal whose communities the spreadsheet should report on: a committed deal with this
+     * council running during the quarter, else the most recent committed one, else the most
+     * recent of any kind. Null when we have never had a deal with them, and the boundary
+     * decides.
+     */
+    private function partnershipFor(int $authorityId, string $quarter): ?int
+    {
+        $quarterStart = Carbon::parse($quarter)->firstOfQuarter()->toDateString();
+
+        $best = DB::table('partnerships')
+            ->where('authorityid', $authorityId)
+            ->get(['id', 'status', 'startdate', 'enddate'])
+            ->sortByDesc(fn ($p) => [
+                in_array($p->status, ['Confirmed', 'Paid', 'Overdue'], true),
+                $p->startdate <= $quarterStart && $quarterStart <= $p->enddate,
+                $p->enddate,
+            ])
+            ->first();
+
+        return $best === null ? null : (int) $best->id;
     }
 
     /**

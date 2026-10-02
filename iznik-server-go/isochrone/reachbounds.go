@@ -11,7 +11,7 @@ import (
 
 // Sandwich-bounds prefilter for the browse reach queries — see
 // rippling/reachbounds.go for the shared fragments, the sentinel ladder and the design
-// rationale (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md). The browse form drives
+// rationale (docs/developers/reference/rippling-algorithm.md section 11). The browse form drives
 // the R-tree from the small indexed outer_bound column (the design's target shape), so
 // completed posts — degraded to POINT bounds — are pruned by the index itself.
 //

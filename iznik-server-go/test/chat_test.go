@@ -1879,6 +1879,53 @@ func TestReferToSupportNotMember(t *testing.T) {
 	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
+// The button's main use: a moderator of the community refers a member-to-mods chat. The
+// moderator is never a participant of such a chat, so a participants-only check refused
+// every one of these with a 403 (Discourse 10199, 2026-09-25).
+func TestReferToSupportByGroupModerator(t *testing.T) {
+	prefix := uniquePrefix("refersupport_mod")
+	db := database.DBConn
+	memberID := CreateTestUser(t, prefix+"_m", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, memberID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	chatid := CreateTestChatRoom(t, memberID, nil, &groupID, "User2Mod")
+	CreateTestChatMessage(t, chatid, memberID, "Hello mods")
+	_, token := CreateTestSession(t, modID)
+
+	payload := map[string]interface{}{"id": chatid, "action": "ReferToSupport", "modtools": true}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'refer_to_support' AND JSON_EXTRACT(data, '$.chatid') = ? AND JSON_EXTRACT(data, '$.userid') = ?", chatid, modID).Scan(&taskCount)
+	assert.Equal(t, int64(1), taskCount, "the referral must be queued under the moderator who asked")
+}
+
+// A moderator of some other community, whose members are not in this chat, still may not.
+func TestReferToSupportByUnrelatedModerator(t *testing.T) {
+	prefix := uniquePrefix("refersupport_other")
+	memberID := CreateTestUser(t, prefix+"_m", "User")
+	otherModID := CreateTestUser(t, prefix+"_om", "Moderator")
+	groupID := CreateTestGroup(t, prefix)
+	otherGroupID := CreateTestGroup(t, prefix+"_other")
+	CreateTestMembership(t, memberID, groupID, "Member")
+	CreateTestMembership(t, otherModID, otherGroupID, "Moderator")
+	chatid := CreateTestChatRoom(t, memberID, nil, &groupID, "User2Mod")
+	_, token := CreateTestSession(t, otherModID)
+
+	payload := map[string]interface{}{"id": chatid, "action": "ReferToSupport", "modtools": true}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
 func TestReferToSupportNotLoggedIn(t *testing.T) {
 	payload := map[string]interface{}{"id": 1, "action": "ReferToSupport"}
 	s, _ := json2.Marshal(payload)
@@ -1913,7 +1960,6 @@ func TestReferToSupportMissingChatID(t *testing.T) {
 	resp, _ := getApp().Test(request)
 	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 }
-
 
 // Helper to set up a moderator with a group and User2Mod chat containing messages.
 func setupModChatData(t *testing.T, prefix string) (modID uint64, userID uint64, groupID uint64, chatID uint64, token string) {
@@ -2223,14 +2269,14 @@ func TestReviewChatMessagesSenderOnlyExcluded(t *testing.T) {
 	prefix := uniquePrefix("ReviewSenderOnly")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	otherGroupID := CreateTestGroup(t, prefix + "_other")
+	otherGroupID := CreateTestGroup(t, prefix+"_other")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, token := CreateTestSession(t, modID)
 
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
 	recipientID := CreateTestUser(t, prefix+"_recip", "User")
-	CreateTestMembership(t, senderID, groupID, "Member")    // sender in mod's group
+	CreateTestMembership(t, senderID, groupID, "Member")         // sender in mod's group
 	CreateTestMembership(t, recipientID, otherGroupID, "Member") // recipient in different group
 
 	chatID := CreateTestChatRoom(t, senderID, &recipientID, nil, "User2User")

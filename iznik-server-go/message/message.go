@@ -19,6 +19,7 @@ import (
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/driving"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/group"
@@ -27,6 +28,7 @@ import (
 	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/modmessaging"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
@@ -219,17 +221,23 @@ type Message struct {
 	// thing once a post has been reposted or has rippled: this browse view was ordering by
 	// Arrival while the card showed a group arrival, so a 20-day-old post displaying "5 days"
 	// sat above a 3-hour-old one.
-	VisibleSince       time.Time           `json:"visibleSince"`
-	Date               time.Time           `json:"date"`
-	Fromuser           uint64              `json:"fromuser"`
-	Subject            string              `json:"subject"`
-	Type               string              `json:"type"`
-	Textbody           string              `json:"textbody"`
-	Lat                float64             `json:"lat"`
-	Lng                float64             `json:"lng"`
-	Unseen             bool                `json:"unseen"`
-	Availablenow       uint                `json:"availablenow"`
-	Availableinitially uint                `json:"availableinitially"`
+	VisibleSince       time.Time `json:"visibleSince"`
+	Date               time.Time `json:"date"`
+	Fromuser           uint64    `json:"fromuser"`
+	Subject            string    `json:"subject"`
+	Type               string    `json:"type"`
+	Textbody           string    `json:"textbody"`
+	Lat                float64   `json:"lat"`
+	Lng                float64   `json:"lng"`
+	Unseen             bool      `json:"unseen"`
+	Availablenow       uint      `json:"availablenow"`
+	Availableinitially uint      `json:"availableinitially"`
+	// Partgone is true once somebody has been recorded as having taken some of a
+	// multi-item post. It is a fact about takers, not arithmetic on the two counts
+	// above: an ordinary poster is no longer asked how many each person took, so
+	// availablenow stops tracking reality the moment the first person is recorded.
+	// Bulk offers still count items out one by one and use the numbers instead.
+	Partgone           bool                `json:"partgone" gorm:"-"`
 	MessageGroups      []MessageGroup      `gorm:"-" json:"groups"`
 	MessageAttachments []MessageAttachment `gorm:"-" json:"attachments"`
 	MessageOutcomes    []MessageOutcome    `gorm:"-" json:"outcomes"`
@@ -282,6 +290,14 @@ type Message struct {
 	Postings         []MessagePosting `json:"postings,omitempty" gorm:"-"`
 	Tnpostid         *string          `json:"tnpostid"`
 	Expiresat        *time.Time       `json:"expiresat,omitempty" gorm:"-"`
+	// ModMessagingAllowed is false for a TN post placed on a Freegle community the poster
+	// never chose (its origin messages_groups row has mod_messaging_allowed = 0). ModTools
+	// then offers Approve and Delete but not Edit, Blank Reply or any standard message,
+	// because there is nobody on the other end who agreed to hear from that community.
+	// True for every ordinary post. Message-level rather than per-group: the poster either
+	// asked to be on Freegle or did not, so a moderator looking at a rippled-in copy gets
+	// the origin row's answer too.
+	ModMessagingAllowed bool `json:"mod_messaging_allowed" gorm:"-"`
 	// ReplyEligible: rippling-out (#2). nil/omitted = eligible (the post isn't rippling,
 	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
 	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
@@ -299,6 +315,12 @@ type Message struct {
 	// finishes early when the post gathers enough repliers or is taken.
 	ReachesYouAt    *time.Time `json:"reachesyouat,omitempty" gorm:"-"`
 	ReachesYouFully *bool      `json:"reachesyoufully,omitempty" gorm:"-"`
+	// ReachFinished: the post's reach has stopped expanding (rippling_reach.status
+	// 'done') without covering the viewer, so it is never going to. Set instead of
+	// ReachesYouAt, whose final-tick date would already be in the past and read as
+	// "any moment now" about a reach that ended weeks ago (Discourse 9808/797). The
+	// reply is still held for the moment and released by the finished-reach sweep.
+	ReachFinished *bool `json:"reachfinished,omitempty" gorm:"-"`
 	// BulkItems is the structured catalogue for a bulk offer ("clearance"). Nil
 	// (and omitted) for ordinary single-item posts. Bulkcount is len(BulkItems),
 	// exposed so list/summary views can flag a bulk offer cheaply.
@@ -435,19 +457,6 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 func rippleEnabled() bool {
 	v := os.Getenv("RIPPLE_ENABLED")
 	return v == "true" || v == "1"
-}
-
-// defaultSearchMode returns the searchmode used when the caller doesn't specify
-// one. Vector-hybrid is the default for every caller (public site, ModTools,
-// apps). VECTOR_SEARCH_DEFAULT=keyword is the no-deploy rollback lever that
-// reverts the whole site to the legacy keyword cascade. Both this env var and
-// the ?searchmode param are scheduled for removal once the keyword machinery is
-// retired.
-func defaultSearchMode() string {
-	if os.Getenv("VECTOR_SEARCH_DEFAULT") == "keyword" {
-		return "keyword"
-	}
-	return "vector"
 }
 
 // addRoadMetrics fills Roadmins/Roadmiles from the viewer's home for a batch
@@ -597,8 +606,9 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// issue because these messages were posted with the intention of being public. It also
 				// allows shared links to work even before moderation approval.
 				db.Table("messages_groups").
-					Select("groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in").
+					Select("groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in, mod_messaging_allowed, locked_by_home").
 					Where("msgid = ? AND deleted = 0", id).Scan(&messageGroups)
+				effectiveHomeLocks(messageGroups)
 
 				// Moderator-only "quicker to get to" P/Q note, kept in its own rippling_proximity
 				// table (off the hot messages_groups path). Best-effort: only for mods, and a
@@ -745,6 +755,11 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				Scan(&messagePostings)
 
 			message.MessageGroups = messageGroups
+
+			// Read off the origin row (rippled_in = 0). A rippled copy is inserted by the
+			// engine without the column and takes the table default, so testing every row
+			// would read a rippled copy of an unaddressed post as addressed.
+			message.ModMessagingAllowed = modMessagingAllowed(messageGroups)
 
 			// Holds are carried per-group on messageGroups (groups[].heldby); that is the
 			// truth, and what up-to-date clients read. The message-level Heldby below is a
@@ -1029,6 +1044,12 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				canSeeInterest := message.Fromuser == myid || isGroupMod
 				message.BulkItems = LoadBulkItems(db, message.ID, myid, canSeeInterest, message.MessageAttachments)
 				message.Bulkcount = len(message.BulkItems)
+
+				// Part gone: somebody has taken some. Read from the takers rather than
+				// from availablenow, which an ordinary post no longer maintains.
+				var takers int64
+				db.Table("messages_by").Where("msgid = ?", message.ID).Count(&takers)
+				message.Partgone = takers > 0
 				if message.Bulkcount > 0 {
 					message.Bulkslots = LoadBulkSlots(db, message.ID)
 					// Access instructions are private — only the offerer/mod sees them.
@@ -1135,6 +1156,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		// posts costs one search's latency rather than the sum. Only blocked posts
 		// pay it, which is a small minority of any feed.
 		coverage := make(map[uint64]rippling.Coverage, len(reachBlocked))
+		finished := make(map[uint64]bool, len(reachBlocked))
 		if len(reachBlocked) > 0 {
 			hazard := rippling.LoadHazardHours(db)
 
@@ -1150,6 +1172,12 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			var covMu sync.Mutex
 			var covWg sync.WaitGroup
 			for msgid, origin := range reachBlocked {
+				// A finished reach is not coming. No routing search and no date:
+				// the member is told the reach has ended instead (ReachFinished).
+				if origin.Finished {
+					finished[msgid] = true
+					continue
+				}
 				if !origin.Ok || origin.Arrival == nil || len(origin.Schedule) == 0 {
 					continue
 				}
@@ -1229,6 +1257,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// be a promise we have no intention of keeping, so drop any
 				// estimate the reach check produced for the same post.
 				delete(coverage, b.Msgid)
+				delete(finished, b.Msgid)
 			}
 		}
 
@@ -1240,7 +1269,10 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 
 					// Only the reach reason carries an arrival. A ban also lands in
 					// blockedSet and has no coverage entry, so it stays nil.
-					if cov, found := coverage[messages[ix].ID]; found {
+					if finished[messages[ix].ID] {
+						done := true
+						messages[ix].ReachFinished = &done
+					} else if cov, found := coverage[messages[ix].ID]; found {
 						at := cov.At
 						fully := cov.Covered
 						messages[ix].ReachesYouAt = &at
@@ -1263,6 +1295,7 @@ func checkWorryWords(db *gorm.DB, messages []Message) {
 			"WHEN 'substance_regulated' THEN 'Regulated' " +
 			"WHEN 'substance_reportable' THEN 'Reportable' " +
 			"WHEN 'substance_medicine' THEN 'Medicine' " +
+			"WHEN 'safeguarding' THEN 'Safeguarding' " +
 			"WHEN 'review' THEN 'Review' " +
 			"WHEN 'allowed' THEN 'Allowed' " +
 			"ELSE 'Review' END AS type").
@@ -1804,6 +1837,18 @@ func Search(c *fiber.Ctx) error {
 		}
 	}
 
+	// ?originonly=true is the Approved Messages "Only this group's own posts (hide
+	// rippled-in)" box. The listing honoured it and a search with a term dropped it, so
+	// every result of a search could be a rippled-in copy (Discourse 9808/798). Applied
+	// at every return that carries results, like applyBrowseFilters.
+	originOnly := c.Query("originonly") == "true"
+	applyOriginOnly := func(rs []SearchResult) []SearchResult {
+		if !originOnly {
+			return rs
+		}
+		return dropRippledIn(db, rs, groupids)
+	}
+
 	// If groupids contains 0 ("All my communities" in ModTools), handle based on role:
 	// - Admin/Support: clear groupids so the search covers all groups (no filter).
 	// - Everyone else: replace with the user's actual memberships so they only see
@@ -1862,7 +1907,7 @@ func Search(c *fiber.Ctx) error {
 			byID := SearchByMsgID(db, msgid, groupids)
 			if len(byID) > 0 {
 				wg.Wait()
-				return c.JSON(byID)
+				return c.JSON(applyOriginOnly(byID))
 			}
 		}
 	}
@@ -2037,118 +2082,34 @@ func Search(c *fiber.Ctx) error {
 		return rs
 	}
 
-	searchmode := c.Query("searchmode", defaultSearchMode())
-
-	// We've seen problems with crashes inside Gorm.  Best I can tell, it looks like a Gorm bug exposed when an
-	// array is resized.  So as a workaround we create slices with capacity, then filter out the empty ones at
-	// the end.
 	var res []SearchResult
-	var res2 []SearchResult
 
 	if len(term) > 0 {
-		if term == "" {
-			return fiber.NewError(fiber.StatusBadRequest, "No search term")
-		}
-
-		// Hybrid search: vector + keyword run in parallel, merged so that exact
-		// lexical matches always appear even when the embedding model misses them
-		// (e.g. short titles, UK retail terms like "white goods").
-		if searchmode == "vector" && embedding.Global.Count() > 0 {
-			expandedWords := ExpandQuery(term)
-
-			var vectorResults []SearchResult
-			var vectorStats VectorStats
-			var vectorErr error
-			var keyExact, keyStarts []SearchResult
-
-			var hybridWg sync.WaitGroup
-			hybridWg.Add(2)
-
-			go func() {
-				defer hybridWg.Done()
-				vectorResults, vectorStats, vectorErr = VectorSearch(term, SEARCH_LIMIT, groupids, universeSet, msgtype,
-					float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-			}()
-
-			go func() {
-				defer hybridWg.Done()
-				if len(expandedWords) > 0 {
-					keyExact = GetWordsExact(db, expandedWords, SEARCH_LIMIT, groupids, universeIDs, msgtype,
-						float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-					keyStarts = GetWordsStarts(db, expandedWords, SEARCH_LIMIT, groupids, universeIDs, msgtype,
-						float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-				}
-			}()
-
-			hybridWg.Wait()
-
-			fallbackTaken := vectorErr != nil
-			logVectorSearch(term, groupids, msgtype, myid, searchmode, len(vectorResults), fallbackTaken, vectorStats)
-
+		// Pure vector search. VectorSearch combines semantic (cosine) ranking with
+		// an in-memory lexical guarantee — a post whose subject literally contains
+		// the query words is always returned, even below the cosine threshold — so
+		// it fully replaces the retired keyword index and its typo/soundex cascade.
+		// The store is loaded synchronously at startup; if it somehow has no
+		// entries we return nothing rather than fall back to an index that no
+		// longer exists. Results are already blurred and deduplicated by
+		// VectorSearch. Search is spatial-reach based (store group + bbox filters);
+		// a post is found in its spatial area, not on every group it was cross-
+		// posted/rippled into.
+		if embedding.Global.Count() > 0 {
+			vectorResults, vectorStats, vectorErr := VectorSearch(term, SEARCH_LIMIT, groupids, universeSet, msgtype,
+				float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+			logVectorSearch(term, groupids, msgtype, myid, len(vectorResults), vectorErr != nil, vectorStats)
 			if vectorErr != nil {
 				fmt.Printf("Vector search failed: %v\n", vectorErr)
-			}
-
-			// Merge: vector results first (semantic ranking), then keyword-only
-			// results the embedding missed (exact-match guarantee).
-			merged := mergeHybrid(vectorResults, append(keyExact, keyStarts...))
-
-			if len(merged) > 0 {
-				wg.Wait()
-				return c.JSON(applyBrowseFilters(merged))
-			}
-			// Both vector and keyword exact/starts returned nothing; fall through to
-			// typo and soundex cascade.
-		}
-
-		if len(res) == 0 {
-			words := GetWords(term)
-
-			var wg sync.WaitGroup
-			wg.Add(2)
-
-			go func() {
-				defer wg.Done()
-				res = GetWordsExact(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-			}()
-
-			go func() {
-				defer wg.Done()
-				// Add in prefix matches, which helps with plurals.
-				res2 = GetWordsStarts(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-			}()
-
-			wg.Wait()
-
-			res = append(res, res2...)
-
-			if len(res) == 0 {
-				res = GetWordsTypo(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-			}
-
-			if len(res) == 0 {
-				res = GetWordsSounds(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-			}
-
-			// Blur: one batched routing call, then cache hits.
-			blurCoords2 := make([][2]float64, 0, len(res))
-			for _, r := range res {
-				blurCoords2 = append(blurCoords2, [2]float64{float64(r.Lat), float64(r.Lng)})
-			}
-			roadblur.RoadBlurPrewarm(blurCoords2, utils.BLUR_USER)
-			for ix, r := range res {
-				res[ix].Lat, res[ix].Lng = roadblur.RoadBlur(r.Lat, r.Lng, utils.BLUR_USER)
+			} else {
+				res = vectorResults
 			}
 		}
 	}
 
-	// Return results where Msgid is not 0, deduplicated by msgid. The keyword path
-	// merges an exact-match pass with a starts-with pass (res2); any exact match is
-	// also a starts-with match, so without this dedup essentially every match would be
-	// returned twice. A message cross-posted to several of the searched groups likewise
-	// yields one spatial row per group and must collapse to a single result. We keep the
-	// first occurrence (exact matches are appended first, so they win). This mirrors the
-	// dedup mergeHybrid already applies on the vector path.
+	// Return results where Msgid is not 0, deduplicated by msgid as a safety net.
+	// VectorSearch already dedups, but keep this so any future change can't leak a
+	// duplicate; we keep the first (highest-ranked) occurrence.
 	filtered := []SearchResult{}
 	seen := make(map[uint64]bool, len(res))
 
@@ -2161,107 +2122,7 @@ func Search(c *fiber.Ctx) error {
 
 	wg.Wait()
 
-	return c.JSON(applyBrowseFilters(filtered))
-}
-
-// Activity represents a recent activity in groups
-// swagger:model Activity
-type Activity struct {
-	ID      uint64          `json:"id"`
-	Message ActivityMessage `json:"message"`
-	Group   ActivityGroup   `json:"group"`
-}
-
-// ActivityMessage represents a message in an activity
-// swagger:model ActivityMessage
-type ActivityMessage struct {
-	ID      uint64    `json:"id"`
-	Subject string    `json:"subject"`
-	Arrival time.Time `json:"arrival"`
-	Delta   int64     `json:"delta"`
-}
-
-// ActivityGroup represents a group in an activity
-// swagger:model ActivityGroup
-type ActivityGroup struct {
-	ID          uint64  `json:"id"`
-	Nameshort   string  `json:"nameshort"`
-	Namefull    string  `json:"-"`
-	Namedisplay string  `json:"namedisplay"`
-	Lat         float32 `json:"lat"`
-	Lng         float32 `json:"lng"`
-}
-
-type ActivityQuery struct {
-	Id        uint64
-	Subject   string
-	Arrival   time.Time
-	Delta     int64
-	Groupid   uint64
-	Nameshort string
-	Namefull  string
-	Lat       float32
-	Lng       float32
-}
-
-func GetRecentActivity(c *fiber.Ctx) error {
-	var activity []ActivityQuery
-
-	db := database.DBConn
-
-	start := time.Now().Add(-time.Hour * 24).Format("2006-01-02 15:04:05")
-
-	db.Table("messages").
-		Select("messages.id, messages_groups.arrival, messages_groups.groupid, messages.subject, "+
-			"groups.nameshort, groups.namefull, groups.lat, groups.lng").
-		Joins("INNER JOIN messages_groups ON messages.id = messages_groups.msgid").
-		Joins("INNER JOIN `groups` ON messages_groups.groupid = groups.id").
-		Joins("INNER JOIN users ON messages.fromuser = users.id").
-		Where("messages_groups.arrival > ? AND collection = ?", start, utils.COLLECTION_APPROVED).
-		Order("messages_groups.arrival ASC").
-		Limit(100).
-		Scan(&activity)
-
-	last := int64(0)
-
-	var ret []Activity
-
-	for _, r := range activity {
-		namedisplay := r.Nameshort
-
-		if len(r.Namefull) > 0 {
-			namedisplay = r.Namefull
-		}
-
-		arrival := r.Arrival.Unix()
-		delta := int64(0)
-
-		if last != 0 {
-			delta = arrival - last
-		}
-
-		last = arrival
-
-		ret = append(ret, Activity{
-			ID: r.Id,
-			Message: ActivityMessage{
-				ID:      r.Id,
-				Subject: r.Subject,
-				Arrival: r.Arrival,
-				Delta:   delta,
-			},
-			Group: ActivityGroup{
-				ID:          r.Groupid,
-				Lat:         r.Lat,
-				Lng:         r.Lng,
-				Nameshort:   r.Nameshort,
-				Namefull:    r.Namefull,
-				Namedisplay: namedisplay,
-			},
-		})
-	}
-
-	return c.JSON(ret)
+	return c.JSON(applyOriginOnly(applyBrowseFilters(filtered)))
 }
 
 // =============================================================================
@@ -2550,20 +2411,12 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 	}
 }
 
-// invalidateMessageSearchIndexes drops the keyword-index (messages_index) and/or vector
-// embedding (messages_embeddings) rows for a message whose subject/body has just changed.
-// Both are populated ONCE for messages "missing" from those tables
-// (MessageSearchService.indexUnindexedMessages / GenerateEmbeddingsCommand) and are never
-// refreshed on edit, so a search for a term the edit introduced would never match.
-// Deleting the stale rows lets those background jobs re-index and re-embed from the new
-// text. Discourse 9954: a Wanted edited to add "Moulinex" was unfindable by that word.
-//
-// The two stores are driven by different fields, so they take independent invalidation
-// flags: messages_index is derived from the message SUBJECT only (indexString is only ever
-// called with subject text), while messages_embeddings is derived from subject+textbody. A
-// body-only edit must not drop the keyword index - those rows still accurately reflect the
-// unchanged subject, and dropping them would make the message unsearchable by keyword for
-// no reason until the next background run.
+// invalidateMessageEmbedding drops the vector embedding (messages_embeddings) row for a
+// message whose subject or body has just changed. It is populated ONCE for messages
+// "missing" from that table (GenerateEmbeddingsCommand) and never refreshed on edit, so a
+// search for a term the edit introduced would never match. Deleting the stale row lets the
+// background job re-embed from the new text. Discourse 9954: a Wanted edited to add
+// "Moulinex" was unfindable by that word.
 //
 // Deleting the messages_embeddings row is necessary but not sufficient for vector search:
 // apiv2 serves vector search entirely from an in-process store (embedding.Global) that
@@ -2571,14 +2424,9 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 // ticks would leave the STALE embedding in memory (see Store.Refresh's "Known limitation").
 // We therefore also Evict the msgid from that store so the next Refresh reloads the
 // regenerated blob.
-func invalidateMessageSearchIndexes(db *gorm.DB, msgid uint64, subjectChanged bool, textChanged bool) {
-	if subjectChanged {
-		db.Table("messages_index").Where("msgid = ?", msgid).Delete(nil)
-	}
-	if subjectChanged || textChanged {
-		db.Table("messages_embeddings").Where("msgid = ?", msgid).Delete(nil)
-		embedding.Global.Evict(msgid)
-	}
+func invalidateMessageEmbedding(db *gorm.DB, msgid uint64) {
+	db.Table("messages_embeddings").Where("msgid = ?", msgid).Delete(nil)
+	embedding.Global.Evict(msgid)
 }
 
 // handleApprove approves a pending message.
@@ -2601,17 +2449,22 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Set ctx.Groupid to the primary acted-on group (for logging).
 	ctx.Groupid = authorizedGroups[0]
 
-	// Move to Approved with arrival=NOW() so immediate-email recipients get it.
-	// Guard against double-approve by requiring collection != Approved.
-	// Restrict to groups the caller is authorised for.
-	if result := db.Table("messages_groups").
-		Where("msgid = ? AND groupid IN ? AND collection != ?", req.ID, authorizedGroups, utils.COLLECTION_APPROVED).
-		Updates(map[string]interface{}{
-			"collection": utils.COLLECTION_APPROVED, "approvedby": myid,
-			"approvedat": gorm.Expr("NOW()"), "arrival": gorm.Expr("NOW()"),
-		}); result.Error != nil {
-		log.Printf("Failed to approve message %d: %v", req.ID, result.Error)
+	// A copy that rippled in cannot be approved while the post's home community is
+	// reviewing it (their moderator sent it back to pending): see lockedCopiesBlocked.
+	if blocked := lockedCopiesBlocked(db, req.ID, authorizedGroups); len(blocked) > 0 {
+		return fiber.NewError(fiber.StatusForbidden, homeLockedMessage)
 	}
+
+	approvable, stillHeld := ApprovePendingCopies(db, req.ID, myid, authorizedGroups)
+	if len(approvable) == 0 && len(stillHeld) > 0 {
+		holder, holderName := heldByAnotherMod(myid, req)
+		return heldByAnotherResponse(c, holder, holderName)
+	}
+	authorizedGroups = approvable
+
+	// The home copy is approved, so the copies it was locking go back to normal per-group
+	// moderation. The reach stays frozen: nothing is re-sent.
+	clearHomeLocksIfHomeApproved(db, req.ID, authorizedGroups)
 
 	// Release hold on the same authorised groups.
 	// Identical to cc381d7c669b
@@ -2659,7 +2512,7 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// A standard message attached to an approval is the third route by which a
 	// moderator's words reach the poster, so it is gated the same way: a group the post
 	// rippled into approves its own copy without writing to the freegler.
-	originGid := MessageOriginGroup(db, req.ID)
+	home := HomeGroups(db, req.ID)
 
 	for _, gid := range authorizedGroups {
 		// Identical golden to
@@ -2667,7 +2520,7 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		db.Table("background_tasks").Create(map[string]interface{}{
 			"task_type": "email_message_approved",
 			"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
-				req.ID, gid, myid, subject, body, stdmsgid, "Approve", NotifyPosterFlag(originGid, gid)),
+				req.ID, gid, myid, subject, body, stdmsgid, "Approve", NotifyPosterFlag(home, gid)),
 		})
 	}
 
@@ -2689,57 +2542,146 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-// handleReject rejects a pending message.
-// MessageOriginGroup returns the group a message was first posted to — the one it was not
-// rippled into. Rippling-out adds a messages_groups row per group a post reaches, flagged
-// rippled_in = 1; the poster's own group keeps rippled_in = 0. Only the origin group's
-// moderators correspond with the poster (#6, Discourse 10102); a rippled-in group's
-// moderators administer their copy in silence.
+// ApprovePendingCopies moves the message's copies on the given groups to Approved, with
+// arrival=NOW() so immediate-email recipients get it, and returns the groups the caller may
+// carry on with plus those it must leave alone.
 //
-// rippled_in is the only sound test. It is written by ExpandService at ripple time and
-// never moves, and is the same column the client marks the home group with
-// (composables/rippleStatus.js homeGroupId). An arrival window (mg.arrival close to
+// The hold is checked in the write itself, not only by the check in
+// dispatchPostMessageAction: a hold and an approval by two moderators in the same second both
+// succeeded, because the hold landed between that check and this update (Discourse 9808/835,
+// where it is how the post first went live). A copy held by somebody else is simply not
+// touched, and, unlike the rest of the approval, its hold is not released afterwards.
+//
+// Guards against double-approve by requiring collection != Approved. heldByOther lists the
+// groups still Pending under another moderator's hold; approvable is everything else asked
+// for.
+func ApprovePendingCopies(db *gorm.DB, msgid uint64, myid uint64, groups []uint64) (approvable []uint64, heldByOther []uint64) {
+	if result := db.Table("messages_groups").
+		Where("msgid = ? AND groupid IN ? AND collection != ? AND (heldby IS NULL OR heldby = ?)", msgid, groups, utils.COLLECTION_APPROVED, myid).
+		Updates(map[string]interface{}{
+			"collection": utils.COLLECTION_APPROVED, "approvedby": myid,
+			"approvedat": gorm.Expr("NOW()"), "arrival": gorm.Expr("NOW()"),
+			"needs_moderator": 0,
+		}); result.Error != nil {
+		log.Printf("Failed to approve message %d: %v", msgid, result.Error)
+	}
+
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND groupid IN ? AND collection != ? AND heldby IS NOT NULL AND heldby != ? AND deleted = 0",
+			msgid, groups, utils.COLLECTION_APPROVED, myid).
+		Scan(&heldByOther)
+
+	held := map[uint64]bool{}
+	for _, gid := range heldByOther {
+		held[gid] = true
+	}
+	for _, gid := range groups {
+		if !held[gid] {
+			approvable = append(approvable, gid)
+		}
+	}
+
+	return approvable, heldByOther
+}
+
+// homeLockedMessage is what a receiving community's moderator is told when they try to
+// approve a copy their post's home community has pulled back.
+const homeLockedMessage = "The post's home community is reviewing this post, so it can't be approved here until they approve it."
+
+// lockedCopiesBlocked returns the groups, among those the moderator is acting on, whose
+// copy is locked by the home community and so may not be approved. A copy is blocked while
+// the post has an undeleted home row that is not Approved. Acting on the home group itself
+// is never blocked: that approval is what lifts the lock.
+func lockedCopiesBlocked(db *gorm.DB, msgid uint64, groups []uint64) []uint64 {
+	home := HomeGroups(db, msgid)
+	for _, gid := range groups {
+		if home[gid] {
+			return nil
+		}
+	}
+
+	var homePending int64
+	db.Table("messages_groups").
+		Where("msgid = ? AND rippled_in = 0 AND deleted = 0 AND collection != ?", msgid, utils.COLLECTION_APPROVED).
+		Count(&homePending)
+	if homePending == 0 {
+		return nil
+	}
+
+	var blocked []uint64
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND groupid IN ? AND rippled_in = 1 AND locked_by_home = 1 AND deleted = 0", msgid, groups).
+		Scan(&blocked)
+
+	return blocked
+}
+
+// clearHomeLocksIfHomeApproved lifts the home lock on a post's other copies once a home
+// group's copy has been approved by this action.
+func clearHomeLocksIfHomeApproved(db *gorm.DB, msgid uint64, approvedGroups []uint64) {
+	home := HomeGroups(db, msgid)
+	for _, gid := range approvedGroups {
+		if home[gid] {
+			db.Table("messages_groups").
+				Where("msgid = ? AND locked_by_home = 1", msgid).
+				Update("locked_by_home", 0)
+			return
+		}
+	}
+}
+
+// handleReject rejects a pending message.
+// HomeGroups is the set of communities a post was posted to DIRECTLY: every
+// messages_groups row with rippled_in = 0, soft-deleted rows included. It is what
+// every poster-facing decision reads ("may this group's action be relayed to the
+// freegler?"), and it is a SET because a TrashNothing cross-post is one post sent to
+// several communities, whose per-group mails arrive a second apart (Discourse 10115).
+// Modelling home as the single earliest row told every other community it was
+// rejecting a rippled-in copy, and dropped its mail to the member.
+//
+// rippled_in is the only column consulted. An arrival window (mg.arrival close to
 // messages.arrival) does NOT work: handleApprove re-stamps messages_groups.arrival to the
 // approval time while messages.arrival keeps the time the post was received, so any post
 // moderated more slowly than the window has no row inside it and reads as having no
-// origin — which silently opens everything gated on "is this the home group?".
+// home at all - which silently opens everything gated on "is this the home group?".
 //
-// Returns 0 when the origin cannot be determined — the origin row was HARD-deleted
+// Empty when no direct row survives - the direct rows were HARD-deleted
 // (handleDeleteMessage / handleMove) leaving only rippled-in rows, or the message has no
-// rows at all. Callers then fall back to notifying (the safe direction — notify rather
-// than silently drop). Soft-deleted (deleted=1) origin rows from a plain-delete rejection
-// still persist and are still matched, so a later secondary rejection stays silent.
-//
-// messages_groups has no surrogate id column (its key is the composite (msgid, groupid)),
-// so groupid is the tiebreak when two rows share the same arrival second: lowest groupid
-// wins, deterministically. Manual cross-posting is retired by #10, so same-second ties are
-// rare (TN same-second import order).
-func MessageOriginGroup(db *gorm.DB, msgid uint64) uint64 {
-	var gid uint64
+// rows at all. Callers then fall back to notifying (the safe direction - notify rather
+// than silently drop). Soft-deleted (deleted=1) direct rows from a plain-delete rejection
+// still persist and still count, so a later secondary rejection stays silent.
+func HomeGroups(db *gorm.DB, msgid uint64) map[uint64]bool {
+	var gids []uint64
 	db.Table("messages_groups").
 		Select("groupid").
 		Where("msgid = ? AND rippled_in = 0", msgid).
-		Order("arrival ASC, groupid ASC").
-		Limit(1).
-		Scan(&gid)
-	return gid
+		Scan(&gids)
+
+	home := make(map[uint64]bool, len(gids))
+	for _, gid := range gids {
+		home[gid] = true
+	}
+
+	return home
 }
 
 // NotifyPosterFlag reports whether a moderation action taken on group gid may be relayed
-// to the poster: 1 for the post's home group, 0 for a group it merely rippled into. It is
-// written into the poster-email background task, which the batch reads before sending
-// anything to the freegler (ProcessBackgroundTasksCommand::handleModStdMessage).
+// to the poster: 1 for a community the post was posted to (HomeGroups), 0 for one it
+// merely rippled into. It is written into the poster-email background task, which the
+// batch reads before sending anything to the freegler
+// (ProcessBackgroundTasksCommand::handleModStdMessage).
 //
 // The task is queued either way, because the action DID happen on that group and its
 // moderation log entry and moderator push are its own business. It is only the
 // correspondence that belongs to the home community.
 //
-// An unknown origin yields 1: better a message the poster did not need than a rejection
+// No known home group yields 1: better a message the poster did not need than a rejection
 // they never hear about on the group they actually posted to.
-func NotifyPosterFlag(originGid, gid uint64) int {
-	if originGid != 0 && gid != originGid {
+func NotifyPosterFlag(home map[uint64]bool, gid uint64) int {
+	if len(home) > 0 && !home[gid] {
 		return 0
 	}
+
 	return 1
 }
 
@@ -2790,7 +2732,11 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		Where("msgid = ? AND groupid IN ? AND collection IN ? AND deleted = 0",
 			req.ID, authorizedGroups, moderatable).Scan(&pendingGroups)
 
-	if subject != "" && len(pendingGroups) == 0 {
+	// The same answer for a plain delete (no standard message): ModTools used to show the
+	// Pending buttons on an Approved copy whenever any OTHER group's copy was still Pending,
+	// and a Delete there updated nothing yet reported Success (Discourse 10102). Saying so
+	// lets the client show the real state instead.
+	if len(pendingGroups) == 0 {
 		return c.JSON(fiber.Map{"ret": 1, "status": "Message is no longer pending and was not rejected"})
 	}
 
@@ -2841,18 +2787,18 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// showing in that group's area and must NOT be sent back to the poster (#6): they
 	// posted it on their origin group and it remains available there, so a secondary
 	// "out of area" rejection is not their concern.
-	originGid := MessageOriginGroup(db, req.ID)
+	home := HomeGroups(db, req.ID)
 
 	// Queue the rejection task for every group actually rejected here (Pending at the
 	// time) so a group where the post had already gone live gets no phantom log (#9815).
-	// notifyposter carries whether the batch may relay it to the freegler: only the origin
-	// group may. A secondary group's rejection still queues its task, so that group keeps
-	// its own moderation log entry and its mods get their push — the task carries
+	// notifyposter carries whether the batch may relay it to the freegler: only a community
+	// the post was posted to may. A secondary group's rejection still queues its task, so
+	// that group keeps its own moderation log entry and its mods get their push — the task carries
 	// notifyposter 0 and the batch sends no mail and opens no modmail chat. Secondary
 	// rejections are also logged for #9 observability (how often rippling pushes a post
 	// somewhere a group rejects it).
 	for _, gid := range pendingGroups {
-		notifyPoster := NotifyPosterFlag(originGid, gid)
+		notifyPoster := NotifyPosterFlag(home, gid)
 		if notifyPoster == 0 {
 			log.Printf("ripple: secondary-group reject msgid=%d groupid=%d byuser=%d (poster not notified)", req.ID, gid, myid)
 			RecordRippleEvent(db, "secondary_reject")
@@ -3006,7 +2952,7 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// misfired in Discourse 10102: the shared "Animals (Delete)" standard message has
 	// action "Delete Approved Message", so it never went near handleReject's suppression
 	// and a Walsall moderator's note reached a Potteries poster.
-	originGid := MessageOriginGroup(db, req.ID)
+	home := HomeGroups(db, req.ID)
 
 	// Per-group delete: remove only the authorized groups' rows.
 	// Identical golden to f90b6df0a3bb
@@ -3053,7 +2999,7 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// Queue email+log+push via background task for each authorized group.
 	// The batch processor will create the mod log entry and notify group moderators.
 	for _, gid := range authorizedGroups {
-		notifyPoster := NotifyPosterFlag(originGid, gid)
+		notifyPoster := NotifyPosterFlag(home, gid)
 		if notifyPoster == 0 {
 			log.Printf("ripple: secondary-group delete msgid=%d groupid=%d byuser=%d (poster not notified)", req.ID, gid, myid)
 			RecordRippleEvent(db, "secondary_delete")
@@ -3155,6 +3101,23 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
+// homeSentBackReason is the reason and log text a receiving community sees when a moderator
+// of the post's home community sends it back.
+const homeSentBackReason = "A moderator of the home community moved this post back to pending for review. It can't be approved here until they approve it."
+
+// actingOnHomeGroup reports whether any group a moderator is acting on is one the post was
+// posted to directly (HomeGroups), as opposed to one it merely rippled into.
+func actingOnHomeGroup(db *gorm.DB, msgid uint64, acting []uint64) bool {
+	home := HomeGroups(db, msgid)
+	for _, gid := range acting {
+		if home[gid] {
+			return true
+		}
+	}
+
+	return false
+}
+
 // handleBackToPending moves an approved message back to pending.
 func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
@@ -3187,7 +3150,35 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// Pending.
 	db.Table("messages_groups").Where("msgid = ? AND collection = ?", req.ID, utils.COLLECTION_APPROVED).
 		Updates(map[string]interface{}{"approvedby": gorm.Expr("NULL"), "approvedat": gorm.Expr("NULL")})
-	microvolunteering.SendForReviewAllGroups(db, req.ID, "A moderator moved this post back to pending for review.")
+	// The groups this moderator acted on get their own log and mod notification below;
+	// every other group whose copy is pulled back (rippled copies elsewhere) gets a Hold
+	// log from SendForReviewAllGroups, so its moderators can see why the post is back in
+	// their queue and who did it (Discourse 10102).
+	//
+	// When the acting moderator moderates the post's HOME community, the receiving
+	// communities are told it was the home community and their copies are locked: they
+	// cannot approve until the home copy is approved again (Discourse 9808/835). A Back to
+	// pending from a receiving community's own moderator, or by a members' report quorum,
+	// locks nothing: those copies stay independent.
+	fromHome := actingOnHomeGroup(db, req.ID, authorizedGroups)
+	rippledReason := ""
+	if fromHome {
+		rippledReason = homeSentBackReason
+	}
+	flipped := microvolunteering.SendForReviewAllGroupsWithRippledReason(db, req.ID, "A moderator moved this post back to pending for review.", rippledReason, &myid, authorizedGroups)
+
+	// Every copy pulled back, and the copy this moderator acted on, now waits for a
+	// moderator of its own group: needs_moderator stops the content check and auto-approve
+	// putting it back live. Only a moderator's Approve clears it.
+	db.Table("messages_groups").
+		Where("msgid = ? AND groupid IN ? AND collection = ?", req.ID, append(flipped, authorizedGroups...), utils.COLLECTION_PENDING).
+		Update("needs_moderator", 1)
+
+	if fromHome {
+		db.Table("messages_groups").
+			Where("msgid = ? AND rippled_in = 1 AND deleted = 0 AND collection = ?", req.ID, utils.COLLECTION_PENDING).
+			Updates(map[string]interface{}{"locked_by_home": 1, "needs_moderator": 1})
+	}
 
 	// Freeze the ripple once the origin is Pending: the copies persist for per-group
 	// moderation and a later re-approval brings a copy back without re-rippling or
@@ -3271,9 +3262,10 @@ func handleApproveEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		if edit.Newtext != nil {
 			db.Table("messages").Where("id = ?", req.ID).Update("textbody", *edit.Newtext)
 		}
-		// Applied an edit → whichever of the keyword index / vector embedding depend on
-		// the field(s) just written are now stale.
-		invalidateMessageSearchIndexes(db, req.ID, edit.Newsubject != nil, edit.Newtext != nil)
+		// Applied an edit → the vector embedding of the old subject/body is now stale.
+		if edit.Newsubject != nil || edit.Newtext != nil {
+			invalidateMessageEmbedding(db, req.ID)
+		}
 	}
 
 	// Mark ALL pending edits as approved.
@@ -3324,10 +3316,11 @@ func handleRevertEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		}
 		db.Table("messages").Clauses(assignments).Where("id = ?", req.ID).Updates(map[string]interface{}{})
 
-		// Reverting restored the previous subject/body, so whichever of the keyword index
-		// / vector embedding depend on the restored field(s) are out of sync again - drop
-		// them to be rebuilt.
-		invalidateMessageSearchIndexes(db, req.ID, old.Oldsubject != nil, old.Oldtext != nil)
+		// Reverting restored the previous subject/body, so the vector embedding is out of
+		// sync again - drop it to be rebuilt.
+		if old.Oldsubject != nil || old.Oldtext != nil {
+			invalidateMessageEmbedding(db, req.ID)
+		}
 	} else {
 		// No recorded old values — just clear the editedby flag.
 		// Identical golden to
@@ -3381,6 +3374,14 @@ func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
 	}
 
+	// The whole point of an unaddressed TN post is that its poster has not agreed to hear
+	// from this community's moderators. ModTools hides Blank Reply and the standard
+	// messages for these posts; this is the guard behind that, and it matters because app
+	// bundles are baked into the APK and can be months out of date.
+	if modmessaging.PostIsUnaddressed(db, req.ID) {
+		return fiber.NewError(fiber.StatusForbidden, "This poster didn't choose this community, so they can't be messaged")
+	}
+
 	subject := ""
 	if req.Subject != nil {
 		subject = *req.Subject
@@ -3425,7 +3426,7 @@ func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// to the community it was posted on (Discourse 10102). Refuse rather than accept and
 	// silently drop it — the moderator wrote those words deliberately and must be told
 	// they did not go.
-	if NotifyPosterFlag(MessageOriginGroup(db, req.ID), ctx.Groupid) == 0 {
+	if NotifyPosterFlag(HomeGroups(db, req.ID), ctx.Groupid) == 0 {
 		return fiber.NewError(fiber.StatusForbidden,
 			"Only the community this was posted on can message the freegler about it")
 	}
@@ -3494,6 +3495,17 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		return fiber.NewError(fiber.StatusInternalServerError, "Transaction failed")
 	}
 
+	// Capture any mod-applied hold on the group the draft is recorded against,
+	// before its messages_groups row is removed below. A hold is scoped to a
+	// specific (message, group) pair; capturing it here is what lets
+	// JoinAndPostAs restore it on repost without a mod having released it
+	// (Discourse 9946/8), without needing the old messages_groups row itself
+	// to survive.
+	var heldby *uint64
+	if len(groupids) > 0 {
+		tx.Table("messages_groups").Select("heldby").Where("msgid = ? AND groupid = ?", req.ID, groupids[0]).Scan(&heldby)
+	}
+
 	// messages_drafts is unique per msgid, so a message has at most one draft
 	// row. Record it against the first targeted group; on re-post via
 	// JoinAndPost the owner picks the destination group(s) again. INSERT IGNORE
@@ -3502,6 +3514,7 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		if err := tx.Table("messages_drafts").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 			"msgid":   req.ID,
 			"groupid": groupids[0],
+			"heldby":  heldby,
 			"userid":  myid,
 		}).Error; err != nil {
 			tx.Rollback()
@@ -3512,12 +3525,16 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// Remove the targeted group rows. With a groupid this is just that group;
 	// without one it's every group the message was on. Any groups not in the
 	// set keep their live posting.
-	// Identical golden to 3a50dbee0fa0
-	// (handleDeleteMessage); converted together per gate (h). Runs on tx (a
-	// *gorm.DB transaction), which the retired harness's dry-run build
-	// function rendered identically to the plain connection - same reasoning
-	// as the retired orm_wave2_pilot_test.go's handleMerge note (removed in
-	// d22ba1d6c).
+	//
+	// A hard delete is safe here: any mod-applied heldby was captured above
+	// into messages_drafts.heldby, which JoinAndPostAs re-applies to the fresh
+	// row it creates on repost - so a hold survives the pause without the old
+	// messages_groups row needing to survive too. Keeping the row alive
+	// (soft-delete) was tried and rejected (PR #1517): it leaves a Pending row
+	// with deleted=1 and heldby still set, a state several existing
+	// heldby-checking queries over messages_groups don't filter out (PR #998
+	// fixed exactly this shape of row causing a real stuck-Held message in
+	// production), so it widens an already-live risk instead of avoiding it.
 	if err := tx.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, groupids).
 		Delete(nil).Error; err != nil {
 		tx.Rollback()
@@ -3644,11 +3661,26 @@ func JoinAndPostAs(c *fiber.Ctx, caller uint64, author uint64, req PostMessageRe
 	}
 
 	// Find the group — from request, then messages_drafts, then messages_groups.
+	// Also fetch any hold RejectToDraft captured from the group the draft was
+	// taken back from, so it can be reapplied below (Discourse 9946/8) - but
+	// only if the message is still headed to that same group: a hold is
+	// scoped to a (message, group) pair, and applyPatchMessageCore clears
+	// messages_drafts.heldby whenever the member switches destination group
+	// via PATCH, so comparing draft.Groupid to the resolved groupid here also
+	// covers a groupid supplied directly on this request that bypasses the
+	// draft's stored group entirely.
+	type draftInfo struct {
+		Groupid uint64
+		Heldby  *uint64
+	}
+	var draft draftInfo
+	db.Table("messages_drafts").Select("groupid, heldby").Where("msgid = ?", req.ID).Limit(1).Scan(&draft)
+
 	groupid := uint64(0)
 	if req.Groupid != nil && *req.Groupid > 0 {
 		groupid = *req.Groupid
 	} else {
-		db.Table("messages_drafts").Select("groupid").Where("msgid = ?", req.ID).Limit(1).Scan(&groupid)
+		groupid = draft.Groupid
 	}
 	if groupid == 0 {
 		groupid = getPrimaryGroupForMessage(db, req.ID)
@@ -3759,8 +3791,11 @@ func JoinAndPostAs(c *fiber.Ctx, caller uint64, author uint64, req PostMessageRe
 		db.Table("messages").Where("id = ?", req.ID).Update("deliverypossible", *req.Deliverypossible)
 	}
 
-	// Submit: insert into messages_groups and clean up draft.
-	db.Table("messages_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+	// Submit: insert into messages_groups. INSERT IGNORE only fires for a
+	// group with no existing row (msgid, groupid unique key) - RejectToDraft
+	// hard-deletes the old row (see handleRejectToDraft), so there is always
+	// exactly a fresh insert or nothing to do here, never a row to revive.
+	createFields := map[string]interface{}{
 		"msgid":      req.ID,
 		"groupid":    groupid,
 		"collection": collection,
@@ -3770,12 +3805,20 @@ func JoinAndPostAs(c *fiber.Ctx, caller uint64, author uint64, req PostMessageRe
 		// Read from the row rather than msg.Type so a draft with no type stored
 		// writes NULL rather than an empty string the enum would reject.
 		"msgtype": gorm.Expr("(SELECT type FROM messages WHERE id = ?)", req.ID),
-	})
+	}
+	if draft.Heldby != nil && draft.Groupid == groupid {
+		// Restore the hold RejectToDraft captured for this exact group -
+		// preserves a mod's hold across a member's edit-and-repost without a
+		// mod having released it (Discourse 9946/8).
+		createFields["heldby"] = *draft.Heldby
+	}
+	db.Table("messages_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(createFields)
 
 	// Clear any previous outcomes (V1 parity: submit() always deletes outcomes before re-posting).
 	// Identical golden to 854c7e93efe3
 	// and a08c7f4426c7; converted together per gate (h).
 	db.Table("messages_outcomes").Where("msgid = ?", req.ID).Delete(nil)
+	reachqueue.BumpReachForRepost(db, req.ID)
 	// Identical golden to 0486830f6eda
 	// and 4064113639bf; converted together per gate (h).
 	db.Table("messages_outcomes_intended").Where("msgid = ?", req.ID).Delete(nil)
@@ -3927,7 +3970,10 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, []uint64, error) {
 	// The sync's job is to STOP divergence, not tolerate it: merge the twins
 	// (falls back to the split candidates if the merge fails).
 	candidates = user.HealTNDivergence(db, candidates)
-	return candidates[0], candidates, nil
+	// The member may hold further accounts carrying a DIFFERENT per-group alias
+	// (see user.FindTNSiblings). Added after the heal, so they widen owner
+	// arbitration without being merged.
+	return candidates[0], user.WithTNSiblings(db, candidates, email), nil
 }
 
 // actAsOwnerCandidate returns the message owner's id when the owner is one of
@@ -4062,6 +4108,15 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to modify this message")
 	}
 
+	// An unaddressed TN post is not a post its host community owns: the poster never chose
+	// that community and cannot be told the wording was changed, so a moderator rewriting
+	// it would be putting words in the mouth of someone with no way to object. Approve and
+	// delete stay available (see modmessaging); editing does not. The poster's own edits,
+	// which arrive from TN as the owner, are untouched.
+	if isMod && !isOwner && modmessaging.PostIsUnaddressed(db, req.ID) {
+		return fiber.NewError(fiber.StatusForbidden, "This post can't be edited - the poster didn't choose this community")
+	}
+
 	// Get old values for edit tracking.
 	type msgValues struct {
 		Subject    string
@@ -4182,11 +4237,20 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	// rather than the original one from RejectToDraft.  Without this, the group
 	// change is silently dropped and the message is reposted to the wrong community.
 	// The UPDATE is a no-op when the message is not in draft state (0 rows affected).
+	//
+	// Only fires when the groupid is actually changing (WHERE groupid != ?):
+	// clearing heldby is deliberate here, not a side effect. RejectToDraft
+	// captured any mod hold against the ORIGINAL group; once this switches the
+	// draft to a different one, that hold no longer applies there, and leaving
+	// it set would let JoinAndPostAs's "does the draft's group match where
+	// we're posting" check compare the new group against itself and wrongly
+	// reapply a hold that belonged to a different group (Discourse 9946/8).
 	if req.Groupid != nil && *req.Groupid > 0 {
 		var groupExists int64
 		db.Table("groups").Where("id = ?", *req.Groupid).Count(&groupExists)
 		if groupExists > 0 {
-			db.Table("messages_drafts").Where("msgid = ?", req.ID).Update("groupid", *req.Groupid)
+			db.Table("messages_drafts").Where("msgid = ? AND groupid != ?", req.ID, *req.Groupid).
+				Updates(map[string]interface{}{"groupid": *req.Groupid, "heldby": gorm.Expr("NULL")})
 		}
 	}
 
@@ -4427,15 +4491,15 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 			})
 	}
 
-	// The subject/body drive the search indexes (messages_index keyword search and
-	// messages_embeddings vector search), which are each populated once for "missing"
-	// messages and never refreshed on edit. Drop the stale rows for ANY editor (owner or
-	// mod) so the background indexer/embedder rebuild from the new text. Discourse 9954.
+	// The subject/body drive the vector search embedding (messages_embeddings), which is
+	// populated once for "missing" messages and never refreshed on edit. Drop the stale row
+	// for ANY editor (owner or mod) so the background embedder rebuilds from the new text.
+	// Discourse 9954.
 	if subjectChanged || textChanged {
-		invalidateMessageSearchIndexes(db, req.ID, subjectChanged, textChanged)
+		invalidateMessageEmbedding(db, req.ID)
 	}
 
-	if (subjectChanged || textChanged || typeChanged || locationChanged || itemsChanged || imagesChanged) && !isMod {
+	if subjectChanged || textChanged || typeChanged || locationChanged || itemsChanged || imagesChanged {
 		// Store oldtype/newtype only when type actually changed.
 		var oldType, newType interface{}
 		if typeChanged {
@@ -4481,30 +4545,36 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		// V1 parity: reviewrequired is only set when the message is Approved
 		// AND the member's posting status would put them in Pending (i.e. they
 		// are moderated). Unmoderated members' edits go live with no review.
+		// A moderator's own edit never requires review of itself - skip the
+		// computation entirely so a mod's own membership row (looked up by
+		// myid, the editor) can't push reviewRequired to 1 and queue mods to
+		// review the mod's own edit.
 		reviewRequired := 0
 		groupIDs := getAllGroupsForMessage(db, req.ID)
 
-		for _, gid := range groupIDs {
-			// Check if the message is currently Approved on this group.
-			var collection string
-			db.Table("messages_groups").Select("collection").Where("msgid = ? AND groupid = ?", req.ID, gid).Scan(&collection)
+		if !isMod {
+			for _, gid := range groupIDs {
+				// Check if the message is currently Approved on this group.
+				var collection string
+				db.Table("messages_groups").Select("collection").Where("msgid = ? AND groupid = ?", req.ID, gid).Scan(&collection)
 
-			if strings.EqualFold(collection, "Approved") {
-				// Check if the group is set to moderate all posts.
-				var groupModerated, groupClosed int
-				db.Table("groups").Select("COALESCE(JSON_EXTRACT(settings, '$.moderated'), 0), COALESCE(JSON_EXTRACT(settings, '$.closed'), 0)").Where("id = ?", gid).Row().Scan(&groupModerated, &groupClosed)
+				if strings.EqualFold(collection, "Approved") {
+					// Check if the group is set to moderate all posts.
+					var groupModerated, groupClosed int
+					db.Table("groups").Select("COALESCE(JSON_EXTRACT(settings, '$.moderated'), 0), COALESCE(JSON_EXTRACT(settings, '$.closed'), 0)").Where("id = ?", gid).Row().Scan(&groupModerated, &groupClosed)
 
-				if groupModerated == 1 || groupClosed == 1 {
-					// Group moderates all posts — this edit needs review.
-					reviewRequired = 1
-				} else {
-					// Check the member's individual posting status.
-					var postingStatus *string
-					db.Table("memberships").Select("ourPostingStatus").Where("userid = ? AND groupid = ?", myid, gid).Scan(&postingStatus)
-
-					// NULL, empty, or MODERATED → member is moderated → review required.
-					if postingStatus == nil || *postingStatus == "" || strings.EqualFold(*postingStatus, "MODERATED") || strings.EqualFold(*postingStatus, "PROHIBITED") {
+					if groupModerated == 1 || groupClosed == 1 {
+						// Group moderates all posts — this edit needs review.
 						reviewRequired = 1
+					} else {
+						// Check the member's individual posting status.
+						var postingStatus *string
+						db.Table("memberships").Select("ourPostingStatus").Where("userid = ? AND groupid = ?", myid, gid).Scan(&postingStatus)
+
+						// NULL, empty, or MODERATED → member is moderated → review required.
+						if postingStatus == nil || *postingStatus == "" || strings.EqualFold(*postingStatus, "MODERATED") || strings.EqualFold(*postingStatus, "PROHIBITED") {
+							reviewRequired = 1
+						}
 					}
 				}
 			}
@@ -4938,7 +5008,9 @@ type OnBehalfPosting struct {
 // postcode their own posts carry. Deliberately not derived from lastlocation or
 // a nearest-postcode lookup: those say where they last were, not where they say
 // they are, so they would stamp a postcode on a member's post that the member
-// never picked. If they have not set one, we refuse rather than guess.
+// never picked. If they have not set one, we refuse rather than guess. A Trash
+// Nothing member's mylocation is stale V1 data (TN is the master for their
+// location), so it does not count as chosen.
 //
 // The error text is shown to the moderator, so it says what to do about it.
 func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
@@ -4956,7 +5028,7 @@ func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
 			"JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.name')) AS locationname, "+
 			"JSON_EXTRACT(settings, '$.mylocation.lat') AS lat, "+
 			"JSON_EXTRACT(settings, '$.mylocation.lng') AS lng").
-		Where("id = ?", author).Scan(&chosen)
+		Where("id = ? AND tnuserid IS NULL", author).Scan(&chosen)
 
 	if chosen.Locationid == 0 || chosen.Locationname == "" {
 		return nil, errors.New("That member hasn't set their location, so we can't post for them - ask them to set it first")
@@ -5434,6 +5506,11 @@ type PostMessageRequest struct {
 	// Bulk-offer interest state change (action "BulkInterestState").
 	Bulkitemid *uint64 `json:"bulkitemid"`
 	State      *string `json:"state"`
+	// Optional structured terms attached to a promise (action "Promise"). Stored
+	// as JSON on messages_promises.terms and returned on the message's promises;
+	// omit it and nothing changes. Deployments that turn a promise into a formal
+	// agreement (see "AcceptAgreement") use it; Freegle's own clients do not send it.
+	Terms *json.RawMessage `json:"terms"`
 }
 
 // BulkInterestInput is one item the caller is expressing interest in.
@@ -5494,6 +5571,9 @@ func PostMessage(c *fiber.Ctx) error {
 			// candidates for per-message arbitration if the merge fails).
 			partnerCandidates = user.HealTNDivergence(db, partnerCandidates)
 			myid = partnerCandidates[0]
+			// Same as resolvePartnerAuth: the member's other accounts join the
+			// candidate set for owner arbitration only, never for merging.
+			partnerCandidates = user.WithTNSiblings(db, partnerCandidates, email)
 		}
 	}
 
@@ -5627,24 +5707,31 @@ func heldByAnotherMod(myid uint64, req PostMessageRequest) (uint64, string) {
 	return holder, holderName
 }
 
+// heldByAnotherResponse is the 409 body ModTools reads to show who holds the post.
+func heldByAnotherResponse(c *fiber.Ctx, holder uint64, holderName string) error {
+	return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+		"ret":        1,
+		"status":     "Held by another moderator",
+		"heldby":     holder,
+		"heldbyname": holderName,
+	})
+}
+
 // dispatchPostMessageAction routes a POST /message action to the correct handler.
 func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Enforced centrally rather than per-handler so a new moderation action
 	// cannot silently skip the check by forgetting to call it.
 	if moderationActionsBlockedByHold[req.Action] {
 		if holder, holderName := heldByAnotherMod(myid, req); holder != 0 {
-			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-				"ret":        1,
-				"status":     "Held by another moderator",
-				"heldby":     holder,
-				"heldbyname": holderName,
-			})
+			return heldByAnotherResponse(c, holder, holderName)
 		}
 	}
 
 	switch req.Action {
 	case "Promise":
 		return handlePromise(c, myid, req)
+	case "AcceptAgreement":
+		return handleAcceptAgreement(c, myid, req)
 	case "Renege":
 		return handleRenege(c, myid, req)
 	case "OutcomeIntended":
@@ -5691,9 +5778,54 @@ func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest
 		return handleBulkInterestState(c, myid, req)
 	case "BulkEditLink":
 		return handleBulkEditLink(c, myid, req)
+	case "Report":
+		return handleReport(c, myid, req)
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
 	}
+}
+
+// handleReport records a member's report of an UNADDRESSED TN post.
+//
+// Every other post is reported the way it always has been - a User2Mod chat message to the
+// community's moderators, which CreateChatMessage turns into a review verdict. An
+// unaddressed post has no community that could act on such a message, so there is nobody to
+// send it to; the verdict is recorded directly here instead, and a quorum of two distinct
+// reporters removes the post (microvolunteering.RecordReportVerdict).
+//
+// Restricted to unaddressed posts on purpose: this must not become a way to report an
+// ordinary post without its moderators ever hearing about it.
+func handleReport(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
+	db := database.DBConn
+
+	// POST /message does not require a login (View is anonymous), and the quorum counts
+	// distinct people, so an anonymous report has nothing to count. Say so rather than
+	// recording nothing and answering Success.
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "id is required")
+	}
+
+	if !modmessaging.PostIsUnaddressed(db, req.ID) {
+		return fiber.NewError(fiber.StatusBadRequest, "Report this post to its community's moderators")
+	}
+
+	groupid := uint64(0)
+	if req.Groupid != nil {
+		groupid = *req.Groupid
+	}
+
+	comments := ""
+	if req.Message != nil {
+		comments = *req.Message
+	}
+
+	microvolunteering.RecordReportVerdict(db, myid, req.ID, groupid, comments)
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
 // handlePromise records a promise of an item to a user.
@@ -5718,16 +5850,50 @@ func handlePromise(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	// REPLACE INTO - idempotent. count is how many of a multi-quantity post were
-	// promised to this person; NULL reads as 1.
-	promiseRow := map[string]interface{}{"msgid": req.ID, "userid": promisedTo}
+	// promised to this person; NULL reads as 1. Terms are optional: absent means NULL.
+	promise := map[string]interface{}{"msgid": req.ID, "userid": promisedTo}
 	if req.Count != nil && *req.Count > 0 {
-		promiseRow["count"] = *req.Count
+		promise["count"] = *req.Count
 	}
-	db.Table("messages_promises").Clauses(clause.Insert{Modifier: "REPLACE"}).Create(promiseRow)
+	if req.Terms != nil && len(*req.Terms) > 0 && string(*req.Terms) != "null" {
+		promise["terms"] = string(*req.Terms)
+	}
+	db.Table("messages_promises").Clauses(clause.Insert{Modifier: "REPLACE"}).
+		Create(promise)
 
 	// Create a chat message of type Promised if promising to another user.
 	if req.Userid != nil && *req.Userid > 0 && *req.Userid != myid {
 		createSystemChatMessage(db, myid, *req.Userid, req.ID, utils.CHAT_MESSAGE_PROMISED)
+	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// handleAcceptAgreement lets the person a message was promised TO accept it,
+// turning the promise into an agreement between the two members: it stamps
+// messages_promises.acceptedat/acceptedby on the caller's own promise row.
+//
+// This is an opt-in step that Freegle's own clients never take - a Freegle
+// promise is complete when the owner makes it. Deployments built on this
+// codebase that need a two-sided agreement (terms proposed by the owner, then
+// accepted by the other party) call it after "Promise". Only the promised-to
+// member can accept, only once, and only while a promise exists; every other
+// case is a 404 so nothing is ever created here.
+func handleAcceptAgreement(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
+	db := database.DBConn
+
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "id is required")
+	}
+
+	result := db.Table("messages_promises").
+		Where("msgid = ? AND userid = ? AND acceptedat IS NULL", req.ID, myid).
+		Updates(map[string]interface{}{"acceptedat": gorm.Expr("NOW()"), "acceptedby": myid})
+	if result.Error != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to accept")
+	}
+	if result.RowsAffected == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "No unaccepted promise to you on this message")
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -5859,9 +6025,15 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// the pending queue before the withdrawal can still reject / delete the message
 	// without getting a spurious 403 from getMessageModContext failing to scan a
 	// now-absent messages row.
+	//
+	// "Still pending" means a live Pending row on a group the post was POSTED on. A copy
+	// that rippled into a neighbouring group and is sitting in its veto window is not
+	// that: the post is live at home, so withdrawing it is a real outcome, and the
+	// rippled copy is retired below like Taken and Received do. Rows already soft-deleted
+	// do not count either (Discourse 10102).
 	if req.Outcome == utils.OUTCOME_WITHDRAWN {
 		var pendingCount int64
-		db.Table("messages_groups").Where("msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING).Count(&pendingCount)
+		db.Table("messages_groups").Where("msgid = ? AND collection = ? AND deleted = 0 AND rippled_in = 0", req.ID, utils.COLLECTION_PENDING).Count(&pendingCount)
 		if pendingCount > 0 {
 			// Capture the groups the post is actively pending on *before* the
 			// soft-delete, so we can write a per-group audit log below.
@@ -5977,8 +6149,10 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// leaves those mod queues (and is never auto-approved/mailed into them later). We do this
 	// ONLY when the post is Approved on some other group, so the post and its Taken record
 	// survive and a post pending only on its single group is never stranded. Mirrors the
-	// Withdrawn-while-pending cleanup above, but keeps the message.
-	if req.Outcome == utils.OUTCOME_TAKEN || req.Outcome == utils.OUTCOME_RECEIVED {
+	// Withdrawn-while-pending cleanup above, but keeps the message. Withdrawn takes the
+	// same path: a rippled copy still in its veto window must not linger in that group's
+	// queue, or be approved into it later, once the poster has withdrawn (Discourse 10102).
+	if req.Outcome == utils.OUTCOME_TAKEN || req.Outcome == utils.OUTCOME_RECEIVED || req.Outcome == utils.OUTCOME_WITHDRAWN {
 		var approvedElsewhere int64
 		db.Table("messages_groups").Where("msgid = ? AND collection = ? AND deleted = 0", req.ID, utils.COLLECTION_APPROVED).Count(&approvedElsewhere)
 		if approvedElsewhere > 0 {
@@ -6035,11 +6209,14 @@ func canModifyMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 		return true
 	}
 
-	// Check if user is a moderator/owner of any group the message is on.
+	// Otherwise a moderator/owner of a group the message was POSTED on. Outcomes and
+	// "taken by" are facts about the whole post, so a copy that merely rippled into a
+	// moderator's group (rippled_in = 1) gives them no standing here; their per-group
+	// actions (reject, delete, hold) are unaffected (Discourse 10102).
 	var modCount int64
 	db.Table("messages_groups mg").
 		Joins("JOIN memberships m ON mg.groupid = m.groupid").
-		Where("mg.msgid = ? AND m.userid = ? AND m.role IN (?, ?)", msgid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Where("mg.msgid = ? AND mg.rippled_in = 0 AND m.userid = ? AND m.role IN (?, ?)", msgid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
 		Count(&modCount)
 	return modCount > 0
 }
@@ -6053,8 +6230,15 @@ func handleAddBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to modify this message")
 	}
 
-	count := 1
-	if req.Count != nil {
+	// A request with no count is an ordinary post saying "this person took some".
+	// Nobody is asked how many any more, so there is no number to apply: record the
+	// taker and leave availablenow alone. Inventing one (the old default of 1) made
+	// the remaining count drift away from reality one taker at a time, invisibly,
+	// because the badge stopped showing it. Bulk offers always send a count and are
+	// unaffected.
+	counted := req.Count != nil
+	count := 0
+	if counted {
 		count = *req.Count
 	}
 
@@ -6079,19 +6263,26 @@ func handleAddBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	existingCount := existing.Count
 
 	if existingID > 0 {
-		// Restore old count before updating.
-		// Identical golden to
-		// 228b6b678e0c (handleRemoveBy); converted together per gate (h).
-		db.Table("messages").Where("id = ?", req.ID).
-			Update("availablenow", gorm.Expr("LEAST(availableinitially, availablenow + ?)", existingCount))
-		db.Table("messages_by").Where("id = ?", existingID).Update("count", count)
+		if counted {
+			// Restore old count before updating.
+			// Identical golden to
+			// 228b6b678e0c (handleRemoveBy); converted together per gate (h).
+			db.Table("messages").Where("id = ?", req.ID).
+				Update("availablenow", gorm.Expr("LEAST(availableinitially, availablenow + ?)", existingCount))
+			db.Table("messages_by").Where("id = ?", existingID).Update("count", count)
+		}
+		// Uncounted and already recorded: nothing to say. Leaving any earlier count
+		// alone matters for posts that were part-taken under the old flow, where the
+		// number was entered deliberately and rewriting it to 0 would lose it.
 	} else {
 		db.Table("messages_by").Create(map[string]interface{}{"userid": userid, "msgid": req.ID, "count": count})
 	}
 
-	// Reduce available count.
-	db.Table("messages").Where("id = ?", req.ID).
-		Update("availablenow", gorm.Expr("GREATEST(LEAST(availableinitially, availablenow - ?), 0)", count))
+	if counted {
+		// Reduce available count.
+		db.Table("messages").Where("id = ?", req.ID).
+			Update("availablenow", gorm.Expr("GREATEST(LEAST(availableinitially, availablenow - ?), 0)", count))
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

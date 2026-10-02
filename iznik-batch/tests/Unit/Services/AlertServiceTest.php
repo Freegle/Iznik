@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Services\AlertService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class AlertServiceTest extends TestCase
@@ -640,9 +641,7 @@ class AlertServiceTest extends TestCase
     // resolveFrom — known roles with hardcoded address
     // ===================================================================
 
-    /**
-     * @dataProvider hardcodedRoleProvider
-     */
+    #[DataProvider('hardcodedRoleProvider')]
     public function test_resolveFrom_hardcoded_roles(string $role, string $expectedAddr, string $expectedName): void
     {
         [$addr, $name] = $this->invokeResolveFrom($role);

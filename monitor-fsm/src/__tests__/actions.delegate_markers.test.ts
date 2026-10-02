@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { extractJsonArrayMarker } from '../actions/index.js'
+import { extractJsonArrayMarker, lastMarker } from '../actions/index.js'
 
 // Regression coverage for the silent bug-drop of 2026-07-22 (topic 9808 post
 // 633): a verbose topic delegate emitted CLASSIFICATIONS=[...] near the middle
@@ -56,5 +56,22 @@ describe('extractJsonArrayMarker', () => {
   it('extracts the SENTRY_ISSUES marker with the same parser', () => {
     const out = 'SENTRY_ISSUES=[{"project":"nuxt3","id":"1"}]\nANALYSIS_COMPLETE=sentry scan done'
     expect(extractJsonArrayMarker(out, 'SENTRY_ISSUES')).toEqual([{ project: 'nuxt3', id: '1' }])
+  })
+
+  it('ignores the marker documented in the delegate brief, and takes the delegate\'s own', () => {
+    // The brief that is sent to the delegate lists its markers, indented:
+    //   - Read-only / analysis task done:  ANALYSIS_COMPLETE=<one-line summary>
+    // That line used to be the FIRST match, so every delegate reported the template
+    // as its finding and the run consumed its bug queue while fixing nothing.
+    const brief = '  - Read-only / analysis task done:  ANALYSIS_COMPLETE=<one-line summary>\n'
+    const work = 'read three files\nANALYSIS_COMPLETE=bug 10059 already fixed by PR #1421\n'
+    expect(lastMarker(brief + work, 'ANALYSIS_COMPLETE')?.[1]).toBe(
+      'bug 10059 already fixed by PR #1421'
+    )
+  })
+
+  it('returns nothing when only the brief mentions the marker', () => {
+    const brief = '  - Read-only / analysis task done:  ANALYSIS_COMPLETE=<one-line summary>\n'
+    expect(lastMarker(brief, 'ANALYSIS_COMPLETE')).toBeNull()
   })
 })

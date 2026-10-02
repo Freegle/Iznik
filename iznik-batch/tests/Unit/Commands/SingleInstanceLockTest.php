@@ -4,6 +4,7 @@ namespace Tests\Unit\Commands;
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -32,10 +33,9 @@ class SingleInstanceLockTest extends TestCase
     }
 
     /**
-     * @dataProvider guardedCommands
-     *
      * @param  array<string, mixed>  $options
      */
+    #[DataProvider('guardedCommands')]
     public function test_run_exits_without_working_while_the_lock_is_held(string $command, string $lockName, array $options): void
     {
         Http::fake();
