@@ -65,14 +65,18 @@ class EmailPathMirrorDriftTest extends TestCase
         // Re-pinned on 25 September: the approval update now skips a copy marked
         // messages_groups.needs_moderator, which only a moderator's Approve clears.
         // The API mirror's approval update carries the same guard.
-        'handleGroupPost'         => '07115bf56134dc646344a62cd4029de824d681589ea68dd0d362c16fb34f9025',
+        'handleGroupPost'         => 'ed0b06f9e8de0f7c0ab41532b2b521bbed8e2bb63bebcc24b966df9674db9e31',
         // Re-pinned on 21 September: createGroupPostMessage now checks that the
         // location id the spatial index hands back still exists in `locations`
         // before writing it to users.lastlocation, and ingests without a location
         // when it does not. That is the guard the API mirror already had
         // (GroupPostIngestionService, "LOCATION-STALE"); without it a stale id
         // failed the foreign key and lost the whole post.
-        'createGroupPostMessage'  => 'b7b6e4ed336c2d49016969223f7228e595a6b0b220740954445ee6c75fe381aa',
+        //
+        // Re-pinned on 1 October: a TN member's lastlocation is only filled in by a
+        // post when it is empty, because TN is the master for it. The API mirror makes
+        // the same check.
+        'createGroupPostMessage'  => '2e541f310c4733ee124793d71b07d99cebc20be4adfde5dcf04fb6da3d6073bf',
     ];
 
     public static function mirroredMethods(): array

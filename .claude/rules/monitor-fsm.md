@@ -40,6 +40,14 @@ review fails. An open request from it is not a reviewed one.
 Delegate briefs name the main checkout, so a delegate writes there rather than into the worktree
 the run is using. Anything that spawns a sub-run needs its working directory passed explicitly.
 
+A worker that wants the main checkout's test container copies its test file into the main checkout and
+can die before copying it back. On 2026-09-29 a 29-line change to
+`MessageIllustrationsServiceTest.php` that had sat modified in the main checkout for three days was
+one of these: a temporary test deliberately asserting the bug, left behind by a worker whose own
+folder had since been cleaned up. So a modified file in the main checkout that nobody remembers
+editing may be a stray from a worker; search the transcripts under `~/.claude/projects/-tmp-monitor-fsm-*`
+for its path before treating it as someone's work, or before discarding it.
+
 ## See also
 
 - `.claude/rules/dev-containers.md` - the worktree isolation this keeps escaping.

@@ -31,7 +31,8 @@ import { getPhaseInfo } from '../phase.js'
 import { modelForAdversarialReview } from '../policy.js'
 import { groundingActions } from '../grounding.js'
 import { proseProblems } from '../prose.js'
-import { assessReportSpecifics, detailRequestBody } from '../specifics.js'
+import { assessReportSpecifics, detailRequestBody, CONTEXT_QUESTION } from '../specifics.js'
+import { assessPrEvidence } from '../evidence.js'
 
 const exec = promisify(execFile)
 
@@ -1266,6 +1267,59 @@ export function retestReplyBody(opts: { affectsApp: boolean; link?: string | nul
 
 // Seam for unit tests: the question paths reach Discourse to fetch the text they
 // quote and to post. Tests substitute both.
+/** Backlog reports already re-checked and found specific, so the router does not
+ * fetch them from Discourse again on every call. */
+const recheckedSpecific = new Set<string>()
+
+/** The gh calls create_pr makes, behind a seam so its gate can be tested. */
+export const prGateDeps = {
+  gh: (args: string[]) => sh('gh', args),
+}
+
+/**
+ * Refuse a Discourse bug-fix PR that has no production reads in its local evidence
+ * record, or whose description holds a member's details. See evidence.ts. The PR is closed, the
+ * report is held as needs-detail, and the reporter is asked for what would let the
+ * next attempt look it up: a fix agent with nothing to look up guesses, and the
+ * guesses read convincingly (PRs #1654, #1657, #1658, #1659).
+ */
+async function refuseUngroundedPr(
+  prNumber: number, repo: string, body: string, topic: number, post: number,
+): Promise<{ refused: boolean; problems: string[] }> {
+  const evidence = assessPrEvidence(body, topic, post)
+  if (evidence.ok) return { refused: false, problems: [] }
+
+  // The repository is public. Blank the description before anything else, so the
+  // details are not left on view while the rest happens.
+  if (evidence.confidential) {
+    const blanked = await prGateDeps.gh(['api', '-X', 'PATCH', `repos/${repo}/pulls/${prNumber}`, '-f',
+      'body=Description removed: it contained personal details. This repository is public.'])
+    if (blanked.code !== 0) outWarn(`create_pr: could not blank the description of #${prNumber}: ${blanked.stderr.slice(0, 200)}`)
+  }
+  const comment = `Closed by the monitor before review: ${evidence.problems.join('; ')}. A fix needs production reads, recorded locally, showing the diagnosed path is the one failing.`
+  await prGateDeps.gh(['pr', 'close', String(prNumber), '--repo', repo, '--comment', comment])
+
+  const db = getDb()
+  const bug = getDiscourseBug(db, topic, post)
+  const missing = assessReportSpecifics({ text: bug?.excerpt ?? '' }).missing
+  const questions = missing.length > 0 ? missing : [CONTEXT_QUESTION]
+  let quote = ''
+  try { quote = (await questionAnswerDeps.fetchReporterQuote(topic, post)) ?? '' } catch { quote = '' }
+  if (!quote.trim()) quote = (bug?.excerpt ?? '').trim()
+  if (quote) {
+    await askReporterOnDiscourse(db, {
+      topic, post, username: bug?.reporter ?? 'there', quote, body: detailRequestBody(questions),
+    })
+  }
+  upsertDiscourseBug(db, {
+    topic, post,
+    state: 'needs-detail',
+    reason: `PR #${prNumber} refused: ${evidence.problems.join('; ')}`,
+  })
+  outWarn(`create_pr: refused #${prNumber} for ${topic}/${post}: ${evidence.problems.join('; ')}`)
+  return { refused: true, problems: evidence.problems }
+}
+
 export const questionAnswerDeps = {
   fetchReporterQuote,
   postDiscourseReply,
@@ -2245,9 +2299,9 @@ print(json.dumps(out))
     handler: async (params) => {
       const prNumber = params.prNumber as number
       const repo = (params.repo as string) ?? 'Freegle/Iznik'
-      const viewRes = await sh('gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'number,title,url,author,files,headRefName'])
+      const viewRes = await prGateDeps.gh(['pr', 'view', String(prNumber), '--repo', repo, '--json', 'number,title,url,author,files,headRefName,body'])
       if (viewRes.code !== 0) throw new Error(`create_pr verification failed: PR #${prNumber} in ${repo}: ${viewRes.stderr}`)
-      const viewData = JSON.parse(viewRes.stdout) as { number: number; title: string; url: string; author: any; files?: Array<{ path: string }>; headRefName: string }
+      const viewData = JSON.parse(viewRes.stdout) as { number: number; title: string; url: string; author: any; files?: Array<{ path: string }>; headRefName: string; body?: string }
       const files = (viewData.files ?? []).map(f => f.path)
       const frontendOnly = files.length > 0 && files.every(p => p.startsWith('iznik-nuxt3/'))
 
@@ -2256,6 +2310,10 @@ print(json.dumps(out))
       const topic = params.topic as number | undefined
       const post = params.post as number | undefined
       if (topic && post) {
+        const gate = await refuseUngroundedPr(prNumber, repo, viewData.body ?? '', topic, post)
+        if (gate.refused) {
+          return { verified: false, refused: true, problems: gate.problems, files, frontendOnly }
+        }
         const db = getDb()
         upsertDiscourseBug(db, {
           topic, post,
@@ -2267,7 +2325,7 @@ print(json.dumps(out))
       }
 
       let deployPreviewUrl: string | undefined
-      const checksRes = await sh('gh', ['pr', 'checks', String(prNumber), '--repo', repo])
+      const checksRes = await prGateDeps.gh(['pr', 'checks', String(prNumber), '--repo', repo])
       if (checksRes.code === 0 || checksRes.stdout) {
         // Only accept a genuine deploy-preview URL (contains `deploy-preview-<N>`).
         // Netlify also surfaces admin links (app.netlify.com/...) which are NOT testable.
@@ -4082,7 +4140,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const db = getDb()
       const dbOpenBugs = (db.prepare(`
         SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle,
-               pr_rejections AS prRejections, symptom_tags AS symptomTagsJson
+               pr_rejections AS prRejections, symptom_tags AS symptomTagsJson, first_seen_at
         FROM discourse_bug
         WHERE state = 'open' AND pr_number IS NULL
       `).all() as Array<any>).filter(b => !fixedKeys.has(`${b.topic}.${b.post}`))
@@ -4176,8 +4234,39 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         // (e.g. #661/#662, both rewriting the same donate link for topic 9692). Keep
         // the oldest post per topic; a genuinely-distinct second bug is picked up a
         // later iteration (where the first post's PR makes topicsWithActivePr skip it).
+        // A backlog report carries only triage's paraphrase, and a paraphrase tidies the
+        // vagueness away ("two members" became "Members cannot see..."). Reports from
+        // before the vagueness check existed were never judged at all (10029/9, 10200/1:
+        // both went to a fix that was a guess). Judge the reporter's own words here, for
+        // as many as could be dispatched, and hold and ask about any that name nothing.
+        const dispatchable: any[] = []
+        for (const b of sorted) {
+          const key = `${b.topic}/${b.post}`
+          if (dispatchable.length >= MAX_PARALLEL_BUGS * 2 || recheckedSpecific.has(key) || String(b.originalPostText ?? '').trim()) {
+            dispatchable.push(b)
+            continue
+          }
+          let quote = ''
+          // Judged on the whole post: the line that gives it away is often near the end.
+          try { quote = (await questionAnswerDeps.fetchReporterQuote(Number(b.topic), Number(b.post), 4000)) ?? '' } catch { quote = '' }
+          const specifics = quote.trim() ? assessReportSpecifics({ text: quote, anchorText: `${b.excerpt ?? ''} ${quote}` }) : null
+          if (!specifics?.isVague) {
+            if (specifics) recheckedSpecific.add(key)
+            dispatchable.push(b)
+            continue
+          }
+          const asked = await askReporterOnDiscourse(db, {
+            topic: Number(b.topic), post: Number(b.post), username: b.reporter ?? b.user ?? 'there',
+            quote: quote.trim().slice(0, 300), body: detailRequestBody(specifics.missing),
+          })
+          upsertDiscourseBug(db, {
+            topic: Number(b.topic), post: Number(b.post), state: 'needs-detail',
+            reason: `re-checked before dispatch: asked the reporter for: ${specifics.missing.join('; ')}`,
+          })
+          out(`work_router_decide: ${b.topic}/${b.post} names nothing that can be looked up - held${asked ? ' and asked' : ''}`)
+        }
         const seenDispatchTopics = new Set<number>()
-        const bugBatch = sorted
+        const bugBatch = dispatchable
           .filter((b) => {
             const t = Number(b.topic)
             if (seenDispatchTopics.has(t)) return false

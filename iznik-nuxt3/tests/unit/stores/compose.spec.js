@@ -743,6 +743,47 @@ describe('compose store', () => {
     })
   })
 
+  describe('whole-number quantity', () => {
+    // A draft kept in the browser from before the input rounded can still
+    // hold a decimal, which the API rejects with a 400 (SR-UZFMH).
+    it.each([
+      [18.5, 19],
+      [3.2, 3],
+      [0, 1],
+      [NaN, 1],
+      [undefined, 1],
+      ['4', 4],
+    ])('createDraft sends %s as %s', async (given, expected) => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 5 }
+      mockMessagePut.mockResolvedValueOnce({ id: 1 })
+
+      await store.createDraft(
+        {
+          type: 'Offer',
+          item: 'Dark chocolates',
+          description: '',
+          availablenow: given,
+          attachments: [],
+        },
+        'me@example.com'
+      )
+
+      expect(mockMessagePut.mock.calls[0][0].availablenow).toBe(expected)
+    })
+
+    it('updateIt sends a whole number', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      mockMessagePatch.mockResolvedValue({})
+
+      await store.updateIt(1, 100, 'Offer', 'Sofa', 'Good', [5], 18.5, 10)
+
+      expect(mockMessagePatch.mock.calls[0][0].availablenow).toBe(19)
+    })
+  })
+
   describe('updateIt', () => {
     it('patches message and increments progress', async () => {
       const store = useComposeStore()

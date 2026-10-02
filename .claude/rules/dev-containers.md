@@ -194,36 +194,29 @@ therefore what production executes, which makes ordinary git operations producti
 Check what production is running by grepping the file, not by recalling what you last did. The
 answer changes under you.
 
-## Never list `/srv/tusd-data` on the FreegleDocker host
+## A flat directory of millions of files must never be listed while something writes to it
 
-The upload store is **one flat NFS directory with millions of entries**. Listing it - `find /`,
-`du -x /`, `ls`, a shell tab-completion - holds the directory lock for every `getdents()`, each of
-which on NFS is a long chain of READDIRPLUS calls, and every tusd upload create, finish and
-delete queues behind it. (Hit 2026-09-18: two orphaned `find / -maxdepth 3 -iname iznik-batch`
-processes, left behind by an ssh command from another session, put 1,036 tusd threads into D
-state; uploads hung for ~25 minutes and the load average reached 1,049 with the CPU idle. The
-NFS server was healthy throughout - `nfsstat` and the admin UI both said so.)
+Uploads used to land on one flat NFS directory with two million entries. Listing it - `find /`,
+`du -x /`, `ls`, a shell tab-completion - held the directory lock for every `getdents()`, each
+a long chain of READDIRPLUS calls on NFS, and every tusd create, finish and delete queued
+behind it (2026-09-18: two orphaned `find /` processes put 1,036 tusd threads into D state and
+hung uploads for 25 minutes with the CPU idle). The share is gone, but the shape recurs: the
+local spool volume is small because the pusher drains it every minute, and the object store
+is listed through its API, never as a directory.
 
 - The repos are under `/var/www/FreegleDocker`; look there, never `find /`.
-- If a whole-filesystem scan is unavoidable: `find / -xdev`, or `-path /srv/tusd-data -prune`.
-- monit (`ops/hosts/monit/batch-host/conf.d/tusd`) kills whatever is scanning once tusd is
-  starved, so a process of yours vanishing mid-scan is that, not a crash.
+- If a whole-filesystem scan is unavoidable, `find / -xdev`.
 
-## An image bucket that is not public fails through to "every new photo is missing"
+## A bucket that is not public breaks every photo, and now says so
 
 The uploads vhost in `frontend-nginx.conf` answers a GET from the spool, then the object
-store, then the legacy share, and any error from the bucket (401, 403, 404, 5xx, no answer)
-is treated like a 404 so the chain can go on. So a bucket whose public read is off does not
-error: every photo that exists only in the bucket falls through to the legacy share, which
-has never heard of it, and weserv gets a 404 that the delivery cache keeps for five minutes.
-Nothing logs the bucket's answer.
-
-The fall-through list must stay complete. On 2026-09-28 it was `403 404` and the bucket
-started answering 401 (a Swift auth challenge to every key: public read and the access key
-revoked together, provider side). nginx passed the 401 straight to the resizer, so every
-image not in the spool was broken for an hour, and nothing alerted because the pusher and
-migrator only logged warnings per object. The scheduled `images:object-store-check --report`
-and `ObjectStoreUnavailable` in Sentry exist because of that hour.
+store, and that is the end of the chain: whatever the bucket answers reaches the resizer.
+On 2026-09-28 the bucket answered 401 to every key for an hour (public read and the access
+key revoked together, provider side) and every photo not in the spool was broken, with
+nothing alerting because the pusher and migrator only logged warnings per object. The
+scheduled `images:object-store-check --report` and `ObjectStoreUnavailable` in Sentry exist
+because of that hour. A 401 or 403 from the bucket is that incident again: check the
+bucket's public-read setting and the key in the provider console before anything else.
 
 `php artisan images:object-store-check` reads a probe back anonymously at the public URL
 and is the only thing that proves the bucket is public. Run it before enabling

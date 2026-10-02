@@ -1052,11 +1052,11 @@ class UnifiedDigestService
             // containment and by any overflow ring - so a member cannot be admitted on one
             // resolution and then measured from another.
             $latExpr = "CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                                 AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                                 AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
                             THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
                             ELSE l.lat END";
             $lngExpr = "CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                                 AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                                 AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
                             THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
                             ELSE l.lng END";
             $point = "ST_SRID(POINT($lngExpr, $latExpr), ?)";
@@ -1294,7 +1294,7 @@ class UnifiedDigestService
             // The distance-preference filter needs each recipient's point, resolved
             // the same "mylocation else lastlocation" way the reach query resolves it -
             // via resolvedLatLngCase(), shared with mailNewlyReachedForPost().
-            [$resolvedLat, $resolvedLng] = $this->resolvedLatLngCase('u.settings', 'l.lat', 'l.lng');
+            [$resolvedLat, $resolvedLng] = $this->resolvedLatLngCase('u.settings', 'u.tnuserid', 'l.lat', 'l.lng');
             $latLng = [];
             foreach (DB::table('users as u')
                 ->leftJoin('locations as l', 'l.id', '=', 'u.lastlocation')
@@ -2434,9 +2434,11 @@ class UnifiedDigestService
      * CAST(JSON null AS DECIMAL) yields 0 rather than falling back to the joined column — a
      * pre-existing quirk of the original construct, preserved here rather than fixed.
      *
+     * A TN member's mylocation is ignored (tnuserid must be NULL), as User::chosenLatLng does.
+     *
      * @return array{0: CaseWhen, 1: CaseWhen} [resolvedLatExpression, resolvedLngExpression]
      */
-    private function resolvedLatLngCase(string $settingsColumn, string $fallbackLatColumn, string $fallbackLngColumn): array
+    private function resolvedLatLngCase(string $settingsColumn, string $tnuseridColumn, string $fallbackLatColumn, string $fallbackLngColumn): array
     {
         $mylocationLat = new JsonExtract($settingsColumn, Value::of('$.mylocation.lat'));
         $mylocationLng = new JsonExtract($settingsColumn, Value::of('$.mylocation.lng'));
@@ -2444,6 +2446,7 @@ class UnifiedDigestService
         $bothPresent = Logical::and(
             new IsNull($mylocationLat, not: true),
             new IsNull($mylocationLng, not: true),
+            new IsNull($tnuseridColumn),
         );
 
         $lat = (new CaseWhen())
@@ -2463,18 +2466,15 @@ class UnifiedDigestService
      * Resolve a member's point as settings.mylocation (both coords) else their lastlocation —
      * the same order the immediate-mail recipient query uses, so the digest, the push and the
      * immediate path all agree on where a member is. Returns [lat, lng] or null if unknown.
+     * A TN member's mylocation is ignored (User::chosenLatLng).
      *
      * @return array{0:float,1:float}|null
      */
     private function resolveUserLatLng(User $user): ?array
     {
-        $settings = $user->settings;
-        if (is_string($settings)) {
-            $settings = json_decode($settings, true) ?: [];
-        }
-        $myloc = is_array($settings) ? ($settings['mylocation'] ?? null) : null;
-        if (is_array($myloc) && isset($myloc['lat'], $myloc['lng']) && $myloc['lat'] !== null && $myloc['lng'] !== null) {
-            return [(float) $myloc['lat'], (float) $myloc['lng']];
+        $chosen = User::chosenLatLng($user->settings, $user->tnuserid);
+        if ($chosen) {
+            return $chosen;
         }
 
         if ($user->lastlocation) {

@@ -331,15 +331,16 @@ class ReengageContentService
 
     /**
      * Lat/lng waterfall matching NewsfeedDigestService::resolveLatLng: the saved
-     * 'mylocation' setting first, then the user's lastlocation.
+     * 'mylocation' setting first (never for a TN member, see User::chosenLatLng), then the
+     * user's lastlocation.
      *
      * @return array{0: float|null, 1: float|null}
      */
     private function resolveLatLng(User $user): array
     {
-        $settings = $user->settings ?? [];
-        if (isset($settings['mylocation']['lat'], $settings['mylocation']['lng'])) {
-            return [(float) $settings['mylocation']['lat'], (float) $settings['mylocation']['lng']];
+        $chosen = User::chosenLatLng($user->settings, $user->tnuserid);
+        if ($chosen) {
+            return $chosen;
         }
 
         return $user->getLatLng();

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Sandwich bounds for the catchment polygon (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md):
+// Sandwich bounds for the catchment polygon (docs/developers/reference/rippling-algorithm.md section 11):
 // the routing server derives them on the SAME rasterisation grid as the exact polygon, by
 // morphological dilation/erosion, so the superset/subset guarantees hold by construction —
 // unlike deriving them in MySQL from the (frequently invalid) stored geometry. The bounds are

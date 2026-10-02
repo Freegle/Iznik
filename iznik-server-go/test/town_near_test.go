@@ -11,24 +11,29 @@ import (
 
 func townDriveMin(v float64) *float64 { return &v }
 
-// SelectNear picks the FURTHEST towns reachable within the drive-time budget (so the "Near: ..."
-// hint changes as the slider widens) and returns their names in descending-population order
-// (ascending town id). Unreachable (nil) and beyond-budget towns are excluded.
+// SelectNear names the biggest places in the outer half of the reach, so the hint moves outwards
+// as the slider widens but still names places people know rather than villages on the edge.
+// With nothing in the outer half it names the biggest reachable places. Unreachable (nil) and
+// beyond-budget places are excluded.
 func TestTownSelectNear(t *testing.T) {
 	cands := []town.TownCand{
-		{ID: 1, Name: "Big", DriveMin: townDriveMin(5)},
-		{ID: 2, Name: "MidFar", DriveMin: townDriveMin(28)},
-		{ID: 3, Name: "Near2", DriveMin: townDriveMin(8)},
-		{ID: 4, Name: "FarSmall", DriveMin: townDriveMin(25)},
-		{ID: 5, Name: "Unreachable", DriveMin: nil},
-		{ID: 6, Name: "TooFar", DriveMin: townDriveMin(40)},
+		{ID: 1, Name: "HomeTown", Population: 56000, DriveMin: townDriveMin(2)},
+		{ID: 2, Name: "City", Population: 245000, DriveMin: townDriveMin(28)},
+		{ID: 3, Name: "Village", Population: 4000, DriveMin: townDriveMin(8)},
+		{ID: 4, Name: "EdgeVillage", Population: 3100, DriveMin: townDriveMin(29)},
+		{ID: 5, Name: "MarketTown", Population: 37000, DriveMin: townDriveMin(18)},
+		{ID: 6, Name: "Unreachable", Population: 900000, DriveMin: nil},
+		{ID: 7, Name: "TooFar", Population: 500000, DriveMin: townDriveMin(40)},
 	}
-	// Furthest 3 reachable within 30 min, displayed by population (ascending id).
-	assert.Equal(t, []string{"MidFar", "Near2", "FarSmall"}, town.SelectNear(cands, 30, 3))
-	// Fewer reachable than the limit -> all reachable, population order.
-	assert.Equal(t, []string{"Big", "MidFar", "Near2", "FarSmall"}, town.SelectNear(cands, 30, 5))
+	// 30 min: outer half is 15-30, biggest first; the edge village loses to the city at a limit of 2.
+	assert.Equal(t, []string{"City", "MarketTown"}, town.SelectNear(cands, 30, 2))
+	assert.Equal(t, []string{"City", "MarketTown", "EdgeVillage"}, town.SelectNear(cands, 30, 5))
+	// 10 min: outer half is 5-10, which holds only the village - the home town is not repeated.
+	assert.Equal(t, []string{"Village"}, town.SelectNear(cands, 10, 5))
+	// 3 min: nothing in the outer half, so the biggest reachable place - the member's own town.
+	assert.Equal(t, []string{"HomeTown"}, town.SelectNear(cands, 3, 5))
 	// None reachable in a tight budget, and empty input.
-	assert.Empty(t, town.SelectNear(cands, 3, 5))
+	assert.Empty(t, town.SelectNear(cands, 1, 5))
 	assert.Empty(t, town.SelectNear(nil, 30, 5))
 }
 

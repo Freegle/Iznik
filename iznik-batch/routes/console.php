@@ -1893,6 +1893,22 @@ Schedule::command('partnerships:reminders')
     ->sendOutputTo(cronLog('partnerships:reminders'))
     ->runInBackground();
 
+// And chase the ones that ended without a renewal, when the council should have paid for the
+// next year.
+Schedule::command('partnerships:reminders --ended --days=30 --type=ended')
+    ->dailyAt('08:05')
+    ->withoutOverlapping(30)
+    ->sendOutputTo(cronLog('partnerships:reminders-ended'))
+    ->runInBackground();
+
+// Keep each live deal's communities in line with the council boundary, so a community set up
+// inside it later is covered and shows the sponsor without anyone having to add it.
+Schedule::command('partnerships:sync-groups')
+    ->dailyAt('07:40')
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('partnerships:sync-groups'))
+    ->runInBackground();
+
 // Nightly physical database backup. OFF unless BACKUP_DB_ENABLED is set; until then the
 // shell script on the database node is still what runs. Scheduled inside the drain window
 // on purpose: BackupDrain never holds "backup:" commands off.

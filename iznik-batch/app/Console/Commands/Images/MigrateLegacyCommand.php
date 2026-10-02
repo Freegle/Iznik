@@ -27,6 +27,7 @@ class MigrateLegacyCommand extends Command
                             {--max-mbps= : Upload bandwidth cap in MB/s (default from config; 0 = none)}
                             {--dry-run : Report what would be copied without copying or moving cursors}
                             {--verify : Report referenced uploads the store lacks; copies nothing}
+                            {--listing= : Copy the files named in this listing of the share (one tusd id per line) that the store lacks; the cursor is the line number}
                             {--status : Show the cursor and counts for every source}
                             {--reset= : Start this source again from the beginning (with --verify: its verify cursor)}';
 
@@ -88,7 +89,17 @@ class MigrateLegacyCommand extends Command
             $this->warn('[DRY RUN] nothing will be copied and no cursor will move');
         }
 
-        $stats = $migrator->migrate($sources, $budget, $chunk, $limit, $maxMbps, $dryRun);
+        $listing = $this->option('listing');
+        if ($listing !== null) {
+            if (! is_file((string) $listing)) {
+                $this->error("The listing {$listing} is not a file.");
+
+                return Command::FAILURE;
+            }
+            $stats = $migrator->migrateListing((string) $listing, $budget, $limit, $maxMbps, $dryRun);
+        } else {
+            $stats = $migrator->migrate($sources, $budget, $chunk, $limit, $maxMbps, $dryRun);
+        }
 
         $this->table(
             ['Metric', 'Count'],
@@ -112,7 +123,9 @@ class MigrateLegacyCommand extends Command
         }
 
         if ($stats['finished']) {
-            $this->info('Every requested source is complete. Run --verify next.');
+            $this->info($listing !== null
+                ? 'The listing is complete: everything it names is in the store or was not on the share.'
+                : 'Every requested source is complete. Run --verify next.');
         } elseif ($stats['budget_exhausted']) {
             $this->line('Time budget used; the next run carries on from the cursor.');
         }

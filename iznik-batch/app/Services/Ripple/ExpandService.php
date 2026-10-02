@@ -586,7 +586,12 @@ class ExpandService
                 'SELECT mr.msgid AS msgid
                  FROM rippling_reach mr
                  LEFT JOIN messages_spatial ms ON ms.msgid = mr.msgid
-                 WHERE ms.msgid IS NULL AND mr.status <> \'held\'' . $scopeSql,
+                 WHERE ms.msgid IS NULL
+                   AND (mr.status <> \'held\' OR NOT EXISTS (
+                          SELECT 1 FROM messages_groups o
+                           WHERE o.msgid = mr.msgid AND o.rippled_in = 0
+                             AND o.deleted = 0 AND o.collection = \'Pending\'
+                        ))' . $scopeSql,
                 $params
             );
 
@@ -760,6 +765,11 @@ class ExpandService
      * same retraction (soft-delete + Message/Deleted log + ripple-membership cleanup, no
      * Group/Left) and drops the reach row so it stops spreading; a later re-approval on the home
      * group re-ripples it afresh. Best-effort: never breaks the run.
+     *
+     * A frozen ('held') reach is retracted too, once the home post is deleted or rejected: Back to
+     * pending freezes the reach and nothing clears it, so skipping 'held' meant a later delete at
+     * home never cascaded (122141630). While the home copy still exists and is Pending, a held
+     * reach keeps its copies for per-group moderation.
      */
     private function retractCopiesOrphanedByOriginRemoval(bool $dryRun, array &$stats, ?int $onlyMsgid = null): void
     {
@@ -772,13 +782,18 @@ class ExpandService
                       ->where('mg.rippled_in', 1)
                       ->where('mg.deleted', 0);
                 })
-                ->where('mr.status', '!=', 'held')
                 ->whereNotExists(function ($q) {
                     $q->from('messages_groups as o')
                       ->whereColumn('o.msgid', 'mr.msgid')
                       ->where('o.rippled_in', 0)
                       ->where('o.deleted', 0)
-                      ->where('o.collection', 'Approved');
+                      ->where(function ($c) {
+                          $c->where('o.collection', 'Approved')
+                            ->orWhere(function ($h) {
+                                $h->where('mr.status', 'held')
+                                  ->where('o.collection', 'Pending');
+                            });
+                      });
                 })
                 ->when($onlyMsgid !== null, fn ($q) => $q->where('mr.msgid', $onlyMsgid))
                 ->get();

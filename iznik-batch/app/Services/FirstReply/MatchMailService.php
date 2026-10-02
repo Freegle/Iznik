@@ -251,11 +251,11 @@ class MatchMailService
             ->where('u.id', $userId)
             ->selectRaw(
                 "CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                           AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                           AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
                       THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
                       ELSE l.lat END AS lat,
                  CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                           AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                           AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
                       THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
                       ELSE l.lng END AS lng"
             )
@@ -697,11 +697,11 @@ class MatchMailService
         // interpolated three times (band tests + distance); each use binds SRID.
         $pointExpr = "ST_SRID(POINT(
                      CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
                           THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
                           ELSE l.lng END,
                      CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
                           THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
                           ELSE l.lat END
                    ), ?)";

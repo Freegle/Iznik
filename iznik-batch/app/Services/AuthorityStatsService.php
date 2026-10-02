@@ -22,6 +22,7 @@ use App\Database\Expressions\Substring;
 use App\Database\Expressions\Sum;
 use App\Database\Expressions\Value;
 use App\Models\Message;
+use App\Models\User;
 use App\Support\ReuseBenefit;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -127,7 +128,7 @@ class AuthorityStatsService
      *   postcodes:array<string, array{Offer:int,Wanted:int,Searches:int,Outcomes:int,Weight:float}>
      * }|null
      */
-    public function computeReport(int $authorityId, string $quarterStart): ?array
+    public function computeReport(int $authorityId, string $quarterStart, ?int $partnershipId = null): ?array
     {
         $months = $this->getMonths($quarterStart);
         $authority = $this->getAuthority($authorityId);
@@ -135,10 +136,24 @@ class AuthorityStatsService
             return null;
         }
 
-        // Keep only groups that reused more than 3 kg over the whole quarter,
-        // so trivial overlaps do not clutter the report.
+        // A council we have a deal with gets exactly the communities the Partnerships page
+        // shows for that deal, so what they are told they sponsor and what the spreadsheet
+        // reports always match. Otherwise, derive them from the boundary and keep only groups
+        // that reused more than 3 kg over the whole quarter, so trivial overlaps do not clutter
+        // the report.
+        $fromPartnership = $partnershipId !== null;
+        if ($fromPartnership) {
+            $authority['groups'] = $this->getPartnershipGroups($partnershipId);
+        }
+
         $nontrivial = [];
         foreach ($authority['groups'] as $group) {
+            if ($fromPartnership) {
+                $nontrivial[] = $group;
+
+                continue;
+            }
+
             $stats = $this->getMultiStats([$group['id']], $months[0]['start'], $months[2]['end'], [self::WEIGHT]);
             $totWeight = 0.0;
             foreach ($stats[self::WEIGHT] as $stat) {
@@ -195,7 +210,7 @@ class AuthorityStatsService
         $links = [];
         foreach ($nontrivial as $group) {
             $gid = $group['id'];
-            if (empty($perGroup[$gid][2]['members'])) {
+            if (!$fromPartnership && empty($perGroup[$gid][2]['members'])) {
                 continue;
             }
 
@@ -321,6 +336,33 @@ class AuthorityStatsService
         }
 
         return ['name' => $auth->name, 'groups' => $groups];
+    }
+
+    /**
+     * The communities a partnership covers, in the same shape as getAuthority()'s groups.
+     * One inside the boundary is weighted by how much of it lies inside; one added by hand
+     * from outside the boundary counts in full, because the council is sponsoring all of it.
+     *
+     * @return array<int, array{id:int, namedisplay:string, overlap:float}>
+     */
+    public function getPartnershipGroups(int $partnershipId): array
+    {
+        $rows = DB::table('partnerships_groups')
+            ->join('groups', 'groups.id', '=', 'partnerships_groups.groupid')
+            ->where('partnerships_groups.partnershipid', $partnershipId)
+            ->where('partnerships_groups.source', '!=', 'Removed')
+            ->orderBy('groups.nameshort')
+            ->get(['groups.id', 'groups.nameshort', 'groups.namefull', 'partnerships_groups.overlap']);
+
+        return $rows->map(static function ($row) {
+            $overlap = $row->overlap === null ? 1.0 : (float) $row->overlap;
+
+            return [
+                'id' => (int) $row->id,
+                'namedisplay' => $row->namefull ?: $row->nameshort,
+                'overlap' => $overlap > 0.95 ? 1.0 : $overlap,
+            ];
+        })->all();
     }
 
     /**
@@ -623,18 +665,11 @@ class AuthorityStatsService
             return $ret;
         }
 
-        // 1. settings.mylocation  2. users.lastlocation
-        $users = DB::table('users')->whereIn('id', $userids)->get(['id', 'settings', 'lastlocation']);
+        // 1. settings.mylocation (never for a TN member, see User::chosenLatLng)  2. users.lastlocation
+        $users = DB::table('users')->whereIn('id', $userids)->get(['id', 'settings', 'lastlocation', 'tnuserid']);
         $lastLocationIds = [];
         foreach ($users as $u) {
-            $lat = $lng = null;
-            if (!empty($u->settings)) {
-                $settings = json_decode($u->settings, true);
-                if (isset($settings['mylocation']['lat'], $settings['mylocation']['lng'])) {
-                    $lat = (float) $settings['mylocation']['lat'];
-                    $lng = (float) $settings['mylocation']['lng'];
-                }
-            }
+            [$lat, $lng] = User::chosenLatLng($u->settings, $u->tnuserid) ?? [null, null];
             if ($lat === null && $u->lastlocation) {
                 $lastLocationIds[(int) $u->lastlocation][] = (int) $u->id;
                 continue;

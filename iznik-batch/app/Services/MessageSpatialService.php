@@ -335,7 +335,7 @@ class MessageSpatialService
                         DB::table('messages_spatial')->where('id', $msg->id)->update(['successful' => 1]);
                         // Completed → prune the post from the cheap reach path via its
                         // BOUNDS row only; the exact polygon stays for the consumers that
-                        // still need it (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md).
+                        // still need it (docs/developers/reference/rippling-algorithm.md section 11).
                         $this->reachBounds->degradeForCompleted((int) $msg->msgid);
                     }
                     $count++;

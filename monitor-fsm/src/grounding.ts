@@ -142,15 +142,15 @@ export const groundingActions: ActionDefinition[] = [
         const { stdout } = await exec(
           'timeout',
           ['25', 'mysql', '-h', '127.0.0.1', '-P', port, '-u', user, 'iznik',
-            '--connect-timeout=5', '-N', '-B', '-e', bounded],
+            '--connect-timeout=5', '-B', '-e', bounded],
           { env: { ...process.env, MYSQL_PWD: pass }, maxBuffer: 4 * 1024 * 1024 },
         )
-        const rows = stdout
-          .split('\n')
-          .filter((l) => l.length > 0)
-          .slice(0, 200)
-          .map((l) => l.split('\t'))
-        return { available: true, rows, rowCount: rows.length, truncatedAt: 200 }
+        // The header row is kept as columns: the evidence check needs to know which
+        // cells are names or emails, so it can refuse a PR that repeats them.
+        const lines = stdout.split('\n').filter((l) => l.length > 0)
+        const columns = (lines[0] ?? '').split('\t')
+        const rows = lines.slice(1, 201).map((l) => l.split('\t'))
+        return { available: true, columns, rows, rowCount: rows.length, truncatedAt: 200 }
       } catch (err: any) {
         const msg = String(err.stderr || err.message || err)
         // Connection refused / timeout = tunnel down, not a query error.

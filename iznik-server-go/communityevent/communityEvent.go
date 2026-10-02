@@ -105,6 +105,11 @@ func ListGroup(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
+	// Allow the logged-in creator to see their own pending event on the group page,
+	// matching List's behaviour: `pending = 0 OR communityevents.userid = myid`.
+	// Anonymous requests (myid = 0) only see approved events.
+	myid := user.WhoAmI(c)
+
 	var ids []uint64
 
 	start := time.Now().Format("2006-01-02")
@@ -114,8 +119,8 @@ func ListGroup(c *fiber.Ctx) error {
 		Joins("LEFT JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid").
 		Joins("LEFT JOIN communityevents_dates ON communityevents.id = communityevents_dates.eventid").
 		Joins("LEFT JOIN users ON communityevents.userid = users.id").
-		Where("groupid = ? AND end IS NOT NULL AND end >= ? AND communityevents.deleted = 0 AND pending = 0 AND users.deleted IS NULL",
-			id, start).
+		Where("groupid = ? AND end IS NOT NULL AND end >= ? AND communityevents.deleted = 0 AND (pending = 0 OR communityevents.userid = ?) AND users.deleted IS NULL",
+			id, start, myid).
 		Order("end ASC").
 		Pluck("id", &ids)
 
