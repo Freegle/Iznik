@@ -216,6 +216,18 @@
                 </a>
               </span>
             </NoticeMessage>
+            <!-- The post's home community sent it back to pending. This copy
+                 rippled in and cannot be approved until they approve theirs; the
+                 server refuses it too (locked_by_home is the effective lock). -->
+            <NoticeMessage
+              v-if="lockedByHome"
+              variant="warning"
+              class="mt-1 mb-2"
+              data-test="locked-by-home-notice"
+            >
+              The home community is reviewing this post, so it can't be approved
+              here until they approve it. Nothing for you to do for now.
+            </NoticeMessage>
             <ModMessageTnNotice
               :mod-messaging-allowed="modMessagingAllowed"
               :live="contextCopyIsLive"
@@ -1183,6 +1195,13 @@ const contextCopyIsLive = computed(
 // group being administered in the all-communities view) so the banner shows in both.
 const isRippledInToContextGroup = computed(() =>
   isRippledIn(message.value?.groups, currentGroupid.value)
+)
+
+// A moderator of the post's home community sent it back to pending, so this rippled-in
+// copy waits for them. The API sends the effective lock: it is already 0 once the home
+// copy is approved.
+const lockedByHome = computed(
+  () => parseInt(contextGroup.value?.locked_by_home) === 1
 )
 
 // Task #23: the P/Q "quicker to get to" note for the copy on currentGroupid - only present
