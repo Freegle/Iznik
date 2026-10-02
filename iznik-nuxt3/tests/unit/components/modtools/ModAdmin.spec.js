@@ -286,4 +286,38 @@ describe('ModAdmin', () => {
       expect(mockUserStore.fetch).not.toHaveBeenCalled()
     })
   })
+
+  describe('guidance for local moderators', () => {
+    const guidance = 'Add your own names at the end and drop paragraph two.'
+
+    it('shows guidance clearly marked as not sent to members', async () => {
+      const wrapper = mountComponent({ open: true }, { modguidance: guidance })
+      await wrapper.vm.$nextTick()
+      const box = wrapper.find('.modguidance')
+      expect(box.exists()).toBe(true)
+      expect(box.text()).toContain(guidance)
+      expect(box.text()).toContain('NOT')
+      expect(box.text()).toContain('sent to members')
+    })
+
+    it('shows no guidance block when there is none', () => {
+      const wrapper = mountComponent({ open: true }, { modguidance: null })
+      expect(wrapper.find('.modguidance').exists()).toBe(false)
+    })
+
+    it('keeps guidance out of the body textarea', async () => {
+      const wrapper = mountComponent({ open: true }, { modguidance: guidance })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('textarea').element.value).toBe('Test body')
+    })
+
+    it('saving does not fold guidance into the text or send it', async () => {
+      const wrapper = mountComponent({}, { modguidance: guidance })
+      await wrapper.vm.save()
+
+      const params = mockAdminsStore.edit.mock.calls[0][0]
+      expect(params.text).toBe('Test body')
+      expect(JSON.stringify(params)).not.toContain(guidance)
+    })
+  })
 })

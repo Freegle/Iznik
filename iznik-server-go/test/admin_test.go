@@ -439,3 +439,158 @@ func TestPostAdminCreateWithSendAfter(t *testing.T) {
 	// Cleanup.
 	db.Exec("DELETE FROM admins WHERE id = ?", id)
 }
+
+// Guidance for local moderators lives in admins.modguidance, separate from subject and text.
+
+func adminGuidanceRow(t *testing.T, id uint64) (string, string, *string) {
+	db := database.DBConn
+	var row struct {
+		Subject     string
+		Text        string
+		Modguidance *string
+	}
+	db.Raw("SELECT subject, text, modguidance FROM admins WHERE id = ?", id).Scan(&row)
+	return row.Subject, row.Text, row.Modguidance
+}
+
+func TestCreateSystemWideAdminStoresGuidanceSeparately(t *testing.T) {
+	prefix := uniquePrefix("adm_guid_new")
+	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	_, token := CreateTestSession(t, supportID)
+
+	guidance := "GUIDANCE-" + prefix + " add your own sign-off"
+	body := fmt.Sprintf(`{"subject":"Sys %s","text":"Body for members","modguidance":%q}`, prefix, guidance)
+	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+token, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	id := uint64(result["id"].(float64))
+	assert.Greater(t, id, uint64(0))
+
+	subject, text, stored := adminGuidanceRow(t, id)
+	assert.NotNil(t, stored)
+	assert.Equal(t, guidance, *stored)
+	assert.Equal(t, "Body for members", text, "guidance must not be folded into the body")
+	assert.Equal(t, "Sys "+prefix, subject)
+	assert.NotContains(t, text, "GUIDANCE-")
+	assert.NotContains(t, subject, "GUIDANCE-")
+
+	database.DBConn.Exec("DELETE FROM admins WHERE id = ?", id)
+}
+
+func TestCreateGroupAdminIgnoresGuidance(t *testing.T) {
+	prefix := uniquePrefix("adm_guid_grp")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	body := fmt.Sprintf(`{"groupid":%d,"subject":"Grp %s","text":"Body","modguidance":"nobody reads this"}`, groupID, prefix)
+	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+token, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	id := uint64(result["id"].(float64))
+
+	_, _, stored := adminGuidanceRow(t, id)
+	assert.Nil(t, stored, "guidance only applies to a system-wide admin")
+
+	database.DBConn.Exec("DELETE FROM admins WHERE id = ?", id)
+}
+
+func TestModeratorSeesGuidanceOnTheirCopy(t *testing.T) {
+	prefix := uniquePrefix("adm_guid_get")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	adminID := createTestAdmin(t, modID, groupID, "Copy "+prefix)
+	guidance := "GUIDANCE-" + prefix
+	database.DBConn.Exec("UPDATE admins SET modguidance = ? WHERE id = ?", guidance, adminID)
+
+	// Single admin.
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/admin/%d?jwt=%s", adminID, modToken), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+	var single map[string]interface{}
+	json2.Unmarshal(rsp(resp), &single)
+	assert.Equal(t, guidance, single["modguidance"])
+	assert.Equal(t, "Test admin text", single["text"], "guidance must not be folded into the body")
+
+	// List.
+	req = httptest.NewRequest("GET", "/api/modtools/admin?jwt="+modToken, nil)
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+	var list []map[string]interface{}
+	json2.Unmarshal(rsp(resp), &list)
+	found := false
+	for _, a := range list {
+		if a["id"] == float64(adminID) {
+			found = true
+			assert.Equal(t, guidance, a["modguidance"])
+		}
+	}
+	assert.True(t, found)
+
+	database.DBConn.Exec("DELETE FROM admins WHERE id = ?", adminID)
+}
+
+func TestNonModeratorNeverGetsGuidance(t *testing.T) {
+	prefix := uniquePrefix("adm_guid_nomod")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	adminID := createTestAdmin(t, modID, groupID, "Hidden "+prefix)
+	database.DBConn.Exec("UPDATE admins SET modguidance = ? WHERE id = ?", "GUIDANCE-"+prefix, adminID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+	_, memberToken := CreateTestSession(t, memberID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/admin/%d?jwt=%s", adminID, memberToken), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 403, resp.StatusCode)
+	assert.NotContains(t, string(rsp(resp)), "GUIDANCE-")
+
+	req = httptest.NewRequest("GET", "/api/modtools/admin?jwt="+memberToken, nil)
+	resp, _ = getApp().Test(req)
+	assert.NotContains(t, string(rsp(resp)), "GUIDANCE-")
+
+	database.DBConn.Exec("DELETE FROM admins WHERE id = ?", adminID)
+}
+
+func TestEditingCopyLeavesGuidanceAlone(t *testing.T) {
+	prefix := uniquePrefix("adm_guid_edit")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	adminID := createTestAdmin(t, modID, groupID, "Edit "+prefix)
+	guidance := "GUIDANCE-" + prefix
+	database.DBConn.Exec("UPDATE admins SET modguidance = ? WHERE id = ?", guidance, adminID)
+
+	// A PATCH that tries to change guidance has no effect on it, and edits to the text do not
+	// pick it up.
+	body := fmt.Sprintf(`{"id":%d,"subject":"New subject","text":"New body","modguidance":"overwritten"}`, adminID)
+	req := httptest.NewRequest("PATCH", "/api/modtools/admin?jwt="+modToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	subject, text, stored := adminGuidanceRow(t, adminID)
+	assert.Equal(t, "New subject", subject)
+	assert.Equal(t, "New body", text)
+	assert.NotContains(t, text, "GUIDANCE-")
+	assert.NotNil(t, stored)
+	assert.Equal(t, guidance, *stored)
+
+	database.DBConn.Exec("DELETE FROM admins WHERE id = ?", adminID)
+}

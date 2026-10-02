@@ -77,6 +77,22 @@
             >.
           </p>
         </NoticeMessage>
+        <NoticeMessage
+          v-if="admin.modguidance"
+          variant="info"
+          class="modguidance mb-3 border border-2 border-info"
+        >
+          <h4 class="h6">
+            <v-icon icon="info-circle" /> Guidance for local moderators - NOT
+            sent to members
+          </h4>
+          <p class="small mb-1">
+            This is advice from Support on how you might adapt this ADMIN for
+            your community. It is not part of the message and will not be in
+            the email.
+          </p>
+          <p class="modguidance-text mb-0">{{ admin.modguidance }}</p>
+        </NoticeMessage>
         <p class="text-muted">
           <span v-if="admin.parentid"> Suggested ADMIN </span>
           <b-button
@@ -316,3 +332,9 @@ async function approve() {
   checkWork(true)
 }
 </script>
+
+<style scoped>
+.modguidance-text {
+  white-space: pre-wrap;
+}
+</style>

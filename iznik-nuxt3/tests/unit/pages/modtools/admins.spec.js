@@ -111,6 +111,9 @@ describe('admins.vue page', () => {
           },
           VeeForm: {
             template: '<form class="vee-form-stub" ref="form"><slot /></form>',
+            methods: {
+              validate: () => Promise.resolve({ valid: true }),
+            },
           },
           Field: {
             template:
@@ -150,6 +153,11 @@ describe('admins.vue page', () => {
           'b-form-input': {
             template:
               '<input class="form-input" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+            props: ['modelValue', 'id'],
+          },
+          'b-form-textarea': {
+            template:
+              '<textarea class="form-textarea" :id="id" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
             props: ['modelValue', 'id'],
           },
           'b-form-select': {
@@ -343,6 +351,53 @@ describe('admins.vue page', () => {
     it('renders group select in Pending tab', () => {
       const wrapper = mountComponent()
       expect(wrapper.find('.group-select-stub').exists()).toBe(true)
+    })
+  })
+
+  describe('guidance for local moderators', () => {
+    it('shows the separate guidance field for a system-wide ADMIN only', async () => {
+      const wrapper = mountComponent()
+      expect(wrapper.find('#modguidance').exists()).toBe(false)
+
+      wrapper.vm.groupidcreate = 5
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('#modguidance').exists()).toBe(false)
+
+      wrapper.vm.groupidcreate = -2
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.modguidance').exists()).toBe(true)
+      expect(wrapper.find('textarea#modguidance').exists()).toBe(true)
+      expect(
+        wrapper.find('.modguidance .form-group').attributes('label')
+      ).toContain('NOT sent to members')
+    })
+
+    it('sends guidance as its own field and keeps it out of the body', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.groupidcreate = -2
+      wrapper.vm.subject = 'Subject'
+      wrapper.vm.body = 'The message to members'
+      wrapper.vm.modguidance = 'Tell your mods to add local details'
+      await wrapper.vm.create()
+
+      expect(mockAdminsStore.add).toHaveBeenCalledTimes(1)
+      const params = mockAdminsStore.add.mock.calls[0][0]
+      expect(params.modguidance).toBe('Tell your mods to add local details')
+      expect(params.text).toBe('The message to members')
+      expect(params.subject).toBe('Subject')
+      expect(params.text).not.toContain('local details')
+    })
+
+    it('does not send guidance for a single-group ADMIN', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.groupidcreate = 5
+      wrapper.vm.subject = 'Subject'
+      wrapper.vm.body = 'Body'
+      wrapper.vm.modguidance = 'Should be dropped'
+      await wrapper.vm.create()
+
+      const params = mockAdminsStore.add.mock.calls[0][0]
+      expect(params).not.toHaveProperty('modguidance')
     })
   })
 })

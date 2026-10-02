@@ -142,6 +142,30 @@
                   />
                   <ErrorMessage name="body" class="text-danger fw-bold" />
                 </b-form-group>
+                <div
+                  v-if="groupidcreate < 0"
+                  class="modguidance border border-2 border-info rounded p-3 mb-3 mt-3"
+                >
+                  <b-form-group
+                    label="Guidance for local moderators (NOT sent to members):"
+                    label-for="modguidance"
+                    label-class="mb-0 fw-bold"
+                  >
+                    <p class="small text-muted mb-1">
+                      Optional. Local moderators see this above their copy of
+                      the ADMIN, to help them adapt it for their community. It
+                      is stored separately and is never part of the email that
+                      goes to members.
+                    </p>
+                    <b-form-textarea
+                      id="modguidance"
+                      v-model="modguidance"
+                      rows="5"
+                      spellcheck="true"
+                      placeholder="e.g. Please add your own local details at the end, and delete the paragraph about X if it doesn't apply to your area."
+                    />
+                  </b-form-group>
+                </div>
                 <p>
                   You can optionally add a big button into the ADMIN, and
                   specify where it will go.
@@ -251,6 +275,7 @@ const subject = ref(null)
 const body = ref(null)
 const ctatext = ref(null)
 const ctalink = ref(null)
+const modguidance = ref(null)
 const creating = ref(false)
 const created = ref(false)
 const essential = ref(true)
@@ -349,6 +374,11 @@ async function create() {
       ctatext: ctatext.value,
       ctalink: ctalink.value,
       essential: essential.value,
+    }
+
+    // Guidance for local mods only applies to a system-wide ADMIN, and is sent as its own field.
+    if (groupidcreate.value < 0 && modguidance.value) {
+      params.modguidance = modguidance.value
     }
   }
 

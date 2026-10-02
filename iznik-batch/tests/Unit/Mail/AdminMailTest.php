@@ -290,4 +290,27 @@ class AdminMailTest extends TestCase
             'Tracking pixel must be wrapped in its own mj-section/mj-column, not a bare mj-body child.'
         );
     }
+
+    public function test_moderator_guidance_never_appears_in_rendered_email(): void
+    {
+        $guidance = 'GUIDANCE-FOR-MODS-ONLY please add local details';
+        $user = $this->createTestUser();
+        $admin = $this->makeAdmin(['modguidance' => $guidance]);
+
+        $mail = new AdminMail($user, $admin, 'Test Group', 'mods@groups.ilovefreegle.org', 'testgroup');
+
+        $html = $mail->render();
+        $text = view('emails.text.admin.admin', $mail->buildViewData())->render();
+
+        // Positive control: the real body is rendered, so a missing guidance string is meaningful.
+        $this->assertStringContainsString('this is a test admin message', $html);
+        $this->assertStringContainsString('this is a test admin message', $text);
+
+        $this->assertStringNotContainsString($guidance, $html);
+        $this->assertStringNotContainsString('GUIDANCE-FOR-MODS-ONLY', $html);
+        $this->assertStringNotContainsString($guidance, $text);
+        $this->assertStringNotContainsString('GUIDANCE-FOR-MODS-ONLY', $text);
+        $this->assertStringNotContainsString($guidance, $mail->adminText);
+        $this->assertStringNotContainsString($guidance, $mail->envelope()->subject);
+    }
 }

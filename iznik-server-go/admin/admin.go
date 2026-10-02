@@ -2,6 +2,7 @@ package admin
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/auth"
@@ -27,6 +28,7 @@ type Admin struct {
 	Essential     bool       `json:"essential"`
 	Template      *string    `json:"template"`
 	Editprotected bool       `json:"editprotected"`
+	Modguidance   *string    `json:"modguidance"`
 }
 
 // GetAdmin handles GET /admin/:id - get a single admin by ID.
@@ -54,7 +56,7 @@ func GetAdmin(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var admin Admin
-	db.Table("admins").Select("id, createdby, groupid, subject, text, ctatext, ctalink, created, complete, heldby, pending, essential, template, editprotected").Where("id = ?", id).Scan(&admin)
+	db.Table("admins").Select("id, createdby, groupid, subject, text, ctatext, ctalink, created, complete, heldby, pending, essential, template, editprotected, modguidance").Where("id = ?", id).Scan(&admin)
 
 	if admin.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Admin not found")
@@ -95,7 +97,7 @@ func ListAdmins(c *fiber.Ctx) error {
 	// the retired ormharness (shapes.json / TestTier3Shapes_3d5506803f0c,
 	// removed in d22ba1d6c).
 	tx := db.Table("admins a").Select("a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, " +
-		"a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected")
+		"a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected, a.modguidance")
 
 	if groupidParam > 0 && auth.IsAdminOrSupport(myid) {
 		// System Admin/Support may view the admin history for any specific group they ask for
@@ -147,6 +149,7 @@ type PostAdminRequest struct {
 	Template      *string `json:"template,omitempty"`
 	Editprotected *bool   `json:"editprotected,omitempty"`
 	SendAfter     *string `json:"sendafter,omitempty"`
+	Modguidance   *string `json:"modguidance,omitempty"`
 }
 
 // PostAdmin handles POST /admin - action-based handler for Create, Hold, Release.
@@ -262,6 +265,12 @@ func PostAdmin(c *fiber.Ctx) error {
 			"editprotected": req.Editprotected != nil && *req.Editprotected,
 			"sendafter":     sendAfter,
 			"created":       gorm.Expr("NOW()"),
+		}
+		// Guidance for local moderators exists only on a system-wide admin (no groupid): that is the
+		// one whose per-group copies local mods review. It is its own column and is never merged
+		// into subject or text, so it cannot be sent to members.
+		if req.GroupID == 0 && req.Modguidance != nil && strings.TrimSpace(*req.Modguidance) != "" {
+			row["modguidance"] = strings.TrimSpace(*req.Modguidance)
 		}
 		if err := db.Table("admins").Create(row).Error; err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create admin")
