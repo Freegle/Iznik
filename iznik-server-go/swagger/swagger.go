@@ -2331,6 +2331,33 @@ type listMessagesResponse struct {
 //
 //	200: listMessagesResponse
 
+// swagger:route PUT /message/submit message submitMessage
+// Submit a complete post in one call
+//
+// Creates, attaches photos, joins the group and posts a complete message in a single request. Logged-out callers supply an email, which finds or creates the account and returns a JWT.
+//
+// Responses:
+//
+//	200: description: Success
+
+// swagger:route POST /modtools/messages/markchecked modtools markMessagesChecked
+// Mark posts as checked
+//
+// Marks the Checked or Trusted oversight bucket for a group as reviewed by the calling moderator.
+//
+// Responses:
+//
+//	200: description: Success
+
+// swagger:route GET /modtools/moderationstats modtools getModerationStats
+// Moderation statistics
+//
+// Reports where posts went (auto-approved, trusted, manual) and the auto-publish error rate over a period.
+//
+// Responses:
+//
+//	200: description: Success
+
 // swagger:route GET /message/count message getMessageCount
 // Get message count
 //
