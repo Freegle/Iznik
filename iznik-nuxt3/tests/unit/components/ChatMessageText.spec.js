@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, nextTick } from 'vue'
 import ChatMessageText from '~/components/ChatMessageText.vue'
 
@@ -45,9 +45,10 @@ vi.mock('~/composables/useChat', () => ({
 }))
 
 // Mock location store
+const mockTypeahead = vi.hoisted(() => vi.fn())
 vi.mock('~/stores/location', () => ({
   useLocationStore: () => ({
-    typeahead: vi.fn().mockResolvedValue([]),
+    typeahead: mockTypeahead,
   }),
 }))
 
@@ -80,9 +81,10 @@ vi.mock('~/constants', () => ({
 describe('ChatMessageText', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockTypeahead.mockResolvedValue([])
   })
 
-  function createWrapper(props = {}) {
+  function createWrapper(props = {}, stubOverrides = {}) {
     return mount(ChatMessageText, {
       props: {
         chatid: 123,
@@ -113,6 +115,7 @@ describe('ChatMessageText', () => {
             template: '<div class="l-marker"></div>',
             props: ['latLng', 'interactive'],
           },
+          ...stubOverrides,
         },
       },
     })
@@ -148,6 +151,50 @@ describe('ChatMessageText', () => {
     expect(wrapper.find('.l-map').attributes('data-scrollwheelzoom')).toBe(
       'false'
     )
+  })
+
+  describe('map failure', () => {
+    // A message with a house number and postcode gets an inline map. If the map
+    // blows up while mounting (Leaflet throws on bad coordinates, Sentry
+    // 7683112976 "_northEast.lat"), the message text must still be shown.
+    const throwingLMap = {
+      'l-map': {
+        props: ['zoom', 'maxZoom', 'center', 'style', 'options'],
+        template: '<div class="l-map" />',
+        setup() {
+          throw new Error('Bounds are not valid.')
+        },
+      },
+    }
+
+    async function withPostcode(stubs) {
+      const { useChatMessageBase } = await import('~/composables/useChat')
+      const msg = { ...mockChatMessage, message: '12 AB1 2CD' }
+      useChatMessageBase.mockReturnValueOnce({
+        ...mockComposableReturn,
+        chatmessage: { value: msg },
+        emessage: 'Meet me at 12 AB1 2CD',
+      })
+      return createWrapper({}, stubs)
+    }
+
+    it('still shows the message text when the map throws', async () => {
+      mockTypeahead.mockResolvedValue([{ lat: 53.8321, lng: -2.6191 }])
+      const wrapper = await withPostcode(throwingLMap)
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Meet me at 12 AB1 2CD')
+      expect(wrapper.text()).not.toContain('Map shows approximate')
+    })
+
+    it('does not draw a map for non-numeric coordinates', async () => {
+      mockTypeahead.mockResolvedValue([{ lat: 'x', lng: 'y' }])
+      const wrapper = await withPostcode({})
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Meet me at 12 AB1 2CD')
+      expect(wrapper.find('.l-map').exists()).toBe(false)
+    })
   })
 
   it('highlights emails only when highlightEmails prop is true', () => {

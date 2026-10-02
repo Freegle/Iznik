@@ -96,7 +96,7 @@
           </span>
         </template>
       </div>
-      <div v-if="lat || lng">
+      <div v-if="(lat || lng) && !mapFailed">
         <l-map
           ref="map"
           :zoom="16"
@@ -123,6 +123,7 @@ import {
   linkifyAndHighlightEmails,
 } from '~/composables/useLinkify'
 import { ref, computed, onMounted } from '#imports'
+import { onErrorCaptured } from 'vue'
 import ProfileImage from '~/components/ProfileImage'
 import { MAX_MAP_ZOOM, POSTCODE_REGEX } from '~/constants'
 import { attribution, osmtile, INLINE_MAP_OPTIONS } from '~/composables/useMap'
@@ -167,6 +168,15 @@ const {
 // Data properties
 const lat = ref(null)
 const lng = ref(null)
+
+// The map is a bonus on top of the message text. If Leaflet throws while
+// mounting (e.g. invalid LatLngBounds, Sentry 7683112976), the error would
+// otherwise take the whole message down with it, so drop just the map.
+const mapFailed = ref(false)
+onErrorCaptured(() => {
+  mapFailed.value = true
+  return false
+})
 
 // Computed properties
 const maxZoom = computed(() => MAX_MAP_ZOOM)
@@ -227,9 +237,12 @@ onMounted(async () => {
     const locationStore = useLocationStore()
     const locs = await locationStore.typeahead(postcode.value)
 
-    if (locs?.length) {
-      lat.value = locs[0].lat
-      lng.value = locs[0].lng
+    const la = Number(locs?.[0]?.lat)
+    const ln = Number(locs?.[0]?.lng)
+
+    if (Number.isFinite(la) && Number.isFinite(ln)) {
+      lat.value = la
+      lng.value = ln
     }
   }
 })
