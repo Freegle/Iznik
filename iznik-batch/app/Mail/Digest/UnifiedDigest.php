@@ -2,6 +2,7 @@
 
 namespace App\Mail\Digest;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\Contracts\RetryableMailable;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\AmpEmail;
@@ -29,7 +30,7 @@ use App\Services\UnsubscribeService;
  * Contains posts from all communities the user is a member of,
  * with cross-posted items deduplicated.
  */
-class UnifiedDigest extends MjmlMailable implements RetryableMailable
+class UnifiedDigest extends MjmlMailable implements RetryableMailable, DescribesMemberContent
 {
     use AmpEmail;
     use AvatarResolver;
@@ -278,6 +279,27 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             // immediate digests, which have no completed section. Without this a
             // rebuilt daily digest silently dropped the whole section.
             'completed' => $this->completedPosts->map(fn ($message) => $message->id)->values()->all(),
+        ];
+    }
+
+    /**
+     * The live posts and the "came and went" section both quote a Message and its author
+     * (plan section 11.8); filter-spool removes this mail if every one of those posts has
+     * since stopped being Approved, or every author is now a spammer, leaving nothing left
+     * that is still fit to send.
+     */
+    public function about(): array
+    {
+        $messages = $this->posts->map(fn ($post) => $post['message']->id)
+            ->merge($this->completedPosts->map(fn ($message) => $message->id));
+        $users = $this->posts->map(fn ($post) => $post['message']->fromuser)
+            ->merge($this->completedPosts->map(fn ($message) => $message->fromuser));
+
+        return [
+            'chatmessages' => [],
+            'messages' => $messages->unique()->values()->all(),
+            'newsfeed' => [],
+            'users' => $users->unique()->values()->all(),
         ];
     }
 

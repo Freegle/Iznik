@@ -88,6 +88,9 @@ already read and copy those.
 single community or suggest copies to many communities that each community then edits and
 approves. Use these sparingly and keep them warm.
 
+While Freegle is in a [lockdown](../ops/runbooks/lockdown.md), creating, editing or deleting
+an ADMIN is refused for moderators; Support and Admin are exempt.
+
 When Support or Admin suggests an ADMIN to every community, they can add **Guidance for
 local moderators (NOT sent to members)** on the Create tab. It is a separate box from the
 message body. Each community's copy shows that guidance in a highlighted box above the

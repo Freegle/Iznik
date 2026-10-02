@@ -2,6 +2,7 @@
 
 namespace App\Mail\Volunteering;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
@@ -16,7 +17,7 @@ use Illuminate\Mail\Mailables\Envelope;
  * /volunteering/{id} where the owner can renew (Go API sets renewed=NOW(),
  * expired=0).
  */
-class VolunteeringRenewMail extends MjmlMailable
+class VolunteeringRenewMail extends MjmlMailable implements DescribesMemberContent
 {
     public function __construct(
         public readonly string $recipientEmail,
@@ -69,5 +70,21 @@ class VolunteeringRenewMail extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->userId;
+    }
+
+    /**
+     * Names the opportunity's owner - the recipient is always the owner here, so
+     * there is no separate "author" to distinguish (plan section 11.8). There is
+     * no bucket for a volunteering opportunity itself, only for the people named
+     * in it; filter-spool removes this mail once the owner is now a spammer.
+     */
+    public function about(): array
+    {
+        return [
+            'chatmessages' => [],
+            'messages' => [],
+            'newsfeed' => [],
+            'users' => $this->userId !== null ? [$this->userId] : [],
+        ];
     }
 }

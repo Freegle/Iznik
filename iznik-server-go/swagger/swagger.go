@@ -5761,3 +5761,112 @@ type housekeeperTasksResponse struct {
 //	401: errorResponse
 //	403: errorResponse
 //	404: errorResponse
+
+// ============================================================================
+// Lockdown
+// ============================================================================
+
+// swagger:route GET /lockdown lockdown getLockdownNotice
+// Get the public lockdown notice
+//
+// Returns the current member-facing notice text, if any. Never reveals whether a
+// lockdown is active or which areas are held.
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route PATCH /lockdown lockdown patchLockdown
+// Change the lockdown state
+//
+// press, surfaces, notice, liftall or close. Support/Admin only. Each writes a new
+// row and returns the new state.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	409: errorResponse
+
+// swagger:route GET /modtools/lockdown lockdown getModtoolsLockdown
+// Get the lockdown state for moderators
+//
+// Active, incidentid, surfaces, reason, notice and who started it.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/lockdown/history lockdown getModtoolsLockdownHistory
+// Get lockdown history
+//
+// Last 50 rows of the lockdowns table, newest first. Support/Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/lockdown/stats lockdown getModtoolsLockdownStats
+// Get lockdown stats
+//
+// Counts of what is held and released, the email queue, what leaked, and batch loop
+// acknowledgements. Support/Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/lockdown/held lockdown getModtoolsLockdownHeld
+// Browse held items
+//
+// Chat messages, posts or ChitChat posts still held by the current lockdown, newest
+// first, 50 per page. Support/Admin only.
+//
+// Parameters:
+//   + name: kind
+//     in: query
+//     description: chat, post or chitchat
+//     required: true
+//     type: string
+//   + name: q
+//     in: query
+//     description: Search text, sender name or email
+//     type: string
+//   + name: userid
+//     in: query
+//     description: Only this sender
+//     type: integer
+//   + name: before
+//     in: query
+//     description: Hold id to page from (exclusive)
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse

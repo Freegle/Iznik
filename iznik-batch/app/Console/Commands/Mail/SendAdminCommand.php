@@ -55,6 +55,18 @@ class SendAdminCommand extends Command
             return Command::SUCCESS;
         }
 
+        // While a lockdown holds email, generate nothing (plan 2026-09-27-lockdown-switch.md
+        // section 11.11). Admins a moderator queued before the press have already been sent
+        // back to pending by lockdown:tick, so they wait for a fresh approval.
+        $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+        $lockdown->ack('mail-loops');
+        if ($lockdown->held('email')) {
+            $lockdown->count('deferred:admin');
+            $this->info('Email is held by the lockdown; no admins sent.');
+
+            return Command::SUCCESS;
+        }
+
         if (!$this->acquireLock()) {
             $this->warn('Another instance of mail:admin:send is already running.');
 

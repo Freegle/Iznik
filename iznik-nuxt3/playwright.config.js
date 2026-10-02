@@ -25,6 +25,83 @@ if (fs.existsSync(orderedTestsFile)) {
   }
 }
 
+// Shared `use` block for the chromium browser, common to the main project
+// and the isolated 'lockdown' project below (they must behave identically,
+// just run at different times).
+const chromiumUse = {
+  ...devices['Desktop Chrome'],
+  viewport: null, // Remove viewport constraints to use full screen
+  deviceScaleFactor: undefined, // Remove device scale factor when viewport is null
+  video: 'on-first-retry',
+  // Use Playwright's downloaded Chromium browser with security flags for Docker
+  launchOptions: {
+    headless: true, // Run in headless mode for CI/Docker environments
+    args: [
+      '--start-maximized', // Maximize browser window
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-web-security',
+      '--allow-running-insecure-content',
+      '--disable-features=VizDisplayCompositor',
+      '--disable-ipc-flooding-protection',
+      '--ignore-certificate-errors',
+      '--allow-insecure-localhost',
+      '--disable-extensions',
+      '--disable-plugins',
+      // Disable CDP async call stack depth tracking. Playwright enables this by
+      // default; V8's PromiseHookAfter fires on every Promise resolution to maintain
+      // async context chains. Vue's scheduler (queueFlush/queueJob) resolves a Promise
+      // per reactive cycle, so over a long spec run the tracked context list grows until
+      // iterating it on every resolution saturates the renderer thread (issue #285).
+      '--disable-features=AsyncCallStackDepth',
+      // Prevent Chrome from keeping navigated-away pages frozen in the BFCache.
+      // Across hundreds of navigations in a long run, accumulated V8 heap
+      // (compiled code, closures) builds up and can contribute to GC pauses.
+      '--disable-features=BackForwardCache',
+      // Stop V8 from scheduling background optimization/GC during idle periods,
+      // which can cause latency spikes mid-test.
+      '--disable-v8-idle-tasks',
+      // Prevent Chrome's background network activity (update checks, safebrowsing
+      // fetches, etc.) from generating Promise chains in the renderer.
+      '--disable-background-networking',
+      // Prevent renderer from being deprioritised when Playwright switches between
+      // pages — deprioritisation causes timer/Promise batching which then resolves
+      // in a burst and stresses the V8 hook machinery when focus returns.
+      '--disable-renderer-backgrounding',
+      // Same idea for background timers: keep them firing at normal rate so
+      // they don't batch up and produce Promise bursts on re-focus.
+      '--disable-background-timer-throttling',
+      // Disable Chrome profile sync — generates IPC and network traffic in the
+      // background throughout the test run.
+      '--disable-sync',
+      // Disable the hang monitor — it can kill a renderer that's momentarily
+      // slow under load, producing a false crash rather than a recoverable freeze.
+      '--disable-hang-monitor',
+      // Skip Chrome's first-run setup flow and component update checks.
+      '--no-first-run',
+      '--disable-component-update',
+      // Disable media routing (Chromecast/Cast) background discovery traffic.
+      '--disable-features=MediaRouter',
+      // Force V8 to eagerly parse/compile all JS. Removing this caused
+      // test-reply-flow-existing-user.spec.js 3.1 to hit a 20m timeout
+      // (job 5179) because the post-signup gotoAndVerify('/') in
+      // logoutIfLoggedIn stalled on lazy V8 parse of the homepage JS
+      // bundle. Prior commit with this flag (2fb8f2669, job 5167)
+      // passed; removing it for coverage stability regressed test
+      // stability. ChatMobileNavbar exclusion above carries the
+      // coverage recovery independently.
+      '--js-flags=--no-lazy',
+    ],
+    env: {},
+  },
+  contextOptions: {
+    // Disable background sync and other features that might prevent network idle
+    reducedMotion: 'reduce',
+  },
+}
+
 module.exports = defineConfig({
   testDir: './tests/e2e',
   testMatch,
@@ -174,80 +251,48 @@ module.exports = defineConfig({
 
   projects: [
     {
+      // Trivial no-op project (tests/e2e/lockdown-order.setup.js). Its only
+      // job is to exist so it can declare `teardown: 'lockdown'` below.
+      //
+      // A plain `dependencies: ['chromium']` on the 'lockdown' project (the
+      // previous approach) is the wrong tool: Playwright reports a dependent
+      // project's tests as "did not run", not "failed", whenever ANY test in
+      // the project it depends on fails - anywhere, even something unrelated
+      // and flaky. That means a red lockdown.spec.js would be
+      // indistinguishable from a lockdown.spec.js that silently never ran at
+      // all, which defeats the point of the safety check.
+      //
+      // `teardown` behaves differently: the named teardown project runs
+      // after every project depending on this setup project has finished,
+      // whether or not they passed, and its own pass/fail is reported as a
+      // real result. So 'lockdown' below always runs and always reports,
+      // however 'chromium' (or any other project depending on this one)
+      // comes out.
+      name: 'lockdown-order',
+      testMatch: /(^|\/)lockdown-order\.setup\.js$/,
+      teardown: 'lockdown',
+    },
+    {
       name: 'chromium',
-      use: {
-        ...devices['Desktop Chrome'],
-        viewport: null, // Remove viewport constraints to use full screen
-        deviceScaleFactor: undefined, // Remove device scale factor when viewport is null
-        video: 'on-first-retry',
-        // Use Playwright's downloaded Chromium browser with security flags for Docker
-        launchOptions: {
-          headless: true, // Run in headless mode for CI/Docker environments
-          args: [
-            '--start-maximized', // Maximize browser window
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--disable-web-security',
-            '--allow-running-insecure-content',
-            '--disable-features=VizDisplayCompositor',
-            '--disable-ipc-flooding-protection',
-            '--ignore-certificate-errors',
-            '--allow-insecure-localhost',
-            '--disable-extensions',
-            '--disable-plugins',
-            // Disable CDP async call stack depth tracking. Playwright enables this by
-            // default; V8's PromiseHookAfter fires on every Promise resolution to maintain
-            // async context chains. Vue's scheduler (queueFlush/queueJob) resolves a Promise
-            // per reactive cycle, so over a long spec run the tracked context list grows until
-            // iterating it on every resolution saturates the renderer thread (issue #285).
-            '--disable-features=AsyncCallStackDepth',
-            // Prevent Chrome from keeping navigated-away pages frozen in the BFCache.
-            // Across hundreds of navigations in a long run, accumulated V8 heap
-            // (compiled code, closures) builds up and can contribute to GC pauses.
-            '--disable-features=BackForwardCache',
-            // Stop V8 from scheduling background optimization/GC during idle periods,
-            // which can cause latency spikes mid-test.
-            '--disable-v8-idle-tasks',
-            // Prevent Chrome's background network activity (update checks, safebrowsing
-            // fetches, etc.) from generating Promise chains in the renderer.
-            '--disable-background-networking',
-            // Prevent renderer from being deprioritised when Playwright switches between
-            // pages — deprioritisation causes timer/Promise batching which then resolves
-            // in a burst and stresses the V8 hook machinery when focus returns.
-            '--disable-renderer-backgrounding',
-            // Same idea for background timers: keep them firing at normal rate so
-            // they don't batch up and produce Promise bursts on re-focus.
-            '--disable-background-timer-throttling',
-            // Disable Chrome profile sync — generates IPC and network traffic in the
-            // background throughout the test run.
-            '--disable-sync',
-            // Disable the hang monitor — it can kill a renderer that's momentarily
-            // slow under load, producing a false crash rather than a recoverable freeze.
-            '--disable-hang-monitor',
-            // Skip Chrome's first-run setup flow and component update checks.
-            '--no-first-run',
-            '--disable-component-update',
-            // Disable media routing (Chromecast/Cast) background discovery traffic.
-            '--disable-features=MediaRouter',
-            // Force V8 to eagerly parse/compile all JS. Removing this caused
-            // test-reply-flow-existing-user.spec.js 3.1 to hit a 20m timeout
-            // (job 5179) because the post-signup gotoAndVerify('/') in
-            // logoutIfLoggedIn stalled on lazy V8 parse of the homepage JS
-            // bundle. Prior commit with this flag (2fb8f2669, job 5167)
-            // passed; removing it for coverage stability regressed test
-            // stability. ChatMobileNavbar exclusion above carries the
-            // coverage recovery independently.
-            '--js-flags=--no-lazy',
-          ],
-          env: {},
-        },
-        contextOptions: {
-          // Disable background sync and other features that might prevent network idle
-          reducedMotion: 'reduce',
-        },
-      },
+      // lockdown.spec.js presses a real site-wide lockdown, holding writes
+      // for every other spec/agent sharing these Docker containers. It runs
+      // as the 'lockdown' project's teardown (declared on 'lockdown-order'
+      // above), which starts only once every project depending on
+      // 'lockdown-order' - this one - has finished. The exact filename match
+      // (not a `lockdown*` glob) deliberately leaves
+      // lockdown-pr-screenshots.spec.js (mocked state, no real press)
+      // running here as normal.
+      testIgnore: /(^|\/)lockdown\.spec\.js$/,
+      dependencies: ['lockdown-order'],
+      use: chromiumUse,
+    },
+    {
+      name: 'lockdown',
+      testMatch: /(^|\/)lockdown\.spec\.js$/,
+      // Not a `dependencies` project - it is invoked automatically as the
+      // teardown for 'lockdown-order' (see above), which is what makes it
+      // run, and report its own result, even when 'chromium' has failures.
+      use: chromiumUse,
     },
   ],
 })

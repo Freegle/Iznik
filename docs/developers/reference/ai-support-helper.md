@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-29
+last_reviewed: 2026-10-02
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -287,3 +287,6 @@ points `SUPPORT_SMTP_*` at a real relay.
   `Dockerfile` / `entrypoint.sh`.
 - **Frontend**: `iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue`.
 - **Compose**: the `ai-support-helper` service in `docker-compose.yml` (profile `backend`).
+- **Lockdown**: the user dump (`iznik-server-go/userdump/userdump.go`) is a download, so it is
+  refused while a [lockdown](../../ops/runbooks/lockdown.md) holds `export`, for Support and Admin
+  too.

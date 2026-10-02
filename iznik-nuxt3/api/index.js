@@ -13,7 +13,6 @@ import AddressAPI from './AddressAPI.js'
 import AdminsAPI from './AdminsAPI.js'
 import AlertAPI from './AlertAPI.js'
 import AuthorityAPI from './AuthorityAPI.js'
-import ElectricalsAPI from './ElectricalsAPI.js'
 import BanditAPI from './BanditAPI.js'
 import BrowseAPI from './BrowseAPI.js'
 import CharityAPI from './CharityAPI.js'
@@ -24,6 +23,8 @@ import ConfigAPI from './ConfigAPI.js'
 import DashboardAPI from './DashboardAPI.js'
 import DomainAPI from './DomainAPI.js'
 import DonationsAPI from './DonationsAPI.js'
+import DrivingAPI from './DrivingAPI.js'
+import ElectricalsAPI from './ElectricalsAPI.js'
 import EmailTrackingAPI from './EmailTrackingAPI.js'
 import ExportAPI from './ExportAPI.js'
 import GiftAidAPI from './GiftAidAPI.js'
@@ -33,6 +34,7 @@ import ImageAPI from './ImageAPI.js'
 import IsochroneAPI from './IsochroneAPI.js'
 import JobAPI from './JobAPI.js'
 import LocationAPI from './LocationAPI.js'
+import LockdownAPI from './LockdownAPI.js'
 import LogsAPI from './LogsAPI.js'
 import MembershipsAPI from './MembershipsAPI.js'
 import MergeAPI from './MergeAPI.js'
@@ -52,7 +54,6 @@ import StatusAPI from './StatusAPI.js'
 import StoriesAPI from './StoriesAPI.js'
 import SystemLogsAPI from './SystemLogsAPI.js'
 import TeamAPI from './TeamAPI.js'
-import DrivingAPI from './DrivingAPI.js'
 import TownAPI from './TownAPI.js'
 import TrystAPI from './TrystAPI.js'
 import UserAPI from './UserAPI.js'
@@ -68,7 +69,6 @@ export default (config) => {
     admins: new AdminsAPI(options),
     alert: new AlertAPI(options),
     authority: new AuthorityAPI(options),
-    electricals: new ElectricalsAPI(options),
     bandit: new BanditAPI(options),
     browse: new BrowseAPI(options),
     charity: new CharityAPI(options),
@@ -79,6 +79,8 @@ export default (config) => {
     dashboard: new DashboardAPI(options),
     domain: new DomainAPI(options),
     donations: new DonationsAPI(options),
+    driving: new DrivingAPI(options),
+    electricals: new ElectricalsAPI(options),
     emailtracking: new EmailTrackingAPI(options),
     export: new ExportAPI(options),
     giftaid: new GiftAidAPI(options),
@@ -88,6 +90,7 @@ export default (config) => {
     isochrone: new IsochroneAPI(options),
     job: new JobAPI(options),
     location: new LocationAPI(options),
+    lockdown: new LockdownAPI(options),
     logs: new LogsAPI(options),
     memberships: new MembershipsAPI(options),
     merge: new MergeAPI(options),
@@ -107,7 +110,6 @@ export default (config) => {
     stories: new StoriesAPI(options),
     systemlogs: new SystemLogsAPI(options),
     team: new TeamAPI(options),
-    driving: new DrivingAPI(options),
     town: new TownAPI(options),
     tryst: new TrystAPI(options),
     user: new UserAPI(options),

@@ -6,6 +6,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
@@ -97,6 +98,10 @@ func PostStdMsg(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"ret": 1, "status": "Not logged in"})
+	}
+
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	if !auth.IsSystemMod(myid) {
@@ -191,6 +196,10 @@ func PatchStdMsg(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"ret": 1, "status": "Not logged in"})
 	}
 
+	if lockdown.GateMod(c, myid) {
+		return nil
+	}
+
 	type PatchRequest struct {
 		ID           uint64  `json:"id"`
 		Title        *string `json:"title"`
@@ -280,6 +289,10 @@ func DeleteStdMsg(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"ret": 1, "status": "Not logged in"})
+	}
+
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	type DeleteRequest struct {

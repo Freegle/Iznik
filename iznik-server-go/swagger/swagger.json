@@ -3221,6 +3221,51 @@
     ]
    }
   },
+  "/lockdown": {
+   "get": {
+    "description": "Returns the current member-facing notice text, if any. Never reveals whether a lockdown is active or which areas are held.",
+    "tags": [
+     "lockdown"
+    ],
+    "summary": "Get the public lockdown notice",
+    "operationId": "getLockdownNotice",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     }
+    }
+   },
+   "patch": {
+    "description": "press, surfaces, notice, liftall or close. Support/Admin only. Each writes a new row and returns the new state.",
+    "tags": [
+     "lockdown"
+    ],
+    "summary": "Change the lockdown state",
+    "operationId": "patchLockdown",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "409": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
   "/memberships": {
    "get": {
     "description": "Returns group memberships for the authenticated user or members of a group",
@@ -4599,6 +4644,140 @@
     "responses": {
      "200": {
       "$ref": "#/responses/genericResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/modtools/lockdown": {
+   "get": {
+    "description": "Active, incidentid, surfaces, reason, notice and who started it.",
+    "tags": [
+     "lockdown"
+    ],
+    "summary": "Get the lockdown state for moderators",
+    "operationId": "getModtoolsLockdown",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/modtools/lockdown/held": {
+   "get": {
+    "description": "Chat messages, posts or ChitChat posts still held by the current lockdown, newest first, 50 per page. Support/Admin only.",
+    "tags": [
+     "lockdown"
+    ],
+    "summary": "Browse held items",
+    "operationId": "getModtoolsLockdownHeld",
+    "parameters": [
+     {
+      "type": "string",
+      "description": "chat, post or chitchat",
+      "name": "kind",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "string",
+      "description": "Search text, sender name or email",
+      "name": "q",
+      "in": "query"
+     },
+     {
+      "type": "integer",
+      "description": "Only this sender",
+      "name": "userid",
+      "in": "query"
+     },
+     {
+      "type": "integer",
+      "description": "Hold id to page from (exclusive)",
+      "name": "before",
+      "in": "query"
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/modtools/lockdown/history": {
+   "get": {
+    "description": "Last 50 rows of the lockdowns table, newest first. Support/Admin only.",
+    "tags": [
+     "lockdown"
+    ],
+    "summary": "Get lockdown history",
+    "operationId": "getModtoolsLockdownHistory",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/modtools/lockdown/stats": {
+   "get": {
+    "description": "Counts of what is held and released, the email queue, what leaked, and batch loop acknowledgements. Support/Admin only.",
+    "tags": [
+     "lockdown"
+    ],
+    "summary": "Get lockdown stats",
+    "operationId": "getModtoolsLockdownStats",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
      },
      "401": {
       "$ref": "#/responses/errorResponse"
