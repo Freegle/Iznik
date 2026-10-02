@@ -450,13 +450,6 @@ services:
     volumes:
       - ./frontend-nginx.conf:/etc/nginx/templates/nginx.conf.template:ro
       - delivery-cache:/var/cache/nginx/wsrv_cache
-      # The LEGACY upload store, read-only: nginx serves a GET from here only
-      # after the spool and the object store have both said 404. Static files,
-      # no tusd in front (tusd creates a lock file even on GET, which a
-      # read-only mount refuses). On the prod host the edge override binds the
-      # NFS share here; on dev it is an empty volume. Dropped, with the nginx
-      # hop, once images:migrate-legacy --verify reports nothing missing.
-      - tusd-legacy:/images:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8081/healthz || exit 1"]
       interval: 10s
@@ -2065,8 +2058,6 @@ volumes:
     driver: local   # frontend-nginx wsrv_cache (mirror of app1's 41 GB delivery cache)
   tusd-spool:
     driver: local   # tusd's local upload spool; images:push-spool drains it to the object store
-  tusd-legacy:
-    driver: local   # empty stand-in for the legacy NFS share (the edge override binds the real one into frontend-nginx)
   objectstore-data:
     driver: local   # dev/CI object store
   osm-data:
