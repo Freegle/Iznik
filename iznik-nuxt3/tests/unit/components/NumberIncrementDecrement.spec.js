@@ -10,7 +10,7 @@ vi.mock('@chenfengyuan/vue-number-input', () => ({
   default: {
     name: 'VueNumberInput',
     template:
-      '<div class="vue-number-input" :class="$attrs.class"><input :value="modelValue" /></div>',
+      '<div class="vue-number-input" :class="$attrs.class"><input :value="modelValue" v-bind="attrs" /></div>',
     props: {
       modelValue: null,
       controls: Boolean,
@@ -22,6 +22,8 @@ vi.mock('@chenfengyuan/vue-number-input', () => ({
       size: null,
       // Boolean like the library's, so a bare `rounded` attribute reads true.
       rounded: Boolean,
+      // Merged onto the <input> itself, as the library does.
+      attrs: { type: Object, default: () => ({}) },
     },
     emits: ['update:modelValue'],
   },
@@ -138,6 +140,76 @@ describe('NumberIncrementDecrement', () => {
     it('accepts custom size', () => {
       const wrapper = createWrapper({ size: 'small' })
       expect(wrapper.props('size')).toBe('small')
+    })
+  })
+
+  describe('whole numbers only', () => {
+    // A count is a whole number, and the API rejects a decimal with a 400
+    // (SR-UZFMH). The box refuses anything else as it is entered, rather than
+    // accepting it and changing it afterwards.
+    function fire(wrapper, type, init = {}, extra = {}) {
+      const Ctor = type === 'keydown' ? KeyboardEvent : InputEvent
+      const event = new Ctor(type, { cancelable: true, ...init })
+      for (const [k, v] of Object.entries(extra)) {
+        Object.defineProperty(event, k, { value: v })
+      }
+      wrapper.find('input').element.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+
+    it('asks phones for a digits-only keypad', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.find('input').attributes('inputmode')).toBe('numeric')
+    })
+
+    it.each(['.', ',', 'e', '-', '+'])('refuses typing %s', (data) => {
+      const wrapper = createWrapper()
+      expect(fire(wrapper, 'beforeinput', { data })).toBe(true)
+      expect(fire(wrapper, 'keydown', { key: data })).toBe(true)
+    })
+
+    it('allows typing a digit', () => {
+      const wrapper = createWrapper()
+      expect(fire(wrapper, 'beforeinput', { data: '7' })).toBe(false)
+      expect(fire(wrapper, 'keydown', { key: '7' })).toBe(false)
+    })
+
+    it.each(['Backspace', 'Delete', 'ArrowUp', 'ArrowLeft', 'Tab', 'Enter'])(
+      'allows the %s key',
+      (key) => {
+        const wrapper = createWrapper()
+        expect(fire(wrapper, 'keydown', { key })).toBe(false)
+      }
+    )
+
+    it('allows shortcuts such as Ctrl+A', () => {
+      const wrapper = createWrapper()
+      expect(fire(wrapper, 'keydown', { key: 'a', ctrlKey: true })).toBe(false)
+    })
+
+    it('allows deleting, which has no inserted text', () => {
+      const wrapper = createWrapper()
+      expect(
+        fire(wrapper, 'beforeinput', {
+          data: null,
+          inputType: 'deleteContentBackward',
+        })
+      ).toBe(false)
+    })
+
+    it('refuses pasting 18.5 but allows pasting 18', () => {
+      const wrapper = createWrapper()
+      const paste = (text) =>
+        fire(
+          wrapper,
+          'beforeinput',
+          { inputType: 'insertFromPaste' },
+          {
+            dataTransfer: { getData: () => text },
+          }
+        )
+      expect(paste('18.5')).toBe(true)
+      expect(paste('18')).toBe(false)
     })
   })
 
