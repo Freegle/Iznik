@@ -594,3 +594,102 @@ func TestEditingCopyLeavesGuidanceAlone(t *testing.T) {
 
 	database.DBConn.Exec("DELETE FROM admins WHERE id = ?", adminID)
 }
+
+// V1 parity: Admin::getPublic returned parentid, heldat, activeonly, sendafter and createdby as
+// a user object. ModAdmin needs parentid for its "copy of a suggested ADMIN" notice and
+// createdby.displayname for "Created by".
+
+func TestAdminReturnsV1Fields(t *testing.T) {
+	prefix := uniquePrefix("adm_v1")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	parentID := createTestAdmin(t, modID, groupID, "Parent "+prefix)
+	adminID := createTestAdmin(t, modID, groupID, "Child "+prefix)
+	db := database.DBConn
+	db.Exec("UPDATE admins SET parentid = ?, activeonly = 1, heldby = ?, heldat = NOW() WHERE id = ?", parentID, modID, adminID)
+
+	check := func(a map[string]interface{}) {
+		assert.Equal(t, float64(parentID), a["parentid"])
+		assert.Equal(t, true, a["activeonly"])
+		assert.NotNil(t, a["heldat"])
+		assert.Contains(t, a, "sendafter")
+		cb, ok := a["createdby"].(map[string]interface{})
+		assert.True(t, ok, "createdby must be a user object, as in V1")
+		assert.Equal(t, float64(modID), cb["id"])
+		assert.NotEmpty(t, cb["displayname"])
+	}
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/admin/%d?jwt=%s", adminID, modToken), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+	var single map[string]interface{}
+	json2.Unmarshal(rsp(resp), &single)
+	check(single)
+
+	req = httptest.NewRequest("GET", "/api/modtools/admin?jwt="+modToken, nil)
+	resp, _ = getApp().Test(req)
+	var list []map[string]interface{}
+	json2.Unmarshal(rsp(resp), &list)
+	found := false
+	for _, a := range list {
+		if a["id"] == float64(adminID) {
+			found = true
+			check(a)
+		}
+	}
+	assert.True(t, found)
+
+	db.Exec("DELETE FROM admins WHERE id IN (?, ?)", adminID, parentID)
+}
+
+func TestHoldAdminRecordsWhen(t *testing.T) {
+	prefix := uniquePrefix("adm_holdat")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	adminID := createTestAdmin(t, modID, groupID, "Hold "+prefix)
+
+	body := fmt.Sprintf(`{"id":%d,"action":"Hold"}`, adminID)
+	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+modToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var withHeldat int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM admins WHERE id = ? AND heldat IS NOT NULL", adminID).Scan(&withHeldat)
+	assert.Equal(t, int64(1), withHeldat, "a hold records when it was taken, as in V1")
+
+	database.DBConn.Exec("DELETE FROM admins WHERE id = ?", adminID)
+}
+
+func TestAnyGroupModeratorCanGetAnAdmin(t *testing.T) {
+	prefix := uniquePrefix("adm_anymod")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Moderator")
+	adminID := createTestAdmin(t, ownerID, groupID, "Anymod "+prefix)
+
+	// A moderator of a different group, with no system role, may read it.
+	otherGroup := CreateTestGroup(t, prefix+"_other")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, otherGroup, "Owner")
+	_, modToken := CreateTestSession(t, modID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/admin/%d?jwt=%s", adminID, modToken), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// A plain member of a group still may not.
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+	_, memberToken := CreateTestSession(t, memberID)
+	req = httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/admin/%d?jwt=%s", adminID, memberToken), nil)
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 403, resp.StatusCode)
+
+	database.DBConn.Exec("DELETE FROM admins WHERE id = ?", adminID)
+}

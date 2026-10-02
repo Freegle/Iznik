@@ -320,4 +320,23 @@ describe('ModAdmin', () => {
       expect(JSON.stringify(params)).not.toContain(guidance)
     })
   })
+
+  describe('copy of a suggested ADMIN', () => {
+    it('shows the suggested-ADMIN notice and label when the admin has a parent', async () => {
+      const wrapper = mountComponent({ open: true }, { parentid: 7 })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('This is a copy of a suggested ADMIN')
+      expect(wrapper.text()).toContain('Suggested ADMIN')
+    })
+
+    it('shows no suggested-ADMIN notice without a parent, and names the creator', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { parentid: null, createdby: { id: 5, displayname: 'Pat Mod' } }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).not.toContain('copy of a suggested ADMIN')
+      expect(wrapper.text()).toContain('Pat Mod')
+    })
+  })
 })
