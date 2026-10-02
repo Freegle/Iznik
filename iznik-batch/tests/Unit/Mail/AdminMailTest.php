@@ -290,4 +290,63 @@ class AdminMailTest extends TestCase
             'Tracking pixel must be wrapped in its own mj-section/mj-column, not a bare mj-body child.'
         );
     }
+
+    public function test_moderator_guidance_never_appears_in_rendered_email(): void
+    {
+        $guidance = 'GUIDANCE-FOR-MODS-ONLY please add local details';
+        $user = $this->createTestUser();
+        $admin = $this->makeAdmin(['modguidance' => $guidance]);
+
+        $mail = new AdminMail($user, $admin, 'Test Group', 'mods@groups.ilovefreegle.org', 'testgroup');
+
+        $html = $mail->render();
+        $text = view('emails.text.admin.admin', $mail->buildViewData())->render();
+
+        // Positive control: the real body is rendered, so a missing guidance string is meaningful.
+        $this->assertStringContainsString('this is a test admin message', $html);
+        $this->assertStringContainsString('this is a test admin message', $text);
+
+        $this->assertStringNotContainsString($guidance, $html);
+        $this->assertStringNotContainsString('GUIDANCE-FOR-MODS-ONLY', $html);
+        $this->assertStringNotContainsString($guidance, $text);
+        $this->assertStringNotContainsString('GUIDANCE-FOR-MODS-ONLY', $text);
+        $this->assertStringNotContainsString($guidance, $mail->adminText);
+        $this->assertStringNotContainsString($guidance, $mail->envelope()->subject);
+    }
+
+    private function subjectFor(array $overrides): string
+    {
+        $mail = new AdminMail($this->createTestUser(), $this->makeAdmin($overrides), 'Test Group');
+
+        return $mail->envelope()->subject;
+    }
+
+    public function test_essential_admin_subject_is_admin_prefixed(): void
+    {
+        $this->assertEquals('ADMIN: Rota change', $this->subjectFor(['subject' => 'Rota change', 'essential' => true]));
+    }
+
+    public function test_non_essential_admin_subject_is_newsletter_prefixed(): void
+    {
+        $this->assertEquals('NEWSLETTER: Spring news', $this->subjectFor(['subject' => 'Spring news', 'essential' => false]));
+    }
+
+    public function test_typed_prefix_is_never_doubled_in_subject(): void
+    {
+        $this->assertEquals('ADMIN: Rota change', $this->subjectFor(['subject' => 'ADMIN: Rota change', 'essential' => true]));
+        $this->assertEquals('ADMIN: Rota change', $this->subjectFor(['subject' => 'ADMIN Rota change', 'essential' => true]));
+        $this->assertEquals('NEWSLETTER: Spring news', $this->subjectFor(['subject' => 'ADMIN: Spring news', 'essential' => false]));
+        $this->assertEquals('NEWSLETTER: Spring news', $this->subjectFor(['subject' => 'NEWSLETTER: Spring news', 'essential' => false]));
+        $this->assertEquals('ADMIN: Rota change', $this->subjectFor(['subject' => 'NEWSLETTER Rota change', 'essential' => true]));
+    }
+
+    public function test_a_subject_merely_containing_admin_is_kept(): void
+    {
+        $this->assertEquals('ADMIN: Admin team meeting', $this->subjectFor(['subject' => 'Admin team meeting']));
+    }
+
+    public function test_marketing_template_subject_unchanged(): void
+    {
+        $this->assertEquals('ADMIN: Help us', $this->subjectFor(['subject' => 'ADMIN: Help us', 'template' => 'fundraising', 'essential' => false]));
+    }
 }

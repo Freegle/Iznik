@@ -77,6 +77,22 @@
             >.
           </p>
         </NoticeMessage>
+        <NoticeMessage
+          v-if="admin.modguidance"
+          variant="info"
+          class="modguidance mb-3 border border-2 border-info"
+        >
+          <h4 class="h6">
+            <v-icon icon="info-circle" /> Guidance for local moderators - NOT
+            sent to members
+          </h4>
+          <p class="small mb-1">
+            This is advice from Support on how you might adapt this ADMIN for
+            your community. It is not part of the message and will not be in
+            the email.
+          </p>
+          <p class="modguidance-text mb-0">{{ admin.modguidance }}</p>
+        </NoticeMessage>
         <p class="text-muted">
           <span v-if="admin.parentid"> Suggested ADMIN </span>
           <b-button
@@ -139,6 +155,20 @@
               class="mb-3"
               placeholder="Put your message in here.  Plain-text only."
               rows="15"
+            />
+          </b-form-group>
+          <b-form-group
+            label="Send after (optional):"
+            label-for="sendafter"
+            label-class="mb-0"
+            description="Leave empty to send as soon as it is approved. Otherwise it is held until this time."
+            class="mb-3"
+          >
+            <b-form-input
+              id="sendafter"
+              v-model="sendafter"
+              type="datetime-local"
+              style="max-width: 250px"
             />
           </b-form-group>
           <b-form-group
@@ -212,6 +242,10 @@ import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
 import { useHeldNotice } from '~/composables/useHeldNotice'
+import {
+  sendAfterToInput,
+  inputToSendAfter,
+} from '~/modtools/composables/useAdminSendAfter'
 
 const props = defineProps({
   id: {
@@ -251,6 +285,16 @@ const groupname = computed(() => {
   return null
 })
 
+// The send-after time is edited as a local datetime-local string and saved as ISO.
+const sendafter = computed({
+  get: () => sendAfterToInput(admin.value?.sendafter),
+  set: (val) => {
+    if (admin.value) {
+      admin.value.sendafter = inputToSendAfter(val)
+    }
+  },
+})
+
 const holder = computed(() => {
   return admin.value?.heldby ? userStore.byId(admin.value.heldby) : null
 })
@@ -285,6 +329,7 @@ async function save() {
       id: admin.value.id,
       subject: admin.value.subject,
       text: admin.value.text,
+      sendafter: admin.value.sendafter ?? null,
       pending: true,
     })
   )
@@ -316,3 +361,9 @@ async function approve() {
   checkWork(true)
 }
 </script>
+
+<style scoped>
+.modguidance-text {
+  white-space: pre-wrap;
+}
+</style>
