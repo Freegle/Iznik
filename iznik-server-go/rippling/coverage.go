@@ -2,6 +2,7 @@ package rippling
 
 import (
 	"encoding/json"
+	"math"
 	"sort"
 	"time"
 
@@ -136,4 +137,47 @@ func CoverageAt(ticks []ScheduleTick, hazardHours []int, arrival time.Time, driv
 	}
 
 	return Coverage{At: at, Covered: false}, true
+}
+
+// maxMilesPerMinute is a deliberately generous ceiling on road speed (90 mph). A viewer
+// whose straight-line distance exceeds budget * this cannot be inside the budget by road
+// however good the roads are, so no routing search is needed to say so.
+const maxMilesPerMinute = 1.5
+
+// DriveTimeFetcher is FetchDriveTime's signature, injectable so tests need no routing server.
+type DriveTimeFetcher func(fromLat, fromLng, toLat, toLng, maxMinutes float64) (DriveTime, bool)
+
+// EstimateCoverage answers CoverageAt for a viewer at (toLat,toLng) of a post whose reach
+// grows from (fromLat,fromLng). A viewer plainly beyond the post's widest budget is answered
+// as unreachable without a routing search, so a routing outage (or the per-request cap)
+// cannot leave them with the open-ended "as soon as it does" wording. Everyone else needs
+// the search, and ok is false when it is unavailable.
+func EstimateCoverage(ticks []ScheduleTick, hazardHours []int, arrival time.Time,
+	fromLat, fromLng, toLat, toLng float64, fetch DriveTimeFetcher) (Coverage, bool) {
+	if len(ticks) == 0 {
+		return Coverage{}, false
+	}
+
+	budget := ticks[len(ticks)-1].DriveMin
+	if haversineMiles(fromLat, fromLng, toLat, toLng) > budget*maxMilesPerMinute {
+		return CoverageAt(ticks, hazardHours, arrival, 0, false)
+	}
+
+	dt, ok := fetch(fromLat, fromLng, toLat, toLng, budget)
+	if !ok {
+		return Coverage{}, false
+	}
+
+	return CoverageAt(ticks, hazardHours, arrival, dt.Minutes, dt.Reachable)
+}
+
+func haversineMiles(lat1, lng1, lat2, lng2 float64) float64 {
+	const r = 3959.0
+	rad := math.Pi / 180
+	dLat := (lat2 - lat1) * rad
+	dLng := (lng2 - lng1) * rad
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(lat1*rad)*math.Cos(lat2*rad)*math.Sin(dLng/2)*math.Sin(dLng/2)
+
+	return 2 * r * math.Asin(math.Sqrt(a))
 }

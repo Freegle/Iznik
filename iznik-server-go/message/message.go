@@ -1181,22 +1181,16 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				go func(msgid uint64, origin ReachOrigin) {
 					defer covWg.Done()
 
-					// Search no further than this post's own widest budget: beyond it
-					// the answer is "no tick ever covers you" however far they are, and
-					// the search cost scales with the budget.
-					budget := origin.Schedule[len(origin.Schedule)-1].DriveMin
-					dt, ok := rippling.FetchDriveTime(
+					// A viewer plainly beyond the post's widest budget is answered without
+					// a routing search; the rest search no further than that budget.
+					cov, ok := rippling.EstimateCoverage(
+						origin.Schedule, hazard, *origin.Arrival,
 						origin.Lat, origin.Lng,
 						float64(latlng.Lat), float64(latlng.Lng),
-						budget,
+						rippling.FetchDriveTime,
 					)
 					if !ok {
 						// Routing unavailable: no estimate, rather than a guess.
-						return
-					}
-
-					cov, ok := rippling.CoverageAt(origin.Schedule, hazard, *origin.Arrival, dt.Minutes, dt.Reachable)
-					if !ok {
 						return
 					}
 
