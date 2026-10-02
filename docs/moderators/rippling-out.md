@@ -515,6 +515,27 @@ cannot see. As with a report, the copies are **kept** (not deleted), each commun
 or rejects its own, and **re-approving brings a copy back without re-notifying members or
 re-rippling from scratch**.
 
+If you moderate the post's **home** community, the other communities cannot approve their
+copies until you approve yours again (see above). If you only moderate a community it
+rippled into, your Back to Pending does not stop anyone else approving theirs.
+
+**There is one exception, when a moderator of the post's home community does it.** The
+home community is where the poster posted, so if one of its moderators sends the post back,
+the neighbouring communities' copies are **locked**: their moderators cannot approve them
+until the home community approves its own copy again. Their pending list says why ("The
+home community is reviewing this post, so it can't be approved here until they approve
+it"), and so does the log, which names the home community rather than just "a moderator".
+They can still reject their copy or hold it.
+
+When the home copy is approved, the locks lift and each copy goes back to ordinary
+per-community moderation: nothing is re-sent to members and the post does not ripple out
+again from scratch. If the home community deletes or rejects the post instead, every
+rippled copy is removed, even though it had been sent back to pending first.
+
+A Back to Pending by a moderator of a community the post only rippled **into**, and a
+report by members, do **not** lock anything. Those copies stay independent, as described
+above.
+
 ---
 
 ## TrashNothing posts
