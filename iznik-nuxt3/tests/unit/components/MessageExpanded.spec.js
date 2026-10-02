@@ -741,6 +741,32 @@ describe('MessageExpanded', () => {
         expect(text).toContain('People closer to it get first go')
       })
 
+      // The fallback copy lives in two v-else blocks: single-column (above) and the
+      // two-column modal layout. Both must drop the misleading promise.
+      it('uses the same non-promising fallback wording in the two-column layout', async () => {
+        const originalHeight = window.innerHeight
+        window.innerHeight = 600
+        try {
+          mockBreakpoint.value = 'xl'
+          mockFromme.value = false
+          mockMessage.value.replyeligible = false
+          const wrapper = await createWrapper({
+            replyable: true,
+            inModal: true,
+          })
+          await flushPromises()
+
+          expect(
+            wrapper.findComponent(MessageExpanded).vm.isTwoColumnLayout
+          ).toBe(true)
+          const text = wrapper.text().replace(/\s+/g, ' ')
+          expect(text).not.toContain('as soon as it does')
+          expect(text).toContain('People closer to it get first go')
+        } finally {
+          window.innerHeight = originalHeight
+        }
+      })
+
       // Discourse 9808/797: a reach the governor had finished weeks earlier still read
       // "hasn't reached your area yet ... any moment now at the latest". A finished
       // reach is never going to arrive; say so, and that the reply goes straight on.
