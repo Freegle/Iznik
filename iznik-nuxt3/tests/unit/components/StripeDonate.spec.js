@@ -656,5 +656,36 @@ describe('StripeDonate', () => {
       expect(component.emitted('error')).toBeFalsy()
       expect(component.vm.error).toBeFalsy()
     })
+
+    it('does not emit error or noPaymentMethods when the mount-time intent fails', async () => {
+      mockDonationStore.stripeIntent = vi.fn(() =>
+        Promise.reject(new Error('500'))
+      )
+
+      const wrapper = await createWrapper()
+      const component = wrapper.findComponent(StripeDonate)
+
+      // The parents treat error as the no-wallets PayPal fallback, so an API
+      // failure must stay silent here and be retried lazily on click.
+      expect(component.emitted('error')).toBeFalsy()
+      expect(component.emitted('noPaymentMethods')).toBeFalsy()
+      expect(component.emitted('loaded')).toBeTruthy()
+    })
+
+    it('does not emit error when lazy intent creation fails on click', async () => {
+      mockDonationStore.stripeIntent = vi.fn(() =>
+        Promise.reject(new Error('500'))
+      )
+
+      const wrapper = await createWrapper()
+      const component = wrapper.findComponent(StripeDonate)
+
+      await wrapper.find('button[aria-label*="PayPay"]').trigger('click')
+      await flushPromises()
+
+      expect(component.emitted('error')).toBeFalsy()
+      expect(component.emitted('noPaymentMethods')).toBeFalsy()
+      expect(component.vm.error).toBeTruthy()
+    })
   })
 })
