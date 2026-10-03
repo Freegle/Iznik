@@ -38,7 +38,7 @@ func getHelper(t *testing.T, token string, msgid uint64) (int, map[string]interf
 func helperFixture(t *testing.T, prefix string) (ownerID, replierID, msgID, itemID uint64, ownerToken string) {
 	ownerID = CreateTestUser(t, prefix+"_owner", "User")
 	replierID = CreateTestUser(t, prefix+"_replier", "User")
-	msgID = CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
+	msgID = CreateTestMessage(t, ownerID, prefix+" Office Clearance", 55.95, -3.18)
 	itemID = addBulkItem(t, msgID, "Office desk", 4, "Good")
 	db := database.DBConn
 	db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, state) VALUES (?, ?, ?, 2, 'Interested')", itemID, msgID, replierID)

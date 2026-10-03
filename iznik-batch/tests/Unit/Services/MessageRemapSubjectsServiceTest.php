@@ -3,7 +3,6 @@
 namespace Tests\Unit\Services;
 
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Services\MessageRemapSubjectsService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -21,7 +20,6 @@ class MessageRemapSubjectsServiceTest extends TestCase
     public function test_updates_subject_when_location_name_changes(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // Create a location with old name, then update it.
         $locationId = DB::table('locations')->insertGetId([
@@ -52,8 +50,7 @@ class MessageRemapSubjectsServiceTest extends TestCase
         DB::table('messages_items')->insertOrIgnore(['msgid' => $message->id, 'itemid' => $itemId]);
         MessageGroup::create([
             'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'collection' => Message::COLLECTION_APPROVED,
             'arrival' => now()->subDays(5),
         ]);
 
@@ -67,7 +64,6 @@ class MessageRemapSubjectsServiceTest extends TestCase
     public function test_skips_message_when_location_unchanged(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $locationId = DB::table('locations')->insertGetId([
             'name' => 'Same Town',
@@ -94,8 +90,7 @@ class MessageRemapSubjectsServiceTest extends TestCase
         DB::table('messages_items')->insertOrIgnore(['msgid' => $message->id, 'itemid' => $itemId]);
         MessageGroup::create([
             'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'collection' => Message::COLLECTION_APPROVED,
             'arrival' => now()->subDays(5),
         ]);
 
@@ -107,7 +102,6 @@ class MessageRemapSubjectsServiceTest extends TestCase
     public function test_returns_zero_for_old_messages(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $locationId = DB::table('locations')->insertGetId([
             'name' => 'Updated Area',
@@ -131,8 +125,7 @@ class MessageRemapSubjectsServiceTest extends TestCase
         ]);
         MessageGroup::create([
             'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'collection' => Message::COLLECTION_APPROVED,
             'arrival' => now()->subDays(91),
         ]);
 

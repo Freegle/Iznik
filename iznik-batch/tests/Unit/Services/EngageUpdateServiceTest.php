@@ -3,7 +3,6 @@
 namespace Tests\Unit\Services;
 
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Services\EngageUpdateService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -103,7 +102,6 @@ class EngageUpdateServiceTest extends TestCase
     public function test_inactive_user_with_recent_chat_message_becomes_occasional(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         DB::table('users')->where('id', $user->id)->update([
             'engagement' => 'Inactive',
@@ -133,7 +131,6 @@ class EngageUpdateServiceTest extends TestCase
     public function test_inactive_user_with_recent_message_post_becomes_occasional(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         DB::table('users')->where('id', $user->id)->update([
             'engagement' => 'Inactive',
@@ -153,8 +150,7 @@ class EngageUpdateServiceTest extends TestCase
         ]);
         MessageGroup::create([
             'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'collection' => Message::COLLECTION_APPROVED,
             'arrival' => now()->subDays(5),
         ]);
 
@@ -182,7 +178,6 @@ class EngageUpdateServiceTest extends TestCase
     public function test_occasional_user_with_many_posts_becomes_frequent(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         DB::table('users')->where('id', $user->id)->update([
             'engagement' => 'Occasional',
@@ -204,8 +199,7 @@ class EngageUpdateServiceTest extends TestCase
             ]);
             MessageGroup::create([
                 'msgid' => $message->id,
-                'groupid' => $group->id,
-                'collection' => MessageGroup::COLLECTION_APPROVED,
+                'collection' => Message::COLLECTION_APPROVED,
                 'arrival' => now()->subDays(35 + $i),
             ]);
         }
@@ -218,7 +212,6 @@ class EngageUpdateServiceTest extends TestCase
     public function test_occasional_user_with_few_posts_stays_occasional(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         DB::table('users')->where('id', $user->id)->update([
             'engagement' => 'Occasional',
@@ -240,8 +233,7 @@ class EngageUpdateServiceTest extends TestCase
             ]);
             MessageGroup::create([
                 'msgid' => $message->id,
-                'groupid' => $group->id,
-                'collection' => MessageGroup::COLLECTION_APPROVED,
+                'collection' => Message::COLLECTION_APPROVED,
                 'arrival' => now()->subDays(10 + $i),
             ]);
         }
@@ -256,7 +248,6 @@ class EngageUpdateServiceTest extends TestCase
     public function test_frequent_user_with_many_recent_posts_becomes_obsessed(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         DB::table('users')->where('id', $user->id)->update([
             'engagement' => 'Frequent',
@@ -277,8 +268,7 @@ class EngageUpdateServiceTest extends TestCase
             ]);
             MessageGroup::create([
                 'msgid' => $message->id,
-                'groupid' => $group->id,
-                'collection' => MessageGroup::COLLECTION_APPROVED,
+                'collection' => Message::COLLECTION_APPROVED,
                 'arrival' => now()->subDays(5 + $i),
             ]);
         }
@@ -293,7 +283,6 @@ class EngageUpdateServiceTest extends TestCase
     public function test_obsessed_user_with_few_recent_posts_becomes_frequent(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         DB::table('users')->where('id', $user->id)->update([
             'engagement' => 'Obsessed',
@@ -315,8 +304,7 @@ class EngageUpdateServiceTest extends TestCase
             ]);
             MessageGroup::create([
                 'msgid' => $message->id,
-                'groupid' => $group->id,
-                'collection' => MessageGroup::COLLECTION_APPROVED,
+                'collection' => Message::COLLECTION_APPROVED,
                 'arrival' => now()->subDays(10 + $i),
             ]);
         }

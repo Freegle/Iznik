@@ -175,26 +175,6 @@
                     </span>
                   </div>
                   <div class="group-row">
-                    <ShowMore :items="messageGroups" :limit="3" inline>
-                      <template #item="{ item }"
-                        ><v-icon
-                          v-if="item.isHome"
-                          icon="home"
-                          class="me-1 text-muted"
-                          title="Home community (where this was originally posted)"
-                        /><nuxt-link
-                          :to="'/explore/' + item.nameshort"
-                          class="group-link"
-                          @click.stop
-                          >{{ item.namedisplay }}</nuxt-link
-                        ></template
-                      >
-                    </ShowMore>
-                    <span
-                      v-if="messageGroups.length && timeAgoExpandedDisplay"
-                      class="group-time-separator"
-                      >·</span
-                    >
                     <span v-if="timeAgoExpandedDisplay" class="group-time">{{
                       timeAgoExpandedDisplay
                     }}</span>

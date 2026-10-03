@@ -28,37 +28,6 @@ class ExpandCommandTest extends TestCase
     }
 
     /**
-     * publishTrialGroups mirrors RIPPLE_WITHIN_GROUPS into the shared `config` table so the Go API
-     * (which runs on a different server and can't read this batch env var) can scope the rippling
-     * dashboard to the trial groups. Upserts a comma-separated id list keyed 'ripple.within_groups'.
-     */
-    public function test_publishes_trial_group_set_to_config(): void
-    {
-        Http::fake();
-        config(['freegle.ripple.within_groups' => ['111', '222']]);
-        DB::table('config')->where('key', 'ripple.within_groups')->delete();
-
-        // A real (non-dry-run) run mirrors RIPPLE_WITHIN_GROUPS into config via handle(),
-        // so the Go API (a different server, no access to this batch env var) can read the
-        // trial set. --dry-run deliberately skips the publish (covered by the run-clean test).
-        $this->artisan('ripple:expand', ['--limit' => 1])->assertExitCode(0);
-
-        $this->assertSame(
-            '111,222',
-            DB::table('config')->where('key', 'ripple.within_groups')->value('value'),
-            'RIPPLE_WITHIN_GROUPS is mirrored into config for the Go API to read'
-        );
-
-        // Re-running with a changed set upserts (one row, updated value), not a duplicate.
-        config(['freegle.ripple.within_groups' => ['333']]);
-        $this->artisan('ripple:expand', ['--limit' => 1])->assertExitCode(0);
-        $this->assertSame('333', DB::table('config')->where('key', 'ripple.within_groups')->value('value'));
-        $this->assertSame(1, DB::table('config')->where('key', 'ripple.within_groups')->count());
-
-        DB::table('config')->where('key', 'ripple.within_groups')->delete();
-    }
-
-    /**
      * The site tells a member when a post is due to reach their area, and that date comes
      * from the hazard schedule: tick k goes live at arrival + hazard_hours[k-1]. The API
      * runs on a different server, so the schedule is published here rather than restated
@@ -97,14 +66,13 @@ class ExpandCommandTest extends TestCase
      * runInBackground() jobs (the overlap mutex is freed when the foreground tick forks), so on
      * 2026-06-26 dozens of ripple:expand runs piled up and starved the serial worker with
      * messages_groups/logs lock waits. The command now takes a DB-backed Cache lock and exits
-     * cleanly if another run holds it. We prove it SKIPPED the body by asserting publishTrialGroups
-     * (which only runs inside the guarded run()) never wrote the trial-group config row.
+     * cleanly if another run holds it. We prove it SKIPPED the body by asserting publishHazardHours
+     * (which only runs inside the guarded run()) never wrote the hazard-hours config row.
      */
     public function test_second_run_exits_without_working_while_the_lock_is_held(): void
     {
         Http::fake();
-        config(['freegle.ripple.within_groups' => ['111', '222']]);
-        DB::table('config')->where('key', 'ripple.within_groups')->delete();
+        DB::table('config')->where('key', 'ripple.hazard_hours')->delete();
 
         $held = Cache::lock('ripple:expand:run', 30);
         $this->assertTrue($held->get(), 'precondition: acquire the lock as another run');
@@ -115,14 +83,14 @@ class ExpandCommandTest extends TestCase
                 ->assertExitCode(0);
 
             $this->assertNull(
-                DB::table('config')->where('key', 'ripple.within_groups')->value('value'),
-                'a locked-out run must not reach publishTrialGroups (body was skipped)'
+                DB::table('config')->where('key', 'ripple.hazard_hours')->value('value'),
+                'a locked-out run must not reach publishHazardHours (body was skipped)'
             );
         } finally {
             $held->release();
         }
 
-        DB::table('config')->where('key', 'ripple.within_groups')->delete();
+        DB::table('config')->where('key', 'ripple.hazard_hours')->delete();
     }
 
     /**

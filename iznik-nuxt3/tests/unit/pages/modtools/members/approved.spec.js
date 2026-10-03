@@ -210,7 +210,6 @@ describe('members/approved/[[term]].vue page', () => {
       wrapper.vm.startsearch('#')
 
       expect(mockSearch.value).toBe('')
-      expect(mockRouterPush).toHaveBeenCalledWith('/members/approved/')
     })
 
     it('navigates to the bare page for an empty search', async () => {

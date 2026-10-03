@@ -93,8 +93,8 @@ describe('ModPostingHistoryModal', () => {
       },
     ])
 
-    expect(wrapper.text()).toContain('rejected')
-    expect(wrapper.text()).not.toContain('still open')
+    expect(wrapper.text()).toContain('Rejected')
+    expect(wrapper.text()).not.toContain('Still open')
   })
 
   it('shows "still open" for an approved message with no outcome', () => {
@@ -112,7 +112,7 @@ describe('ModPostingHistoryModal', () => {
       },
     ])
 
-    expect(wrapper.text()).toContain('still open')
+    expect(wrapper.text()).toContain('Still open')
     expect(wrapper.text()).not.toContain('rejected')
   })
 
@@ -132,7 +132,7 @@ describe('ModPostingHistoryModal', () => {
     ])
 
     expect(wrapper.text()).toContain('Taken')
-    expect(wrapper.text()).not.toContain('still open')
+    expect(wrapper.text()).not.toContain('Still open')
     expect(wrapper.text()).not.toContain('rejected')
   })
 })

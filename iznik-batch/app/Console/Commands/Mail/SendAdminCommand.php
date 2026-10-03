@@ -6,7 +6,6 @@ use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\AdminMail;
 use App\Mail\Traits\AvatarResolver;
 use App\Mail\Traits\FeatureFlags;
-use App\Models\Group;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
 use App\Traits\GracefulShutdown;
@@ -28,7 +27,7 @@ class SendAdminCommand extends Command
                             {--dry-run : Count what would be sent without actually sending}
                             {--id= : Send a specific admin by ID (for testing)}";
 
-    protected $description = 'Send approved admin emails to group members';
+    protected $description = 'Send approved admin emails to members';
 
     private const EMAIL_TYPE = 'Admin';
 
@@ -46,6 +45,8 @@ class SendAdminCommand extends Command
      * Chunk size for batch-loading User models to avoid N+1 queries.
      */
     private const USER_CHUNK_SIZE = 100;
+
+    private const MOD_ROLES = [User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN];
 
     public function handle(EmailSpoolerService $spooler): int
     {
@@ -164,27 +165,20 @@ class SendAdminCommand extends Command
     }
 
     /**
-     * Get local volunteers (active moderators who haven't opted out via
-     * "Show me as a volunteer") for a group.
+     * Get the volunteers (active national moderators who haven't opted out via
+     * "Show me as a volunteer").
      *
-     * Uses users.settings.showmod (default true) — same source of truth the
-     * modtools toggle writes to and the Go API's group volunteer list reads
-     * (iznik-server-go group/groupVolunteer.go:45). V1's Donations.php birthday
-     * code filtered on users.publishconsent (a different consent — "republish
-     * my posts to non-members" — that defaults to 0 and is never set by the
-     * UI toggle), which silently excluded almost every active mod. See
-     * BirthdayService::getActiveVolunteers for the full rationale.
+     * Uses users.settings.showmod (default true), the setting the ModTools
+     * "Show me as a volunteer" toggle writes. users.publishconsent is a different
+     * consent and must not be used here.
      */
-    public static function getLocalVolunteers(int $groupId): array
+    public static function getVolunteers(): array
     {
         $oneYearAgo  = now()->subYear();
         $avatarBase  = rtrim(config('freegle.avatar_server_url', ''), '/');
 
         $mods = User::select('users.id', 'users.fullname')
-            ->join('memberships', 'memberships.userid', '=', 'users.id')
-            ->where('memberships.groupid', $groupId)
-            ->where('memberships.collection', 'Approved')
-            ->whereIn('memberships.role', ['Moderator', 'Owner'])
+            ->whereIn('users.systemrole', self::MOD_ROLES)
             ->where('users.lastaccess', '>', $oneYearAgo)
             ->whereRaw("(JSON_EXTRACT(users.settings, '$.showmod') IS NULL OR JSON_EXTRACT(users.settings, '$.showmod') = TRUE)")
             ->whereNull('users.deleted')
@@ -210,7 +204,7 @@ class SendAdminCommand extends Command
     }
 
     /**
-     * Process a single admin — send to all eligible members of its group.
+     * Process a single admin — send to all eligible members.
      */
     protected function processAdmin(
         object $admin,
@@ -222,32 +216,10 @@ class SendAdminCommand extends Command
     ): int {
         $sent = 0;
 
-        // Admin must have a group to send to.
-        if (!$admin->groupid) {
-            Log::warning("Admin {$admin->id} has no groupid, skipping.");
+        $groupName = 'Freegle';
+        $modsEmail = config('freegle.mail.support_addr');
 
-            return 0;
-        }
-
-        $group = Group::find($admin->groupid);
-
-        if (!$group) {
-            Log::warning("Admin {$admin->id}: group {$admin->groupid} not found.");
-
-            return 0;
-        }
-
-        // Only send to active, non-external Freegle groups.
-        if ($group->type !== Group::TYPE_FREEGLE || !$group->onhere || !$group->publish || $group->external) {
-            Log::info("Admin {$admin->id}: group {$group->id} not an active Freegle group, skipping.");
-
-            return 0;
-        }
-
-        $groupName = $group->namefull ?: $group->nameshort;
-        $modsEmail = $group->nameshort ? "{$group->nameshort}-volunteers@groups.ilovefreegle.org" : null;
-
-        $this->info("Processing admin {$admin->id} for group {$groupName}...");
+        $this->info("Processing admin {$admin->id}...");
 
         // Pre-load dedup set: all user IDs already sent for this admin's parent (or self).
         // Uses a flipped collection for O(1) lookups instead of per-user DB queries.
@@ -257,23 +229,20 @@ class SendAdminCommand extends Command
             ->pluck('userid')
             ->flip();
 
-        // Get local volunteers for the group footer.
-        $volunteers = self::getLocalVolunteers($admin->groupid);
+        // Volunteers for the footer.
+        $volunteers = self::getVolunteers();
 
-        // Query members with relevantallowed from users table.
-        // Note: V1 queries all memberships regardless of collection. We intentionally
-        // filter to Approved only to avoid sending to spam-flagged or pending members.
-        $members = DB::table('memberships')
-            ->join('users', 'users.id', '=', 'memberships.userid')
-            ->where('memberships.groupid', $admin->groupid)
-            ->where('memberships.collection', 'Approved')
+        $members = DB::table('users')
+            ->whereNull('users.deleted')
+            ->whereNull('users.banned')
             ->select([
-                'memberships.userid',
-                'memberships.role',
+                'users.id AS userid',
+                'users.systemrole',
                 'users.relevantallowed',
                 'users.lastaccess',
                 'users.deleted',
             ])
+            ->orderBy('users.id')
             ->cursor();
 
         $activeThreshold = now()->subDays(User::USER_INACTIVE_DAYS);
@@ -320,7 +289,7 @@ class SendAdminCommand extends Command
             // Filter: non-essential admins skip users with relevantallowed=0.
             // Moderators are always included (they can't opt out).
             if (!$admin->essential && !$member->relevantallowed) {
-                $isMod = in_array($member->role, ['Moderator', 'Owner']);
+                $isMod = in_array($member->systemrole, self::MOD_ROLES);
                 if (!$isMod) {
                     $stats['skipped_relevantallowed']++;
 
@@ -341,7 +310,7 @@ class SendAdminCommand extends Command
             if (count($memberBuffer) >= self::USER_CHUNK_SIZE) {
                 $sent += $this->processChunk(
                     $memberBuffer, $admin, $adminArr, $stats, $dryRun, $useSpool, $spooler,
-                    $groupName, $modsEmail, $group->nameshort, $dedupAdminId, $sentUserIds, $volunteers, $limit
+                    $groupName, $modsEmail, null, $dedupAdminId, $sentUserIds, $volunteers, $limit
                 );
                 $memberBuffer = [];
             }
@@ -351,7 +320,7 @@ class SendAdminCommand extends Command
         if (!empty($memberBuffer) && !$interrupted) {
             $sent += $this->processChunk(
                 $memberBuffer, $admin, $adminArr, $stats, $dryRun, $useSpool, $spooler,
-                $groupName, $modsEmail, $group->nameshort, $dedupAdminId, $sentUserIds, $volunteers, $limit
+                $groupName, $modsEmail, null, $dedupAdminId, $sentUserIds, $volunteers, $limit
             );
         }
 

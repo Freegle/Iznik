@@ -165,8 +165,7 @@ class MatchMailServiceTest extends TestCase
     private function seedSilentPost(string $type, bool $populateMaxReach = true): Message
     {
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup(['lat' => 51.5, 'lng' => -0.1]);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'type' => $type,
             'subject' => strtoupper($type) . ': Pine bookcase (TestLocation)',
             'lat' => 51.5,
@@ -174,9 +173,9 @@ class MatchMailServiceTest extends TestCase
         ]);
 
         DB::statement(
-            'INSERT INTO messages_spatial (msgid, point, successful, promised, groupid, msgtype, arrival)
-             VALUES (?, ST_SRID(POINT(-0.1, 51.5), 3857), 0, 0, ?, ?, NOW())',
-            [$message->id, $group->id, $type]
+            'INSERT INTO messages_spatial (msgid, point, successful, promised, msgtype, arrival)
+             VALUES (?, ST_SRID(POINT(-0.1, 51.5), 3857), 0, 0, ?, NOW())',
+            [$message->id, $type]
         );
 
         $schedule = json_encode([
@@ -517,7 +516,7 @@ class MatchMailServiceTest extends TestCase
         // Mailed about something else an hour ago, so inside the cooldown. The
         // other post carries no spatial row, so it is not itself a candidate and
         // cannot mail anybody during this run.
-        $elsewhere = $this->createTestMessage($this->createTestUser(), $this->createTestGroup());
+        $elsewhere = $this->createTestMessage($this->createTestUser());
         DB::table('firstreply_scouts')->insert([
             'msgid' => $elsewhere->id,
             'userid' => $alreadyMailed->id,
@@ -682,7 +681,7 @@ class MatchMailServiceTest extends TestCase
         $this->service()->run();
 
         $poster = $this->createTestUser();
-        $elsewhere = $this->createTestMessage($poster, $this->createTestGroup());
+        $elsewhere = $this->createTestMessage($poster);
         $room = $this->createTestChatRoom($searcher, $poster);
         $this->createTestChatMessage($room, $searcher, [
             'type' => \App\Models\ChatMessage::TYPE_INTERESTED,
@@ -734,15 +733,14 @@ class MatchMailServiceTest extends TestCase
      */
     private function openPostAt(\App\Models\User $user, float $lat, float $lng, string $type): void
     {
-        $group = $this->createTestGroup();
-        $post = $this->createTestMessage($user, $group, [
+        $post = $this->createTestMessage($user, [
             'type' => $type,
             'subject' => strtoupper($type) . ': Pine bookcase (TestLocation)',
         ]);
         DB::statement(
-            'INSERT INTO messages_spatial (msgid, point, successful, promised, groupid, msgtype, arrival)
-             VALUES (?, ST_SRID(POINT(?, ?), 3857), 0, 0, ?, ?, NOW())',
-            [$post->id, $lng, $lat, $group->id, $type]
+            'INSERT INTO messages_spatial (msgid, point, successful, promised, msgtype, arrival)
+             VALUES (?, ST_SRID(POINT(?, ?), 3857), 0, 0, ?, NOW())',
+            [$post->id, $lng, $lat, $type]
         );
 
         $this->apiMatchIds[] = (int) $post->id;
@@ -854,7 +852,6 @@ class MatchMailServiceTest extends TestCase
         ]);
     }
 
-
     private function callCellBand(int $msgid, array $rows): array
     {
         $m = new \ReflectionMethod(MatchMailService::class, 'applyCellBand');
@@ -865,8 +862,7 @@ class MatchMailServiceTest extends TestCase
     public function test_band_is_answered_from_stored_labels_when_present(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
         $schedule = json_encode([
             ['tick' => 1, 'drive_min' => 5],
             ['tick' => 2, 'drive_min' => 30],
@@ -905,8 +901,7 @@ class MatchMailServiceTest extends TestCase
     public function test_band_is_empty_when_routing_cannot_answer(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
         DB::statement(
             "INSERT INTO rippling_reach
                (msgid, lat, lng, reach_labels, polygon_cells, max_polygon_cells, outer_bound, arrival,
@@ -931,7 +926,6 @@ class MatchMailServiceTest extends TestCase
         $this->assertCount(0, $kept);
     }
 
-
     public function test_band_labels_arm_keeps_sparse_candidate_keys_aligned(): void
     {
         // Rows without a resolvable location leave GAPS in the points array
@@ -939,8 +933,7 @@ class MatchMailServiceTest extends TestCase
         // the RIGHT rows through the sparse keys, or the band would order -
         // and pick - the wrong candidates.
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
         $schedule = json_encode([['tick' => 1, 'drive_min' => 5]]);
         DB::statement(
             "INSERT INTO rippling_reach

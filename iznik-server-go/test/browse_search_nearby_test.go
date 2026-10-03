@@ -74,9 +74,9 @@ func TestBrowseScopedSearchNearby(t *testing.T) {
 	// guarantee, not cosine ranking - the reach restriction under test is applied
 	// on that path too (see LexicalMatch's allowedIDs filter).
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: inReach, Groupid: group, Msgtype: "Offer", Lat: 51.5, Lng: -0.1,
+		{Msgid: inReach, Msgtype: "Offer", Lat: 51.5, Lng: -0.1,
 			Subject: "Zorbnak Sofa reach covers viewer (browsesearchnearby)", Arrival: time.Now(), SubjectVec: makeAntiparallelVec(10.0)},
-		{Msgid: outOfReach, Groupid: group, Msgtype: "Offer", Lat: 51.5, Lng: -0.1,
+		{Msgid: outOfReach, Msgtype: "Offer", Lat: 51.5, Lng: -0.1,
 			Subject: "Zorbnak Sofa reach excludes viewer (browsesearchnearby)", Arrival: time.Now(), SubjectVec: makeAntiparallelVec(11.0)},
 	})
 	t.Cleanup(func() { embedding.Global.SetEntries(nil) })

@@ -31,40 +31,6 @@ func TestSearchByMsgID_FindsThePostAndLabelsItAnIDMatch(t *testing.T) {
 	}
 }
 
-func TestSearchByMsgID_HonoursAGroupFilter(t *testing.T) {
-	db := database.DBConn
-	prefix := uniquePrefix("searchByIDGroup")
-
-	userID := CreateTestUser(t, prefix, "User")
-	msgID := CreateTestMessage(t, userID, "OFFER: Watering can "+prefix, 53.0, -2.0)
-
-	onItsOwnGroup := message.SearchByMsgID(db, msgID, []uint64{groupID})
-	assert.Len(t, onItsOwnGroup, 1, "the post is on this group, so the filter keeps it")
-
-	onAnotherGroup := message.SearchByMsgID(db, msgID, []uint64{otherGroupID})
-	assert.Empty(t, onAnotherGroup, "the post is not on that group, so the filter drops it")
-}
-
-func TestSearchByMsgID_IgnoresAMembershipThatIsNotApproved(t *testing.T) {
-	db := database.DBConn
-	prefix := uniquePrefix("searchByIDPending")
-
-	userID := CreateTestUser(t, prefix, "User")
-	msgID := CreateTestMessage(t, userID, "OFFER: Stepladder "+prefix, 53.0, -2.0)
-
-	// The post is waiting for a moderator rather than approved on that group.
-	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ?", msgID)
-	t.Cleanup(func() {
-		db.Exec("UPDATE messages_groups SET collection = 'Approved' WHERE msgid = ?", msgID)
-	})
-
-	assert.Empty(t, message.SearchByMsgID(db, msgID, []uint64{groupID}),
-		"a filtered search should not return a post that is not approved on the group")
-
-	assert.Len(t, message.SearchByMsgID(db, msgID, nil), 1,
-		"without a group filter the post is still found by its id")
-}
-
 func TestSearchByMsgID_FindsNothingForAnIDThatIsNotThere(t *testing.T) {
 	db := database.DBConn
 	assert.Empty(t, message.SearchByMsgID(db, 999999999999, nil))

@@ -217,41 +217,6 @@ class SponsorshipRemindersCommandTest extends TestCase
             ->where('partnershipid', $id)->where('type', '1month')->count());
     }
 
-    public function test_mail_reports_the_covered_community_count(): void
-    {
-        $id = $this->partnership(60);
-
-        $groupId = (int) DB::table('groups')->insertGetId([
-            'nameshort' => 'remindergrp' . uniqid(),
-            'type' => 'Freegle',
-            // groups.polyindex has no default, so a catchment has to be supplied.
-            'polyindex' => DB::raw("ST_GeomFromText('POLYGON((-0.5 10.5, 0.5 10.5, 0.5 11.5, -0.5 11.5, -0.5 10.5))', 3857)"),
-        ]);
-        DB::table('partnerships_groups')->insert([
-            'partnershipid' => $id,
-            'groupid' => $groupId,
-        ]);
-
-        // Left out by hand, so not covered.
-        $removedId = (int) DB::table('groups')->insertGetId([
-            'nameshort' => 'remindergrp' . uniqid(),
-            'type' => 'Freegle',
-            'polyindex' => DB::raw("ST_GeomFromText('POLYGON((-0.5 10.5, 0.5 10.5, 0.5 11.5, -0.5 11.5, -0.5 10.5))', 3857)"),
-        ]);
-        DB::table('partnerships_groups')->insert([
-            'partnershipid' => $id,
-            'groupid' => $removedId,
-            'source' => 'Removed',
-        ]);
-
-        $this->artisan('partnerships:reminders')->assertExitCode(0);
-
-        Mail::assertSent(SponsorshipExpiringMail::class, function ($mail) {
-            return $mail->groupCount === 1
-                && $mail->amount === 4800.0;
-        });
-    }
-
     public function test_mail_lists_every_council_contact(): void
     {
         $id = $this->partnership(60);

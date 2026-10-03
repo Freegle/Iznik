@@ -53,17 +53,17 @@ class EngagementServiceTest extends TestCase
      * A live post with no replies. messages_spatial is what the engine reads, so
      * the row has to be there for the post to be visible to it at all.
      */
-    private function seedSilentPost(User $user, $group, array $attributes = []): Message
+    private function seedSilentPost(User $user, array $attributes = []): Message
     {
-        $message = $this->createTestMessage($user, $group, array_merge([
+        $message = $this->createTestMessage($user, array_merge([
             'subject' => 'OFFER: Dining chairs (TestLocation)',
         ], $attributes));
 
         DB::statement(
-            'INSERT INTO messages_spatial (msgid, point, successful, promised, groupid, msgtype, arrival)
-             VALUES (?, ST_SRID(POINT(?, ?), 3857), 0, 0, ?, ?, NOW())',
+            'INSERT INTO messages_spatial (msgid, point, successful, promised, msgtype, arrival)
+             VALUES (?, ST_SRID(POINT(?, ?), 3857), 0, 0, ?, NOW())',
             [
-                $message->id, $group->lng, $group->lat, $group->id,
+                $message->id, -0.1278, 51.5074,
                 $attributes['type'] ?? Message::TYPE_OFFER,
             ]
         );
@@ -71,20 +71,19 @@ class EngagementServiceTest extends TestCase
         return $message;
     }
 
-    /** @return array{0:User, 1:mixed, 2:array<int,Message>} */
+    /** @return array{0:User, 1:array<int,Message>} */
     private function seedMemberWithPosts(int $count, array $attributes = []): array
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
         $posts = [];
 
         foreach (range(1, $count) as $i) {
-            $posts[] = $this->seedSilentPost($user, $group, array_merge([
+            $posts[] = $this->seedSilentPost($user, array_merge([
                 'subject' => "OFFER: Item {$i} (TestLocation)",
             ], $attributes));
         }
 
-        return [$user, $group, $posts];
+        return [$user, $posts];
     }
 
     private function addViews(int $msgid, int $count): void
@@ -136,7 +135,7 @@ class EngagementServiceTest extends TestCase
     {
         // The case that makes per-post messaging unusable: somebody clearing a
         // house. One question about all their posts, not six separate threads.
-        [, , $posts] = $this->seedMemberWithPosts(4);
+        [, $posts] = $this->seedMemberWithPosts(4);
 
         $stats = $this->service()->run();
 
@@ -152,7 +151,7 @@ class EngagementServiceTest extends TestCase
     {
         // "your 3 posts have been looked at 12 times between them" is the number
         // that means something; per-post it is three discouraging small numbers.
-        [, , $posts] = $this->seedMemberWithPosts(3);
+        [, $posts] = $this->seedMemberWithPosts(3);
         $this->givePhotos($posts);
         DB::table('messages')->whereIn('id', array_map(static fn ($p) => $p->id, $posts))
             ->update(['deliverypossible' => 1]);
@@ -173,7 +172,7 @@ class EngagementServiceTest extends TestCase
         // Two posts have photos, two do not. The photo question is about the two
         // that do not - asking about the others is how a useful message becomes
         // noise.
-        [, , $posts] = $this->seedMemberWithPosts(4);
+        [, $posts] = $this->seedMemberWithPosts(4);
         $this->givePhotos([$posts[0], $posts[1]]);
 
         $this->service()->run();
@@ -187,8 +186,7 @@ class EngagementServiceTest extends TestCase
     public function test_does_not_ask_a_wanted_poster_whether_they_could_deliver(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $post = $this->seedSilentPost($user, $group, [
+        $post = $this->seedSilentPost($user, [
             'type' => Message::TYPE_WANTED,
             'subject' => 'WANTED: Dining chairs (TestLocation)',
         ]);
@@ -203,7 +201,7 @@ class EngagementServiceTest extends TestCase
 
     public function test_says_nothing_about_views_until_enough_people_have_looked(): void
     {
-        [$user, , $posts] = $this->seedMemberWithPosts(2);
+        [$user, $posts] = $this->seedMemberWithPosts(2);
         $this->givePhotos($posts);
         $this->addViews((int) $posts[0]->id, 2);
 
@@ -253,12 +251,11 @@ class EngagementServiceTest extends TestCase
         config(['freegle.firstreply.chat.schedule' => ['photo' => 5]]);
 
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $old = $this->seedSilentPost($user, $group);
+        $old = $this->seedSilentPost($user);
         DB::table('messages_spatial')->where('msgid', $old->id)
             ->update(['arrival' => now()->subHours(9)]);
 
-        $this->seedSilentPost($user, $group, ['subject' => 'OFFER: Just now (TestLocation)']);
+        $this->seedSilentPost($user, ['subject' => 'OFFER: Just now (TestLocation)']);
 
         $this->assertSame(1, $this->service()->run()['sent']);
     }
@@ -285,7 +282,7 @@ class EngagementServiceTest extends TestCase
 
     public function test_says_nothing_to_a_member_whose_posts_all_have_replies(): void
     {
-        [, , $posts] = $this->seedMemberWithPosts(2);
+        [, $posts] = $this->seedMemberWithPosts(2);
         $poster = User::find($posts[0]->fromuser);
 
         foreach ($posts as $p) {
@@ -305,7 +302,7 @@ class EngagementServiceTest extends TestCase
     public function test_retires_a_question_once_none_of_its_posts_are_still_waiting(): void
     {
         // Answering a stale prompt would edit posts that are already sorted.
-        [, , $posts] = $this->seedMemberWithPosts(2);
+        [, $posts] = $this->seedMemberWithPosts(2);
         $this->service()->run();
 
         $chatmsgid = DB::table('chat_prompts')->orderByDesc('chatmsgid')->value('chatmsgid');
@@ -331,7 +328,7 @@ class EngagementServiceTest extends TestCase
     {
         // The question still means something for the ones that remain, and
         // answering applies to those.
-        [, , $posts] = $this->seedMemberWithPosts(3);
+        [, $posts] = $this->seedMemberWithPosts(3);
         $this->service()->run();
 
         $chatmsgid = DB::table('chat_prompts')->orderByDesc('chatmsgid')->value('chatmsgid');
@@ -356,7 +353,7 @@ class EngagementServiceTest extends TestCase
     public function test_an_already_answered_question_is_left_alone(): void
     {
         // Retiring must not rewrite history: what the member said stands.
-        [, , $posts] = $this->seedMemberWithPosts(1);
+        [, $posts] = $this->seedMemberWithPosts(1);
         $this->service()->run();
 
         $chatmsgid = DB::table('chat_prompts')->orderByDesc('chatmsgid')->value('chatmsgid');
@@ -383,7 +380,7 @@ class EngagementServiceTest extends TestCase
     {
         // Fixed timescales are wrong for anyone with a real date in mind, and the
         // poster already knows theirs.
-        [, , $posts] = $this->seedMemberWithPosts(2);
+        [, $posts] = $this->seedMemberWithPosts(2);
         $this->givePhotos($posts);
         DB::table('messages')->whereIn('id', array_map(static fn ($p) => $p->id, $posts))
             ->update(['deliverypossible' => 1]);
@@ -535,7 +532,7 @@ class EngagementServiceTest extends TestCase
     {
         config(['freegle.firstreply.rollout_percent' => 100]);
 
-        [$user, , $posts] = $this->seedMemberWithPosts(2);
+        [$user, $posts] = $this->seedMemberWithPosts(2);
         $this->givePhotos([]);   // leave them without photos so photo applies
         $this->assertNotEmpty($posts);
 

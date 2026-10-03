@@ -95,20 +95,13 @@ class SponsorshipRemindersCommand extends Command
             $endDate = Carbon::parse($partnership->enddate);
             $daysLeft = (int) $today->diffInDays($endDate, false);
 
-            $groupCount = (int) DB::table('partnerships_groups')
-                ->where('partnershipid', $partnership->id)
-                ->where('source', '!=', 'Removed')
-                ->count();
-
             $this->info(sprintf(
-                '%s (%s) %s %s - %d days, %d %s covered.',
+                '%s (%s) %s %s - %d days.',
                 $partnership->name,
                 $partnership->authorityname,
                 $ended ? 'ended' : 'ends',
                 $endDate->format('j M Y'),
-                abs($daysLeft),
-                $groupCount,
-                $groupCount === 1 ? 'community' : 'communities'
+                abs($daysLeft)
             ));
 
             if ($dryRun) {
@@ -123,7 +116,6 @@ class SponsorshipRemindersCommand extends Command
                 endDate: $endDate->format('j M Y'),
                 daysLeft: $daysLeft,
                 amount: (float) $partnership->amount,
-                groupCount: $groupCount,
                 contacts: $this->contacts((int) $partnership->id),
                 modToolsUrl: $modSite . '/partnerships?id=' . $partnership->id,
                 ended: $ended,

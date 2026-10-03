@@ -13,9 +13,9 @@ class AlertsCommandTest extends TestCase
     {
         parent::setUp();
         Mail::fake();
-        // Other test classes can leave published groups that slip through DatabaseTransactions.
-        // Hide them so processAlerts() only finds groups created within this test.
-        DB::table('groups')->update(['publish' => 0]);
+        // The recipients are every moderator, so the fixture moderators are demoted and each
+        // test counts only the moderators it creates. The transaction undoes this.
+        DB::table('users')->where('systemrole', '!=', 'User')->update(['systemrole' => 'User']);
     }
 
     private function createAlert(array $attrs = []): int
@@ -33,12 +33,11 @@ class AlertsCommandTest extends TestCase
         ], $attrs));
     }
 
-    private function makeMod(int $groupId): array
+    private function makeMod(): array
     {
         $user = $this->createTestUser();
-        $this->createMembership($user, \App\Models\Group::find($groupId), [
-            'role' => \App\Models\Membership::ROLE_MODERATOR,
-        ]);
+        DB::table('users')->where('id', $user->id)->update(['systemrole' => 'Moderator']);
+
         return [$user->id];
     }
 
@@ -56,20 +55,18 @@ class AlertsCommandTest extends TestCase
 
     public function test_sends_email_to_mod_for_incomplete_alert(): void
     {
-        $group = $this->createTestGroup();
         $this->createAlert();
-        $this->makeMod($group->id);
+        $this->makeMod();
 
         (new AlertService())->processAlerts();
 
         Mail::assertSent(\App\Mail\Alert\AlertMail::class, 1);
     }
 
-    public function test_marks_alert_complete_after_processing_all_groups(): void
+    public function test_marks_alert_complete_after_processing(): void
     {
-        $group = $this->createTestGroup();
         $alertId = $this->createAlert();
-        $this->makeMod($group->id);
+        $this->makeMod();
 
         (new AlertService())->processAlerts();
 
@@ -79,15 +76,13 @@ class AlertsCommandTest extends TestCase
 
     public function test_does_not_send_to_already_mailed_email(): void
     {
-        $group = $this->createTestGroup();
         $alertId = $this->createAlert();
-        [$userId] = $this->makeMod($group->id);
+        [$userId] = $this->makeMod();
 
         $email = DB::table('users_emails')->where('userid', $userId)->where('preferred', 1)->first();
 
         DB::table('alerts_tracking')->insert([
             'alertid' => $alertId,
-            'groupid' => $group->id,
             'userid' => $userId,
             'emailid' => $email->id,
             'type' => 'ModEmail',
@@ -100,9 +95,8 @@ class AlertsCommandTest extends TestCase
 
     public function test_creates_tracking_record_for_each_mod(): void
     {
-        $group = $this->createTestGroup();
         $alertId = $this->createAlert();
-        $this->makeMod($group->id);
+        $this->makeMod();
 
         (new AlertService())->processAlerts();
 
@@ -115,9 +109,8 @@ class AlertsCommandTest extends TestCase
 
     public function test_skips_already_complete_alerts(): void
     {
-        $group = $this->createTestGroup();
         $this->createAlert(['complete' => now()]);
-        $this->makeMod($group->id);
+        $this->makeMod();
 
         (new AlertService())->processAlerts();
 
@@ -126,9 +119,8 @@ class AlertsCommandTest extends TestCase
 
     public function test_dry_run_does_not_send_emails(): void
     {
-        $group = $this->createTestGroup();
         $this->createAlert();
-        $this->makeMod($group->id);
+        $this->makeMod();
 
         (new AlertService())->processAlerts(dryRun: true);
 
@@ -137,9 +129,8 @@ class AlertsCommandTest extends TestCase
 
     public function test_dry_run_does_not_mark_alert_complete(): void
     {
-        $group = $this->createTestGroup();
         $alertId = $this->createAlert();
-        $this->makeMod($group->id);
+        $this->makeMod();
 
         (new AlertService())->processAlerts(dryRun: true);
 
@@ -149,21 +140,19 @@ class AlertsCommandTest extends TestCase
 
     public function test_returns_count_of_emails_sent(): void
     {
-        $group = $this->createTestGroup();
         $this->createAlert();
-        $this->makeMod($group->id);
+        $this->makeMod();
 
         $count = (new AlertService())->processAlerts();
 
         $this->assertSame(1, $count);
     }
 
-    public function test_sends_to_multiple_mods_in_same_group(): void
+    public function test_sends_to_multiple_mods__nationally(): void
     {
-        $group = $this->createTestGroup();
         $this->createAlert();
-        $this->makeMod($group->id);
-        $this->makeMod($group->id);
+        $this->makeMod();
+        $this->makeMod();
 
         (new AlertService())->processAlerts();
 
@@ -172,13 +161,10 @@ class AlertsCommandTest extends TestCase
 
     public function test_does_not_send_to_soft_deleted_user(): void
     {
-        $group = $this->createTestGroup();
         $this->createAlert();
 
         $user = $this->createTestUser(['deleted' => now()]);
-        $this->createMembership($user, $group, [
-            'role' => \App\Models\Membership::ROLE_MODERATOR,
-        ]);
+        DB::table('users')->where('id', $user->id)->update(['systemrole' => 'Moderator']);
 
         (new AlertService())->processAlerts();
 

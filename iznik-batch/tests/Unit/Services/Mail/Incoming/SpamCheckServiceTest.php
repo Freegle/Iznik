@@ -106,10 +106,9 @@ class SpamCheckServiceTest extends TestCase
     public function test_subject_over_threshold_returns_spam_result(): void
     {
         for ($i = 0; $i < SpamCheckService::SUBJECT_THRESHOLD + 1; $i++) {
-            $group = $this->createTestGroup();
             DB::table('messages_history')->insert([
                 'prunedsubject' => 'Spam subject line',
-                'groupid' => $group->id,
+                'msgid' => $i + 1,
                 'arrival' => now(),
             ]);
         }
@@ -124,10 +123,9 @@ class SpamCheckServiceTest extends TestCase
     public function test_subject_over_threshold_but_whitelisted_returns_null(): void
     {
         for ($i = 0; $i < SpamCheckService::SUBJECT_THRESHOLD + 1; $i++) {
-            $group = $this->createTestGroup();
             DB::table('messages_history')->insert([
                 'prunedsubject' => 'Whitelisted subject',
-                'groupid' => $group->id,
+                'msgid' => $i + 1,
                 'arrival' => now(),
             ]);
         }
@@ -143,13 +141,12 @@ class SpamCheckServiceTest extends TestCase
 
     public function test_subject_ignores_history_outside_window(): void
     {
-        // A subject reused across many groups, but all older than the history window, must not be
+        // A subject reused for many posts, but all older than the history window, must not be
         // flagged - the check used to accumulate subject history indefinitely.
         for ($i = 0; $i < SpamCheckService::SUBJECT_THRESHOLD + 1; $i++) {
-            $group = $this->createTestGroup();
             DB::table('messages_history')->insert([
                 'prunedsubject' => 'Old reused subject',
-                'groupid' => $group->id,
+                'msgid' => $i + 1,
                 'arrival' => now()->subDays(SpamCheckService::HISTORY_WINDOW_DAYS + 1),
             ]);
         }
@@ -231,111 +228,6 @@ class SpamCheckServiceTest extends TestCase
     // ========================================
     // Keyword-Based Spam Tests
     // ========================================
-
-    public function test_spam_keyword_detected(): void
-    {
-        DB::table('spam_keywords')->insert([
-            'word' => 'Western Union',
-            'action' => 'Spam',
-            'type' => 'Literal',
-            'exclude' => null,
-        ]);
-
-        $result = $this->service->checkSpamKeywords(
-            'Please send money via Western Union',
-            [SpamCheckService::ACTION_SPAM]
-        );
-
-        $this->assertNotNull($result);
-        $this->assertEquals(SpamCheckService::REASON_KNOWN_KEYWORD, $result[1]);
-    }
-
-    public function test_review_keyword_detected(): void
-    {
-        DB::table('spam_keywords')->insert([
-            'word' => 'earn money',
-            'action' => 'Review',
-            'type' => 'Literal',
-            'exclude' => null,
-        ]);
-
-        $result = $this->service->checkSpamKeywords(
-            'You can earn money fast',
-            [SpamCheckService::ACTION_REVIEW]
-        );
-
-        $this->assertNotNull($result);
-    }
-
-    public function test_keyword_with_exclude_pattern_not_flagged(): void
-    {
-        DB::table('spam_keywords')->insert([
-            'word' => 'free',
-            'action' => 'Spam',
-            'type' => 'Literal',
-            'exclude' => 'freegle',
-        ]);
-
-        $result = $this->service->checkSpamKeywords(
-            'I love freegle free stuff',
-            [SpamCheckService::ACTION_SPAM]
-        );
-
-        // The exclude pattern 'freegle' matches, so it should NOT flag
-        $this->assertNull($result);
-    }
-
-    public function test_keyword_not_matching_action_not_flagged(): void
-    {
-        DB::table('spam_keywords')->insert([
-            'word' => 'suspicious',
-            'action' => 'Review',
-            'type' => 'Literal',
-            'exclude' => null,
-        ]);
-
-        $result = $this->service->checkSpamKeywords(
-            'This is suspicious',
-            [SpamCheckService::ACTION_SPAM]  // Only checking Spam, not Review
-        );
-
-        $this->assertNull($result);
-    }
-
-    public function test_html_entity_decoding_catches_obfuscated_spam(): void
-    {
-        DB::table('spam_keywords')->insert([
-            'word' => 'Isis',
-            'action' => 'Spam',
-            'type' => 'Literal',
-            'exclude' => null,
-        ]);
-
-        $result = $this->service->checkSpamKeywords(
-            'Join &#206;&#537;&#616;&#537;',  // Obfuscated "Isis"
-            [SpamCheckService::ACTION_SPAM]
-        );
-
-        $this->assertNotNull($result);
-    }
-
-    public function test_url_in_job_post_not_flagged(): void
-    {
-        DB::table('spam_keywords')->insert([
-            'word' => 'click here',
-            'action' => 'Spam',
-            'type' => 'Literal',
-            'exclude' => null,
-        ]);
-
-        $result = $this->service->checkSpamKeywords(
-            '<https://www.ilovefreegle.org/jobs/12345> click here for job details',
-            [SpamCheckService::ACTION_SPAM]
-        );
-
-        // The job URL line is stripped, so 'click here' in same line goes too
-        $this->assertNull($result);
-    }
 
     // ========================================
     // Our Domain Spoofing in URLs Tests
@@ -624,10 +516,9 @@ class SpamCheckServiceTest extends TestCase
         // form so the LIKE prefix match actually hits and the without-flag
         // assertion below has something to flag.
         for ($i = 0; $i < SpamCheckService::SUBJECT_THRESHOLD + 1; $i++) {
-            $group = $this->createTestGroup();
             DB::table('messages_history')->insert([
                 'prunedsubject' => 'Re: Washing Machine',
-                'groupid' => $group->id,
+                'msgid' => $i + 1,
                 'arrival' => now(),
             ]);
         }

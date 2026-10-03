@@ -114,9 +114,9 @@ class EeeProductionStore
         // for MAX over a grouped subquery, and the statement reads better whole.
         $mark = DB::selectOne(
             'SELECT MAX(first_approved) AS mark FROM (
-                 SELECT MIN(COALESCE(mg.approvedat, mg.arrival)) AS first_approved
+                 SELECT MIN(COALESCE(m.approvedat, m.arrival)) AS first_approved
                  FROM messages_eee e
-                 INNER JOIN messages_groups mg ON mg.msgid = e.msgid AND mg.collection = ?
+                 INNER JOIN messages m ON m.id = e.msgid AND m.collection = ?
                  WHERE e.model = ? AND e.prompt_version = ?
                  GROUP BY e.msgid
              ) AS per_message',

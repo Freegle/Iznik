@@ -85,7 +85,7 @@ class ItemServiceTest extends TestCase
     public function test_link_to_message_is_idempotent(): void
     {
         // messages_items has a FK to messages, so we need a real message row.
-        $message = $this->createTestMessage($this->createTestUser(), $this->createTestGroup());
+        $message = $this->createTestMessage($this->createTestUser());
         $itemid = $this->service->findOrCreate('Lamp');
 
         $this->service->linkToMessage($message->id, $itemid);
@@ -104,15 +104,14 @@ class ItemServiceTest extends TestCase
      */
     public function test_link_to_message_increments_popularity(): void
     {
-        $group  = $this->createTestGroup();
         $itemid = $this->service->findOrCreate('Kettle');
 
         $this->assertSame(0, (int) DB::table('items')->where('id', $itemid)->value('popularity'));
 
-        $this->service->linkToMessage($this->createTestMessage($this->createTestUser(), $group)->id, $itemid);
+        $this->service->linkToMessage($this->createTestMessage($this->createTestUser())->id, $itemid);
         $this->assertSame(1, (int) DB::table('items')->where('id', $itemid)->value('popularity'));
 
-        $this->service->linkToMessage($this->createTestMessage($this->createTestUser(), $group)->id, $itemid);
+        $this->service->linkToMessage($this->createTestMessage($this->createTestUser())->id, $itemid);
         $this->assertSame(2, (int) DB::table('items')->where('id', $itemid)->value('popularity'));
     }
 
@@ -123,7 +122,7 @@ class ItemServiceTest extends TestCase
      */
     public function test_relinking_the_same_message_does_not_inflate_popularity(): void
     {
-        $message = $this->createTestMessage($this->createTestUser(), $this->createTestGroup());
+        $message = $this->createTestMessage($this->createTestUser());
         $itemid  = $this->service->findOrCreate('Toaster');
 
         $this->service->linkToMessage($message->id, $itemid);
@@ -136,13 +135,12 @@ class ItemServiceTest extends TestCase
     /** Each item counts its own postings, not another item's. */
     public function test_popularity_is_per_item(): void
     {
-        $group   = $this->createTestGroup();
         $kettle  = $this->service->findOrCreate('Kettle');
         $blender = $this->service->findOrCreate('Blender');
 
-        $this->service->linkToMessage($this->createTestMessage($this->createTestUser(), $group)->id, $kettle);
-        $this->service->linkToMessage($this->createTestMessage($this->createTestUser(), $group)->id, $kettle);
-        $this->service->linkToMessage($this->createTestMessage($this->createTestUser(), $group)->id, $blender);
+        $this->service->linkToMessage($this->createTestMessage($this->createTestUser())->id, $kettle);
+        $this->service->linkToMessage($this->createTestMessage($this->createTestUser())->id, $kettle);
+        $this->service->linkToMessage($this->createTestMessage($this->createTestUser())->id, $blender);
 
         $this->assertSame(2, (int) DB::table('items')->where('id', $kettle)->value('popularity'));
         $this->assertSame(1, (int) DB::table('items')->where('id', $blender)->value('popularity'));
@@ -150,7 +148,7 @@ class ItemServiceTest extends TestCase
 
     public function test_record_from_subject_creates_item_and_link(): void
     {
-        $message = $this->createTestMessage($this->createTestUser(), $this->createTestGroup());
+        $message = $this->createTestMessage($this->createTestUser());
 
         $itemid = $this->service->recordFromSubject($message->id, 'OFFER: Garden Spade (Leeds LS1)');
 
@@ -162,7 +160,7 @@ class ItemServiceTest extends TestCase
 
     public function test_record_from_subject_returns_null_for_malformed_subject(): void
     {
-        $message = $this->createTestMessage($this->createTestUser(), $this->createTestGroup());
+        $message = $this->createTestMessage($this->createTestUser());
 
         $this->assertNull($this->service->recordFromSubject($message->id, 'just a plain subject'));
         $this->assertSame(0, DB::table('messages_items')->where('msgid', $message->id)->count());

@@ -89,7 +89,7 @@
         <mj-text font-size="13px" color="#555555" line-height="1.4" padding="0 25px 14px">
           @if ($hasProfile)<img src="{{ $story['profileurl'] }}" width="26" height="26" style="vertical-align:middle;margin-right:7px;" />@endif
           @if ($hasName)<strong>{{ e($story['username']) }}</strong>@if ($hasGroup) &nbsp;&middot;&nbsp; <span style="color:#888888;">{{ e($story['groupname']) }}</span>@endif
-          @else<span style="color:#888888;">From a freegler on {{ e($story['groupname']) }}.</span>@endif
+          @else<span style="color:#888888;">From a freegler{{ $hasGroup ? " on " . e($story["groupname"]) : "" }}.</span>@endif
         </mj-text>
         @endif
       </mj-column>

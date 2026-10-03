@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-29
+last_reviewed: 2026-10-03
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/server/utils/sitemap.ts
@@ -11,7 +11,6 @@ covers:
   - iznik-nuxt3/public/robots.txt
   - iznik-server-go/message/sitemap.go
   - iznik-batch/app/Services/MessageSpatialService.php
-  - iznik-server-go/group/groupMessages.go
   - delivery-imagesweserv.conf
 ---
 
@@ -41,7 +40,7 @@ of URLs:
 | Route | Contents | ISR |
 |-------|----------|-----|
 | `/sitemap.xml` | index listing the children below | 600s |
-| `/sitemap-pages.xml` | landing/policy pages, `/compare/*`, one per community | 3600s |
+| `/sitemap-pages.xml` | landing/policy pages and `/compare/*` | 3600s |
 | `/sitemap-posts/<n>` | up to 20,000 live posts each, with `lastmod` | 600s |
 
 Building blocks live in `server/utils/sitemap.ts` (pure functions, unit tested in
@@ -62,7 +61,7 @@ route sets.
 ### Where the post list comes from
 
 `GET /message/sitemap` in the Go API (`message/sitemap.go`) reads
-**`messages_spatial`**, not `messages`/`messages_groups`/`messages_outcomes`.
+**`messages_spatial`**, not `messages`/`messages_outcomes`.
 That table:
 
 - is already exactly the set the site treats as currently visible, because the
@@ -121,26 +120,13 @@ thin pages, and gets the whole `/message/*` path discounted and crawled less.
 `?showtaken=1` deliberately overrides this, for links that are meant to show a
 finished post.
 
-## Community pages are a crawl path
+## There are no community pages
 
-`/explore/<group>` renders its interactive content inside `<client-only>`, so the
-HTML a crawler receives contained **no links to posts at all**. Google can run our
-JavaScript, but on a delayed second pass and not for every page every time, so
-which communities surfaced a given post was effectively arbitrary.
-
-The page now also renders a plain, server-rendered list of post links, hidden from
-sighted users with `visually-hidden` but present in the served HTML with real
-`<a href="/message/...">` and the post subject as link text. It is fed by
-`GET /group/:id/message/summary` (`group/groupMessages.go`), which returns id +
-subject for up to 200 recent live posts.
-
-That endpoint is deliberately **anonymous** — unlike `GET /group/:id/message` it
-never folds in the caller's own pending posts, because its output is rendered into
-a page that gets cached and served to everyone.
-
-`/explore/**` is on a 600s ISR window, down from 3600s: a community page is the
-crawl path into that community's new posts, so an hour of cache meant a new post
-could sit invisible for an hour after it landed.
+This experiment removed the community model, so there is no `/explore/<group>` page and
+no `GET /group/:id/message/summary` endpoint. Post pages (`/message/<id>`) are the crawl
+target, reached from the post sitemap. Before the removal, the community page carried a
+server-rendered list of post links so crawlers could find new posts; nothing replaces it,
+because the sitemap already lists every live post.
 
 ## Meta tags
 
@@ -150,14 +136,13 @@ also emits:
 - **`rel=canonical`**, agreeing with `og:url`. Both are the clean path with query
   strings stripped, so `?src=` tracking on inbound links doesn't fragment the
   signal. Pass `options.canonical` to override, which the post page does
-  (`/message/<id>`) and the community page does (`/explore/<group>`, so that
-  `/explore/<group>/<msgid>` folds into it).
+  (`/message/<id>`).
 - **`options.noindex`**, which adds `robots: noindex, follow` while leaving the
   rest of the tags in place. Call sites used to do this by assigning `head.meta`,
   which replaced the array and silently threw away the description and every
   `og:`/`twitter:` tag.
-- **cleaned descriptions**, via `seoDescription()`: strips HTML (group
-  descriptions are WYSIWYG and arrived as raw `<p><strong>...` in the meta tag),
+- **cleaned descriptions**, via `seoDescription()`: strips HTML (descriptions
+  entered in a rich-text editor arrived as raw `<p><strong>...` in the meta tag),
   decodes entities, collapses whitespace, truncates at a word boundary.
 
 `seoDescription` strips only an **allowlist** of real HTML tags rather than
@@ -242,9 +227,6 @@ curl -s -A "Googlebot" https://www.ilovefreegle.org/message/<id> | grep -o '<met
 
 # A finished post should be 410
 curl -s -o /dev/null -w '%{http_code}\n' https://www.ilovefreegle.org/message/<taken-id>
-
-# Community page should contain post links in the raw HTML
-curl -s https://www.ilovefreegle.org/explore/<group> | grep -c 'href="/message/'
 
 # Photos must not be disallowed
 curl -s --compressed https://delivery.ilovefreegle.org/robots.txt | tail -5

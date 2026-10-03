@@ -10,14 +10,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Community-event roundup, unified per user.
- *
- * Previously one email per group: a member of several groups received several
- * roundups, and the same event cross-posted to multiple of their groups
- * appeared in each one. This now sends ONE email per user covering upcoming
- * events across ALL their event-enabled groups, with each event shown once
- * (deduplicated by event id) and annotated with which of the user's groups it
- * belongs to.
+ * Community-event roundup: one email per opted-in member covering every upcoming
+ * event, each shown once. The site is national, so there are no communities to
+ * scope events or members by. An event carries no coordinates, so the roundup is
+ * not filtered by distance either.
  */
 class EventsDigestService
 {
@@ -30,9 +26,9 @@ class EventsDigestService
     public const HORIZON_DAYS = 30;
 
     /**
-     * Send unified community-event roundups.
+     * Send community-event roundups.
      *
-     * @return array{sent: int, users_processed: int, groups_processed: int}
+     * @return array{sent: int, users_processed: int}
      */
     public function sendEventDigests(bool $dryRun = false): array
     {
@@ -41,22 +37,14 @@ class EventsDigestService
         $sent = 0;
         $usersProcessed = 0;
 
-        $eligibleGroups = $this->eligibleGroups('communityevents'); // id => nameshort
-        if (empty($eligibleGroups)) {
-            return ['sent' => 0, 'users_processed' => 0, 'groups_processed' => 0];
-        }
-        $groupIds = array_keys($eligibleGroups);
+        // Pre-fetch all upcoming events and their images once, rather than per user.
+        $events = $this->fetchUpcomingEvents($userSite);
 
-        // Pre-fetch all upcoming events + their group associations + images once,
-        // rather than per user. The working set (events in the next 30 days
-        // across all groups) is small and bounded.
-        [$eventsById, $groupsByEvent] = $this->fetchUpcomingEvents($groupIds, $userSite);
-
-        if (empty($eventsById)) {
-            return ['sent' => 0, 'users_processed' => 0, 'groups_processed' => count($eligibleGroups)];
+        if (empty($events)) {
+            return ['sent' => 0, 'users_processed' => 0];
         }
 
-        foreach ($this->eligibleUsers($groupIds, 'eventsallowed', self::DIGEST_MODE) as $userRow) {
+        foreach ($this->eligibleUsers('eventsallowed', self::DIGEST_MODE) as $userRow) {
             $usersProcessed++;
 
             $user = User::find($userRow->id);
@@ -71,16 +59,6 @@ class EventsDigestService
                 continue;
             }
 
-            $userGroupIds = $this->userGroupIds($user->id, $groupIds, 'eventsallowed');
-            if (empty($userGroupIds)) {
-                continue;
-            }
-
-            $userEvents = $this->eventsForUser($eventsById, $groupsByEvent, $userGroupIds, $eligibleGroups);
-            if (empty($userEvents)) {
-                continue;
-            }
-
             if (!$dryRun) {
                 $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($email);
                 // spool() builds the message (incl. MJML render) up front and only
@@ -90,7 +68,7 @@ class EventsDigestService
                 try {
                     app(EmailSpoolerService::class)->spool(new EventsDigestMail(
                         recipientEmail: $email,
-                        events: $userEvents,
+                        events: $events,
                         unsubscribeUrl: $unsubscribeUrl,
                         userId: $user->id,
                     ), $email);
@@ -111,58 +89,22 @@ class EventsDigestService
         return [
             'sent' => $sent,
             'users_processed' => $usersProcessed,
-            'groups_processed' => count($eligibleGroups),
         ];
     }
 
     /**
-     * Build the deduplicated, group-attributed event list for one user.
+     * Fetch all upcoming events, earliest date first, as display data.
      *
-     * An event that belongs to several of the user's groups appears once, with
-     * the names of those groups attached.
-     *
-     * @param array<int,array>  $eventsById     eventid => event data (start-ordered)
-     * @param array<int,int[]>  $groupsByEvent  eventid => [group ids]
-     * @param array<int>        $userGroupIds   the user's eligible group ids
-     * @param array<int,array{name:string,url:string}> $eligibleGroups group id => display name + /explore link
      * @return array<int,array>
      */
-    protected function eventsForUser(array $eventsById, array $groupsByEvent, array $userGroupIds, array $eligibleGroups): array
-    {
-        $out = [];
-        foreach ($eventsById as $eid => $eventData) {
-            $shared = array_values(array_intersect($groupsByEvent[$eid] ?? [], $userGroupIds));
-            if (empty($shared)) {
-                continue;
-            }
-            $eventData['groups'] = array_values(array_filter(array_map(
-                fn ($gid) => $eligibleGroups[$gid] ?? null,
-                $shared
-            )));
-            $out[] = $eventData;
-        }
-
-        return $out;
-    }
-
-    /**
-     * Fetch all upcoming events for the eligible groups, returning both the
-     * per-event display data (keyed by id, ordered by start) and the map of
-     * event id => the eligible group ids it belongs to.
-     *
-     * @param array<int> $groupIds
-     * @return array{0: array<int,array>, 1: array<int,int[]>}
-     */
-    protected function fetchUpcomingEvents(array $groupIds, string $userSite): array
+    protected function fetchUpcomingEvents(string $userSite): array
     {
         $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
         $tusUploader = config('freegle.tus_uploader', 'https://uploads.ilovefreegle.org:8080');
         $deliveryUrl = config('freegle.delivery.base_url');
 
         $rawEvents = DB::table('communityevents')
-            ->join('communityevents_groups', 'communityevents_groups.eventid', '=', 'communityevents.id')
             ->join('communityevents_dates', 'communityevents_dates.eventid', '=', 'communityevents.id')
-            ->whereIn('communityevents_groups.groupid', $groupIds)
             ->where('communityevents_dates.start', '>=', now())
             ->whereRaw('DATEDIFF(communityevents_dates.start, NOW()) <= ?', [self::HORIZON_DAYS])
             ->where('communityevents.pending', 0)
@@ -184,20 +126,10 @@ class EventsDigestService
             ->unique('id'); // earliest upcoming date per event (rows are start-ordered)
 
         if ($rawEvents->isEmpty()) {
-            return [[], []];
+            return [];
         }
 
         $eventIds = $rawEvents->pluck('id')->all();
-
-        // All eligible-group associations per event (for dedup + attribution).
-        $groupsByEvent = [];
-        DB::table('communityevents_groups')
-            ->whereIn('eventid', $eventIds)
-            ->whereIn('groupid', $groupIds)
-            ->get(['eventid', 'groupid'])
-            ->each(function ($row) use (&$groupsByEvent) {
-                $groupsByEvent[(int) $row->eventid][] = (int) $row->groupid;
-            });
 
         // First non-archived image per event.
         $images = DB::table('communityevents_images')
@@ -215,7 +147,7 @@ class EventsDigestService
         $decode = fn (?string $s): ?string =>
             $s !== null ? html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null;
 
-        $eventsById = [];
+        $events = [];
         foreach ($rawEvents as $event) {
             $start = Carbon::parse($event->start)->setTimezone('Europe/London')->format('D, jS F g:ia');
             $end = ($event->end && $event->end !== '0000-00-00 00:00:00')
@@ -246,7 +178,7 @@ class EventsDigestService
                 }
             }
 
-            $eventsById[(int) $event->id] = [
+            $events[] = [
                 'id'           => (int) $event->id,
                 'title'        => $decode($event->title),
                 'location'     => $decode($event->location),
@@ -259,10 +191,9 @@ class EventsDigestService
                 'end'          => $end,
                 'imageUrl'     => $imageUrl,
                 'url'          => "{$userSite}/communityevent/{$event->id}",
-                'groups'       => [],
             ];
         }
 
-        return [$eventsById, $groupsByEvent];
+        return $events;
     }
 }

@@ -559,12 +559,11 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					Select("DISTINCT chat_messages.id, refmsgid, chat_messages.date, userid, fromuser, "+
 						"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname").
 					Joins("INNER JOIN messages ON messages.id = chat_messages.refmsgid").
-					Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
 					Joins("INNER JOIN users ON users.id = chat_messages.userid").
 					Where("refmsgid = ? AND chat_messages.type = ? AND (messages.fromuser != ? OR chat_messages.userid != ?) "+
 						"AND reviewrequired = 0 AND reviewrejected = 0 "+
 						"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') "+
-						"AND DATEDIFF(chat_messages.date, messages_groups.arrival) < ?",
+						"AND DATEDIFF(chat_messages.date, messages.arrival) < ?",
 						id, utils.MESSAGE_INTERESTED, myid, myid, utils.OPEN_AGE).
 					Group("userid").
 					Scan(&messageReply)

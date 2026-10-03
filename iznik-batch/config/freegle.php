@@ -879,22 +879,11 @@ return [
         // instant ever START rippling; older pending posts are left alone. This is the
         // flood guard: when rippling first turns on, every historical pending post would
         // otherwise become eligible at once and fan out a wall of mail. With the cutoff,
-        // only recent posts ripple, so turn-on is a trickle. It applies to the scoped
-        // group experiment too (an area run still ripples only post-cutoff posts inside
-        // the polygon), so for a clean before/after boundary set RIPPLE_ENABLED_AT in
-        // .env.background to the day you switch the experiment on, alongside
-        // RIPPLE_WITHIN_GROUPS - otherwise the first run back-fills the gap to this date.
+        // only recent posts ripple, so turn-on is a trickle. Set RIPPLE_ENABLED_AT in
+        // .env.background to the day you switch rippling on, otherwise the first run
+        // back-fills the gap to this date.
         // Empty string disables the cutoff (ripple everything, e.g. in tests).
         'enabled_at' => env('RIPPLE_ENABLED_AT', '2026-06-23'),
-        // Group experiment scope: comma-separated group ids that ripple even while the global
-        // RIPPLE_ENABLED switch is OFF. When non-empty, the scheduled ripple:expand cron runs SCOPED
-        // to these groups' polygons, so ONLY these groups' posts ripple (origin-in-polygon) and
-        // everyone else stays dark - this is the per-group before/after experiment. Empty = no
-        // experiment. RIPPLE_ENABLED remains the network-wide kill switch for the unscoped rollout.
-        'within_groups' => array_values(array_filter(array_map(
-            'intval',
-            explode(',', (string) env('RIPPLE_WITHIN_GROUPS', ''))
-        ))),
         // Density curve passed to /v1/ripple-schedule (see iznik-routing-go ripple.go).
         'curve' => env('RIPPLE_CURVE', 'step-70'),
         // Travel mode for the reach isochrone.

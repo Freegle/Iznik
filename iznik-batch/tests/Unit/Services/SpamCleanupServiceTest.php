@@ -61,91 +61,61 @@ class SpamCleanupServiceTest extends TestCase
     }
 
     // ===================================================================
-    // removeSpamMemberships
+    // removeSpamMemberships (bans the spammer site-wide)
     // ===================================================================
 
-    public function test_removes_member_role_membership_for_spammer(): void
+    public function test_bans_a_spammer(): void
     {
         $spammerId = $this->makeSpammer();
-        $group = $this->createTestGroup();
-        $spammer = \App\Models\User::find($spammerId);
-        $this->createMembership($spammer, $group, ['role' => 'Member']);
 
         $this->service->removeSpamMemberships();
 
-        $remaining = DB::table('memberships')
-            ->where('userid', $spammerId)
-            ->where('groupid', $group->id)
-            ->count();
-
-        $this->assertEquals(0, $remaining);
+        $this->assertNotNull(DB::table('users')->where('id', $spammerId)->value('banned'));
     }
 
-    public function test_does_not_remove_moderator_role_membership_for_spammer(): void
+    public function test_does_not_ban_a_non_spammer(): void
     {
-        $spammerId = $this->makeSpammer();
-        $group = $this->createTestGroup();
-        $spammer = \App\Models\User::find($spammerId);
-        $this->createMembership($spammer, $group, ['role' => 'Moderator']);
+        $userId = $this->createTestUser()->id;
 
         $this->service->removeSpamMemberships();
 
-        $remaining = DB::table('memberships')
-            ->where('userid', $spammerId)
-            ->where('groupid', $group->id)
-            ->count();
-
-        $this->assertEquals(1, $remaining);
+        $this->assertNull(DB::table('users')->where('id', $userId)->value('banned'));
     }
 
-    public function test_inserts_users_banned_for_removed_spammer(): void
+    public function test_dry_run_does_not_ban(): void
     {
         $spammerId = $this->makeSpammer();
-        $group = $this->createTestGroup();
-        $spammer = \App\Models\User::find($spammerId);
-        $this->createMembership($spammer, $group, ['role' => 'Member']);
 
-        $this->service->removeSpamMemberships();
+        $count = $this->service->removeSpamMemberships(true);
 
-        $banned = DB::table('users_banned')
-            ->where('userid', $spammerId)
-            ->where('groupid', $group->id)
-            ->count();
-
-        $this->assertEquals(1, $banned);
+        $this->assertGreaterThanOrEqual(1, $count);
+        $this->assertNull(DB::table('users')->where('id', $spammerId)->value('banned'));
     }
 
     public function test_logs_autoremoved_spammer(): void
     {
         $spammerId = $this->makeSpammer();
-        $group = $this->createTestGroup();
-        $spammer = \App\Models\User::find($spammerId);
-        $this->createMembership($spammer, $group, ['role' => 'Member']);
 
         $this->service->removeSpamMemberships();
 
         $log = DB::table('logs')
             ->where('user', $spammerId)
-            ->where('type', 'Group')
-            ->where('subtype', 'Left')
+            ->where('type', 'User')
+            ->where('subtype', 'Banned')
             ->where('text', 'Autoremoved spammer')
             ->first();
 
         $this->assertNotNull($log);
     }
 
-    public function test_returns_count_of_removed_memberships(): void
+    public function test_an_already_banned_spammer_is_not_banned_again(): void
     {
         $spammerId = $this->makeSpammer();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-        $spammer = \App\Models\User::find($spammerId);
-        $this->createMembership($spammer, $group1, ['role' => 'Member']);
-        $this->createMembership($spammer, $group2, ['role' => 'Member']);
+        DB::table('users')->where('id', $spammerId)->update(['banned' => '2026-01-01 00:00:00']);
 
-        $count = $this->service->removeSpamMemberships();
+        $this->service->removeSpamMemberships();
 
-        $this->assertEquals(2, $count);
+        $this->assertSame('2026-01-01 00:00:00', (string) DB::table('users')->where('id', $spammerId)->value('banned'));
     }
 
     // ===================================================================
@@ -156,8 +126,7 @@ class SpamCleanupServiceTest extends TestCase
     {
         $spammerId = $this->makeSpammer();
         $spammer = \App\Models\User::find($spammerId);
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($spammer, $group);
+        $message = $this->createTestMessage($spammer);
 
         $this->service->deleteSpamMessages();
 
@@ -165,28 +134,10 @@ class SpamCleanupServiceTest extends TestCase
         $this->assertNotNull($deleted);
     }
 
-    public function test_marks_messages_groups_deleted_for_spam_messages(): void
-    {
-        $spammerId = $this->makeSpammer();
-        $spammer = \App\Models\User::find($spammerId);
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($spammer, $group);
-
-        $this->service->deleteSpamMessages();
-
-        $deleted = DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->value('deleted');
-
-        $this->assertEquals(1, $deleted);
-    }
-
     public function test_does_not_delete_messages_from_non_spammer(): void
     {
         $author = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($author, $group);
+        $message = $this->createTestMessage($author);
 
         $this->service->deleteSpamMessages();
 
@@ -241,8 +192,8 @@ class SpamCleanupServiceTest extends TestCase
 
     public function test_removes_review_messages_sent_to_a_spammer_and_their_holds(): void
     {
-        // A member's message to a spammer waiting in Chat Review. Removing the spammer from
-        // their groups moves it out of the queue of whoever held it, and nobody else could
+        // A member's message to a spammer waiting in Chat Review. Banning the spammer
+        // moves it out of the queue of whoever held it, and nobody else could
         // release it (Discourse 10171/54). There is no one worth delivering it to.
         $spammer = \App\Models\User::find($this->makeSpammer());
         $member = $this->createTestUser();
@@ -422,17 +373,15 @@ class SpamCleanupServiceTest extends TestCase
     // removeSpamMembers (full integration)
     // ===================================================================
 
-    public function test_remove_spam_members_returns_combined_count(): void
+    public function test_remove_spam_members_returns_the_stats(): void
     {
         $spammerId = $this->makeSpammer();
         $spammer = \App\Models\User::find($spammerId);
-        $group = $this->createTestGroup();
-        $this->createMembership($spammer, $group, ['role' => 'Member']);
-        $this->createTestMessage($spammer, $group);
+        $this->createTestMessage($spammer);
 
-        $count = $this->service->removeSpamMembers();
+        $stats = $this->service->removeSpamMembers();
 
-        // 1 membership removed + 1 message deleted
-        $this->assertGreaterThanOrEqual(2, $count);
+        $this->assertGreaterThanOrEqual(1, $stats['banned']);
+        $this->assertGreaterThanOrEqual(1, $stats['messages']);
     }
 }

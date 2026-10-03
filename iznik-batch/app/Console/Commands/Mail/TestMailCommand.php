@@ -18,7 +18,6 @@ use App\Mail\Stories\StoriesNewsletterMail;
 use App\Mail\Welcome\WelcomeMail;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
-use App\Models\Membership;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
@@ -82,7 +81,6 @@ class TestMailCommand extends Command
         'deadline-reached' => 'Deadline reached notification',
         'notifications' => 'On-site notification chase-up (unseen comments, loves and nudges). Real notifications if the member has any, otherwise one of every type',
         'stories-newsletter' => 'Monthly stories newsletter (real stories from DB, or sample data if none found)',
-        'ripple-intro' => 'Rippling Out intro email (one-off "your post is reaching more people" notice)',
         'matched' => 'Matched-posts email (opposite-type posts near you that match your open offers/wanteds)',
         'unsubscribed' => 'Unsubscribe acknowledgement (what we turned off, what is still on). --unsubscribed-type sets the category, default digest',
     ];
@@ -375,7 +373,6 @@ class TestMailCommand extends Command
             'deadline-reached' => $this->buildDeadlineReached(),
             'notifications' => $this->buildNotificationChaseUp(),
             'stories-newsletter' => $this->buildStoriesNewsletter(),
-            'ripple-intro' => $this->buildRippleIntro(),
             'matched' => $this->buildMatched(),
             'unsubscribed' => $this->buildUnsubscribedNotice(),
             default => null,
@@ -662,7 +659,7 @@ class TestMailCommand extends Command
             ->where('fromuser', '!=', $user->id)
             ->orderByDesc('arrival')
             ->limit($count)
-            ->with(['attachments', 'fromUser', 'groups'])
+            ->with(['attachments', 'fromUser'])
             ->get();
 
         if ($posts->isEmpty()) {
@@ -690,46 +687,6 @@ class TestMailCommand extends Command
     }
 
     /**
-     * Build the Rippling Out intro email (one-off "your post is reaching more people" notice).
-     * Use to preview/review the copy in Mailpit: mail:test ripple-intro --user=ID --send-to=you@...
-     */
-    protected function buildRippleIntro(): ?\App\Mail\Ripple\RippleIntroMail
-    {
-        $user = $this->findUserWithEmail($this->option('user'));
-        if (! $user) {
-            return null;
-        }
-
-        $this->info("Generating Rippling Out intro email for user: {$user->displayname} (ID: {$user->id})");
-
-        // Optionally attach one of the user's posts for light context (subject/body only).
-        $message = \App\Models\Message::where('fromuser', $user->id)->latest('id')->first();
-
-        // For preview: show the per-community welcome section using a couple of real groups'
-        // welcome text where available, else sample text, so the layout can be reviewed.
-        $welcomeGroups = DB::table('groups')
-            ->where('onhere', 1)
-            ->whereNotNull('welcomemail')
-            ->where('welcomemail', '<>', '')
-            ->orderByDesc('id')
-            ->limit(2)
-            ->get(['namefull', 'nameshort', 'welcomemail'])
-            ->map(fn ($g) => [
-                'name' => $g->namefull ?: $g->nameshort,
-                'welcome' => $g->welcomemail,
-            ])->all();
-
-        if (empty($welcomeGroups)) {
-            $welcomeGroups = [
-                ['name' => 'Freegle Sampleton', 'welcome' => "Welcome to Freegle Sampleton!\nPlease keep posts local and be kind. Our volunteers are here to help."],
-                ['name' => 'Freegle Exampleford', 'welcome' => "Hi and welcome!\nOffers and Wanteds both welcome - thanks for helping us reuse rather than bin."],
-            ];
-        }
-
-        return new \App\Mail\Ripple\RippleIntroMail($user, $message, $welcomeGroups);
-    }
-
-    /**
      * Build a generic admin email (with realistic local-volunteer data).
      */
     protected function buildAdmin(): ?AdminMail
@@ -754,24 +711,18 @@ class TestMailCommand extends Command
 
         $this->info("Found user: {$user->displayname} (ID: {$user->id})");
 
-        // Find a group the user is on, for realistic volunteer data.
-        $membership = DB::table('memberships')->where('userid', $user->id)->first();
-        $group = $membership ? Group::find($membership->groupid) : Group::where('type', Group::TYPE_FREEGLE)->first();
+        $groupName = 'Freegle';
+        $groupShort = null;
+        $modsEmail = config('freegle.mail.support_addr');
 
-        $groupName = $group ? ($group->namefull ?: $group->nameshort) : 'Test Freegle Group';
-        $groupShort = $group->nameshort ?? 'TestGroup';
-        $modsEmail = "{$groupShort}-volunteers@groups.ilovefreegle.org";
-
-        // Get real local volunteers for the group.
-        $volunteers = $group ? SendAdminCommand::getLocalVolunteers($group->id) : [];
-        $this->info('Found '.count($volunteers)." local volunteer(s) for {$groupName}");
+        $volunteers = SendAdminCommand::getVolunteers();
+        $this->info('Found '.count($volunteers).' volunteer(s)');
 
         // Build a realistic admin record.
         $admin = [
             'id' => 0,
-            'groupid' => $group->id ?? 0,
             'subject' => 'Test admin email from '.$groupName,
-            'text' => "Hello \$membername,\n\nThis is a test admin email for \$groupname.\n\nYou can contact your local volunteers at \$owneremail.\n\nThank you for freegling!",
+            'text' => "Hello \$membername,\n\nThis is a test admin email.\n\nYou can contact the volunteers at \$owneremail.\n\nThank you for freegling!",
             'ctatext' => 'Visit Freegle',
             'ctalink' => 'https://www.ilovefreegle.org',
             'essential' => false,
@@ -839,15 +790,9 @@ class TestMailCommand extends Command
 
         if ($chatType === ChatRoom::TYPE_USER2MOD && $perspective === 'mod') {
             // For mod perspective, find a chat where user is NOT user1 (they're a mod).
-            // User2Mod chats have user1 as the member, mods are found via group membership.
-            // We need to find a chat where the user is a mod of the group.
+            // User2Mod chats have user1 as the member; the mods are the national moderators.
             $chatRoomQuery->where('user1', '!=', $recipient->id)
-                ->whereHas('group', function ($q) use ($recipient) {
-                    $q->whereHas('memberships', function ($mq) use ($recipient) {
-                        $mq->where('userid', $recipient->id)
-                            ->whereIn('role', ['Moderator', 'Owner']);
-                    });
-                });
+                ;
         } else {
             // Default: find chat where user is a participant.
             $chatRoomQuery->where(function ($q) use ($recipient) {
@@ -1039,7 +984,6 @@ class TestMailCommand extends Command
             $user = User::find($userId);
         } else {
             $user = User::whereHas('emails')
-                ->whereHas('memberships', fn ($q) => $q->where('collection', Membership::COLLECTION_APPROVED))
                 ->inRandomOrder()->first();
         }
 
@@ -1051,35 +995,19 @@ class TestMailCommand extends Command
 
         $this->info("Generating unified digest for user: {$user->displayname} (ID: {$user->id})");
 
-        // Get the user's group IDs.
-        $groupIds = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->pluck('groupid');
-
-        if ($groupIds->isEmpty()) {
-            $this->error("User {$user->id} has no approved group memberships");
-
-            return null;
-        }
-
-        $this->info('User is a member of '.$groupIds->count().' groups');
-
-        // Get recent messages from those groups.
-        $posts = Message::select('messages.*', 'messages_groups.groupid', 'messages_groups.arrival')
-            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
-            ->whereIn('messages_groups.groupid', $groupIds)
-            ->where('messages_groups.collection', 'Approved')
-            ->where('messages_groups.deleted', 0)
+        // Get recent live messages.
+        $posts = Message::select('messages.*')
+            ->where('messages.collection', 'Approved')
             ->whereNull('messages.deleted')
             ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
             ->where('messages.fromuser', '!=', $user->id)
-            ->orderBy('messages_groups.arrival', 'desc')
+            ->orderBy('messages.arrival', 'desc')
             ->limit(20)
-            ->with(['attachments', 'fromUser', 'groups'])
+            ->with(['attachments', 'fromUser'])
             ->get();
 
         if ($posts->isEmpty()) {
-            $this->error('No recent messages found in user\'s groups');
+            $this->error('No recent messages found');
 
             return null;
         }
@@ -1203,7 +1131,7 @@ class TestMailCommand extends Command
      */
     protected function buildAutoRepostWarning(): ?AutoRepostWarning
     {
-        [$user, $message, $group] = $this->findUserMessageGroup();
+        [$user, $message] = $this->findUserMessage();
         if (! $user) {
             return null;
         }
@@ -1217,7 +1145,6 @@ class TestMailCommand extends Command
             userId: $user->id,
             userName: $user->displayname,
             userEmail: $user->email_preferred,
-            groupId: $group->id,
         );
     }
 
@@ -1226,7 +1153,7 @@ class TestMailCommand extends Command
      */
     protected function buildChaseUp(bool $promised): ChaseUp|ChaseUpPromised|null
     {
-        [$user, $message, $group] = $this->findUserMessageGroup();
+        [$user, $message] = $this->findUserMessage();
         if (! $user) {
             return null;
         }
@@ -1242,7 +1169,6 @@ class TestMailCommand extends Command
                 userId: $user->id,
                 userName: $user->displayname,
                 userEmail: $user->email_preferred,
-                groupId: $group->id,
             );
         }
 
@@ -1253,7 +1179,6 @@ class TestMailCommand extends Command
             userId: $user->id,
             userName: $user->displayname,
             userEmail: $user->email_preferred,
-            groupId: $group->id,
         );
     }
 
@@ -1262,7 +1187,7 @@ class TestMailCommand extends Command
      */
     protected function buildDeadlineReached(): ?DeadlineReached
     {
-        [$user, $message, $group] = $this->findUserMessageGroup();
+        [$user, $message] = $this->findUserMessage();
         if (! $user) {
             return null;
         }
@@ -1273,16 +1198,16 @@ class TestMailCommand extends Command
     }
 
     /**
-     * Find a user, message, and group for message-related test emails.
+     * Find a user and message for message-related test emails.
      */
-    protected function findUserMessageGroup(): array
+    protected function findUserMessage(): array
     {
         $toEmail = $this->option('to');
 
         if (! $toEmail) {
             $this->error('Please specify --to=email to find a user');
 
-            return [null, null, null];
+            return [null, null];
         }
 
         $user = User::whereHas('emails', function ($q) use ($toEmail) {
@@ -1292,7 +1217,7 @@ class TestMailCommand extends Command
         if (! $user) {
             $this->error("No user found with email: {$toEmail}");
 
-            return [null, null, null];
+            return [null, null];
         }
 
         $this->info("Found user: {$user->displayname} (ID: {$user->id})");
@@ -1306,23 +1231,10 @@ class TestMailCommand extends Command
         if (! $message) {
             $this->error("No messages found for user {$user->id}");
 
-            return [null, null, null];
+            return [null, null];
         }
 
-        // Get a group the message is on.
-        $group = $message->groups->first();
-        if (! $group) {
-            $membership = DB::table('memberships')->where('userid', $user->id)->first();
-            $group = $membership ? Group::find($membership->groupid) : null;
-        }
-
-        if (! $group) {
-            $this->error('No group found for message or user');
-
-            return [null, null, null];
-        }
-
-        return [$user, $message, $group];
+        return [$user, $message];
     }
 
     /**
@@ -1368,12 +1280,7 @@ class TestMailCommand extends Command
                 continue;
             }
 
-            $groupName = DB::table('memberships')
-                ->join('groups', 'groups.id', '=', 'memberships.groupid')
-                ->where('memberships.userid', $story->userid)
-                ->where('groups.type', Group::TYPE_FREEGLE)
-                ->selectRaw('COALESCE(groups.namefull, groups.nameshort) AS namedisplay')
-                ->value('namedisplay');
+            $groupName = null;
 
             $photoUrl = null;
             if ($row->photoid) {

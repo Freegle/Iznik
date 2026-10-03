@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -237,53 +236,6 @@ func getPartnership(t *testing.T, token string, id uint64) map[string]interface{
 	json2.Unmarshal(rsp(resp), &result)
 
 	return result
-}
-
-// findGroup picks one group out of a partnership's detail, or nil.
-func findGroup(detail map[string]interface{}, groupID uint64) map[string]interface{} {
-	for _, g := range detail["groups"].([]interface{}) {
-		gm := g.(map[string]interface{})
-		if uint64(gm["groupid"].(float64)) == groupID {
-			return gm
-		}
-	}
-
-	return nil
-}
-
-func sponsorshipCount(groupID uint64) int64 {
-	var n int64
-	database.DBConn.Raw("SELECT COUNT(*) FROM groups_sponsorship WHERE groupid = ?", groupID).Scan(&n)
-
-	return n
-}
-
-// A community that only touches the boundary is covered, with the small share of it that is
-// inside - the same as the authority stats page, which counts that share of its figures.
-// Southend against Essex County is the real case; leaving it out is a decision for the team.
-func TestPartnershipCoversACommunityThatTouchesTheBoundaryWithItsShare(t *testing.T) {
-	prefix := uniquePrefix("PartnershipGraze")
-	_, token := partnershipsUser(t, prefix)
-	authorityID := createPartnershipAuthority(t, prefix)
-
-	db := database.DBConn
-	// Mostly east of the authority's -3 edge: 0.02 of its 1.0 width is inside, and it covers
-	// a sliver of the authority.
-	name := "TestPGroupGraze_" + prefix
-	db.Exec(fmt.Sprintf("INSERT INTO `groups` (nameshort, namefull, type, onhere, publish, onmap, "+
-		"polyindex, lat, lng) VALUES (?, ?, 'Freegle', 1, 1, 1, "+
-		"ST_GeomFromText('POLYGON((-3.02 55.5, -2.02 55.5, -2.02 55.6, -3.02 55.6, -3.02 55.5))', %d), 55.55, -2.5)",
-		utils.SRID), name, name)
-	var grazeID uint64
-	db.Raw("SELECT id FROM `groups` WHERE nameshort = ?", name).Scan(&grazeID)
-	require.NotZero(t, grazeID)
-
-	id := createPartnership(t, token, authorityID, defaultBody(authorityID))
-
-	g := findGroup(getPartnership(t, token, id), grazeID)
-	require.NotNil(t, g)
-	assert.Equal(t, "Boundary", g["source"])
-	assert.InDelta(t, 0.02, g["overlap"].(float64), 0.005)
 }
 
 func TestPartnershipRejectsUnknownStatus(t *testing.T) {

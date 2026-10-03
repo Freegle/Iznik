@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Commands\Notification;
 
+use Illuminate\Support\Facades\DB;
 use App\Services\PushNotificationService;
 use Tests\TestCase;
 

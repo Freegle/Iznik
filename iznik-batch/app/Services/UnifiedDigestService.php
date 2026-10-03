@@ -846,9 +846,6 @@ class UnifiedDigestService
     ): array {
         $msgid = (int) $msg->id;
 
-        // No group to fetch a sponsor for: reach mail is national, not per-community.
-        $sponsorsCache = null;
-
         $users = User::whereIn('id', $recipientIds)->with(['emails'])->get();
 
         // Anyone who has already had an immediate mail about this ITEM - this message, or
@@ -904,7 +901,7 @@ class UnifiedDigestService
             try {
                 app(\App\Services\EmailSpoolerService::class)->spool(
                     new UnifiedDigest(
-                        $user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache,
+                        $user, $deduped, self::MODE_IMMEDIATE, collect(),
                         matchReason: $matchReasons[(int) $user->id] ?? null
                     ),
                     $user->email_preferred,

@@ -2,6 +2,7 @@
 
 namespace Tests;
 
+use Illuminate\Support\Facades\DB;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\Message;

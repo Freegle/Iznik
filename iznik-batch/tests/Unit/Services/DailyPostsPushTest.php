@@ -2,11 +2,8 @@
 
 namespace Tests\Unit\Services;
 
-use App\Models\Group;
-use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageAttachment;
-use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
 use App\Services\PushNotificationService;
@@ -56,15 +53,14 @@ class DailyPostsPushTest extends TestCase
     public function test_distance_preference_filter_narrows_to_the_members_range(): void
     {
         $poster = $this->createTestUser();
-        $group  = $this->createTestGroup();
 
         $member = $this->createTestUser();
         $member->settings = ['mylocation' => ['lat' => 51.5, 'lng' => -0.1], 'browseMaxDistance' => 5];
         $member->save();
         $member->refresh();
 
-        $near = $this->createApprovedMessage($poster, $group, 'OFFER: Near sofa (Kingston)');
-        $far  = $this->createApprovedMessage($poster, $group, 'OFFER: Far sofa (Aberdeen)');
+        $near = $this->createApprovedMessage($poster, 'OFFER: Near sofa (Kingston)');
+        $far  = $this->createApprovedMessage($poster, 'OFFER: Far sofa (Aberdeen)');
 
         // Roughly 2 miles away, and roughly 400 miles away.
         $near->lat = 51.53; $near->lng = -0.1;  $near->fromuser = $poster->id;
@@ -93,8 +89,7 @@ class DailyPostsPushTest extends TestCase
     public function test_single_post_title_is_item_name(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Sofa (Kingston)');
+        $msg   = $this->createApprovedMessage($user, 'OFFER: Sofa (Kingston)');
 
         $posts   = $this->buildPostsArray([$msg]);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
@@ -114,13 +109,12 @@ class DailyPostsPushTest extends TestCase
         // inflate the app-icon badge with the post count. The badge must equal
         // the user's actual unread items (unseen notifications + unread chats).
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // Three posts in the digest...
         $msgs = [
-            $this->createApprovedMessage($user, $group, 'OFFER: Sofa (Kingston)'),
-            $this->createApprovedMessage($user, $group, 'WANTED: Bike (Surbiton)'),
-            $this->createApprovedMessage($user, $group, 'OFFER: Lamp (Kingston)'),
+            $this->createApprovedMessage($user, 'OFFER: Sofa (Kingston)'),
+            $this->createApprovedMessage($user, 'WANTED: Bike (Surbiton)'),
+            $this->createApprovedMessage($user, 'OFFER: Lamp (Kingston)'),
         ];
         $posts = $this->buildPostsArray($msgs);
 
@@ -143,8 +137,7 @@ class DailyPostsPushTest extends TestCase
     public function test_bulk_offer_shows_item_count(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Office clearance (Brighton)');
+        $msg   = $this->createApprovedMessage($user, 'OFFER: Office clearance (Brighton)');
         foreach (['Desk', 'Chair', 'Lamp'] as $i => $name) {
             \Illuminate\Support\Facades\DB::table('messages_bulk_items')->insert([
                 'msgid' => $msg->id, 'position' => $i, 'name' => $name, 'quantity' => 1, 'condition' => 'Good',
@@ -160,10 +153,9 @@ class DailyPostsPushTest extends TestCase
     public function test_multi_post_title_is_count_new_things(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
         $msgs  = [
-            $this->createApprovedMessage($user, $group, 'OFFER: Sofa (Kingston)'),
-            $this->createApprovedMessage($user, $group, 'WANTED: Bike (Surbiton)'),
+            $this->createApprovedMessage($user, 'OFFER: Sofa (Kingston)'),
+            $this->createApprovedMessage($user, 'WANTED: Bike (Surbiton)'),
         ];
 
         $posts   = $this->buildPostsArray($msgs);
@@ -176,7 +168,6 @@ class DailyPostsPushTest extends TestCase
     public function test_seven_posts_lines_capped_at_five_and_more_count(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $msgs = [];
         $subjects = [
@@ -189,7 +180,7 @@ class DailyPostsPushTest extends TestCase
             'OFFER: Desk (Richmond)',
         ];
         foreach ($subjects as $s) {
-            $msgs[] = $this->createApprovedMessage($user, $group, $s);
+            $msgs[] = $this->createApprovedMessage($user, $s);
         }
 
         $posts   = $this->buildPostsArray($msgs);
@@ -212,8 +203,7 @@ class DailyPostsPushTest extends TestCase
     public function test_payload_required_fields_are_strings(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Lamp (Ealing)');
+        $msg   = $this->createApprovedMessage($user, 'OFFER: Lamp (Ealing)');
 
         $posts   = $this->buildPostsArray([$msg]);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
@@ -232,8 +222,7 @@ class DailyPostsPushTest extends TestCase
     public function test_payload_constant_fields(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Box (Ealing)');
+        $msg   = $this->createApprovedMessage($user, 'OFFER: Box (Ealing)');
 
         $posts   = $this->buildPostsArray([$msg]);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
@@ -250,10 +239,9 @@ class DailyPostsPushTest extends TestCase
     public function test_lines_are_json_encoded_array(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
         $msgs  = [
-            $this->createApprovedMessage($user, $group, 'OFFER: Sofa (Kingston)'),
-            $this->createApprovedMessage($user, $group, 'WANTED: Bike (Surbiton)'),
+            $this->createApprovedMessage($user, 'OFFER: Sofa (Kingston)'),
+            $this->createApprovedMessage($user, 'WANTED: Bike (Surbiton)'),
         ];
 
         $posts   = $this->buildPostsArray($msgs);
@@ -270,8 +258,7 @@ class DailyPostsPushTest extends TestCase
     public function test_image_is_empty_string_when_no_attachment(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Books (London)');
+        $msg   = $this->createApprovedMessage($user, 'OFFER: Books (London)');
 
         $posts   = $this->buildPostsArray([$msg]);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
@@ -282,8 +269,7 @@ class DailyPostsPushTest extends TestCase
     public function test_image_url_from_attachment_externalurl(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Vase (London)');
+        $msg   = $this->createApprovedMessage($user, 'OFFER: Vase (London)');
 
         // Add a usable attachment with externalurl.
         MessageAttachment::create([
@@ -305,14 +291,13 @@ class DailyPostsPushTest extends TestCase
     public function test_images_collects_top_post_photos_for_collage(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // Two posts with photos, one without — images[] should hold the two photo URLs
         // in order, and skip the photo-less post.
-        $m1 = $this->createApprovedMessage($user, $group, 'OFFER: Sofa (London)');
+        $m1 = $this->createApprovedMessage($user, 'OFFER: Sofa (London)');
         MessageAttachment::create(['msgid' => $m1->id, 'externalurl' => 'https://cdn.example.com/a.jpg', 'archived' => 0, 'primary' => 1]);
-        $m2 = $this->createApprovedMessage($user, $group, 'WANTED: Bike (London)');
-        $m3 = $this->createApprovedMessage($user, $group, 'OFFER: Lamp (London)');
+        $m2 = $this->createApprovedMessage($user, 'WANTED: Bike (London)');
+        $m3 = $this->createApprovedMessage($user, 'OFFER: Lamp (London)');
         MessageAttachment::create(['msgid' => $m3->id, 'externalurl' => 'https://cdn.example.com/c.jpg', 'archived' => 0, 'primary' => 1]);
         foreach ([$m1, $m2, $m3] as $m) {
             $m->load('attachments');
@@ -330,9 +315,9 @@ class DailyPostsPushTest extends TestCase
     /**
      * Helper: create an approved OFFER with a single attachment, optionally AI.
      */
-    private function postWithPhoto(User $user, Group $group, string $subject, string $url, bool $ai = false, int $primary = 1): Message
+    private function postWithPhoto(User $user, string $subject, string $url, bool $ai = false, int $primary = 1): Message
     {
-        $msg = $this->createApprovedMessage($user, $group, $subject);
+        $msg = $this->createApprovedMessage($user, $subject);
         MessageAttachment::create([
             'msgid'        => $msg->id,
             'externalurl'  => $url,
@@ -348,16 +333,15 @@ class DailyPostsPushTest extends TestCase
     public function test_collage_puts_real_photos_before_ai_and_pads_with_ai(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // Interleaved real/AI posts: real A, AI X, real B, AI Y, real C.
         // Collage must list real photos first (in order), then pad to 4 with AI.
         $posts = $this->buildPostsArray([
-            $this->postWithPhoto($user, $group, 'OFFER: A (London)', 'https://cdn.example.com/realA.jpg'),
-            $this->postWithPhoto($user, $group, 'OFFER: X (London)', 'https://cdn.example.com/aiX.jpg', true),
-            $this->postWithPhoto($user, $group, 'OFFER: B (London)', 'https://cdn.example.com/realB.jpg'),
-            $this->postWithPhoto($user, $group, 'OFFER: Y (London)', 'https://cdn.example.com/aiY.jpg', true),
-            $this->postWithPhoto($user, $group, 'OFFER: C (London)', 'https://cdn.example.com/realC.jpg'),
+            $this->postWithPhoto($user, 'OFFER: A (London)', 'https://cdn.example.com/realA.jpg'),
+            $this->postWithPhoto($user, 'OFFER: X (London)', 'https://cdn.example.com/aiX.jpg', true),
+            $this->postWithPhoto($user, 'OFFER: B (London)', 'https://cdn.example.com/realB.jpg'),
+            $this->postWithPhoto($user, 'OFFER: Y (London)', 'https://cdn.example.com/aiY.jpg', true),
+            $this->postWithPhoto($user, 'OFFER: C (London)', 'https://cdn.example.com/realC.jpg'),
         ]);
 
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
@@ -377,14 +361,13 @@ class DailyPostsPushTest extends TestCase
     public function test_collage_pads_with_ai_when_too_few_real(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // Only one real photo available; AI photos fill the remaining slots so the
         // collage still renders (needs >= 2 photos).
         $posts = $this->buildPostsArray([
-            $this->postWithPhoto($user, $group, 'OFFER: X (London)', 'https://cdn.example.com/aiX.jpg', true),
-            $this->postWithPhoto($user, $group, 'OFFER: A (London)', 'https://cdn.example.com/realA.jpg'),
-            $this->postWithPhoto($user, $group, 'OFFER: Y (London)', 'https://cdn.example.com/aiY.jpg', true),
+            $this->postWithPhoto($user, 'OFFER: X (London)', 'https://cdn.example.com/aiX.jpg', true),
+            $this->postWithPhoto($user, 'OFFER: A (London)', 'https://cdn.example.com/realA.jpg'),
+            $this->postWithPhoto($user, 'OFFER: Y (London)', 'https://cdn.example.com/aiY.jpg', true),
         ]);
 
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
@@ -402,12 +385,11 @@ class DailyPostsPushTest extends TestCase
     public function test_collage_uses_ai_when_no_real_photos(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // No real photos at all — AI photos are the only option, so use them.
         $posts = $this->buildPostsArray([
-            $this->postWithPhoto($user, $group, 'OFFER: X (London)', 'https://cdn.example.com/aiX.jpg', true),
-            $this->postWithPhoto($user, $group, 'OFFER: Y (London)', 'https://cdn.example.com/aiY.jpg', true),
+            $this->postWithPhoto($user, 'OFFER: X (London)', 'https://cdn.example.com/aiX.jpg', true),
+            $this->postWithPhoto($user, 'OFFER: Y (London)', 'https://cdn.example.com/aiY.jpg', true),
         ]);
 
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
@@ -422,11 +404,10 @@ class DailyPostsPushTest extends TestCase
     public function test_within_post_prefers_real_attachment_over_ai(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // A single post carrying BOTH an AI illustration (primary) and a real photo.
         // The post must contribute its real photo, even though the AI one is primary.
-        $msg = $this->createApprovedMessage($user, $group, 'OFFER: Sofa (London)');
+        $msg = $this->createApprovedMessage($user, 'OFFER: Sofa (London)');
         MessageAttachment::create([
             'msgid'        => $msg->id,
             'externalurl'  => 'https://cdn.example.com/ai.jpg',
@@ -468,8 +449,7 @@ class DailyPostsPushTest extends TestCase
     public function test_notify_excludes_users_own_posts(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Self (London)');
+        $msg   = $this->createApprovedMessage($user, 'OFFER: Self (London)');
 
         // Insert a push token so it's present for the DB query (even though
         // Firebase is unavailable, the method returns 0 after own-post filter).
@@ -487,8 +467,7 @@ class DailyPostsPushTest extends TestCase
     {
         $user    = $this->createTestUser();
         $other   = $this->createTestUser();
-        $group   = $this->createTestGroup();
-        $msg     = $this->createApprovedMessage($other, $group, 'OFFER: Lamp (Oxford)');
+        $msg     = $this->createApprovedMessage($other, 'OFFER: Lamp (Oxford)');
 
         // No push token inserted for $user.
         $posts = $this->buildPostsArray([$msg]);
@@ -517,11 +496,8 @@ class DailyPostsPushTest extends TestCase
         Config::set('freegle.posts_push_allowlist', '*');
 
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->createApprovedMessage($this->createTestUser(), $group, 'OFFER: Dry item (London)');
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => 24]);
+        $this->createApprovedMessage($this->createTestUser(), 'OFFER: Dry item (London)');
         $this->createUserPushToken($user->id);
 
         // Mock so notifyDailyNewPosts never fires.
@@ -553,9 +529,8 @@ class DailyPostsPushTest extends TestCase
         ]);
         $user = $user->fresh();
 
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $this->createApprovedMessage($this->createTestUser(), $group, 'OFFER: Opted-out item (London)');
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
+        $this->createApprovedMessage($this->createTestUser(), 'OFFER: Opted-out item (London)');
         $this->createUserPushToken($user->id);
 
         $mockPush = $this->createMock(PushNotificationService::class);
@@ -577,18 +552,15 @@ class DailyPostsPushTest extends TestCase
 
         $user  = $this->createTestUser();
         $other = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $user->settings = ['mylocation' => ['lat' => 51.5, 'lng' => -0.1], 'browseMaxDistance' => 5];
         $user->save();
         $user->refresh();
 
-        $this->createMembership($user, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => 24]);
 
         // The only post is hundreds of miles away, well outside the member's 5 miles.
-        $msg = $this->createApprovedMessage($other, $group, 'OFFER: Far away item (Aberdeen)');
+        $msg = $this->createApprovedMessage($other, 'OFFER: Far away item (Aberdeen)');
         DB::table('messages')->where('id', $msg->id)->update(['lat' => 57.15, 'lng' => -2.1]);
         DB::table('messages_spatial')->where('msgid', $msg->id)->update([
             'point' => DB::raw("ST_SRID(POINT(-2.1, 57.15), 3857)"),
@@ -614,15 +586,12 @@ class DailyPostsPushTest extends TestCase
 
         $user  = $this->createTestUser();
         $other = $this->createTestUser();
-        $group = $this->createTestGroup();
 
-        $this->createMembership($user, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => 24]);
         $this->createUserPushToken($user->id);
 
-        $first = $this->createApprovedMessage($other, $group, 'OFFER: Twice posted shelf (London)');
-        DB::table('messages_groups')->where('msgid', $first->id)->update(['arrival' => now()->subHour()]);
+        $first = $this->createApprovedMessage($other, 'OFFER: Twice posted shelf (London)');
+        DB::table('messages')->where('id', $first->id)->update(['arrival' => now()->subHour()]);
         DB::table('messages')->where('id', $first->id)->update(['arrival' => now()->subHour()]);
 
         $firstRun = $this->createMock(PushNotificationService::class);
@@ -631,7 +600,7 @@ class DailyPostsPushTest extends TestCase
         $this->artisan('push:daily-posts', ['--user' => $user->id])->assertExitCode(0);
 
         // The poster puts the same thing up again after that push went out.
-        $this->createApprovedMessage($other, $group, 'OFFER: Twice posted shelf (London)');
+        $this->createApprovedMessage($other, 'OFFER: Twice posted shelf (London)');
 
         $secondRun = $this->createMock(PushNotificationService::class);
         $secondRun->expects($this->never())->method('notifyDailyNewPosts');
@@ -645,13 +614,10 @@ class DailyPostsPushTest extends TestCase
 
         $user    = $this->createTestUser();
         $other   = $this->createTestUser();
-        $group   = $this->createTestGroup();
 
-        $this->createMembership($user, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => 24]);
 
-        $msg = $this->createApprovedMessage($other, $group, 'OFFER: Cursor item (London)');
+        $msg = $this->createApprovedMessage($other, 'OFFER: Cursor item (London)');
         $this->createUserPushToken($user->id);
 
         $mockPush = $this->createMock(PushNotificationService::class);
@@ -677,12 +643,9 @@ class DailyPostsPushTest extends TestCase
 
         $user  = $this->createTestUser();
         $other = $this->createTestUser();
-        $group = $this->createTestGroup();
 
-        $this->createMembership($user, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->createApprovedMessage($other, $group, 'OFFER: Guard item (London)');
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => 24]);
+        $this->createApprovedMessage($other, 'OFFER: Guard item (London)');
         $this->createUserPushToken($user->id);
 
         // Seed a cursor with lastsent = today (London) to simulate already-sent.
@@ -714,13 +677,12 @@ class DailyPostsPushTest extends TestCase
         $email1 = 'test' . $user1->id . '@test.com';
         Config::set('freegle.posts_push_allowlist', $email1);
 
-        $group = $this->createTestGroup();
         $other = $this->createTestUser();
 
-        $this->createMembership($user1, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($user2, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        DB::table('users')->where('id', $user1->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $user2->id)->update(['emailfrequency' => 24]);
 
-        $this->createApprovedMessage($other, $group, 'OFFER: Allowlist item (London)');
+        $this->createApprovedMessage($other, 'OFFER: Allowlist item (London)');
         $this->createUserPushToken($user1->id);
         $this->createUserPushToken($user2->id);
 
@@ -749,9 +711,9 @@ class DailyPostsPushTest extends TestCase
     /**
      * Create an approved message (messages + messages_groups).
      */
-    private function createApprovedMessage(User $user, Group $group, string $subject): Message
+    private function createApprovedMessage(User $user, string $subject): Message
     {
-        return $this->createTestMessage($user, $group, [
+        return $this->createTestMessage($user, [
             'subject' => $subject,
             'type'    => str_starts_with(strtolower($subject), 'offer') ? Message::TYPE_OFFER : Message::TYPE_WANTED,
         ]);
@@ -759,17 +721,11 @@ class DailyPostsPushTest extends TestCase
 
     /**
      * Build the deduped post array format that deduplicatePosts() returns
-     * from a flat list of Message models. Each item carries a groupid attribute
-     * so the key function works.
+     * from a flat list of Message models.
      */
     private function buildPostsArray(array $messages): array
     {
-        $posts = collect($messages)->map(function (Message $msg) {
-            $msg->groupid = (int) DB::table('messages_groups')
-                ->where('msgid', $msg->id)
-                ->value('groupid');
-            return $msg;
-        });
+        $posts = collect($messages);
 
         return $this->digestService->deduplicatePosts($posts)->values()->all();
     }

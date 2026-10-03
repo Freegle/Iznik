@@ -23,8 +23,7 @@ class ExpandCommand extends Command
                             {--dry-run : Compute and report without writing reach}
                             {--limit=50 : Max posts to initialise/advance this run. initialiseNew computes ALL schedules (Phase 1) before writing any (Phase 2), so on a memory-pressured routing host a large batch stalls the whole tick before any reach row lands; 50 keeps each tick small and completing, and the per-minute cron still drains the backlog quickly}
                             {--msgid= : Restrict the whole run to a single message ID (controlled testing)}
-                            {--within-poly= : Restrict the run to posts whose origin lies within this WKT polygon (area testing)}
-                            {--within-group= : Restrict the run to posts within these group IDs\' area - comma-separated, resolved to the union of their polygons (group experiment / area testing)}';
+                            {--within-poly= : Restrict the run to posts whose origin lies within this WKT polygon (area testing)}';
 
     protected $description = 'Maintain rippling-out reach (rippling_reach) for active posts';
 
@@ -91,21 +90,16 @@ class ExpandCommand extends Command
     {
         $dryRun = (bool) $this->option('dry-run');
 
-        // Mirror the current trial group set (RIPPLE_WITHIN_GROUPS) into the shared
-        // `config` table (key 'ripple.within_groups') so the Go API - which runs on a
-        // different server and can't read this batch env var - can scope the rippling
-        // dashboard to just the trial groups. Alongside it, publish the hazard schedule for
-        // the same reason. Cheap upserts; skipped on --dry-run.
+        // Publish the hazard schedule into the shared `config` table so the Go API, which runs
+        // on a different server, can quote arrival dates. Cheap upsert; skipped on --dry-run.
         if (!$dryRun) {
-            $this->publishTrialGroups();
             $this->publishHazardHours();
         }
 
         $limit = max(1, (int) $this->option('limit'));
         $onlyMsgid = $this->option('msgid') !== null ? (int) $this->option('msgid') : null;
 
-        // Resolve the area scope (one post wins over an area if both somehow given). --within-group
-        // is a convenience that resolves to the group's stored polygon (groups.polyindex).
+        // Resolve the area scope (one post wins over an area if both somehow given).
         $withinPolyWkt = $this->resolveWithinPoly();
         if ($withinPolyWkt === false) {
             return Command::FAILURE;
@@ -148,24 +142,6 @@ class ExpandCommand extends Command
         return $stats['errors'] > 0 ? Command::FAILURE : Command::SUCCESS;
     }
 
-    /**
-     * Publish the current rippling trial group set into the shared `config` table.
-     *
-     * The trial groups live in RIPPLE_WITHIN_GROUPS (config freegle.ripple.within_groups),
-     * which only the batch container sees. The Go API runs on a separate server, so it reads
-     * the value from the `config` table (key 'ripple.within_groups') to scope the rippling
-     * dashboard to the trial groups. We upsert a comma-separated id list on each run.
-     */
-    protected function publishTrialGroups(): void
-    {
-        $withinGroups = array_map('strval', (array) config('freegle.ripple.within_groups', []));
-
-        DB::table('config')->upsert(
-            [['key' => 'ripple.within_groups', 'value' => implode(',', $withinGroups)]],
-            ['key'],
-            ['value'],
-        );
-    }
 
     /**
      * Publish the hazard schedule into the shared `config` table.
@@ -194,8 +170,7 @@ class ExpandCommand extends Command
     /**
      * Resolve the optional area scope into a WKT polygon string for the service.
      *
-     * --within-poly takes a raw WKT polygon. --within-group is a convenience that loads the
-     * group's stored area polygon (groups.polyindex). Returns null when neither is given,
+     * --within-poly takes a raw WKT polygon. Returns null when it is not given,
      * the WKT string when an area is requested, or false on a usage/lookup error (so the
      * caller aborts rather than silently rippling the whole eligible set).
      *
@@ -204,14 +179,6 @@ class ExpandCommand extends Command
     private function resolveWithinPoly()
     {
         $poly = $this->option('within-poly');
-        $groupId = $this->option('within-group');
-
-        if ($poly !== null && $groupId !== null) {
-            $this->error('Use only one of --within-poly or --within-group, not both.');
-
-            return false;
-        }
-
         if ($poly !== null) {
             $poly = trim($poly);
             if ($poly === '') {
@@ -221,48 +188,6 @@ class ExpandCommand extends Command
             }
 
             return $poly;
-        }
-
-        if ($groupId !== null) {
-            // A comma-separated list of group ids (the experiment scope). Resolve to the UNION of
-            // their stored area polygons (the same polyindex the cross-post step tests) so one run
-            // ripples every experiment group's posts. The scheduled cron passes the env-backed list
-            // (freegle.ripple.within_groups); it can also be given by hand for area testing.
-            $groupIds = array_values(array_filter(
-                array_map('intval', explode(',', (string) $groupId)),
-                fn ($id) => $id > 0
-            ));
-            if (empty($groupIds)) {
-                $this->error('--within-group had no usable group ids.');
-
-                return false;
-            }
-            $idList = implode(',', $groupIds);
-
-            // Keep only ids that actually have a polygon. MySQL ST_Union is BINARY (not an
-            // aggregate), so chain ST_Union over per-id subqueries - this avoids round-tripping
-            // each (large) polygon out to WKT and back through a giant query string.
-            $validIds = DB::table('groups')->whereIn('id', $groupIds)->whereNotNull('polyindex')
-                ->pluck('id')->map(fn ($v) => (int) $v)->all();
-            if (empty($validIds)) {
-                $this->error("None of the --within-group ids [{$idList}] have a usable polyindex polygon.");
-
-                return false;
-            }
-            $count = count($validIds);
-            $expr = '(SELECT polyindex FROM `groups` WHERE id = ' . array_pop($validIds) . ')';
-            foreach (array_reverse($validIds) as $id) {
-                $expr = 'ST_Union((SELECT polyindex FROM `groups` WHERE id = ' . $id . '), ' . $expr . ')';
-            }
-            $wkt = DB::selectOne('SELECT ST_AsText(' . $expr . ') AS u')?->u;
-            if (!$wkt) {
-                $this->error("ST_Union of --within-group polygons [{$idList}] returned NULL.");
-
-                return false;
-            }
-            $this->info("Resolved --within-group=[{$idList}] to the union of {$count} area polygon(s).");
-
-            return $wkt;
         }
 
         return null;

@@ -126,7 +126,6 @@ type LogEntry struct {
 	Byuser    *uint64
 	Type      string
 	Subtype   string
-	Groupid   *uint64
 	User      *uint64
 	Msgid     *uint64
 	Configid  *uint64

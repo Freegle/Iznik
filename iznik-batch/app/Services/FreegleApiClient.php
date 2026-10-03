@@ -128,12 +128,11 @@ class FreegleApiClient
      * @param  bool  $forcePending  Force the message to Pending regardless of moderation status
      * @return bool True on success
      */
-    public function publishMessage(int $messageId, int $groupId, bool $forcePending = false): bool
+    public function publishMessage(int $messageId, bool $forcePending = false): bool
     {
         $params = [
             'id' => $messageId,
             'action' => 'JoinAndPost',
-            'groupid' => $groupId,
         ];
 
         if ($forcePending) {
@@ -148,7 +147,6 @@ class FreegleApiClient
 
         Log::warning('FreegleApiClient: publish message failed', [
             'messageId' => $messageId,
-            'groupId' => $groupId,
             'response' => $response,
         ]);
 

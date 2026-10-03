@@ -23,12 +23,11 @@ func TestMyGroupsOwnPostFlaggedMine(t *testing.T) {
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
 	otherID := CreateTestUser(t, prefix+"_other", "Other")
 
-
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 
-	own := CreateTestMessage(t, viewerID, group, prefix+" my own offer", 51.5, -0.1)
-	rival := CreateTestMessage(t, otherID, group, prefix+" someone else's offer", 51.5, -0.1)
+	own := CreateTestMessage(t, viewerID, prefix+" my own offer", 51.5, -0.1)
+	rival := CreateTestMessage(t, otherID, prefix+" someone else's offer", 51.5, -0.1)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/mygroups?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -58,9 +57,8 @@ func TestBoundsOwnPostFlaggedMine(t *testing.T) {
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
 	otherID := CreateTestUser(t, prefix+"_other", "Other")
 
-
-	own := CreateTestMessage(t, viewerID, group, prefix+" my own offer", 51.5, -0.1)
-	rival := CreateTestMessage(t, otherID, group, prefix+" someone else's offer", 51.5, -0.1)
+	own := CreateTestMessage(t, viewerID, prefix+" my own offer", 51.5, -0.1)
+	rival := CreateTestMessage(t, otherID, prefix+" someone else's offer", 51.5, -0.1)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET",
 		"/api/message/inbounds?swlat=51.4&swlng=-0.2&nelat=51.6&nelng=0.0&jwt="+token, nil))

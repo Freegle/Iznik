@@ -100,7 +100,7 @@ func TestRipplingDensityCountsAPostOnceHoweverManyHeldReplies(t *testing.T) {
 	_, token := CreateTestSession(t, adminID)
 
 	poster := CreateTestUser(t, prefix+"_poster", "User")
-	msgID := CreateTestMessage(t, poster, groupID, prefix+" bookcase", 51.5, -0.1)
+	msgID := CreateTestMessage(t, poster, prefix+" bookcase", 51.5, -0.1)
 
 	db := database.DBConn
 	db.Exec("DELETE FROM rippling_reach WHERE density_band = ?", bandOnce)
@@ -142,7 +142,7 @@ func TestRipplingDensityReportsCapAskedAndDriveTimeReachedSeparately(t *testing.
 	_, token := CreateTestSession(t, adminID)
 
 	poster := CreateTestUser(t, prefix+"_poster", "User")
-	msgID := CreateTestMessage(t, poster, groupID, prefix+" table", 51.5, -0.1)
+	msgID := CreateTestMessage(t, poster, prefix+" table", 51.5, -0.1)
 
 	db := database.DBConn
 	db.Exec("DELETE FROM rippling_reach WHERE density_band = ?", bandGap)
@@ -169,7 +169,7 @@ func TestRipplingDensityKeepsUnmeasuredPostsAsUnknown(t *testing.T) {
 	_, token := CreateTestSession(t, adminID)
 
 	poster := CreateTestUser(t, prefix+"_poster", "User")
-	msgID := CreateTestMessage(t, poster, groupID, prefix+" chair", 51.5, -0.1)
+	msgID := CreateTestMessage(t, poster, prefix+" chair", 51.5, -0.1)
 
 	db := database.DBConn
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
@@ -196,8 +196,8 @@ func TestRipplingDensityExcludesReachRowsOutsideTheWindow(t *testing.T) {
 	_, token := CreateTestSession(t, adminID)
 
 	poster := CreateTestUser(t, prefix+"_poster", "User")
-	old := CreateTestMessage(t, poster, groupID, prefix+" old", 51.5, -0.1)
-	recent := CreateTestMessage(t, poster, groupID, prefix+" recent", 51.5, -0.1)
+	old := CreateTestMessage(t, poster, prefix+" old", 51.5, -0.1)
+	recent := CreateTestMessage(t, poster, prefix+" recent", 51.5, -0.1)
 
 	db := database.DBConn
 	db.Exec("DELETE FROM rippling_reach WHERE density_band = ?", bandWindow)

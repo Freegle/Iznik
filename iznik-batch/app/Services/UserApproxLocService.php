@@ -139,10 +139,8 @@ class UserApproxLocService
      * One page of members to consider: anyone with a membership whose lastaccess is inside the
      * cutoff, walked by ascending id so a long run pages without OFFSET.
      *
-     * V1 used `INNER JOIN memberships ... DISTINCT`; whereExists is the same set without the join
-     * fan-out. Like V1 this deliberately does not filter on membership collection or on
-     * users.deleted — the readers apply their own filters (reachable_groups.go, for instance,
-     * requires collection='Approved' and lastaccess within 90 days).
+     * Every member, not only those who belonged to a community, because there are none now. This
+     * deliberately does not filter on users.deleted - the readers apply their own filters.
      *
      * @return \Illuminate\Support\Collection<int, object>
      */
@@ -150,11 +148,6 @@ class UserApproxLocService
     {
         return DB::table('users as u')
             ->leftJoin('locations as l', 'l.id', '=', 'u.lastlocation')
-            ->whereExists(function ($query) {
-                $query->select(DB::raw(1))
-                    ->from('memberships as m')
-                    ->whereColumn('m.userid', 'u.id');
-            })
             ->where('u.id', '>', $afterId)
             ->where('u.lastaccess', '>=', $cutoff)
             ->orderBy('u.id')

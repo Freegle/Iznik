@@ -30,7 +30,7 @@ class RepairRosterCommand extends Command
 
         // Find User2Mod chats where user1 is missing from the roster.
         $missingMember = DB::select("
-            SELECT cr.id AS chatid, cr.user1, cr.groupid, cr.latestmessage,
+            SELECT cr.id AS chatid, cr.user1, cr.latestmessage,
                    (SELECT MAX(cm.id) FROM chat_messages cm WHERE cm.chatid = cr.id) AS max_msg_id
             FROM chat_rooms cr
             WHERE cr.chattype = 'User2Mod'
@@ -52,7 +52,7 @@ class RepairRosterCommand extends Command
 
             if ($dryRun) {
                 $label = $isRecent ? 'notify' : 'silent';
-                $this->line("  [{$label}] Would add user {$row->user1} to chat {$row->chatid} (group {$row->groupid}, last active {$row->latestmessage})");
+                $this->line("  [{$label}] Would add user {$row->user1} to chat {$row->chatid} (last active {$row->latestmessage})");
                 $isRecent ? $repairedNotify++ : $repairedSilent++;
                 continue;
             }
@@ -69,11 +69,10 @@ class RepairRosterCommand extends Command
                 );
             }
 
-            // Ensure group mods are in the roster.
-            $modIds = DB::table('memberships')
-                ->where('groupid', $row->groupid)
-                ->whereIn('role', ['Owner', 'Moderator'])
-                ->pluck('userid');
+            // Ensure the national moderators are in the roster.
+            $modIds = DB::table('users')
+                ->whereIn('systemrole', ['Moderator', 'Support', 'Admin'])
+                ->pluck('id');
 
             foreach ($modIds as $modId) {
                 DB::statement('INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)', [$row->chatid, $modId]);

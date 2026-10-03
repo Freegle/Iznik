@@ -35,7 +35,6 @@ class SponsorshipExpiringMail extends MjmlMailable
         public readonly string $endDate,
         public readonly int $daysLeft,
         public readonly float $amount,
-        public readonly int $groupCount,
         /** @var array<int, array{name: ?string, email: ?string, role: string}> Everyone at the council. */
         public readonly array $contacts,
         public readonly string $modToolsUrl,
@@ -71,7 +70,6 @@ class SponsorshipExpiringMail extends MjmlMailable
                 'endDate' => $this->endDate,
                 'daysLeft' => $this->daysLeft,
                 'amount' => $this->amount,
-                'groupCount' => $this->groupCount,
                 'contacts' => $this->contacts,
                 'modToolsUrl' => $this->modToolsUrl,
                 'ended' => $this->ended,

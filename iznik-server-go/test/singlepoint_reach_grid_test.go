@@ -11,8 +11,8 @@ import (
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
-	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/gofiber/fiber/v2"
 )
 
 // The single-point reach gates — replyeligible on the message list and the

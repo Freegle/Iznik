@@ -50,53 +50,6 @@ class AuthorityStatsServiceTest extends TestCase
         $this->assertSame(0.51, ReuseBenefit::CO2_PER_TONNE);
     }
 
-    public function test_get_authority_returns_name_and_overlapping_groups(): void
-    {
-        $this->seedAuthorityScenario();
-
-        $authority = $this->service->getAuthority($this->authorityId);
-
-        $this->assertNotNull($authority);
-        $this->assertSame('Test Authority (B)', $authority['name']);
-
-        $overlaps = [];
-        foreach ($authority['groups'] as $g) {
-            $overlaps[$g['namedisplay']] = $g['overlap'];
-        }
-
-        $this->assertCount(3, $authority['groups']);
-        $this->assertEqualsWithDelta(1.0, $overlaps['Full Group'], 0.001);
-        $this->assertEqualsWithDelta(0.5, $overlaps['Half Group'], 0.01);
-        $this->assertEqualsWithDelta(1.0, $overlaps['Trivial Group'], 0.001);
-    }
-
-    public function test_get_multi_stats_aggregates_by_date(): void
-    {
-        $this->seedAuthorityScenario();
-
-        $quarter = $this->service->getMultiStats([$this->groupFullId], '2025-04-01', '2025-07-01', [AuthorityStatsService::WEIGHT]);
-        $weights = array_column($quarter[AuthorityStatsService::WEIGHT], 'count');
-        $this->assertSame([50.0, 50.0, 200.0, 150.0], $weights);
-
-        $april = $this->service->getMultiStats([$this->groupFullId], '2025-04-01', '2025-05-01', [AuthorityStatsService::WEIGHT]);
-        $this->assertCount(2, $april[AuthorityStatsService::WEIGHT], 'end bound is exclusive');
-    }
-
-    public function test_get_shortlinks_and_click_history(): void
-    {
-        $this->seedAuthorityScenario();
-
-        $links = $this->service->getShortlinks($this->groupFullId);
-        $this->assertSame(['apple link', 'Zebra Link'], array_column($links, 'name'));
-
-        $history = $this->service->getClickHistory(900801);
-        $byDate = [];
-        foreach ($history as $h) {
-            $byDate[$h->date] = (int) $h->count;
-        }
-        $this->assertSame(['2025-04-05' => 2, '2025-05-10' => 3, '2025-07-01' => 9], $byDate);
-    }
-
     public function test_get_by_authority_postcode_breakdown(): void
     {
         $this->seedAuthorityScenario();
@@ -133,93 +86,15 @@ class AuthorityStatsServiceTest extends TestCase
         $this->assertSame(0.51, $report['co2PerTonne']);
         $this->assertSame(ReuseBenefit::getBenefitPerTonne(), $report['benefitPerTonne']);
 
-        // Monthly totals (the trivial group is excluded by the 3 kg cutoff).
-        $this->assertSame(['members' => 120, 'weight' => 150.0, 'outcomes' => 14.0], $report['totals'][0]);
-        $this->assertSame(['members' => 132, 'weight' => 250.0, 'outcomes' => 20.0], $report['totals'][1]);
-        $this->assertSame(['members' => 145, 'weight' => 200.0, 'outcomes' => 19.0], $report['totals'][2]);
-
-        // Per-group rows.
-        $groups = [];
-        foreach ($report['groups'] as $g) {
-            $groups[$g['namedisplay']] = $g;
-        }
-        $this->assertCount(2, $groups);
-        $this->assertSame([100, 110, 120], $groups['Full Group']['members']);
-        $this->assertSame([100.0, 200.0, 150.0], $groups['Full Group']['weight']);
-        $this->assertSame([10.0, 20.0, 15.0], $groups['Full Group']['outcomes']);
-        // Half group's partial overlap is flagged with a trailing "*".
-        $this->assertArrayHasKey('Half Group *', $groups);
-        $this->assertSame([20, 22, 25], $groups['Half Group *']['members']);
-        $this->assertSame([50.0, 50.0, 50.0], $groups['Half Group *']['weight']);
-        $this->assertSame([4.0, 0.0, 4.0], $groups['Half Group *']['outcomes']);
-
-        // Shortlinks, sorted case-insensitively, totalling clicks per month.
-        $this->assertSame(['apple link', 'Middle', 'Zebra Link'], array_column($report['shortlinks'], 'name'));
-        $clicks = [];
-        foreach ($report['shortlinks'] as $l) {
-            $clicks[$l['name']] = $l['clicks'];
-        }
-        $this->assertSame([2, 3, 0], $clicks['apple link']);
-        $this->assertSame([0, 0, 5], $clicks['Middle']);
-        $this->assertSame([1, 0, 4], $clicks['Zebra Link']);
+        // Monthly totals for the area: members living inside it at each month end (one
+        // joined in May, one left in June), and the one gift completed inside it in June.
+        $this->assertSame(['members' => 3, 'weight' => 0.0, 'outcomes' => 0.0], $report['totals'][0]);
+        $this->assertSame(['members' => 4, 'weight' => 0.0, 'outcomes' => 0.0], $report['totals'][1]);
+        $this->assertSame(['members' => 3, 'weight' => 25.0, 'outcomes' => 1.0], $report['totals'][2]);
 
         // Stories and postcode breakdown carried through.
         $this->assertSame(['Newer inside', 'Older inside'], array_column($report['stories'], 'headline'));
         $this->assertSame(2, $report['postcodes']['AB1 2']['Offer']);
-    }
-
-    public function test_get_authority_keeps_a_group_that_only_touches_the_boundary_at_its_share(): void
-    {
-        $this->seedAuthorityScenario();
-
-        // 2% of this group is inside the authority - Southend against Essex County. It is kept,
-        // and counts for 2% of its figures, as on the authority stats page.
-        $this->insertGroup(900104, 'grazegrp', 'Graze Group', 'POLYGON((0.98 10.5, 1.98 10.5, 1.98 10.6, 0.98 10.6, 0.98 10.5))');
-
-        $overlaps = array_column($this->service->getAuthority($this->authorityId)['groups'], 'overlap', 'namedisplay');
-
-        $this->assertArrayHasKey('Graze Group', $overlaps);
-        $this->assertEqualsWithDelta(0.02, $overlaps['Graze Group'], 0.005);
-    }
-
-    public function test_compute_report_for_a_partnership_reports_exactly_its_communities(): void
-    {
-        $this->seedAuthorityScenario();
-
-        // A community well outside the boundary that the council sponsors anyway.
-        $outsideId = 900105;
-        $this->insertGroup($outsideId, 'outsidegrp', 'Outside Group', 'POLYGON((5 10.5, 6 10.5, 6 11.5, 5 11.5, 5 10.5))');
-        $this->stat($outsideId, self::AMC, '2025-06-30', 30);
-        $this->stat($outsideId, self::WEIGHT, '2025-06-15', 10);
-
-        $partnershipId = DB::table('partnerships')->insertGetId([
-            'authorityid' => $this->authorityId,
-            'name' => 'Test Authority',
-            'startdate' => '2025-01-01',
-            'enddate' => '2025-12-31',
-            'status' => 'Confirmed',
-        ]);
-        DB::table('partnerships_groups')->insert([
-            ['partnershipid' => $partnershipId, 'groupid' => $this->groupFullId, 'source' => 'Boundary', 'overlap' => 1],
-            ['partnershipid' => $partnershipId, 'groupid' => $this->groupHalfId, 'source' => 'Removed', 'overlap' => 0.5],
-            ['partnershipid' => $partnershipId, 'groupid' => $this->groupTrivialId, 'source' => 'Boundary', 'overlap' => 1],
-            ['partnershipid' => $partnershipId, 'groupid' => $outsideId, 'source' => 'Added', 'overlap' => null],
-        ]);
-
-        $report = $this->service->computeReport($this->authorityId, $this->quarterStart, $partnershipId);
-
-        $groups = [];
-        foreach ($report['groups'] as $g) {
-            $groups[$g['namedisplay']] = $g;
-        }
-
-        // The page's list, no more and no less: the left-out community is gone, and the
-        // trivial one stays because the council was told it is covered.
-        $this->assertSame(['Full Group', 'Outside Group', 'Trivial Group'], array_keys($groups));
-        // Added by hand counts in full.
-        $this->assertSame([0, 0, 30], $groups['Outside Group']['members']);
-        $this->assertSame([0.0, 0.0, 10.0], $groups['Outside Group']['weight']);
-        $this->assertSame(['members' => 160, 'weight' => 160.0, 'outcomes' => 15.0], $report['totals'][2]);
     }
 
     public function test_compute_report_returns_null_for_unknown_authority(): void

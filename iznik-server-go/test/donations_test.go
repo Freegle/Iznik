@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/gofiber/fiber/v2"
 )
 
 func TestGetDonations(t *testing.T) {

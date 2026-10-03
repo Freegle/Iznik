@@ -230,4 +230,48 @@ class LocationIdTest extends TestCase
 
         return implode("\r\n", $lines)."\r\n\r\nGood condition, free to collect.";
     }
+
+    /**
+     * Create a partner area: the geographic area a TrashNothing post is addressed to.
+     * `partner_areas.id` has no AUTO_INCREMENT, so the test picks its own id, spread by pid
+     * and a per-process counter to keep it clear of anything another test process is using.
+     */
+    protected function createTestGroup(array $attributes = []): object
+    {
+        static $counter = 0;
+        $counter++;
+        $id = 900000000000 + (getmypid() * 100000) + $counter;
+
+        $nameshort = $attributes['nameshort'] ?? 'testarea'.$counter.uniqid();
+        $lat = $attributes['lat'] ?? 51.5;
+        $lng = $attributes['lng'] ?? -0.1;
+
+        DB::table('partner_areas')->insert([
+            'id' => $id,
+            'nameshort' => $nameshort,
+            'namefull' => $attributes['namefull'] ?? ('Test Area '.$nameshort),
+            'lat' => $lat,
+            'lng' => $lng,
+            'polyindex' => DB::raw("ST_GeomFromText('POINT({$lng} {$lat})', 3857)"),
+        ]);
+
+        return DB::table('partner_areas')->where('id', $id)->first();
+    }
+
+    /**
+     * Posting eligibility lives on `users` now, not on a per-community membership row.
+     * $group is accepted for call-site compatibility but otherwise unused.
+     */
+    protected function createMembership($user, $group, array $attributes = []): void
+    {
+        $update = [];
+
+        if (array_key_exists('ourPostingStatus', $attributes)) {
+            $update['postingstatus'] = $attributes['ourPostingStatus'];
+        }
+
+        if ($update !== []) {
+            DB::table('users')->where('id', $user->id)->update($update);
+        }
+    }
 }

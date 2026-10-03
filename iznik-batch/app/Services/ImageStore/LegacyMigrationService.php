@@ -31,7 +31,6 @@ class LegacyMigrationService
         'messages_attachments' => ['messages_attachments', 'externaluid'],
         'chat_images' => ['chat_images', 'externaluid'],
         'users_images' => ['users_images', 'externaluid'],
-        'groups_images' => ['groups_images', 'externaluid'],
         'communityevents_images' => ['communityevents_images', 'externaluid'],
         'volunteering_images' => ['volunteering_images', 'externaluid'],
         'newsfeed_images' => ['newsfeed_images', 'externaluid'],

@@ -40,49 +40,6 @@ func TestRipplingMetricsEndpoint(t *testing.T) {
 	assert.True(t, found, "reply_blocked total present in the rollup")
 }
 
-// This endpoint must only read small rippling-owned tables (or a window-bounded slice of
-// rippling_reply_attribution), so it always answers well inside the production gateway's
-// timeout. The per-day reply-rate / replies-per-post / reply-distance / taken-rate series and
-// the 30-day cross-group summary used to be computed here by scanning messages_groups and
-// chat_messages; once rippling scaled up they took 40-190s EACH on production, the gateway
-// 504'd (which the browser reports as a bogus CORS failure), and the client's retry piled more
-// of the same queries on top. Nothing read them - the dashboard that charted them was retired
-// in 6982b1ee3 and /rippling/analytics serves the equivalent KPIs from rippling_reach - so they
-// were removed rather than split behind their own (still-too-slow) endpoints.
-//
-// This guards that: those keys must not come back without the analytics-style rework, and the
-// sections the dashboard actually reads must still be there.
-func TestRipplingMetricsOmitsHeavyScanKPIs(t *testing.T) {
-	prefix := uniquePrefix("ripplefast")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
-	_, token := CreateTestSession(t, adminID)
-
-	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var result map[string]interface{}
-	json.Unmarshal(rsp(resp), &result)
-
-	for _, key := range []string{"reply_rate_36h", "replies_per_post", "reply_distance_median",
-		"taken_rate", "cross_group_summary"} {
-		_, present := result[key]
-		assert.False(t, present, key+" is not computed here - it scanned messages_groups/chat_messages "+
-			"and blew the gateway timeout; /rippling/analytics serves the equivalent KPI")
-	}
-
-	// The sections ModSysAdminRipplingAnalytics.vue reads must still be served.
-	for _, key := range []string{"reply_source_split", "hotspots", "attribution_capture_from",
-		"held_reply_by_source"} {
-		_, present := result[key]
-		assert.True(t, present, key+" is read by the sysadmin analytics tab")
-	}
-
-	// Nothing should be hitting the endpoint's deadline on a healthy request.
-	degraded, ok := result["degraded"].([]interface{})
-	assert.True(t, ok, "degraded list present")
-	assert.Empty(t, degraded, "no section gave up")
-}
-
 // When a section's query does hit the deadline it comes back empty, which would read as
 // "nothing to show" - so the endpoint names it in `degraded` and the dashboard reports it as a
 // timeout rather than as no data. Proved by shrinking the deadline so every section trips it.
@@ -338,63 +295,6 @@ func TestRipplingMetricsReplyKPIs(t *testing.T) {
 	assert.True(t, found, "the seeded channel split is surfaced")
 }
 
-// Rows captured before the ripple-join fix froze was_home_member = 1 for members rippling itself
-// auto-joined. The live derivation (used for any row the backfill has not yet visited) must sort
-// those into ripple_join off the membership's surviving provenance, while a row backed by an
-// ordinary membership still reads home. Without this, the un-backfilled tail of the chart keeps
-// crediting rippling's own side-effect to the home column.
-func TestRipplingMetricsLegacyHomeBitSplitsByMembershipProvenance(t *testing.T) {
-	prefix := uniquePrefix("ripplejoinderive")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
-	_, token := CreateTestSession(t, adminID)
-
-	db := database.DBConn
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	msgID := CreateTestMessage(t, posterID, "OFFER: legacy derive test item", 51.5, -0.1)
-	// The post arrived a month ago, so both memberships below predate it.
-	db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 30 DAY WHERE msgid = ?", msgID)
-
-	joinedID := CreateTestUser(t, prefix+"_ripplejoined", "User")
-	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 60 DAY, collection = 'Approved', rippled = 1 "+
-		"WHERE userid = ? AND groupid = ?", joinedID, groupID)
-
-	ordinaryID := CreateTestUser(t, prefix+"_ordinary", "User")
-	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 60 DAY, collection = 'Approved', rippled = 0 "+
-		"WHERE userid = ? AND groupid = ?", ordinaryID, groupID)
-
-	// A user with no membership left at all: their frozen home bit is all the evidence there is,
-	// so it must be honoured rather than reclassified.
-	goneID := CreateTestUser(t, prefix+"_gone", "User")
-
-	// Legacy shape: was_home_member = 1, attribution NULL (backfill has not run).
-	day := "2020-03-15 12:00:00"
-	db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) VALUES "+
-		"(?, ?, ?, 1), (?, ?, ?, 1), (?, ?, ?, 1)",
-		msgID, joinedID, day, msgID, ordinaryID, day, msgID, goneID, day)
-	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
-
-	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf(
-		"/api/rippling/metrics?start=2020-03-01%%2000:00:00&end=2020-04-01%%2000:00:00&jwt=%s", token), nil))
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var result map[string]interface{}
-	json.Unmarshal(rsp(resp), &result)
-	split, _ := result["reply_source_split"].([]interface{})
-
-	found := false
-	for _, r := range split {
-		if m, ok := r.(map[string]interface{}); ok && m["day"] == "2020-03-15" {
-			found = true
-			assert.Equal(t, float64(1), m["ripple_join"],
-				"the ripple-created membership reclassifies out of home")
-			assert.Equal(t, float64(2), m["home"],
-				"the ordinary membership - and the decayed one - stay home")
-			assert.Equal(t, float64(1), m["ripple"], "ripple_join counts towards the ripple share")
-		}
-	}
-	assert.True(t, found, "the seeded legacy day is surfaced")
-}
-
 // The ?start= / ?end= range bounds every headline KPI so a treatment group's before-vs-after can
 // be read. We seed a single reply in Jan 2020 - long before rippling_reply_attribution existed, so
 // no real rows collide - and confirm it appears only when its day is inside the requested window.
@@ -492,70 +392,4 @@ func TestRipplingMetricsClientSourceSummary(t *testing.T) {
 	}
 	assert.GreaterOrEqual(t, counts["browse"], float64(2), "browse surfaces counted")
 	assert.GreaterOrEqual(t, counts["(not reported)"], float64(1), "NULL surfaces reported honestly")
-}
-
-// The legacy reply-source variant - what runs against a production DB that predates the
-// graded-attribution migration - must derive the durable channels live: a notified-ledger hit
-// outranks a rippled-group membership, home wins over both, and everything else is unknown
-// (never silently credited to rippling). Runs the legacy SQL directly against the migrated
-// test DB: the variant reads none of the graded columns, so its behaviour is identical there.
-func TestReplySourceSplitLegacyVariant(t *testing.T) {
-	prefix := uniquePrefix("legacysplit")
-	db := database.DBConn
-
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	msgID := CreateTestMessage(t, posterID, "OFFER: legacy split test item", 51.5, -0.1)
-	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
-	defer db.Exec("DELETE FROM rippling_reach_notified WHERE msgid = ?", msgID)
-
-	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach_notified (
-		msgid BIGINT UNSIGNED NOT NULL, userid BIGINT UNSIGNED NOT NULL,
-		notified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (msgid, userid), KEY rrn_userid (userid))`)
-
-	// A rippled-in copy of the post, and a replier who was an established member of that
-	// group before it arrived.
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
-		"VALUES (?, ?, NOW() - INTERVAL 1 DAY, 'Approved', 0, 1)", msgID, rippledGroup)
-	groupMemberID := CreateTestUser(t, prefix+"_member", "User")
-	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 2 DAY, collection = 'Approved' WHERE userid = ? AND groupid = ?",
-		groupMemberID, rippledGroup)
-
-	notifiedID := CreateTestUser(t, prefix+"_notified", "User")
-	db.Exec("INSERT INTO rippling_reach_notified (msgid, userid, notified_at) VALUES (?, ?, NOW() - INTERVAL 1 DAY)",
-		msgID, notifiedID)
-
-	unknownID := CreateTestUser(t, prefix+"_unknown", "User")
-
-	// Rows the attribution backfill has not reached: was_home_member only, attribution NULL.
-	db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) VALUES "+
-		"(?, ?, NOW() - INTERVAL 2 HOUR, 1), "+ // home member
-		"(?, ?, NOW() - INTERVAL 2 HOUR, 0), "+ // notified
-		"(?, ?, NOW() - INTERVAL 2 HOUR, 0), "+ // rippled-group member
-		"(?, ?, NOW() - INTERVAL 2 HOUR, 0)", // no evidence -> unknown
-		msgID, posterID, msgID, notifiedID, msgID, groupMemberID, msgID, unknownID)
-
-	rows := []rippling.ReplySourceRow{}
-	start := time.Now().AddDate(0, 0, -1).Format("2006-01-02 15:04:05")
-	end := time.Now().Format("2006-01-02 15:04:05")
-	// Attribution-NULL rows must be derived PER ROW, not folded into home/unknown - otherwise
-	// the window between the migration landing on production and the backfill running reads
-	// as a misleading zero-ripple chart (seen live 2026-07-07).
-	err := db.Raw(rippling.ReplySourceSplitSQL(""), start, end).Scan(&rows).Error
-	assert.NoError(t, err)
-
-	var row *rippling.ReplySourceRow
-	for i := range rows {
-		if rows[i].Replies >= 4 && rows[i].Home >= 1 {
-			row = &rows[i]
-			break
-		}
-	}
-	if assert.NotNil(t, row, "the seeded day is present") {
-		assert.GreaterOrEqual(t, row.RippleNotified, 1, "NULL-attribution notified reply derived per row")
-		assert.GreaterOrEqual(t, row.RippleGroup, 1, "NULL-attribution rippled-group reply derived per row")
-		assert.Equal(t, 0, row.RippleReach, "location channels are not derivable retrospectively")
-		assert.Equal(t, 0, row.OrganicLocal, "location channels are not derivable retrospectively")
-		assert.GreaterOrEqual(t, row.Unknown, 1, "un-evidenced replies sit in unknown")
-	}
 }

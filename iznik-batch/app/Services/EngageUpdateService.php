@@ -258,9 +258,8 @@ class EngageUpdateService
             ->max('date');
 
         $lastMessage = DB::table('messages')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
             ->where('messages.fromuser', $userId)
-            ->max('messages_groups.arrival');
+            ->max('messages.arrival');
 
         if (!$lastChat && !$lastMessage) {
             return null;
@@ -280,9 +279,8 @@ class EngageUpdateService
     private function postsSince(int $userId, string $since): int
     {
         return DB::table('messages')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
             ->where('messages.fromuser', $userId)
-            ->where('messages_groups.arrival', '>=', $since)
+            ->where('messages.arrival', '>=', $since)
             ->count();
     }
 }

@@ -2,8 +2,7 @@
 
 namespace Tests\Feature\User;
 
-use App\Models\Group;
-use App\Models\Membership;
+use Illuminate\Support\Facades\DB;
 use App\Models\User;
 use App\Models\UserEmail;
 use Tests\TestCase;
@@ -94,7 +93,7 @@ class ListModsCommandTest extends TestCase
         // DB cannot be assumed: assert the command emits the header plus
         // exactly one row per distinct mod/owner userid present at run time.
         $expected = Membership::query()
-            ->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
+            ->whereIn('role', ['Moderator', 'Moderator'])
             ->distinct()
             ->pluck('userid')
             ->map(fn ($id) => (int) $id)
@@ -113,13 +112,12 @@ class ListModsCommandTest extends TestCase
 
     public function test_lists_moderators_and_owners_but_not_members(): void
     {
-        $group = $this->createTestGroup();
         $mod = $this->createTestUser();
         $owner = $this->createTestUser();
         $member = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
-        $this->createMembership($owner, $group, ['role' => Membership::ROLE_OWNER]);
-        $this->createMembership($member, $group, ['role' => Membership::ROLE_MEMBER]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $owner->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $member->id)->update(['emailfrequency' => -1]);
 
         $rows = $this->runAndParse()['rows'];
 
@@ -130,11 +128,9 @@ class ListModsCommandTest extends TestCase
 
     public function test_moderator_of_two_groups_appears_once_with_groups_sorted_by_name(): void
     {
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $groupA, ['role' => Membership::ROLE_MODERATOR]);
-        $this->createMembership($mod, $groupB, ['role' => Membership::ROLE_OWNER]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
 
         $rows = $this->runAndParse()['rows'];
 
@@ -155,24 +151,11 @@ class ListModsCommandTest extends TestCase
     public function test_backup_mod_split_uses_settings_active_and_legacy_showmessages(): void
     {
         $mod = $this->createTestUser();
-        $noSettings = $this->createTestGroup();
-        $activeFalse = $this->createTestGroup();
-        $showmessagesOff = $this->createTestGroup();
-        $activeWinsOverShowmessages = $this->createTestGroup();
 
-        $this->createMembership($mod, $noSettings, ['role' => Membership::ROLE_MODERATOR]);
-        $this->createMembership($mod, $activeFalse, [
-            'role' => Membership::ROLE_MODERATOR,
-            'settings' => ['active' => FALSE],
-        ]);
-        $this->createMembership($mod, $showmessagesOff, [
-            'role' => Membership::ROLE_MODERATOR,
-            'settings' => ['showmessages' => 0],
-        ]);
-        $this->createMembership($mod, $activeWinsOverShowmessages, [
-            'role' => Membership::ROLE_MODERATOR,
-            'settings' => ['active' => 1, 'showmessages' => 0],
-        ]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
 
         $row = $this->runAndParse()['rows'][$mod->id];
 
@@ -187,26 +170,25 @@ class ListModsCommandTest extends TestCase
 
     public function test_preferred_email_skips_internal_domains_and_orders_alphabetically(): void
     {
-        $group = $this->createTestGroup();
 
         // Internal domain wins the preferred flag but must be skipped.
         $internalPreferred = $this->createBareUser();
         $this->addEmail($internalPreferred, 'mod123@users.ilovefreegle.org', preferred: 1);
         $this->addEmail($internalPreferred, 'real@example.com');
-        $this->createMembership($internalPreferred, $group, ['role' => Membership::ROLE_MODERATOR]);
+        DB::table('users')->where('id', $internalPreferred->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
 
         // Two candidates with equal preferred flag: email ASC decides, not
         // insertion order.  users_emails.email is unique, so per-user addresses.
         $alphabetical = $this->createBareUser();
         $this->addEmail($alphabetical, 'zzz.alpha@example.com');
         $this->addEmail($alphabetical, 'aaa.alpha@example.com');
-        $this->createMembership($alphabetical, $group, ['role' => Membership::ROLE_MODERATOR]);
+        DB::table('users')->where('id', $alphabetical->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
 
         // The preferred flag beats alphabetical order.
         $flagged = $this->createBareUser();
         $this->addEmail($flagged, 'aaa.flag@example.com');
         $this->addEmail($flagged, 'zzz.flag@example.com', preferred: 1);
-        $this->createMembership($flagged, $group, ['role' => Membership::ROLE_MODERATOR]);
+        DB::table('users')->where('id', $flagged->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
 
         $rows = $this->runAndParse()['rows'];
 
@@ -220,13 +202,12 @@ class ListModsCommandTest extends TestCase
         // V1 used two different filters: the preferred email skips internal
         // domains AND @yahoogroups., but "other known emails" only skips
         // internal domains - so a yahoogroups address shows up there.
-        $group = $this->createTestGroup();
         $mod = $this->createBareUser();
         $this->addEmail($mod, 'main@example.com', preferred: 1);
         $this->addEmail($mod, 'second@example.com');
         $this->addEmail($mod, 'mod123@users.ilovefreegle.org');
         $this->addEmail($mod, 'old@yahoogroups.com');
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
 
         $row = $this->runAndParse()['rows'][$mod->id];
 
@@ -240,9 +221,8 @@ class ListModsCommandTest extends TestCase
 
     public function test_user_with_no_emails_has_blank_email_columns(): void
     {
-        $group = $this->createTestGroup();
         $mod = $this->createBareUser();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
 
         $row = $this->runAndParse()['rows'][$mod->id];
 
@@ -255,10 +235,9 @@ class ListModsCommandTest extends TestCase
         // users.lastaccess is NOT NULL DEFAULT CURRENT_TIMESTAMP, so the
         // blank case in V1's null-guard is unreachable; only the date
         // formatting is observable.
-        $group = $this->createTestGroup();
 
         $active = $this->createTestUser(['lastaccess' => '2026-07-01 12:34:56']);
-        $this->createMembership($active, $group, ['role' => Membership::ROLE_MODERATOR]);
+        DB::table('users')->where('id', $active->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
 
         $rows = $this->runAndParse()['rows'];
 
@@ -267,7 +246,6 @@ class ListModsCommandTest extends TestCase
 
     public function test_name_transformations_match_v1_getname(): void
     {
-        $group = $this->createTestGroup();
 
         $cases = [
             // [user attributes, expected name]
@@ -282,7 +260,7 @@ class ListModsCommandTest extends TestCase
         $users = [];
         foreach ($cases as [$attributes, $expected]) {
             $user = $this->createBareUser($attributes);
-            $this->createMembership($user, $group, ['role' => Membership::ROLE_MODERATOR]);
+            DB::table('users')->where('id', $user->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
             $users[] = [$user, $expected];
         }
 
@@ -297,9 +275,8 @@ class ListModsCommandTest extends TestCase
     {
         // V1 CLI scripts ran with Session::modtools() defaulting TRUE, so the
         // memberships query did NOT filter on groups.publish.
-        $group = $this->createTestGroup(['publish' => 0]);
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
 
         $rows = $this->runAndParse()['rows'];
 
@@ -309,9 +286,8 @@ class ListModsCommandTest extends TestCase
 
     public function test_writes_csv_to_stdout_without_output_option(): void
     {
-        $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
 
         // fputcsv to php://stdout bypasses the console output buffer, so just
         // assert the command succeeds when no --output is given.

@@ -51,7 +51,6 @@ class ElectricalsStatsService
 
     /** Unusual-items guard. All must hold, see buildUnusual(). */
     protected const UNUSUAL_MIN_USERS  = 3;
-    protected const UNUSUAL_MIN_GROUPS = 2;
     protected const UNUSUAL_MAX_WORDS  = 4;
     protected const UNUSUAL_MAX_CHARS  = 30;
 
@@ -137,13 +136,7 @@ class ElectricalsStatsService
             ->where('m.arrival', '<', $to)
             ->where('m.type', 'Offer')
             ->whereNull('m.deleted')
-            ->whereExists(function ($q) {
-                $q->select(DB::raw(1))
-                  ->from('messages_groups as mg')
-                  ->whereColumn('mg.msgid', 'm.id')
-                  ->where('mg.collection', 'Approved')
-                  ->where('mg.deleted', 0);
-            })
+            ->where('m.collection', 'Approved')
             ->count();
 
         $classified = (int) $counts['classified'];
@@ -259,7 +252,6 @@ class ElectricalsStatsService
                FROM messages_outcomes mo
                INNER JOIN messages_eee e ON e.msgid = mo.msgid AND e.model = ? AND e.is_eee = 1
                      AND ' . self::LATEST_ROW . '
-               INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.rippled_in = 0
                INNER JOIN messages_items mi ON mi.msgid = mo.msgid
                LEFT JOIN items i ON i.id = mi.itemid
                WHERE mo.timestamp >= ? AND mo.timestamp < ?
@@ -337,12 +329,11 @@ class ElectricalsStatsService
         // keep-raw: the LATEST_ROW correlated MAX subquery has no builder form, and the
         // statement reads better whole than as a chain wrapped round a raw fragment.
         return DB::select(
-            'SELECT i.name, m.id AS msgid, m.fromuser, mg.groupid
+            'SELECT i.name, m.id AS msgid, m.fromuser
              FROM messages_eee e
              INNER JOIN messages m ON m.id = e.msgid
              INNER JOIN messages_items mi ON mi.msgid = m.id
              INNER JOIN items i ON i.id = mi.itemid
-             INNER JOIN messages_groups mg ON mg.msgid = m.id AND mg.rippled_in = 0
              WHERE e.model = ? AND e.is_eee = 1
                AND ' . self::LATEST_ROW . '
                AND m.arrival >= ? AND m.arrival < ?
@@ -410,22 +401,20 @@ class ElectricalsStatsService
         usort($ranked, fn($a, $b) => [$a['count'], $a['name']] <=> [$b['count'], $b['name']]);
 
         return [
-            // users and groups stay as counted: they are the evidence that a rare item is
+            // users stay as counted: they are the evidence that a rare item is
             // real, and scaling people would claim to know about people never seen.
             'items' => array_map(
                 fn($c) => $this->scaledItem($c, $scale) + [
                     'users'  => $c['users'],
-                    'groups' => $c['groups'],
                 ],
                 array_slice($ranked, 0, $limit)
             ),
             'guard' => [
                 'min_users'  => self::UNUSUAL_MIN_USERS,
-                'min_groups' => self::UNUSUAL_MIN_GROUPS,
                 'max_words'  => self::UNUSUAL_MAX_WORDS,
                 'max_chars'  => self::UNUSUAL_MAX_CHARS,
-                'note'       => 'An item only counts as rare once several different people in more '
-                                . 'than one community have offered one, so a single odd listing '
+                'note'       => 'An item only counts as rare once several different people '
+                                . 'have offered one, so a single odd listing '
                                 . 'cannot appear here. Items are counted by type, and types that '
                                 . 'are versions of a common item are left out.',
             ],
@@ -442,7 +431,7 @@ class ElectricalsStatsService
      */
     protected function qualifiesAsUnusual(array $cluster): bool
     {
-        if ($cluster['users'] < self::UNUSUAL_MIN_USERS || $cluster['groups'] < self::UNUSUAL_MIN_GROUPS) {
+        if ($cluster['users'] < self::UNUSUAL_MIN_USERS) {
             return false;
         }
 
@@ -567,13 +556,7 @@ class ElectricalsStatsService
             ->where('m.arrival', '>=', now()->subMonths($months)->startOfMonth()->toDateTimeString())
             ->where('m.type', 'Offer')
             ->whereNull('m.deleted')
-            ->whereExists(function ($q) {
-                $q->select(DB::raw(1))
-                  ->from('messages_groups as mg')
-                  ->whereColumn('mg.msgid', 'm.id')
-                  ->where('mg.collection', 'Approved')
-                  ->where('mg.deleted', 0);
-            })
+            ->where('m.collection', 'Approved')
             ->groupBy('month')
             ->pluck('total', 'month');
 

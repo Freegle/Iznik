@@ -5,7 +5,6 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 	"time"
 
@@ -64,9 +63,9 @@ func TestVectorSearchBasic(t *testing.T) {
 	bikeVec := makeTestVec(5.0)
 
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "OFFER: Sofa bed", Arrival: time.Now(), SubjectVec: sofaVec},
-		{Msgid: 2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "OFFER: Chair", Arrival: time.Now(), SubjectVec: chairVec},
-		{Msgid: 3, Groupid: 200, Msgtype: "Wanted", Lat: 52.0, Lng: 0.0, Subject: "WANTED: Bike", Arrival: time.Now(), SubjectVec: bikeVec},
+		{Msgid: 1, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "OFFER: Sofa bed", Arrival: time.Now(), SubjectVec: sofaVec},
+		{Msgid: 2, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "OFFER: Chair", Arrival: time.Now(), SubjectVec: chairVec},
+		{Msgid: 3, Msgtype: "Wanted", Lat: 52.0, Lng: 0.0, Subject: "WANTED: Bike", Arrival: time.Now(), SubjectVec: bikeVec},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -75,7 +74,7 @@ func TestVectorSearchBasic(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, _, err := message.VectorSearch("sofa", 10, nil, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	assert.NotEmpty(t, results)
 	assert.Equal(t, uint64(1), results[0].Msgid)
@@ -97,7 +96,7 @@ func TestVectorSearchLexicalGuarantee(t *testing.T) {
 	// return it.
 	const lexID = uint64(660001)
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: lexID, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "White goods bundle", Arrival: time.Now(), SubjectVec: makeAntiparallelVec(1.0)},
+		{Msgid: lexID, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "White goods bundle", Arrival: time.Now(), SubjectVec: makeAntiparallelVec(1.0)},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -109,7 +108,7 @@ func TestVectorSearchLexicalGuarantee(t *testing.T) {
 	// "white" is a stopword filtered by GetWords, so the effective query word is
 	// "goods" — which the subject contains. The post must be returned despite the
 	// deeply-negative cosine.
-	results, _, err := message.VectorSearch("goods", 10, nil, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("goods", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	found := false
 	for _, r := range results {
@@ -128,8 +127,8 @@ func TestVectorSearchKeywordBoost(t *testing.T) {
 	vecSimilar := makeTestVec(1.001)
 
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: 10, Groupid: 100, Msgtype: "Offer", Subject: "OFFER: Table lamp", SubjectVec: vecSimilar},
-		{Msgid: 11, Groupid: 100, Msgtype: "Offer", Subject: "OFFER: Sofa bed", SubjectVec: vecSimilar},
+		{Msgid: 10, Msgtype: "Offer", Subject: "OFFER: Table lamp", SubjectVec: vecSimilar},
+		{Msgid: 11, Msgtype: "Offer", Subject: "OFFER: Sofa bed", SubjectVec: vecSimilar},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -138,7 +137,7 @@ func TestVectorSearchKeywordBoost(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, _, err := message.VectorSearch("sofa", 10, nil, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 	// Sofa should be boosted to first by keyword match in subject
@@ -152,8 +151,8 @@ func TestVectorSearchWithMsgtypeFilter(t *testing.T) {
 	vec := makeTestVec(1.0)
 
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: 20, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "OFFER: Sofa", SubjectVec: vec},
-		{Msgid: 21, Groupid: 200, Msgtype: "Wanted", Lat: 52.0, Lng: 0.0, Subject: "WANTED: Sofa", SubjectVec: vec},
+		{Msgid: 20, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "OFFER: Sofa", SubjectVec: vec},
+		{Msgid: 21, Msgtype: "Wanted", Lat: 52.0, Lng: 0.0, Subject: "WANTED: Sofa", SubjectVec: vec},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -162,33 +161,10 @@ func TestVectorSearchWithMsgtypeFilter(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, _, err := message.VectorSearch("sofa", 10, nil, nil, "Offer", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("sofa", 10, nil, "Offer", 0, 0, 0, 0)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, uint64(20), results[0].Msgid)
-}
-
-func TestVectorSearchWithGroupFilter(t *testing.T) {
-	embedding.ResetQueryCache()
-	t.Cleanup(embedding.ResetQueryCache)
-
-	vec := makeTestVec(1.0)
-
-	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: 30, Groupid: 100, Msgtype: "Offer", Subject: "OFFER: Sofa", SubjectVec: vec},
-		{Msgid: 31, Groupid: 200, Msgtype: "Offer", Subject: "OFFER: Sofa", SubjectVec: vec},
-	})
-	defer embedding.Global.SetEntries(nil)
-
-	server := mockSidecarReturning(t, vec[:])
-	defer server.Close()
-	embedding.SetSidecarURL(server.URL)
-	defer embedding.SetSidecarURL("")
-
-	results, _, err := message.VectorSearch("sofa", 10, []uint64{200}, nil, "", 0, 0, 0, 0)
-	require.NoError(t, err)
-	assert.Len(t, results, 1)
-	assert.Equal(t, uint64(31), results[0].Msgid)
 }
 
 func TestVectorSearchLimit(t *testing.T) {
@@ -199,7 +175,7 @@ func TestVectorSearchLimit(t *testing.T) {
 	entries := make([]embedding.Entry, 10)
 	for i := range entries {
 		entries[i] = embedding.Entry{
-			Msgid: uint64(i + 1), Groupid: 100, Msgtype: "Offer",
+			Msgid: uint64(i + 1), Msgtype: "Offer",
 			Subject: "OFFER: Item", SubjectVec: vec,
 		}
 	}
@@ -211,7 +187,7 @@ func TestVectorSearchLimit(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, _, err := message.VectorSearch("item", 3, nil, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("item", 3, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	assert.Len(t, results, 3)
 }
@@ -230,8 +206,8 @@ func TestVectorSearchStatsDiagnostics(t *testing.T) {
 	antiparallel := makeAntiparallelVec(1.0) // cosine ≈ -1 → below threshold
 
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Subject: "strong", SubjectVec: strongMatch},
-		{Msgid: 2, Groupid: 100, Msgtype: "Offer", Subject: "noise", SubjectVec: antiparallel},
+		{Msgid: 1, Msgtype: "Offer", Subject: "strong", SubjectVec: strongMatch},
+		{Msgid: 2, Msgtype: "Offer", Subject: "noise", SubjectVec: antiparallel},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -240,7 +216,7 @@ func TestVectorSearchStatsDiagnostics(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	_, stats, err := message.VectorSearch("thing", 10, nil, nil, "", 0, 0, 0, 0)
+	_, stats, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, stats.StoreSize, "StoreSize must reflect embedding.Global.Count()")
@@ -264,7 +240,7 @@ func TestVectorSearchStatsDeterministicFingerprint(t *testing.T) {
 
 	queryVec := makeTestVec(1.0)
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Subject: "x", SubjectVec: makeTestVec(1.001)},
+		{Msgid: 1, Msgtype: "Offer", Subject: "x", SubjectVec: makeTestVec(1.001)},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -273,11 +249,11 @@ func TestVectorSearchStatsDeterministicFingerprint(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	_, s1, err := message.VectorSearch("thing", 10, nil, nil, "", 0, 0, 0, 0)
+	_, s1, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
-	_, s2, err := message.VectorSearch("thing", 10, nil, nil, "", 0, 0, 0, 0)
+	_, s2, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
-	_, s3, err := message.VectorSearch("thing", 10, nil, nil, "", 0, 0, 0, 0)
+	_, s3, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 
 	assert.Equal(t, s1.QueryVecFP, s2.QueryVecFP)
@@ -292,7 +268,7 @@ func TestVectorSearchStatsOnEmbedError(t *testing.T) {
 	t.Cleanup(embedding.ResetQueryCache)
 
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Subject: "x", SubjectVec: makeTestVec(1.0)},
+		{Msgid: 1, Msgtype: "Offer", Subject: "x", SubjectVec: makeTestVec(1.0)},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -302,7 +278,7 @@ func TestVectorSearchStatsOnEmbedError(t *testing.T) {
 	embedding.SetSidecarURL(url)
 	defer embedding.SetSidecarURL("")
 
-	_, stats, err := message.VectorSearch("sofa", 10, nil, nil, "", 0, 0, 0, 0)
+	_, stats, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
 	assert.Error(t, err)
 	assert.NotEmpty(t, stats.Error, "stats.Error must be populated when EmbedQuery fails")
 	assert.Equal(t, 1, stats.StoreSize, "StoreSize is known even when embedding fails")
@@ -313,7 +289,7 @@ func TestVectorSearchSidecarError(t *testing.T) {
 	t.Cleanup(embedding.ResetQueryCache)
 
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Subject: "test", SubjectVec: makeTestVec(1.0)},
+		{Msgid: 1, Msgtype: "Offer", Subject: "test", SubjectVec: makeTestVec(1.0)},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -325,7 +301,7 @@ func TestVectorSearchSidecarError(t *testing.T) {
 	embedding.SetSidecarURL(url)
 	defer embedding.SetSidecarURL("")
 
-	_, _, err := message.VectorSearch("sofa", 10, nil, nil, "", 0, 0, 0, 0)
+	_, _, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
 	assert.Error(t, err)
 }
 
@@ -365,138 +341,4 @@ func TestStoreSetEntriesAndCount(t *testing.T) {
 
 	embedding.Global.SetEntries(nil)
 	assert.Equal(t, 0, embedding.Global.Count())
-}
-
-// TestSearchHandlerLexicalGuaranteeViaEndpoint verifies at the endpoint level
-// that a post whose subject literally contains the query word is returned even
-// when its embedding cosine is far below MinVectorScore — the in-memory lexical
-// guarantee that replaced the keyword index (short titles, UK retail terms the
-// model misses). Also deterministic across repeat calls (Discourse 9594).
-func TestSearchHandlerLexicalGuaranteeViaEndpoint(t *testing.T) {
-	embedding.ResetQueryCache()
-	t.Cleanup(embedding.ResetQueryCache)
-
-	prefix := uniquePrefix("vectorhybrid")
-	userID := CreateTestUser(t, prefix, "User")
-
-	// Create a message whose indexed words match a keyword search for
-	// "television" (via exact word match on the search index).
-	CreateTestMessage(t, userID, "television stand oak", 55.9533, -3.1883)
-
-	// Confirm the keyword path actually finds this message — otherwise the
-	// assertions below would pass trivially.
-	keywordResp, _ := getApp().Test(httptest.NewRequest(
-		"GET",
-		"/api/message/search/television?searchmode=keyword&groupids="+strconv.FormatUint(groupID, 10),
-		nil,
-	), 60000)
-	require.Equal(t, 200, keywordResp.StatusCode)
-	var keywordResults []message.SearchResult
-	json.NewDecoder(keywordResp.Body).Decode(&keywordResults)
-	require.NotEmpty(t, keywordResults, "sanity check: keyword search must find the seeded message")
-
-	// Set up the embedding store with ONE entry whose vector points in the
-	// opposite direction to the query — cosine ≈ -1, far below MinVectorScore.
-	// Count() > 0 so the handler enters the hybrid branch; vector returns nothing
-	// above threshold, but the keyword leg of the hybrid must still surface the
-	// exact match.
-	queryVec := makeTestVec(1.0)
-	antiparallel := makeAntiparallelVec(1.0)
-	const lexID = uint64(999998)
-	embedding.Global.SetEntries([]embedding.Entry{
-		{
-			Msgid: lexID, Groupid: groupID, Msgtype: "Offer",
-			Lat: 55.9533, Lng: -3.1883,
-			Subject: "television stand oak", Arrival: time.Now(),
-			SubjectVec: antiparallel,
-		},
-	})
-	defer embedding.Global.SetEntries(nil)
-
-	server := mockSidecarReturning(t, queryVec[:])
-	defer server.Close()
-	embedding.SetSidecarURL(server.URL)
-	defer embedding.SetSidecarURL("")
-
-	url := "/api/message/search/television?groupids=" + strconv.FormatUint(groupID, 10)
-	run := func() []uint64 {
-		resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil), 60000)
-		require.Equal(t, 200, resp.StatusCode)
-		var results []message.SearchResult
-		json.NewDecoder(resp.Body).Decode(&results)
-		ids := make([]uint64, len(results))
-		for i, r := range results {
-			ids[i] = r.Msgid
-		}
-		return ids
-	}
-
-	first := run()
-	found := false
-	for _, id := range first {
-		if id == lexID {
-			found = true
-		}
-	}
-	assert.True(t, found, "lexical guarantee must surface a subject-word match even at cosine ~ -1")
-	assert.Equal(t, first, run(), "search must be deterministic for identical inputs")
-}
-
-// TestSearchHandlerVectorModeIsDeterministic confirms the same vector query
-// returns the same result set on repeat calls — directly addresses Dee's
-// "very puzzling" report that identical queries produced different results
-// (Discourse 9594).
-func TestSearchHandlerVectorModeIsDeterministic(t *testing.T) {
-	embedding.ResetQueryCache()
-	t.Cleanup(embedding.ResetQueryCache)
-
-	prefix := uniquePrefix("vectordeterministic")
-
-	// Two entries: one strong match, one antiparallel (noise).
-	queryVec := makeTestVec(1.0)
-	strongMatch := makeTestVec(1.001)
-	embedding.Global.SetEntries([]embedding.Entry{
-		{
-			Msgid: 11111, Groupid: groupID, Msgtype: "Offer",
-			Lat: 55.9533, Lng: -3.1883,
-			Subject: "television", Arrival: time.Now(), SubjectVec: strongMatch,
-		},
-		{
-			Msgid: 22222, Groupid: groupID, Msgtype: "Offer",
-			Lat: 55.9533, Lng: -3.1883,
-			Subject: "unrelated", Arrival: time.Now(),
-			SubjectVec: makeAntiparallelVec(1.0),
-		},
-	})
-	defer embedding.Global.SetEntries(nil)
-
-	server := mockSidecarReturning(t, queryVec[:])
-	defer server.Close()
-	embedding.SetSidecarURL(server.URL)
-	defer embedding.SetSidecarURL("")
-
-	url := "/api/message/search/television?groupids=" + strconv.FormatUint(groupID, 10)
-
-	runOnce := func() []uint64 {
-		resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil), 60000)
-		require.Equal(t, 200, resp.StatusCode)
-		var results []message.SearchResult
-		json.NewDecoder(resp.Body).Decode(&results)
-		ids := make([]uint64, len(results))
-		for i, r := range results {
-			ids[i] = r.Msgid
-		}
-		return ids
-	}
-
-	first := runOnce()
-	for i := 0; i < 3; i++ {
-		assert.Equal(t, first, runOnce(),
-			"repeat #%d returned different ids — vector search must be deterministic for identical inputs", i+1)
-	}
-
-	// Sanity: the strong match should be in the result set; the antiparallel
-	// noise must be filtered by MinVectorScore.
-	assert.Contains(t, first, uint64(11111))
-	assert.NotContains(t, first, uint64(22222))
 }

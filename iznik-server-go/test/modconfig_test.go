@@ -133,27 +133,6 @@ func TestDeleteModConfig(t *testing.T) {
 	assert.Equal(t, float64(0), result["ret"])
 }
 
-func TestDeleteModConfigInUse(t *testing.T) {
-	prefix := uniquePrefix("ModCfgDelUse")
-	modID := CreateTestUser(t, prefix+"_mod", "Admin")
-	_, token := CreateTestSession(t, modID)
-
-	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
-
-	// Assign config to membership so it's in use.
-	db := database.DBConn
-	PromoteTestUserToModerator(t, modID)
-	db.Exec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?", cfgID, modID, groupID)
-
-	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/modconfig?id=%d&jwt=%s", cfgID, token), nil)
-	resp, _ := getApp().Test(req)
-	assert.Equal(t, 409, resp.StatusCode)
-
-	var result map[string]interface{}
-	json2.Unmarshal(rsp(resp), &result)
-	assert.Equal(t, float64(5), result["ret"])
-}
-
 func TestPostModConfigCreatesLog(t *testing.T) {
 	prefix := uniquePrefix("ModCfgLogC")
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
@@ -199,33 +178,6 @@ func TestPatchModConfigCreatesLog(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND byuser = ? AND configid = ?",
 		log.LOG_TYPE_CONFIG, log.LOG_SUBTYPE_EDIT, modID, cfgID).Scan(&logCount)
 	assert.Equal(t, int64(1), logCount, "Expected a Config/Edit log entry after PATCH")
-}
-
-func TestPatchModConfigProtectedSetsCreatedby(t *testing.T) {
-	prefix := uniquePrefix("ModCfgProt")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	PromoteTestUserToModerator(t, modID)
-	_, token := CreateTestSession(t, modID)
-
-	// Create config owned by someone else (unprotected, so modID can modify).
-	otherID := CreateTestUser(t, prefix+"_other", "User")
-	cfgID := createTestModConfig(t, prefix+"_cfg", otherID)
-
-	// Assign it to a group modID moderates so they can see it.
-	db := database.DBConn
-	PromoteTestUserToModerator(t, otherID)
-	db.Exec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?", cfgID, otherID, groupID)
-
-	// Set protected=1 — should also set createdby to the caller.
-	body := fmt.Sprintf(`{"id":%d,"protected":1}`, cfgID)
-	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/modtools/modconfig?jwt=%s", token), strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(req)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var createdby uint64
-	db.Raw("SELECT createdby FROM mod_configs WHERE id = ?", cfgID).Scan(&createdby)
-	assert.Equal(t, modID, createdby, "Setting protected should update createdby to the caller")
 }
 
 func TestDeleteModConfigCreatesLog(t *testing.T) {

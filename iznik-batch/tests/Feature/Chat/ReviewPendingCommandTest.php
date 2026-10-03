@@ -14,7 +14,6 @@ class ReviewPendingCommandTest extends TestCase
 
         $this->artisan('chats:review-pending')
             ->expectsOutputToContain('Auto-rejected 0 message(s)')
-            ->expectsOutputToContain('Notified mods for 0 group(s)')
             ->assertExitCode(0);
 
         Mail::assertNothingSent();
@@ -84,7 +83,6 @@ class ReviewPendingCommandTest extends TestCase
         ]);
 
         $this->artisan('chats:review-pending')
-            ->expectsOutputToContain('Notified mods for 0 group(s)')
             ->assertExitCode(0);
 
         Mail::assertNothingSent();
@@ -106,7 +104,6 @@ class ReviewPendingCommandTest extends TestCase
         ]);
 
         $this->artisan('chats:review-pending')
-            ->expectsOutputToContain('Notified mods for 0 group(s)')
             ->assertExitCode(0);
 
         Mail::assertNothingSent();

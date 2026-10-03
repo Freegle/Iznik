@@ -23,7 +23,6 @@ class DeduplicateTest extends TestCase
     public function test_deduplicate_search_history_removes_consecutive_dupes(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // Insert 3 consecutive identical searches.
         for ($i = 0; $i < 3; $i++) {
@@ -32,7 +31,6 @@ class DeduplicateTest extends TestCase
                 'date' => now()->subHour(),
                 'term' => 'table',
                 'locationid' => null,
-                'groups' => (string) $group->id,
             ]);
         }
 
@@ -51,14 +49,12 @@ class DeduplicateTest extends TestCase
     public function test_deduplicate_search_history_keeps_different_searches(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         DB::table('search_history')->insert([
             'userid' => $user->id,
             'date' => now()->subHour(),
             'term' => 'table',
             'locationid' => null,
-            'groups' => (string) $group->id,
         ]);
 
         DB::table('search_history')->insert([
@@ -66,7 +62,6 @@ class DeduplicateTest extends TestCase
             'date' => now()->subMinutes(30),
             'term' => 'chair',
             'locationid' => null,
-            'groups' => (string) $group->id,
         ]);
 
         $deleted = $this->service->deduplicateSearchHistory(2);
@@ -77,7 +72,6 @@ class DeduplicateTest extends TestCase
     public function test_deduplicate_search_history_different_location_not_duplicate(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $loc1 = \App\Models\Location::create([
             'name' => 'TestLoc1_' . uniqid(),
@@ -97,7 +91,6 @@ class DeduplicateTest extends TestCase
             'date' => now()->subHour(),
             'term' => 'table',
             'locationid' => $loc1->id,
-            'groups' => (string) $group->id,
         ]);
 
         DB::table('search_history')->insert([
@@ -105,7 +98,6 @@ class DeduplicateTest extends TestCase
             'date' => now()->subMinutes(30),
             'term' => 'table',
             'locationid' => $loc2->id,
-            'groups' => (string) $group->id,
         ]);
 
         $deleted = $this->service->deduplicateSearchHistory(2);
@@ -123,7 +115,6 @@ class DeduplicateTest extends TestCase
     public function test_deduplicate_search_history_respects_days_parameter(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // Insert duplicates 5 days ago.
         for ($i = 0; $i < 2; $i++) {
@@ -132,7 +123,6 @@ class DeduplicateTest extends TestCase
                 'date' => now()->subDays(5),
                 'term' => 'table',
                 'locationid' => null,
-                'groups' => (string) $group->id,
             ]);
         }
 
@@ -199,10 +189,9 @@ class DeduplicateTest extends TestCase
     {
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $room = $this->createTestChatRoom($user1, $user2);
-        $msg = $this->createTestMessage($user1, $group);
+        $msg = $this->createTestMessage($user1);
 
         // Same text but different refmsgid — NOT duplicates.
         $this->createTestChatMessage($room, $user1, [

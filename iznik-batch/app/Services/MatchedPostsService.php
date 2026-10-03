@@ -160,19 +160,18 @@ class MatchedPostsService
         $bindings = ['Approved', 'Offer', 'Wanted', $since->toDateTimeString()];
         $upper = '';
         if ($until !== null) {
-            $upper = ' AND mg.arrival <= ?';
+            $upper = ' AND m.arrival <= ?';
             $bindings[] = $until->toDateTimeString();
         }
 
         return collect(DB::select(
             'SELECT m.id AS msgid, m.fromuser, m.type
-               FROM messages_groups mg
-               INNER JOIN messages m ON m.id = mg.msgid
+               FROM messages m
                INNER JOIN messages_spatial ms ON ms.msgid = m.id
                INNER JOIN messages_embeddings me ON me.msgid = m.id
-              WHERE mg.collection = ? AND mg.deleted = 0 AND mg.rippled_in = 0
+              WHERE m.collection = ?
                 AND m.type IN (?, ?)
-                AND mg.arrival > ?' . $upper . '
+                AND m.arrival > ?' . $upper . '
                 AND m.deleted IS NULL
                 AND ms.successful = 0 AND ms.promised = 0
               GROUP BY m.id, m.fromuser, m.type',

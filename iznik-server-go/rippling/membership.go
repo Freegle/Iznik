@@ -53,7 +53,6 @@ func ClearRippledMembership(db *gorm.DB, userid uint64, groupid uint64, reason s
 	flog.Log(flog.LogEntry{
 		Type:    flog.LOG_TYPE_GROUP,
 		Subtype: flog.LOG_SUBTYPE_JOINED,
-		Groupid: &groupid,
 		User:    &userid,
 		Byuser:  &userid,
 		Text:    &text,

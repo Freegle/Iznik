@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-21
+last_reviewed: 2026-10-03
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Console/Commands/Integrations
@@ -41,7 +41,8 @@ flowchart LR
 ## TrashNothing
 
 By far the biggest and the most important. TrashNothing is a separate reuse site whose
-members can use Freegle groups. Their members appear in our database as real members with
+members use Freegle as one national site (the community model was removed in this experiment;
+only `partner_areas` remains, which is how TrashNothing still addresses its members). Their members appear in our database as real members with
 addresses at `*@user.trashnothing.com`, so a great deal of Freegle traffic is theirs.
 
 Because it is large and long-standing it has its own page:

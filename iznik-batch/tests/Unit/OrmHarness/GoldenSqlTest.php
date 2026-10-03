@@ -85,7 +85,7 @@ class GoldenSqlTest extends TestCase
             'site1' => ['goldenSql' => 'SELECT id FROM users WHERE id = ?'],
         ]);
 
-        [$passed] = $this->runAssertion('site1', fn () => DB::table('groups')->select('id')->where('id', 5));
+        [$passed] = $this->runAssertion('site1', fn () => DB::table('items')->select('id')->where('id', 5));
 
         $this->assertFalse($passed, 'expected a genuinely different rendered statement (different table) to fail parity');
     }

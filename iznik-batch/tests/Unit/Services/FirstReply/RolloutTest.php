@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\FirstReply;
 
+use Illuminate\Support\Facades\DB;
 use App\Services\FirstReply\Rollout;
 use Tests\TestCase;
 

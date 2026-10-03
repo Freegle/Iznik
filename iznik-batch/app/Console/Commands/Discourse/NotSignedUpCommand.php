@@ -27,8 +27,8 @@ class NotSignedUpCommand extends Command
         }
 
         $this->info(sprintf(
-            'Done. groups not represented=%d, volunteers not signed up=%d, TN preferred emails=%d.',
-            $result['notrepresented'], $result['notondiscourse'], $result['tnpreferred']
+            'Done. volunteers not signed up=%d, TN preferred emails=%d.',
+            $result['notondiscourse'], $result['tnpreferred']
         ));
 
         return self::SUCCESS;

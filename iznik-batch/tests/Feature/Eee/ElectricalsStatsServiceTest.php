@@ -51,7 +51,6 @@ class ElectricalsStatsServiceTest extends TestCase
         DB::table('messages_outcomes')->delete();
         DB::table('messages_items')->delete();
         DB::table('messages_eee')->delete();
-        DB::table('messages_groups')->delete();
         DB::table('messages')->delete();
     }
 
@@ -67,22 +66,17 @@ class ElectricalsStatsServiceTest extends TestCase
         ?string $outcome = null,
         ?string $condition = null,
         mixed $userid = null,
-        mixed $groupid = null,
     ): int {
-        // createTestUser()/createTestGroup() hand back models, and createTestMessage()
-        // wants those models. Callers reusing one across several offers pass the model
-        // straight back in, so these stay as objects; idOf() is only for raw inserts.
-        $user  = $userid ?? $this->createTestUser();
-        $group = $groupid ?? $this->createTestGroup();
+        $user = $userid ?? $this->createTestUser();
 
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         DB::table('messages')->where('id', $message->id)->update([
             'type'    => 'Offer',
             'arrival' => $arrival,
             'subject' => 'OFFER: ' . $itemName . ' (Test)',
         ]);
-        DB::table('messages_groups')->where('msgid', $message->id)->update(['arrival' => $arrival]);
+        DB::table('messages')->where('id', $message->id)->update(['arrival' => $arrival]);
 
         $itemid = $this->items->findOrCreate($itemName);
         $this->items->linkToMessage($message->id, $itemid);
@@ -155,34 +149,6 @@ class ElectricalsStatsServiceTest extends TestCase
         $this->offer('Ancient Kettle', 1, now()->subMonths(18)->toDateTimeString());
 
         $this->assertSame(1, $this->stats->build()['counts']['classified']);
-    }
-
-    /**
-     * A post that reached forty groups is one item, not forty. messages_groups carries a
-     * row per group reached, so any join to it without rippled_in = 0 multiplies the
-     * count by the fan-out.
-     */
-    public function test_rippled_copies_do_not_multiply_counts(): void
-    {
-        // Taken, so the post enters the impact query - the one that joins
-        // messages_groups and so is the one the fan-out can actually multiply.
-        $msgid = $this->offer('Kettle', 1, $this->recent(), 'Taken');
-
-        // Ripple copies: same message, other groups, flagged as rippled in.
-        foreach (range(1, 2) as $ignored) {
-            DB::table('messages_groups')->insert([
-                'msgid'      => $msgid,
-                'groupid'    => $this->idOf($this->createTestGroup()),
-                'arrival'    => $this->recent(),
-                'collection' => 'Approved',
-                'rippled_in' => 1,
-            ]);
-        }
-
-        $build = $this->stats->build();
-
-        $this->assertSame(1, $build['counts']['electrical']);
-        $this->assertSame(1, $build['impact']['items_taken'], 'a post reaching three groups is one item');
     }
 
     /**
@@ -288,12 +254,11 @@ class ElectricalsStatsServiceTest extends TestCase
 
     public function test_popular_lists_most_offered_electrical_items(): void
     {
-        $group = $this->createTestGroup();
         foreach (range(1, 3) as $ignored) {
-            $this->offer('Kettle', 1, $this->recent(), null, null, null, $group);
+            $this->offer('Kettle', 1, $this->recent());
         }
-        $this->offer('Toaster', 1, $this->recent(), null, null, null, $group);
-        $this->offer('Sofa', 0, $this->recent(), null, null, null, $group);
+        $this->offer('Toaster', 1, $this->recent());
+        $this->offer('Sofa', 0, $this->recent());
 
         $popular = $this->stats->build()['popular'];
 
@@ -309,10 +274,9 @@ class ElectricalsStatsServiceTest extends TestCase
     public function test_unusual_excludes_items_from_a_single_member(): void
     {
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         foreach (range(1, 3) as $ignored) {
-            $this->offer('Weird Gizmo', 1, $this->recent(), null, null, $user, $group);
+            $this->offer('Weird Gizmo', 1, $this->recent(), null, null, $user);
         }
 
         $names = array_column($this->stats->build()['unusual']['items'], 'name');
@@ -320,21 +284,7 @@ class ElectricalsStatsServiceTest extends TestCase
         $this->assertNotContains('Weird Gizmo', $names);
     }
 
-    /** And one community's local usage must not either. */
-    public function test_unusual_excludes_items_from_a_single_group(): void
-    {
-        $group = $this->createTestGroup();
-
-        foreach (range(1, 3) as $ignored) {
-            $this->offer('Local Gizmo', 1, $this->recent(), null, null, null, $group);
-        }
-
-        $names = array_column($this->stats->build()['unusual']['items'], 'name');
-
-        $this->assertNotContains('Local Gizmo', $names);
-    }
-
-    /** An item several people in different communities have offered does qualify. */
+    /** An item several different people have offered does qualify. */
     public function test_unusual_includes_a_genuinely_shared_rare_item(): void
     {
         foreach (range(1, 3) as $ignored) {

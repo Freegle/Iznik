@@ -45,7 +45,7 @@ class EeeClassifyNewCommand extends Command
      * Arrival alone is wrong twice over — it admits posts no moderator has passed yet,
      * and it loses posts that were held and approved after the mark moved past them.
      */
-    protected const APPROVAL_CLOCK = 'COALESCE(messages_groups.approvedat, messages_groups.arrival)';
+    protected const APPROVAL_CLOCK = 'COALESCE(messages.approvedat, messages.arrival)';
 
     public function handle(): int
     {
@@ -90,11 +90,9 @@ class EeeClassifyNewCommand extends Command
 
         $ids = DB::table('messages')
             ->select('messages.id')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
             ->where('messages.type', 'Offer')
             ->whereNull('messages.deleted')
-            ->where('messages_groups.collection', 'Approved')
-            ->where('messages_groups.deleted', 0)
+            ->where('messages.collection', 'Approved')
             // keep-raw: COALESCE over two columns; the builder has no expression form.
             ->whereRaw("$clock >= ?", [$since])
             ->whereNotExists(function ($q) {

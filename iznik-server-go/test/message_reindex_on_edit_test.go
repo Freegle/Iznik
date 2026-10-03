@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -88,45 +87,4 @@ func TestPatchMessageBodyOnlyEditInvalidatesEmbedding(t *testing.T) {
 	var embAfter int64
 	db.Raw("SELECT COUNT(*) FROM messages_embeddings WHERE msgid = ?", msgID).Scan(&embAfter)
 	assert.Equal(t, int64(0), embAfter, "a body-only edit clears the stale vector embedding")
-}
-
-// 9954 (adversarial-review follow-up): deleting the messages_embeddings row is necessary
-// but not sufficient. apiv2 serves vector search entirely from an in-process store
-// (embedding.Global) that Refresh()es on a timer and is presence-keyed, so if the batch
-// re-embeds the new content before the store ever observes the msgid as absent, the STALE
-// in-memory blob keeps matching the OLD wording (see Store.Refresh's "Known limitation").
-// invalidateMessageEmbedding therefore also evicts the msgid from the store. This test
-// seeds the store with the message's soon-to-be-stale entry, edits it, and asserts the
-// entry is gone so the next Refresh reloads the regenerated embedding.
-func TestPatchMessageEditEvictsStaleInMemoryEmbedding(t *testing.T) {
-	db := database.DBConn
-	prefix := uniquePrefix("reindexEvict")
-
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	_, ownerToken := CreateTestSession(t, ownerID)
-	msgID := CreateTestMessage(t, ownerID, "WANTED: Spindle stem "+prefix, 55.0, -1.0)
-
-	db.Exec("INSERT INTO messages_embeddings (msgid, subject_embedding, model_version) VALUES (?, ?, ?)",
-		msgID, []byte{0x00}, "test")
-	t.Cleanup(func() {
-		db.Exec("DELETE FROM messages_embeddings WHERE msgid = ?", msgID)
-	})
-
-	// Seed the in-memory store with this message's (soon-to-be-stale) embedding, mirroring
-	// a message embedded before the edit. Reset afterwards, like the vector-search tests.
-	embedding.Global.SetEntries([]embedding.Entry{{Msgid: msgID, Groupid: groupID, Msgtype: "Wanted"}})
-	defer embedding.Global.SetEntries(nil)
-	if _, ok := embedding.Global.FindByMsgid(msgID); !ok {
-		t.Fatal("precondition: seeded entry should be in the store")
-	}
-
-	newSubject := fmt.Sprintf("WANTED: Spindle stem for Moulinex food processor %s", prefix)
-	body := fmt.Sprintf(`{"id":%d,"subject":%q}`, msgID, newSubject)
-	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(req)
-	require.Equal(t, 200, resp.StatusCode)
-
-	_, stillThere := embedding.Global.FindByMsgid(msgID)
-	assert.False(t, stillThere, "editing a message must evict its stale embedding from the in-memory store so vector search stops matching the old wording")
 }

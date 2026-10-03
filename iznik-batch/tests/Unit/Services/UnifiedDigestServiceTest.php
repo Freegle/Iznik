@@ -2,11 +2,8 @@
 
 namespace Tests\Unit\Services;
 
-use App\Models\Group;
-use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageAttachment;
-use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
 use App\Services\Ripple\ReachMemberQueueService;
@@ -35,52 +32,20 @@ class UnifiedDigestServiceTest extends TestCase
         $this->fakeRingIndex();
     }
 
-    public function test_deduplication_with_tnpostid(): void
-    {
-        $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-
-        // Create two messages with same tnpostid (cross-posted via TN).
-        $message1 = $this->createTestMessage($user, $group1, [
-            'tnpostid' => 'TN12345',
-        ]);
-        $message2 = $this->createTestMessage($user, $group2, [
-            'tnpostid' => 'TN12345',
-            'subject' => $message1->subject,
-        ]);
-
-        // Add groupid attribute for deduplication test.
-        $message1->groupid = $group1->id;
-        $message2->groupid = $group2->id;
-
-        $posts = collect([$message1, $message2]);
-        $deduplicated = $this->service->deduplicatePosts($posts);
-
-        $this->assertCount(1, $deduplicated);
-        $this->assertCount(2, $deduplicated->first()['postedToGroups']);
-    }
-
     public function test_completed_came_and_went_posts_are_deduplicated_like_live(): void
     {
-        // The same item, cross-posted to two groups as two separate messages
+        // The same item posted twice as two separate messages
         // (distinct ids, shared tnpostid) — and both Taken/Received, so they
         // land in the greyed daily "came and went" section.
         $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
 
-        $message1 = $this->createTestMessage($user, $group1, [
+        $message1 = $this->createTestMessage($user, [
             'tnpostid' => 'TN54321',
         ]);
-        $message2 = $this->createTestMessage($user, $group2, [
+        $message2 = $this->createTestMessage($user, [
             'tnpostid' => 'TN54321',
             'subject' => $message1->subject,
         ]);
-        $message1->load('groups');
-        $message2->load('groups');
-        $message1->groupid = $group1->id;
-        $message2->groupid = $group2->id;
 
         $completed = collect([$message1, $message2]);
 
@@ -93,149 +58,18 @@ class UnifiedDigestServiceTest extends TestCase
         $deduped = $this->service->deduplicateCompletedPosts($completed);
         $this->assertCount(1, $deduped);
         $this->assertEquals($message1->id, $deduped->first()->id);
-
-        // Both groups are folded into the surviving card, so the byline reads
-        // "Posted to: A, B" just like the live section — not a single group.
-        $this->assertEqualsCanonicalizing(
-            [$group1->id, $group2->id],
-            $deduped->first()->groups->pluck('id')->all()
-        );
-    }
-
-    public function test_deduplication_single_message_on_multiple_groups(): void
-    {
-        // The multi-group model: ONE messages row with two messages_groups
-        // rows. The digest query joins messages to messages_groups, so the
-        // same messages.id comes back once per group with a different groupid.
-        // deduplicatePosts must collapse those into a single digest entry that
-        // lists both groups.
-        $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-
-        $message = $this->createTestMessage($user, $group1, [
-            'subject' => 'OFFER: Single multi-group item (London)',
-            'textbody' => 'One physical item, posted to two groups.',
-        ]);
-
-        // Second messages_groups row — same msgid, different group.
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group2->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now(),
-        ]);
-
-        // Reproduce the join output: the same message as two rows differing
-        // only by groupid.
-        $row1 = $message->fresh();
-        $row1->groupid = $group1->id;
-        $row2 = $message->fresh();
-        $row2->groupid = $group2->id;
-
-        $posts = collect([$row1, $row2]);
-        $deduplicated = $this->service->deduplicatePosts($posts);
-
-        $this->assertCount(1, $deduplicated);
-        $this->assertEquals($message->id, $deduplicated->first()['message']->id);
-        $this->assertCount(2, $deduplicated->first()['postedToGroups']);
-        $this->assertEqualsCanonicalizing(
-            [$group1->id, $group2->id],
-            $deduplicated->first()['postedToGroups']
-        );
-    }
-
-    /**
-     * Regression (Discourse #9850): a poster reposts one item under the same subject/location with
-     * a slightly reworded body, and BOTH reposts ripple into several groups. The two reposts share
-     * a dedup key but differ by body. Each repost's own multi-group copies must still collapse into
-     * a single card — the earlier code kept only the FIRST post per key as a merge target, so the
-     * second repost's copies each failed bodiesMatch against the first and became a separate card
-     * (linda_rowlands' bed appeared ~10x). Expect exactly TWO cards (one per repost), each listing
-     * all its groups — not one-card-per-group.
-     */
-    public function test_deduplication_two_reworded_reposts_each_collapse_across_groups(): void
-    {
-        $user = $this->createTestUser();
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-
-        // Two reposts of the same item: same subject + location, slightly different body.
-        $repost1 = $this->createTestMessage($user, $groupA, [
-            'subject' => 'OFFER: Divan bed frame (London)',
-            'textbody' => '5ft wide retail bedframe for queen sized divan. Dismantled.',
-        ]);
-        $repost2 = $this->createTestMessage($user, $groupA, [
-            'subject' => 'OFFER: Divan bed frame (London)',
-            'textbody' => '5ft wide retail bedframe only for queen. Dismantled, all fittings.',
-        ]);
-        $repost2->locationid = $repost1->locationid;
-        $repost2->save();
-
-        // Each repost appears on BOTH groups (the join produces one row per (msgid, group)),
-        // interleaved as the real query would return them by arrival.
-        $mk = function ($msg, $groupid) {
-            $row = $msg->fresh();
-            $row->locationid = $msg->locationid;
-            $row->groupid = $groupid;
-            return $row;
-        };
-        $posts = collect([
-            $mk($repost1, $groupA->id), $mk($repost2, $groupA->id),
-            $mk($repost1, $groupB->id), $mk($repost2, $groupB->id),
-        ]);
-
-        $deduplicated = $this->service->deduplicatePosts($posts);
-
-        $this->assertCount(2, $deduplicated, 'each reworded repost is one card, not one card per group');
-        foreach ($deduplicated as $card) {
-            $this->assertCount(2, $card['postedToGroups'], 'each repost card lists both its groups');
-            $this->assertEqualsCanonicalizing([$groupA->id, $groupB->id], $card['postedToGroups']);
-        }
-    }
-
-    public function test_deduplication_without_tnpostid(): void
-    {
-        $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-
-        // Create two similar messages without tnpostid but with same subject/location.
-        $message1 = $this->createTestMessage($user, $group1, [
-            'subject' => 'OFFER: Test Item (London)',
-        ]);
-        $message2 = $this->createTestMessage($user, $group2, [
-            'subject' => 'OFFER: Test Item (London)',
-        ]);
-
-        // Set same locationid after creation (nullable, no FK constraint).
-        $message1->locationid = $message1->locationid;
-        $message2->locationid = $message1->locationid;
-
-        $message1->groupid = $group1->id;
-        $message2->groupid = $group2->id;
-
-        $posts = collect([$message1, $message2]);
-        $deduplicated = $this->service->deduplicatePosts($posts);
-
-        $this->assertCount(1, $deduplicated);
-        $this->assertCount(2, $deduplicated->first()['postedToGroups']);
     }
 
     public function test_different_items_not_deduplicated(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
-        $message1 = $this->createTestMessage($user, $group, [
+        $message1 = $this->createTestMessage($user, [
             'subject' => 'OFFER: Sofa (London)',
         ]);
-        $message2 = $this->createTestMessage($user, $group, [
+        $message2 = $this->createTestMessage($user, [
             'subject' => 'OFFER: Table (London)',
         ]);
-
-        $message1->groupid = $group->id;
-        $message2->groupid = $group->id;
 
         $posts = collect([$message1, $message2]);
         $deduplicated = $this->service->deduplicatePosts($posts);
@@ -247,7 +81,6 @@ class UnifiedDigestServiceTest extends TestCase
     {
         $poster = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // Set recipient to want daily digests and be active. V1 parity:
         // membership emailfrequency=24 is the authoritative daily selector;
@@ -257,13 +90,11 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->save();
         $recipient->refresh();
 
-        $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
         // Create a message from another user (so recipient has something to receive).
-        $this->createTestMessage($poster, $group);
+        $this->createTestMessage($poster);
 
         // Run digest - should create tracker and send email.
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
@@ -283,20 +114,17 @@ class UnifiedDigestServiceTest extends TestCase
         // appear in the digest — it was advertising withdrawn items as live.
         $poster = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
         $recipient->lastaccess = now();
         $recipient->save();
         $recipient->refresh();
 
-        $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
         // The only post in range has been withdrawn.
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
         DB::table('messages_outcomes')->insert([
             'msgid' => $message->id,
             'outcome' => 'Withdrawn',
@@ -315,19 +143,16 @@ class UnifiedDigestServiceTest extends TestCase
         // pushing a post that is under review.
         $poster = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
         $recipient->lastaccess = now();
         $recipient->save();
         $recipient->refresh();
 
-        $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
 
         // A reach that DOES cover the recipient, so only the frozen status can exclude it.
         DB::statement(
@@ -352,7 +177,6 @@ class UnifiedDigestServiceTest extends TestCase
         // narrowing browse applies, so mail can never carry what browse hides.
         $poster = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
         $recipient->lastaccess = now();
@@ -360,12 +184,10 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->refresh();
         $this->setMyLocation($recipient, 51.5, -0.1);
 
-        $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
 
         // Cells that DO cover the recipient at (51.5, -0.1).
         DB::statement(
@@ -391,7 +213,6 @@ class UnifiedDigestServiceTest extends TestCase
         // cell-grid verdict stands unchanged.
         $poster = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
         $recipient->lastaccess = now();
@@ -399,12 +220,10 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->refresh();
         $this->setMyLocation($recipient, 51.5, -0.1);
 
-        $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
 
         DB::statement(
             "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
@@ -431,7 +250,6 @@ class UnifiedDigestServiceTest extends TestCase
         // same union the browse feed applies.
         $poster = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
         $recipient->lastaccess = now();
@@ -439,12 +257,10 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->refresh();
         $this->setMyLocation($recipient, 51.5, -0.1);
 
-        $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
 
         // Cells well away from the recipient at (51.5, -0.1).
         DB::statement(
@@ -472,14 +288,11 @@ class UnifiedDigestServiceTest extends TestCase
         // daily digest can sink it below fresh posts (config freegle.digest.seen_penalty).
         $poster = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
-        $seen = $this->createTestMessage($poster, $group);
-        $unseen = $this->createTestMessage($poster, $group);
+        $seen = $this->createTestMessage($poster);
+        $unseen = $this->createTestMessage($poster);
 
         DB::table('messages_likes')->insert([
             'msgid' => $seen->id, 'userid' => $recipient->id, 'type' => 'View', 'count' => 0,
@@ -506,20 +319,17 @@ class UnifiedDigestServiceTest extends TestCase
         // "came and went" section rather than blocking the send.
         $poster = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
         $recipient->lastaccess = now();
         $recipient->save();
         $recipient->refresh();
 
-        $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
-        $this->createTestMessage($poster, $group); // available
-        $taken = $this->createTestMessage($poster, $group);
+        $this->createTestMessage($poster); // available
+        $taken = $this->createTestMessage($poster);
         DB::table('messages_outcomes')->insert([
             'msgid' => $taken->id,
             'outcome' => 'Taken',
@@ -541,18 +351,15 @@ class UnifiedDigestServiceTest extends TestCase
 
         $poster = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
         $recipient->lastaccess = now();
         $recipient->save();
         $recipient->refresh();
 
-        $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->createTestMessage($poster, $group);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        $this->createTestMessage($poster);
 
         // Already digested at the start of today's London day, cursor at 0 so
         // there ARE newer posts — only the once-today guard should hold it back.
@@ -583,17 +390,16 @@ class UnifiedDigestServiceTest extends TestCase
         // rotates the lag fairly. Regression for streamDailyOverdueFirst.
         config(['freegle.digest.daily_allowlist' => '*']);
 
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $this->createTestMessage($poster, $group);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        $this->createTestMessage($poster);
 
-        $mk = function () use ($group) {
+        $mk = function () {
             $u = $this->createTestUser();
             $u->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
             $u->lastaccess = now();
             $u->save();
-            $this->createMembership($u, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+            DB::table('users')->where('id', $u->id)->update(['emailfrequency' => 24]);
             return $u->fresh();
         };
 
@@ -662,45 +468,21 @@ class UnifiedDigestServiceTest extends TestCase
         );
     }
 
-    public function test_format_posted_to_multiple_groups(): void
-    {
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-
-        $result = $this->service->formatPostedTo([$group1->id, $group2->id]);
-
-        $this->assertStringContainsString('Posted to:', $result);
-        $this->assertStringContainsString($group1->nameshort, $result);
-        $this->assertStringContainsString($group2->nameshort, $result);
-    }
-
-    public function test_format_posted_to_single_group_returns_empty(): void
-    {
-        $group = $this->createTestGroup();
-
-        $result = $this->service->formatPostedTo([$group->id]);
-
-        $this->assertEmpty($result);
-    }
-
     public function test_digest_includes_users_own_posts(): void
     {
         // V1 parity: the per-group digest selection in the legacy V1 PHP
         // Digest implementation has no fromuser != ? filter, so a user's
         // own posts appear in their own digest. Mirror that here.
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
         $recipient->lastaccess = now();
         $recipient->save();
         $recipient->refresh();
 
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
-        $this->createTestMessage($recipient, $group);
+        $this->createTestMessage($recipient);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
 
@@ -710,21 +492,16 @@ class UnifiedDigestServiceTest extends TestCase
     public function test_deduplication_same_subject_different_body_not_deduped(): void
     {
         $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
 
         // Two messages with same subject but different body text.
-        $message1 = $this->createTestMessage($user, $group1, [
+        $message1 = $this->createTestMessage($user, [
             'subject' => 'OFFER: Garden tools (London)',
             'textbody' => 'I have a spade and a fork available for collection.',
         ]);
-        $message2 = $this->createTestMessage($user, $group2, [
+        $message2 = $this->createTestMessage($user, [
             'subject' => 'OFFER: Garden tools (London)',
             'textbody' => 'Lawnmower available, needs collecting this weekend.',
         ]);
-
-        $message1->groupid = $group1->id;
-        $message2->groupid = $group2->id;
 
         $posts = collect([$message1, $message2]);
         $deduplicated = $this->service->deduplicatePosts($posts);
@@ -733,280 +510,25 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertCount(2, $deduplicated);
     }
 
-    public function test_deduplication_same_subject_same_body_deduped(): void
-    {
-        $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-
-        $bodyText = 'I have a lovely sofa available for collection.';
-
-        // Two messages with same subject AND same body.
-        $message1 = $this->createTestMessage($user, $group1, [
-            'subject' => 'OFFER: Sofa (London)',
-            'textbody' => $bodyText,
-        ]);
-        $message2 = $this->createTestMessage($user, $group2, [
-            'subject' => 'OFFER: Sofa (London)',
-            'textbody' => $bodyText,
-        ]);
-
-        $message1->groupid = $group1->id;
-        $message2->groupid = $group2->id;
-
-        $posts = collect([$message1, $message2]);
-        $deduplicated = $this->service->deduplicatePosts($posts);
-
-        // Should be deduplicated because both subject and body match.
-        $this->assertCount(1, $deduplicated);
-        $this->assertCount(2, $deduplicated->first()['postedToGroups']);
-    }
-
     public function test_deduplication_null_body_treated_as_matching(): void
     {
         $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
 
         // Two messages with same subject and both null bodies.
-        $message1 = $this->createTestMessage($user, $group1, [
+        $message1 = $this->createTestMessage($user, [
             'subject' => 'OFFER: Table (London)',
             'textbody' => null,
         ]);
-        $message2 = $this->createTestMessage($user, $group2, [
+        $message2 = $this->createTestMessage($user, [
             'subject' => 'OFFER: Table (London)',
             'textbody' => null,
         ]);
-
-        $message1->groupid = $group1->id;
-        $message2->groupid = $group2->id;
 
         $posts = collect([$message1, $message2]);
         $deduplicated = $this->service->deduplicatePosts($posts);
 
         // Should be deduplicated - null bodies both normalize to ''.
         $this->assertCount(1, $deduplicated);
-    }
-
-    public function test_sponsors_are_included_and_deduplicated(): void
-    {
-        $poster = $this->createTestUser();
-        $recipient = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-
-        // Recipient wants daily digests for both groups — V1 parity requires
-        // per-group emailfrequency=24 on each membership.
-        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
-        $recipient->lastaccess = now();
-        $recipient->save();
-        $recipient->refresh();
-
-        $this->createMembership($poster, $group1);
-        $this->createMembership($poster, $group2);
-        $this->createMembership($recipient, $group1, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->createMembership($recipient, $group2, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-
-        // Create messages so the digest has content.
-        $this->createTestMessage($poster, $group1);
-        $this->createTestMessage($poster, $group2);
-
-        // Same sponsor on both groups (Essex-style: one sponsor, many groups).
-        DB::table('groups_sponsorship')->insert([
-            'groupid' => $group1->id,
-            'name' => 'Essex County Council',
-            'linkurl' => 'https://essex.gov.uk',
-            'imageurl' => 'https://essex.gov.uk/logo.png',
-            'tagline' => 'Supporting reuse in Essex',
-            'startdate' => now()->subDay(),
-            'enddate' => now()->addMonth(),
-            'contactname' => 'Test Contact',
-            'contactemail' => 'test@essex.gov.uk',
-            'amount' => 100,
-            'visible' => TRUE,
-        ]);
-        DB::table('groups_sponsorship')->insert([
-            'groupid' => $group2->id,
-            'name' => 'Essex County Council',
-            'linkurl' => 'https://essex.gov.uk',
-            'imageurl' => 'https://essex.gov.uk/logo.png',
-            'tagline' => 'Supporting reuse in Essex',
-            'startdate' => now()->subDay(),
-            'enddate' => now()->addMonth(),
-            'contactname' => 'Test Contact',
-            'contactemail' => 'test@essex.gov.uk',
-            'amount' => 100,
-            'visible' => TRUE,
-        ]);
-
-        // Different sponsor on group2 only.
-        DB::table('groups_sponsorship')->insert([
-            'groupid' => $group2->id,
-            'name' => 'Local Business',
-            'linkurl' => 'https://localbiz.example.com',
-            'imageurl' => 'https://localbiz.example.com/logo.png',
-            'tagline' => null,
-            'startdate' => now()->subDay(),
-            'enddate' => now()->addMonth(),
-            'contactname' => 'Biz Contact',
-            'contactemail' => 'biz@example.com',
-            'amount' => 50,
-            'visible' => TRUE,
-        ]);
-
-        // Get sponsors for this user — should deduplicate Essex across groups.
-        $sponsors = $this->service->getSponsorsForUser($recipient);
-
-        // Should have 2 unique sponsors, not 3.
-        $this->assertCount(2, $sponsors);
-
-        // Essex should appear once with the highest amount.
-        $essex = $sponsors->firstWhere('name', 'Essex County Council');
-        $this->assertNotNull($essex);
-        $this->assertEquals('https://essex.gov.uk', $essex->linkurl);
-        $this->assertEquals('Supporting reuse in Essex', $essex->tagline);
-
-        // Local Business should appear once.
-        $localBiz = $sponsors->firstWhere('name', 'Local Business');
-        $this->assertNotNull($localBiz);
-    }
-
-    public function test_get_sponsors_for_group_returns_only_that_groups_sponsors(): void
-    {
-        // V1 parity for immediate digests: an email about group A must carry
-        // only group A's sponsors, never the union across the recipient's other
-        // groups (which getSponsorsForUser returns for the daily digest).
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-
-        DB::table('groups_sponsorship')->insert([
-            'groupid' => $groupA->id,
-            'name' => 'Group A Sponsor',
-            'linkurl' => 'https://a.example.com',
-            'imageurl' => 'https://a.example.com/logo.png',
-            'tagline' => 'Backs group A',
-            'startdate' => now()->subDay(),
-            'enddate' => now()->addMonth(),
-            'contactname' => 'A',
-            'contactemail' => 'a@example.com',
-            'amount' => 100,
-            'visible' => TRUE,
-        ]);
-        DB::table('groups_sponsorship')->insert([
-            'groupid' => $groupB->id,
-            'name' => 'Group B Sponsor',
-            'linkurl' => 'https://b.example.com',
-            'imageurl' => 'https://b.example.com/logo.png',
-            'tagline' => 'Backs group B',
-            'startdate' => now()->subDay(),
-            'enddate' => now()->addMonth(),
-            'contactname' => 'B',
-            'contactemail' => 'b@example.com',
-            'amount' => 100,
-            'visible' => TRUE,
-        ]);
-
-        $sponsors = $this->service->getSponsorsForGroup($groupA->id);
-
-        $this->assertCount(1, $sponsors);
-        $this->assertEquals('Group A Sponsor', $sponsors->first()->name);
-        $this->assertNull($sponsors->firstWhere('name', 'Group B Sponsor'));
-    }
-
-    public function test_get_sponsors_for_group_excludes_expired_and_invisible(): void
-    {
-        $group = $this->createTestGroup();
-
-        // Expired.
-        DB::table('groups_sponsorship')->insert([
-            'groupid' => $group->id,
-            'name' => 'Expired Sponsor',
-            'linkurl' => 'https://x.example.com',
-            'imageurl' => null,
-            'tagline' => null,
-            'startdate' => now()->subMonths(2),
-            'enddate' => now()->subMonth(),
-            'contactname' => 'X',
-            'contactemail' => 'x@example.com',
-            'amount' => 100,
-            'visible' => TRUE,
-        ]);
-        // Hidden.
-        DB::table('groups_sponsorship')->insert([
-            'groupid' => $group->id,
-            'name' => 'Hidden Sponsor',
-            'linkurl' => 'https://y.example.com',
-            'imageurl' => null,
-            'tagline' => null,
-            'startdate' => now()->subDay(),
-            'enddate' => now()->addMonth(),
-            'contactname' => 'Y',
-            'contactemail' => 'y@example.com',
-            'amount' => 100,
-            'visible' => FALSE,
-        ]);
-        // Active + visible.
-        DB::table('groups_sponsorship')->insert([
-            'groupid' => $group->id,
-            'name' => 'Active Sponsor',
-            'linkurl' => 'https://z.example.com',
-            'imageurl' => null,
-            'tagline' => null,
-            'startdate' => now()->subDay(),
-            'enddate' => now()->addMonth(),
-            'contactname' => 'Z',
-            'contactemail' => 'z@example.com',
-            'amount' => 100,
-            'visible' => TRUE,
-        ]);
-
-        $sponsors = $this->service->getSponsorsForGroup($group->id);
-
-        $this->assertCount(1, $sponsors);
-        $this->assertEquals('Active Sponsor', $sponsors->first()->name);
-    }
-
-    public function test_get_sponsors_for_group_returns_empty_for_zero_group(): void
-    {
-        $this->assertTrue($this->service->getSponsorsForGroup(0)->isEmpty());
-    }
-
-    public function test_expired_sponsors_are_excluded(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
-        // Expired sponsor.
-        DB::table('groups_sponsorship')->insert([
-            'groupid' => $group->id,
-            'name' => 'Old Sponsor',
-            'startdate' => now()->subYear(),
-            'enddate' => now()->subMonth(),
-            'contactname' => 'Old',
-            'contactemail' => 'old@example.com',
-            'amount' => 100,
-            'visible' => TRUE,
-        ]);
-
-        // Hidden sponsor.
-        DB::table('groups_sponsorship')->insert([
-            'groupid' => $group->id,
-            'name' => 'Hidden Sponsor',
-            'startdate' => now()->subDay(),
-            'enddate' => now()->addMonth(),
-            'contactname' => 'Hidden',
-            'contactemail' => 'hidden@example.com',
-            'amount' => 100,
-            'visible' => FALSE,
-        ]);
-
-        $sponsors = $this->service->getSponsorsForUser($user);
-        $this->assertCount(0, $sponsors);
     }
 
     // PER-USER ELIGIBILITY TESTS REMOVED — they were based on the prior
@@ -1034,15 +556,12 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->refresh();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: A (TestLocation)']);
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: B (TestLocation)']);
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: C (TestLocation)']);
+        $this->createTestMessage($poster, ['subject' => 'OFFER: A (TestLocation)']);
+        $this->createTestMessage($poster, ['subject' => 'OFFER: B (TestLocation)']);
+        $this->createTestMessage($poster, ['subject' => 'OFFER: C (TestLocation)']);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
 
@@ -1063,13 +582,10 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->save();
         $recipient->refresh();
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
         for ($i = 1; $i <= $cap + 2; $i++) {
-            $this->createTestMessage($poster, $group, ['subject' => "OFFER: Carry{$i}Zq (TestLocation)"]);
+            $this->createTestMessage($poster, ['subject' => "OFFER: Carry{$i}Zq (TestLocation)"]);
         }
 
         Mail::fake();
@@ -1112,10 +628,10 @@ class UnifiedDigestServiceTest extends TestCase
         // interleave it gives the member a digest whose dates jump around - the exact thing
         // the roll-up exists to avoid. The carried half sinks below the new posts.
         $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
-        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        [$recipient, $poster] = $this->dailyDigestMembers();
 
         for ($i = 1; $i <= $cap + 2; $i++) {
-            $this->createTestMessage($poster, $group, [
+            $this->createTestMessage($poster, [
                 'subject' => "OFFER: Below{$i}Zq (TestLocation)",
                 'arrival' => now()->subHours(2),
             ]);
@@ -1129,7 +645,7 @@ class UnifiedDigestServiceTest extends TestCase
         // A quiet next day: two new posts arrive, so there is room for everything.
         $fresh = [];
         foreach ([1, 2] as $i) {
-            $fresh[] = $this->createTestMessage($poster, $group, [
+            $fresh[] = $this->createTestMessage($poster, [
                 'subject' => "OFFER: Fresh{$i}Zq (TestLocation)",
             ])->id;
         }
@@ -1154,10 +670,10 @@ class UnifiedDigestServiceTest extends TestCase
         // room to show one. Without the age bound they accumulate a permanent block of old
         // posts at the head of every window.
         $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
-        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        [$recipient, $poster] = $this->dailyDigestMembers();
 
         for ($i = 1; $i <= $cap + 2; $i++) {
-            $this->createTestMessage($poster, $group, [
+            $this->createTestMessage($poster, [
                 'subject' => "OFFER: Aged{$i}Zq (TestLocation)",
                 'arrival' => now()->subHours(2),
             ]);
@@ -1170,11 +686,11 @@ class UnifiedDigestServiceTest extends TestCase
         // Age one of the two past the bound, on the clock the digest window uses.
         $aged = now()->subDays(UnifiedDigestService::CARRYOVER_MAX_AGE_DAYS + 1);
         DB::table('messages')->where('id', $stale)->update(['arrival' => $aged]);
-        DB::table('messages_groups')->where('msgid', $stale)->update(['arrival' => $aged]);
+        DB::table('messages')->where('id', $stale)->update(['arrival' => $aged]);
 
         // Next day, a full digest's worth of new posts, so neither carried post has room.
         for ($i = 1; $i <= $cap; $i++) {
-            $this->createTestMessage($poster, $group, ['subject' => "OFFER: Next{$i}Zq (TestLocation)"]);
+            $this->createTestMessage($poster, ['subject' => "OFFER: Next{$i}Zq (TestLocation)"]);
         }
         $this->digestTrackerFor($recipient)->update(['lastsent' => now()->subDay()]);
 
@@ -1195,10 +711,10 @@ class UnifiedDigestServiceTest extends TestCase
         // the window, since carried posts are older than the cursor - on a post that will
         // never be shown.
         $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
-        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        [$recipient, $poster] = $this->dailyDigestMembers();
 
         for ($i = 1; $i <= $cap + 2; $i++) {
-            $this->createTestMessage($poster, $group, [
+            $this->createTestMessage($poster, [
                 'subject' => "OFFER: Seen{$i}Zq (TestLocation)",
                 'arrival' => now()->subHours(2),
             ]);
@@ -1214,7 +730,7 @@ class UnifiedDigestServiceTest extends TestCase
         ]);
 
         for ($i = 1; $i <= $cap; $i++) {
-            $this->createTestMessage($poster, $group, ['subject' => "OFFER: After{$i}Zq (TestLocation)"]);
+            $this->createTestMessage($poster, ['subject' => "OFFER: After{$i}Zq (TestLocation)"]);
         }
         $this->digestTrackerFor($recipient)->update(['lastsent' => now()->subDay()]);
 
@@ -1235,10 +751,10 @@ class UnifiedDigestServiceTest extends TestCase
         // most that could ever be shown, and droppedPostIds() is in the digest's own priority
         // order, so the head is the part with a real chance.
         $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
-        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        [$recipient, $poster] = $this->dailyDigestMembers();
 
         for ($i = 1; $i <= 2 * $cap + 3; $i++) {
-            $this->createTestMessage($poster, $group, [
+            $this->createTestMessage($poster, [
                 'subject' => "OFFER: Many{$i}Zq (TestLocation)",
                 'arrival' => now()->subHours(2),
             ]);
@@ -1258,21 +774,20 @@ class UnifiedDigestServiceTest extends TestCase
     public function test_the_carryover_is_not_ORed_into_the_window_query(): void
     {
         // The carryover list is on messages.id; the window's range column is
-        // messages_groups.arrival. ORing them puts a predicate on a DIFFERENT table inside
-        // the range, so MySQL cannot index-merge, abandons the
-        // groupid(groupid,collection,deleted,arrival) index and — because the query is
+        // messages.arrival. ORing them inside the range means MySQL cannot index-merge, and
+        // — because the query is
         // ORDER BY arrival ASC LIMIT — walks the arrival index from the oldest row of
         // 11M forward instead. Measured on production 2026-09-17: 60-74s against 0.29s
         // for the same query with the carryover arm removed, which is what pinned db2 at
         // 98% of its cores and stopped the daily digest finishing inside its window.
         // The two arms must therefore be two queries, not one.
-        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        [$recipient, $poster] = $this->dailyDigestMembers();
 
-        $carried = $this->createTestMessage($poster, $group, [
+        $carried = $this->createTestMessage($poster, [
             'subject' => 'OFFER: SplitCarriedZq (TestLocation)',
             'arrival' => now()->subDays(2),
         ]);
-        $this->createTestMessage($poster, $group, [
+        $this->createTestMessage($poster, [
             'subject' => 'OFFER: SplitFreshZq (TestLocation)',
             'arrival' => now()->subHour(),
         ]);
@@ -1287,58 +802,19 @@ class UnifiedDigestServiceTest extends TestCase
 
         // Exact, not approximate: the window arm carries the arrival range and the carryover
         // arm carries the id list. Only the ORed form has both in one statement.
-        $isWindow = fn ($sql) => str_contains($sql, '`messages_groups`.`arrival` >');
+        $isWindow = fn ($sql) => str_contains($sql, '`messages`.`arrival` >');
         $hasIdList = fn ($sql) => (bool) preg_match('/`messages`\.`id`\s+in\s*\(/i', $sql);
 
         foreach ($queries as $sql) {
             $this->assertFalse(
                 $isWindow($sql) && $hasIdList($sql),
-                "the carryover is ORed into the windowed query, which costs the groupid index:\n" . $sql
+                "the carryover is ORed into the windowed query, which costs the arrival index:\n" . $sql
             );
         }
 
         // ...and both arms did run, so this is not passing because nothing was queried.
         $this->assertTrue(collect($queries)->contains($isWindow), 'the window arm did not run');
         $this->assertTrue(collect($queries)->contains($hasIdList), 'the carryover arm did not run');
-    }
-
-    public function test_a_post_in_both_the_window_and_the_carryover_is_returned_once_per_copy(): void
-    {
-        // Splitting the arms means a post that satisfies BOTH comes back from both queries.
-        // On production 2026-09-17 that overlap was 234 of 1,921 rows. The merge has to
-        // de-duplicate on the (msgid, groupid) PAIR, not on msgid: the query deliberately
-        // returns one row per copy of a cross-posted item, and collapsing by msgid would
-        // silently drop a member's other communities from the digest.
-        [$recipient, $poster, $group] = $this->dailyDigestMembers();
-        $other = $this->createTestGroup();
-        $this->createMembership($recipient, $other, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->createMembership($poster, $other);
-
-        // Cross-posted, and INSIDE the window as well as on the carryover list.
-        $both = $this->createTestMessage($poster, $group, [
-            'subject' => 'OFFER: OverlapZq (TestLocation)',
-            'arrival' => now()->subHour(),
-        ]);
-        MessageGroup::create([
-            'msgid' => $both->id,
-            'groupid' => $other->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subHour(),
-        ]);
-
-        $tracker = $this->trackerWithCarryover($recipient, [$both->id], now()->subDay());
-
-        $posts = $this->service->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY);
-
-        $pairs = $posts->map(fn ($p) => (int) $p->id . ':' . (int) $p->groupid)->all();
-        $this->assertSame(
-            count($pairs),
-            count(array_unique($pairs)),
-            'a post on both the window and the carryover came back twice'
-        );
-        $this->assertCount(2, $pairs, 'both copies of the cross-posted item survive the de-duplication');
     }
 
     public function test_a_carryover_only_run_does_not_move_the_cursor_backwards(): void
@@ -1349,14 +825,14 @@ class UnifiedDigestServiceTest extends TestCase
         // regresses. The next run then re-opens a window the member has already been sent,
         // which both re-offers posts and widens the scan this change exists to narrow.
         $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
-        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        [$recipient, $poster] = $this->dailyDigestMembers();
 
         // Staggered arrivals, so "backwards" is observable: the cap keeps the newest and
         // drops the oldest, so everything carried is strictly older than the cursor. Minutes,
         // not hours - a fresh tracker's window is arrival >= now()-1 day, and DIGEST_POST_CAP
         // is 65, so hour-spacing would push most of these outside the first run's window.
         for ($i = 1; $i <= $cap + 2; $i++) {
-            $this->createTestMessage($poster, $group, [
+            $this->createTestMessage($poster, [
                 'subject' => "OFFER: Cursor{$i}Zq (TestLocation)",
                 'arrival' => now()->subMinutes($cap + 3 - $i),
             ]);
@@ -1404,9 +880,9 @@ class UnifiedDigestServiceTest extends TestCase
     }
 
     /**
-     * A recipient on daily, someone to post, and the group they share.
+     * A recipient on daily and someone to post.
      *
-     * @return array{0: User, 1: User, 2: Group}
+     * @return array{0: User, 1: User}
      */
     private function dailyDigestMembers(): array
     {
@@ -1417,13 +893,10 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->refresh();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
-        return [$recipient, $poster, $group];
+        return [$recipient, $poster];
     }
 
     private function digestTrackerFor(User $recipient): UserDigest
@@ -1463,7 +936,7 @@ class UnifiedDigestServiceTest extends TestCase
      * given per-group cadence. The poster is immediate-only with no lastaccess
      * so it never shows up in the broad daily selection.
      */
-    private function makeDailyRecipientWithPost(int $emailfrequency = Membership::EMAIL_FREQUENCY_DAILY): User
+    private function makeDailyRecipientWithPost(int $emailfrequency = 24): User
     {
         $recipient = $this->createTestUser();
         $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
@@ -1472,10 +945,9 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->refresh();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, ['emailfrequency' => $emailfrequency]);
-        $this->createMembership($poster, $group);
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => $emailfrequency]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        $this->createTestMessage($poster, ['subject' => 'OFFER: Item (TestLocation)']);
 
         return $recipient;
     }
@@ -1542,79 +1014,6 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(1, $stats['emails_sent']);
     }
 
-    public function test_immediate_mode_allowlist_empty_allows_everyone(): void
-    {
-        // Empty config means "no restriction" — both immediate-frequency
-        // members get the notification: the recipient AND the poster (V1
-        // parity loops a user's own post back to them).
-        config(['freegle.digest.immediate_allowlist' => '']);
-
-        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
-        $this->makeImmediateReady($msg);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-        $this->assertEquals(2, $stats['emails_sent']);
-    }
-
-    public function test_immediate_mode_allowlist_wildcard_allows_everyone(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
-        $this->makeImmediateReady($msg);
-
-        // Both immediate members (recipient + poster) receive it.
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-        $this->assertEquals(2, $stats['emails_sent']);
-    }
-
-    public function test_immediate_mode_allowlist_filters_to_specified_addresses(): void
-    {
-        $group = $this->createTestGroup();
-        $poster = $this->createTestUser();
-        $allowed = $this->createTestUser();
-        $blocked = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $this->createMembership($allowed, $group);
-        $this->createMembership($blocked, $group);
-        $this->seedImmediateCursor($group);
-
-        $allowedEmail = $allowed->emails()->first()->email;
-        config(['freegle.digest.immediate_allowlist' => $allowedEmail]);
-
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
-        $this->makeImmediateReady($msg);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        // Only the allowed-list recipient gets the message; the other
-        // immediate-frequency member in the same group is filtered out.
-        $this->assertEquals(1, $stats['emails_sent']);
-        $this->assertEquals(1, $stats['users_processed']);
-    }
-
-    /**
-     * The default value checked into config must be '*' so the rolled-out
-     * cron emails every eligible user — V1's bulk3 immediate-digest cron was
-     * disabled on 2026-05-27 and this Laravel job is now the only source of
-     * immediate notifications. A regression that re-pinned the default to a
-     * specific address would silently drop all but that user's notifications.
-     */
-    public function test_immediate_mode_default_is_wildcard(): void
-    {
-        $this->assertEquals('*', config('freegle.digest.immediate_allowlist'));
-
-        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
-        $this->makeImmediateReady($msg);
-
-        // Both immediate members (recipient + poster) receive it.
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-        $this->assertEquals(2, $stats['emails_sent']);
-    }
-
     public function test_mail_newly_reached_reach_gates_then_picks_up_later_reached_on_rerun(): void
     {
         // The expander-driven mailer (#0 step 4) mails the post to immediate members the reach
@@ -1622,19 +1021,18 @@ class UnifiedDigestServiceTest extends TestCase
         // reaches afterwards (the exact case the cursor-based approach silently dropped).
         config(['freegle.digest.immediate_allowlist' => '*']);
 
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
         $memberA = $this->createTestUser();
-        $this->createMembership($memberA, $group);
+        DB::table('users')->where('id', $memberA->id)->update(['emailfrequency' => -1]);
         $memberB = $this->createTestUser();
-        $this->createMembership($memberB, $group);
+        DB::table('users')->where('id', $memberB->id)->update(['emailfrequency' => -1]);
         $this->setMyLocation($memberA, 51.5, -0.1);  // inside reach v1
         $this->setMyLocation($memberB, 51.5, 0.5);   // outside v1, inside v2
 
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: reach mail (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $msg = $this->createTestMessage($poster, ['subject' => 'OFFER: reach mail (TestLocation)']);
+        DB::table('messages')->where('id', $msg->id)
+            ->update(['collection' => Message::COLLECTION_APPROVED, 'arrival' => now()]);
         DB::table('messages_attachments')->insert([
             'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('a', 32),
             'primary' => 1, 'archived' => 0,
@@ -1672,97 +1070,6 @@ class UnifiedDigestServiceTest extends TestCase
             'immediate mails on expansion are counted');
     }
 
-    public function test_cursor_immediate_digest_excludes_posts_with_a_reach_row(): void
-    {
-        // A rippling post (has a rippling_reach row) is mailed by the expander, NOT the cursor
-        // digest — so the cursor digest must skip it, or members get two immediate mails.
-        config(['freegle.digest.immediate_allowlist' => '*']);
-        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: rippling (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
-        DB::table('messages_attachments')->insert([
-            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('b', 32),
-            'primary' => 1, 'archived' => 0,
-        ]);
-        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        $this->assertEquals(0, $stats['emails_sent'], 'cursor immediate digest skips a post that has a reach row');
-    }
-
-    public function test_cursor_immediate_ledger_is_written_even_when_rippling_disabled(): void
-    {
-        // The ledger records that a member has been told about a post, and has two readers: the
-        // expander mailer, which is inert while rippling is off, and the cursor immediate digest
-        // itself, which reads it so a post on several of a member's groups reaches them once.
-        // The second reader needs the row whatever rippling is doing, so it is written whenever a
-        // send happens. A row for a post that never ripples is simply never read by the first.
-        config(['freegle.ripple.enabled' => false]);
-        config(['freegle.digest.immediate_allowlist' => '*']);
-        $group = $this->createTestGroup();
-        $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $member = $this->createTestUser();
-        $this->createMembership($member, $group);
-        $this->setMyLocation($member, 51.5, -0.1);
-
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: dark (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
-        DB::table('messages_attachments')->insert([
-            'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('d', 32),
-            'primary' => 1, 'archived' => 0,
-        ]);
-        $this->seedImmediateCursor($group);
-
-        $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        $this->assertGreaterThan(
-            0,
-            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count(),
-            'a send is recorded in the ledger whether or not rippling is switched on'
-        );
-    }
-
-    public function test_cursor_and_expander_do_not_double_mail_via_shared_ledger(): void
-    {
-        // A post is cursor-mailed on arrival (no reach row yet) and the reach row appears minutes
-        // later. The cursor send records the ledger, so the expander must NOT re-mail those members.
-        config(['freegle.digest.immediate_allowlist' => '*']);
-        $group = $this->createTestGroup();
-        $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $member = $this->createTestUser();
-        $this->createMembership($member, $group);
-        $this->setMyLocation($member, 51.5, -0.1);
-
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: window (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
-        DB::table('messages_attachments')->insert([
-            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('c', 32),
-            'primary' => 1, 'archived' => 0,
-        ]);
-        $this->seedImmediateCursor($group);
-
-        // No reach row yet → the cursor immediate digest mails the group and records the ledger.
-        $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-        $this->assertTrue(
-            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $member->id)->exists(),
-            'cursor immediate send is recorded in the ledger'
-        );
-
-        // Reach row appears afterwards; the expander must not re-mail the already-mailed member.
-        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
-        $before = DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count();
-        $sent = $this->service->mailNewlyReachedForPost($msg->id);
-        $this->assertSame(0, $sent, 'expander does not re-mail members the cursor digest already mailed');
-        $this->assertSame(
-            $before,
-            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count(),
-            'no new ledger rows — the shared ledger prevents the double-mail'
-        );
-    }
-
     public function test_daily_digest_reach_gates_rippling_posts_by_member_location(): void
     {
         // The daily digest (and the daily-posts push, which shares getPostsForUser) must
@@ -1770,21 +1077,20 @@ class UnifiedDigestServiceTest extends TestCase
         // a daily member is only shown a rippling post once its reach covers them.
         $poster = $this->createTestUser();
         $member = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $member->id)->update(['emailfrequency' => 24]);
         $this->setMyLocation($member, 51.5, -0.1);
 
         // Reach COVERS the member (-0.1, 51.5 is inside this polygon).
-        $covered = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: covered (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $covered->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $covered = $this->createTestMessage($poster, ['subject' => 'OFFER: covered (TestLocation)']);
+        DB::table('messages')->where('id', $covered->id)
+            ->update(['collection' => Message::COLLECTION_APPROVED, 'arrival' => now()]);
         $this->seedReach($covered->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
 
         // Reach does NOT cover the member (far to the east).
-        $faraway = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: faraway (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $faraway->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $faraway = $this->createTestMessage($poster, ['subject' => 'OFFER: faraway (TestLocation)']);
+        DB::table('messages')->where('id', $faraway->id)
+            ->update(['collection' => Message::COLLECTION_APPROVED, 'arrival' => now()]);
         $this->seedReach($faraway->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
 
         $tracker = UserDigest::create([
@@ -1800,99 +1106,6 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertNotContains($faraway->id, $ids, 'rippling post whose reach does not cover the member is excluded');
     }
 
-    /**
-     * Seed a post whose committed reach (and outer_bound, which seedReach derives as the
-     * polygon's own envelope) EXCLUDE the ring member's location, with a rural overflow ring
-     * — bbox included, as ReachService::parseOverflow would compute it — that DOES cover them.
-     * Placing the member outside the envelope (not just outside the exact polygon) exercises
-     * the authoritative outer_bound reject, not only the boundary-band fallback, which is the
-     * branch the rural-ring rescue must reach into. Returns the created Message.
-     */
-    private function seedRuralRingDigestPost(string $ringKey = 'sparse'): Message
-    {
-        $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: ring rescue (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
-        // Committed reach stops at lng 0.0, well short of the member at 0.4.
-        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
-        DB::table('rippling_reach')->where('msgid', $msg->id)->update([
-            'overflow_cells' => $this->overflowCellsDoc(
-                ['rural' => [$ringKey => 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))']],
-                ['bbox' => [-0.2, 51.4, 0.6, 51.6]],
-            ),
-        ]);
-
-        return $msg;
-    }
-
-    /** The ring-rescue member: outside the reach envelope at (51.5, 0.4), inside the ring. */
-    private function makeRingMember(Group $group, ?string $band): User
-    {
-        $member = $this->createTestUser();
-        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $settings = ['mylocation' => ['lat' => 51.5, 'lng' => 0.4]];
-        if ($band !== null) {
-            $settings['browseDensityBand'] = $band;
-        }
-        $member->settings = $settings;
-        $member->save();
-
-        return $member;
-    }
-
-    public function test_daily_digest_admits_member_via_rural_ring_when_outside_reach(): void
-    {
-        // The daily digest / daily-posts push reach gate must admit via the member's rural
-        // ring exactly as browse (ReachQueryService) and the reach mail (overflowBranch)
-        // already do — the gap this closes.
-        config(['freegle.ripple.rural_access.enabled' => true]);
-        $msg = $this->seedRuralRingDigestPost('sparse');
-        $group = Group::find(DB::table('messages_groups')->where('msgid', $msg->id)->value('groupid'));
-        $member = $this->makeRingMember($group, 'sparse');
-
-        $tracker = UserDigest::create(['userid' => $member->id, 'mode' => UnifiedDigestService::MODE_DAILY, 'lastmsgid' => 0]);
-        $ids = $this->service->getPostsForUser($member, $tracker, UnifiedDigestService::MODE_DAILY)->pluck('id')->all();
-
-        $this->assertContains(
-            $msg->id,
-            $ids,
-            'outside the capped reach (and its outer_bound) but inside their own band ring - admitted'
-        );
-    }
-
-    public function test_daily_digest_excludes_member_whose_band_has_no_matching_ring(): void
-    {
-        // Geographically inside the sparse ring, but a dense-band member has not earned that
-        // budget: the ring belongs to the band, not the area - same rule as the mail path.
-        config(['freegle.ripple.rural_access.enabled' => true]);
-        $msg = $this->seedRuralRingDigestPost('sparse');
-        $group = Group::find(DB::table('messages_groups')->where('msgid', $msg->id)->value('groupid'));
-        $member = $this->makeRingMember($group, 'dense');
-
-        $tracker = UserDigest::create(['userid' => $member->id, 'mode' => UnifiedDigestService::MODE_DAILY, 'lastmsgid' => 0]);
-        $ids = $this->service->getPostsForUser($member, $tracker, UnifiedDigestService::MODE_DAILY)->pluck('id')->all();
-
-        $this->assertNotContains($msg->id, $ids, 'a dense-band member inside the sparse ring must not be admitted by it');
-    }
-
-    public function test_daily_digest_rural_ring_rescue_disabled_by_config(): void
-    {
-        // Lane off: the ring is stored but must be ignored entirely - old behaviour.
-        config(['freegle.ripple.rural_access.enabled' => false]);
-        $msg = $this->seedRuralRingDigestPost('sparse');
-        $group = Group::find(DB::table('messages_groups')->where('msgid', $msg->id)->value('groupid'));
-        $member = $this->makeRingMember($group, 'sparse');
-
-        $tracker = UserDigest::create(['userid' => $member->id, 'mode' => UnifiedDigestService::MODE_DAILY, 'lastmsgid' => 0]);
-        $ids = $this->service->getPostsForUser($member, $tracker, UnifiedDigestService::MODE_DAILY)->pluck('id')->all();
-
-        $this->assertNotContains($msg->id, $ids, 'lane off means the ring is inert - only the reach polygon decides');
-    }
-
     public function test_daily_digest_ignores_degraded_bounds_for_came_and_went_posts(): void
     {
         // Completion degrades a post's bounds row to a degenerate point (outer=POINT,
@@ -1903,14 +1116,13 @@ class UnifiedDigestServiceTest extends TestCase
         // carries the post (the design doc's "digest came-and-went posts vanish" trap).
         $poster = $this->createTestUser();
         $member = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $member->id)->update(['emailfrequency' => 24]);
         $this->setMyLocation($member, 51.5, -0.1);
 
-        $taken = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: came and went (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $taken->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $taken = $this->createTestMessage($poster, ['subject' => 'OFFER: came and went (TestLocation)']);
+        DB::table('messages')->where('id', $taken->id)
+            ->update(['collection' => Message::COLLECTION_APPROVED, 'arrival' => now()]);
         $this->seedReach($taken->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
         DB::table('messages_outcomes')->insert(['msgid' => $taken->id, 'outcome' => Message::OUTCOME_TAKEN]);
         // Degraded bounds, as completion pruning writes them.
@@ -1937,29 +1149,6 @@ class UnifiedDigestServiceTest extends TestCase
             (int) $posts->firstWhere('id', $taken->id)->has_success,
             'and it is flagged has_success for the came-and-went section'
         );
-    }
-
-    public function test_immediate_cursor_advances_past_reach_excluded_posts(): void
-    {
-        // After full rollout every new post has a reach row, so the cursor digest finds
-        // nothing to mail. The cursor must still advance past those posts — otherwise it
-        // freezes forever and the scan window grows without bound.
-        config(['freegle.digest.immediate_allowlist' => '*']);
-        [$group, $poster] = $this->bootstrapImmediateGroup();
-
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: reach only (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
-        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
-
-        $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        $cursor = DB::table('groups_digests')
-            ->where('groupid', $group->id)
-            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-            ->first();
-        $this->assertEquals((int) $msg->id, (int) $cursor->msgid,
-            'cursor advances past the reach-excluded post rather than freezing');
     }
 
     /** Set a user's settings.mylocation point (the canonical first-choice location source). */
@@ -2024,45 +1213,6 @@ class UnifiedDigestServiceTest extends TestCase
     }
 
     /**
-     * Helper: create a group, a poster, a recipient (both at
-     * emailfrequency=-1) and seed the immediate cursor. Returns
-     * [$group, $poster, $recipient]. Used by the allowlist tests above
-     * to keep their setup terse.
-     */
-    protected function bootstrapImmediateGroup(): array
-    {
-        $group = $this->createTestGroup();
-        $poster = $this->createTestUser();
-        $recipient = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group);
-        $this->seedImmediateCursor($group);
-        return [$group, $poster, $recipient];
-    }
-
-    /**
-     * Helper: seed/update a groups_digests row at frequency=-1 for one
-     * group. The per-group cron walks groups_digests, so a row must exist
-     * (V1 INSERT IGNOREs in production; tests need the same shape).
-     */
-    protected function seedImmediateCursor(Group $group, ?string $msgdate = null, ?int $msgid = null): void
-    {
-        // msgid has a FK to messages.id (ON DELETE SET NULL), so the value must
-        // be either NULL or a real message id. Tests that need a baseline cursor
-        // without a real message default to NULL.
-        \App\Models\GroupDigest::updateOrCreate(
-            [
-                'groupid' => $group->id,
-                'frequency' => Membership::EMAIL_FREQUENCY_IMMEDIATE,
-            ],
-            [
-                'msgdate' => $msgdate,
-                'msgid' => $msgid,
-            ]
-        );
-    }
-
-    /**
      * Push the given message's messages_groups.arrival back past the
      * isImmediateMessageReady() defer deadline so the digest doesn't
      * postpone it waiting for an attachment. Most immediate tests don't
@@ -2070,8 +1220,8 @@ class UnifiedDigestServiceTest extends TestCase
      */
     protected function makeImmediateReady(Message $message): void
     {
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
+        DB::table('messages')
+            ->where('id', $message->id)
             ->update([
                 'arrival' => now()->subMinutes(UnifiedDigestService::ATTACHMENT_WAIT_DEADLINE_MINUTES + 1),
             ]);
@@ -2091,10 +1241,7 @@ class UnifiedDigestServiceTest extends TestCase
         $user->lastaccess = now();
         $user->save();
         $user->refresh();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => 24]);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $user->id);
 
@@ -2108,284 +1255,6 @@ class UnifiedDigestServiceTest extends TestCase
     // at emailfrequency=-1 — including the poster, since V1 (no fromuser
     // filter) loops a user's own posts back to them too — advance the cursor.
 
-    public function test_immediate_sends_to_each_immediate_frequency_member_in_group(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $poster = $this->createTestUser();
-        $r1 = $this->createTestUser();
-        $r2 = $this->createTestUser();
-        $dailyOnly = $this->createTestUser();
-
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($r1, $group);
-        $this->createMembership($r2, $group);
-        $this->createMembership($dailyOnly, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->seedImmediateCursor($group);
-
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
-        $this->makeImmediateReady($msg);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        // poster + r1 + r2 are all immediate-frequency; all three receive
-        // (V1 parity includes the poster's own post). dailyOnly is excluded
-        // by the emailfrequency filter.
-        $this->assertEquals(1, $stats['groups_processed']);
-        $this->assertEquals(3, $stats['users_processed']);
-        $this->assertEquals(3, $stats['emails_sent']);
-    }
-
-    public function test_immediate_includes_poster_own_post(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->seedImmediateCursor($group);
-
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Own item (TestLocation)']);
-        $this->makeImmediateReady($msg);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        // V1 parity: the per-group selection has no fromuser filter, so a
-        // poster's own post loops back to them too. Poster is the only
-        // immediate-frequency member, so exactly one email goes out — to them.
-        $this->assertEquals(1, $stats['emails_sent']);
-    }
-
-    /**
-     * A post on more than one of a member's groups is still one item, and reaches them once.
-     * The immediate path runs once per group, so without a cross-group check the member is
-     * mailed once per group the post is on - two groups, two emails about the same thing.
-     */
-    public function test_immediate_mails_a_member_once_for_a_post_on_two_of_their_groups(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $poster = $this->createTestUser();
-        $recipient = $this->createTestUser();
-
-        // The recipient is in both groups; the poster only in A, so they are not also mailed
-        // twice and cannot mask the count.
-        $this->createMembership($poster, $groupA);
-        $this->createMembership($recipient, $groupA);
-        $this->createMembership($recipient, $groupB);
-        $this->seedImmediateCursor($groupA);
-        $this->seedImmediateCursor($groupB);
-
-        // One message, on both groups - the shape of a cross-post or a rippled copy.
-        $msg = $this->createTestMessage($poster, $groupA, ['subject' => 'OFFER: Singular Shared Item (TestLocation)']);
-        \Illuminate\Support\Facades\DB::table('messages_groups')->insert([
-            'msgid' => $msg->id,
-            'groupid' => $groupB->id,
-            'collection' => 'Approved',
-            'arrival' => now(),
-            'msgtype' => 'Offer',
-        ]);
-        $this->makeImmediateReady($msg);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        // Poster (group A only) = 1, recipient (both groups) = 1, not 2.
-        $this->assertEquals(
-            2,
-            $stats['emails_sent'],
-            'a post on two of the same member groups must reach them once, not once per group'
-        );
-    }
-
-    /**
-     * ONE ITEM, TWO MESSAGES. A hand cross-post, a TrashNothing copy or a repost puts the
-     * same thing in the database twice, under two msgids. The daily digest already collapses
-     * those into one card (deduplicatePosts); the immediate path must send the FIRST mail and
-     * then stay quiet, or the member gets the same item twice within minutes.
-     */
-    public function test_immediate_mails_a_member_once_for_one_item_posted_as_two_messages(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $group = $this->createTestGroup();
-        $poster = $this->createTestUser();
-        $recipient = $this->createTestUser();
-        // Poster on daily so only the recipient's mails are counted.
-        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($recipient, $group);
-        $this->seedImmediateCursor($group);
-
-        foreach (['a', 'b'] as $copy) {
-            $msg = $this->createTestMessage($poster, $group, [
-                'subject' => 'OFFER: Twice Posted Sofa (TestLocation)',
-                'textbody' => 'Same sofa, posted twice.',
-            ]);
-            $this->makeImmediateReady($msg);
-        }
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        $this->assertEquals(
-            1,
-            $stats['emails_sent'],
-            'one item posted as two messages must produce one immediate mail, not two'
-        );
-    }
-
-    /**
-     * The duplicate usually arrives LATER - after the first mail went out and the cursor moved
-     * past it. In-batch dedup cannot see that, so the check has to read the sent ledger.
-     */
-    public function test_immediate_does_not_remail_a_duplicate_that_arrives_after_the_first_mail(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $group = $this->createTestGroup();
-        $poster = $this->createTestUser();
-        $recipient = $this->createTestUser();
-        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($recipient, $group);
-        $this->seedImmediateCursor($group);
-
-        $first = $this->createTestMessage($poster, $group, [
-            'subject' => 'OFFER: Later Duplicate Lamp (TestLocation)',
-            'textbody' => 'A small lamp.',
-        ]);
-        $this->makeImmediateReady($first);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-        $this->assertEquals(1, $stats['emails_sent'], 'first copy mails normally');
-
-        $second = $this->createTestMessage($poster, $group, [
-            'subject' => 'OFFER: Later Duplicate Lamp (TestLocation)',
-            'textbody' => 'A small lamp.',
-        ]);
-        $this->makeImmediateReady($second);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-        $this->assertEquals(
-            0,
-            $stats['emails_sent'],
-            'a duplicate arriving after the first mail must not be mailed again'
-        );
-    }
-
-    /**
-     * Cross-posted BY HAND to two groups as two separate messages, member in both. Each group
-     * is a separate pass, so this only works if the check outlives the batch.
-     */
-    public function test_immediate_mails_a_member_once_for_one_item_posted_to_two_groups_separately(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $poster = $this->createTestUser();
-        $recipient = $this->createTestUser();
-        $this->createMembership($poster, $groupA, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($poster, $groupB, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($recipient, $groupA);
-        $this->createMembership($recipient, $groupB);
-        $this->seedImmediateCursor($groupA);
-        $this->seedImmediateCursor($groupB);
-
-        foreach ([$groupA, $groupB] as $group) {
-            $msg = $this->createTestMessage($poster, $group, [
-                'subject' => 'OFFER: Hand Crossposted Table (TestLocation)',
-                'textbody' => 'One table, two posts.',
-            ]);
-            $this->makeImmediateReady($msg);
-        }
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        $this->assertEquals(
-            1,
-            $stats['emails_sent'],
-            'the same item posted separately to two of the member groups must mail them once'
-        );
-    }
-
-    /**
-     * The guard must not swallow genuinely different things. Same poster, same subject, same
-     * place, DIFFERENT body is two items - exactly the case bodiesMatch() keeps apart in the
-     * daily digest, so immediate must keep them apart too.
-     */
-    public function test_immediate_still_mails_two_different_items_that_share_a_subject(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $group = $this->createTestGroup();
-        $poster = $this->createTestUser();
-        $recipient = $this->createTestUser();
-        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($recipient, $group);
-        $this->seedImmediateCursor($group);
-
-        foreach (['A blue one, 3-seater.', 'A red armchair, quite worn.'] as $body) {
-            $msg = $this->createTestMessage($poster, $group, [
-                'subject' => 'OFFER: Chair (TestLocation)',
-                'textbody' => $body,
-            ]);
-            $this->makeImmediateReady($msg);
-        }
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        $this->assertEquals(
-            2,
-            $stats['emails_sent'],
-            'two different items sharing a subject are two mails, as in the daily digest'
-        );
-    }
-
-    /**
-     * Location is part of the daily digest's dedup key, so the same wording at a different
-     * place is a different item there. Immediate follows the same rule - no more, no less.
-     */
-    public function test_immediate_still_mails_the_same_wording_from_a_different_location(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $group = $this->createTestGroup();
-        $poster = $this->createTestUser();
-        $recipient = $this->createTestUser();
-        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($recipient, $group);
-        $this->seedImmediateCursor($group);
-
-        $locA = DB::table('locations')->insertGetId([
-            'name' => 'DedupTestLocA', 'type' => 'Postcode', 'lat' => 51.5, 'lng' => -0.1,
-            'geometry' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
-        ]);
-        $locB = DB::table('locations')->insertGetId([
-            'name' => 'DedupTestLocB', 'type' => 'Postcode', 'lat' => 51.6, 'lng' => -0.2,
-            'geometry' => DB::raw("ST_GeomFromText('POINT(-0.2 51.6)', 3857)"),
-        ]);
-
-        foreach ([$locA, $locB] as $locid) {
-            $msg = $this->createTestMessage($poster, $group, [
-                'subject' => 'OFFER: Moving Boxes (TestLocation)',
-                'textbody' => 'Ten flat boxes.',
-                'locationid' => $locid,
-            ]);
-            $this->makeImmediateReady($msg);
-        }
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        $this->assertEquals(
-            2,
-            $stats['emails_sent'],
-            'same wording at two different locations is two items, matching the daily key'
-        );
-    }
-
     /**
      * The reach mailer is the other immediate path (rippling posts go through it, not the
      * cursor). A member already mailed about one copy must not be mailed about its twin when
@@ -2395,21 +1264,20 @@ class UnifiedDigestServiceTest extends TestCase
     {
         config(['freegle.digest.immediate_allowlist' => '*']);
 
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => 24]);
         $member = $this->createTestUser();
-        $this->createMembership($member, $group);
+        DB::table('users')->where('id', $member->id)->update(['emailfrequency' => -1]);
         $this->setMyLocation($member, 51.5, -0.1);
 
         $ids = [];
         foreach (['c', 'd'] as $copy) {
-            $msg = $this->createTestMessage($poster, $group, [
+            $msg = $this->createTestMessage($poster, [
                 'subject' => 'OFFER: Rippled Twice Bike (TestLocation)',
                 'textbody' => 'A bike, one owner.',
             ]);
-            DB::table('messages_groups')->where('msgid', $msg->id)
-                ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+            DB::table('messages')->where('id', $msg->id)
+                ->update(['collection' => Message::COLLECTION_APPROVED, 'arrival' => now()]);
             DB::table('messages_attachments')->insert([
                 'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat($copy, 32),
                 'primary' => 1, 'archived' => 0,
@@ -2432,20 +1300,19 @@ class UnifiedDigestServiceTest extends TestCase
      */
     public function test_item_siblings_group_copies_and_keep_other_things_apart(): void
     {
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
         $other = $this->createTestUser();
 
-        $copyOne = $this->createTestMessage($poster, $group, [
+        $copyOne = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Sibling Kettle (TestLocation)', 'textbody' => 'A kettle.',
         ]);
-        $copyTwo = $this->createTestMessage($poster, $group, [
+        $copyTwo = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Sibling Kettle (TestLocation)', 'textbody' => 'A kettle.',
         ]);
-        $different = $this->createTestMessage($poster, $group, [
+        $different = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Sibling Kettle (TestLocation)', 'textbody' => 'Actually a toaster.',
         ]);
-        $someoneElse = $this->createTestMessage($other, $group, [
+        $someoneElse = $this->createTestMessage($other, [
             'subject' => 'OFFER: Sibling Kettle (TestLocation)', 'textbody' => 'A kettle.',
         ]);
 
@@ -2476,11 +1343,10 @@ class UnifiedDigestServiceTest extends TestCase
         $member->save();
         $member->refresh();
 
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $member->id)->update(['emailfrequency' => 24]);
 
-        $this->createTestMessage($poster, $group, [
+        $this->createTestMessage($poster, [
             'subject' => 'OFFER: Repeated Shelf (TestLocation)',
             'textbody' => 'A pine shelf.',
             'arrival' => now()->subHours(2),
@@ -2489,7 +1355,7 @@ class UnifiedDigestServiceTest extends TestCase
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $member->id);
         $this->assertEquals(1, $stats['emails_sent'], 'the first digest carries the item');
 
-        $this->createTestMessage($poster, $group, [
+        $this->createTestMessage($poster, [
             'subject' => 'OFFER: Repeated Shelf (TestLocation)',
             'textbody' => 'A pine shelf.',
         ]);
@@ -2515,18 +1381,17 @@ class UnifiedDigestServiceTest extends TestCase
         $member->save();
         $member->refresh();
 
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $member->id)->update(['emailfrequency' => 24]);
 
         // Two copies, both inside the first-run 24h window. They collapse to one card, and the
         // older one must not be read as "already sent".
-        $this->createTestMessage($poster, $group, [
+        $this->createTestMessage($poster, [
             'subject' => 'OFFER: First Run Bike (TestLocation)',
             'textbody' => 'A bike.',
             'arrival' => now()->subHours(3),
         ]);
-        $this->createTestMessage($poster, $group, [
+        $this->createTestMessage($poster, [
             'subject' => 'OFFER: First Run Bike (TestLocation)',
             'textbody' => 'A bike.',
             'arrival' => now()->subHour(),
@@ -2535,554 +1400,6 @@ class UnifiedDigestServiceTest extends TestCase
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $member->id);
 
         $this->assertEquals(1, $stats['emails_sent'], 'a first digest still goes out');
-    }
-
-    public function test_immediate_sends_one_email_per_new_post(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $msgA = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: A (TestLocation)']);
-        $msgB = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: B (TestLocation)']);
-        $msgC = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: C (TestLocation)']);
-        $this->makeImmediateReady($msgA);
-        $this->makeImmediateReady($msgB);
-        $this->makeImmediateReady($msgC);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        // 3 posts × 2 immediate members (recipient + poster) = 6 emails.
-        $this->assertEquals(1, $stats['groups_processed']);
-        $this->assertEquals(2, $stats['users_processed']);
-        $this->assertEquals(6, $stats['emails_sent']);
-    }
-
-    /**
-     * A group with no immediate members must not re-scan the same messages on every
-     * tick. Without a cursor advance its scan window would grow without limit, which is
-     * the way dropping the eligible-groups pre-filter could have cost more than it saved.
-     */
-    public function test_group_with_no_immediate_members_still_advances_its_cursor(): void
-    {
-        $group = $this->createTestGroup();
-        $poster = $this->createTestUser();
-
-        $daily = $this->createTestUser();
-        $this->createMembership($daily, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-
-        $this->seedImmediateCursor($group);
-        $message = $this->createTestMessage($poster, $group);
-        $this->makeImmediateReady($message);
-
-        $this->service->sendDigests(
-            UnifiedDigestService::MODE_IMMEDIATE, null, null, false, $group->id
-        );
-
-        $cursor = DB::table('groups_digests')
-            ->where('groupid', $group->id)
-            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-            ->first();
-
-        $this->assertEquals(
-            $message->id,
-            (int) $cursor->msgid,
-            'the cursor must move past a message nobody was mailed, or it is rescanned for ever'
-        );
-    }
-
-    public function test_immediate_advances_groups_digests_cursor(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $msg1 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: A (TestLocation)']);
-        $msg2 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: B (TestLocation)']);
-        $this->makeImmediateReady($msg1);
-        $this->makeImmediateReady($msg2);
-
-        $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        $cursor = DB::table('groups_digests')
-            ->where('groupid', $group->id)
-            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-            ->first();
-
-        $this->assertEquals($msg2->id, $cursor->msgid);
-        $this->assertNotNull($cursor->msgdate);
-
-        // Running again with no new posts must not re-send.
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-        $this->assertEquals(0, $stats['emails_sent']);
-    }
-
-    public function test_immediate_tuple_tiebreak_catches_messages_with_identical_arrival(): void
-    {
-        // V1 only uses `arrival > msgdate`; we tighten to (arrival, msgid)
-        // tuple compare so a same-arrival collision can't drop a message
-        // between two cron ticks. Force two messages_groups rows to share
-        // an arrival, run once to send both, then run again to confirm
-        // nothing fires again.
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-
-        // Backdate past the immediate-defer deadline so isImmediateMessageReady
-        // doesn't postpone these; same arrival for both messages to force the
-        // tuple-tiebreak path we're testing.
-        $sharedArrival = now()
-            ->subMinutes(UnifiedDigestService::ATTACHMENT_WAIT_DEADLINE_MINUTES + 1)
-            ->format('Y-m-d H:i:s.u');
-        $msg1 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: A (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg1->id)->update(['arrival' => $sharedArrival]);
-        $msg2 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: B (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg2->id)->update(['arrival' => $sharedArrival]);
-
-        // 2 same-arrival posts × 2 immediate members (recipient + poster) = 4.
-        $first = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-        $this->assertEquals(4, $first['emails_sent'], 'Both same-arrival messages must be picked up');
-
-        $second = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-        $this->assertEquals(0, $second['emails_sent'], 'Cursor msgid must keep same-arrival messages from re-firing');
-    }
-
-    /**
-     * Renamed and re-pointed with the eligible-groups EXISTS removed.
-     *
-     * It used to assert groups_processed === 0, and its comment named the whereExists()
-     * as the reason. That filter cost roughly one and a half cores of the database
-     * sustained to skip 12 groups out of 505, so it is gone; the group is walked now.
-     *
-     * The guarantee members actually rely on is the second assertion, and it is
-     * untouched: nobody who has not asked for immediate mail receives any. That holds
-     * because the recipient query applies the same condition the EXISTS did.
-     */
-    public function test_immediate_sends_nothing_to_groups_with_no_immediate_members(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $poster = $this->createTestUser();
-        $dailyMember = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->createMembership($dailyMember, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->seedImmediateCursor($group);
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        $this->assertEquals(1, $stats['groups_processed'], 'the group is walked, not pre-filtered out');
-        $this->assertEquals(0, $stats['emails_sent'], 'nobody on it has asked for immediate mail');
-    }
-
-    public function test_immediate_limit_caps_groups_processed_per_run(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $poster = $this->createTestUser();
-        $recipient = $this->createTestUser();
-        for ($i = 0; $i < 3; $i++) {
-            $g = $this->createTestGroup();
-            $this->createMembership($poster, $g);
-            $this->createMembership($recipient, $g);
-            $this->seedImmediateCursor($g);
-            $msg = $this->createTestMessage($poster, $g, ['subject' => "OFFER: Item {$i} (TestLocation)"]);
-            $this->makeImmediateReady($msg);
-        }
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, null, 1);
-
-        // Limit caps it to one group; that group's post goes to both its
-        // immediate members (recipient + poster).
-        $this->assertEquals(1, $stats['groups_processed']);
-        $this->assertEquals(2, $stats['emails_sent']);
-    }
-
-    public function test_immediate_group_filter_restricts_to_single_group(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $poster = $this->createTestUser();
-        $recipient = $this->createTestUser();
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        foreach ([$groupA, $groupB] as $g) {
-            $this->createMembership($poster, $g);
-            $this->createMembership($recipient, $g);
-            $this->seedImmediateCursor($g);
-            $msg = $this->createTestMessage($poster, $g, ['subject' => 'OFFER: Item (TestLocation)']);
-            $this->makeImmediateReady($msg);
-        }
-
-        $stats = $this->service->sendDigests(
-            UnifiedDigestService::MODE_IMMEDIATE,
-            null, null, false, $groupA->id
-        );
-
-        // Only group A processed; its post goes to both immediate members
-        // (recipient + poster).
-        $this->assertEquals(1, $stats['groups_processed']);
-        $this->assertEquals(2, $stats['emails_sent']);
-
-        $cursorB = DB::table('groups_digests')
-            ->where('groupid', $groupB->id)
-            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-            ->first();
-        $this->assertNull($cursorB->msgdate, 'Group B must not have advanced its cursor');
-    }
-
-    public function test_immediate_user_filter_restricts_recipients_within_group(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $poster = $this->createTestUser();
-        $targeted = $this->createTestUser();
-        $other = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($targeted, $group);
-        $this->createMembership($other, $group);
-        $this->seedImmediateCursor($group);
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
-        $this->makeImmediateReady($msg);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $targeted->id);
-
-        // Only the targeted user gets the email.
-        $this->assertEquals(1, $stats['users_processed']);
-        $this->assertEquals(1, $stats['emails_sent']);
-
-        // Cursor must NOT advance when --user is set — the other group
-        // member ($other) still needs to receive this message on the next
-        // unrestricted run.
-        $cursor = DB::table('groups_digests')
-            ->where('groupid', $group->id)
-            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-            ->first();
-        $this->assertNull($cursor->msgdate, 'Cursor must not advance under a --user-restricted run');
-    }
-
-    public function test_immediate_dry_run_does_not_advance_cursor(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
-
-        $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, null, null, true);
-
-        $cursor = DB::table('groups_digests')
-            ->where('groupid', $group->id)
-            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-            ->first();
-
-        $this->assertNull($cursor->msgdate, 'Dry run must not advance the cursor');
-    }
-
-    public function test_immediate_defers_recent_message_with_no_attachment(): void
-    {
-        // Newly-posted message that hasn't acquired an AI-generated
-        // attachment yet — defer rather than mail with a stock placeholder
-        // while generation is still in flight. The cursor must NOT
-        // advance past it so the next tick retries.
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Recent no-image (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        $this->assertEquals(0, $stats['emails_sent']);
-
-        $cursor = DB::table('groups_digests')
-            ->where('groupid', $group->id)
-            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-            ->first();
-        $this->assertNull($cursor->msgdate, 'Cursor must not advance past a deferred message');
-    }
-
-    public function test_immediate_sends_attached_message_even_if_recent(): void
-    {
-        // Has a usable attachment immediately (user-uploaded photo).
-        // No need to wait for AI; mail right away.
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: With photo (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
-        DB::table('messages_attachments')->insert([
-            'msgid' => $msg->id,
-            'externaluid' => 'freegletusd-' . str_repeat('a', 32),
-            'primary' => 1,
-            'archived' => 0,
-        ]);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        // recipient + poster both receive (immediate members; own post included).
-        $this->assertEquals(2, $stats['emails_sent']);
-    }
-
-    public function test_immediate_sends_unattached_message_after_deadline(): void
-    {
-        // Older than ATTACHMENT_WAIT_DEADLINE_MINUTES and still no
-        // attachment — give up waiting and send with the placeholder
-        // rather than holding the notification indefinitely.
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Stuck no-image (TestLocation)']);
-        $oldArrival = now()->subMinutes(UnifiedDigestService::ATTACHMENT_WAIT_DEADLINE_MINUTES + 1);
-        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => $oldArrival]);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        // recipient + poster both receive (immediate members; own post included).
-        $this->assertEquals(2, $stats['emails_sent']);
-
-        $cursor = DB::table('groups_digests')
-            ->where('groupid', $group->id)
-            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-            ->first();
-        $this->assertNotNull($cursor->msgdate, 'Cursor must advance after we give up waiting');
-    }
-
-    public function test_immediate_shard_partitions_groups_by_modulo(): void
-    {
-        // Each shard must own a disjoint slice of groups (MOD(groupid, N)
-        // = shard). Running shard 0 of 4 must process only groups where
-        // groupid % 4 == 0; running shard 1 must process only those where
-        // % 4 == 1; and so on. Union across all shards = every group.
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $poster = $this->createTestUser();
-        $recipient = $this->createTestUser();
-
-        // Create 8 groups; force their ids so we know each shard's slice.
-        // (createTestGroup doesn't let us pin the id, but we can sample
-        // many and just check that the shard filter is applied — we look
-        // at WHICH groups each shard sees.)
-        $groups = [];
-        for ($i = 0; $i < 8; $i++) {
-            $g = $this->createTestGroup();
-            $this->createMembership($poster, $g);
-            $this->createMembership($recipient, $g);
-            $this->seedImmediateCursor($g);
-            $this->createTestMessage($poster, $g, ['subject' => "OFFER: Item {$i} (TestLocation)"]);
-            DB::table('messages_groups')->where('msgid', DB::table('messages')->where('subject','like',"OFFER: Item {$i}%")->max('id'))
-                ->update(['arrival' => now()->subMinutes(10)]); // older than the AI-wait deadline so they all send
-            $groups[$i] = $g;
-        }
-
-        // Run shard 0 of 2: should process exactly the groups with even
-        // ids. Shard 1 should process exactly the groups with odd ids.
-        $statsShard0 = $this->service->sendDigests(
-            UnifiedDigestService::MODE_IMMEDIATE,
-            null, null, false, null, 0, 2
-        );
-        $statsShard1 = $this->service->sendDigests(
-            UnifiedDigestService::MODE_IMMEDIATE,
-            null, null, false, null, 1, 2
-        );
-
-        $evenGroupCount = collect($groups)->filter(fn($g) => $g->id % 2 === 0)->count();
-        $oddGroupCount = collect($groups)->filter(fn($g) => $g->id % 2 === 1)->count();
-
-        $this->assertEquals($evenGroupCount, $statsShard0['groups_processed'], 'Shard 0 must process even-id groups');
-        $this->assertEquals($oddGroupCount, $statsShard1['groups_processed'], 'Shard 1 must process odd-id groups');
-        $this->assertEquals(count($groups), $statsShard0['groups_processed'] + $statsShard1['groups_processed'], 'Shards must partition the group set');
-    }
-
-    public function test_immediate_shards_do_not_double_process_same_group(): void
-    {
-        // Stronger check than the partition test: pick one specific
-        // group and verify that exactly one shard (the one matching
-        // MOD(groupid, 4)) sees it and the other three don't.
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()->subMinutes(10)]);
-
-        $owningShard = $group->id % 4;
-        for ($s = 0; $s < 4; $s++) {
-            // Reset cursor between shards so each run sees a clean state.
-            // msgid must be NULL (not 0) — there's a FK to messages.id.
-            DB::table('groups_digests')
-                ->where('groupid', $group->id)
-                ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-                ->update(['msgid' => null, 'msgdate' => null]);
-
-            $stats = $this->service->sendDigests(
-                UnifiedDigestService::MODE_IMMEDIATE,
-                null, null, false, null, $s, 4
-            );
-            if ($s === $owningShard) {
-                $this->assertEquals(1, $stats['groups_processed'], "Shard {$s} owns this group");
-                // recipient + poster both receive (immediate members; own post included).
-                $this->assertEquals(2, $stats['emails_sent']);
-            } else {
-                $this->assertEquals(0, $stats['groups_processed'], "Shard {$s} must not see this group");
-                $this->assertEquals(0, $stats['emails_sent']);
-            }
-        }
-    }
-
-    public function test_immediate_deferral_blocks_later_messages_in_same_group(): void
-    {
-        // If msg A (older) is deferred, msg B (newer) MUST NOT be sent
-        // even if it's ready — otherwise advancing the cursor to B's
-        // position would skip A on the next tick.
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $now = now();
-
-        // Msg A: arrived now, no attachment → deferred.
-        $a = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: A no-img (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $a->id)->update(['arrival' => $now]);
-
-        // Msg B: arrived later, has attachment → would be ready, but
-        // must wait behind A.
-        $b = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: B with photo (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $b->id)->update(['arrival' => $now->copy()->addSecond()]);
-        DB::table('messages_attachments')->insert([
-            'msgid' => $b->id,
-            'externaluid' => 'freegletusd-' . str_repeat('b', 32),
-            'primary' => 1,
-            'archived' => 0,
-        ]);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        $this->assertEquals(0, $stats['emails_sent'], 'Later ready msg B must wait until A is dealt with');
-
-        $cursor = DB::table('groups_digests')
-            ->where('groupid', $group->id)
-            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-            ->first();
-        $this->assertNull($cursor->msgdate, 'Cursor must not advance past the deferred A');
-    }
-
-    public function test_immediate_advances_cursor_even_if_one_recipient_send_throws(): void
-    {
-        // Regression: if Mail::send threw for one recipient (e.g. bad
-        // address), the exception used to escape processGroupImmediate's
-        // outer foreach. lastProcessed stayed null → cursor never
-        // advanced → next cron tick re-sent the SAME message to every
-        // recipient. Observed: Penny Langley received 27 copies of one
-        // post in 13 min. SafeMail::sendMailable now catches permanent
-        // failures and marks the recipient as bouncing, so the loop
-        // keeps going and the cursor advances normally.
-        //
-        // We can't easily make Mail::fake() throw, so use a User with a
-        // syntactically invalid preferred email to drive the permanent-
-        // failure path through SmtpFailureClassifier in a real Mail
-        // pipeline. This needs the real Symfony mailer (not Mail::fake);
-        // tests in CI use a null mailer that swallows everything, so for
-        // unit purposes we assert the cursor logic with all-good sends.
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $poster = $this->createTestUser();
-        $r1 = $this->createTestUser();
-        $r2 = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($r1, $group);
-        $this->createMembership($r2, $group);
-        $this->seedImmediateCursor($group);
-
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
-        $this->makeImmediateReady($msg);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        // Poster + both recipients got mailed (all immediate members; own
-        // post loops back to the poster per V1 parity).
-        $this->assertEquals(3, $stats['emails_sent']);
-
-        // Cursor advanced (this is the regression check — used to stay
-        // at null if any send threw).
-        $cursor = DB::table('groups_digests')
-            ->where('groupid', $group->id)
-            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-            ->first();
-        $this->assertEquals($msg->id, $cursor->msgid, 'Cursor must advance after sends complete');
-
-        // Re-running finds nothing to do (proving the cursor stuck).
-        $stats2 = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-        $this->assertEquals(0, $stats2['emails_sent'], 'No duplicate send after cursor advance');
-    }
-
-    /**
-     * Long-inactive members and daily members must not get immediate
-     * per-post emails (Discourse topic 9728 posts 11-12: member 39318461
-     * "no recent activity"; support flooded). processGroupImmediate gates
-     * recipients on the same V1-parity inactivity window the daily path uses
-     * (Engage::USER_INACTIVE = 365*12*3600 = 182.5 days) and on
-     * emailfrequency=-1. It must NOT use a stricter 90-day cutoff: that
-     * silently dropped members inactive for 90-182.5 days (member 41020747,
-     * lastaccess 111 days) even though V1 and the daily digest still mail them.
-     *
-     * Five-user group:
-     *   poster         emailfrequency=-1, active → receives (V1 parity: own post loops back)
-     *   immediateUser  emailfrequency=-1, active → receives
-     *   deadZoneUser   emailfrequency=-1, lastaccess 120 days ago → receives (inside 182.5d)
-     *   dailyUser      emailfrequency=24, active → excluded (emailfrequency filter)
-     *   inactiveUser   emailfrequency=-1, lastaccess 2 years ago → excluded (182.5d gate)
-     *
-     * So poster + immediateUser + deadZoneUser receive: 3 emails.
-     */
-    public function test_inactive_and_daily_users_must_not_receive_immediate_individual_emails(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $poster = $this->createTestUser();
-
-        // Active immediate-frequency member — receives (alongside the poster).
-        $immediateUser = $this->createTestUser();
-
-        // Immediate-frequency member inactive for 120 days — inside the 182.5-day
-        // V1-parity window, so must still receive. A 90-day cutoff would wrongly
-        // drop them (the member 41020747 regression).
-        $deadZoneUser = $this->createTestUser();
-        $deadZoneUser->lastaccess = now()->subDays(120);
-        $deadZoneUser->save();
-
-        // Active daily-digest member — correctly excluded by the emailfrequency filter.
-        $dailyUser = $this->createTestUser();
-
-        // Long-inactive immediate-frequency member (lastaccess 2 years ago) —
-        // beyond the 182.5-day window, correctly excluded.
-        $inactiveUser = $this->createTestUser();
-        $inactiveUser->lastaccess = now()->subYears(2);
-        $inactiveUser->save();
-
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($immediateUser, $group);
-        $this->createMembership($deadZoneUser, $group);
-        $this->createMembership($dailyUser, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->createMembership($inactiveUser, $group);
-        $this->seedImmediateCursor($group);
-
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
-        $this->makeImmediateReady($msg);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        // poster + immediateUser + deadZoneUser receive; dailyUser (freq) and
-        // inactiveUser (182.5-day gate) are excluded.
-        $this->assertEquals(3, $stats['emails_sent']);
-        $this->assertEquals(3, $stats['users_processed']);
     }
 
     // ─── V1-PARITY: per-group emailfrequency is authoritative ────────────
@@ -3106,12 +1423,9 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->refresh();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        $this->createTestMessage($poster, ['subject' => 'OFFER: Item (TestLocation)']);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
 
@@ -3131,12 +1445,9 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->refresh();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_IMMEDIATE,
-        ]);
-        $this->createTestMessage($poster, $group);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => -1]);
+        $this->createTestMessage($poster);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
 
@@ -3154,64 +1465,13 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->refresh();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->createTestMessage($poster, $group);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        $this->createTestMessage($poster);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
 
         $this->assertEquals(0, $stats['emails_sent']);
-    }
-
-    public function test_daily_digest_excludes_posts_from_immediate_only_groups(): void
-    {
-        // Mixed-frequency case: same user, two groups, one Daily and one
-        // Immediate. The daily roll-up must contain ONLY the daily
-        // group's post — the immediate group's post must not be bundled
-        // (that group is the immediate cron's responsibility). The old
-        // code skipped the per-group emailfrequency filter whenever
-        // simplemail was set and would have included both.
-        $recipient = $this->createTestUser();
-        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
-        $recipient->lastaccess = now();
-        $recipient->save();
-        $recipient->refresh();
-
-        $poster = $this->createTestUser();
-        $dailyGroup = $this->createTestGroup();
-        $immediateGroup = $this->createTestGroup();
-        $this->createMembership($poster, $dailyGroup);
-        $this->createMembership($poster, $immediateGroup);
-        $this->createMembership($recipient, $dailyGroup, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->createMembership($recipient, $immediateGroup, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_IMMEDIATE,
-        ]);
-
-        $dailyMsg = $this->createTestMessage($poster, $dailyGroup, [
-            'subject' => 'OFFER: Daily item (TestLocation)',
-        ]);
-        $immediateMsg = $this->createTestMessage($poster, $immediateGroup, [
-            'subject' => 'OFFER: Immediate item (TestLocation)',
-        ]);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
-
-        $this->assertEquals(1, $stats['emails_sent']);
-        Mail::assertSent(\App\Mail\Digest\UnifiedDigest::class, function ($mail) use ($dailyMsg, $immediateMsg) {
-            // $posts is protected on purpose: making it public would auto-inject
-            // the raw collection into the mail views and shadow the prepared
-            // posts (breaking the templates), so read it via reflection.
-            $prop = new \ReflectionProperty($mail, 'posts');
-            $prop->setAccessible(true);
-            $subjects = $prop->getValue($mail)->map(fn ($p) => $p['message']->subject)->all();
-            return in_array($dailyMsg->subject, $subjects, true)
-                && !in_array($immediateMsg->subject, $subjects, true);
-        });
     }
 
     public function test_immediate_excludes_simplemail_full_user_with_daily_only_memberships(): void
@@ -3228,10 +1488,7 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->save();
         $recipient->refresh();
 
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
         $reflection = new \ReflectionClass($this->service);
         $method = $reflection->getMethod('getUsersForDigest');
@@ -3257,12 +1514,9 @@ class UnifiedDigestServiceTest extends TestCase
     {
         $recipient = $this->createTestUser();
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
-        $msg = $this->createTestMessage($poster, $group, [
+        $msg = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Counted (TestLocation)',
             'arrival' => now()->subHours(2),
         ]);
@@ -3318,8 +1572,7 @@ class UnifiedDigestServiceTest extends TestCase
 
         // Need a real message row to satisfy rippling_reach FK on msgid.
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg = $this->createTestMessage($poster, $group);
+        $msg = $this->createTestMessage($poster);
 
         // seedReach() seeds the origin at (lat 51.5, lng -0.1). The polygon stores
         // lng/lat DEGREES (tagged SRID 3857 by Freegle convention). This box spans
@@ -3410,19 +1663,16 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->refresh();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup(['lat' => 51.5, 'lng' => -0.12]);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
         // near post has NEWER arrival; far post has OLDER arrival.
         // Arrival ASC would put far (older) first => [far, near].
         // Score ordering should put near first => [near, far].
-        $near = $this->createTestMessage($poster, $group, [
+        $near = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Near (TestLocation)',
             'lat' => 51.5, 'lng' => -0.12, 'arrival' => now()->subHours(2),
         ]);
-        $far = $this->createTestMessage($poster, $group, [
+        $far = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Far (TestLocation)',
             'lat' => 53.0, 'lng' => -0.12, 'arrival' => now()->subHours(10),
         ]);
@@ -3461,19 +1711,16 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->refresh();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup(['lat' => 51.5, 'lng' => -0.12]);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
         // A normal, recent, in-window post.
-        $normal = $this->createTestMessage($poster, $group, [
+        $normal = $this->createTestMessage($poster, [
             'subject' => 'OFFER: normal recent (TestLocation)',
             'lat' => 51.5, 'lng' => -0.12, 'arrival' => now()->subHours(1),
         ]);
         // A PINNED post that arrived 10 days ago — OUTSIDE the first-digest 24h window, so
         // getPostsForUser would NOT return it. Pinning must force it in, at the very top.
-        $pinnedMsg = $this->createTestMessage($poster, $group, [
+        $pinnedMsg = $this->createTestMessage($poster, [
             'subject' => 'OFFER: pinned clearance (TestLocation)',
             'lat' => 51.5, 'lng' => -0.12, 'arrival' => now()->subDays(10),
         ]);
@@ -3507,14 +1754,11 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->refresh();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
         // The only post is pinned but has been TAKEN (closed). Pinning applies only while a
         // post is open, so it must NOT be force-included, and nothing should send.
-        $pinnedTaken = $this->createTestMessage($poster, $group, [
+        $pinnedTaken = $this->createTestMessage($poster, [
             'subject' => 'OFFER: pinned but taken (TestLocation)',
             'arrival' => now()->subDays(10),
         ]);
@@ -3539,16 +1783,15 @@ class UnifiedDigestServiceTest extends TestCase
     {
         config(['freegle.digest.immediate_allowlist' => '*']);
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group, ['added' => now()->subHours(72)]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, ['added' => now()->subHours(72)]); // immediate by default
+        DB::table('users')->where('id', $member->id)->update(['emailfrequency' => -1, 'added' => now()->subHours(72)]);
         $member->settings = ['mylocation' => ['lat' => 51.5, 'lng' => -0.1]];
         $member->save();
 
-        $message = $this->createTestMessage($poster, $group);
-        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $group->id)->update([
-            'collection' => MessageGroup::COLLECTION_APPROVED,
+        $message = $this->createTestMessage($poster);
+        DB::table('messages')->where('id', $message->id)->update([
+            'collection' => Message::COLLECTION_APPROVED,
             'arrival' => now()->subHours(1),
         ]);
         // Reach (status 'expanding', just updated) covering the member's location.
@@ -3628,7 +1871,7 @@ class UnifiedDigestServiceTest extends TestCase
     // immediate cursor path and the reach-mail path — see
     // docs/superpowers/specs/2026-07-01-distance-preference-email-filtering-design.md.
     // London (51.5074, -0.1278) is the default group/message location
-    // (createTestGroup/createTestMessage); Edinburgh (55.9533, -3.1889) is
+    // (createTestMessage); Edinburgh (55.9533, -3.1889) is
     // ~330 miles away (always "far"); (51.5, 0.4) is ~22.7 miles away (a
     // "medium-far" point used to straddle a 2-mile cap vs a 50-mile cap).
 
@@ -3646,11 +1889,10 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->save();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
-        $this->createTestMessage($poster, $group, [
+        $this->createTestMessage($poster, [
             'subject' => 'OFFER: Far item (Edinburgh)',
             'lat' => 55.9533,
             'lng' => -3.1889,
@@ -3675,12 +1917,11 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->save();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
         // ~0.9 miles from the recipient — inside the 5-mile cap.
-        $this->createTestMessage($poster, $group, [
+        $this->createTestMessage($poster, [
             'subject' => 'OFFER: Near item (London)',
             'lat' => 51.52,
             'lng' => -0.1278,
@@ -3706,11 +1947,10 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->save();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
-        $this->createTestMessage($poster, $group, [
+        $this->createTestMessage($poster, [
             'subject' => 'OFFER: Far item (Edinburgh)',
             'lat' => 55.9533,
             'lng' => -3.1889,
@@ -3735,11 +1975,10 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->save();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
-        $this->createTestMessage($poster, $group, [
+        $this->createTestMessage($poster, [
             'subject' => 'OFFER: Far item (Edinburgh)',
             'lat' => 55.9533,
             'lng' => -3.1889,
@@ -3767,20 +2006,19 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->save();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
         // ~0.9 miles away, inside the 2-mile cap — keeps the digest non-empty
         // so this test isolates the completed-post filtering, not the send/no-send decision.
-        $this->createTestMessage($poster, $group, [
+        $this->createTestMessage($poster, [
             'subject' => 'OFFER: Near item (London)',
             'lat' => 51.52,
             'lng' => -0.1278,
         ]);
 
         // Taken, ~330 miles away (Edinburgh) — outside the 2-mile cap.
-        $farTaken = $this->createTestMessage($poster, $group, [
+        $farTaken = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Far taken item (Edinburgh)',
             'lat' => 55.9533,
             'lng' => -3.1889,
@@ -3827,12 +2065,11 @@ class UnifiedDigestServiceTest extends TestCase
         $poster->settings = ['browseMaxDistance' => 2];
         $poster->save();
 
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
         // ~22.7 miles from the recipient — outside the poster's 2-mile outbound cap.
-        $this->createTestMessage($poster, $group, [
+        $this->createTestMessage($poster, [
             'subject' => 'OFFER: Local-only item',
             'lat' => 51.5,
             'lng' => 0.4,
@@ -3860,11 +2097,10 @@ class UnifiedDigestServiceTest extends TestCase
         $poster->settings = ['browseMaxDistance' => 50];
         $poster->save();
 
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
-        $this->createTestMessage($poster, $group, [
+        $this->createTestMessage($poster, [
             'subject' => 'OFFER: Wider-reach item',
             'lat' => 51.5,
             'lng' => 0.4,
@@ -3888,11 +2124,10 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->lastaccess = now();
         $recipient->save();
 
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
         // The recipient's OWN post, far from their resolved location.
-        $this->createTestMessage($recipient, $group, [
+        $this->createTestMessage($recipient, [
             'subject' => 'OFFER: My own far item (Edinburgh)',
             'lat' => 55.9533,
             'lng' => -3.1889,
@@ -3917,11 +2152,10 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->save();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
-        $this->createTestMessage($poster, $group, [
+        $this->createTestMessage($poster, [
             'subject' => 'OFFER: Far item (Edinburgh)',
             'lat' => 55.9533,
             'lng' => -3.1889,
@@ -3947,11 +2181,10 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient->save();
 
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
-        $far = $this->createTestMessage($poster, $group, [
+        $far = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Far item (Edinburgh)',
             'lat' => 55.9533,
             'lng' => -3.1889,
@@ -3971,142 +2204,23 @@ class UnifiedDigestServiceTest extends TestCase
         );
     }
 
-    public function test_immediate_cursor_filters_far_post_for_distance_limited_member(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-
-        $limited = $this->createTestUser();
-        $limited->settings = ['browseMaxDistance' => 2, 'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278]];
-        $limited->save();
-        $this->createMembership($limited, $group);
-
-        $this->seedImmediateCursor($group);
-
-        $msg = $this->createTestMessage($poster, $group, [
-            'subject' => 'OFFER: Far item (Edinburgh)',
-            'lat' => 55.9533,
-            'lng' => -3.1889,
-        ]);
-        $this->makeImmediateReady($msg);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        // Poster's own post always bypasses the filter; the distance-limited member
-        // does not get mailed — the post is ~330 miles away, beyond their 2-mile cap.
-        $this->assertEquals(1, $stats['emails_sent']);
-        $this->assertEquals(1, $stats['users_processed']);
-    }
-
-    public function test_immediate_cursor_does_not_filter_unlimited_member_for_distance_preference(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-
-        $unlimited = $this->createTestUser();
-        $unlimited->settings = ['mylocation' => ['lat' => 51.5074, 'lng' => -0.1278]]; // no browseMaxDistance
-        $unlimited->save();
-        $this->createMembership($unlimited, $group);
-
-        $this->seedImmediateCursor($group);
-
-        $msg = $this->createTestMessage($poster, $group, [
-            'subject' => 'OFFER: Far item (Edinburgh)',
-            'lat' => 55.9533,
-            'lng' => -3.1889,
-        ]);
-        $this->makeImmediateReady($msg);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        $this->assertEquals(2, $stats['emails_sent'], 'an unlimited member in the same group still gets the far post');
-        $this->assertEquals(2, $stats['users_processed']);
-    }
-
-    public function test_immediate_cursor_advances_even_when_every_recipient_is_distance_filtered(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        // The poster is NOT a member of this group, so there is no own-post
-        // bypass in play — the only recipient is filtered by distance.
-        $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        $limited = $this->createTestUser();
-        $limited->settings = ['browseMaxDistance' => 2, 'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278]];
-        $limited->save();
-        $this->createMembership($limited, $group);
-
-        $this->seedImmediateCursor($group);
-
-        $msg = $this->createTestMessage($poster, $group, [
-            'subject' => 'OFFER: Far item (Edinburgh)',
-            'lat' => 55.9533,
-            'lng' => -3.1889,
-        ]);
-        $this->makeImmediateReady($msg);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        $this->assertEquals(0, $stats['emails_sent'], 'the only recipient is filtered out by distance');
-
-        $cursor = DB::table('groups_digests')->where('groupid', $group->id)
-            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)->first();
-        $this->assertEquals(
-            (int) $msg->id,
-            (int) $cursor->msgid,
-            'cursor still advances past the message even though every recipient was distance-filtered'
-        );
-    }
-
-    public function test_immediate_cursor_own_post_bypasses_distance_preference(): void
-    {
-        config(['freegle.digest.immediate_allowlist' => '*']);
-
-        $poster = $this->createTestUser();
-        $poster->settings = ['browseMaxDistance' => 1, 'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278]];
-        $poster->save();
-
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->seedImmediateCursor($group);
-
-        $msg = $this->createTestMessage($poster, $group, [
-            'subject' => 'OFFER: Own far item (Edinburgh)',
-            'lat' => 55.9533,
-            'lng' => -3.1889,
-        ]);
-        $this->makeImmediateReady($msg);
-
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
-
-        $this->assertEquals(1, $stats['emails_sent'], 'own post always bypasses the distance filter');
-    }
-
     public function test_mail_newly_reached_filters_distance_limited_member_inside_reach(): void
     {
         config(['freegle.digest.immediate_allowlist' => '*']);
 
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
         $memberC = $this->createTestUser();
-        $this->createMembership($memberC, $group);
+        DB::table('users')->where('id', $memberC->id)->update(['emailfrequency' => -1]);
         // ~22.7 miles from the post origin — inside the reach polygon below, but
         // beyond memberC's own 2-mile cap.
         $memberC->settings = ['browseMaxDistance' => 2, 'mylocation' => ['lat' => 51.5, 'lng' => 0.4]];
         $memberC->save();
 
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: reach distance (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $msg = $this->createTestMessage($poster, ['subject' => 'OFFER: reach distance (TestLocation)']);
+        DB::table('messages')->where('id', $msg->id)
+            ->update(['collection' => Message::COLLECTION_APPROVED, 'arrival' => now()]);
         DB::table('messages_attachments')->insert([
             'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('c', 32),
             'primary' => 1, 'archived' => 0,
@@ -4126,18 +2240,17 @@ class UnifiedDigestServiceTest extends TestCase
     {
         config(['freegle.digest.immediate_allowlist' => '*']);
 
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
         $memberC = $this->createTestUser();
-        $this->createMembership($memberC, $group);
+        DB::table('users')->where('id', $memberC->id)->update(['emailfrequency' => -1]);
         $memberC->settings = ['browseMaxDistance' => 2, 'mylocation' => ['lat' => 51.5, 'lng' => 0.4]];
         $memberC->save();
 
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: reach distance widen (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $msg = $this->createTestMessage($poster, ['subject' => 'OFFER: reach distance widen (TestLocation)']);
+        DB::table('messages')->where('id', $msg->id)
+            ->update(['collection' => Message::COLLECTION_APPROVED, 'arrival' => now()]);
         DB::table('messages_attachments')->insert([
             'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('e', 32),
             'primary' => 1, 'archived' => 0,
@@ -4167,17 +2280,16 @@ class UnifiedDigestServiceTest extends TestCase
     {
         config(['freegle.digest.immediate_allowlist' => '*']);
 
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
         // Poster's own resolved location differs from the post's origin (e.g. they
         // posted from work) and is beyond their own tight distance preference.
         $poster->settings = ['browseMaxDistance' => 2, 'mylocation' => ['lat' => 51.5, 'lng' => 0.4]];
         $poster->save();
 
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: own reach post (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $msg = $this->createTestMessage($poster, ['subject' => 'OFFER: own reach post (TestLocation)']);
+        DB::table('messages')->where('id', $msg->id)
+            ->update(['collection' => Message::COLLECTION_APPROVED, 'arrival' => now()]);
         DB::table('messages_attachments')->insert([
             'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('f', 32),
             'primary' => 1, 'archived' => 0,
@@ -4192,76 +2304,6 @@ class UnifiedDigestServiceTest extends TestCase
         );
     }
 
-    public function test_cross_pipeline_distance_preference_decisions_agree(): void
-    {
-        // Same recipient location, same post location (~22.7 miles apart), same
-        // tight browseMaxDistance=2 miles: all three pipelines must independently
-        // reach the SAME "filter this out" decision, since all three call the one
-        // shared DistancePreferenceFilter helper.
-        config(['freegle.digest.immediate_allowlist' => '*']);
-        config(['freegle.digest.daily_allowlist' => '*']);
-
-        $recipientSettings = ['browseMaxDistance' => 2, 'mylocation' => ['lat' => 51.5, 'lng' => 0.4]];
-        $farLat = 51.5074;
-        $farLng = -0.1278;
-
-        // --- Daily ---
-        $dailyGroup = $this->createTestGroup();
-        $dailyPoster = $this->createTestUser();
-        $dailyRecipient = $this->createTestUser();
-        $dailyRecipient->settings = array_merge(['simplemail' => User::SIMPLE_MAIL_BASIC], $recipientSettings);
-        $dailyRecipient->lastaccess = now();
-        $dailyRecipient->save();
-        $this->createMembership($dailyRecipient, $dailyGroup, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->createMembership($dailyPoster, $dailyGroup);
-        $this->createTestMessage($dailyPoster, $dailyGroup, [
-            'subject' => 'OFFER: Cross-pipeline daily (TestLocation)', 'lat' => $farLat, 'lng' => $farLng,
-        ]);
-        $dailyStats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $dailyRecipient->id);
-        $this->assertEquals(0, $dailyStats['emails_sent'], 'daily digest rejects the out-of-range post');
-
-        // --- Immediate cursor ---
-        $cursorGroup = $this->createTestGroup();
-        $cursorPoster = $this->createTestUser();
-        $cursorRecipient = $this->createTestUser();
-        $cursorRecipient->settings = $recipientSettings;
-        $cursorRecipient->save();
-        $this->createMembership($cursorPoster, $cursorGroup);
-        $this->createMembership($cursorRecipient, $cursorGroup);
-        $this->seedImmediateCursor($cursorGroup);
-        $cursorMsg = $this->createTestMessage($cursorPoster, $cursorGroup, [
-            'subject' => 'OFFER: Cross-pipeline cursor (TestLocation)', 'lat' => $farLat, 'lng' => $farLng,
-        ]);
-        $this->makeImmediateReady($cursorMsg);
-        $cursorStats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $cursorRecipient->id);
-        $this->assertEquals(0, $cursorStats['emails_sent'], 'cursor immediate rejects the out-of-range post');
-
-        // --- Reach-mail ---
-        $reachGroup = $this->createTestGroup();
-        $reachPoster = $this->createTestUser();
-        $reachRecipient = $this->createTestUser();
-        $reachRecipient->settings = $recipientSettings;
-        $reachRecipient->save();
-        $this->createMembership($reachPoster, $reachGroup);
-        $this->createMembership($reachRecipient, $reachGroup);
-        $reachMsg = $this->createTestMessage($reachPoster, $reachGroup, [
-            'subject' => 'OFFER: Cross-pipeline reach (TestLocation)', 'lat' => $farLat, 'lng' => $farLng,
-        ]);
-        DB::table('messages_groups')->where('msgid', $reachMsg->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
-        DB::table('messages_attachments')->insert([
-            'msgid' => $reachMsg->id, 'externaluid' => 'freegletusd-'.str_repeat('g', 32),
-            'primary' => 1, 'archived' => 0,
-        ]);
-        // Polygon wide enough to cover both the post origin and the recipient's location.
-        $this->seedReach($reachMsg->id, 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))');
-        $this->service->mailNewlyReachedForPost($reachMsg->id);
-        $this->assertFalse(
-            DB::table('rippling_reach_notified')->where('msgid', $reachMsg->id)->where('userid', $reachRecipient->id)->exists(),
-            'reach-mail rejects the out-of-range post, same as the other two pipelines'
-        );
-    }
-
     public function test_daily_digest_eager_loads_externalmods_for_ai_photo_detection(): void
     {
         // The daily-posts PUSH collage prefers a real photo over an AI illustration
@@ -4271,17 +2313,14 @@ class UnifiedDigestServiceTest extends TestCase
         // tests build fully-loaded models and so never exercised the real eager-load.
         $poster = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $recipient->lastaccess = now();
         $recipient->save();
 
-        $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
 
-        $msg = $this->createTestMessage($poster, $group, [
+        $msg = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Sofa (London)',
         ]);
         MessageAttachment::create([
@@ -4336,12 +2375,11 @@ class UnifiedDigestServiceTest extends TestCase
         string $ringKey = 'sparse'
     ): array {
         config(['freegle.digest.immediate_allowlist' => '*']);
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
         $member = $this->createTestUser();
-        $this->createMembership($member, $group);
+        DB::table('users')->where('id', $member->id)->update(['emailfrequency' => -1]);
         $settings = [
             'mylocation' => ['lat' => 51.5, 'lng' => 0.4],
             // The sentinel: their own preference must not be what excludes them, or the test
@@ -4355,9 +2393,9 @@ class UnifiedDigestServiceTest extends TestCase
         $member->settings = $settings;
         $member->save();
 
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: rural overflow (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $msg = $this->createTestMessage($poster, ['subject' => 'OFFER: rural overflow (TestLocation)']);
+        DB::table('messages')->where('id', $msg->id)
+            ->update(['collection' => Message::COLLECTION_APPROVED, 'arrival' => now()]);
         DB::table('messages_attachments')->insert([
             'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('r', 32),
             'primary' => 1, 'archived' => 0,
@@ -4538,21 +2576,20 @@ class UnifiedDigestServiceTest extends TestCase
             'freegle.ripple.fairness.enabled' => true,
             'freegle.ripple.cluster.enabled' => true,
         ]);
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
         $member = $this->createTestUser();
-        $this->createMembership($member, $group);
+        DB::table('users')->where('id', $member->id)->update(['emailfrequency' => -1]);
         $member->settings = [
             'mylocation' => ['lat' => 51.5, 'lng' => 0.4],
             'browseDensityBand' => 'sparse',
         ];
         $member->save();
 
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: cluster only (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $msg = $this->createTestMessage($poster, ['subject' => 'OFFER: cluster only (TestLocation)']);
+        DB::table('messages')->where('id', $msg->id)
+            ->update(['collection' => Message::COLLECTION_APPROVED, 'arrival' => now()]);
         DB::table('messages_attachments')->insert([
             'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('c', 32),
             'primary' => 1, 'archived' => 0,
@@ -4575,7 +2612,6 @@ class UnifiedDigestServiceTest extends TestCase
         );
     }
 
-
     public function test_newly_reached_mail_answers_from_the_label_for_a_retired_grid(): void
     {
         // A retired grid (label stored, squares drained): the "you are now in
@@ -4583,16 +2619,15 @@ class UnifiedDigestServiceTest extends TestCase
         // one routing call, instead of probing squares that no longer exist.
         config(['freegle.digest.immediate_allowlist' => '*']);
 
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
         $member = $this->createTestUser();
-        $this->createMembership($member, $group);
+        DB::table('users')->where('id', $member->id)->update(['emailfrequency' => -1]);
         $this->setMyLocation($member, 51.5, -0.1);
 
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: retired reach mail (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        $msg = $this->createTestMessage($poster, ['subject' => 'OFFER: retired reach mail (TestLocation)']);
+        DB::table('messages')->where('id', $msg->id)
+            ->update(['collection' => Message::COLLECTION_APPROVED, 'arrival' => now()]);
         DB::table('messages_attachments')->insert([
             'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('a', 32),
             'primary' => 1, 'archived' => 0,
@@ -4620,12 +2655,11 @@ class UnifiedDigestServiceTest extends TestCase
      */
     private function seedReachUpdatedAgo(int $minutesAgo): int
     {
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: mark (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        $msg = $this->createTestMessage($poster, ['subject' => 'OFFER: mark (TestLocation)']);
+        DB::table('messages')->where('id', $msg->id)
+            ->update(['collection' => Message::COLLECTION_APPROVED, 'arrival' => now()]);
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
         DB::table('rippling_reach')->where('msgid', $msg->id)->update(['updated_at' => now()->subMinutes($minutesAgo)]);
 
@@ -4755,18 +2789,15 @@ class UnifiedDigestServiceTest extends TestCase
     /**
      * A settled post: approved, attached, reach seeded over a box, and OUTSIDE the post-side
      * pass (updated_at three hours ago, mark one hour ago). Only the member queue can reach it.
-     *
-     * @return array{0: int, 1: \App\Models\Group}
      */
-    private function seedSettledPostOutsideThePostPass(): array
+    private function seedSettledPostOutsideThePostPass(): int
     {
         config(['freegle.digest.immediate_allowlist' => '*']);
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: queue drain (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $msg->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
+        $msg = $this->createTestMessage($poster, ['subject' => 'OFFER: queue drain (TestLocation)']);
+        DB::table('messages')->where('id', $msg->id)
+            ->update(['collection' => Message::COLLECTION_APPROVED, 'arrival' => now()]);
         DB::table('messages_attachments')->insert([
             'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('b', 32),
             'primary' => 1, 'archived' => 0,
@@ -4778,7 +2809,7 @@ class UnifiedDigestServiceTest extends TestCase
             ['key'], ['value']
         );
 
-        return [$msg->id, $group];
+        return $msg->id;
     }
 
     private function ledgered(int $msgid, int $userid): bool
@@ -4787,16 +2818,16 @@ class UnifiedDigestServiceTest extends TestCase
     }
 
     /**
-     * The member side of reach mail. A member who joins a group after a post's reach has
-     * settled is queued by the join, and the next pass mails them about the posts that cover
+     * The member side of reach mail. A member who arrives (joins or moves) after a post's reach has
+     * settled is queued, and the next pass mails them about the posts that cover
      * them, then drops the queue row. Today they are mailed only if the join happens to land
      * inside 60 minutes of the post's last reach change.
      */
     public function test_queued_member_inside_a_settled_reach_is_mailed_and_dequeued(): void
     {
-        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $msgid = $this->seedSettledPostOutsideThePostPass();
         $member = $this->createTestUser();
-        $this->createMembership($member, $group);
+        DB::table('users')->where('id', $member->id)->update(['emailfrequency' => -1]);
         $this->setMyLocation($member, 51.5, -0.1);
         ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
 
@@ -4813,9 +2844,9 @@ class UnifiedDigestServiceTest extends TestCase
      */
     public function test_queued_member_outside_every_reach_is_dequeued_without_mail(): void
     {
-        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $msgid = $this->seedSettledPostOutsideThePostPass();
         $member = $this->createTestUser();
-        $this->createMembership($member, $group);
+        DB::table('users')->where('id', $member->id)->update(['emailfrequency' => -1]);
         $this->setMyLocation($member, 55.0, -3.0);
         ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_MOVED);
 
@@ -4831,9 +2862,9 @@ class UnifiedDigestServiceTest extends TestCase
      */
     public function test_drain_does_not_mail_a_member_already_in_the_ledger(): void
     {
-        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $msgid = $this->seedSettledPostOutsideThePostPass();
         $member = $this->createTestUser();
-        $this->createMembership($member, $group);
+        DB::table('users')->where('id', $member->id)->update(['emailfrequency' => -1]);
         $this->setMyLocation($member, 51.5, -0.1);
         $this->service->mailNewlyReachedForPost($msgid);
         $this->assertTrue($this->ledgered($msgid, $member->id), 'precondition: mailed once by the post side');
@@ -4852,12 +2883,12 @@ class UnifiedDigestServiceTest extends TestCase
      */
     public function test_drain_evaluates_only_the_queued_member(): void
     {
-        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $msgid = $this->seedSettledPostOutsideThePostPass();
         $queued = $this->createTestUser();
-        $this->createMembership($queued, $group);
+        DB::table('users')->where('id', $queued->id)->update(['emailfrequency' => -1]);
         $this->setMyLocation($queued, 51.5, -0.1);
         $bystander = $this->createTestUser();
-        $this->createMembership($bystander, $group);
+        DB::table('users')->where('id', $bystander->id)->update(['emailfrequency' => -1]);
         $this->setMyLocation($bystander, 51.45, -0.15);
         ReachMemberQueueService::enqueue($queued->id, ReachMemberQueueService::REASON_FREQUENCY);
 
@@ -4873,9 +2904,9 @@ class UnifiedDigestServiceTest extends TestCase
      */
     public function test_drain_is_partitioned_by_shard(): void
     {
-        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $msgid = $this->seedSettledPostOutsideThePostPass();
         $member = $this->createTestUser();
-        $this->createMembership($member, $group);
+        DB::table('users')->where('id', $member->id)->update(['emailfrequency' => -1]);
         $this->setMyLocation($member, 51.5, -0.1);
         ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
         $mine = (int) ($member->id % 2);

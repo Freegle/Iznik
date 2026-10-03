@@ -35,20 +35,19 @@ class ItemClusterServiceTest extends TestCase
     private function rows(array $rows): array
     {
         return array_map(
-            fn($r) => (object) ['name' => $r[0], 'msgid' => $r[1], 'fromuser' => $r[2], 'groupid' => $r[3]],
+            fn($r) => (object) ['name' => $r[0], 'msgid' => $r[1], 'fromuser' => $r[2]],
             $rows
         );
     }
 
-    /** @return array{canonical:string, name:string, count:int, users:int, groups:int} */
-    private function cluster(string $canonical, int $count, int $users = 3, int $groups = 2): array
+    /** @return array{canonical:string, name:string, count:int, users:int} */
+    private function cluster(string $canonical, int $count, int $users = 3): array
     {
         return [
             'canonical' => $canonical,
             'name'      => $canonical,
             'count'     => $count,
             'users'     => $users,
-            'groups'    => $groups,
         ];
     }
 
@@ -72,7 +71,6 @@ class ItemClusterServiceTest extends TestCase
         $this->assertSame('fridge freezer', $only['canonical']);
         $this->assertSame(3, $only['count']);
         $this->assertSame(3, $only['users']);
-        $this->assertSame(3, $only['groups']);
     }
 
     /** The printed label should be the plain name, not somebody's brand. */
@@ -132,11 +130,11 @@ class ItemClusterServiceTest extends TestCase
     }
 
     /**
-     * Rows arrive one per (post, group), so a post that rippled to three groups
-     * arrives three times. Summing would treble it.
+     * The same post can arrive in several rows (under several names). Summing would
+     * treble it.
      */
     #[Test]
-    public function it_counts_a_post_once_however_many_groups_it_reached(): void
+    public function it_counts_a_post_once_however_many_rows_it_arrives_in(): void
     {
         $clusters = $this->svc->cluster($this->rows([
             ['Kettle', 1, 11, 21],
@@ -148,7 +146,6 @@ class ItemClusterServiceTest extends TestCase
 
         $this->assertSame(1, $only['count']);
         $this->assertSame(1, $only['users']);
-        $this->assertSame(3, $only['groups']);
     }
 
     /** A name the canonicaliser cannot make sense of still has to be counted. */

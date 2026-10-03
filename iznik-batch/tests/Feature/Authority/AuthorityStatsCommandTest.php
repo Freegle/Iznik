@@ -62,21 +62,13 @@ class AuthorityStatsCommandTest extends TestCase
         $this->assertSame('Freegle in Test Authority (B)', $standard->getCell('A1')->getValue());
 
         // Membership row (latest month repeated as the "total").
-        $this->assertSame(120, (int) $standard->getCell('B9')->getValue());
-        $this->assertSame(132, (int) $standard->getCell('C9')->getValue());
-        $this->assertSame(145, (int) $standard->getCell('D9')->getValue());
+        $this->assertSame(3, (int) $standard->getCell('B9')->getValue());
+        $this->assertSame(4, (int) $standard->getCell('C9')->getValue());
+        $this->assertSame(3, (int) $standard->getCell('D9')->getValue());
 
-        // Kgs reused, and gifts made, for the first month.
-        $this->assertSame(150, (int) $standard->getCell('B10')->getValue());
-        $this->assertSame(14, (int) $standard->getCell('B13')->getValue());
-
-        // Both non-trivial groups appear in the per-group table (rows 19-20).
-        $names = [
-            $standard->getCell('A19')->getValue(),
-            $standard->getCell('A20')->getValue(),
-        ];
-        sort($names);
-        $this->assertSame(['Full Group', 'Half Group *'], $names);
+        // Kgs reused, and gifts made, for the last month.
+        $this->assertSame(25, (int) $standard->getCell('D10')->getValue());
+        $this->assertSame(1, (int) $standard->getCell('D13')->getValue());
 
         // Postcode breakdown sheet.
         $postcode = $sheet->getSheetByName('Postcode breakdown');

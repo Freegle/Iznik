@@ -35,9 +35,9 @@ func TestMatchesReturnsNearbyOffers(t *testing.T) {
 	near := makeTestVec(0.5001) // cosine ~1, above MinVectorScore
 	const offerID, wantedID, farID = 850001, 850002, 850003
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: offerID, Fromuser: 60001, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Sofa", Arrival: time.Now(), SubjectVec: near},
-		{Msgid: wantedID, Fromuser: 60002, Groupid: 100, Msgtype: "Wanted", Lat: 51.5, Lng: -0.1, Subject: "Want sofa", Arrival: time.Now(), SubjectVec: near},
-		{Msgid: farID, Fromuser: 60003, Groupid: 100, Msgtype: "Offer", Lat: 53.0, Lng: 2.0, Subject: "Far sofa", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: offerID, Fromuser: 60001, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Sofa", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: wantedID, Fromuser: 60002, Msgtype: "Wanted", Lat: 51.5, Lng: -0.1, Subject: "Want sofa", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: farID, Fromuser: 60003, Msgtype: "Offer", Lat: 53.0, Lng: 2.0, Subject: "Far sofa", Arrival: time.Now(), SubjectVec: near},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -56,7 +56,7 @@ func TestMatchesFlagOff(t *testing.T) {
 	queryVec := makeTestVec(0.5)
 	near := makeTestVec(0.5001)
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: 851001, Fromuser: 60001, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Sofa", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: 851001, Fromuser: 60001, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Sofa", Arrival: time.Now(), SubjectVec: near},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -68,7 +68,7 @@ func TestMatchesNoLocation(t *testing.T) {
 	queryVec := makeTestVec(0.5)
 	near := makeTestVec(0.5001)
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: 852001, Fromuser: 60001, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Sofa", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: 852001, Fromuser: 60001, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Sofa", Arrival: time.Now(), SubjectVec: near},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -85,8 +85,8 @@ func TestMatchesExcludesOwnPosts(t *testing.T) {
 	near := makeTestVec(0.5001)
 	const ownID, otherID = 853001, 853002
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: ownID, Fromuser: poster, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "My sofa", Arrival: time.Now(), SubjectVec: near},
-		{Msgid: otherID, Fromuser: 60002, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Their sofa", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: ownID, Fromuser: poster, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "My sofa", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: otherID, Fromuser: 60002, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Their sofa", Arrival: time.Now(), SubjectVec: near},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -119,8 +119,8 @@ func TestMatchesReachFilter(t *testing.T) {
 	near := makeTestVec(0.5001)
 	const inID = 854001
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: inID, Fromuser: 60002, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "in reach sofa", Arrival: time.Now(), SubjectVec: near},
-		{Msgid: outID, Fromuser: posterOut, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "out of reach sofa", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: inID, Fromuser: 60002, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "in reach sofa", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: outID, Fromuser: posterOut, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "out of reach sofa", Arrival: time.Now(), SubjectVec: near},
 	})
 	defer embedding.Global.SetEntries(nil)
 

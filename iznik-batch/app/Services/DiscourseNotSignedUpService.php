@@ -8,14 +8,13 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Daily check for Freegle groups not represented by an active moderator on
- * Discourse, plus active mods who haven't signed up and mods whose preferred
- * email is a TrashNothing address. Faithful migration of V1
+ * Weekly check for active moderators who haven't signed up to Discourse, and mods
+ * whose preferred email is a TrashNothing address. Migrated from V1
  * scripts/cron/discourse_not_signed_up.php.
  *
- * "Active" mod = Owner/Moderator on a Freegle group with users.lastaccess in
- * the last 6 months. Reports daily to geeks (and central mods) on Saturdays or
- * whenever a group is unrepresented.
+ * "Active" mod = a moderator, support user or admin (users.systemrole) with
+ * users.lastaccess in the last 6 months. There are no communities to be
+ * "represented" on Discourse any more. Reports to geeks (and central mods) on Saturdays.
  */
 class DiscourseNotSignedUpService
 {
@@ -38,37 +37,22 @@ class DiscourseNotSignedUpService
 
         $allDusers = $this->client->getAllUsers();
 
-        // Published groups, all initially "not represented".
-        $allGroups = DB::table('groups')
-            ->where('publish', 1)
-            ->orderBy('nameshort')
-            ->get(['id', 'nameshort']);
-        $represented = [];
-        foreach ($allGroups as $g) {
-            $represented[$g->id] = false;
-        }
-
-        // Active mods (one row per user+group they moderate), ordered by user id.
+        // Active mods, ordered by user id.
         $sixMonthsAgo = Carbon::now()->subMonths(6);
         $activeModsGroups = DB::table('users')
-            ->join('memberships', 'users.id', '=', 'memberships.userid')
-            ->join('groups', 'groups.id', '=', 'memberships.groupid')
-            ->whereIn('memberships.role', ['Owner', 'Moderator'])
-            ->where('groups.type', 'Freegle')
+            ->whereIn('users.systemrole', ['Moderator', 'Support', 'Admin'])
+            ->whereNull('users.deleted')
             ->where('users.lastaccess', '>', $sixMonthsAgo)
             ->orderBy('users.id')
             ->get([
                 'users.id as id',
                 'users.fullname as fullname',
                 'users.lastaccess as lastaccess',
-                'groups.id as groupid',
-                'memberships.settings as settings',
             ]);
 
         $distinctActiveMods = $activeModsGroups->pluck('id')->unique()->count();
 
         $reportTop = 'Total Discourse users: '.count($allDusers)."\n";
-        $reportTop .= 'Published groups: '.count($allGroups)."\n";
         $reportTop .= 'Total active mods: '.$distinctActiveMods." (in last 6 months)\n";
         $reportMid = "\nList of these volunteers not on Discourse:\n";
 
@@ -120,7 +104,7 @@ class DiscourseNotSignedUpService
             }
         }
 
-        // Active mods not on Discourse, and which groups are represented.
+        // Active mods not on Discourse.
         $notondiscourse = 0;
         $lastmodid = 0;
         foreach ($activeModsGroups as $mod) {
@@ -134,72 +118,41 @@ class DiscourseNotSignedUpService
                 $reportMid .= '* '.$modId.': '.$mod->fullname.' - '.$mod->lastaccess."\n";
                 $notondiscourse++;
             }
-
-            if ($found) {
-                // A mod with this group muted (active:0) doesn't count as cover.
-                if ($mod->settings && str_contains($mod->settings, '"active":0')) {
-                    continue;
-                }
-                $represented[$mod->groupid] = true;
-            }
         }
 
         $reportMid .= "\nActive volunteers not on discourse: $notondiscourse\n\n";
 
-        // Groups with no active mod represented on Discourse.
-        $notrepresentedcount = 0;
-        foreach ($allGroups as $group) {
-            if (!empty($represented[$group->id])) {
-                continue;
-            }
-
-            $reportTop .= 'NOT REPRESENTED '.$group->id.' - '.$group->nameshort."\n";
-            foreach ($activeModsGroups as $mod) {
-                if ((int) $mod->groupid === (int) $group->id) {
-                    $reportTop .= '* Moderator: '.$mod->id.' - '.$mod->fullname."\n";
-                }
-            }
-            $notrepresentedcount++;
-        }
-
-        $reportTop .= "\nGroups without active volunteers on Discourse: $notrepresentedcount\n";
         $reportTop .= "Mods with TN preferred emails: $modswithTNpreferredemails\n\n";
 
         $report = $reportTop.$reportMid;
         $report .= "\ndiscourse:not-signed-up — migrated from V1 discourse_not_signed_up.php\n";
 
-        $this->sendReports($notrepresentedcount, $notondiscourse, $report);
+        $this->sendReports($notondiscourse, $report);
 
         return [
             'skipped' => false,
-            'notrepresented' => $notrepresentedcount,
             'notondiscourse' => $notondiscourse,
             'tnpreferred' => $modswithTNpreferredemails,
         ];
     }
 
-    private function sendReports(int $notrepresented, int $notondiscourse, string $report): void
+    private function sendReports(int $notondiscourse, string $report): void
     {
         $from = (string) config('freegle.mail.geeks_addr', 'geeks@ilovefreegle.org');
         $geeks = (string) config('freegle.mail.geek_alerts_addr', 'geek-alerts@ilovefreegle.org');
         $centralmods = (string) config('freegle.mail.centralmods_addr');
 
         $subject = 'Discourse: ';
-        if ($notrepresented === 0) {
-            $subject .= 'All groups represented. ';
-        } else {
-            $subject .= "$notrepresented groups not represented. ";
-        }
         if ($notondiscourse > 0) {
             $subject .= "$notondiscourse volunteers not signed up. ";
         }
-        if ($notrepresented === 0 && $notondiscourse === 0) {
+        if ($notondiscourse === 0) {
             $subject .= 'all active volunteers on here';
         }
 
         $weeklySendToday = Carbon::now()->dayOfWeek === Carbon::SATURDAY;
 
-        if ($weeklySendToday || $notrepresented > 0) {
+        if ($weeklySendToday) {
             $this->send($centralmods, 'Volunteer Support', $from, $subject, $report);
             $this->send($geeks, 'Geeks Alerts', $from, $subject, $report);
         }

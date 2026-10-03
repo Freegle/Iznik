@@ -26,14 +26,11 @@ class LoveJunkService
             SELECT DISTINCT messages.id, lovejunk.status
             FROM messages
             INNER JOIN lovejunk ON lovejunk.msgid = messages.id
-            INNER JOIN messages_groups ON messages_groups.msgid = messages.id
             INNER JOIN messages_edits ON messages_edits.msgid = messages.id
-            INNER JOIN `groups` ON groups.id = messages_groups.groupid
             WHERE messages.arrival >= ?
               AND messages_edits.timestamp > lovejunk.timestamp
               AND messages.type = 'Offer'
-              AND messages_groups.collection = 'Approved'
-              AND groups.onlovejunk = 1
+              AND messages.collection = 'Approved'
             ORDER BY messages.arrival ASC
         ", [$since]);
 
@@ -51,13 +48,10 @@ class LoveJunkService
             SELECT messages.id
             FROM messages
             LEFT JOIN lovejunk ON lovejunk.msgid = messages.id
-            INNER JOIN messages_groups ON messages_groups.msgid = messages.id
-            INNER JOIN `groups` ON groups.id = messages_groups.groupid
             WHERE messages.arrival >= ?
               AND messages.type = 'Offer'
               AND lovejunk.msgid IS NULL
-              AND messages_groups.collection = 'Approved'
-              AND groups.onlovejunk = 1
+              AND messages.collection = 'Approved'
               AND NOT EXISTS (
                 SELECT 1 FROM messages_bulk_items
                 WHERE messages_bulk_items.msgid = messages.id
@@ -83,15 +77,12 @@ class LoveJunkService
             SELECT DISTINCT messages.id
             FROM messages_outcomes
             INNER JOIN messages ON messages.id = messages_outcomes.msgid
-            INNER JOIN messages_groups ON messages_groups.msgid = messages.id
             INNER JOIN lovejunk ON lovejunk.msgid = messages_outcomes.msgid
-            INNER JOIN `groups` ON groups.id = messages_groups.groupid
             WHERE messages_outcomes.timestamp >= ?
               AND messages.type = 'Offer'
               AND lovejunk.success = 1
               AND lovejunk.deleted IS NULL
               AND lovejunk.status LIKE '{%'
-              AND groups.onlovejunk = 1
             ORDER BY messages.arrival ASC
         ", [$since]);
 

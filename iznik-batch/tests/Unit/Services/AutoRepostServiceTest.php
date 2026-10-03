@@ -2,9 +2,7 @@
 
 namespace Tests\Unit\Services;
 
-use App\Models\Group;
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Models\MessageOutcome;
 use App\Services\AutoRepostService;
 use Illuminate\Support\Facades\DB;
@@ -28,40 +26,33 @@ class AutoRepostServiceTest extends TestCase
      */
     private function createRepostCandidate(
         ?object $user = null,
-        ?object $group = null,
         int $hoursOld = 80,
         int $autoreposts = 0,
         string $type = 'Offer',
     ): array {
         $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
         $user = $user ?? $this->createTestUser();
-        $group = $group ?? $this->createTestGroup();
 
         // User must have been active recently.
         DB::table('users')->where('id', $user->id)->update([
             'lastaccess' => now()->subHours(1),
         ]);
 
-        $this->createMembership($user, $group, [
-            'added' => now()->subDays(30),
-        ]);
-
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'type' => $type,
             'fromaddr' => 'test-' . $user->id . '@' . $domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
 
         // Set arrival to make message old enough for repost.
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
+        DB::table('messages')
+            ->where('id', $message->id)
             ->update([
                 'arrival' => now()->subHours($hoursOld),
                 'autoreposts' => $autoreposts,
             ]);
 
-        return ['user' => $user, 'group' => $group, 'message' => $message];
+        return ['user' => $user, 'message' => $message];
     }
 
     public function test_no_messages_returns_zero_stats(): void
@@ -85,16 +76,14 @@ class AutoRepostServiceTest extends TestCase
         $this->assertEquals(1, $stats['reposted']);
 
         // Verify autoreposts incremented.
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $data['message']->id)
-            ->where('groupid', $data['group']->id)
+        $mg = DB::table('messages')
+            ->where('id', $data['message']->id)
             ->first();
         $this->assertEquals(1, $mg->autoreposts);
 
         // Verify log entry.
         $this->assertDatabaseHas('logs', [
             'msgid' => $data['message']->id,
-            'groupid' => $data['group']->id,
             'type' => 'Message',
             'subtype' => 'Autoreposted',
         ]);
@@ -102,7 +91,6 @@ class AutoRepostServiceTest extends TestCase
         // Verify messages_postings entry.
         $this->assertDatabaseHas('messages_postings', [
             'msgid' => $data['message']->id,
-            'groupid' => $data['group']->id,
             'repost' => 1,
             'autorepost' => 1,
         ]);
@@ -117,9 +105,8 @@ class AutoRepostServiceTest extends TestCase
         $this->assertEquals(1, $stats['reposted']);
 
         // Autoreposts should still be 0.
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $data['message']->id)
-            ->where('groupid', $data['group']->id)
+        $mg = DB::table('messages')
+            ->where('id', $data['message']->id)
             ->first();
         $this->assertEquals(0, $mg->autoreposts);
 
@@ -175,24 +162,18 @@ class AutoRepostServiceTest extends TestCase
     {
         $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         DB::table('users')->where('id', $user->id)->update([
             'lastaccess' => now()->subHours(1),
         ]);
 
-        $this->createMembership($user, $group, [
-            'added' => now()->subDays(30),
-        ]);
-
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'fromaddr' => 'test@' . $domain,
             'source' => 'Email',
         ]);
 
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
+        DB::table('messages')
+            ->where('id', $message->id)
             ->update(['arrival' => now()->subHours(80)]);
 
         $stats = $this->service->process();
@@ -203,57 +184,24 @@ class AutoRepostServiceTest extends TestCase
     public function test_skips_non_our_domain(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         DB::table('users')->where('id', $user->id)->update([
             'lastaccess' => now()->subHours(1),
         ]);
 
-        $this->createMembership($user, $group, [
-            'added' => now()->subDays(30),
-        ]);
-
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'fromaddr' => 'test@external.com',
             'source' => Message::SOURCE_PLATFORM,
         ]);
 
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
+        DB::table('messages')
+            ->where('id', $message->id)
             ->update(['arrival' => now()->subHours(80)]);
 
         $stats = $this->service->process();
 
         $this->assertEquals(0, $stats['reposted']);
         $this->assertGreaterThan(0, $stats['skipped']);
-    }
-
-    public function test_skips_closed_group(): void
-    {
-        $data = $this->createRepostCandidate(hoursOld: 80);
-
-        // Close the group.
-        DB::table('groups')->where('id', $data['group']->id)->update([
-            'settings' => json_encode(['closed' => true]),
-        ]);
-
-        $stats = $this->service->process();
-
-        $this->assertEquals(0, $stats['reposted']);
-    }
-
-    public function test_skips_group_with_autofunctionoverride(): void
-    {
-        $data = $this->createRepostCandidate(hoursOld: 80);
-
-        DB::table('groups')->where('id', $data['group']->id)->update([
-            'autofunctionoverride' => 1,
-        ]);
-
-        $stats = $this->service->process();
-
-        $this->assertEquals(0, $stats['reposted']);
     }
 
     public function test_skips_message_with_recent_chat_reply(): void
@@ -303,6 +251,19 @@ class AutoRepostServiceTest extends TestCase
         $this->assertEquals(0, $stats['reposted']);
     }
 
+    public function test_skips_prohibited_or_banned_poster(): void
+    {
+        $prohibited = $this->createRepostCandidate(hoursOld: 80);
+        DB::table('users')->where('id', $prohibited['user']->id)->update(['postingstatus' => 'PROHIBITED']);
+
+        $banned = $this->createRepostCandidate(hoursOld: 80);
+        DB::table('users')->where('id', $banned['user']->id)->update(['banned' => now()]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(0, $stats['reposted']);
+    }
+
     public function test_skips_deleted_message(): void
     {
         $data = $this->createRepostCandidate(hoursOld: 80);
@@ -314,33 +275,6 @@ class AutoRepostServiceTest extends TestCase
         $stats = $this->service->process();
 
         $this->assertEquals(0, $stats['reposted']);
-    }
-
-    public function test_skips_soft_deleted_membership(): void
-    {
-        // Rippling's "removed on origin removal" (and group-leave retraction) soft-deletes a
-        // rippled-in messages_groups row with deleted=1 while leaving collection=Approved and the
-        // parent messages.deleted NULL. Autorepost must not repost that dead membership —
-        // reposting stamps arrival=NOW() and resurrects a copy rippling already pulled, leaking it
-        // back into browse and the spatial index. Live incident 2026-07-08 (msgid 119128577):
-        // six memberships removed on 07-01 were all reposted a week later.
-        $data = $this->createRepostCandidate(hoursOld: 80);
-
-        DB::table('messages_groups')
-            ->where('msgid', $data['message']->id)
-            ->where('groupid', $data['group']->id)
-            ->update(['deleted' => 1]);
-
-        $stats = $this->service->process();
-
-        $this->assertEquals(0, $stats['reposted'], 'a membership removed by rippling must not be reposted');
-
-        // The removed membership's arrival must NOT have been bumped to now.
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $data['message']->id)
-            ->where('groupid', $data['group']->id)
-            ->first();
-        $this->assertEquals(0, $mg->autoreposts, 'the dead membership was not touched');
     }
 
     public function test_warns_in_window_before_repost(): void
@@ -355,9 +289,8 @@ class AutoRepostServiceTest extends TestCase
         $this->assertEquals(0, $stats['reposted']);
 
         // Verify lastautopostwarning was set.
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $data['message']->id)
-            ->where('groupid', $data['group']->id)
+        $mg = DB::table('messages')
+            ->where('id', $data['message']->id)
             ->first();
         $this->assertNotNull($mg->lastautopostwarning);
     }
@@ -414,27 +347,21 @@ class AutoRepostServiceTest extends TestCase
         // This test uses a message within the reposting window.
 
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
         $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
 
         DB::table('users')->where('id', $user->id)->update([
             'lastaccess' => now()->subHours(1),
         ]);
 
-        $this->createMembership($user, $group, [
-            'added' => now()->subDays(30),
-        ]);
-
         // Create a message that's 10 days old (within maxAge window of 18 days, past 72h offer interval)
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'type' => 'Offer',
             'fromaddr' => 'test-' . $user->id . '@' . $domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
 
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
+        DB::table('messages')
+            ->where('id', $message->id)
             ->update([
                 'arrival' => now()->subDays(10),
                 'autoreposts' => 0,
@@ -478,27 +405,21 @@ class AutoRepostServiceTest extends TestCase
         // This might be the bug if the intent was to include messages from the "last 90 days".
 
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
         $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
 
         DB::table('users')->where('id', $user->id)->update([
             'lastaccess' => now()->subHours(1),
         ]);
 
-        $this->createMembership($user, $group, [
-            'added' => now()->subDays(100),
-        ]);
-
         // Create a message that's exactly 90 days old
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'type' => 'Offer',
             'fromaddr' => 'test-' . $user->id . '@' . $domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
 
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
+        DB::table('messages')
+            ->where('id', $message->id)
             ->update([
                 'arrival' => now()->subDays(90),
                 'autoreposts' => 0,
@@ -511,249 +432,6 @@ class AutoRepostServiceTest extends TestCase
 
         // Based on current code, this should NOT be reposted (should be skipped by getCandidates)
         $this->assertEquals(0, $stats['reposted']);
-    }
-
-    public function test_skips_message_if_user_left_group(): void
-    {
-        // Test that messages are not reposted if the user is no longer a member of the group.
-        // This tests the INNER JOIN on memberships - if membership is deleted, message is excluded.
-
-        $data = $this->createRepostCandidate(hoursOld: 80);
-
-        // Remove the user's membership from the group
-        DB::table('memberships')
-            ->where('userid', $data['user']->id)
-            ->where('groupid', $data['group']->id)
-            ->delete();
-
-        $stats = $this->service->process();
-
-        // Should not be reposted because user is no longer a member
-        $this->assertEquals(0, $stats['reposted']);
-    }
-
-    public function test_multiple_groups_each_repost_independently(): void
-    {
-        // Test that when a message is posted to multiple groups,
-        // it's reposted on EACH group independently (multi-group fix).
-
-        $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
-
-        DB::table('users')->where('id', $user->id)->update([
-            'lastaccess' => now()->subHours(1),
-        ]);
-
-        $this->createMembership($user, $group1, ['added' => now()->subDays(30)]);
-        $this->createMembership($user, $group2, ['added' => now()->subDays(30)]);
-
-        // Create message and post to both groups
-        $message = $this->createTestMessage($user, $group1, [
-            'type' => 'Offer',
-            'fromaddr' => 'test-' . $user->id . '@' . $domain,
-            'source' => Message::SOURCE_PLATFORM,
-        ]);
-
-        // Add to group2 as well
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id,
-            'groupid' => $group2->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subHours(80),
-            'autoreposts' => 0,
-        ]);
-
-        // Set group1's entry arrival time for repost
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group1->id)
-            ->update(['arrival' => now()->subHours(80)]);
-
-        $stats = $this->service->process();
-
-        // Should repost on BOTH groups (2 total)
-        $this->assertEquals(2, $stats['reposted']);
-
-        // Verify autoreposts incremented on both group entries
-        $mg1 = DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group1->id)
-            ->first();
-        $mg2 = DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group2->id)
-            ->first();
-
-        $this->assertEquals(1, $mg1->autoreposts);
-        $this->assertEquals(1, $mg2->autoreposts);
-    }
-
-    /**
-     * Rippling-out: a post on its home group plus two rippled-into groups, all in the
-     * warning window, must remind the poster ONCE (from the home posting), not once per
-     * group. The reminder's buttons act on the whole item, so one email is enough.
-     */
-    public function test_warning_sent_once_across_rippled_groups(): void
-    {
-        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
-        $user = $this->createTestUser();
-        $home = $this->createTestGroup();
-        $rippledA = $this->createTestGroup();
-        $rippledB = $this->createTestGroup();
-
-        DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()->subHours(1)]);
-        $this->createMembership($user, $home, ['added' => now()->subDays(30)]);
-        $this->createMembership($user, $rippledA, ['added' => now()->subDays(30)]);
-        $this->createMembership($user, $rippledB, ['added' => now()->subDays(30)]);
-
-        // Home posting in the warning window (50h; offer interval 3d => window 48-72h).
-        $message = $this->createTestMessage($user, $home, [
-            'type' => 'Offer',
-            'fromaddr' => 'test-' . $user->id . '@' . $domain,
-            'source' => Message::SOURCE_PLATFORM,
-        ]);
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $home->id)
-            ->update(['arrival' => now()->subHours(50), 'autoreposts' => 0, 'rippled_in' => 0]);
-
-        // Two rippled-in postings, also in the warning window.
-        foreach ([$rippledA, $rippledB] as $g) {
-            DB::table('messages_groups')->insert([
-                'msgid' => $message->id,
-                'groupid' => $g->id,
-                'collection' => MessageGroup::COLLECTION_APPROVED,
-                'arrival' => now()->subHours(50),
-                'autoreposts' => 0,
-                'rippled_in' => 1,
-            ]);
-        }
-
-        $stats = $this->service->process();
-
-        $this->assertEquals(1, $stats['warned'], 'rippled item must warn once, not once per group');
-        $this->assertEquals(0, $stats['reposted']);
-
-        // lastautopostwarning stamped on EVERY group so none re-fires next run.
-        $rows = DB::table('messages_groups')->where('msgid', $message->id)->get();
-        $this->assertCount(3, $rows);
-        foreach ($rows as $r) {
-            $this->assertNotNull($r->lastautopostwarning, 'every group of the item must be stamped');
-        }
-
-        // And prove that claim with a second pass: every row now carries the
-        // fresh stamp, so nothing may re-warn (or repost - still mid-window).
-        // This also makes coverage of the lastwarnago computation
-        // deterministic: groups iterate in random order (V1 ORDER BY RAND()),
-        // so in one first-pass ordering out of three the home group processed
-        // last and no row ever reached that code with the stamp already set.
-        $stats2 = $this->service->process();
-        $this->assertEquals(0, $stats2['warned'], 'stamped rows must not re-warn within 24h');
-        $this->assertEquals(0, $stats2['reposted']);
-    }
-
-    /**
-     * A rippled-in row that reaches the WARNING window is skipped, not warned.
-     *
-     * The test above exercises the same branch only by luck: it gives the home group a row
-     * in the window too, and process() iterates groups with inRandomOrder() (V1 ORDER BY
-     * RAND()). When home happens to go first it stamps lastautopostwarning on every row of
-     * the message, so the rippled rows arrive with lastwarnago ~0, fail the outer window
-     * condition and never reach the rippled_in skip at all — one ordering in three. That
-     * makes coverage of that line a dice roll, and it has repeatedly failed Coveralls on
-     * branches that touch no PHP whatsoever.
-     *
-     * Here only the rippled row is in the window: the home row is fresh, so nothing can
-     * stamp it first and no ordering can dodge the branch.
-     */
-    public function test_rippled_in_row_in_warning_window_is_skipped_not_warned(): void
-    {
-        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
-        $user = $this->createTestUser();
-        $home = $this->createTestGroup();
-        $rippled = $this->createTestGroup();
-
-        DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()->subHours(1)]);
-        $this->createMembership($user, $home, ['added' => now()->subDays(30)]);
-        $this->createMembership($user, $rippled, ['added' => now()->subDays(30)]);
-
-        $message = $this->createTestMessage($user, $home, [
-            'type' => 'Offer',
-            'fromaddr' => 'test-' . $user->id . '@' . $domain,
-            'source' => Message::SOURCE_PLATFORM,
-        ]);
-
-        // Home posting fresh: outside both the warning and repost windows, so it cannot
-        // stamp lastautopostwarning regardless of the order groups are processed in.
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $home->id)
-            ->update(['arrival' => now()->subHours(1), 'autoreposts' => 0, 'rippled_in' => 0]);
-
-        // Rippled-in posting inside the warning window (offer interval 3d => 48-72h).
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id,
-            'groupid' => $rippled->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subHours(50),
-            'autoreposts' => 0,
-            'rippled_in' => 1,
-        ]);
-
-        $stats = $this->service->process();
-
-        $this->assertEquals(0, $stats['warned'], 'a rippled-in row must never warn on its own');
-        $this->assertEquals(0, $stats['reposted'], 'still mid-window, nothing to repost yet');
-        $this->assertGreaterThan(0, $stats['skipped'], 'the rippled-in row must be counted as skipped');
-
-        // Nothing stamped, because no reminder was sent for it.
-        $mgRippled = DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $rippled->id)->first();
-        $this->assertNull($mgRippled->lastautopostwarning);
-    }
-
-    /**
-     * Rippling-out: a rippled-in posting (rippled_in=1) is still reposted on its group to
-     * keep the item fresh there, but it never generates its own repost reminder email.
-     */
-    public function test_rippled_in_row_reposts_without_warning(): void
-    {
-        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
-        $user = $this->createTestUser();
-        $home = $this->createTestGroup();
-        $rippled = $this->createTestGroup();
-
-        DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()->subHours(1)]);
-        $this->createMembership($user, $home, ['added' => now()->subDays(30)]);
-        $this->createMembership($user, $rippled, ['added' => now()->subDays(30)]);
-
-        // Home posting still fresh (not in any window); rippled posting past the repost window.
-        $message = $this->createTestMessage($user, $home, [
-            'type' => 'Offer',
-            'fromaddr' => 'test-' . $user->id . '@' . $domain,
-            'source' => Message::SOURCE_PLATFORM,
-        ]);
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $home->id)
-            ->update(['arrival' => now()->subHours(1), 'autoreposts' => 0, 'rippled_in' => 0]);
-
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id,
-            'groupid' => $rippled->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subHours(80), // past the 72h offer interval
-            'autoreposts' => 0,
-            'rippled_in' => 1,
-        ]);
-
-        $stats = $this->service->process();
-
-        $this->assertEquals(1, $stats['reposted'], 'rippled-in row must still repost');
-        $this->assertEquals(0, $stats['warned'], 'rippled-in row must not generate a reminder');
-
-        $mgRippled = DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $rippled->id)->first();
-        $this->assertEquals(1, $mgRippled->autoreposts);
     }
 
     /**
@@ -778,16 +456,14 @@ class AutoRepostServiceTest extends TestCase
         $this->assertEquals(1, $stats['reposted'], 'Repost should happen even when AutoRepost emails are disabled');
 
         // Verify the DB was actually updated.
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $data['message']->id)
-            ->where('groupid', $data['group']->id)
+        $mg = DB::table('messages')
+            ->where('id', $data['message']->id)
             ->first();
         $this->assertEquals(1, $mg->autoreposts, 'autoreposts counter must be incremented');
 
         // Verify messages_postings entry was created.
         $this->assertDatabaseHas('messages_postings', [
             'msgid' => $data['message']->id,
-            'groupid' => $data['group']->id,
             'repost' => 1,
             'autorepost' => 1,
         ]);
@@ -824,15 +500,14 @@ class AutoRepostServiceTest extends TestCase
         );
 
         // DB must reflect the repost.
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $data['message']->id)
-            ->where('groupid', $data['group']->id)
+        $mg = DB::table('messages')
+            ->where('id', $data['message']->id)
             ->first();
         $this->assertEquals(1, $mg->autoreposts, 'autoreposts counter must be incremented after catch-up');
     }
 
     /**
-     * Regression: messages #119974515 and #116370696 (FifeFreegle, group 21313) had
+     * Regression: messages #119974515 and #116370696 had
      * autoreposts=1 and arrival=108h ago, with offer interval=3d. They were skipped
      * indefinitely because the V2 trigger used (autoreposts + 1) * interval * 24 = 144h
      * as the threshold instead of interval * 24 = 72h. arrival is reset to NOW() on
@@ -851,9 +526,8 @@ class AutoRepostServiceTest extends TestCase
 
         $this->assertEquals(1, $stats['reposted'], 'Message past the interval since the last repost must repost again');
 
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $data['message']->id)
-            ->where('groupid', $data['group']->id)
+        $mg = DB::table('messages')
+            ->where('id', $data['message']->id)
             ->first();
         $this->assertEquals(2, $mg->autoreposts, 'autoreposts counter must be incremented to 2');
     }
@@ -893,9 +567,8 @@ class AutoRepostServiceTest extends TestCase
         $this->assertEquals(1, $stats['warned']);
 
         // lastautopostwarning must NOT have been updated (no email sent = no warning logged).
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $data['message']->id)
-            ->where('groupid', $data['group']->id)
+        $mg = DB::table('messages')
+            ->where('id', $data['message']->id)
             ->first();
         $this->assertNull($mg->lastautopostwarning, 'lastautopostwarning should not be set when emails are disabled');
     }

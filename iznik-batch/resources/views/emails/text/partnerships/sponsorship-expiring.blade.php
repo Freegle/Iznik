@@ -12,7 +12,6 @@ Sponsorship renewal due
 @endif
 
 Value of the deal: £{{ number_format($amount) }}
-Freegle communities covered: {{ $groupCount }}
 @if(count($contacts))
 
 Council {{ Str::plural('contact', count($contacts)) }}:

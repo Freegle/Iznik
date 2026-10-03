@@ -82,15 +82,6 @@ class PurgeMessagesCommand extends Command
                 return $this->abortWithResults($results);
             }
 
-            // Purge non-Freegle messages.
-            $this->line('Purging non-Freegle messages...');
-            $results['non_freegle'] = $purgeService->purgeNonFreegleMessages(90, $dryRun);
-            $this->info("  Purged {$results['non_freegle']} non-Freegle messages");
-
-            if ($this->shouldAbort()) {
-                return $this->abortWithResults($results);
-            }
-
             // Purge deleted messages.
             $this->line('Purging deleted messages...');
             $deletedRetention = (int) $this->option('deleted-retention');

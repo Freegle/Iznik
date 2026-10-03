@@ -9,7 +9,6 @@ use App\Models\EmailTracking;
 use App\Models\EmailTrackingClick;
 use App\Models\EmailTrackingImage;
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Services\PurgeService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -28,9 +27,8 @@ class PurgeServiceTest extends TestCase
     {
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user1, $group);
-        $this->createMembership($user2, $group);
+        DB::table('users')->where('id', $user1->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $user2->id)->update(['emailfrequency' => -1]);
 
         $room = ChatRoom::create([
             'name' => 'Test Room',
@@ -69,10 +67,9 @@ class PurgeServiceTest extends TestCase
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
         $user3 = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user1, $group);
-        $this->createMembership($user2, $group);
-        $this->createMembership($user3, $group);
+        DB::table('users')->where('id', $user1->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $user2->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $user3->id)->update(['emailfrequency' => -1]);
 
         // Create an empty room.
         $emptyRoom = ChatRoom::create([
@@ -152,15 +149,14 @@ class PurgeServiceTest extends TestCase
     public function test_purge_pending_messages(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
 
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         // Set to pending and old.
         MessageGroup::where('msgid', $message->id)
             ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
+                'collection' => Message::COLLECTION_PENDING,
                 'arrival' => now()->subDays(100),
             ]);
 
@@ -172,10 +168,9 @@ class PurgeServiceTest extends TestCase
     public function test_purge_old_drafts(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
 
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         // Create old draft entry.
         DB::table('messages_drafts')->insert([
@@ -191,10 +186,9 @@ class PurgeServiceTest extends TestCase
     public function test_purge_deleted_messages(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
 
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         // Mark as deleted.
         $message->update([
@@ -232,12 +226,11 @@ class PurgeServiceTest extends TestCase
     {
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user1, $group);
-        $this->createMembership($user2, $group);
+        DB::table('users')->where('id', $user1->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $user2->id)->update(['emailfrequency' => -1]);
 
-        $message1 = $this->createTestMessage($user1, $group);
-        $message2 = $this->createTestMessage($user2, $group);
+        $message1 = $this->createTestMessage($user1);
+        $message2 = $this->createTestMessage($user2);
 
         // Create old entry.
         DB::table('users_nearby')->insert([
@@ -362,10 +355,9 @@ class PurgeServiceTest extends TestCase
     public function test_purge_html_body(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
 
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         // Set htmlbody and old arrival.
         $message->update([
@@ -383,10 +375,9 @@ class PurgeServiceTest extends TestCase
     public function test_purge_stranded_messages(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
 
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         // Remove from all groups (making it stranded).
         MessageGroup::where('msgid', $message->id)->delete();
@@ -404,11 +395,10 @@ class PurgeServiceTest extends TestCase
         $user = $this->createTestUser();
 
         // Create non-Freegle group.
-        $group = $this->createTestGroup();
         $group->update(['type' => 'Reuse']);
 
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
+        $message = $this->createTestMessage($user);
 
         // Make it old.
         MessageGroup::where('msgid', $message->id)
@@ -448,9 +438,8 @@ class PurgeServiceTest extends TestCase
     public function test_purge_old_likes(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
+        $message = $this->createTestMessage($user);
 
         // Old like.
         DB::table('messages_likes')->insert([
@@ -472,9 +461,8 @@ class PurgeServiceTest extends TestCase
     public function test_purge_old_likes_keeps_recent(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
+        $message = $this->createTestMessage($user);
 
         // Recent like.
         DB::table('messages_likes')->insert([
@@ -608,12 +596,10 @@ class PurgeServiceTest extends TestCase
     public function test_purge_non_freegle_group_logs(): void
     {
         // Create non-Freegle group.
-        $group = $this->createTestGroup();
         $group->update(['type' => 'Reuse']);
 
         $logId = DB::table('logs')->insertGetId([
             'type' => 'Group',
-            'groupid' => $group->id,
             'timestamp' => now()->subDays(60),
         ]);
 

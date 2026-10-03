@@ -56,7 +56,7 @@ func TestRecommendationsStatsFunnel(t *testing.T) {
 	// days ago so a 7-day reply window is testable inside the 30-day report window.
 	msgs := make([]uint64, 5)
 	for i := 0; i < 5; i++ {
-		msgs[i] = CreateTestMessage(t, poster, groupID, fmt.Sprintf("%s item %d", prefix, i), 55.9533, -3.1883)
+		msgs[i] = CreateTestMessage(t, poster, fmt.Sprintf("%s item %d", prefix, i), 55.9533, -3.1883)
 		pv := 0
 		if i >= 3 {
 			pv = 1 // last two are clicks
@@ -155,7 +155,7 @@ func TestRecommendationsStatsHoldoutSplitsByRecordedArm(t *testing.T) {
 	// seedViews records n impressions of the given source for a member, and cleans up.
 	seedViews := func(member uint64, source string, n int) {
 		for i := 0; i < n; i++ {
-			msg := CreateTestMessage(t, poster, groupID, fmt.Sprintf("%s %s %d", prefix, source, i), 55.9533, -3.1883)
+			msg := CreateTestMessage(t, poster, fmt.Sprintf("%s %s %d", prefix, source, i), 55.9533, -3.1883)
 			db.Exec("INSERT INTO messages_likes (msgid, userid, type, pageview, source, timestamp) "+
 				"VALUES (?, ?, 'View', 0, ?, DATE_SUB(NOW(), INTERVAL 5 DAY))", msg, member, source)
 		}
@@ -165,7 +165,7 @@ func TestRecommendationsStatsHoldoutSplitsByRecordedArm(t *testing.T) {
 	seedReplies := func(member uint64, n int) {
 		chatID := CreateTestChatRoom(t, member, &poster, "User2User")
 		for i := 0; i < n; i++ {
-			msg := CreateTestMessage(t, poster, groupID, fmt.Sprintf("%s reply %d %d", prefix, member, i), 55.9533, -3.1883)
+			msg := CreateTestMessage(t, poster, fmt.Sprintf("%s reply %d %d", prefix, member, i), 55.9533, -3.1883)
 			db.Exec("INSERT INTO chat_messages (chatid, userid, message, type, refmsgid, date, processingsuccessful, reviewrequired) "+
 				"VALUES (?, ?, 'Interested', 'Interested', ?, DATE_SUB(NOW(), INTERVAL 4 DAY), 1, 0)",
 				chatID, member, msg)

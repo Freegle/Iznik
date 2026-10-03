@@ -33,8 +33,8 @@ func TestSimilarImpressionLoggingDoesNotAffectResults(t *testing.T) {
 	const u1, u2 = uint64(96001), uint64(96002)
 
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: srcID, Fromuser: u1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Dining table", Arrival: time.Now(), SubjectVec: base},
-		{Msgid: okID, Fromuser: u2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Dining table and chairs", Arrival: time.Now(), SubjectVec: strong},
+		{Msgid: srcID, Fromuser: u1, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Dining table", Arrival: time.Now(), SubjectVec: base},
+		{Msgid: okID, Fromuser: u2, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Dining table and chairs", Arrival: time.Now(), SubjectVec: strong},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -67,9 +67,9 @@ func TestSimilarThresholdExcludesWeakBand(t *testing.T) {
 	strong := makeVecWithCosine(base, 0.92) // clears the new floor
 
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: srcID, Fromuser: u1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Crocosmia", Arrival: time.Now(), SubjectVec: base},
-		{Msgid: weakID, Fromuser: u2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Crockery", Arrival: time.Now(), SubjectVec: weak},
-		{Msgid: strongID, Fromuser: u2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Crocosmia bulbs", Arrival: time.Now(), SubjectVec: strong},
+		{Msgid: srcID, Fromuser: u1, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Crocosmia", Arrival: time.Now(), SubjectVec: base},
+		{Msgid: weakID, Fromuser: u2, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Crockery", Arrival: time.Now(), SubjectVec: weak},
+		{Msgid: strongID, Fromuser: u2, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Crocosmia bulbs", Arrival: time.Now(), SubjectVec: strong},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -86,38 +86,6 @@ func TestSimilarThresholdExcludesWeakBand(t *testing.T) {
 	}
 	assert.True(t, got[uint64(strongID)], "0.92 similarity is shown")
 	assert.False(t, got[uint64(weakID)], "0.70 similarity clears the old 0.60 floor but must not be shown")
-}
-
-// TestSimilarReturnsNearMatchesSameType: given a source Offer, /similar returns
-// only open posts that are the same type, above MinSimilarScore, by a DIFFERENT
-// author, and not the source itself.
-func TestSimilarReturnsNearMatchesSameType(t *testing.T) {
-	base := makeTestVec(0.5)
-	near := makeTestVec(0.5001) // cosine ~1 with base
-	const srcID, nearID, wantedID, weakID, sameAuthorID = 810001, 810002, 810003, 810004, 810005
-	const u1, u2 = uint64(91001), uint64(91002)
-
-	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: srcID, Fromuser: u1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Blue sofa", Arrival: time.Now(), SubjectVec: base},
-		{Msgid: nearID, Fromuser: u2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Grey sofa", Arrival: time.Now(), SubjectVec: near},
-		{Msgid: wantedID, Fromuser: u2, Groupid: 100, Msgtype: "Wanted", Lat: 51.5, Lng: -0.1, Subject: "Want sofa", Arrival: time.Now(), SubjectVec: near},
-		{Msgid: weakID, Fromuser: u2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "unrelated noise", Arrival: time.Now(), SubjectVec: makeAntiparallelVec(0.5)},
-		{Msgid: sameAuthorID, Fromuser: u1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Another sofa", Arrival: time.Now(), SubjectVec: near},
-	})
-	defer embedding.Global.SetEntries(nil)
-
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/810001/similar", nil), 60000)
-	require.Equal(t, 200, resp.StatusCode)
-
-	var results []message.SimilarResult
-	json.NewDecoder(resp.Body).Decode(&results)
-
-	require.Len(t, results, 1, "only the same-type, above-threshold, different-author match qualifies")
-	assert.Equal(t, uint64(nearID), results[0].Msgid)
-	assert.GreaterOrEqual(t, results[0].Score, float32(message.MinSimilarScore))
-	assert.NotZero(t, results[0].Lat, "lat populated (blurred)")
-	assert.NotZero(t, results[0].Lng, "lng populated (blurred)")
-	assert.Equal(t, uint64(100), results[0].Groupid)
 }
 
 // TestSimilarFlipsTypeOnOwnPost: viewing your OWN post flips the type — a Wanted you
@@ -140,11 +108,11 @@ func TestSimilarFlipsTypeOnOwnPost(t *testing.T) {
 	const srcID, offerID, wantedID = 880001, 880002, 880003
 
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: srcID, Fromuser: author, Groupid: 100, Msgtype: "Wanted", Lat: 51.5, Lng: -0.1, Subject: "Want a sofa", Arrival: time.Now(), SubjectVec: base},
+		{Msgid: srcID, Fromuser: author, Msgtype: "Wanted", Lat: 51.5, Lng: -0.1, Subject: "Want a sofa", Arrival: time.Now(), SubjectVec: base},
 		// A matching OFFER by someone else — the flipped type for the author.
-		{Msgid: offerID, Fromuser: 99001, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Sofa", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: offerID, Fromuser: 99001, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Sofa", Arrival: time.Now(), SubjectVec: near},
 		// Another WANTED — same type as the source.
-		{Msgid: wantedID, Fromuser: 99002, Groupid: 100, Msgtype: "Wanted", Lat: 51.5, Lng: -0.1, Subject: "Want sofa too", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: wantedID, Fromuser: 99002, Msgtype: "Wanted", Lat: 51.5, Lng: -0.1, Subject: "Want sofa too", Arrival: time.Now(), SubjectVec: near},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -170,36 +138,6 @@ func TestSimilarFlipsTypeOnOwnPost(t *testing.T) {
 	}
 	assert.True(t, gotTheirs[uint64(wantedID)], "another viewer gets same-type (Wanted) matches")
 	assert.False(t, gotTheirs[uint64(offerID)], "another viewer does not get the flipped Offer")
-}
-
-// TestSimilarMessageNotInStore: a source post that isn't in the in-memory store
-// but has an embedding row in the DB resolves via the fallback read and still
-// matches store candidates.
-func TestSimilarMessageNotInStore(t *testing.T) {
-	prefix := uniquePrefix("similarnotinstore")
-	userID := CreateTestUser(t, prefix, "Member")
-	otherUser := CreateTestUser(t, prefix+"o", "Member")
-
-	base := makeTestVec(0.5)
-	near := makeTestVec(0.5001)
-
-	// Source in the DB only (helper inserts an OPEN message + embedding); never
-	// loaded into embedding.Global, so the handler must hit the DB fallback.
-	srcID := createOpenTestMessageWithEmbedding(t, userID, groupID, "DB sofa "+prefix, 51.5, -0.1, base)
-
-	const candID = uint64(820002)
-	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: candID, Fromuser: otherUser, Groupid: groupID, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Store sofa", Arrival: time.Now(), SubjectVec: near},
-	})
-	defer embedding.Global.SetEntries(nil)
-
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/"+fmt.Sprint(srcID)+"/similar", nil), 60000)
-	require.Equal(t, 200, resp.StatusCode)
-
-	var results []message.SimilarResult
-	json.NewDecoder(resp.Body).Decode(&results)
-	require.Len(t, results, 1, "DB-resolved source should match the store candidate")
-	assert.Equal(t, candID, results[0].Msgid)
 }
 
 // TestSimilarNoEmbedding: a source id with no embedding row returns 200 + empty,
@@ -246,7 +184,7 @@ func TestSimilarOverfetchSurvivesReachRejection(t *testing.T) {
 
 	const srcID = 870001
 	entries := []embedding.Entry{
-		{Msgid: srcID, Fromuser: 88001, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "src", Arrival: time.Now(), SubjectVec: base},
+		{Msgid: srcID, Fromuser: 88001, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "src", Arrival: time.Now(), SubjectVec: base},
 	}
 
 	// Eight higher-scoring candidates, all near the viewer (in the box) but rippled
@@ -254,8 +192,8 @@ func TestSimilarOverfetchSurvivesReachRejection(t *testing.T) {
 	// more than the old limit*3 pool for a small requested limit.
 	blocked := make([]uint64, 0, 8)
 	for i := 0; i < 8; i++ {
-		mid := CreateTestMessage(t, poster, groupID, fmt.Sprintf("%s blocked %d", prefix, i), 51.5, -0.1)
-		entries = append(entries, embedding.Entry{Msgid: mid, Fromuser: poster, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: fmt.Sprintf("blocked %d", i), Arrival: time.Now(), SubjectVec: strong})
+		mid := CreateTestMessage(t, poster, fmt.Sprintf("%s blocked %d", prefix, i), 51.5, -0.1)
+		entries = append(entries, embedding.Entry{Msgid: mid, Fromuser: poster, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: fmt.Sprintf("blocked %d", i), Arrival: time.Now(), SubjectVec: strong})
 		blocked = append(blocked, mid)
 		db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
 		db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
@@ -275,7 +213,7 @@ func TestSimilarOverfetchSurvivesReachRejection(t *testing.T) {
 	// One lower-scoring, reachable candidate (no reach row → fail-open). It ranks below
 	// all eight blocked ones, so at limit=2 (old pool = 6) it never entered the set.
 	const reachableID = 870999
-	entries = append(entries, embedding.Entry{Msgid: reachableID, Fromuser: 88002, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "reachable", Arrival: time.Now(), SubjectVec: reachableVec})
+	entries = append(entries, embedding.Entry{Msgid: reachableID, Fromuser: 88002, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "reachable", Arrival: time.Now(), SubjectVec: reachableVec})
 	embedding.Global.SetEntries(entries)
 	defer embedding.Global.SetEntries(nil)
 
@@ -300,8 +238,8 @@ func TestSimilarFlagOff(t *testing.T) {
 	near := makeTestVec(0.5001)
 	const srcID, nearID = 830001, 830002
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: srcID, Fromuser: 1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "x", Arrival: time.Now(), SubjectVec: base},
-		{Msgid: nearID, Fromuser: 2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "y", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: srcID, Fromuser: 1, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "x", Arrival: time.Now(), SubjectVec: base},
+		{Msgid: nearID, Fromuser: 2, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "y", Arrival: time.Now(), SubjectVec: near},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -344,9 +282,9 @@ func TestSimilarReachFiltered(t *testing.T) {
 	near := makeTestVec(0.5001)
 	const srcID, inReachID = 840001, 840002
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: srcID, Fromuser: 70001, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "src sofa", Arrival: time.Now(), SubjectVec: base},
-		{Msgid: inReachID, Fromuser: 70002, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "in reach sofa", Arrival: time.Now(), SubjectVec: near},
-		{Msgid: outReachID, Fromuser: posterOut, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "out of reach sofa", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: srcID, Fromuser: 70001, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "src sofa", Arrival: time.Now(), SubjectVec: base},
+		{Msgid: inReachID, Fromuser: 70002, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "in reach sofa", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: outReachID, Fromuser: posterOut, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "out of reach sofa", Arrival: time.Now(), SubjectVec: near},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -402,10 +340,10 @@ func TestSimilarBoxRestrictsToCentre(t *testing.T) {
 	const u1, u2 = uint64(97001), uint64(97002)
 
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: srcID, Fromuser: u1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Preston drawers", Arrival: time.Now(), SubjectVec: base},
+		{Msgid: srcID, Fromuser: u1, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Preston drawers", Arrival: time.Now(), SubjectVec: base},
 		// Equally similar, but one is local to the post and one is ~500km away.
-		{Msgid: nearID, Fromuser: u2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "local drawers", Arrival: time.Now(), SubjectVec: near},
-		{Msgid: farID, Fromuser: u2, Groupid: 100, Msgtype: "Offer", Lat: 55.9, Lng: -3.2, Subject: "distant drawers", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: nearID, Fromuser: u2, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "local drawers", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: farID, Fromuser: u2, Msgtype: "Offer", Lat: 55.9, Lng: -3.2, Subject: "distant drawers", Arrival: time.Now(), SubjectVec: near},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -434,12 +372,12 @@ func TestSimilarDedupesRippledCopies(t *testing.T) {
 	const u1, u2, u3 = uint64(98001), uint64(98002), uint64(98003)
 
 	embedding.Global.SetEntries([]embedding.Entry{
-		{Msgid: srcID, Fromuser: u1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Oak table", Arrival: time.Now(), SubjectVec: base},
+		{Msgid: srcID, Fromuser: u1, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Oak table", Arrival: time.Now(), SubjectVec: base},
 		// Same author + same subject on two msgids/groups = one rippled item.
-		{Msgid: copyA, Fromuser: u2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Pine wardrobe", Arrival: time.Now(), SubjectVec: near},
-		{Msgid: copyB, Fromuser: u2, Groupid: 101, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Pine wardrobe", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: copyA, Fromuser: u2, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Pine wardrobe", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: copyB, Fromuser: u2, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Pine wardrobe", Arrival: time.Now(), SubjectVec: near},
 		// Different author, same subject — a genuinely separate offer, must remain.
-		{Msgid: other, Fromuser: u3, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Pine wardrobe", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: other, Fromuser: u3, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Pine wardrobe", Arrival: time.Now(), SubjectVec: near},
 	})
 	defer embedding.Global.SetEntries(nil)
 

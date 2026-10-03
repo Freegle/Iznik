@@ -17,7 +17,6 @@ class MessageRemapSubjectsService
 
         $messages = DB::table('locations')
             ->join('messages', 'messages.locationid', '=', 'locations.id')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
             ->leftJoin('messages_items', 'messages_items.msgid', '=', 'messages.id')
             ->leftJoin('items', 'items.id', '=', 'messages_items.itemid')
             ->leftJoin('locations as areas', 'areas.id', '=', 'locations.areaid')

@@ -291,19 +291,6 @@ describe('MicroVolunteeringCheckMessage', () => {
       expect(wrapper.text()).not.toContain('Yes, that looks ok')
     })
 
-    it('says so when the post is on none of my communities', async () => {
-      const wrapper = createWrapper(
-        {},
-        {
-          ...mockMessage,
-          groups: [{ groupid: 999, arrival: '2023-01-01T10:00:00Z' }],
-        }
-      )
-      await flushPromises()
-
-      expect(wrapper.text()).toContain(NO_LONGER)
-    })
-
     it('says so, instead of an error, when the vote is refused', async () => {
       mockMicroVolunteeringRespond.mockRejectedValueOnce(
         Object.assign(

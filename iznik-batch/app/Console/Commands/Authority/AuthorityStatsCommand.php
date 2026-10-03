@@ -11,14 +11,13 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 
 /**
  * Produces the quarterly statistics spreadsheet that local authorities receive:
- * membership, weight reused, CO2 and financial benefit, gifts made, a per-group
- * breakdown, shortlink clicks, member stories and a per-postcode breakdown.
+ * membership, weight reused, CO2 and financial benefit, gifts made, member stories and a
+ * per-postcode breakdown, all for the authority's own area.
+ *
+ * The template still carries the per-community and shortlink tables; there are no
+ * communities, so they are left empty.
  *
  *   php artisan authority:stats --i=72467,117233 --q="3 months ago"
- *   php artisan authority:stats --i=117233 --partnership=12
- *
- * With --partnership, the communities are the ones that deal covers rather than those
- * derived from the boundary, so the spreadsheet matches the Partnerships page.
  */
 class AuthorityStatsCommand extends Command
 {
@@ -38,8 +37,7 @@ class AuthorityStatsCommand extends Command
     protected $signature = 'authority:stats
                             {--i= : Comma-separated authority IDs}
                             {--q=3 months ago : Quarter start date (any parseable date; defaults to the last full quarter)}
-                            {--output= : Directory to write spreadsheets to (default: storage/app/authority-stats)}
-                            {--partnership= : Report on the communities this partnership covers (one authority only)}';
+                            {--output= : Directory to write spreadsheets to (default: storage/app/authority-stats)}';
 
     protected $description = 'Generate the quarterly per-authority statistics spreadsheet(s)';
 
@@ -66,16 +64,10 @@ class AuthorityStatsCommand extends Command
             return Command::FAILURE;
         }
 
-        $partnershipId = $this->option('partnership') ? (int) $this->option('partnership') : null;
-        if ($partnershipId !== null && count($ids) !== 1) {
-            $this->error('--partnership reports on one deal, so give exactly one authority.');
-            return Command::FAILURE;
-        }
-
         $failed = false;
         foreach ($ids as $id) {
             $this->info("Generating statistics for authority {$id} ...");
-            $report = $service->computeReport((int) $id, $quarter, $partnershipId);
+            $report = $service->computeReport((int) $id, $quarter);
 
             if ($report === null) {
                 $this->warn("  Authority {$id} not found - skipping.");
@@ -169,7 +161,7 @@ class AuthorityStatsCommand extends Command
         // Per-group rows. A blank row is inserted after each so the styled rows
         // below the table are pushed down and preserved.
         $grouprow = 19;
-        foreach ($report['groups'] as $group) {
+        foreach (($report['groups'] ?? []) as $group) {
             $w = $group['weight'];
             $wSum = $w[0] + $w[1] + $w[2];
 
@@ -206,7 +198,7 @@ class AuthorityStatsCommand extends Command
         $sheet->removeRow($grouprow);
 
         // Number formats for the per-group table (rows 19..last).
-        $groupCount = count($report['groups']);
+        $groupCount = count(($report['groups'] ?? []));
         if ($groupCount > 0) {
             $end = 18 + $groupCount;
             $this->numberFormat($sheet, "B19:I$end", self::FMT_INT);     // members, weight
@@ -224,7 +216,7 @@ class AuthorityStatsCommand extends Command
         $shortlinkrow++;
         $shortlinkStart = $shortlinkrow;
 
-        foreach ($report['shortlinks'] as $link) {
+        foreach (($report['shortlinks'] ?? []) as $link) {
             $sheet->setCellValue("A$shortlinkrow", $link['name']);
             $sheet->setCellValue("B$shortlinkrow", $link['clicks'][0]);
             $sheet->setCellValue("C$shortlinkrow", $link['clicks'][1]);
@@ -236,8 +228,8 @@ class AuthorityStatsCommand extends Command
         }
         $sheet->removeRow($shortlinkrow);
 
-        if (count($report['shortlinks']) > 0) {
-            $range = "B$shortlinkStart:E" . ($shortlinkStart + count($report['shortlinks']) - 1);
+        if (count(($report['shortlinks'] ?? [])) > 0) {
+            $range = "B$shortlinkStart:E" . ($shortlinkStart + count(($report['shortlinks'] ?? [])) - 1);
             $this->numberFormat($sheet, $range, self::FMT_INT);
             // Natalie centres the monthly click figures under Jan/Feb/Mar.
             $sheet->getStyle($range)->getAlignment()->setHorizontal('center');
@@ -273,7 +265,7 @@ class AuthorityStatsCommand extends Command
      */
     private function fillFooterSections($sheet, int $shortlinkrow, array $report): void
     {
-        $links = $report['shortlinks'];
+        $links = ($report['shortlinks'] ?? []);
         $max = $sheet->getHighestRow();
 
         // The intro line and the single URL placeholder are in the template,

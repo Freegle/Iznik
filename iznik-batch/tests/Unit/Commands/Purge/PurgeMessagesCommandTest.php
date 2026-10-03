@@ -13,7 +13,6 @@ class PurgeMessagesCommandTest extends TestCase
         $service->method('purgeOldMessagesHistory')->willReturn(0);
         $service->method('purgePendingMessages')->willReturn(0);
         $service->method('purgeOldDrafts')->willReturn(0);
-        $service->method('purgeNonFreegleMessages')->willReturn(0);
         $service->method('purgeDeletedMessages')->willReturn(0);
         $service->method('purgeStrandedMessages')->willReturn(0);
         $service->method('purgeHtmlBody')->willReturn(0);
@@ -35,7 +34,6 @@ class PurgeMessagesCommandTest extends TestCase
         $service->method('purgeOldMessagesHistory')->willReturn(5);
         $service->method('purgePendingMessages')->willReturn(2);
         $service->method('purgeOldDrafts')->willReturn(1);
-        $service->method('purgeNonFreegleMessages')->willReturn(0);
         $service->method('purgeDeletedMessages')->willReturn(3);
         $service->method('purgeStrandedMessages')->willReturn(0);
         $service->method('purgeHtmlBody')->willReturn(10);

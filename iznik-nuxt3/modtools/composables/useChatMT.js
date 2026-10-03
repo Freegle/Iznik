@@ -4,7 +4,6 @@ import { useChatStore } from '~/stores/chat'
 import { useUserStore } from '~/stores/user'
 import { useAuthStore } from '~/stores/auth'
 import { useMessageStore } from '~/stores/message'
-import { useGroupStore } from '~/stores/group'
 import { twem } from '~/composables/useTwem'
 import { milesAway } from '~/composables/useDistance'
 import { MT_EMAIL_REGEX } from '~/constants'
@@ -240,18 +239,8 @@ export function useChatMessageBaseMT(chatId, messageId, pov = null) {
     const id = chatmessage.value?.refmsgid
 
     if (id) {
-      const groupStore = useGroupStore()
-
       try {
         await messageStore.fetch(id)
-
-        const message = messageStore.byId(id)
-
-        if (message) {
-          message.groups.forEach(async (g) => {
-            await groupStore.fetch(g.groupid)
-          })
-        }
       } catch (e) {
         console.log('Message fetch failed', id, e)
       }

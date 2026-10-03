@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Config;
 
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**

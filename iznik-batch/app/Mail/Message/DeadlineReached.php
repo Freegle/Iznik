@@ -47,34 +47,14 @@ class DeadlineReached extends MjmlMailable
             ? Message::OUTCOME_TAKEN
             : Message::OUTCOME_RECEIVED;
 
-        $group = $this->originGroupForMessage($message);
-
         $this->initTracking(
             'DeadlineReached',
             $user->email_preferred,
             $user->id,
-            $group?->id,
+            null,
             $this->getSubject(),
             ['message_id' => $message->id]
         );
-    }
-
-    /**
-     * The group to show the poster for their own message: the ORIGIN group,
-     * the one they actually posted to.
-     *
-     * Rippling adds a messages_groups row per group the post spreads into
-     * (rippled_in = 1, arrival = the ripple time) and auto-joins the poster
-     * there, so the old "recipient's membership with the most recent arrival"
-     * pick named whichever distant group the post most recently rippled into.
-     * Falls back to the earliest-arrival row for pre-rippling data.
-     */
-    protected function originGroupForMessage(Message $message): ?object
-    {
-        $groups = $message->groups;
-
-        return $groups->first(fn ($g) => !($g->pivot->rippled_in ?? 0))
-            ?? $groups->sortBy(fn ($g) => $g->pivot->arrival ?? null)->first();
     }
 
     /**
@@ -83,8 +63,7 @@ class DeadlineReached extends MjmlMailable
     public function build(): static
     {
         $userSite = config('freegle.sites.user');
-        $group = $this->originGroupForMessage($this->message);
-        $groupName = $group?->nameshort ?? 'Freegle';
+        $groupName = 'Freegle';
 
         return $this->to($this->user->email_preferred, $this->user->displayname)
             ->subject($this->getSubject())

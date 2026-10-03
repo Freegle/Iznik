@@ -403,7 +403,7 @@ class SpamCheckService
     }
 
     /**
-     * Check if pruned subject has been used across too many groups.
+     * Check if the pruned subject has been used for too many distinct posts.
      *
      * @return array{bool, string, string}|null
      */
@@ -412,9 +412,8 @@ class SpamCheckService
         $count = DB::table('messages_history')
             ->where('prunedsubject', 'LIKE', "{$prunedSubject}%")
             ->where('arrival', '>=', now()->subDays(self::HISTORY_WINDOW_DAYS))
-            ->whereNotNull('groupid')
-            ->distinct('groupid')
-            ->count('groupid');
+            ->distinct('msgid')
+            ->count('msgid');
 
         if ($count >= self::SUBJECT_THRESHOLD) {
             // Check whitelist
@@ -424,7 +423,7 @@ class SpamCheckService
 
             if (! $whitelisted) {
                 return [true, self::REASON_SUBJECT_USED_FOR_DIFFERENT_GROUPS,
-                    "Warning - subject {$prunedSubject} recently used on {$count} groups"];
+                    "Warning - subject {$prunedSubject} recently used on {$count} posts"];
             }
         }
 

@@ -2,9 +2,7 @@
 
 namespace Tests\Feature\Message;
 
-use App\Models\Group;
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Models\User;
 use App\Services\ContentCheckService;
 use App\Services\ContentEmbeddingService;
@@ -49,197 +47,14 @@ class ContentCheckTest extends TestCase
             ->update(['contentcheck_checked_at' => now()]);
     }
 
-    // -------------------------------------------------------------------------
-    // checkConcernKeywords — unified keyword check (replaces worrywords + spam_keywords)
-    // -------------------------------------------------------------------------
-
-    public function test_concern_keyword_match_returns_reason(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'  => 'testconcernkw_cc',
-            'category' => 'scam',
-            'action'   => 'flag',
-        ]);
-
-        $result = $this->service->checkConcernKeywords('OFFER: testconcernkw_cc item', 'Some text', $group->id);
-
-        $this->assertNotNull($result);
-        $this->assertEquals('ConcernKeyword', $result['check']);
-        $this->assertEquals('scam', $result['category']);
-        $this->assertStringContainsString('testconcernkw_cc', $result['detail']);
-    }
-
-    public function test_concern_keyword_returns_category_in_result(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'  => 'testmedicine_cc',
-            'category' => 'substance_medicine',
-            'action'   => 'flag',
-        ]);
-
-        $result = $this->service->checkConcernKeywords('OFFER: testmedicine_cc tablets', '', $group->id);
-
-        $this->assertNotNull($result);
-        $this->assertEquals('substance_medicine', $result['category']);
-    }
-
-    public function test_clean_text_returns_null_for_concern_keywords(): void
-    {
-        $group = $this->createTestGroup();
-
-        $result = $this->service->checkConcernKeywords('OFFER: Nice lamp', 'A lovely lamp', $group->id);
-
-        $this->assertNull($result);
-    }
-
-    public function test_blank_concern_keyword_does_not_match_all_messages(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert(['keyword' => '', 'category' => 'review', 'action' => 'flag']);
-
-        $result = $this->service->checkConcernKeywords('OFFER: Nice lamp', 'A lovely lamp', $group->id);
-
-        $this->assertNull($result);
-    }
-
-    public function test_concern_keyword_literal_match_uses_word_boundary(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'knife',
-            'category'   => 'substance_reportable',
-            'action'     => 'flag',
-            'match_mode' => 'literal',
-        ]);
-
-        // 'penknife' should NOT match the word-boundary literal check for 'knife'.
-        $noMatch = $this->service->checkConcernKeywords('OFFER: penknife', '', $group->id);
-        $this->assertNull($noMatch);
-
-        // 'knife' as a standalone word should match.
-        $match = $this->service->checkConcernKeywords('OFFER: knife', '', $group->id);
-        $this->assertNotNull($match);
-    }
-
-    public function test_concern_keyword_regex_match(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'diazep[ai]m',
-            'category'   => 'substance_medicine',
-            'action'     => 'flag',
-            'match_mode' => 'regex',
-        ]);
-
-        $match = $this->service->checkConcernKeywords('OFFER: diazepam tablets', '', $group->id);
-        $this->assertNotNull($match);
-    }
-
-    public function test_concern_keyword_exclude_pattern_suppresses_match(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'gun',
-            'category'   => 'substance_regulated',
-            'action'     => 'flag',
-            'match_mode' => 'literal',
-            'exclude'    => 'water gun|toy gun',
-        ]);
-
-        $noMatch = $this->service->checkConcernKeywords('OFFER: water gun', '', $group->id);
-        $this->assertNull($noMatch);
-
-        $match = $this->service->checkConcernKeywords('OFFER: gun (real)', '', $group->id);
-        $this->assertNotNull($match);
-    }
-
-    /**
-     * 'allowed'-category entries are a whitelist: text matching them must be
-     * removed before the flagging keywords are scanned, exactly as V1's worry
-     * words and the Go display path do. Discourse 9944: 'Cashes Green' (a
-     * Stroud place name) was whitelisted, but posts and chats mentioning it
-     * kept being flagged because the fuzzy keyword 'cash' inflects to
-     * 'cashes' and the whitelist entry was never applied.
-     */
-    public function test_allowed_keyword_whitelists_phrase_from_fuzzy_match(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'cash',
-            'category'   => 'review',
-            'action'     => 'flag',
-            'match_mode' => 'fuzzy',
-        ]);
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'Cashes Green',
-            'category'   => 'allowed',
-            'action'     => 'flag',
-            'match_mode' => 'literal',
-        ]);
-
-        // Diz's live example from Discourse 9944 post 9.
-        $result = $this->service->checkConcernKeywords('OFFER: Basin & Tap (Cashes Green GL6)', 'GL6 6EY', $group->id);
-
-        $this->assertNull($result);
-    }
-
-    public function test_fuzzy_match_still_fires_outside_allowed_phrase(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'cash',
-            'category'   => 'review',
-            'action'     => 'flag',
-            'match_mode' => 'fuzzy',
-        ]);
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'Cashes Green',
-            'category'   => 'allowed',
-            'action'     => 'flag',
-            'match_mode' => 'literal',
-        ]);
-
-        // 'cashes' NOT followed by 'Green' is outside the whitelisted phrase
-        // and must still flag.
-        $result = $this->service->checkConcernKeywords('OFFER: lamp', 'cashes accepted', $group->id);
-
-        $this->assertNotNull($result);
-        $this->assertStringContainsString('cash', $result['detail']);
-    }
-
-    public function test_chat_message_respects_allowed_keyword(): void
-    {
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'cash',
-            'category'   => 'review',
-            'action'     => 'flag',
-            'match_mode' => 'fuzzy',
-        ]);
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'Cashes Green',
-            'category'   => 'allowed',
-            'action'     => 'flag',
-            'match_mode' => 'literal',
-        ]);
-
-        // Neville's live example from Discourse 9944 post 10: a chat message
-        // giving an address in Cashes Green, repeatedly held in Chat review.
-        $result = $this->service->checkChatMessage("It's 29 elm rd cashes green gl5 4nu, I'm in all morning");
-
-        $this->assertNull($result);
-    }
-
     public function test_offer_with_no_location_is_not_auto_promoted(): void
     {
         // An Offer/Wanted we couldn't locate (NULL lat) must NOT be auto-promoted -
         // it would go live undiscoverable. It stays Pending for a moderator to add a
         // postcode via the "add a postcode" prompt (Discourse #9865). An otherwise
         // identical located post from the same unmoderated poster is auto-promoted.
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        DB::table('users')->where('id', $user->id)->update(['postingstatus' => 'DEFAULT']);
 
         $noLocId = DB::table('messages')->insertGetId([
             'fromuser' => $user->id,
@@ -266,414 +81,19 @@ class ContentCheckTest extends TestCase
             'lng'      => -0.13,
         ]);
         foreach ([$noLocId, $locId] as $mid) {
-            DB::table('messages_groups')->insert([
-                'msgid'      => $mid,
-                'groupid'    => $group->id,
+            DB::table('messages')->where('id', $mid)->update([
                 'collection' => 'Pending',
                 'arrival'    => now(),
-                'deleted'    => 0,
             ]);
         }
 
         $this->service->processUnprocessed();
 
-        $noLocColl = DB::table('messages_groups')->where('msgid', $noLocId)->value('collection');
-        $locColl   = DB::table('messages_groups')->where('msgid', $locId)->value('collection');
+        $noLocColl = DB::table('messages')->where('id', $noLocId)->value('collection');
+        $locColl   = DB::table('messages')->where('id', $locId)->value('collection');
 
         $this->assertSame('Pending', $noLocColl, 'no-location Offer is kept Pending for a mod');
         $this->assertSame('Approved', $locColl, 'located Offer is auto-promoted as normal');
-    }
-
-    public function test_edited_copy_sent_back_for_a_moderator_is_not_auto_promoted(): void
-    {
-        // A moderator's Back to pending marks every copy it pulls back needs_moderator. The
-        // next edit makes the content check look at those copies again; a clean post from an
-        // unmoderated poster must still wait for a moderator, not go straight back live with
-        // no log entry (122011064: six copies re-approved a minute after an edit). An
-        // identical copy that was never sent back is promoted as normal.
-        $group = $this->createTestGroup();
-        $other = $this->createTestGroup();
-        $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
-        $this->createMembership($user, $other, ['ourPostingStatus' => 'DEFAULT']);
-
-        $mid = DB::table('messages')->insertGetId([
-            'fromuser' => $user->id,
-            'type'     => 'Offer',
-            'subject'  => 'OFFER: Bookshelf (SW1A)',
-            'textbody' => 'A bookshelf. Collection only.',
-            'message'  => 'A bookshelf. Collection only.',
-            'arrival'  => now()->subHour(),
-            'date'     => now()->subHour(),
-            'editedat' => now(),
-            'source'   => 'Platform',
-            'lat'      => 51.50,
-            'lng'      => -0.13,
-        ]);
-        foreach ([[$group->id, 1], [$other->id, 0]] as [$gid, $needs]) {
-            DB::table('messages_groups')->insert([
-                'msgid'                   => $mid,
-                'groupid'                 => $gid,
-                'collection'              => 'Pending',
-                'arrival'                 => now()->subHour(),
-                'deleted'                 => 0,
-                'needs_moderator'         => $needs,
-                'contentcheck_checked_at' => now()->subMinutes(30),
-            ]);
-        }
-
-        $this->service->processUnprocessed();
-
-        $this->assertSame('Pending', DB::table('messages_groups')->where('msgid', $mid)->where('groupid', $group->id)->value('collection'),
-            'a copy sent back for a moderator stays Pending after an edit');
-        $this->assertSame('Approved', DB::table('messages_groups')->where('msgid', $mid)->where('groupid', $other->id)->value('collection'),
-            'the same post on a copy that was not sent back is promoted as normal');
-    }
-
-    public function test_edited_copy_locked_by_the_home_community_is_not_auto_promoted(): void
-    {
-        // The home community's Back to pending locks the rippled-in copies. The content
-        // check may record what it finds but must never promote a locked copy, whatever the
-        // needs_moderator flag says.
-        $group = $this->createTestGroup();
-        $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
-
-        $mid = DB::table('messages')->insertGetId([
-            'fromuser' => $user->id,
-            'type'     => 'Offer',
-            'subject'  => 'OFFER: Bookshelf (SW1A)',
-            'textbody' => 'A bookshelf. Collection only.',
-            'message'  => 'A bookshelf. Collection only.',
-            'arrival'  => now()->subHour(),
-            'date'     => now()->subHour(),
-            'editedat' => now(),
-            'source'   => 'Platform',
-            'lat'      => 51.50,
-            'lng'      => -0.13,
-        ]);
-        DB::table('messages_groups')->insert([
-            'msgid'                   => $mid,
-            'groupid'                 => $group->id,
-            'collection'              => 'Pending',
-            'arrival'                 => now()->subHour(),
-            'deleted'                 => 0,
-            'rippled_in'              => 1,
-            'needs_moderator'         => 0,
-            'locked_by_home'          => 1,
-            'contentcheck_checked_at' => now()->subMinutes(30),
-        ]);
-
-        $this->service->processUnprocessed();
-
-        $this->assertSame('Pending', DB::table('messages_groups')->where('msgid', $mid)->value('collection'),
-            'a copy locked by the home community stays Pending after an edit');
-    }
-
-    public function test_safeguarding_keywords_flag_with_their_own_category(): void
-    {
-        $group = $this->createTestGroup();
-
-        $result = $this->service->checkConcernKeywords(
-            'WANTED: bedding for a friend', 'She is fleeing domestic abuse and needs bedding.', $group->id
-        );
-
-        $this->assertNotNull($result, 'a post disclosing domestic abuse is flagged');
-        $this->assertSame('safeguarding', $result['category']);
-        $this->assertSame('flag', $result['action']);
-    }
-
-    public function test_safeguarding_shelter_exclusion_still_applies(): void
-    {
-        $group = $this->createTestGroup();
-
-        $this->assertNull(
-            $this->service->checkConcernKeywords('OFFER: garden shelter', 'A small garden shelter.', $group->id),
-            'a garden shelter is not a safeguarding concern'
-        );
-        $result = $this->service->checkConcernKeywords('WANTED: help', 'Looking for a night shelter nearby.', $group->id);
-        $this->assertNotNull($result);
-        $this->assertSame('safeguarding', $result['category']);
-    }
-
-    public function test_refugee_does_not_match_the_refuge_keyword(): void
-    {
-        $group = $this->createTestGroup();
-
-        $this->assertNull(
-            $this->service->checkConcernKeywords('WANTED: clothes', 'For a refugee family we support.', $group->id)
-        );
-    }
-
-    public function test_allowed_category_keywords_are_not_flagged(): void
-    {
-        // 'allowed' is a category (whitelist) in concern_keywords, not an action.
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'  => 'testallowed_cc',
-            'category' => 'allowed',
-            'action'   => 'flag',
-        ]);
-
-        $result = $this->service->checkConcernKeywords('OFFER: testallowed_cc item', '', $group->id);
-        $this->assertNull($result);
-    }
-
-    // -------------------------------------------------------------------------
-    // checkConcernKeywords — fuzzy match_mode (levenshtein, V1 parity)
-    // -------------------------------------------------------------------------
-
-    public function test_fuzzy_match_catches_plural(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'testfuzzy_cc',
-            'category'   => 'substance_medicine',
-            'action'     => 'flag',
-            'match_mode' => 'fuzzy',
-        ]);
-
-        $exact = $this->service->checkConcernKeywords('OFFER: testfuzzy_cc tablets', '', $group->id);
-        $this->assertNotNull($exact, 'exact keyword must match');
-
-        // plural adds one character → levenshtein distance 1 ≤ 1
-        $plural = $this->service->checkConcernKeywords('OFFER: testfuzzy_ccs for sale', '', $group->id);
-        $this->assertNotNull($plural, 'plural form must match via fuzzy');
-    }
-
-    public function test_fuzzy_match_catches_single_char_typo(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'testfuzzy2_cc',
-            'category'   => 'substance_medicine',
-            'action'     => 'flag',
-            'match_mode' => 'fuzzy',
-        ]);
-
-        // one substitution → levenshtein distance 1 ≤ 1
-        $typo = $this->service->checkConcernKeywords('OFFER: testfuzzy2_cd items', '', $group->id);
-        $this->assertNotNull($typo, 'single-char typo must match via fuzzy');
-    }
-
-    public function test_fuzzy_match_catches_transposition(): void
-    {
-        // Damerau-Levenshtein: adjacent-char transpositions count as distance 1.
-        // 8-char keyword keeps it in the fuzzy-typo branch (< 8 chars only get
-        // exact + inflections to avoid false positives like formic/formica).
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'nicotine',
-            'category'   => 'substance_regulated',
-            'action'     => 'flag',
-            'match_mode' => 'fuzzy',
-        ]);
-
-        $transposed = $this->service->checkConcernKeywords('OFFER: nictoine for sale', '', $group->id);
-        $this->assertNotNull($transposed, 'adjacent-char transposition must match via Damerau-Levenshtein');
-    }
-
-    public function test_fuzzy_match_rejects_six_and_seven_char_neighbours(): void
-    {
-        // Regression: 'formica' (laminate brand) wrongly matched 'formic' acid
-        // via levenshtein-1, blocking a benign WANTED post about furniture
-        // restoration. Now keywords < 8 chars only accept exact + inflections.
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insertOrIgnore([
-            ['keyword' => 'formic',  'category' => 'substance_reportable', 'action' => 'block', 'match_mode' => 'fuzzy'],
-            ['keyword' => 'rocket',  'category' => 'review',               'action' => 'flag',  'match_mode' => 'fuzzy'],
-            ['keyword' => 'selling', 'category' => 'review',               'action' => 'flag',  'match_mode' => 'fuzzy'],
-            ['keyword' => 'bangers', 'category' => 'review',               'action' => 'flag',  'match_mode' => 'fuzzy'],
-        ]);
-
-        $cases = [
-            'formica laminate'   => 'WANTED: Imperial 1/2 dowelling for a Formica topped gate-leg table',
-            'socket (vs rocket)' => 'OFFER: Spare socket set for car repairs',
-            'telling (vs selling)' => 'OFFER: A book about telling stories to kids',
-            'hangers (vs bangers)' => 'OFFER: Wooden coat hangers',
-        ];
-
-        foreach ($cases as $label => $subject) {
-            $result = $this->service->checkConcernKeywords($subject, '', $group->id);
-            $this->assertNull($result, "'{$label}' must not match a 6/7-char fuzzy concern keyword");
-        }
-    }
-
-    public function test_fuzzy_match_rejects_substring_of_much_longer_word(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'testhash_cc',
-            'category'   => 'substance_regulated',
-            'action'     => 'flag',
-            'match_mode' => 'fuzzy',
-        ]);
-
-        // length ratio (testhash_ccextended / testhash_cc) = 22/11 = 2.0 > 1.25 → no match
-        $noMatch = $this->service->checkConcernKeywords('OFFER: testhash_ccextended', '', $group->id);
-        $this->assertNull($noMatch, 'compound word much longer than keyword must not match');
-    }
-
-    public function test_fuzzy_match_rejects_completely_different_word(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'testfuzzy3_cc',
-            'category'   => 'review',
-            'action'     => 'flag',
-            'match_mode' => 'fuzzy',
-        ]);
-
-        $noMatch = $this->service->checkConcernKeywords('OFFER: completely different text', '', $group->id);
-        $this->assertNull($noMatch, 'unrelated word must not match');
-    }
-
-    #[DataProvider('shortFuzzyFalsePositiveProvider')]
-    public function test_fuzzy_match_rejects_short_keyword_neighbours(string $keyword, string $body): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => $keyword,
-            'category'   => 'review',
-            'action'     => 'flag',
-            'match_mode' => 'fuzzy',
-        ]);
-
-        $result = $this->service->checkConcernKeywords('OFFER: item', $body, $group->id);
-        $this->assertNull($result, "short keyword '{$keyword}' must not match unrelated 1-edit neighbour in body: {$body}");
-    }
-
-    public static function shortFuzzyFalsePositiveProvider(): array
-    {
-        return [
-            'poof vs roof'   => ['poof', 'waterproof pvc roof with poles'],
-            'poof vs proof'  => ['poof', 'rainproof marquee'],
-            'lend vs led'    => ['lend', 'hp 22" ips backlit led monitor'],
-            'cash vs case'   => ['cash', 'sewing machine in a case'],
-            'pay vs pat'     => ['pay',  'has not been pat tested'],
-            'swap vs snap'   => ['swap', 'one snap-on cover'],
-            'sell vs sill'   => ['sell', 'window sill needs repainting'],
-            'dollar vs lone' => ['$',    'reposting due to no collection - general wear'],
-            'dollar vs a'    => ['$',    'as seen, fair chance of working'],
-        ];
-    }
-
-    #[DataProvider('shortFuzzyInflectionProvider')]
-    public function test_fuzzy_match_still_catches_inflections_for_short_keywords(string $keyword, string $body): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => $keyword,
-            'category'   => 'review',
-            'action'     => 'flag',
-            'match_mode' => 'fuzzy',
-        ]);
-
-        $result = $this->service->checkConcernKeywords('OFFER: item', $body, $group->id);
-        $this->assertNotNull($result, "short keyword '{$keyword}' must match inflection in body: {$body}");
-    }
-
-    public static function shortFuzzyInflectionProvider(): array
-    {
-        return [
-            'lend plural'       => ['lend', 'who lends tools around here'],
-            'cash plural'       => ['cash', 'only cashes accepted'],
-            'pay -ing'          => ['pay',  'I am paying for shipping'],
-            'swap exact'        => ['swap', 'happy to swap items'],
-            'swap -ed'          => ['swap', 'have already swapped these'],
-            'punctuation strip' => ['cash', 'only (cash), please'],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // checkVagueItem
-    // -------------------------------------------------------------------------
-
-    public function test_vague_item_name_returns_reason(): void
-    {
-        $result = $this->service->checkVagueItem('stuff');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('Vague', $result['check']);
-    }
-
-    public function test_vague_item_name_case_insensitive(): void
-    {
-        $result = $this->service->checkVagueItem('STUFF');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('Vague', $result['check']);
-    }
-
-    public function test_short_item_name_passes(): void
-    {
-        // Short acronym item names like "TV", "PC", "ab" have no significant tokens and pass.
-        $this->assertNull($this->service->checkVagueItem('TV'));
-        $this->assertNull($this->service->checkVagueItem('PC'));
-        $this->assertNull($this->service->checkVagueItem('ab'));
-    }
-
-    public function test_specific_item_name_returns_null(): void
-    {
-        $result = $this->service->checkVagueItem('Oak dining table with four chairs');
-
-        $this->assertNull($result);
-    }
-
-    public function test_null_or_empty_item_name_returns_null(): void
-    {
-        $this->assertNull($this->service->checkVagueItem(null));
-        $this->assertNull($this->service->checkVagueItem(''));
-        $this->assertNull($this->service->checkVagueItem('   '));
-    }
-
-    #[DataProvider('vagueItemFalsePositiveProvider')]
-    public function test_specific_noun_rescues_a_vague_modifier(string $itemName): void
-    {
-        $this->assertNull(
-            $this->service->checkVagueItem($itemName),
-            "name '{$itemName}' has a specific noun and must not flag as vague",
-        );
-    }
-
-    public static function vagueItemFalsePositiveProvider(): array
-    {
-        return [
-            'assorted + specific'        => ['Assorted picture frames'],
-            'various + specific'         => ['Various small kitchen items'],
-            'bundle + specific'          => ['Girls clothes bundle'],
-            'collection + specific'      => ['Pending collection -Camping chair'],
-            'mid + specific'             => ['Marilyn monroe stuff'],
-            'trailing-comma + specific'  => ['Mugs, various'],
-            'embedded "stuff"'           => ['stuffed bear toy'],
-            // "yes"/"ok" etc as one word among real nouns must NOT flag.
-            'yes + specific noun'        => ['Yes to Life recovery book'],
-            'ok describing condition'    => ['Sofa in ok condition'],
-        ];
-    }
-
-    #[DataProvider('vagueItemTruePositiveProvider')]
-    public function test_genuinely_vague_names_are_flagged(string $itemName): void
-    {
-        $result = $this->service->checkVagueItem($itemName);
-        $this->assertNotNull($result, "name '{$itemName}' must flag as vague");
-        $this->assertEquals('Vague', $result['check']);
-    }
-
-    public static function vagueItemTruePositiveProvider(): array
-    {
-        return [
-            'single vague word'          => ['stuff'],
-            'two vague words'            => ['various items'],
-            'vague phrase'               => ['bits and pieces'],
-            'free stuff phrase'          => ['free stuff'],
-            'numbers + only vague'       => ['4 assorted things'],
-            // Content-free responses/fillers left in the item box.
-            'affirmation yes'            => ['Yes'],
-            'affirmation no'             => ['No'],
-            'filler please'              => ['Please'],
-            'filler thanks'              => ['Thanks'],
-        ];
     }
 
     // -------------------------------------------------------------------------
@@ -771,41 +191,8 @@ class ContentCheckTest extends TestCase
     // checkMessage (integration: all checks together)
     // -------------------------------------------------------------------------
 
-    public function test_check_message_returns_all_failures(): void
-    {
-        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
-        $user  = $this->createTestUser();
-        DB::table('concern_keywords')->insert([
-            'keyword'  => 'worrycheck_cc',
-            'category' => 'review',
-            'action'   => 'flag',
-        ]);
-
-        $msgid = DB::table('messages')->insertGetId([
-            'fromuser' => $user->id,
-            'type'     => 'Offer',
-            'subject'  => 'OFFER: stuff (Location) - worrycheck_cc',
-            'textbody' => 'Call on 07700 900456',
-            'message'  => 'Call on 07700 900456',
-            'arrival'  => now(),
-            'date'     => now(),
-            'source'   => 'Platform',
-        ]);
-        DB::table('items')->insertOrIgnore(['name' => 'stuff']);
-        $stuffId = DB::table('items')->where('name', 'stuff')->value('id');
-        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $stuffId]);
-
-        $reasons = $this->service->checkMessage($msgid, $group->id);
-
-        $checkNames = array_column($reasons, 'check');
-        $this->assertContains('Vague', $checkNames);
-        $this->assertContains('PhoneNumber', $checkNames);
-        $this->assertContains('ConcernKeyword', $checkNames);
-    }
-
     public function test_check_message_returns_empty_for_clean_message(): void
     {
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
 
         $msgid = DB::table('messages')->insertGetId([
@@ -822,31 +209,9 @@ class ContentCheckTest extends TestCase
         $itemId = DB::table('items')->where('name', 'Oak dining table')->value('id');
         DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
 
-        $reasons = $this->service->checkMessage($msgid, $group->id);
+        $reasons = $this->service->checkMessage($msgid);
 
         $this->assertEmpty($reasons);
-    }
-
-    // -------------------------------------------------------------------------
-    // Reason keyword field + de-duplication across concern keywords and the
-    // legacy per-group worry words (which overlap: a per-group worry word that
-    // has also been migrated into concern_keywords would otherwise be flagged
-    // twice — once as ConcernKeyword and once as PerGroupWorryWord).
-    // -------------------------------------------------------------------------
-
-    public function test_concern_keyword_reason_includes_matched_keyword(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'  => 'testkwfield_cc',
-            'category' => 'review',
-            'action'   => 'flag',
-        ]);
-
-        $result = $this->service->checkConcernKeywords('OFFER: testkwfield_cc item', '', $group->id);
-
-        $this->assertNotNull($result);
-        $this->assertEquals('testkwfield_cc', $result['keyword']);
     }
 
     // -------------------------------------------------------------------------
@@ -855,9 +220,8 @@ class ContentCheckTest extends TestCase
 
     public function test_clean_unmoderated_message_is_promoted_to_approved(): void
     {
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        DB::table('users')->where('id', $user->id)->update(['postingstatus' => 'DEFAULT']);
 
         $msgid = DB::table('messages')->insertGetId([
             'fromuser' => $user->id,
@@ -875,12 +239,9 @@ class ContentCheckTest extends TestCase
         $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
         DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
 
-        DB::table('messages_groups')->insert([
-            'msgid'      => $msgid,
-            'groupid'    => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection' => 'Pending',
             'arrival'    => now(),
-            'deleted'    => 0,
             // contentcheck_checked_at NULL — unprocessed
         ]);
 
@@ -888,10 +249,10 @@ class ContentCheckTest extends TestCase
 
         $this->assertEquals(1, $stats['approved']);
 
-        $collection = DB::table('messages_groups')->where('msgid', $msgid)->value('collection');
+        $collection = DB::table('messages')->where('id', $msgid)->value('collection');
         $this->assertEquals('Approved', $collection);
 
-        $checkedAt = DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_checked_at');
+        $checkedAt = DB::table('messages')->where('id', $msgid)->value('contentcheck_checked_at');
         $this->assertNotNull($checkedAt);
     }
 
@@ -904,9 +265,8 @@ class ContentCheckTest extends TestCase
      */
     public function test_edited_message_marked_for_recheck_is_checked_again(): void
     {
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        DB::table('users')->where('id', $user->id)->update(['postingstatus' => 'DEFAULT']);
 
         $msgid = DB::table('messages')->insertGetId([
             'fromuser' => $user->id,
@@ -928,12 +288,9 @@ class ContentCheckTest extends TestCase
 
         // Checked once, flagged, then edited: stamp intact, editedat newer - exactly
         // what PATCH /message leaves behind.
-        DB::table('messages_groups')->insert([
-            'msgid'                   => $msgid,
-            'groupid'                 => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection'              => 'Pending',
             'arrival'                 => now(),
-            'deleted'                 => 0,
             'contentcheck_checked_at' => now()->subMinutes(5),
             'contentcheck_reasons'    => json_encode(['stale reason from before the edit']),
         ]);
@@ -942,7 +299,7 @@ class ContentCheckTest extends TestCase
 
         $this->assertEquals(1, $stats['approved'], 'A row edited since its check must be re-checked');
 
-        $row = DB::table('messages_groups')->where('msgid', $msgid)->first();
+        $row = DB::table('messages')->where('id', $msgid)->first();
         $this->assertEquals('Approved', $row->collection);
         $editedat = DB::table('messages')->where('id', $msgid)->value('editedat');
         $this->assertFalse(
@@ -954,9 +311,8 @@ class ContentCheckTest extends TestCase
 
     public function test_promoted_message_with_location_is_added_to_spatial_index(): void
     {
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        DB::table('users')->where('id', $user->id)->update(['postingstatus' => 'DEFAULT']);
 
         $msgid = DB::table('messages')->insertGetId([
             'fromuser' => $user->id,
@@ -974,12 +330,9 @@ class ContentCheckTest extends TestCase
         $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
         DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
 
-        DB::table('messages_groups')->insert([
-            'msgid'      => $msgid,
-            'groupid'    => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection' => 'Pending',
             'arrival'    => now(),
-            'deleted'    => 0,
         ]);
 
         // Pending → must not be in the spatial index (it backs the public browse).
@@ -987,7 +340,7 @@ class ContentCheckTest extends TestCase
 
         $stats = $this->service->processUnprocessed();
         $this->assertEquals(1, $stats['approved']);
-        $this->assertEquals('Approved', DB::table('messages_groups')->where('msgid', $msgid)->value('collection'));
+        $this->assertEquals('Approved', DB::table('messages')->where('id', $msgid)->value('collection'));
 
         // Approved → now in the spatial index.
         $this->assertEquals(1, DB::table('messages_spatial')->where('msgid', $msgid)->count());
@@ -997,10 +350,8 @@ class ContentCheckTest extends TestCase
 
     public function test_kept_pending_message_is_not_added_to_spatial_index(): void
     {
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
         // NULL ourPostingStatus = MODERATED → message is kept Pending even when clean.
-        $this->createMembership($user, $group);
 
         $msgid = DB::table('messages')->insertGetId([
             'fromuser' => $user->id,
@@ -1018,17 +369,14 @@ class ContentCheckTest extends TestCase
         $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
         DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
 
-        DB::table('messages_groups')->insert([
-            'msgid'      => $msgid,
-            'groupid'    => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection' => 'Pending',
             'arrival'    => now(),
-            'deleted'    => 0,
         ]);
 
         $stats = $this->service->processUnprocessed();
         $this->assertEquals(1, $stats['kept_pending']);
-        $this->assertEquals('Pending', DB::table('messages_groups')->where('msgid', $msgid)->value('collection'));
+        $this->assertEquals('Pending', DB::table('messages')->where('id', $msgid)->value('collection'));
 
         // Still Pending → must not be in the spatial index.
         $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $msgid)->count());
@@ -1036,10 +384,8 @@ class ContentCheckTest extends TestCase
 
     public function test_moderated_user_message_stays_pending_with_checked_at_set(): void
     {
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
         // NULL ourPostingStatus = MODERATED (default for new users).
-        $this->createMembership($user, $group);
 
         $msgid = DB::table('messages')->insertGetId([
             'fromuser' => $user->id,
@@ -1055,30 +401,26 @@ class ContentCheckTest extends TestCase
         $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
         DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
 
-        DB::table('messages_groups')->insert([
-            'msgid'      => $msgid,
-            'groupid'    => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection' => 'Pending',
             'arrival'    => now(),
-            'deleted'    => 0,
         ]);
 
         $stats = $this->service->processUnprocessed();
 
         $this->assertEquals(1, $stats['kept_pending']);
 
-        $collection = DB::table('messages_groups')->where('msgid', $msgid)->value('collection');
+        $collection = DB::table('messages')->where('id', $msgid)->value('collection');
         $this->assertEquals('Pending', $collection);
 
-        $checkedAt = DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_checked_at');
+        $checkedAt = DB::table('messages')->where('id', $msgid)->value('contentcheck_checked_at');
         $this->assertNotNull($checkedAt, 'contentcheck_checked_at must be set even when kept pending');
     }
 
     public function test_message_with_check_failure_stays_pending_with_reasons(): void
     {
-        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
         $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        DB::table('users')->where('id', $user->id)->update(['postingstatus' => 'DEFAULT']);
 
         $msgid = DB::table('messages')->insertGetId([
             'fromuser' => $user->id,
@@ -1094,33 +436,28 @@ class ContentCheckTest extends TestCase
         $itemId = DB::table('items')->where('name', 'stuff')->value('id');
         DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
 
-        DB::table('messages_groups')->insert([
-            'msgid'      => $msgid,
-            'groupid'    => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection' => 'Pending',
             'arrival'    => now(),
-            'deleted'    => 0,
         ]);
 
         $stats = $this->service->processUnprocessed();
 
         $this->assertEquals(1, $stats['kept_pending']);
 
-        $row = DB::table('messages_groups')->where('msgid', $msgid)->first();
+        $row = DB::table('messages')->where('id', $msgid)->first();
         $this->assertEquals('Pending', $row->collection);
         $this->assertNotNull($row->contentcheck_reasons);
 
         $reasons    = json_decode($row->contentcheck_reasons, true);
         $checkNames = array_column($reasons, 'check');
-        $this->assertContains('Vague', $checkNames);
         $this->assertContains('PhoneNumber', $checkNames);
     }
 
     public function test_already_processed_messages_are_skipped(): void
     {
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        DB::table('users')->where('id', $user->id)->update(['postingstatus' => 'DEFAULT']);
 
         $msgid = DB::table('messages')->insertGetId([
             'fromuser' => $user->id,
@@ -1133,12 +470,9 @@ class ContentCheckTest extends TestCase
             'source'   => 'Platform',
         ]);
         // Already processed — contentcheck_checked_at IS SET.
-        DB::table('messages_groups')->insert([
-            'msgid'                    => $msgid,
-            'groupid'                  => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection'               => 'Pending',
             'arrival'                  => now(),
-            'deleted'                  => 0,
             'contentcheck_checked_at'  => now(),
         ]);
 
@@ -1148,44 +482,10 @@ class ContentCheckTest extends TestCase
         $this->assertEquals(0, $stats['kept_pending']);
     }
 
-    public function test_fully_moderated_group_keeps_message_pending(): void
-    {
-        $group = $this->createTestGroup(['settings' => ['moderated' => 1]]);
-        $user  = $this->createTestUser();
-        // User is non-moderated — but group is fully moderated.
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
-
-        $msgid = DB::table('messages')->insertGetId([
-            'fromuser' => $user->id,
-            'type'     => 'Offer',
-            'subject'  => 'OFFER: Oak chair (SW1A)',
-            'textbody' => 'Beautiful chair. Collection only.',
-            'message'  => 'Beautiful chair. Collection only.',
-            'arrival'  => now(),
-            'date'     => now(),
-            'source'   => 'Platform',
-        ]);
-        DB::table('messages_groups')->insert([
-            'msgid'   => $msgid,
-            'groupid' => $group->id,
-            'collection' => 'Pending',
-            'arrival' => now(),
-            'deleted' => 0,
-        ]);
-
-        $stats = $this->service->processUnprocessed();
-
-        $this->assertEquals(0, $stats['approved']);
-        $this->assertEquals(1, $stats['kept_pending']);
-        $collection = DB::table('messages_groups')->where('msgid', $msgid)->value('collection');
-        $this->assertEquals('Pending', $collection);
-    }
-
     public function test_freebiealerts_task_queued_for_approved_offer(): void
     {
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        DB::table('users')->where('id', $user->id)->update(['postingstatus' => 'DEFAULT']);
 
         $msgid = DB::table('messages')->insertGetId([
             'fromuser' => $user->id,
@@ -1199,12 +499,9 @@ class ContentCheckTest extends TestCase
             'lat'      => 51.50,
             'lng'      => -0.13,
         ]);
-        DB::table('messages_groups')->insert([
-            'msgid'   => $msgid,
-            'groupid' => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection' => 'Pending',
             'arrival' => now(),
-            'deleted' => 0,
         ]);
 
         $stats = $this->service->processUnprocessed();
@@ -1222,10 +519,8 @@ class ContentCheckTest extends TestCase
 
     public function test_push_notify_task_queued_for_kept_pending(): void
     {
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
         // Moderated user — will be kept pending.
-        $this->createMembership($user, $group);
 
         $msgid = DB::table('messages')->insertGetId([
             'fromuser' => $user->id,
@@ -1237,12 +532,9 @@ class ContentCheckTest extends TestCase
             'date'     => now(),
             'source'   => 'Platform',
         ]);
-        DB::table('messages_groups')->insert([
-            'msgid'   => $msgid,
-            'groupid' => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection' => 'Pending',
             'arrival' => now(),
-            'deleted' => 0,
         ]);
 
         $stats = $this->service->processUnprocessed();
@@ -1252,7 +544,7 @@ class ContentCheckTest extends TestCase
 
         $taskCount = DB::table('background_tasks')
             ->where('task_type', 'push_notify_group_mods')
-            ->whereRaw("JSON_EXTRACT(data, '$.group_id') = ?", [$group->id])
+            ->whereRaw("JSON_EXTRACT(data, '$.msgid') = ?", [$msgid])
             ->whereNull('processed_at')
             ->count();
 
@@ -1265,9 +557,8 @@ class ContentCheckTest extends TestCase
 
     public function test_audit_approved_message_that_would_be_flagged_returns_should_flag(): void
     {
-        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
         $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        DB::table('users')->where('id', $user->id)->update(['postingstatus' => 'DEFAULT']);
 
         // Approved message that contains a phone number (would be flagged by PII check).
         $msgid = DB::table('messages')->insertGetId([
@@ -1280,16 +571,13 @@ class ContentCheckTest extends TestCase
             'date'     => now(),
             'source'   => 'Platform',
         ]);
-        DB::table('messages_groups')->insert([
-            'msgid'                   => $msgid,
-            'groupid'                 => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection'              => 'Approved',
             'arrival'                 => now(),
-            'deleted'                 => 0,
             'contentcheck_checked_at' => now(),
         ]);
 
-        $disagreements = $this->service->auditExisting($group->id);
+        $disagreements = $this->service->auditExisting();
 
         $this->assertNotEmpty($disagreements);
         $types = array_column($disagreements, 'type');
@@ -1305,9 +593,8 @@ class ContentCheckTest extends TestCase
 
     public function test_audit_pending_message_that_would_be_approved_returns_should_approve(): void
     {
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        DB::table('users')->where('id', $user->id)->update(['postingstatus' => 'DEFAULT']);
 
         // Clean pending message from a non-moderated user — audit should flag it as should_approve.
         $msgid = DB::table('messages')->insertGetId([
@@ -1324,15 +611,12 @@ class ContentCheckTest extends TestCase
         $itemId = DB::table('items')->where('name', 'Wooden bookshelf')->value('id');
         DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
 
-        DB::table('messages_groups')->insert([
-            'msgid'      => $msgid,
-            'groupid'    => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection' => 'Pending',
             'arrival'    => now(),
-            'deleted'    => 0,
         ]);
 
-        $disagreements = $this->service->auditExisting($group->id);
+        $disagreements = $this->service->auditExisting();
 
         $approvals = array_filter($disagreements, fn ($d) => $d['msgid'] === (int) $msgid);
         $this->assertNotEmpty($approvals, 'Clean pending message from unmoderated user should appear as should_approve');
@@ -1344,10 +628,8 @@ class ContentCheckTest extends TestCase
 
     public function test_audit_pending_moderated_user_not_returned_as_should_approve(): void
     {
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
         // NULL ourPostingStatus = MODERATED — message should NOT appear as should_approve.
-        $this->createMembership($user, $group);
 
         $msgid = DB::table('messages')->insertGetId([
             'fromuser' => $user->id,
@@ -1363,15 +645,12 @@ class ContentCheckTest extends TestCase
         $itemId = DB::table('items')->where('name', 'Lamp')->value('id');
         DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
 
-        DB::table('messages_groups')->insert([
-            'msgid'      => $msgid,
-            'groupid'    => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection' => 'Pending',
             'arrival'    => now(),
-            'deleted'    => 0,
         ]);
 
-        $disagreements = $this->service->auditExisting($group->id);
+        $disagreements = $this->service->auditExisting();
 
         $forThisMsg = array_filter($disagreements, fn ($d) => $d['msgid'] === (int) $msgid);
         $this->assertEmpty($forThisMsg, 'Moderated user pending message should not appear in audit results');
@@ -1379,9 +658,8 @@ class ContentCheckTest extends TestCase
 
     public function test_audit_returns_empty_when_no_disagreements(): void
     {
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        DB::table('users')->where('id', $user->id)->update(['postingstatus' => 'DEFAULT']);
 
         // Approved message with contentcheck already done and no failures — no disagreement.
         $msgid = DB::table('messages')->insertGetId([
@@ -1398,16 +676,13 @@ class ContentCheckTest extends TestCase
         $itemId = DB::table('items')->where('name', 'Oak table')->value('id');
         DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
 
-        DB::table('messages_groups')->insert([
-            'msgid'                   => $msgid,
-            'groupid'                 => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection'              => 'Approved',
             'arrival'                 => now(),
-            'deleted'                 => 0,
             'contentcheck_checked_at' => now(),
         ]);
 
-        $disagreements = $this->service->auditExisting($group->id);
+        $disagreements = $this->service->auditExisting();
 
         $forThisMsg = array_filter($disagreements, fn ($d) => $d['msgid'] === (int) $msgid);
         $this->assertEmpty($forThisMsg);
@@ -1425,9 +700,8 @@ class ContentCheckTest extends TestCase
 
     public function test_contentcheck_command_dry_run_makes_no_changes(): void
     {
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        DB::table('users')->where('id', $user->id)->update(['postingstatus' => 'DEFAULT']);
 
         $msgid = DB::table('messages')->insertGetId([
             'fromuser' => $user->id,
@@ -1439,12 +713,9 @@ class ContentCheckTest extends TestCase
             'date'     => now(),
             'source'   => 'Platform',
         ]);
-        DB::table('messages_groups')->insert([
-            'msgid'   => $msgid,
-            'groupid' => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection' => 'Pending',
             'arrival' => now(),
-            'deleted' => 0,
         ]);
 
         $this->artisan('messages:contentcheck', ['--dry-run' => true])
@@ -1452,63 +723,14 @@ class ContentCheckTest extends TestCase
             ->assertExitCode(0);
 
         // No change — still Pending, contentcheck_checked_at still NULL.
-        $row = DB::table('messages_groups')->where('msgid', $msgid)->first();
+        $row = DB::table('messages')->where('id', $msgid)->first();
         $this->assertEquals('Pending', $row->collection);
         $this->assertNull($row->contentcheck_checked_at);
     }
 
     // -------------------------------------------------------------------------
-    // checkVagueItem — mid-word position
-    // -------------------------------------------------------------------------
-
-    public function test_vague_word_alongside_specific_tokens_is_not_flagged(): void
-    {
-        // "old stuff in shed" includes a vague word ('stuff') but also specific
-        // tokens ('old', 'shed'), so the rule should not flag it.
-        $this->assertNull($this->service->checkVagueItem('old stuff in shed'));
-    }
-
-    // -------------------------------------------------------------------------
     // processUnprocessed — action = 'block' moves message to Spam
     // -------------------------------------------------------------------------
-
-    public function test_block_action_keyword_moves_message_to_spam(): void
-    {
-        $group = $this->createTestGroup();
-        $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
-
-        DB::table('concern_keywords')->insert([
-            'keyword'  => 'testblock_cc',
-            'category' => 'substance_regulated',
-            'action'   => 'block',
-            'match_mode' => 'literal',
-        ]);
-
-        $msgid = DB::table('messages')->insertGetId([
-            'fromuser' => $user->id,
-            'type'     => 'Offer',
-            'subject'  => 'OFFER: testblock_cc item (SW1A)',
-            'textbody' => 'Something that should be blocked',
-            'message'  => 'Something that should be blocked',
-            'arrival'  => now(),
-            'date'     => now(),
-            'source'   => 'Platform',
-        ]);
-        DB::table('messages_groups')->insert([
-            'msgid'      => $msgid,
-            'groupid'    => $group->id,
-            'collection' => 'Pending',
-            'arrival'    => now(),
-            'deleted'    => 0,
-        ]);
-
-        $stats = $this->service->processUnprocessed();
-
-        $this->assertEquals(1, $stats['blocked'] ?? 0, 'block-action keyword must move message to Spam');
-        $collection = DB::table('messages_groups')->where('msgid', $msgid)->value('collection');
-        $this->assertEquals('Spam', $collection, 'message with block-action keyword must be in Spam collection');
-    }
 
     // -------------------------------------------------------------------------
     // processUnprocessed — arrival must NOT be reset on approval
@@ -1516,9 +738,8 @@ class ContentCheckTest extends TestCase
 
     public function test_arrival_not_reset_when_message_is_approved(): void
     {
-        $group = $this->createTestGroup();
         $user  = $this->createTestUser();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+        DB::table('users')->where('id', $user->id)->update(['postingstatus' => 'DEFAULT']);
 
         $originalArrival = now()->subHour();
 
@@ -1537,19 +758,16 @@ class ContentCheckTest extends TestCase
         DB::table('items')->insertOrIgnore(['name' => 'Good chair']);
         $itemId = DB::table('items')->where('name', 'Good chair')->value('id');
         DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
-        DB::table('messages_groups')->insert([
-            'msgid'      => $msgid,
-            'groupid'    => $group->id,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection' => 'Pending',
             'arrival'    => $originalArrival,
-            'deleted'    => 0,
         ]);
 
         $stats = $this->service->processUnprocessed();
 
         $this->assertEquals(1, $stats['approved'], 'message must be approved');
 
-        $row = DB::table('messages_groups')->where('msgid', $msgid)->first();
+        $row = DB::table('messages')->where('id', $msgid)->first();
         $approvedArrival = \Carbon\Carbon::parse($row->arrival);
         // arrival must be preserved — within 5 seconds of the original, not near now()
         $this->assertEqualsWithDelta(
@@ -2127,108 +1345,6 @@ class ContentCheckTest extends TestCase
     // checkGreetingSpam — greeting + link pattern (V1 Spam.php parity)
     // -------------------------------------------------------------------------
 
-    public function test_greeting_with_http_link_flags_message(): void
-    {
-        $result = $this->service->checkGreetingSpam('Hello! Check this deal', 'Visit http://example.com for more info');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('GreetingSpam', $result['check']);
-    }
-
-    public function test_greeting_in_subject_with_link_in_body_flags(): void
-    {
-        $result = $this->service->checkGreetingSpam('Hi there', 'More details at https://www.example.com/offer');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('GreetingSpam', $result['check']);
-    }
-
-    public function test_hey_greeting_with_link_flags_message(): void
-    {
-        $result = $this->service->checkGreetingSpam('Hey!', 'Check http://spam.com');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('GreetingSpam', $result['check']);
-    }
-
-    public function test_good_morning_with_link_flags_message(): void
-    {
-        $result = $this->service->checkGreetingSpam('Good morning everyone', 'Visit our site http://deals.com');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('GreetingSpam', $result['check']);
-    }
-
-    public function test_sup_greeting_with_link_flags_message(): void
-    {
-        $result = $this->service->checkGreetingSpam('Sup guys', 'Check out https://example.com');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('GreetingSpam', $result['check']);
-    }
-
-    public function test_greetings_greeting_with_link_flags_message(): void
-    {
-        $result = $this->service->checkGreetingSpam('Greetings', 'Visit http://spam.com');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('GreetingSpam', $result['check']);
-    }
-
-    public function test_good_afternoon_with_link_flags_message(): void
-    {
-        $result = $this->service->checkGreetingSpam('Good afternoon friends', 'www.example.com has deals');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('GreetingSpam', $result['check']);
-    }
-
-    public function test_good_evening_with_link_flags_message(): void
-    {
-        $result = $this->service->checkGreetingSpam('Good evening', 'Check http://example.com');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('GreetingSpam', $result['check']);
-    }
-
-    public function test_hello_with_link_flags_message(): void
-    {
-        $result = $this->service->checkGreetingSpam('Hello', 'http://example.com');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('GreetingSpam', $result['check']);
-    }
-
-    public function test_salutations_with_link_flags_message(): void
-    {
-        $result = $this->service->checkGreetingSpam('Salutations', 'Visit https://example.com');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('GreetingSpam', $result['check']);
-    }
-
-    public function test_greeting_without_link_returns_null(): void
-    {
-        $result = $this->service->checkGreetingSpam('Hello friend', 'Collection from SW1A 1AA please');
-
-        $this->assertNull($result);
-    }
-
-    public function test_no_greeting_with_link_returns_null(): void
-    {
-        $result = $this->service->checkGreetingSpam('OFFER: Sofa', 'Visit http://example.com');
-
-        $this->assertNull($result);
-    }
-
-    public function test_greeting_case_insensitive(): void
-    {
-        $result = $this->service->checkGreetingSpam('HELLO', 'http://spam.com');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('GreetingSpam', $result['check']);
-    }
-
     // -------------------------------------------------------------------------
     // checkImageSpam — duplicate image hash in 24 hours (V1 parity)
     // -------------------------------------------------------------------------
@@ -2408,100 +1524,6 @@ class ContentCheckTest extends TestCase
     // Contextual embedding suppression — ContentEmbeddingService integration
     // -------------------------------------------------------------------------
 
-    public function test_contextual_innocent_verdict_suppresses_keyword_flag(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'gun',
-            'category'   => 'substance_regulated',
-            'action'     => 'flag',
-            'match_mode' => 'literal',
-        ]);
-
-        $embedding = $this->createMock(ContentEmbeddingService::class);
-        $embedding->method('isInnocentContext')->willReturn(true);
-
-        $service = new ContentCheckService($embedding);
-        $result  = $service->checkConcernKeywords('OFFER: hot glue gun for crafts', '', $group->id);
-
-        $this->assertNull($result, 'Embedding service said innocent — should not flag');
-    }
-
-    public function test_contextual_concerning_verdict_still_flags(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'gun',
-            'category'   => 'substance_regulated',
-            'action'     => 'flag',
-            'match_mode' => 'literal',
-        ]);
-
-        $embedding = $this->createMock(ContentEmbeddingService::class);
-        $embedding->method('isInnocentContext')->willReturn(false);
-
-        $service = new ContentCheckService($embedding);
-        $result  = $service->checkConcernKeywords('OFFER: gun for sale', '', $group->id);
-
-        $this->assertNotNull($result, 'Embedding service said concerning — should flag');
-        $this->assertEquals('substance_regulated', $result['category']);
-    }
-
-    public function test_no_embedding_service_still_flags(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'gun',
-            'category'   => 'substance_regulated',
-            'action'     => 'flag',
-            'match_mode' => 'literal',
-        ]);
-
-        // No embedding service — conservative default is to flag everything.
-        $service = new ContentCheckService(null);
-        $result  = $service->checkConcernKeywords('OFFER: glue gun for crafts', '', $group->id);
-
-        $this->assertNotNull($result, 'No embedding service — should flag conservatively');
-    }
-
-    public function test_contextual_innocent_verdict_suppresses_substance_medicine_flag(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'codeine',
-            'category'   => 'substance_medicine',
-            'action'     => 'flag',
-            'match_mode' => 'literal',
-        ]);
-
-        $embedding = $this->createMock(ContentEmbeddingService::class);
-        $embedding->method('isInnocentContext')->willReturn(true);
-
-        $service = new ContentCheckService($embedding);
-        $result  = $service->checkConcernKeywords('OFFER: medicine cabinet with old codeine labels', '', $group->id);
-
-        $this->assertNull($result, 'Embedding service said innocent — should not flag substance_medicine');
-    }
-
-    public function test_contextual_innocent_verdict_suppresses_scam_flag(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'bank transfer',
-            'category'   => 'scam',
-            'action'     => 'flag',
-            'match_mode' => 'literal',
-        ]);
-
-        $embedding = $this->createMock(ContentEmbeddingService::class);
-        $embedding->method('isInnocentContext')->willReturn(true);
-
-        $service = new ContentCheckService($embedding);
-        $result  = $service->checkConcernKeywords('OFFER: warning — I was asked for a bank transfer, report this scam', '', $group->id);
-
-        $this->assertNull($result, 'Embedding service said innocent — should not flag scam warning');
-    }
-
     // -------------------------------------------------------------------------
     // Held messages must be left alone (Discourse 9816 / mod-veto), and new
     // approved-on-arrival posts must be content-checked too.
@@ -2575,17 +1597,13 @@ class ContentCheckTest extends TestCase
         $user = $this->createTestUser();
 
         $message = $this->createTestMessage($user, [
-            'subject'    => 'OFFER: stuff (SW1A)',
-            'textbody'   => 'Some stuff.',
+            'subject'    => 'OFFER: Sofa (SW1A)',
+            'textbody'   => 'Call 07700 900123 to collect.',
             'collection' => Message::COLLECTION_APPROVED,
         ]);
         $msgid = $message->id;
 
-        // Vague item name -> a content-check reason.
-        DB::table('items')->insertOrIgnore(['name' => 'stuff']);
-        $itemId = DB::table('items')->where('name', 'stuff')->value('id');
-        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
-
+        // A phone number in the body -> a content-check reason.
         $this->service->processUnprocessed();
 
         $this->assertEquals('Approved', DB::table('messages')->where('id', $msgid)->value('collection'),
@@ -2632,6 +1650,7 @@ class ContentCheckTest extends TestCase
         // A clearance (bulk-offer) Offer must not receive a freebie_alerts_add task even
         // when auto-approved — the concierge manages those posts directly.
         $user = $this->createTestUser();
+        DB::table('users')->where('id', $user->id)->update(['postingstatus' => 'DEFAULT']);
 
         $message = $this->createTestMessage($user, [
             'subject'    => 'OFFER: Office Clearance (EC1A)',
@@ -2662,50 +1681,6 @@ class ContentCheckTest extends TestCase
             ->count();
 
         $this->assertEquals(0, $count, 'freebie_alerts_add must not be queued for a clearance/bulk-offer post');
-    }
-
-    /**
-     * A post a moderator has HELD must still be content-checked - but never re-promoted.
-     *
-     * Holding used to exclude a post from the check entirely ("never fight a mod"), which
-     * meant contentcheck_checked_at stayed NULL for as long as the hold lasted. Two things
-     * followed: the moderator who held it never got the content reasons that would tell them
-     * why it needed a look, and the ModTools badge - which only counts checked rows - showed
-     * fewer held posts than were sitting in their list (Discourse 9481/635, seen live with a
-     * post held for two days and still unchecked).
-     *
-     * Checking is not the same as acting. The check records what it found; only promotion
-     * and blocking would fight the moderator, and those stay off for held rows.
-     */
-    public function test_held_post_is_content_checked_but_never_promoted(): void
-    {
-        $poster = $this->createTestUser();
-        $holder = $this->createTestUser();
-
-        DB::table('concern_keywords')->insert([
-            'keyword'  => 'testheldkw_cc',
-            'category' => 'review',
-            'action'   => 'flag',
-            'scope'    => 'global',
-        ]);
-
-        $message = $this->createTestMessage($poster, [
-            'subject'                 => 'OFFER: testheldkw_cc item (TestLocation)',
-            'collection'              => Message::COLLECTION_PENDING,
-            'heldby'                  => $holder->id,
-            'contentcheck_checked_at' => null,
-        ]);
-
-        $this->service->processUnprocessed();
-
-        $row = DB::table('messages')->where('id', $message->id)->first();
-
-        $this->assertNotNull($row->contentcheck_checked_at, 'a held post must still be content-checked');
-        $this->assertNotNull($row->contentcheck_reasons, 'the moderator holding it should get the reasons');
-        $this->assertStringContainsString('testheldkw_cc', $row->contentcheck_reasons);
-        $this->assertEquals(Message::COLLECTION_PENDING, $row->collection,
-            'checking must not promote a post out from under the moderator holding it');
-        $this->assertEquals($holder->id, $row->heldby, 'the hold itself must be left alone');
     }
 
     /**

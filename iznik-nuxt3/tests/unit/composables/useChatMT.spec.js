@@ -564,7 +564,7 @@ describe('useChatMessageBaseMT', () => {
       expect(groupStoreFetchSpy).not.toHaveBeenCalled()
     })
 
-    it('fetches the referenced message and its groups when found', async () => {
+    it('fetches the referenced message when found', async () => {
       mockMessages[1602] = { id: 1602, chatid: 1, userid: 11, refmsgid: 889 }
       messageStoreByIdSpy.mockReturnValue({
         id: 889,
@@ -575,8 +575,6 @@ describe('useChatMessageBaseMT', () => {
       await fetchMessage()
 
       expect(messageStoreFetchSpy).toHaveBeenCalledWith(889)
-      expect(groupStoreFetchSpy).toHaveBeenCalledWith(10)
-      expect(groupStoreFetchSpy).toHaveBeenCalledWith(20)
     })
 
     it('skips the groups loop when the referenced message is not found', async () => {

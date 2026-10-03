@@ -54,7 +54,7 @@ func setupTnPatchLocationMessage(t *testing.T, prefix string) (msgID uint64, tnp
 	tnuserid = 90000000 + ownerID
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", tnuserid, ownerID)
 
-	msgID = CreateTestMessage(t, ownerID, groupID, prefix+" original subject", patchLocOldLat, patchLocOldLng)
+	msgID = CreateTestMessage(t, ownerID, prefix+" original subject", patchLocOldLat, patchLocOldLng)
 
 	itemName := prefix + "_item"
 	db.Exec("INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", itemName)
@@ -208,7 +208,7 @@ func TestPatchMessageDoesNotDeriveLocationIdForNonPartnerCaller(t *testing.T) {
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	_, token := CreateTestSession(t, ownerID)
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", patchLocOldLat, patchLocOldLng)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Offer", patchLocOldLat, patchLocOldLng)
 	db.Exec("UPDATE messages SET locationid = ?, lat = ?, lng = ? WHERE id = ?",
 		patchLocOldID, patchLocOldLat, patchLocOldLng, msgID)
 

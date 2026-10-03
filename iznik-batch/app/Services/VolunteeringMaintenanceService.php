@@ -112,7 +112,7 @@ class VolunteeringMaintenanceService
                     recipientEmail: $email,
                     title: (string) $vol->title,
                     renewUrl: $url,
-                    groupName: $this->groupNameFor((int) $volId),
+                    groupName: config('freegle.site_name', 'Freegle'),
                     userId: (int) $user->id,
                 ), $email);
             } catch (\Throwable $e) {
@@ -218,18 +218,4 @@ class VolunteeringMaintenanceService
         return true;
     }
 
-    /**
-     * Display name of a group the opportunity is posted on, defaulting to the
-     * site name. Mirrors V1's namedisplay (namefull if set, else nameshort).
-     */
-    private function groupNameFor(int $volId): string
-    {
-        $name = DB::table('volunteering_groups')
-            ->join('groups', 'groups.id', '=', 'volunteering_groups.groupid')
-            ->where('volunteering_groups.volunteeringid', $volId)
-            ->selectRaw("COALESCE(NULLIF(groups.namefull, ''), groups.nameshort) AS name")
-            ->value('name');
-
-        return $name ?: config('freegle.site_name', 'Freegle');
-    }
 }

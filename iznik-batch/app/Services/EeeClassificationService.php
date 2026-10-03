@@ -343,13 +343,7 @@ class EeeClassificationService
             ->leftJoin('items as i', 'i.id', '=', 'mi.itemid')
             ->where('m.id', $messageid)
             ->whereNull('m.deleted')
-            ->whereExists(function ($q) {
-                $q->select(DB::raw(1))
-                  ->from('messages_groups')
-                  ->whereColumn('messages_groups.msgid', 'm.id')
-                  ->where('messages_groups.collection', 'Approved')
-                  ->where('messages_groups.deleted', 0);
-            })
+            ->where('m.collection', 'Approved')
             ->select(['m.id', 'm.subject', 'm.textbody', 'i.name as item_name'])
             ->first();
 

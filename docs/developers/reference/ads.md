@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-13
+last_reviewed: 2026-10-03
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/components/ExternalDa.vue
@@ -50,7 +50,8 @@ behind that dispatcher.
 
 **`OurGoogleDa` is not in use.** AdSense was switched off and the module that provides its
 component is commented out in `iznik-nuxt3/nuxt.config.ts`, so the branch cannot render.
-The file and `GOOGLE_ADSENSE_ID` are still in the tree; do not take that as evidence the
+If it were switched on, it would give AdSense the national `/browse` page as its content page (there are no
+community pages in this experiment to pick from). The file and `GOOGLE_ADSENSE_ID` are still in the tree; do not take that as evidence the
 route works.
 
 **Terms worth knowing.** *Header bidding* (Prebid) asks several advertisers to bid for the

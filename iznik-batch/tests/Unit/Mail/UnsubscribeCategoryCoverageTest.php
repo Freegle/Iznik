@@ -32,15 +32,12 @@ class UnsubscribeCategoryCoverageTest extends TestCase
     private const EXPECTED = [
         \App\Mail\AI\AIImageReviewDigestMail::class => null,
         \App\Mail\Admin\AdminMail::class => null,
-        \App\Mail\Admin\ChaseAdminMail::class => null,
         \App\Mail\Admin\ModNotifMail::class => null,
         \App\Mail\Alert\AlertMail::class => null,
         \App\Mail\Birthday\BirthdayMail::class => UnsubscribeService::TYPE_ENGAGEMENT,
         \App\Mail\Charity\CharitySignupMail::class => null,
         \App\Mail\Chat\ChaseupModsMail::class => null,
         \App\Mail\Chat\ChatNotification::class => UnsubscribeService::TYPE_CHAT,
-        \App\Mail\Chat\ChatReviewPendingMail::class => null,
-        \App\Mail\Chat\ChatReviewSummaryMail::class => null,
         \App\Mail\Chat\SpamWarningMail::class => null,
         // Sent once after a provider stops accepting our mail, in place of the
         // chat notifications we declined to send, so it belongs to the same

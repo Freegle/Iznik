@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/gofiber/fiber/v2"
 )
 
 // TestChatRosterUpdateRequiresParticipantOrMod covers the fix for the mod-chat roster IDOR (H2):
@@ -19,7 +19,7 @@ func TestChatRosterUpdateRequiresParticipantOrMod(t *testing.T) {
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 
 	// A User2Mod chat: user1 is the member corresponding with the group's mods.
-	roomID := CreateTestChatRoom(t, memberID, nil, &groupID, "User2Mod")
+	roomID := CreateTestChatRoom(t, memberID, nil, "User2Mod")
 
 	body := fmt.Sprintf(`{"id":%d}`, roomID)
 

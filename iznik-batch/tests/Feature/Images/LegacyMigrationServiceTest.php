@@ -26,7 +26,7 @@ class LegacyMigrationServiceTest extends TestCase
         Storage::fake('images');
         DB::table('image_store_migration')->delete();
         DB::table('users_images')->delete();
-        DB::table('groups_images')->delete();
+        DB::table('chat_images')->delete();
     }
 
     private function migrator(): LegacyMigrationService
@@ -51,9 +51,9 @@ class LegacyMigrationServiceTest extends TestCase
         ]);
     }
 
-    private function groupImage(?string $externaluid): int
+    private function chatImage(?string $externaluid): int
     {
-        return DB::table('groups_images')->insertGetId([
+        return DB::table('chat_images')->insertGetId([
             'contenttype' => 'image/jpeg',
             'externaluid' => $externaluid,
         ]);
@@ -283,12 +283,12 @@ class LegacyMigrationServiceTest extends TestCase
         $this->legacyFile('g1');
         $this->legacyFile('g2');
         $this->userImage('freegletusd-g1');
-        $this->groupImage('freegletusd-g2');
+        $this->chatImage('freegletusd-g2');
 
-        $stats = $this->migrator()->migrate(['users_images', 'groups_images'], timeBudgetSeconds: 60, chunk: 100);
+        $stats = $this->migrator()->migrate(['users_images', 'chat_images'], timeBudgetSeconds: 60, chunk: 100);
 
         $this->assertSame(2, $stats['copied']);
-        $this->assertSame(['groups_images', 'users_images'], DB::table('image_store_migration')->orderBy('source')->pluck('source')->all());
+        $this->assertSame(['chat_images', 'users_images'], DB::table('image_store_migration')->orderBy('source')->pluck('source')->all());
     }
 
     public function test_an_id_that_could_escape_the_directory_is_refused(): void

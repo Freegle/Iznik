@@ -5,9 +5,7 @@ namespace App\Services;
 use App\Helpers\MailHelper;
 use App\Mail\Message\AutoRepostWarning;
 use App\Mail\Traits\FeatureFlags;
-use App\Models\Group;
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -25,8 +23,7 @@ class AutoRepostService
     public const LOOKBACK_DAYS = 90;
 
     /**
-     * Default repost settings per group.
-     * V1: $g->getSetting('reposts', ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5])
+     * Site-wide repost settings: the value every community used, frozen as a constant.
      */
     public const DEFAULT_REPOSTS = [
         'offer' => 3,
@@ -36,28 +33,18 @@ class AutoRepostService
     ];
 
     /**
-     * Process auto-reposts for all active Freegle groups.
+     * Process auto-reposts for every live post.
      *
-     * Matches V1 autorepost.php → Message::autoRepostGroup().
+     * A post has one moderation state and one repost counter, on messages, so a repost
+     * stamps messages.arrival and messages.autoreposts once and the poster is reminded
+     * once per cycle.
      *
-     * Multi-group fix: the REPOST itself stays per-group — V1 autoRepost() updates ALL
-     * messages_groups rows (WHERE msgid = ?), we update only the specific group's row
-     * (WHERE msgid = ? AND groupid = ?), so a rippled item is kept fresh in each
-     * community independently.
-     *
-     * Rippling-out fix: the WARNING email is anchored to the home posting
-     * (rippled_in = 0) and stamped across every group of the message, so a widely-rippled
-     * post reminds the poster once per cycle, not once per group. See processGroup().
-     *
-     * V1 side effects included:
-     *   - UPDATE messages_groups SET arrival=NOW(), autoreposts=autoreposts+1 (per-group)
-     *   - Log AUTOREPOSTED entry per group
-     *   - INSERT messages_postings per group
-     *   - UPDATE lastautopostwarning for warning emails (home posting only; stamped on all groups)
+     * Side effects:
+     *   - UPDATE messages SET arrival=NOW(), autoreposts=autoreposts+1
+     *   - Log Autoreposted
+     *   - INSERT messages_postings
+     *   - UPDATE messages.lastautopostwarning for warning emails
      *   - Warning email: "Will Repost: {subject}" with completed/withdraw/promise buttons
-     *
-     * V1 also bumped the keyword search index; search is now served from vector
-     * embeddings, so there is no index to bump.
      */
     public function process(bool $dryRun = false): array
     {
@@ -80,45 +67,33 @@ class AutoRepostService
 
         $mindate = now()->subDays(self::LOOKBACK_DAYS)->format('Y-m-d');
 
-        // V1: SELECT id FROM groups WHERE type = 'Freegle' AND onhere = 1 ORDER BY RAND()
-        $groups = Group::freegle()->onHere()->inRandomOrder()->get();
-
-        foreach ($groups as $group) {
-            if ($group->isClosed() || $group->getAttribute('autofunctionoverride')) {
-                continue;
-            }
-
-            $reposts = $group->getSetting('reposts', self::DEFAULT_REPOSTS);
-
-            try {
-                $groupStats = $this->processGroup($group, $reposts, $mindate, $dryRun, $warningEmailEnabled);
-                $stats['reposted'] += $groupStats['reposted'];
-                $stats['warned'] += $groupStats['warned'];
-                $stats['skipped'] += $groupStats['skipped'];
-            } catch (\Exception $e) {
-                // Transient SMTP failures during container-startup ordering shouldn't
-                // escalate to Sentry — log them at warning level instead.
-                $level = app(\App\Services\Mail\SmtpFailureClassifier::class)
-                    ->isTransient($e->getMessage()) ? 'warning' : 'error';
-                Log::$level("Error processing auto-repost for group #{$group->id}: " . $e->getMessage());
-                $stats['errors']++;
-            }
+        try {
+            $runStats = $this->processAll(self::DEFAULT_REPOSTS, $mindate, $dryRun, $warningEmailEnabled);
+            $stats['reposted'] += $runStats['reposted'];
+            $stats['warned'] += $runStats['warned'];
+            $stats['skipped'] += $runStats['skipped'];
+        } catch (\Exception $e) {
+            // Transient SMTP failures during container-startup ordering shouldn't
+            // escalate to Sentry — log them at warning level instead.
+            $level = app(\App\Services\Mail\SmtpFailureClassifier::class)
+                ->isTransient($e->getMessage()) ? 'warning' : 'error';
+            Log::$level('Error processing auto-repost: ' . $e->getMessage());
+            $stats['errors']++;
         }
 
         return $stats;
     }
 
     /**
-     * Process auto-reposts for a single group.
+     * Process auto-reposts for every candidate post.
      */
-    protected function processGroup(Group $group, array $reposts, string $mindate, bool $dryRun, bool $warningEmailEnabled = true): array
+    protected function processAll(array $reposts, string $mindate, bool $dryRun, bool $warningEmailEnabled = true): array
     {
         $stats = ['reposted' => 0, 'warned' => 0, 'skipped' => 0];
 
-        // V1 query: approved messages with no outcome, no promise, source=Platform,
-        // not deleted, poster still a member (not PROHIBITED), poster not deleted,
-        // no deadline or future deadline.
-        $messages = $this->getCandidates($group->id, $mindate, $reposts);
+        // Approved posts with no outcome, no promise, source=Platform, not deleted,
+        // poster not PROHIBITED and not deleted, no deadline or a future deadline.
+        $messages = $this->getCandidates($mindate, $reposts);
 
         $now = time();
 
@@ -162,7 +137,7 @@ class AutoRepostService
             // V1: check for recent replies in chat about this message.
             //
             // This asks chat_messages about one message, and it used to be asked before
-            // the two checks above - so every open post on every group paid for it,
+            // the two checks above - so every open post paid for it,
             // around 2.4M lookups a day, the overwhelming majority for posts that were
             // then discarded. It decides nothing that those checks do not already
             // decide first, so asking it here instead changes cost, not behaviour.
@@ -203,26 +178,12 @@ class AutoRepostService
                 && $msg->hoursago > ($interval - 1) * 24
                 && (is_null($lastwarnago) || $lastwarnago > 24 * 60 * 60)
             ) {
-                // Rippling-out fix: the repost reminder is anchored to the message's HOME
-                // posting (rippled_in = 0). A post that rippled INTO this group must never
-                // generate its own "Will Repost" reminder — otherwise a widely-rippled item
-                // would email the poster once per group, which is burdensome. The reminder's
-                // buttons (mark taken / withdraw / promise) act on the whole item, so one
-                // email from the home group governs the post on every group. Rippled rows are
-                // still reposted (the elseif below) to keep the item fresh in each community;
-                // they just stay silent.
-                if ($msg->rippled_in) {
-                    $stats['skipped']++;
-                } elseif (!$msg->lastautopostwarning || ($lastwarnago > 24 * 60 * 60)) {
+                if (!$msg->lastautopostwarning || ($lastwarnago > 24 * 60 * 60)) {
                     if ($dryRun) {
-                        Log::info("Dry run: would send repost warning for message #{$msg->msgid} on group #{$group->id}");
+                        Log::info("Dry run: would send repost warning for message #{$msg->msgid}");
                     } elseif ($warningEmailEnabled) {
-                        // Stamp lastautopostwarning on EVERY group of the message (V1's
-                        // WHERE msgid = ?), so a message cross-posted to several home groups
-                        // (and all its rippled-in rows) is reminded once per cycle, not once
-                        // per group. Mirrors ChaseUpService's cross-group lastchaseup stamp.
-                        DB::table('messages_groups')
-                            ->where('msgid', $msg->msgid)
+                        DB::table('messages')
+                            ->where('id', $msg->msgid)
                             ->update(['lastautopostwarning' => now()]);
 
                         // V1: "Will Repost: {subject}" with links to mark completed/withdraw/promise.
@@ -235,7 +196,6 @@ class AutoRepostService
                                 userId: $msg->fromuser,
                                 userName: $user->displayname,
                                 userEmail: $user->email_preferred,
-                                groupId: $group->id,
                             ));
                         }
                     }
@@ -244,9 +204,9 @@ class AutoRepostService
             } elseif ($msg->hoursago > $interval * 24) {
                 // V1 REPOST: message is past the next repost window.
                 if ($dryRun) {
-                    Log::info("Dry run: would auto-repost message #{$msg->msgid} on group #{$group->id}");
+                    Log::info("Dry run: would auto-repost message #{$msg->msgid}");
                 } else {
-                    $this->repost($msg, $group->id, $msg->autoreposts + 1, $reposts['max'] ?? 5);
+                    $this->repost($msg, $msg->autoreposts + 1, $reposts['max'] ?? 5);
                 }
                 $stats['reposted']++;
             } else {
@@ -258,15 +218,10 @@ class AutoRepostService
     }
 
     /**
-     * Get repost candidate messages for a specific group.
-     *
-     * V1 query from autoRepostGroup().
-     */
-    /**
      * Narrow the candidates to those that could actually be warned about or reposted.
      *
-     * When a post is due is arithmetic on its arrival and the group's settings, so the
-     * database can do it. It used to return every open post on the group - about 109.5k
+     * When a post is due is arithmetic on its arrival and the repost settings, so the
+     * database can do it. It used to return every open post - about 109.5k
      * an hour across the estate - and PHP then discarded the ~98% that were not due yet,
      * having already run a chat lookup for each one.
      *
@@ -302,7 +257,7 @@ class AutoRepostService
         }
 
         if (empty($bands)) {
-            // Nothing on this group can be reposted; return a query that matches nothing
+            // Nothing can be reposted; return a query that matches nothing
             // rather than scanning for rows PHP would discard one by one.
             return $query->whereRaw('1 = 0');
         }
@@ -313,58 +268,43 @@ class AutoRepostService
                     $q->where('messages.type', $type)
                         // keep-raw: an interval expression against NOW() with a bound
                         // parameter; the query builder has no interval helper.
-                        ->whereRaw('messages_groups.arrival <= DATE_SUB(NOW(), INTERVAL ? HOUR)', [$band['earliest']])
-                        ->whereRaw('messages_groups.arrival > DATE_SUB(NOW(), INTERVAL ? HOUR)', [$band['latest']]);
+                        ->whereRaw('messages.arrival <= DATE_SUB(NOW(), INTERVAL ? HOUR)', [$band['earliest']])
+                        ->whereRaw('messages.arrival > DATE_SUB(NOW(), INTERVAL ? HOUR)', [$band['latest']]);
                 });
             }
         });
     }
 
-    protected function getCandidates(int $groupid, string $mindate, ?array $reposts = null)
+    protected function getCandidates(string $mindate, ?array $reposts = null)
     {
-        $query = DB::table('messages_groups')
-            ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
+        $query = DB::table('messages')
             ->join('users', 'messages.fromuser', '=', 'users.id')
-            ->join('memberships', function ($join) {
-                $join->on('memberships.userid', '=', 'messages.fromuser')
-                    ->on('memberships.groupid', '=', 'messages_groups.groupid');
-            })
             ->leftJoin('messages_outcomes', 'messages.id', '=', 'messages_outcomes.msgid')
             ->leftJoin('messages_promises', 'messages_promises.msgid', '=', 'messages.id')
             ->select(
-                'messages_groups.msgid',
-                'messages_groups.groupid',
-                'messages_groups.autoreposts',
-                'messages_groups.lastautopostwarning',
-                'messages_groups.rippled_in',
+                'messages.id AS msgid',
+                'messages.autoreposts',
+                'messages.lastautopostwarning',
                 'messages.type',
                 'messages.subject',
                 'messages.fromaddr',
                 'messages.fromuser',
-                DB::raw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) AS hoursago'),
+                DB::raw('TIMESTAMPDIFF(HOUR, messages.arrival, NOW()) AS hoursago'),
                 DB::raw('TIMESTAMPDIFF(HOUR, users.lastaccess, NOW()) AS activehoursago')
             )
-            ->where('messages_groups.arrival', '>', $mindate)
-            ->where('messages_groups.groupid', $groupid)
-            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
-            // The membership itself must be live. Rippling's "removed on origin removal" (and
-            // group-leave retraction) soft-deletes a rippled-in messages_groups row with
-            // deleted=1 while leaving collection=Approved and the parent messages.deleted NULL.
-            // Without this filter autorepost reposts that dead membership, stamping arrival=NOW()
-            // and resurrecting a copy rippling had already pulled — which then leaks back into
-            // browse and the spatial index (and races purge:messages there). messages.deleted
-            // below only covers the parent message, not the per-group membership.
-            ->where('messages_groups.deleted', 0)
+            ->where('messages.arrival', '>', $mindate)
+            ->where('messages.collection', Message::COLLECTION_APPROVED)
             ->whereNull('messages_outcomes.msgid')
             ->whereNull('messages_promises.msgid')
             ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
             ->where('messages.source', Message::SOURCE_PLATFORM)
             ->whereNull('messages.deleted')
             ->where(function ($q) {
-                $q->whereNull('memberships.ourPostingStatus')
-                    ->orWhere('memberships.ourPostingStatus', '!=', 'PROHIBITED');
+                $q->whereNull('users.postingstatus')
+                    ->orWhere('users.postingstatus', '!=', 'PROHIBITED');
             })
             ->whereNull('users.deleted')
+            ->whereNull('users.banned')
             ->where(function ($q) {
                 $q->whereNull('messages.deadline')
                     ->orWhereRaw('messages.deadline > DATE(NOW())');
@@ -404,49 +344,38 @@ class AutoRepostService
     }
 
     /**
-     * Repost a message on a specific group.
+     * Repost a message.
      *
-     * Multi-group fix: V1 does WHERE msgid = ? (all groups).
-     * We do WHERE msgid = ? AND groupid = ? (specific group only).
-     *
-     * V1 side effects:
-     *   - UPDATE messages_groups SET arrival=NOW(), autoreposts+1
-     *   - Log AUTOREPOSTED
+     * Side effects:
+     *   - UPDATE messages SET arrival=NOW(), autoreposts+1
+     *   - Log Autoreposted
      *   - INSERT messages_postings
-     *   - Bump search index (skipped — handled by cron)
      */
-    protected function repost(object $msg, int $groupid, int $newReposts, int $maxReposts): void
+    protected function repost(object $msg, int $newReposts, int $maxReposts): void
     {
-        // Multi-group fix: only update the specific group's row.
-        // V1: UPDATE messages_groups SET arrival = NOW(), autoreposts = autoreposts + 1 WHERE msgid = ?
-        DB::table('messages_groups')
-            ->where('msgid', $msg->msgid)
-            ->where('groupid', $groupid)
+        DB::table('messages')
+            ->where('id', $msg->msgid)
             ->update([
                 'arrival' => now(),
                 'autoreposts' => DB::raw('autoreposts + 1'),
             ]);
 
-        // V1: log per group.
         DB::table('logs')->insert([
             'timestamp' => now(),
             'type' => 'Message',
             'subtype' => 'Autoreposted',
             'msgid' => $msg->msgid,
-            'groupid' => $groupid,
             'user' => $msg->fromuser,
             'text' => "$newReposts / $maxReposts",
         ]);
 
-        // V1: INSERT INTO messages_postings (msgid, groupid, repost, autorepost)
         DB::table('messages_postings')->insert([
             'msgid' => $msg->msgid,
-            'groupid' => $groupid,
             'repost' => 1,
             'autorepost' => 1,
         ]);
 
-        Log::info("Auto-reposted message #{$msg->msgid} on group #{$groupid} ({$newReposts}/{$maxReposts})");
+        Log::info("Auto-reposted message #{$msg->msgid} ({$newReposts}/{$maxReposts})");
     }
 
 }

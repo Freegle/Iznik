@@ -139,7 +139,6 @@ Schedule::command('mail:chat:user2mod --max-iterations=60 --spool')
     ->sendOutputTo(cronLog('mail:chat:user2mod'))
     ->runInBackground();
 
-
 // Fetch UK CPI inflation data from ONS - runs monthly.
 // Used to inflation-adjust the "benefit of reuse" value from the 2011 WRAP report.
 // Sends alert email to GeekAlerts if fetch fails.
@@ -197,22 +196,6 @@ if (config('freegle.ripple.enabled')) {
         ->runInBackground();
 }
 
-// Group experiment (per-group before/after): when RIPPLE_WITHIN_GROUPS lists group ids, ripple ONLY
-// those groups' posts - even while the global switch above is OFF. The scoped run bypasses the global
-// gate in ExpandService::process(), so the rest of the network stays dark. During the experiment you
-// run with RIPPLE_ENABLED=false and RIPPLE_WITHIN_GROUPS set, so only this scoped cron is active.
-$rippleWithinGroups = (array) config('freegle.ripple.within_groups', []);
-if (!empty($rippleWithinGroups)) {
-    // --limit=200: at scoped-experiment scale the reach population is ~3.6k expanding rows generating
-    // ~60 due-advances per tick, so the default 50 budget is fully consumed advancing and starves new
-    // initialisation (the new-group backlog stops draining). 200 leaves headroom for both advances and
-    // new inits without over-driving the routing server. Tune up if due-advances approach the limit.
-    Schedule::command('ripple:expand', ['--within-group' => implode(',', $rippleWithinGroups), '--limit' => 200])
-        ->everyMinute()
-        ->withoutOverlapping(15)
-        ->sendOutputTo(cronLog('ripple:expand-experiment'))
-        ->runInBackground();
-}
 
 // Release/expire held external (email/TN) replies as posts ripple out (#3).
 // Inert until the reach engine is live -- nothing to release until a reply is held.
@@ -290,15 +273,6 @@ if (config('freegle.firstreply.enabled')) {
             ->runInBackground();
     }
 }
-
-// Best-effort "quicker to get to" moderator notes for rippled-in posts, computed out of the hot
-// ripple:expand cron so its routing/KNN calls can't slow rippling (freegle.ripple.proximity_notes
-// gates it; withoutOverlapping keeps a slow run from stacking).
-Schedule::command('ripple:proximity-notes')
-    ->everyFiveMinutes()
-    ->withoutOverlapping(15)
-    ->sendOutputTo(cronLog('ripple:proximity-notes'))
-    ->runInBackground();
 
 // Update UK spatial data - runs monthly.
 // Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
@@ -607,14 +581,6 @@ Schedule::command('emails:validate')
     ->dailyAt('04:50')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('emails:validate'))
-    ->runInBackground();
-
-// Hourly group member/mod count refresh.
-// V1: cron/membercounts.php
-Schedule::command('groups:update-counts')
-    ->hourly()
-    ->withoutOverlapping(120)
-    ->sendOutputTo(cronLog('groups:update-counts'))
     ->runInBackground();
 
 // Hourly chat-room message count refresh + reopen User2Mod chats with mod
@@ -1112,26 +1078,6 @@ Schedule::command('birthday:send-emails')
     ->sendOutputTo(cronLog('birthday:send-emails'))
     ->runInBackground();
 
-// Check for inactive mods and notify group owners / mentors.
-// V1: cron/mod_active.php (Monday 15:00)
-Schedule::command('groups:check-mod-welfare')
-    ->weeklyOn(1, '15:00')
-    ->withoutOverlapping(360)
-    ->sendOutputTo(cronLog('groups:check-mod-welfare'))
-    ->runInBackground();
-
-// Send a copy of each group's welcome mail to mods once a year for review.
-// V1: cron/group_welcomereview.php (daily 15:00; service dedupes by
-// groups.welcomereview timestamp so each group only fires on its anniversary).
-// V1 had a second identical crontab entry at 01:00 — likely accidental
-// duplicate; not preserved here since the service is idempotent across runs
-// on the same day.
-Schedule::command('groups:welcome-review')
-    ->dailyAt('15:00')
-    ->withoutOverlapping(360)
-    ->sendOutputTo(cronLog('groups:welcome-review'))
-    ->runInBackground();
-
 // Calculate and send the monthly LoveJunk/TrashNothing invoice split to TN.
 // V1: cron/lovejunk_tn_invoice.php (1st of month at 15:00)
 Schedule::command('lovejunk:send-tn-invoice')
@@ -1188,31 +1134,20 @@ Schedule::command('stories:ask')
 // ADMIN EMAILS
 // =============================================================================
 
-// Copy suggested admins to per-group copies and clean up old pending admins.
-// Creates per-group copies (pending=1) for moderator approval,
-// then marks the suggested admin as complete.
-Schedule::command('mail:admin:copy')
-    ->everyMinute()
-    ->withoutOverlapping(15)
-    ->sendOutputTo(cronLog('mail:admin:copy'))
+// Delete admins left pending for more than 31 days.
+Schedule::command('mail:admin:cleanup')
+    ->dailyAt('03:10')
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('mail:admin:cleanup'))
     ->runInBackground();
 
-// Send approved admin emails to group members.
+// Send approved admin emails to members.
 // Only processes admins that are approved (pending=0) and not yet complete.
 Schedule::command('mail:admin:send --spool')
     ->everyMinute()
     ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('mail:admin:send'))
     ->runInBackground();
-
-// Chase moderators about pending suggested admins.
-// Sends reminder emails after 48h, once per day, up to 7 days.
-Schedule::command('mail:admin:chase')
-    ->hourly()
-    ->withoutOverlapping(120)
-    ->sendOutputTo(cronLog('mail:admin:chase'))
-    ->runInBackground();
-
 
 // =============================================================================
 // NOT YET ENABLED — enable individually after testing
@@ -1225,15 +1160,6 @@ Schedule::command('chats:process-incoming')
     ->everyMinute()
     ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('chats:process-incoming'))
-    ->runInBackground();
-
-// Process pending membership history entries: send per-group welcome emails, flag reviewed members.
-// V1: cron/memberships_processing.php (every 1 minute)
-// Go API creates memberships_history with processingrequired=1; this sends welcome emails + review flags.
-Schedule::command('memberships:process')
-    ->everyMinute()
-    ->withoutOverlapping(15)
-    ->sendOutputTo(cronLog('memberships:process'))
     ->runInBackground();
 
 // Process pending GDPR data export requests and purge old completed data.
@@ -1477,13 +1403,6 @@ Schedule::command('purge:messages')
     ->sendOutputTo(cronLog('purge:messages'))
     ->runInBackground();
 
-// V1: cron/locations_skewwhiff.php
-Schedule::command('locations:fix-skewed')
-    ->dailyAt('05:00')
-    ->withoutOverlapping(360)
-    ->sendOutputTo(cronLog('locations:fix-skewed'))
-    ->runInBackground();
-
 // Nightly full postcode -> nearest-area remap, via the spatial server (MySQL
 // locations_spatial + iznik-spatial-go KNN). No PostgreSQL. DoogalService-imported
 // postcodes rely on this pass to be mapped onto group areas.
@@ -1508,51 +1427,12 @@ Schedule::command('users:update-support-roles')
     ->sendOutputTo(cronLog('users:update-support-roles'))
     ->runInBackground();
 
-// Validate group boundary geometry (CGA/DPA polygons).
-// V1: cron/check_cgas.php (every 5 minutes) — disabled pending sign-off
-Schedule::command('groups:check-boundaries')
-    ->everyFiveMinutes()
-    ->withoutOverlapping(15)
-    ->sendOutputTo(cronLog('groups:check-boundaries'))
-    ->runInBackground();
-
-// Update group stats: fix repost settings, polyindex, activity/funding, mod counts, stats_outcomes.
-// V1: cron/group_stats.php (daily at 02:00) — metadata-maintenance portion only.
-// The per-day per-type Stats::generate() rows come from stats:generate-daily below.
-// TrashNothing group sync is intentionally not migrated (V1 keyed off TNKEY constant).
-Schedule::command('groups:update-stats')
-    ->dailyAt('02:00')
-    ->withoutOverlapping(360)
-    ->sendOutputTo(cronLog('groups:update-stats'))
-    ->runInBackground();
-
-// Per-group daily stats (Outcomes, Approved/Spam counts, feedback, breakdowns, replies, weight, ...).
-// V1: cron/group_stats.php Stats::generate(yesterday) loop. Runs after groups:update-stats so the
-// activity/funding rollup it does in the 02:00 job uses today's freshly-written ApprovedMessageCount
-// rows on the NEXT day's run (V1 had the same one-day-stale property).
+// National daily stats (Outcomes, Approved/Spam counts, feedback, breakdowns, replies, weight, ...).
 Schedule::command('stats:generate-daily')
     ->dailyAt('02:30')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('stats:generate-daily'))
     ->runInBackground();
-
-// V1: cron/groups_closed.php
-Schedule::command('groups:remind-closed')
-    ->weeklyOn(1, '09:00')
-    ->withoutOverlapping(360)
-    ->sendOutputTo(cronLog('groups:remind-closed'))
-    ->runInBackground();
-
-// V1: cron/group_customisation.php — script existed in scripts/cron/ but no
-// crontab entry, so it never ran in V1. RETIRED 2026-06-02: the "ways to make
-// {group} more welcoming" customisation reminder is no longer sent (it was never
-// sent in V1 either). The command remains for manual/ad-hoc use only; it is no
-// longer scheduled.
-// Schedule::command('groups:remind-customisation')
-//     ->monthlyOn(1, '08:00')
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('groups:remind-customisation'))
-//     ->runInBackground();
 
 // V1: cron/donations_ads_target.php
 Schedule::command('donations:update-ads-target')
@@ -1586,7 +1466,6 @@ Schedule::command('ai:usage-counts:update --full')
     ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('ai:usage-counts:update-full'))
     ->runInBackground();
-
 
 // =============================================================================
 // GIFT AID
@@ -1698,14 +1577,6 @@ Schedule::command('mail:events-digest')
     ->sendOutputTo(cronLog('mail:events-digest'))
     ->runInBackground();
 
-// Notify group mods about recent chitchat (newsfeed) posts from their members.
-// V1: cron/newsfeed_modnotif.php (daily 13:30)
-Schedule::command('mail:newsfeed-mod-notif')
-    ->dailyAt('13:30')
-    ->withoutOverlapping(360)
-    ->sendOutputTo(cronLog('mail:newsfeed-mod-notif'))
-    ->runInBackground();
-
 // =============================================================================
 // NEWSFEED
 // =============================================================================
@@ -1774,15 +1645,6 @@ Schedule::command('chats:review-pending')
     ->dailyAt('09:00')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('chats:review-pending'))
-    ->runInBackground();
-
-// Alert geeks about Freegle groups that have not received messages in 7+ days.
-// V1: cron/groups_nomessages.php — script existed in scripts/cron/ but no
-// crontab entry, so it never ran in V1. Migrating to Laravel adds the schedule.
-Schedule::command('groups:alert-no-messages')
-    ->dailyAt('07:00')
-    ->withoutOverlapping(360)
-    ->sendOutputTo(cronLog('groups:alert-no-messages'))
     ->runInBackground();
 
 // Sync Reach Volunteering opportunities.

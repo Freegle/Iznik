@@ -64,7 +64,7 @@ func TestVectorSearchBodyTierWhenSubjectBelowThreshold(t *testing.T) {
 	// Must surface via the bodyTier branch.
 	embedding.Global.SetEntries([]embedding.Entry{
 		{
-			Msgid: 100, Groupid: 100, Msgtype: "Offer",
+			Msgid: 100, Msgtype: "Offer",
 			Subject: "OFFER: unrelated subject", Arrival: time.Now(),
 			SubjectVec: noise, BodyVec: bodyVecPtr(query),
 		},
@@ -76,7 +76,7 @@ func TestVectorSearchBodyTierWhenSubjectBelowThreshold(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, _, err := message.VectorSearch("item", 10, nil, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("item", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 1, "body-only match must be returned, not dropped")
 	assert.Equal(t, uint64(100), results[0].Msgid)
@@ -95,7 +95,7 @@ func TestVectorSearchSubjectTierComesBeforeBodyTier(t *testing.T) {
 		// Subject-tier hit: keyword in subject does NOT match the query,
 		// so no keyword boost. SubjectCos = 1.0.
 		{
-			Msgid: 200, Groupid: 100, Msgtype: "Offer",
+			Msgid: 200, Msgtype: "Offer",
 			Subject: "OFFER: completely different words", Arrival: time.Now(),
 			SubjectVec: query,
 		},
@@ -104,7 +104,7 @@ func TestVectorSearchSubjectTierComesBeforeBodyTier(t *testing.T) {
 		// boost. Raw score = 1.0 + 0.3 = 1.3, higher than the subject
 		// hit's 1.0. Despite that, it must come SECOND — tier beats score.
 		{
-			Msgid: 201, Groupid: 100, Msgtype: "Offer",
+			Msgid: 201, Msgtype: "Offer",
 			Subject: "OFFER: coyote sighting", Arrival: time.Now(),
 			SubjectVec: noise, BodyVec: bodyVecPtr(query),
 		},
@@ -116,7 +116,7 @@ func TestVectorSearchSubjectTierComesBeforeBodyTier(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, _, err := message.VectorSearch("coyote", 10, nil, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("coyote", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 	assert.Equal(t, uint64(200), results[0].Msgid, "subject-tier hit must come first")
@@ -133,11 +133,11 @@ func TestVectorSearchCombinedTruncationAcrossTiers(t *testing.T) {
 
 	embedding.Global.SetEntries([]embedding.Entry{
 		// Two subject-tier hits.
-		{Msgid: 300, Groupid: 100, Msgtype: "Offer", Subject: "A", SubjectVec: query},
-		{Msgid: 301, Groupid: 100, Msgtype: "Offer", Subject: "B", SubjectVec: query},
+		{Msgid: 300, Msgtype: "Offer", Subject: "A", SubjectVec: query},
+		{Msgid: 301, Msgtype: "Offer", Subject: "B", SubjectVec: query},
 		// Two body-tier hits.
-		{Msgid: 302, Groupid: 100, Msgtype: "Offer", Subject: "C", SubjectVec: noise, BodyVec: bodyVecPtr(query)},
-		{Msgid: 303, Groupid: 100, Msgtype: "Offer", Subject: "D", SubjectVec: noise, BodyVec: bodyVecPtr(query)},
+		{Msgid: 302, Msgtype: "Offer", Subject: "C", SubjectVec: noise, BodyVec: bodyVecPtr(query)},
+		{Msgid: 303, Msgtype: "Offer", Subject: "D", SubjectVec: noise, BodyVec: bodyVecPtr(query)},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -148,7 +148,7 @@ func TestVectorSearchCombinedTruncationAcrossTiers(t *testing.T) {
 
 	// Limit=3 crosses the tier boundary: 2 subject + 1 body = 3 returned,
 	// one body-tier entry is dropped.
-	results, _, err := message.VectorSearch("item", 3, nil, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("item", 3, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 3)
 	// First two must be the subject-tier entries, in some order.
@@ -171,14 +171,14 @@ func TestVectorSearchDropsResultsBelowBothThresholds(t *testing.T) {
 	embedding.Global.SetEntries([]embedding.Entry{
 		// Both cosines are ≈ 0 — well below the 0.65 floor on both fields.
 		{
-			Msgid: 400, Groupid: 100, Msgtype: "Offer",
+			Msgid: 400, Msgtype: "Offer",
 			Subject: "OFFER: unrelated", Arrival: time.Now(),
 			SubjectVec: noise, BodyVec: bodyVecPtr(noise),
 		},
 		// A genuine subject hit, so the test proves the filter drops
 		// only the below-threshold entry and keeps the passing one.
 		{
-			Msgid: 401, Groupid: 100, Msgtype: "Offer",
+			Msgid: 401, Msgtype: "Offer",
 			Subject: "OFFER: match", Arrival: time.Now(),
 			SubjectVec: query,
 		},
@@ -190,7 +190,7 @@ func TestVectorSearchDropsResultsBelowBothThresholds(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, _, err := message.VectorSearch("item", 10, nil, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("item", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 1, "below-threshold entries must be dropped")
 	assert.Equal(t, uint64(401), results[0].Msgid)
@@ -212,8 +212,8 @@ func TestVectorSearchStopWordQuerySkipsKeywordBoost(t *testing.T) {
 		// GetWords(). If the skip branch didn't fire, this entry might
 		// be boosted. With it firing, both entries get boost=0 and the
 		// higher raw SubjectCos (Msgid 500) must win.
-		{Msgid: 500, Groupid: 100, Msgtype: "Offer", Subject: "OFFER: or", SubjectVec: query},
-		{Msgid: 501, Groupid: 100, Msgtype: "Offer", Subject: "OFFER: and or", SubjectVec: similar},
+		{Msgid: 500, Msgtype: "Offer", Subject: "OFFER: or", SubjectVec: query},
+		{Msgid: 501, Msgtype: "Offer", Subject: "OFFER: and or", SubjectVec: similar},
 	})
 	defer embedding.Global.SetEntries(nil)
 
@@ -227,7 +227,7 @@ func TestVectorSearchStopWordQuerySkipsKeywordBoost(t *testing.T) {
 	require.Empty(t, message.GetWords("the and or"),
 		"premise: all-stop-word query must tokenise to zero words")
 
-	results, _, err := message.VectorSearch("the and or", 10, nil, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("the and or", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 	// Deterministic ordering by raw cosine, no keyword noise applied.
@@ -248,7 +248,7 @@ func TestVectorSearchBlursReturnedCoordinates(t *testing.T) {
 
 	embedding.Global.SetEntries([]embedding.Entry{
 		{
-			Msgid: 600, Groupid: 100, Msgtype: "Offer",
+			Msgid: 600, Msgtype: "Offer",
 			Lat: preciseLat, Lng: preciseLng,
 			Subject: "OFFER: thing", Arrival: time.Now(),
 			SubjectVec: query,
@@ -261,7 +261,7 @@ func TestVectorSearchBlursReturnedCoordinates(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, _, err := message.VectorSearch("thing", 10, nil, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 
@@ -292,13 +292,13 @@ func TestVectorSearchHasBodyFalseDoesNotEnterBodyTier(t *testing.T) {
 	embedding.Global.SetEntries([]embedding.Entry{
 		// Subject below threshold, no body embedding at all.
 		{
-			Msgid: 700, Groupid: 100, Msgtype: "Offer",
+			Msgid: 700, Msgtype: "Offer",
 			Subject: "OFFER: unrelated", Arrival: time.Now(),
 			SubjectVec: noise, BodyVec: nil,
 		},
 		// A subject-tier match so the test isn't trivially empty.
 		{
-			Msgid: 701, Groupid: 100, Msgtype: "Offer",
+			Msgid: 701, Msgtype: "Offer",
 			Subject: "OFFER: match", Arrival: time.Now(),
 			SubjectVec: query, BodyVec: nil,
 		},
@@ -310,7 +310,7 @@ func TestVectorSearchHasBodyFalseDoesNotEnterBodyTier(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, _, err := message.VectorSearch("match", 10, nil, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("match", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 1, "HasBody=false + subject below threshold must drop entry")
 	assert.Equal(t, uint64(701), results[0].Msgid)

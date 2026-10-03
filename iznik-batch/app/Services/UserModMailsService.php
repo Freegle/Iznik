@@ -62,7 +62,6 @@ class UserModMailsService
                 'userid' => $log->user,
                 'logid' => $log->id,
                 'timestamp' => $log->timestamp,
-                'groupid' => $log->groupid ?? 0,
             ]);
 
             if ($affected > 0) {

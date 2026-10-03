@@ -80,7 +80,7 @@ class AdminMail extends MjmlMailable
             'Admin',
             $this->user->email_preferred,
             $this->user->id,
-            $admin['groupid'] ?? null,
+            null,
             $this->adminSubject,
             [
                 'admin_id' => $admin['id'] ?? null,

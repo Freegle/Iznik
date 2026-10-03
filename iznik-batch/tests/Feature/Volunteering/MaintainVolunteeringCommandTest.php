@@ -14,7 +14,7 @@ class MaintainVolunteeringCommandTest extends TestCase
         parent::setUp();
 
         DB::statement('SET FOREIGN_KEY_CHECKS=0');
-        foreach (['volunteering_dates', 'volunteering_images', 'volunteering_groups', 'volunteering', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
+        foreach (['volunteering_dates', 'volunteering_images', 'volunteering', 'users_emails', 'users'] as $table) {
             DB::table($table)->delete();
         }
         DB::statement('SET FOREIGN_KEY_CHECKS=1');

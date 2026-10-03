@@ -16,7 +16,7 @@ class UpdateLastAccessCommand extends Command
                             {--dry-run : Show what would be updated without actually changing}
                             {--full : Look at all history rather than only activity since the last run}';
 
-    protected $description = 'Fallback update of user last access timestamps from chat messages and memberships';
+    protected $description = 'Fallback update of user last access timestamps from chat messages and join dates';
 
     public function handle(UserManagementService $service): int
     {

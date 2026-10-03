@@ -48,50 +48,6 @@ func feedHasMessage(t *testing.T, url string, msgid uint64) bool {
 	return false
 }
 
-// The three states a post can be in, on both feeds that show other members'
-// posts from the spatial index.
-func TestPendingReachGatesBrowseFeeds(t *testing.T) {
-	db := database.DBConn
-
-	prefix := uniquePrefix("pendingreach")
-	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-
-
-	msgID := CreateTestMessage(t, posterID, group, prefix+" offer", 51.5, -0.1)
-	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
-	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
-
-	// The fixtures are back-dated past the grace period; this one is testing the
-	// grace period, so put it back to just-posted.
-	db.Exec("UPDATE messages SET arrival = NOW() WHERE id = ?", msgID)
-
-	mygroups := "/api/message/mygroups?jwt=" + token
-	bounds := "/api/message/inbounds?swlat=51.4&swlng=-0.2&nelat=51.6&nelng=0.0&jwt=" + token
-
-	// Just posted, reach not calculated yet: not live, so not shown.
-	assert.False(t, feedHasMessage(t, mygroups, msgID),
-		"a post whose reach has not been calculated is not live in the mygroups feed")
-	assert.False(t, feedHasMessage(t, bounds, msgID),
-		"a post whose reach has not been calculated is not live in the bounds feed")
-
-	// Reach lands - typically within a minute - and the post goes live.
-	seedPendingReachRow(t, msgID)
-	assert.True(t, feedHasMessage(t, mygroups, msgID),
-		"a post with reach is live in the mygroups feed")
-	assert.True(t, feedHasMessage(t, bounds, msgID),
-		"a post with reach is live in the bounds feed")
-
-	// Reach that never arrives must not hide the post for ever: some origins
-	// cannot snap to the road graph and will never get a row.
-	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
-	db.Exec("UPDATE messages SET arrival = DATE_SUB(NOW(), INTERVAL 30 MINUTE) WHERE id = ?", msgID)
-	assert.True(t, feedHasMessage(t, mygroups, msgID),
-		"a post that waited out the grace period is shown in the mygroups feed regardless")
-	assert.True(t, feedHasMessage(t, bounds, msgID),
-		"a post that waited out the grace period is shown in the bounds feed regardless")
-}
-
 // The member's own post is theirs to see the moment they post it, so the filter
 // exempts the author. The own-posts arm of the mygroups feed cannot cover that
 // on its own: it only serves posts not yet in messages_spatial.
@@ -101,8 +57,7 @@ func TestPendingReachNeverHidesYourOwnPost(t *testing.T) {
 	prefix := uniquePrefix("pendingreachown")
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
 
-
-	msgID := CreateTestMessage(t, viewerID, group, prefix+" my own offer", 51.5, -0.1)
+	msgID := CreateTestMessage(t, viewerID, prefix+" my own offer", 51.5, -0.1)
 	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 

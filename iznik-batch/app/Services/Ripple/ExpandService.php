@@ -1370,16 +1370,14 @@ class ExpandService
     }
 
     /**
-     * True when the post has a live Approved copy on a group it was posted to directly (not
-     * rippled into). Same test as FreezeReachIfOriginPending in iznik-server-go.
+     * True when the post itself is live: Approved and not deleted.
      */
     private function originIsApproved(int $msgid): bool
     {
-        return DB::table('messages_groups')
-            ->where('msgid', $msgid)
-            ->where('rippled_in', 0)
-            ->where('deleted', 0)
-            ->where('collection', \App\Models\MessageGroup::COLLECTION_APPROVED)
+        return DB::table('messages')
+            ->where('id', $msgid)
+            ->whereNull('deleted')
+            ->where('collection', \App\Models\Message::COLLECTION_APPROVED)
             ->exists();
     }
 

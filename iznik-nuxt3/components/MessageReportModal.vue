@@ -21,11 +21,6 @@
           people agree, it will be taken down, and we'll let you know what
           happens.
         </p>
-        <p v-else class="report-explanation">
-          This post came from Trash Nothing and isn't looked after by a local
-          Freegle volunteer team, so there's nobody to pass your report to. If
-          two people report it, we'll take it off Freegle automatically.
-        </p>
 
         <div class="report-reasons">
           <label class="form-label">What's wrong with this post?</label>

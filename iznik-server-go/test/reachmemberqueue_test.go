@@ -3,7 +3,6 @@ package test
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http/httptest"
 	"testing"
 
@@ -29,52 +28,6 @@ func queuedReason(t *testing.T, userid uint64) (string, int64) {
 
 func clearQueue(userid uint64) {
 	database.DBConn.Exec("DELETE FROM rippling_reach_member_pending WHERE userid = ?", userid)
-}
-
-func TestReachQueue_JoiningAGroupQueuesTheMember(t *testing.T) {
-	prefix := uniquePrefix("rq_join")
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	_, token := CreateTestSession(t, userID)
-	clearQueue(userID)
-	defer clearQueue(userID)
-
-	body, _ := json.Marshal(map[string]interface{}{"userid": userID, "groupid": groupID})
-	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/memberships?jwt=%s", token), bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := getApp().Test(req)
-	require.NoError(t, err)
-	require.Equal(t, 200, resp.StatusCode)
-
-	reason, count := queuedReason(t, userID)
-	assert.Equal(t, int64(1), count, "a join queues the member once")
-	assert.Equal(t, "joined", reason)
-}
-
-func TestReachQueue_SwitchingToImmediateQueuesTheMember(t *testing.T) {
-	prefix := uniquePrefix("rq_freq")
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	_, token := CreateTestSession(t, userID)
-	clearQueue(userID)
-	defer clearQueue(userID)
-
-	patch := func(freq int) {
-		body, _ := json.Marshal(map[string]interface{}{"userid": userID, "groupid": groupID, "emailfrequency": freq})
-		req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/memberships?jwt=%s", token), bytes.NewBuffer(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := getApp().Test(req)
-		require.NoError(t, err)
-		require.Equal(t, 200, resp.StatusCode)
-	}
-
-	// Daily first: not immediate, so nothing to queue.
-	patch(24)
-	_, count := queuedReason(t, userID)
-	assert.Equal(t, int64(0), count, "switching to daily does not queue")
-
-	patch(-1)
-	reason, count := queuedReason(t, userID)
-	assert.Equal(t, int64(1), count, "switching to immediate queues the member")
-	assert.Equal(t, "frequency", reason)
 }
 
 func TestReachQueue_ChangingPostcodeQueuesTheMember(t *testing.T) {
@@ -141,32 +94,4 @@ func TestReachQueue_RecentlyActiveMemberIsNotQueued(t *testing.T) {
 
 	_, count := queuedReason(t, uid)
 	assert.Equal(t, int64(0), count, "refreshing lastaccess is not a return")
-}
-
-func TestReachQueue_RegisteringWithAGroupQueuesTheNewMember(t *testing.T) {
-	prefix := uniquePrefix("rq_reg")
-
-	payload, _ := json.Marshal(map[string]interface{}{
-		"email":       fmt.Sprintf("%s@test.com", prefix),
-		"password":    "testpass123",
-		"firstname":   "Test",
-		"lastname":    prefix,
-		"displayname": "Test " + prefix,
-		"groupid":     groupID,
-	})
-	req := httptest.NewRequest("PUT", "/api/user", bytes.NewBuffer(payload))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := getApp().Test(req, 5000)
-	require.NoError(t, err)
-	require.Equal(t, 200, resp.StatusCode)
-
-	var result map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
-	require.NotZero(t, result["id"])
-	userID := uint64(result["id"].(float64))
-	defer clearQueue(userID)
-
-	reason, count := queuedReason(t, userID)
-	assert.Equal(t, int64(1), count, "registering straight into a group queues the new member")
-	assert.Equal(t, "joined", reason)
 }

@@ -31,7 +31,7 @@ class ScoreNewCommand extends Command
      * back to arrival for auto-approved posts. See EeeClassifyNewCommand for why
      * arrival alone is wrong in both directions.
      */
-    protected const APPROVAL_CLOCK = 'COALESCE(messages_groups.approvedat, messages_groups.arrival)';
+    protected const APPROVAL_CLOCK = 'COALESCE(messages.approvedat, messages.arrival)';
 
     public function __construct(protected DesirabilityService $desirability)
     {
@@ -61,11 +61,9 @@ class ScoreNewCommand extends Command
         // NOT EXISTS (same shape as eee:classify-new; ties re-scan for free).
         $rows = DB::table('messages')
             ->select('messages.id', 'messages.subject')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
             ->where('messages.type', 'Offer')
             ->whereNull('messages.deleted')
-            ->where('messages_groups.collection', 'Approved')
-            ->where('messages_groups.deleted', 0)
+            ->where('messages.collection', 'Approved')
             // keep-raw: COALESCE over two columns; the builder has no expression form.
             ->whereRaw("$clock >= ?", [$since])
             ->whereNotExists(function ($q) use ($modelVersion) {
@@ -146,7 +144,7 @@ class ScoreNewCommand extends Command
     {
         $clock = self::APPROVAL_CLOCK;
         $mark = DB::table('messages_desirability')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_desirability.msgid')
+            ->join('messages', 'messages.id', '=', 'messages_desirability.msgid')
             ->where('messages_desirability.model_version', $this->desirability->modelVersion())
             // keep-raw: MAX over a COALESCE clock.
             ->selectRaw("MAX($clock) AS mark")

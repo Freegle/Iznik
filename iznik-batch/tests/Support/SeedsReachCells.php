@@ -2,6 +2,7 @@
 
 namespace Tests\Support;
 
+use Illuminate\Support\Facades\DB;
 use App\Services\Ripple\CellSetService;
 
 /**

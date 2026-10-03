@@ -274,12 +274,6 @@
           name="Teams"
           @mobilehidemenu="mobilehidemenu"
         />
-        <ModMenuItemLeft
-          v-if="onPartnershipsTeam"
-          link="/partnerships"
-          name="Partnerships"
-          @mobilehidemenu="mobilehidemenu"
-        />
         <div>
           <ExternalLink
             href="https://wiki.ilovefreegle.org/ModTools"
@@ -355,7 +349,6 @@ const {
   hasPermissionSpamAdmin,
   hasPermissionGiftAid,
   hasPermissionClearance,
-  onPartnershipsTeam,
   checkWork,
   resetCheckWork,
 } = useModMe()

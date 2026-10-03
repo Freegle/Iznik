@@ -5,7 +5,6 @@ namespace App\Services;
 use App\Mail\Message\DeadlineReached;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Models\MessageOutcome;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -85,14 +84,13 @@ class MessageExpiryService
         // Two passes, because one is unaffordable.
         //
         // This used to be a single `SELECT DISTINCT messages.*` joined to
-        // messages_groups and messages_outcomes, paginated with lazyById. The
+        // messages_outcomes, paginated with lazyById. The
         // `ORDER BY messages.id LIMIT 500` that lazyById adds made the optimiser
         // walk the PRIMARY key from the start of the table rather than range-scan
         // `arrival` - it expects to fill 500 rows quickly and stop. It does not:
         // the matches are all recent, so it traverses the old ids first. Measured
         // live on 2026-09-18 that was 6,301,473 rows examined and 93 seconds, to
-        // find a candidate set of 7,712. The DISTINCT, needed only because the
-        // messages_groups join multiplies a post by the groups it rippled to,
+        // find a candidate set of 7,712. The DISTINCT it needed
         // added a temporary table over every column of messages including the
         // text.
         //
@@ -103,12 +101,8 @@ class MessageExpiryService
             ->where('messages.arrival', '>=', $earliestDate)
             ->whereNotNull('messages.deadline')
             ->whereRaw('messages.deadline < CURDATE()')
-            // A post with no group is not on the site, so it cannot expire off it.
-            // This is a static property of the post, so it belongs in the pass that
-            // runs once rather than in the one that runs per chunk.
-            ->whereExists(fn ($q) => $q->selectRaw('1')
-                ->from('messages_groups')
-                ->whereColumn('messages_groups.msgid', 'messages.id'))
+            // A post that is not live on the site cannot expire off it.
+            ->where('messages.collection', 'Approved')
             ->orderBy('messages.id')
             ->pluck('messages.id')
             ->all();
@@ -178,7 +172,7 @@ class MessageExpiryService
      * getExpiredCandidates(). That V1 method reads getPublic(), which computes a
      * *virtual* OUTCOME_EXPIRED at runtime when:
      *   - No existing outcome AND
-     *   - Group arrival is older than max(maxreposts, maxagetoshow) AND
+     *   - Arrival is older than max(maxreposts, maxagetoshow) AND
      *   - No chat reply in the last 6 days AND
      *   - No promise.
      * (Also acts when a real OUTCOME_EXPIRED row already exists.)
@@ -218,6 +212,9 @@ class MessageExpiryService
         return $count;
     }
 
+    /** Days a post is shown for (the value every community used). */
+    public const MAX_AGE_TO_SHOW_DAYS = 90;
+
     /**
      * V1-equivalent candidate selection — pushes the virtual-expiry filter into SQL
      * rather than calling getPublic() on every post. Returns msgids to auto-withdraw
@@ -227,33 +224,16 @@ class MessageExpiryService
      * V1 Message::getPublic() applies the same formula to both types; only the
      * parameter values differ (offer interval is shorter than wanted interval).
      *
-     * Fallback defaults match Group::defaultSettings (offer=3, wanted=7, max=5).
-     * V1 Message::getPublic() used different fallbacks (wanted=14, max=10) that
-     * caused groups without stored reposts settings to compute a 154-day WANTED
-     * threshold regardless of maxagetoshow — posts hidden from display for months
-     * before being auto-expired. Groups that have stored settings are unaffected
-     * (JSON_EXTRACT reads their actual values).
-     *
-     * Expiry is judged across the message's LIVE postings only, and a message
-     * expires when EVERY live Approved posting is past its group's threshold —
-     * i.e. the most generous group wins, matching what the Go API's
-     * computeExpiresat() displays to the poster. Two earlier behaviours here
-     * were wrong (2,400+ posts wrongly withdrawn between 13 May and 11 Aug 2026):
-     *   - ANY-group semantics: one rippled-in copy on a group with
-     *     maxagetoshow=0 (an 18-day threshold) expired the whole message even
-     *     though the poster's home group gave it 90 days.
-     *   - No deleted/collection filter: copies rippling had already retracted
-     *     (messages_groups.deleted=1, arrival frozen at retraction) still
-     *     counted, so a dead copy could expire the live post.
-     * A message with NO live Approved posting left is not expired here — any
-     * spatial row it still has is cleaned up by MessageSpatialService's
-     * removeDeleted / removeNonApproved passes instead.
+     * The thresholds are the site-wide constants (show for 90 days; offer 3 and wanted 7
+     * days between reposts, 5 reposts), the value every community used. A message that is
+     * not Approved is not expired here — any spatial row it still has is cleaned up by
+     * MessageSpatialService's removeDeleted / removeNonApproved passes instead.
      */
     protected function getExpiredCandidates(): \Illuminate\Support\Collection
     {
-        // Candidates are the LIVE postings (messages_groups, Approved, not deleted), not the
-        // spatial index. MessageSpatialService keeps only the last RECENT_DAYS (31) of posts,
-        // while a group's expiry threshold is routinely longer (90 days by default; a WANTED
+        // Candidates are the live posts (Approved, not deleted), not the spatial index.
+        // MessageSpatialService keeps only the last RECENT_DAYS (31) of posts,
+        // while the expiry threshold is routinely longer (90 days by default; a WANTED
         // with the default repost settings is 42), so a post read from the index lost its row
         // before it ever came due and was never withdrawn: tens of thousands of live posts
         // three months to a year old on production (Discourse 9808/806).
@@ -262,13 +242,11 @@ class MessageExpiryService
         // (using the arrival index) and returns at most AGE_EXPIRY_BATCH of the oldest each
         // run, so a backlog drains over a few daily runs rather than in one long statement.
         $sql = <<<'SQL'
-SELECT m.id AS msgid, MIN(live.arrival) AS first_arrival
-FROM messages_groups live
-JOIN messages m ON m.id = live.msgid
+SELECT m.id AS msgid, m.arrival AS first_arrival
+FROM messages m
 LEFT JOIN messages_promises mp ON mp.msgid = m.id
-WHERE live.collection = 'Approved'
-  AND live.deleted = 0
-  AND live.arrival > DATE_SUB(NOW(), INTERVAL ? DAY)
+WHERE m.collection = 'Approved'
+  AND m.arrival > DATE_SUB(NOW(), INTERVAL ? DAY)
   AND m.deleted IS NULL
   AND m.type IN ('Offer', 'Wanted')
   AND mp.id IS NULL
@@ -278,25 +256,16 @@ WHERE live.collection = 'Approved'
       WHERE mo.msgid = m.id AND mo.outcome = ?
     )
     OR (
-      live.arrival < DATE_SUB(NOW(), INTERVAL 1 DAY)
+      m.arrival < DATE_SUB(NOW(), INTERVAL 1 DAY)
       AND NOT EXISTS (
         SELECT 1 FROM messages_outcomes mo2 WHERE mo2.msgid = m.id
       )
-      AND NOT EXISTS (
-        SELECT 1 FROM messages_groups mg
-        JOIN `groups` g ON g.id = mg.groupid
-        WHERE mg.msgid = m.id
-          AND mg.deleted = 0
-          AND mg.collection = 'Approved'
-          AND TIMESTAMPDIFF(DAY, mg.arrival, NOW()) <= GREATEST(
-            COALESCE(JSON_EXTRACT(g.settings, '$.maxagetoshow') + 0, 90),
-            CASE m.type
-              WHEN 'Offer' THEN COALESCE(JSON_EXTRACT(g.settings, '$.reposts.offer')  + 0, 3)
-                              * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 5) + 1)
-              ELSE          COALESCE(JSON_EXTRACT(g.settings, '$.reposts.wanted') + 0, 7)
-                              * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 5) + 1)
-            END
-          )
+      AND TIMESTAMPDIFF(DAY, m.arrival, NOW()) > GREATEST(
+        ?,
+        CASE m.type
+          WHEN 'Offer' THEN ? * (? + 1)
+          ELSE ? * (? + 1)
+        END
       )
       AND NOT EXISTS (
         SELECT 1 FROM chat_messages cm
@@ -306,15 +275,19 @@ WHERE live.collection = 'Approved'
       )
     )
   )
-GROUP BY m.id
 ORDER BY first_arrival
 LIMIT ?
 SQL;
 
-        // keep-raw: the per-group threshold is arithmetic over JSON_EXTRACT values inside GREATEST/CASE in a correlated NOT EXISTS, and the ordering is over an aggregate of the outer join; the builder cannot render either without falling back to raw fragments anyway.
+        $reposts = AutoRepostService::DEFAULT_REPOSTS;
+
+        // keep-raw: the threshold is arithmetic inside GREATEST/CASE next to correlated NOT EXISTS subqueries; the builder cannot render it without falling back to raw fragments anyway.
         return collect(DB::select($sql, [
             self::AGE_EXPIRY_LOOKBACK_DAYS,
             MessageOutcome::OUTCOME_EXPIRED,
+            self::MAX_AGE_TO_SHOW_DAYS,
+            $reposts['offer'], $reposts['max'],
+            $reposts['wanted'], $reposts['max'],
             self::AGE_EXPIRY_BATCH,
         ]))->pluck('msgid');
     }

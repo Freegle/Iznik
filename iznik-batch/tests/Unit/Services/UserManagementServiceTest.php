@@ -4,7 +4,6 @@ namespace Tests\Unit\Services;
 
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
-use App\Models\Membership;
 use App\Models\User;
 use App\Models\UserDeletion;
 use App\Models\UserEmail;
@@ -134,7 +133,6 @@ class UserManagementServiceTest extends TestCase
         $this->assertEquals(0, $stats['marked_invalid']);
     }
 
-
     public function test_delete_yahoo_groups_users(): void
     {
         $user = User::create([
@@ -159,7 +157,7 @@ class UserManagementServiceTest extends TestCase
 
     public function test_forget_inactive_users(): void
     {
-        // Create user meeting all inactive criteria: no memberships, no spammer record,
+        // Create user meeting all inactive criteria: no spammer record,
         // no mod notes, last access > 6 months, systemrole = User, not deleted.
         $user = User::create([
             'firstname' => 'Inactive',
@@ -198,28 +196,6 @@ class UserManagementServiceTest extends TestCase
 
         // Already-forgotten user should NOT be re-processed.
         $this->assertEquals(0, $count);
-    }
-
-    public function test_forget_inactive_users_skips_with_memberships(): void
-    {
-        $user = User::create([
-            'firstname' => 'Member',
-            'lastname' => 'User',
-            'fullname' => 'Member User',
-            'added' => now()->subYears(2),
-            'lastaccess' => now()->subMonths(7),
-            'systemrole' => 'User',
-        ]);
-
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
-        $count = $this->service->forgetInactiveUsers();
-
-        // User should NOT be forgotten because they have memberships.
-        $user->refresh();
-        $this->assertNull($user->forgotten);
-        $this->assertEquals('Member', $user->firstname);
     }
 
     public function test_process_forgets_after_grace_period(): void
@@ -267,9 +243,8 @@ class UserManagementServiceTest extends TestCase
     public function test_forget_user_wipes_personal_data(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
+        $message = $this->createTestMessage($user);
 
         $this->service->forgetUser($user->id, 'Test reason');
 
@@ -292,9 +267,6 @@ class UserManagementServiceTest extends TestCase
         $this->assertNull($msg->textbody);
         $this->assertNull($msg->htmlbody);
         $this->assertNotNull($msg->deleted);
-
-        // Memberships should be removed.
-        $this->assertDatabaseMissing('memberships', ['userid' => $user->id]);
 
         // users_related entries should be removed so deleted users don't appear in Related Members.
         $this->assertDatabaseMissing('users_related', ['user1' => $user->id]);
@@ -354,8 +326,7 @@ class UserManagementServiceTest extends TestCase
             'forgotten' => now()->subDays(30),
         ]);
 
-        $group = $this->createTestGroup();
-        $this->createTestMessage($user, $group);
+        $this->createTestMessage($user);
 
         $count = $this->service->deleteFullyForgottenUsers();
 
@@ -548,7 +519,6 @@ class UserManagementServiceTest extends TestCase
     public function test_update_lastaccess_from_membership(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // Set lastaccess to well in the past.
         DB::table('users')->where('id', $user->id)->update([
@@ -556,9 +526,7 @@ class UserManagementServiceTest extends TestCase
         ]);
 
         // Create a membership with recent added date.
-        $this->createMembership($user, $group, [
-            'added' => now()->subMinutes(5),
-        ]);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
 
         $stats = $this->service->updateLastAccess();
 
@@ -844,10 +812,9 @@ class UserManagementServiceTest extends TestCase
     {
         $rater = $this->createTestUser();
         $ratee = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $room = $this->createTestChatRoom($rater, $ratee);
-        $message = $this->createTestMessage($rater, $group);
+        $message = $this->createTestMessage($rater);
 
         // Ratee replied to a post (has refmsgid).
         $this->createTestChatMessage($room, $ratee, [
@@ -902,61 +869,4 @@ class UserManagementServiceTest extends TestCase
         $this->assertEquals(0, $stats['made_hidden']);
     }
 
-    public function test_backfill_demotes_stale_moderator(): void
-    {
-        // systemrole Moderator but no Owner/Moderator membership anywhere.
-        $user = $this->createTestUser(['systemrole' => 'Moderator']);
-
-        $stats = $this->service->backfillModeratorSystemRoles();
-
-        $user->refresh();
-        $this->assertEquals('User', $user->systemrole);
-        $this->assertGreaterThanOrEqual(1, $stats['demoted']);
-    }
-
-    public function test_backfill_keeps_moderator_with_mod_membership(): void
-    {
-        $user = $this->createTestUser(['systemrole' => 'Moderator']);
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['role' => 'Moderator']);
-
-        $this->service->backfillModeratorSystemRoles();
-
-        $user->refresh();
-        $this->assertEquals('Moderator', $user->systemrole);
-    }
-
-    public function test_backfill_keeps_moderator_with_owner_membership(): void
-    {
-        $user = $this->createTestUser(['systemrole' => 'Moderator']);
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['role' => 'Owner']);
-
-        $this->service->backfillModeratorSystemRoles();
-
-        $user->refresh();
-        $this->assertEquals('Moderator', $user->systemrole);
-    }
-
-    public function test_backfill_leaves_support_untouched(): void
-    {
-        // Support outranks Moderator and is set deliberately — never auto-demoted.
-        $user = $this->createTestUser(['systemrole' => 'Support']);
-
-        $this->service->backfillModeratorSystemRoles();
-
-        $user->refresh();
-        $this->assertEquals('Support', $user->systemrole);
-    }
-
-    public function test_backfill_dry_run_does_not_change(): void
-    {
-        $user = $this->createTestUser(['systemrole' => 'Moderator']);
-
-        $stats = $this->service->backfillModeratorSystemRoles(true);
-
-        $user->refresh();
-        $this->assertEquals('Moderator', $user->systemrole);
-        $this->assertGreaterThanOrEqual(1, $stats['demoted']);
-    }
 }

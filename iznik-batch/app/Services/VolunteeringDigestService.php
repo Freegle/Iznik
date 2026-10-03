@@ -10,15 +10,9 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Volunteering-opportunity roundup, unified per user.
- *
- * Previously one email per group: a member of several groups received several
- * roundups, and the same opportunity cross-posted to multiple of their groups
- * (or a national/global opportunity with no specific group) appeared in each
- * one. This now sends ONE email per user covering opportunities across ALL
- * their volunteering-enabled groups plus global opportunities, with each shown
- * once (deduplicated by opportunity id) and annotated with which of the user's
- * groups it belongs to.
+ * Volunteering-opportunity roundup: one email per opted-in member covering every
+ * active opportunity, each shown once. The site is national, so there are no
+ * communities to scope opportunities or members by.
  */
 class VolunteeringDigestService
 {
@@ -28,9 +22,9 @@ class VolunteeringDigestService
     public const DIGEST_MODE = 'volunteering';
 
     /**
-     * Send unified volunteering-opportunity roundups.
+     * Send volunteering-opportunity roundups.
      *
-     * @return array{sent: int, users_processed: int, groups_processed: int}
+     * @return array{sent: int, users_processed: int}
      */
     public function sendVolunteeringDigests(bool $dryRun = false): array
     {
@@ -39,21 +33,14 @@ class VolunteeringDigestService
         $sent = 0;
         $usersProcessed = 0;
 
-        $eligibleGroups = $this->eligibleGroups('volunteering'); // id => nameshort
-        if (empty($eligibleGroups)) {
-            return ['sent' => 0, 'users_processed' => 0, 'groups_processed' => 0];
-        }
-        $groupIds = array_keys($eligibleGroups);
+        // Pre-fetch active opportunities once.
+        $opps = $this->fetchActiveOpportunities($userSite);
 
-        // Pre-fetch active opportunities + their group associations once.
-        // $globalOppIds are opportunities with no specific group (shown to all).
-        [$oppsById, $groupsByOpp, $globalOppIds] = $this->fetchActiveOpportunities($userSite);
-
-        if (empty($oppsById)) {
-            return ['sent' => 0, 'users_processed' => 0, 'groups_processed' => count($eligibleGroups)];
+        if (empty($opps)) {
+            return ['sent' => 0, 'users_processed' => 0];
         }
 
-        foreach ($this->eligibleUsers($groupIds, 'volunteeringallowed', self::DIGEST_MODE) as $userRow) {
+        foreach ($this->eligibleUsers('volunteeringallowed', self::DIGEST_MODE) as $userRow) {
             $usersProcessed++;
 
             $user = User::find($userRow->id);
@@ -63,16 +50,6 @@ class VolunteeringDigestService
 
             $email = $user->email_preferred;
             if (!$email) {
-                continue;
-            }
-
-            $userGroupIds = $this->userGroupIds($user->id, $groupIds, 'volunteeringallowed');
-            if (empty($userGroupIds)) {
-                continue;
-            }
-
-            $userOpps = $this->opportunitiesForUser($oppsById, $groupsByOpp, $globalOppIds, $userGroupIds, $eligibleGroups);
-            if (empty($userOpps)) {
                 continue;
             }
 
@@ -88,7 +65,7 @@ class VolunteeringDigestService
                 try {
                     app(EmailSpoolerService::class)->spool(new VolunteeringDigestMail(
                         recipientEmail: $email,
-                        volunteerings: $userOpps,
+                        volunteerings: $opps,
                         unsubscribeUrl: $unsubscribeUrl,
                         jobAds: $jobAds,
                         userId: $user->id,
@@ -110,49 +87,13 @@ class VolunteeringDigestService
         return [
             'sent' => $sent,
             'users_processed' => $usersProcessed,
-            'groups_processed' => count($eligibleGroups),
         ];
     }
 
     /**
-     * Build the deduplicated, group-attributed opportunity list for one user:
-     * every global opportunity, plus opportunities shared with any of the user's
-     * volunteering-enabled groups, each shown once.
+     * Fetch all active opportunities as display data, newest first.
      *
-     * @param array<int,array>  $oppsById
-     * @param array<int,int[]>  $groupsByOpp     opp id => [group ids] (group-specific opps)
-     * @param array<int,bool>   $globalOppIds    opp id => true for opps with no specific group
-     * @param array<int>        $userGroupIds
-     * @param array<int,array{name:string,url:string}> $eligibleGroups  group id => display name + /explore link
      * @return array<int,array>
-     */
-    protected function opportunitiesForUser(array $oppsById, array $groupsByOpp, array $globalOppIds, array $userGroupIds, array $eligibleGroups): array
-    {
-        $out = [];
-        foreach ($oppsById as $oid => $oppData) {
-            $isGlobal = isset($globalOppIds[$oid]);
-            $shared = array_values(array_intersect($groupsByOpp[$oid] ?? [], $userGroupIds));
-
-            if (!$isGlobal && empty($shared)) {
-                continue;
-            }
-
-            $oppData['groups'] = array_values(array_filter(array_map(
-                fn ($gid) => $eligibleGroups[$gid] ?? null,
-                $shared
-            )));
-            $out[] = $oppData;
-        }
-
-        return $out;
-    }
-
-    /**
-     * Fetch all active opportunities, returning per-opportunity display data
-     * (keyed by id), the map of opportunity id => its group ids, and the set of
-     * opportunity ids that have no specific group (global / national).
-     *
-     * @return array{0: array<int,array>, 1: array<int,int[]>, 2: array<int,bool>}
      */
     protected function fetchActiveOpportunities(string $userSite): array
     {
@@ -187,35 +128,15 @@ class VolunteeringDigestService
             ->unique('id');
 
         if ($rawOpps->isEmpty()) {
-            return [[], [], []];
+            return [];
         }
-
-        $oppIds = $rawOpps->pluck('id')->all();
-
-        // Every group association for these opportunities (used both to decide
-        // globality — an opportunity with no rows at all is global — and for the
-        // "shared with" attribution).
-        $groupsByOpp = [];
-        DB::table('volunteering_groups')
-            ->whereIn('volunteeringid', $oppIds)
-            ->get(['volunteeringid', 'groupid'])
-            ->each(function ($row) use (&$groupsByOpp) {
-                if ($row->groupid !== null) {
-                    $groupsByOpp[(int) $row->volunteeringid][] = (int) $row->groupid;
-                }
-            });
 
         $decode = fn (?string $s): ?string =>
             $s !== null ? html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null;
 
-        $oppsById = [];
-        $globalOppIds = [];
+        $opps = [];
         foreach ($rawOpps as $v) {
             $id = (int) $v->id;
-
-            if (empty($groupsByOpp[$id])) {
-                $globalOppIds[$id] = true;
-            }
 
             $photoThumb = null;
             if ($v->photo_id) {
@@ -240,7 +161,7 @@ class VolunteeringDigestService
                 ? Carbon::parse($v->applyby)->setTimezone('Europe/London')->format('D, jS F Y')
                 : null;
 
-            $oppsById[$id] = [
+            $opps[] = [
                 'id'             => $id,
                 'title'          => $decode($v->title),
                 'location'       => $decode($v->location),
@@ -254,10 +175,9 @@ class VolunteeringDigestService
                 'photo_thumb'    => $photoThumb,
                 'applyby'        => $applyby,
                 'url'            => "{$userSite}/volunteering/{$id}",
-                'groups'         => [],
             ];
         }
 
-        return [$oppsById, $groupsByOpp, $globalOppIds];
+        return $opps;
     }
 }

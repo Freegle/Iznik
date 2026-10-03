@@ -16,7 +16,7 @@ class DesirabilityPipelineTest extends TestCase
     {
         parent::setUp();
         config(['freegle.desirability.model_version' => $this->version]);
-        // The selection query reads raw messages/messages_groups: clear anything
+        // The selection query reads raw messages: clear anything
         // committed outside our transaction so counts are deterministic.
         DB::table('messages_desirability')->delete();
         DB::table('item_desirability')->delete();
@@ -31,18 +31,10 @@ class DesirabilityPipelineTest extends TestCase
             'date' => now()->subHour(),
             'textbody' => 'Test body',
         ]);
-        $groupid = DB::table('groups')->insertGetId([
-            'nameshort' => 'TestGroup'.$msgid,
-            'type' => 'Freegle',
-            'polyindex' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
-        ]);
-        DB::table('messages_groups')->insert([
-            'msgid' => $msgid,
-            'groupid' => $groupid,
+        DB::table('messages')->where('id', $msgid)->update([
             'collection' => 'Approved',
             'arrival' => now()->subHour(),
             'approvedat' => $approvedAt ?? now()->subHour(),
-            'deleted' => 0,
         ]);
 
         return $msgid;
@@ -304,14 +296,7 @@ class DesirabilityPipelineTest extends TestCase
             'subject' => 'OFFER: Washing machine (AB1)', 'type' => 'Offer',
             'arrival' => now()->subHour(), 'date' => now()->subHour(), 'textbody' => 'x',
         ]);
-        $groupid = DB::table('groups')->insertGetId([
-            'nameshort' => 'TestGroupP'.$pending, 'type' => 'Freegle',
-            'polyindex' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
-        ]);
-        DB::table('messages_groups')->insert([
-            'msgid' => $pending, 'groupid' => $groupid, 'collection' => 'Pending',
-            'arrival' => now()->subHour(), 'deleted' => 0,
-        ]);
+        DB::table('messages')->where('id', $pending)->update(['collection' => 'Pending']);
         // Deleted post.
         $deleted = $this->makeApprovedOffer('OFFER: Washing machine (AB2)');
         DB::table('messages')->where('id', $deleted)->update(['deleted' => now()]);

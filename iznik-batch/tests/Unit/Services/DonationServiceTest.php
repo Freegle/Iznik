@@ -144,11 +144,10 @@ class DonationServiceTest extends TestCase
     public function test_ask_for_donations_respects_interval(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
 
         // Create a message for the foreign key constraint.
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         // Record recent ask.
         DB::table('users_donations_asks')->insert([
@@ -269,10 +268,9 @@ class DonationServiceTest extends TestCase
     {
         $sender = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
 
-        $this->createMembership($sender, $group);
-        $this->createMembership($recipient, $group);
+        DB::table('users')->where('id', $sender->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => -1]);
 
         // Create an offer message from sender.
         $message = \App\Models\Message::create([
@@ -281,13 +279,6 @@ class DonationServiceTest extends TestCase
             'subject' => 'OFFER: Test Item (Location)',
             'source' => 'Platform',
             'date' => now()->subDays(5),
-            'arrival' => now()->subDays(5),
-        ]);
-
-        \App\Models\MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => \App\Models\MessageGroup::COLLECTION_APPROVED,
             'arrival' => now()->subDays(5),
         ]);
 
@@ -431,8 +422,6 @@ class DonationServiceTest extends TestCase
             'fullname' => 'No Email',
             'added' => now(),
         ]);
-
-        $group = $this->createTestGroup();
 
         // Create a message.
         $message = \App\Models\Message::create([

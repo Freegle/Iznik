@@ -3,7 +3,6 @@ package test
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http/httptest"
 	"testing"
 
@@ -75,62 +74,6 @@ func TestMergeEmailPreferredWinsForId2(t *testing.T) {
 	var preferredEmail string
 	db.Raw("SELECT email FROM users_emails WHERE userid = ? AND preferred = 1", id2).Scan(&preferredEmail)
 	assert.Equal(t, id2PreferredEmail, preferredEmail, "id2's preferred email must remain preferred after merge")
-}
-
-func TestMergeMembershipTransferred(t *testing.T) {
-	prefix := uniquePrefix("merge_memb")
-	db := database.DBConn
-	_, adminToken := mergeAdminSetup(t, prefix)
-
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
-
-	status := mergeUsers(t, adminToken, id1, id2)
-	assert.Equal(t, 200, status, "merge request should succeed")
-
-	var role string
-	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).Scan(&role)
-	assert.Equal(t, "Member", role, "id2 should inherit id1's membership")
-
-	var count int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ?", id1).Scan(&count)
-	assert.Equal(t, int64(0), count, "id1 should have no memberships after merge")
-}
-
-func TestMergeMembershipRoleTakesMax(t *testing.T) {
-	prefix := uniquePrefix("merge_role")
-	db := database.DBConn
-	_, adminToken := mergeAdminSetup(t, prefix)
-
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
-	PromoteTestUserToModerator(t, id1)
-
-	status := mergeUsers(t, adminToken, id1, id2)
-	assert.Equal(t, 200, status, "merge request should succeed")
-
-	var role string
-	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).Scan(&role)
-	assert.Equal(t, "Moderator", role, "merged user should have the higher role")
-}
-
-func TestMergeMembershipConflictTakesOlderDate(t *testing.T) {
-	prefix := uniquePrefix("merge_date")
-	db := database.DBConn
-	_, adminToken := mergeAdminSetup(t, prefix)
-
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
-
-	db.Exec(fmt.Sprintf("INSERT INTO memberships (userid, groupid, role, added) VALUES (%d, %d, 'Member', '2013-01-01 00:00:00')", id1, groupID))
-	db.Exec(fmt.Sprintf("INSERT INTO memberships (userid, groupid, role, added) VALUES (%d, %d, 'Member', NOW())", id2, groupID))
-
-	status := mergeUsers(t, adminToken, id1, id2)
-	assert.Equal(t, 200, status, "merge request should succeed")
-
-	var added string
-	db.Raw("SELECT DATE_FORMAT(added, '%Y-%m-%d') FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).Scan(&added)
-	assert.Equal(t, "2013-01-01", added, "merged user should have the older joined date")
 }
 
 // ── Section B: messages, history, chat rooms, sessions, logins ───────────────
@@ -380,28 +323,6 @@ func TestMergeDonationsTransferred(t *testing.T) {
 
 	db.Raw("SELECT COUNT(*) FROM users_donations WHERE userid = ?", id1).Scan(&count)
 	assert.Equal(t, int64(0), count, "no donations should remain on id1")
-}
-
-func TestMergeBansHandled(t *testing.T) {
-	prefix := uniquePrefix("merge_bans")
-	db := database.DBConn
-	_, adminToken := mergeAdminSetup(t, prefix)
-
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
-	bannerID := CreateTestUser(t, prefix+"_banner", "Admin")
-
-	db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?)", id1, groupID, bannerID)
-
-	mergeUsers(t, adminToken, id1, id2)
-
-	var banCount int64
-	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?", id2, groupID).Scan(&banCount)
-	assert.GreaterOrEqual(t, banCount, int64(1), "id2 should be banned after inheriting id1's ban")
-
-	var membCount int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).Scan(&membCount)
-	assert.Equal(t, int64(0), membCount, "id2's membership should be removed for banned group")
 }
 
 func TestMergeGiftaidBestPeriodKept(t *testing.T) {

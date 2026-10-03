@@ -3,7 +3,6 @@
 namespace Tests\Unit\Services;
 
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Services\AutoRepostService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -30,20 +29,20 @@ class AutoRepostDueWindowTest extends TestCase
         $this->service = new AutoRepostService();
     }
 
-    /** Run the real candidate query for a group with these settings. */
-    private function candidateIds(int $groupid, array $reposts): array
+    /** Run the real candidate query with these settings. */
+    private function candidateIds(array $reposts): array
     {
         $method = new \ReflectionMethod(AutoRepostService::class, 'getCandidates');
         $method->setAccessible(true);
         $mindate = now()->subDays(AutoRepostService::LOOKBACK_DAYS)->format('Y-m-d');
 
-        return collect($method->invoke($this->service, $groupid, $mindate, $reposts))
+        return collect($method->invoke($this->service, $mindate, $reposts))
             ->pluck('msgid')->map(fn ($id) => (int) $id)->all();
     }
 
     /**
      * What the PHP logic would do with a post of this age: does either the warning or
-     * the repost branch fire? Mirrors processGroup's arithmetic exactly.
+     * the repost branch fire? Mirrors processAll's arithmetic exactly.
      */
     private function phpWouldAct(int $hoursAgo, int $interval, int $max): bool
     {
@@ -60,7 +59,7 @@ class AutoRepostDueWindowTest extends TestCase
         return $hoursAgo > $interval * 24;                 // repost band
     }
 
-    private function postAged(int $groupid, int $userid, int $hoursAgo, string $type): int
+    private function postAged(int $userid, int $hoursAgo, string $type): int
     {
         $msgid = DB::table('messages')->insertGetId([
             'type' => $type,
@@ -71,14 +70,7 @@ class AutoRepostDueWindowTest extends TestCase
             'fromaddr' => 'someone@ilovefreegle.org',
             'date' => now()->subHours($hoursAgo),
             'arrival' => now()->subHours($hoursAgo),
-        ]);
-
-        DB::table('messages_groups')->insert([
-            'msgid' => $msgid,
-            'groupid' => $groupid,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subHours($hoursAgo),
-            'autoreposts' => 0,
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         return $msgid;
@@ -89,9 +81,7 @@ class AutoRepostDueWindowTest extends TestCase
      */
     public function test_the_query_never_drops_a_post_php_would_act_on(): void
     {
-        $group = $this->createTestGroup();
         $user = $this->createTestUser();
-        $this->createMembership($user, $group);
         DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()->subYear()]);
 
         $reposts = ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5];
@@ -113,14 +103,14 @@ class AutoRepostDueWindowTest extends TestCase
         $expected = [];
         foreach ($ages as $age) {
             foreach ([Message::TYPE_OFFER => 3, Message::TYPE_WANTED => 7] as $type => $interval) {
-                $msgid = $this->postAged($group->id, $user->id, $age, $type);
+                $msgid = $this->postAged($user->id, $age, $type);
                 if ($this->phpWouldAct($age, $interval, $reposts['max'])) {
                     $expected[$msgid] = "{$type} at {$age}h";
                 }
             }
         }
 
-        $returned = $this->candidateIds($group->id, $reposts);
+        $returned = $this->candidateIds($reposts);
 
         foreach ($expected as $msgid => $what) {
             $this->assertContains(
@@ -137,16 +127,14 @@ class AutoRepostDueWindowTest extends TestCase
      */
     public function test_the_query_drops_posts_that_are_nowhere_near_due(): void
     {
-        $group = $this->createTestGroup();
         $user = $this->createTestUser();
-        $this->createMembership($user, $group);
 
         $reposts = ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5];
 
-        $tooNew = $this->postAged($group->id, $user->id, 1, Message::TYPE_OFFER);
-        $due = $this->postAged($group->id, $user->id, 3 * 24 + 5, Message::TYPE_OFFER);
+        $tooNew = $this->postAged($user->id, 1, Message::TYPE_OFFER);
+        $due = $this->postAged($user->id, 3 * 24 + 5, Message::TYPE_OFFER);
 
-        $returned = $this->candidateIds($group->id, $reposts);
+        $returned = $this->candidateIds($reposts);
 
         $this->assertNotContains($tooNew, $returned, 'an hour-old post is not due for anything');
         $this->assertContains($due, $returned);
@@ -154,47 +142,41 @@ class AutoRepostDueWindowTest extends TestCase
 
     public function test_a_post_past_its_maximum_age_is_dropped(): void
     {
-        $group = $this->createTestGroup();
         $user = $this->createTestUser();
-        $this->createMembership($user, $group);
 
         $reposts = ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5];
 
         // interval 3 x (max 5 + 1) = 18 days; a 20-day-old offer has aged out.
-        $agedOut = $this->postAged($group->id, $user->id, 20 * 24, Message::TYPE_OFFER);
+        $agedOut = $this->postAged($user->id, 20 * 24, Message::TYPE_OFFER);
 
-        $this->assertNotContains($agedOut, $this->candidateIds($group->id, $reposts));
+        $this->assertNotContains($agedOut, $this->candidateIds($reposts));
     }
 
     /** Each type is bounded by its own interval, not by the other's. */
     public function test_offer_and_wanted_use_their_own_intervals(): void
     {
-        $group = $this->createTestGroup();
         $user = $this->createTestUser();
-        $this->createMembership($user, $group);
 
         $reposts = ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5];
 
         // Four days: past an offer's 3-day interval, short of a wanted's 7.
-        $offer = $this->postAged($group->id, $user->id, 4 * 24, Message::TYPE_OFFER);
-        $wanted = $this->postAged($group->id, $user->id, 4 * 24, Message::TYPE_WANTED);
+        $offer = $this->postAged($user->id, 4 * 24, Message::TYPE_OFFER);
+        $wanted = $this->postAged($user->id, 4 * 24, Message::TYPE_WANTED);
 
-        $returned = $this->candidateIds($group->id, $reposts);
+        $returned = $this->candidateIds($reposts);
 
         $this->assertContains($offer, $returned);
         $this->assertNotContains($wanted, $returned, 'a wanted is not due at 4 days when its interval is 7');
     }
 
-    /** Reposting switched off for the group means no candidates at all. */
+    /** Reposting switched off means no candidates at all. */
     public function test_reposting_turned_off_returns_nothing(): void
     {
-        $group = $this->createTestGroup();
         $user = $this->createTestUser();
-        $this->createMembership($user, $group);
 
-        $this->postAged($group->id, $user->id, 30 * 24, Message::TYPE_OFFER);
+        $this->postAged($user->id, 30 * 24, Message::TYPE_OFFER);
 
-        $this->assertSame([], $this->candidateIds($group->id, ['offer' => 3, 'wanted' => 7, 'max' => 0]));
-        $this->assertSame([], $this->candidateIds($group->id, ['offer' => 0, 'wanted' => 0, 'max' => 5]));
+        $this->assertSame([], $this->candidateIds(['offer' => 3, 'wanted' => 7, 'max' => 0]));
+        $this->assertSame([], $this->candidateIds(['offer' => 0, 'wanted' => 0, 'max' => 5]));
     }
 }

@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/router"
@@ -233,19 +232,6 @@ func verifyRequiredTables() {
 	}
 }
 
-func TestMain(m *testing.M) {
-	dropLegacyReachGeometry()
-
-	code := m.Run()
-
-	// Clean up test groups after all tests complete (pass or fail).
-	// Test groups accumulate and bloat the groups table, causing SSR payload
-	// to exceed Chrome's 65534 function parameter limit.
-	cleanupTestGroups()
-
-	os.Exit(code)
-}
-
 // Every reach fixture in this package inserts the cell grids and nothing else, which is
 // the shape rippling_reach has once 2026_08_25_000001_drop_rippling_reach_legacy_geometry
 // has run. A test database cloned from a dev database that still carries the pre-drop
@@ -268,16 +254,6 @@ func dropLegacyReachGeometry() {
 
 	if err := db.Exec("ALTER TABLE rippling_reach DROP COLUMN polygon").Error; err != nil {
 		fmt.Printf("WARNING: could not drop legacy rippling_reach.polygon: %v\n", err)
-	}
-}
-
-func cleanupTestGroups() {
-	db := database.DBConn
-	result := db.Exec("DELETE FROM `groups` WHERE nameshort LIKE 'TestGroup_%'")
-	if result.Error != nil {
-		fmt.Printf("WARNING: Failed to clean up test groups: %v\n", result.Error)
-	} else {
-		fmt.Printf("Cleaned up %d test groups\n", result.RowsAffected)
 	}
 }
 

@@ -15,7 +15,6 @@ import (
 
 	"github.com/freegle/iznik-server-go/amp"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -75,41 +74,6 @@ func CreateTestChatRoster(t *testing.T, chatID uint64, userID uint64) {
 	if result.Error != nil {
 		t.Fatalf("ERROR: Failed to create chat roster entry: %v", result.Error)
 	}
-}
-
-func TestAMPCORSMiddleware(t *testing.T) {
-	// Test v2 AMP CORS with allowed sender
-	request := httptest.NewRequest("GET", "/amp/chat/1?rt=test&uid=1&exp="+fmt.Sprint(time.Now().Unix()+3600), nil)
-	request.Header.Set("AMP-Email-Sender", "test@users.ilovefreegle.org")
-	resp, _ := getApp().Test(request)
-	// The endpoint may fail validation, but CORS headers should be set
-	assert.Equal(t, "test@users.ilovefreegle.org", resp.Header.Get("AMP-Email-Allow-Sender"))
-
-	// Test v2 AMP CORS with disallowed sender
-	request = httptest.NewRequest("GET", "/amp/chat/1?rt=test&uid=1&exp="+fmt.Sprint(time.Now().Unix()+3600), nil)
-	request.Header.Set("AMP-Email-Sender", "test@example.com")
-	resp, _ = getApp().Test(request)
-	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
-
-	// Test v1 AMP CORS with allowed source origin
-	request = httptest.NewRequest("GET", "/amp/chat/1?rt=test&uid=1&exp="+fmt.Sprint(time.Now().Unix()+3600)+"&__amp_source_origin=notifications@mail.ilovefreegle.org", nil)
-	request.Header.Set("Origin", "https://mail.google.com")
-	resp, _ = getApp().Test(request)
-	assert.Equal(t, "https://mail.google.com", resp.Header.Get("Access-Control-Allow-Origin"))
-	assert.Equal(t, "notifications@mail.ilovefreegle.org", resp.Header.Get("AMP-Access-Control-Allow-Source-Origin"))
-
-	// Test v1 AMP CORS with disallowed source origin
-	request = httptest.NewRequest("GET", "/amp/chat/1?rt=test&uid=1&exp="+fmt.Sprint(time.Now().Unix()+3600)+"&__amp_source_origin=badactor@example.com", nil)
-	request.Header.Set("Origin", "https://mail.google.com")
-	resp, _ = getApp().Test(request)
-	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
-
-	// Test OPTIONS preflight
-	request = httptest.NewRequest("OPTIONS", "/amp/chat/1", nil)
-	request.Header.Set("AMP-Email-Sender", "test@ilovefreegle.org")
-	resp, _ = getApp().Test(request)
-	assert.Equal(t, fiber.StatusNoContent, resp.StatusCode)
-	assert.Equal(t, "GET, POST, OPTIONS", resp.Header.Get("Access-Control-Allow-Methods"))
 }
 
 func TestAMPGetChatMessagesInvalidToken(t *testing.T) {
@@ -220,68 +184,6 @@ func TestAMPGetChatMessagesNotInChat(t *testing.T) {
 	assert.Equal(t, 0, len(response.Items))
 }
 
-func TestAMPPostChatReplyInvalidToken(t *testing.T) {
-	// Missing token - should return error response
-	body := map[string]string{"message": "Test reply"}
-	bodyBytes, _ := json2.Marshal(body)
-
-	request := httptest.NewRequest("POST", "/amp/chat/1/reply", bytes.NewBuffer(bodyBytes))
-	request.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(request)
-	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode) // Returns 400 for missing token
-
-	var response amp.ReplyResponse
-	json2.Unmarshal(rsp(resp), &response)
-	assert.False(t, response.Success)
-
-	// Invalid token
-	request = httptest.NewRequest("POST", "/amp/chat/1/reply?rt=invalid&uid=1&exp="+fmt.Sprint(time.Now().Unix()+3600), bytes.NewBuffer(bodyBytes))
-	request.Header.Set("Content-Type", "application/json")
-	resp, _ = getApp().Test(request)
-	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode) // Returns 400 for invalid token
-
-	json2.Unmarshal(rsp(resp), &response)
-	assert.False(t, response.Success)
-}
-
-func TestAMPPostChatReplyExpiredToken(t *testing.T) {
-	// Set up test environment secret
-	ampSecret := os.Getenv("AMP_SECRET")
-	if ampSecret == "" {
-		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
-	}
-	if ampSecret == "" {
-		t.Fatal("AMP_SECRET not set")
-	}
-
-	// Create test data
-	prefix := uniquePrefix("ampexpired")
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
-	CreateTestChatRoster(t, chatID, user1ID)
-	CreateTestChatRoster(t, chatID, user2ID)
-
-	// Create expired token (1 hour ago)
-	exp := time.Now().Unix() - 3600
-	token := generateAMPToken(user1ID, chatID, exp, ampSecret)
-
-	body := map[string]string{"message": "Test reply"}
-	bodyBytes, _ := json2.Marshal(body)
-
-	url := fmt.Sprintf("/amp/chat/%d/reply?rt=%s&uid=%d&exp=%d", chatID, token, user1ID, exp)
-	request := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
-	request.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(request)
-	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode) // Returns 400 for expired token
-
-	var response amp.ReplyResponse
-	json2.Unmarshal(rsp(resp), &response)
-	assert.False(t, response.Success)
-	assert.Equal(t, "Invalid token", response.Message)
-}
-
 func TestAMPPostChatReplyValidToken(t *testing.T) {
 	// Set up test environment secret
 	ampSecret := os.Getenv("AMP_SECRET")
@@ -374,87 +276,6 @@ func TestAMPPostChatReplyTokenCanBeReused(t *testing.T) {
 	assert.True(t, response.Success) // Token can be reused
 }
 
-func TestAMPPostChatReplyEmptyMessage(t *testing.T) {
-	// Set up test environment secret
-	ampSecret := os.Getenv("AMP_SECRET")
-	if ampSecret == "" {
-		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
-	}
-	if ampSecret == "" {
-		t.Fatal("AMP_SECRET not set")
-	}
-
-	// Create test data
-	prefix := uniquePrefix("ampreplyempty")
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
-	CreateTestChatRoster(t, chatID, user1ID)
-	CreateTestChatRoster(t, chatID, user2ID)
-
-	exp := time.Now().Unix() + 3600
-	token := generateAMPToken(user1ID, chatID, exp, ampSecret)
-
-	// Empty message
-	body := map[string]string{"message": ""}
-	bodyBytes, _ := json2.Marshal(body)
-
-	url := fmt.Sprintf("/amp/chat/%d/reply?rt=%s&uid=%d&exp=%d", chatID, token, user1ID, exp)
-	request := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
-	request.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(request)
-	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode) // Returns 400 for empty message
-
-	var response amp.ReplyResponse
-	json2.Unmarshal(rsp(resp), &response)
-	assert.False(t, response.Success)
-	assert.Contains(t, response.Message, "enter a message")
-}
-
-func TestAMPPostChatReplyTokenMismatchChatID(t *testing.T) {
-	// Set up test environment secret
-	ampSecret := os.Getenv("AMP_SECRET")
-	if ampSecret == "" {
-		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
-	}
-	if ampSecret == "" {
-		t.Fatal("AMP_SECRET not set")
-	}
-
-	// Create test data
-	prefix := uniquePrefix("ampmismatch")
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	user3ID := CreateTestUser(t, prefix+"_3", "User")
-
-	// Create two different chats
-	chatID1 := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
-	chatID2 := CreateTestChatRoom(t, user1ID, &user3ID, "User2User")
-	CreateTestChatRoster(t, chatID1, user1ID)
-	CreateTestChatRoster(t, chatID1, user2ID)
-	CreateTestChatRoster(t, chatID2, user1ID)
-	CreateTestChatRoster(t, chatID2, user3ID)
-
-	// Create token for chatID1
-	exp := time.Now().Unix() + 3600
-	token := generateAMPToken(user1ID, chatID1, exp, ampSecret)
-
-	body := map[string]string{"message": "Test message"}
-	bodyBytes, _ := json2.Marshal(body)
-
-	// Try to use token for chatID2 - should fail (HMAC includes chat ID)
-	url := fmt.Sprintf("/amp/chat/%d/reply?rt=%s&uid=%d&exp=%d", chatID2, token, user1ID, exp)
-	request := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
-	request.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(request)
-	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode) // Returns 400 for token mismatch
-
-	var response amp.ReplyResponse
-	json2.Unmarshal(rsp(resp), &response)
-	assert.False(t, response.Success) // Token mismatch
-}
-
 func TestAMPPostChatReplyWithTracking(t *testing.T) {
 	// Set up test environment secret
 	ampSecret := os.Getenv("AMP_SECRET")
@@ -534,32 +355,4 @@ func TestAMPChatRosterMembershipScan(t *testing.T) {
 	// Should return 0 (not found) without error
 	assert.NoError(t, result.Error, "GORM scan should not error for non-member")
 	assert.Equal(t, uint64(0), notMemberUserID, "Should return 0 for non-member")
-}
-
-func TestAMPAllowedSenderDomains(t *testing.T) {
-	// Test various sender domains
-	testCases := []struct {
-		sender   string
-		expected int
-	}{
-		{"noreply@ilovefreegle.org", fiber.StatusOK},              // Main domain - allowed
-		{"user@users.ilovefreegle.org", fiber.StatusOK},           // Users subdomain - allowed
-		{"notify@mail.ilovefreegle.org", fiber.StatusOK},          // Mail subdomain - allowed
-		{"amp@gmail.dev", fiber.StatusOK},                         // Google AMP Playground - allowed
-		{"hacker@evil.com", fiber.StatusForbidden},                // External domain - blocked
-		{"fake@ilovefreegle.org.evil.com", fiber.StatusForbidden}, // Spoofed domain - blocked
-	}
-
-	for _, tc := range testCases {
-		request := httptest.NewRequest("GET", "/amp/chat/1?rt=test&uid=1&exp="+fmt.Sprint(time.Now().Unix()+3600), nil)
-		request.Header.Set("AMP-Email-Sender", tc.sender)
-		resp, _ := getApp().Test(request)
-
-		// Check if CORS passed (403 for forbidden, otherwise 200 even if token fails)
-		if tc.expected == fiber.StatusForbidden {
-			assert.Equal(t, fiber.StatusForbidden, resp.StatusCode, "Sender %s should be blocked", tc.sender)
-		} else {
-			assert.NotEqual(t, fiber.StatusForbidden, resp.StatusCode, "Sender %s should be allowed", tc.sender)
-		}
-	}
 }

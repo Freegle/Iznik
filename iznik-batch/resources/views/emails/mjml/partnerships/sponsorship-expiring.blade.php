@@ -31,10 +31,6 @@
             <td style="padding:6px 12px 6px 0;font-weight:bold;width:45%">Value of the deal</td>
             <td style="padding:6px 0">£{{ number_format($amount) }}</td>
           </tr>
-          <tr>
-            <td style="padding:6px 12px 6px 0;font-weight:bold">Communities covered</td>
-            <td style="padding:6px 0">{{ $groupCount }}</td>
-          </tr>
         </mj-table>
         @if(count($contacts))
           <mj-text font-size="14px" font-weight="bold" padding="12px 25px 4px">

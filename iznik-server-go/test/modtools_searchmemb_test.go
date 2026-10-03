@@ -1,16 +1,7 @@
 package test
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"net/http/httptest"
-	"net/url"
-	"testing"
 
-	"github.com/freegle/iznik-server-go/database"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // The ModTools "find posts by member" search (GET /modtools/messages
@@ -24,27 +15,6 @@ import (
 // The candidate query pins the memberships access path with FORCE INDEX on
 // memberships_groupid_collection_emailfrequency, as the member search does,
 // so these tests also fail loudly if that index is ever renamed.
-
-func mtSearchMemberIDs(t *testing.T, token string, groupID uint64, term string) (int, []uint64) {
-	t.Helper()
-	u := fmt.Sprintf("/api/modtools/messages?collection=Approved&subaction=searchmemb&search=%s&jwt=%s",
-		url.QueryEscape(term), token)
-	if groupID > 0 {
-		u += fmt.Sprintf("&groupid=%d", groupID)
-	}
-	resp, err := getApp().Test(httptest.NewRequest("GET", u, nil))
-	require.NoError(t, err)
-
-	var body map[string]interface{}
-	_ = json.NewDecoder(resp.Body).Decode(&body)
-	var ids []uint64
-	if raw, ok := body["messages"].([]interface{}); ok {
-		for _, id := range raw {
-			ids = append(ids, uint64(id.(float64)))
-		}
-	}
-	return resp.StatusCode, ids
-}
 
 func contains(ids []uint64, id uint64) bool {
 	for _, v := range ids {

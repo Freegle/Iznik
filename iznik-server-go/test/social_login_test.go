@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/golang-jwt/jwt/v4"
 	"github.com/stretchr/testify/assert"
+	"github.com/golang-jwt/jwt/v4"
 )
 
 // =============================================================================

@@ -51,7 +51,7 @@ func setupPromisedMessage(t *testing.T, prefix string) (ownerID uint64, ownerTok
 	_, ownerToken = CreateTestSession(t, ownerID)
 	otherID = CreateTestUser(t, prefix+"_other", "User")
 	_, otherToken = CreateTestSession(t, otherID)
-	msgID = CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	msgID = CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 	CreateTestChatRoom(t, ownerID, &otherID, "User2User")
 	return
 }

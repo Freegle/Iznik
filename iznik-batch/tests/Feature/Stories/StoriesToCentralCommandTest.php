@@ -3,7 +3,6 @@
 namespace Tests\Feature\Stories;
 
 use App\Mail\Stories\StoriesToCentralMail;
-use App\Models\Group;
 use App\Services\StoriesService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;

@@ -27,10 +27,8 @@
 
 <script setup>
 import { setupModMessages } from '~/composables/useModMessages'
-import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 
-const groupStore = useGroupStore()
 const messageStore = useMessageStore()
 
 // composables/modMessagesPage
@@ -52,10 +50,6 @@ defineProps({
 onMounted(async () => {
   // Ensure we have no cached messages for other searches/groups
   messageStore.clear()
-
-  if (import.meta.client && groupid.value) {
-    groupStore.fetch(groupid.value)
-  }
 
   await messageStore.clearContext()
   context.value = null

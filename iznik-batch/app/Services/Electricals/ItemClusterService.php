@@ -35,13 +35,12 @@ class ItemClusterService
     /**
      * Fold rows into one entry per item type.
      *
-     * Each row is one (post, group) pairing, so a post that rippled to three
-     * groups arrives three times; counts are taken over distinct ids rather
-     * than by summing, because the same member and the same group recur across
-     * the names being merged and summing would over-count both.
+     * Counts are taken over distinct ids rather than by summing, because the same
+     * post and the same member recur across the names being merged and summing
+     * would over-count both.
      *
-     * @param  iterable<object>  $rows  each with ->name, ->msgid, ->fromuser, ->groupid
-     * @return array<string, array{canonical:string, name:string, count:int, users:int, groups:int}>
+     * @param  iterable<object>  $rows  each with ->name, ->msgid, ->fromuser
+     * @return array<string, array{canonical:string, name:string, count:int, users:int}>
      */
     public function cluster(iterable $rows): array
     {
@@ -58,12 +57,11 @@ class ItemClusterService
             $key = $c['canonical'];
 
             if (! isset($acc[$key])) {
-                $acc[$key] = ['msgids' => [], 'users' => [], 'groups' => [], 'names' => []];
+                $acc[$key] = ['msgids' => [], 'users' => [], 'names' => []];
             }
 
             $acc[$key]['msgids'][(int) $row->msgid] = true;
             $acc[$key]['users'][(int) $row->fromuser] = true;
-            $acc[$key]['groups'][(int) $row->groupid] = true;
             $acc[$key]['names'][$name][(int) $row->msgid] = true;
         }
 
@@ -75,7 +73,6 @@ class ItemClusterService
                 'name'      => $this->representative($a['names']),
                 'count'     => count($a['msgids']),
                 'users'     => count($a['users']),
-                'groups'    => count($a['groups']),
             ];
         }
 

@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/gofiber/fiber/v2"
 )
 
 // Tests for GET /api/image - the legacy *img_N.jpg URL resolution that

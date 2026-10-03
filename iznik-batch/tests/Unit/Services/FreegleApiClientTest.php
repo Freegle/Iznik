@@ -260,7 +260,7 @@ class FreegleApiClientTest extends TestCase
         ]);
 
         $client = new FreegleApiClient('http://example.test');
-        $result = $client->publishMessage(1234, 56);
+        $result = $client->publishMessage(1234);
 
         $this->assertTrue($result);
     }
@@ -272,7 +272,7 @@ class FreegleApiClientTest extends TestCase
         ]);
 
         $client = new FreegleApiClient('http://example.test');
-        $result = $client->publishMessage(1234, 56, forcePending: true);
+        $result = $client->publishMessage(1234, forcePending: true);
 
         $this->assertTrue($result);
     }
@@ -284,7 +284,7 @@ class FreegleApiClientTest extends TestCase
         ]);
 
         $client = new FreegleApiClient('http://example.test');
-        $result = $client->publishMessage(9999, 56);
+        $result = $client->publishMessage(9999);
 
         $this->assertFalse($result);
     }
@@ -296,7 +296,7 @@ class FreegleApiClientTest extends TestCase
         ]);
 
         $client = new FreegleApiClient('http://example.test');
-        $result = $client->publishMessage(1, 1);
+        $result = $client->publishMessage(1);
 
         $this->assertFalse($result);
     }
@@ -357,7 +357,7 @@ class FreegleApiClientTest extends TestCase
 
         $authed = $client->authenticate(1, 'k');         // consumes mock[0]
         $imgId  = $client->createImageAttachment('uid');  // consumes mock[1]
-        $pub    = $client->publishMessage(55, 1);         // consumes mock[2]
+        $pub    = $client->publishMessage(55);         // consumes mock[2]
 
         $this->assertTrue($authed);
         $this->assertSame(55, $imgId);

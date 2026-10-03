@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

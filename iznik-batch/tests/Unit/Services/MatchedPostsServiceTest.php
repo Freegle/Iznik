@@ -2,7 +2,6 @@
 
 namespace Tests\Unit\Services;
 
-use App\Models\Group;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\FreegleApiClient;
@@ -31,7 +30,6 @@ class MatchedPostsServiceTest extends TestCase
      */
     private function seedMatch(array $recipientAttrs = []): array
     {
-        $group = $this->createTestGroup();
 
         $recipient = $this->createTestUser(array_merge([
             'lastaccess' => now(),
@@ -46,10 +44,10 @@ class MatchedPostsServiceTest extends TestCase
         ]);
 
         // The recipient's own fresh WANTED — the driver (needs spatial + embedding).
-        $wanted = $this->makeFreshDriver($recipient, $group, 'Wanted', 'WANTED: Bicycle (London)');
+        $wanted = $this->makeFreshDriver($recipient, 'Wanted', 'WANTED: Bicycle (London)');
 
         // The matching OFFER — a live post apiv2 returns; not itself a driver.
-        $offer = $this->createTestMessage($offerer, $group, [
+        $offer = $this->createTestMessage($offerer, [
             'type' => 'Offer',
             'subject' => 'OFFER: Bicycle (London)',
             'arrival' => now()->subDay(),
@@ -59,25 +57,25 @@ class MatchedPostsServiceTest extends TestCase
         //  1. matchesForPost(wanted) → [offer]   (drives both directions)
         //  2. matchesForPost(offer)  → [wanted]  (verifyReach: offer owner can reach the wanted)
         FreegleApiClient::fake([
-            ['body' => [['id' => $offer->id, 'score' => 0.82, 'groupid' => $group->id, 'lat' => 51.5, 'lng' => -0.1]]],
-            ['body' => [['id' => $wanted->id, 'score' => 0.82, 'groupid' => $group->id, 'lat' => 51.5, 'lng' => -0.1]]],
+            ['body' => [['id' => $offer->id, 'score' => 0.82, 'lat' => 51.5, 'lng' => -0.1]]],
+            ['body' => [['id' => $wanted->id, 'score' => 0.82, 'lat' => 51.5, 'lng' => -0.1]]],
         ]);
 
         return [$recipient, $wanted, $offerer, $offer];
     }
 
-    private function makeFreshDriver(User $user, Group $group, string $type, string $subject): Message
+    private function makeFreshDriver(User $user, string $type, string $subject): Message
     {
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'type' => $type,
             'subject' => $subject,
             'arrival' => now(),
         ]);
 
         DB::statement(
-            'INSERT INTO messages_spatial (msgid, groupid, msgtype, successful, promised, arrival, point)
-             VALUES (?, ?, ?, 0, 0, ?, ST_GeomFromText(?, 3857))',
-            [$message->id, $group->id, $type, now(), sprintf('POINT(%F %F)', $group->lng, $group->lat)]
+            'INSERT INTO messages_spatial (msgid, msgtype, successful, promised, arrival, point)
+             VALUES (?, ?, 0, 0, ?, ST_GeomFromText(?, 3857))',
+            [$message->id, $type, now(), sprintf('POINT(%F %F)', -0.1278, 51.5074)]
         );
         DB::statement(
             'INSERT INTO messages_embeddings (msgid, subject_embedding, model_version) VALUES (?, ?, ?)',
@@ -236,23 +234,22 @@ class MatchedPostsServiceTest extends TestCase
 
     public function test_collapses_crossposts_to_a_single_card(): void
     {
-        $group = $this->createTestGroup();
         $recipient = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 1, 'lastrelevantcheck' => null]);
         $offerer = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 1, 'lastrelevantcheck' => null]);
 
-        $wanted = $this->makeFreshDriver($recipient, $group, 'Wanted', 'WANTED: Lamp (London)');
+        $wanted = $this->makeFreshDriver($recipient, 'Wanted', 'WANTED: Lamp (London)');
 
         // The same item crossposted to two groups: two messages, one owner, one
         // subject, distinct ids — exactly how a crosspost is stored.
-        $offerA = $this->createTestMessage($offerer, $group, ['type' => 'Offer', 'subject' => 'OFFER: Lamp (London)', 'arrival' => now()->subDay()]);
-        $offerB = $this->createTestMessage($offerer, $group, ['type' => 'Offer', 'subject' => 'OFFER: Lamp (London)', 'arrival' => now()->subDay()]);
+        $offerA = $this->createTestMessage($offerer, ['type' => 'Offer', 'subject' => 'OFFER: Lamp (London)', 'arrival' => now()->subDay()]);
+        $offerB = $this->createTestMessage($offerer, ['type' => 'Offer', 'subject' => 'OFFER: Lamp (London)', 'arrival' => now()->subDay()]);
 
         FreegleApiClient::fake([
             ['body' => [
-                ['id' => $offerA->id, 'score' => 0.80, 'groupid' => $group->id, 'lat' => 51.5, 'lng' => -0.1],
-                ['id' => $offerB->id, 'score' => 0.78, 'groupid' => $group->id, 'lat' => 51.5, 'lng' => -0.1],
+                ['id' => $offerA->id, 'score' => 0.80, 'lat' => 51.5, 'lng' => -0.1],
+                ['id' => $offerB->id, 'score' => 0.78, 'lat' => 51.5, 'lng' => -0.1],
             ]],
-            ['body' => [['id' => $wanted->id, 'score' => 0.80, 'groupid' => $group->id, 'lat' => 51.5, 'lng' => -0.1]]],
+            ['body' => [['id' => $wanted->id, 'score' => 0.80, 'lat' => 51.5, 'lng' => -0.1]]],
         ]);
 
         $toRecipient = $this->notificationFor(app(MatchedPostsService::class)->buildNotifications(), $recipient->id);

@@ -10,64 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestMicrovolunteering_CoinFlipZeroFallsBackToMessage exercises the rand==0
-// branch in GetChallenge where the AI image review is tried first and returns
-// nil, so control falls through to the approved-message review. Before the
-// CoinFlip shim this was only hit probabilistically; that made Go per-job
-// Coveralls status flip between -0.01% and +0% on otherwise identical runs.
-func TestMicrovolunteering_CoinFlipZeroFallsBackToMessage(t *testing.T) {
-	db := database.DBConn
-
-	orig := microvolunteering.CoinFlip
-	microvolunteering.CoinFlip = func() int { return 0 }
-	t.Cleanup(func() { microvolunteering.CoinFlip = orig })
-
-	prefix := uniquePrefix("mv_cf0")
-	// Leave microvolunteeringoptions NULL — the SQL filter uses
-	// `(microvolunteeringoptions IS NULL OR JSON_EXTRACT(...) = 1)` and the
-	// JSON boolean `true` does NOT compare-equal to integer 1 in MySQL, so
-	// setting `{"approvedmessages":true}` would filter the row out.
-	db.Exec("UPDATE `groups` SET microvolunteering = 1 WHERE id = ?", groupID)
-
-	reviewerID := CreateTestUser(t, prefix+"_rev", "User")
-	_, token := CreateTestSession(t, reviewerID)
-	blockInviteChallenge(t, reviewerID)
-
-	senderID := CreateTestUser(t, prefix+"_snd", "User")
-	msgID := CreateTestMessage(t, senderID, "coinflip zero "+prefix, 55.9533, -3.1883)
-
-	// Neutralise any AI images left in the shared test DB by other tests so
-	// getAIImageReviewChallenge returns nil for this reviewer — that forces
-	// the fallback to getApprovedMessageChallenge to execute.
-	db.Exec(`
-		INSERT INTO microactions (actiontype, userid, aiimageid, version, timestamp, result)
-		SELECT 'AIImageReview', ?, id, 4, NOW(), 'Approve'
-		FROM ai_images
-		WHERE externaluid IS NOT NULL AND externaluid != ''
-	`, reviewerID)
-
-	// Scope to the two challenge types this test exercises — EEELabel now
-	// runs ahead of AIImageReview in the default ordering and would shadow
-	// the coin-flip path.
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=CheckMessage,AIImageReview", nil))
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var result microvolunteering.Challenge
-	json2.Unmarshal(rsp(resp), &result)
-	assert.Equal(t, microvolunteering.ChallengeCheckMessage, result.Type,
-		"CoinFlip=0 with no AI images must return the fallback message challenge")
-	if result.Msgid != nil {
-		assert.Equal(t, msgID, *result.Msgid)
-	}
-
-	t.Cleanup(func() {
-		db.Exec("DELETE FROM microactions WHERE userid = ?", reviewerID)
-		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
-		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
-		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
-	})
-}
-
 // TestMicrovolunteering_CoinFlipOneFallsBackToAIImage exercises the rand==1
 // branch where the approved-message review is tried first, returns nil, and
 // control falls through to the AI image review at microvolunteering.go:189-191.

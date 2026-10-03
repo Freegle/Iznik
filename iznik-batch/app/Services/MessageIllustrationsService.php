@@ -175,14 +175,13 @@ class MessageIllustrationsService
             // the oldest waiting posts would take the lot.
             $msgs = DB::select("
                 SELECT msgid, subject, arrival FROM (
-                    SELECT DISTINCT mg.msgid, m.subject, mg.arrival
-                    FROM messages_groups mg
-                    INNER JOIN messages m ON m.id = mg.msgid
-                    INNER JOIN messages_spatial ms ON ms.msgid = mg.msgid
+                    SELECT DISTINCT m.id AS msgid, m.subject, m.arrival
+                    FROM messages m
+                    INNER JOIN messages_spatial ms ON ms.msgid = m.id
                     LEFT JOIN messages_attachments ma ON ma.msgid = m.id
                     LEFT JOIN messages_ai_declined maid ON maid.msgid = m.id
-                    WHERE mg.arrival >= ?
-                    AND mg.collection = 'Approved'
+                    WHERE m.arrival >= ?
+                    AND m.collection = 'Approved'
                     AND ma.id IS NULL
                     AND maid.msgid IS NULL
                     AND m.subject IS NOT NULL
@@ -190,20 +189,18 @@ class MessageIllustrationsService
 
                     UNION
 
-                    (SELECT DISTINCT mg.msgid, m.subject, mg.arrival
-                    FROM messages_groups mg
-                    INNER JOIN messages m ON m.id = mg.msgid
+                    (SELECT DISTINCT m.id AS msgid, m.subject, m.arrival
+                    FROM messages m
                     LEFT JOIN messages_attachments ma ON ma.msgid = m.id
                     LEFT JOIN messages_ai_declined maid ON maid.msgid = m.id
-                    WHERE mg.collection = 'Pending'
-                    AND mg.arrival >= ?
-                    AND mg.deleted = 0
+                    WHERE m.collection = 'Pending'
+                    AND m.arrival >= ?
                     AND m.deleted IS NULL
                     AND ma.id IS NULL
                     AND maid.msgid IS NULL
                     AND m.subject IS NOT NULL
                     AND m.subject != ''
-                    ORDER BY mg.arrival ASC
+                    ORDER BY m.arrival ASC
                     LIMIT ?)
                 ) candidates
                 ORDER BY arrival ASC, msgid ASC

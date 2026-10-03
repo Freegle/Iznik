@@ -6,9 +6,7 @@ use App\Helpers\MailHelper;
 use App\Mail\Message\ChaseUp as ChaseUpMail;
 use App\Mail\Message\ChaseUpPromised;
 use App\Mail\Traits\FeatureFlags;
-use App\Models\Group;
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Models\Notification;
 use App\Models\User;
 use App\Services\Ripple\RippleReplyService;
@@ -28,7 +26,7 @@ class ChaseUpService
     public const LOOKBACK_DAYS = 90;
 
     /**
-     * Default repost settings.
+     * Site-wide repost settings: the value every community used, frozen as a constant.
      */
     public const DEFAULT_REPOSTS = [
         'offer' => 3,
@@ -195,9 +193,7 @@ class ChaseUpService
     }
 
     /**
-     * Check if a message is eligible for reposting on any of its groups.
-     *
-     * V1: Message::canRepost() — checks all groups.
+     * Check if a message is old enough to be reposted.
      */
     protected function canRepostMessage(int $msgid): bool
     {
@@ -206,28 +202,16 @@ class ChaseUpService
             return false;
         }
 
-        $groups = DB::table('messages_groups')
-            ->where('msgid', $msgid)
-            ->select('groupid', DB::raw('TIMESTAMPDIFF(HOUR, arrival, NOW()) AS hoursago'))
-            ->get();
+        $reposts = self::DEFAULT_REPOSTS;
+        $interval = $message->type === Message::TYPE_OFFER
+            ? ($reposts['offer'] ?? 3)
+            : ($reposts['wanted'] ?? 7);
 
-        foreach ($groups as $group) {
-            $groupModel = Group::find($group->groupid);
-            if (!$groupModel) {
-                continue;
-            }
+        $hoursago = (int) DB::table('messages')
+            ->where('id', $msgid)
+            ->value(DB::raw('TIMESTAMPDIFF(HOUR, arrival, NOW())'));
 
-            $reposts = $groupModel->getSetting('reposts', self::DEFAULT_REPOSTS);
-            $interval = $message->type === Message::TYPE_OFFER
-                ? ($reposts['offer'] ?? 3)
-                : ($reposts['wanted'] ?? 7);
-
-            if ($group->hoursago > $interval * 24) {
-                return true;
-            }
-        }
-
-        return false;
+        return $hoursago > $interval * 24;
     }
 
     /**
@@ -237,8 +221,8 @@ class ChaseUpService
      */
     protected function repostMessage(int $msgid): void
     {
-        DB::table('messages_groups')
-            ->where('msgid', $msgid)
+        DB::table('messages')
+            ->where('id', $msgid)
             ->update([
                 'arrival' => now(),
                 'autoreposts' => DB::raw('autoreposts + 1'),
@@ -259,37 +243,29 @@ class ChaseUpService
         $start = now()->subDays(31)->format('Y-m-d');
         $end = now()->subHours(48)->format('Y-m-d');
 
-        $msgs = DB::table('messages_groups')
-            ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages_groups.msgid')
-            ->leftJoin('messages_promises', 'messages_promises.msgid', '=', 'messages_groups.msgid')
-            ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
+        $msgs = DB::table('messages')
+            ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages.id')
+            ->leftJoin('messages_promises', 'messages_promises.msgid', '=', 'messages.id')
             ->select(
-                'messages_groups.msgid',
-                // messages.type, not the denormalised messages_groups.msgtype: the
-                // latter is NULL on the origin membership of some posts, which
-                // would silently skip them below.
+                'messages.id AS msgid',
                 DB::raw('messages.type as msgtype'),
-                'messages_groups.autoreposts',
-                'messages_groups.groupid',
-                'messages_groups.collection',
+                'messages.autoreposts',
+                'messages.collection',
                 'messages.fromuser',
                 'messages.fromaddr'
             )
-            ->whereBetween('messages_groups.arrival', [$start, $end])
+            ->whereBetween('messages.arrival', [$start, $end])
             ->whereNull('messages_outcomes.id')
             ->whereNull('messages_promises.id')
             ->whereNull('messages.deleted')
-            // Per-group hold. The rows here are per-group, so the message-wide
-            // messages.heldby mirror skipped a poster's chase-up on a group whose copy
-            // nobody had held, because a different group's copy was (Discourse 9970/2).
-            ->whereNull('messages_groups.heldby')
+            ->whereNull('messages.heldby')
             ->get();
 
         $languishing = [];
 
         foreach ($msgs as $msg) {
             // V1: filter in PHP for better index usage.
-            if ($msg->collection !== MessageGroup::COLLECTION_APPROVED) {
+            if ($msg->collection !== Message::COLLECTION_APPROVED) {
                 continue;
             }
             if (!in_array($msg->msgtype, [Message::TYPE_OFFER, Message::TYPE_WANTED])) {
@@ -316,13 +292,8 @@ class ChaseUpService
                 continue;
             }
 
-            // Check if autoreposting is finished for this group.
-            $group = Group::find($msg->groupid);
-            if (!$group) {
-                continue;
-            }
-
-            $reposts = $group->getSetting('reposts', self::DEFAULT_REPOSTS);
+            // Check if autoreposting is finished.
+            $reposts = self::DEFAULT_REPOSTS;
             $maxReposts = $reposts['max'] ?? 5;
 
             if ($maxReposts > 0 && $msg->autoreposts <= $maxReposts) {
@@ -371,22 +342,14 @@ class ChaseUpService
     }
 
     /**
-     * Process chase-ups for all active Freegle groups.
+     * Process chase-ups for every live post.
      *
      * Matches V1 chaseup.php → Message::chaseUp().
      * Sends chase-up emails for messages with replies but no outcome,
      * after max reposts reached.
      *
-     * Multi-group: a chase-up is about the item's global outcome, so a cross-posted
-     * message is chased up at most once per interval (not once per group). Two guards
-     * combine: (1) only the HOME posting (rippled_in = 0) may initiate a chase-up, so a
-     * post that rippled into other groups never chases up once per rippled group; and
-     * (2) when one is sent we stamp lastchaseup on EVERY group of the message
-     * (WHERE msgid = ?), matching V1, so any home cross-posts skip it too. Reposting
-     * stays per-group.
-     *
      * V1 side effects included:
-     *   - UPDATE messages_groups SET lastchaseup = NOW() (all the message's groups)
+     *   - UPDATE messages SET lastchaseup = NOW()
      *   - Chase-up email: "What happened to: {subject}" with links to
      *     mark completed/repost/withdraw. Different template if promised.
      */
@@ -405,59 +368,36 @@ class ChaseUpService
 
         $mindate = now()->subDays(self::LOOKBACK_DAYS)->format('Y-m-d');
 
-        // V1: SELECT id FROM groups WHERE type = 'Freegle' ORDER BY RAND()
-        // Note: V1 doesn't filter onhere for chaseup (unlike autorepost).
-        $groups = Group::freegle()->inRandomOrder()->get();
-
-        foreach ($groups as $group) {
-            if ($group->isClosed()) {
-                continue;
-            }
-
-            $reposts = $group->getSetting('reposts', self::DEFAULT_REPOSTS);
-
-            try {
-                $groupStats = $this->processGroup($group, $reposts, $mindate, $dryRun);
-                $stats['chased'] += $groupStats['chased'];
-                $stats['skipped'] += $groupStats['skipped'];
-            } catch (\Exception $e) {
-                // Transient SMTP failures (mail-host:25 connection refused/timed out)
-                // during container-startup ordering shouldn't escalate to Sentry —
-                // log them at warning level. Genuine errors still hit Log::error.
-                $level = app(\App\Services\Mail\SmtpFailureClassifier::class)
-                    ->isTransient($e->getMessage()) ? 'warning' : 'error';
-                Log::$level("Error processing chase-up for group #{$group->id}: " . $e->getMessage());
-                $stats['errors']++;
-            }
+        try {
+            $runStats = $this->processAll(self::DEFAULT_REPOSTS, $mindate, $dryRun);
+            $stats['chased'] += $runStats['chased'];
+            $stats['skipped'] += $runStats['skipped'];
+        } catch (\Exception $e) {
+            // Transient SMTP failures (mail-host:25 connection refused/timed out)
+            // during container-startup ordering shouldn't escalate to Sentry —
+            // log them at warning level. Genuine errors still hit Log::error.
+            $level = app(\App\Services\Mail\SmtpFailureClassifier::class)
+                ->isTransient($e->getMessage()) ? 'warning' : 'error';
+            Log::$level('Error processing chase-up: ' . $e->getMessage());
+            $stats['errors']++;
         }
 
         return $stats;
     }
 
     /**
-     * Process chase-ups for a single group.
+     * Process chase-ups for every candidate post.
      */
-    protected function processGroup(Group $group, array $reposts, string $mindate, bool $dryRun): array
+    protected function processAll(array $reposts, string $mindate, bool $dryRun): array
     {
         $stats = ['chased' => 0, 'skipped' => 0];
 
-        $messages = $this->getCandidates($group->id, $mindate, $reposts);
+        $messages = $this->getCandidates($mindate, $reposts);
         $now = time();
 
         foreach ($messages as $msg) {
             // V1: Mail::ourDomain check.
             if (!MailHelper::isOurDomain($msg->fromaddr)) {
-                $stats['skipped']++;
-                continue;
-            }
-
-            // Rippling-out fix: anchor the chase-up to the message's HOME posting
-            // (rippled_in = 0). A "What happened to…" chase-up asks about the item's
-            // global outcome, so a row that rippled INTO this group must not initiate
-            // its own chase-up — that would email the poster once per rippled group.
-            // The home posting drives it (still deduped across any home cross-posts by
-            // the cross-group lastchaseup stamp below).
-            if ($msg->rippled_in) {
                 $stats['skipped']++;
                 continue;
             }
@@ -500,20 +440,13 @@ class ChaseUpService
             // Ready to chase up.
             if ($dryRun) {
                 $promised = $this->isPromised($msg->msgid);
-                Log::info("Dry run: would send chase-up for message #{$msg->msgid} on group #{$group->id}" . ($promised ? ' (promised)' : ''));
+                Log::info("Dry run: would send chase-up for message #{$msg->msgid}" . ($promised ? ' (promised)' : ''));
                 $stats['chased']++;
                 continue;
             }
 
-            // A chase-up asks the poster to record the item's (global) outcome, so a
-            // cross-posted message must trigger at most one chase-up per interval —
-            // not one per group. Stamp lastchaseup on EVERY group of the message so
-            // the other groups' candidate scans (later in this run, or on a future
-            // run) see it as recently chased and skip it. This matches V1's
-            // whole-message `WHERE msgid = ?` behaviour. Reposting stays per-group —
-            // it keys off arrival/autoreposts, not lastchaseup.
-            DB::table('messages_groups')
-                ->where('msgid', $msg->msgid)
+            DB::table('messages')
+                ->where('id', $msg->msgid)
                 ->update(['lastchaseup' => now()]);
 
             // V1: "What happened to: {subject}" — different template if promised.
@@ -528,7 +461,6 @@ class ChaseUpService
                         userId: $msg->fromuser,
                         userName: $user->displayname,
                         userEmail: $user->email_preferred,
-                        groupId: $group->id,
                     )
                     : new ChaseUpMail(
                         messageId: $msg->msgid,
@@ -537,12 +469,11 @@ class ChaseUpService
                         userId: $msg->fromuser,
                         userName: $user->displayname,
                         userEmail: $user->email_preferred,
-                        groupId: $group->id,
                     );
                 app(\App\Services\EmailSpoolerService::class)->spool($mailable);
             }
 
-            Log::info("Chase-up sent for message #{$msg->msgid} on group #{$group->id}");
+            Log::info("Chase-up sent for message #{$msg->msgid}");
             $stats['chased']++;
         }
 
@@ -550,13 +481,13 @@ class ChaseUpService
     }
 
     /**
-     * Get chase-up candidate messages for a specific group.
+     * Get chase-up candidate messages.
      *
      * V1: UNION query for messages_related on id1 and id2.
      * Simplified here: exclude messages that have related messages.
      * Messages must have at least one chat reply (INNER JOIN chat_messages).
      */
-    protected function getCandidates(int $groupid, string $mindate, array $reposts = self::DEFAULT_REPOSTS)
+    protected function getCandidates(string $mindate, array $reposts = self::DEFAULT_REPOSTS)
     {
         // Three of the things that disqualify a post can be asked of the database
         // directly, and they throw away almost everything. Measured against production
@@ -564,37 +495,28 @@ class ChaseUpService
         // 5,423 survived these three tests in PHP. Everything else was fetched, held in
         // memory and dropped.
         //
-        // Much the largest of the three is the rippled-in test. A post that rippled into
-        // this community must not start its own chase-up - that would email the poster
-        // once per community it reached - and since rippling went live those copies are
-        // 85% of what this query returns.
         $window = $this->chaseupWindowHours($reposts);
 
-        $query = DB::table('messages_groups')
-            ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
-            ->join('memberships', function ($join) {
-                $join->on('memberships.userid', '=', 'messages.fromuser')
-                    ->on('memberships.groupid', '=', 'messages_groups.groupid');
-            })
+        $query = DB::table('messages')
+            ->join('users', 'users.id', '=', 'messages.fromuser')
             ->leftJoin('messages_related AS mr1', 'mr1.id1', '=', 'messages.id')
             ->leftJoin('messages_related AS mr2', 'mr2.id2', '=', 'messages.id')
             ->leftJoin('messages_outcomes', 'messages.id', '=', 'messages_outcomes.msgid')
             ->join('chat_messages', 'messages.id', '=', 'chat_messages.refmsgid')
             ->select(
-                'messages_groups.msgid',
-                'messages_groups.groupid',
-                'messages_groups.lastchaseup',
-                'messages_groups.autoreposts',
-                'messages_groups.rippled_in',
+                'messages.id AS msgid',
+                'messages.lastchaseup',
+                'messages.autoreposts',
                 'messages.type',
                 'messages.subject',
                 'messages.fromaddr',
                 'messages.fromuser',
-                DB::raw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) AS hoursago')
+                DB::raw('TIMESTAMPDIFF(HOUR, messages.arrival, NOW()) AS hoursago')
             )
-            ->where('messages_groups.arrival', '>', $mindate)
-            ->where('messages_groups.groupid', $groupid)
-            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('messages.arrival', '>', $mindate)
+            ->where('messages.collection', Message::COLLECTION_APPROVED)
+            ->whereNull('users.deleted')
+            ->whereNull('users.banned')
             ->whereNull('mr1.id1')
             ->whereNull('mr2.id2')
             ->whereNull('messages_outcomes.msgid')
@@ -602,40 +524,35 @@ class ChaseUpService
             ->where('messages.source', Message::SOURCE_PLATFORM)
             ->whereNull('messages.deleted')
             ->groupBy(
-                'messages_groups.msgid',
-                'messages_groups.groupid',
-                'messages_groups.lastchaseup',
-                'messages_groups.autoreposts',
-                'messages_groups.rippled_in',
+                'messages.id',
+                'messages.lastchaseup',
+                'messages.autoreposts',
                 'messages.type',
                 'messages.subject',
                 'messages.fromaddr',
                 'messages.fromuser',
-                'messages_groups.arrival'
+                'messages.arrival'
             );
 
-        // A copy that rippled in never starts its own chase-up (see processGroup).
-        $query->where('messages_groups.rippled_in', 0);
-
-        // Must have run out of reposts first. Rounded down, so if a community ever
-        // stored a fraction this asks for slightly more than PHP will accept rather
+        // Must have run out of reposts first. Rounded down, so if the setting ever
+        // held a fraction this asks for slightly more than PHP will accept rather
         // than less - it can hand over a post PHP then discards, but it can never
         // hold back one PHP would have chased.
         if ($window['maxreposts'] > 0) {
-            $query->where('messages_groups.autoreposts', '>=', $window['maxreposts']);
+            $query->where('messages.autoreposts', '>=', $window['maxreposts']);
         }
 
         // Either never chased up, or the last one is old enough. The interval differs by
         // type, so ask per type rather than applying the shorter of the two to both.
         $query->where(function ($q) use ($window) {
-            $q->whereNull('messages_groups.lastchaseup')
+            $q->whereNull('messages.lastchaseup')
                 ->orWhere(function ($q2) use ($window) {
                     $q2->where('messages.type', Message::TYPE_OFFER)
-                        ->where('messages_groups.lastchaseup', '<', $window['offer_before']);
+                        ->where('messages.lastchaseup', '<', $window['offer_before']);
                 })
                 ->orWhere(function ($q2) use ($window) {
                     $q2->where('messages.type', Message::TYPE_WANTED)
-                        ->where('messages_groups.lastchaseup', '<', $window['wanted_before']);
+                        ->where('messages.lastchaseup', '<', $window['wanted_before']);
                 });
         });
 
@@ -668,14 +585,8 @@ class ChaseUpService
     }
 
     /**
-     * Check if a message can be chased up on this specific group.
-     *
-     * V1 canChaseup(): queries ALL groups, returns TRUE if ANY passes.
-     * Multi-group: the max-reposts test is evaluated per-group (each group has its
-     * own autoreposts counter), so we don't chase up on group A just because group B
-     * hit max. The lastchaseup interval is effectively shared — when a chase-up is
-     * sent it stamps lastchaseup on every group of the message (see process()), so a
-     * cross-posted item is chased up at most once per interval.
+     * Check if a message can be chased up: it has used its reposts and the last chase-up
+     * is old enough.
      */
     protected function canChaseup(object $msg, array $reposts): bool
     {
@@ -705,10 +616,7 @@ class ChaseUpService
     }
 
     /**
-     * Check if a message is old enough to be reposted on this group.
-     *
-     * V1 canRepost(): queries ALL groups, returns TRUE if ANY passes.
-     * Multi-group fix: we check only the current group's arrival time.
+     * Check if a message is old enough to be reposted.
      */
     protected function canRepost(object $msg, array $reposts): bool
     {

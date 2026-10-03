@@ -295,7 +295,6 @@ describe('systemlogs store', () => {
       ['levels', ['error'], 'levels', 'error'],
       ['search', 'hello', 'search', 'hello'],
       ['userid', 7, 'userid', 7],
-      ['groupid', 3, 'groupid', 3],
       ['msgid', 99, 'msgid', 99],
       ['traceId', 'trace-1', 'trace_id', 'trace-1'],
       ['sessionId', 'sess-1', 'session_id', 'sess-1'],
@@ -333,7 +332,6 @@ describe('systemlogs store', () => {
       ['setSearch', 'search', 'q'],
       ['setTimeRange', 'timeRange', '7d'],
       ['setUserFilter', 'userid', 5],
-      ['setGroupFilter', 'groupid', 6],
       ['setMsgFilter', 'msgid', 7],
       ['setSortDirection', 'sortDirection', 'forward'],
       ['setTraceFilter', 'traceId', 't1'],
@@ -406,10 +404,9 @@ describe('systemlogs store', () => {
         t1: [{ user_id: 3, group_id: 10 }, { message_id: 101 }],
       }
 
-      const { userIds, groupIds, messageIds } = store.entityIds
+      const { userIds, messageIds } = store.entityIds
 
       expect(userIds.sort()).toEqual([1, 2, 3])
-      expect(groupIds.sort()).toEqual([10])
       expect(messageIds.sort()).toEqual([100, 101])
     })
 
@@ -417,7 +414,6 @@ describe('systemlogs store', () => {
       const store = useSystemLogsStore()
       expect(store.entityIds).toEqual({
         userIds: [],
-        groupIds: [],
         messageIds: [],
       })
     })

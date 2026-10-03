@@ -4,14 +4,13 @@ namespace Tests\Unit\Services;
 
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
-use App\Models\Membership;
 use App\Models\Message;
 use App\Services\StatsGenerationService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
- * Covers the per-type SQL ported from V1 Stats::generate().
+ * Covers the per-type SQL ported from V1 Stats::generate(), now national.
  * Each test seeds the minimum fixtures for one type and asserts the
  * matching row appears in `stats` for the given date with the expected count.
  */
@@ -30,33 +29,30 @@ class StatsGenerationServiceTest extends TestCase
         $this->date = '2026-04-01';
     }
 
-    private function assertStat(int $groupId, string $type, int $expected): void
+    private function assertStat(string $type, int $expected): void
     {
         $row = DB::table('stats')
             ->where('date', $this->date)
-            ->where('groupid', $groupId)
             ->where('type', $type)
             ->first();
 
-        $this->assertNotNull($row, "Expected `{$type}` stat row for date {$this->date}, group {$groupId}");
+        $this->assertNotNull($row, "Expected `{$type}` stat row for date {$this->date}");
         $this->assertEquals($expected, $row->count, "`{$type}` count mismatch");
     }
 
-    private function assertNoStat(int $groupId, string $type): void
+    private function assertNoStat(string $type): void
     {
         $row = DB::table('stats')
             ->where('date', $this->date)
-            ->where('groupid', $groupId)
             ->where('type', $type)
             ->first();
         $this->assertNull($row, "Did not expect a `{$type}` row to be written");
     }
 
-    private function assertBreakdown(int $groupId, string $type, array $expected): void
+    private function assertBreakdown(string $type, array $expected): void
     {
         $row = DB::table('stats')
             ->where('date', $this->date)
-            ->where('groupid', $groupId)
             ->where('type', $type)
             ->first();
         $this->assertNotNull($row, "Expected `{$type}` breakdown row");
@@ -65,10 +61,9 @@ class StatsGenerationServiceTest extends TestCase
 
     public function test_outcomes_counts_distinct_msgids_with_taken_or_received_outcome(): void
     {
-        $group = $this->createTestGroup();
         $user = $this->createTestUser();
-        $msg1 = $this->createTestMessage($user, $group);
-        $msg2 = $this->createTestMessage($user, $group);
+        $msg1 = $this->createTestMessage($user);
+        $msg2 = $this->createTestMessage($user);
 
         // Two outcomes for msg1 (only counted once due to DISTINCT) and one for msg2.
         DB::table('messages_outcomes')->insert([
@@ -77,29 +72,29 @@ class StatsGenerationServiceTest extends TestCase
             ['msgid' => $msg2->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => $this->date.' 12:00:00'],
         ]);
 
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
 
-        $this->assertStat($group->id, StatsGenerationService::TYPE_OUTCOMES, 2);
+        $this->assertStat(StatsGenerationService::TYPE_OUTCOMES, 2);
     }
 
     public function test_approved_message_count_uses_arrival_date_and_collection(): void
     {
-        $group = $this->createTestGroup();
         $user = $this->createTestUser();
 
         // Two messages arriving on $date, one the day before.
-        $this->createTestMessage($user, $group, ['arrival' => $this->date.' 09:00:00']);
-        $this->createTestMessage($user, $group, ['arrival' => $this->date.' 15:30:00']);
-        $this->createTestMessage($user, $group, ['arrival' => '2026-03-31 23:59:59']);
+        $this->createTestMessage($user, ['arrival' => $this->date.' 09:00:00']);
+        $this->createTestMessage($user, ['arrival' => $this->date.' 15:30:00']);
+        $this->createTestMessage($user, ['arrival' => '2026-03-31 23:59:59']);
 
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
 
-        $this->assertStat($group->id, StatsGenerationService::TYPE_APPROVED_MESSAGE_COUNT, 2);
+        $this->assertStat(StatsGenerationService::TYPE_APPROVED_MESSAGE_COUNT, 2);
     }
 
     public function test_approved_member_count_is_cumulative_as_of_date(): void
     {
-        $group = $this->createTestGroup();
+        // The count is national, so push any fixture members out of the way.
+        DB::table('users')->update(['added' => '2030-01-01 00:00:00']);
 
         // Three members added before $date, one after.
         $u1 = $this->createTestUser();
@@ -107,64 +102,59 @@ class StatsGenerationServiceTest extends TestCase
         $u3 = $this->createTestUser();
         $u4 = $this->createTestUser();
 
-        DB::table('memberships')->insert([
-            ['userid' => $u1->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => 'Member', 'added' => '2026-01-01 10:00:00'],
-            ['userid' => $u2->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => 'Member', 'added' => '2026-02-01 10:00:00'],
-            ['userid' => $u3->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => 'Member', 'added' => $this->date.' 10:00:00'],
-            // Joined after — not counted.
-            ['userid' => $u4->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => 'Member', 'added' => '2026-04-02 10:00:00'],
-        ]);
+        DB::table('users')->where('id', $u1->id)->update(['added' => '2026-01-01 10:00:00']);
+        DB::table('users')->where('id', $u2->id)->update(['added' => '2026-02-01 10:00:00']);
+        DB::table('users')->where('id', $u3->id)->update(['added' => $this->date.' 10:00:00']);
+        // Joined after — not counted.
+        DB::table('users')->where('id', $u4->id)->update(['added' => '2026-04-02 10:00:00']);
 
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
 
-        $this->assertStat($group->id, StatsGenerationService::TYPE_APPROVED_MEMBER_COUNT, 3);
+        $this->assertStat(StatsGenerationService::TYPE_APPROVED_MEMBER_COUNT, 3);
     }
 
     public function test_spam_message_count_picks_up_classified_spam_logs(): void
     {
-        $group = $this->createTestGroup();
         $user = $this->createTestUser();
 
         DB::table('logs')->insert([
-            ['user' => $user->id, 'type' => 'Message', 'subtype' => 'ClassifiedSpam', 'groupid' => $group->id, 'timestamp' => $this->date.' 10:00:00'],
-            ['user' => $user->id, 'type' => 'Message', 'subtype' => 'ClassifiedSpam', 'groupid' => $group->id, 'timestamp' => $this->date.' 11:00:00'],
+            ['user' => $user->id, 'type' => 'Message', 'subtype' => 'ClassifiedSpam', 'timestamp' => $this->date.' 10:00:00'],
+            ['user' => $user->id, 'type' => 'Message', 'subtype' => 'ClassifiedSpam', 'timestamp' => $this->date.' 11:00:00'],
             // Wrong subtype — ignored.
-            ['user' => $user->id, 'type' => 'Message', 'subtype' => 'Approved', 'groupid' => $group->id, 'timestamp' => $this->date.' 11:00:00'],
+            ['user' => $user->id, 'type' => 'Message', 'subtype' => 'Approved', 'timestamp' => $this->date.' 11:00:00'],
             // Wrong day — ignored.
-            ['user' => $user->id, 'type' => 'Message', 'subtype' => 'ClassifiedSpam', 'groupid' => $group->id, 'timestamp' => '2026-04-02 10:00:00'],
+            ['user' => $user->id, 'type' => 'Message', 'subtype' => 'ClassifiedSpam', 'timestamp' => '2026-04-02 10:00:00'],
         ]);
 
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
 
-        $this->assertStat($group->id, StatsGenerationService::TYPE_SPAM_MESSAGE_COUNT, 2);
+        $this->assertStat(StatsGenerationService::TYPE_SPAM_MESSAGE_COUNT, 2);
     }
 
     public function test_support_queries_counts_user2mod_chat_rooms_created_on_date(): void
     {
-        $group = $this->createTestGroup();
         $u1 = $this->createTestUser();
         $u2 = $this->createTestUser();
 
         // Separate inserts because bulk insert builds column list from first row;
         // mixing null/non-null user2 across rows causes a column count mismatch.
-        DB::table('chat_rooms')->insert(['chattype' => ChatRoom::TYPE_USER2MOD, 'user1' => $u1->id, 'groupid' => $group->id, 'created' => $this->date.' 10:00:00']);
-        DB::table('chat_rooms')->insert(['chattype' => ChatRoom::TYPE_USER2MOD, 'user1' => $u2->id, 'groupid' => $group->id, 'created' => $this->date.' 11:00:00']);
+        DB::table('chat_rooms')->insert(['chattype' => ChatRoom::TYPE_USER2MOD, 'user1' => $u1->id, 'created' => $this->date.' 10:00:00']);
+        DB::table('chat_rooms')->insert(['chattype' => ChatRoom::TYPE_USER2MOD, 'user1' => $u2->id, 'created' => $this->date.' 11:00:00']);
         // Wrong chattype - should not be counted.
-        DB::table('chat_rooms')->insert(['chattype' => ChatRoom::TYPE_USER2USER, 'user1' => $u1->id, 'user2' => $u2->id, 'groupid' => $group->id, 'created' => $this->date.' 12:00:00']);
+        DB::table('chat_rooms')->insert(['chattype' => ChatRoom::TYPE_USER2USER, 'user1' => $u1->id, 'user2' => $u2->id, 'created' => $this->date.' 12:00:00']);
 
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
 
-        $this->assertStat($group->id, StatsGenerationService::TYPE_SUPPORTQUERIES_COUNT, 2);
+        $this->assertStat(StatsGenerationService::TYPE_SUPPORTQUERIES_COUNT, 2);
     }
 
     public function test_feedback_happiness_counts_per_label(): void
     {
-        $group = $this->createTestGroup();
         $user = $this->createTestUser();
-        $msgHappy1 = $this->createTestMessage($user, $group);
-        $msgHappy2 = $this->createTestMessage($user, $group);
-        $msgFine = $this->createTestMessage($user, $group);
-        $msgUnhappy = $this->createTestMessage($user, $group);
+        $msgHappy1 = $this->createTestMessage($user);
+        $msgHappy2 = $this->createTestMessage($user);
+        $msgFine = $this->createTestMessage($user);
+        $msgUnhappy = $this->createTestMessage($user);
 
         DB::table('messages_outcomes')->insert([
             ['msgid' => $msgHappy1->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'happiness' => 'Happy', 'timestamp' => $this->date.' 10:00:00'],
@@ -173,22 +163,21 @@ class StatsGenerationServiceTest extends TestCase
             ['msgid' => $msgUnhappy->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'happiness' => 'Unhappy', 'timestamp' => $this->date.' 13:00:00'],
         ]);
 
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
 
-        $this->assertStat($group->id, StatsGenerationService::TYPE_FEEDBACK_HAPPY, 2);
-        $this->assertStat($group->id, StatsGenerationService::TYPE_FEEDBACK_FINE, 1);
-        $this->assertStat($group->id, StatsGenerationService::TYPE_FEEDBACK_UNHAPPY, 1);
+        $this->assertStat(StatsGenerationService::TYPE_FEEDBACK_HAPPY, 2);
+        $this->assertStat(StatsGenerationService::TYPE_FEEDBACK_FINE, 1);
+        $this->assertStat(StatsGenerationService::TYPE_FEEDBACK_UNHAPPY, 1);
     }
 
-    public function test_replies_counts_interested_chat_messages_for_groups_messages(): void
+    public function test_replies_counts_interested_chat_messages_for_the_posts(): void
     {
-        $group = $this->createTestGroup();
         $u1 = $this->createTestUser();
         $u2 = $this->createTestUser();
-        $msg = $this->createTestMessage($u1, $group);
+        $msg = $this->createTestMessage($u1);
         $room = $this->createTestChatRoom($u1, $u2);
 
-        // Two interested replies on $date for this group's message; one non-Interested ignored.
+        // Two interested replies on $date for the post; one non-Interested ignored.
         $this->createTestChatMessage($room, $u2, [
             'type' => ChatMessage::TYPE_INTERESTED,
             'refmsgid' => $msg->id,
@@ -205,9 +194,9 @@ class StatsGenerationServiceTest extends TestCase
             'date' => $this->date.' 12:00:00',
         ]);
 
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
 
-        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 2);
+        $this->assertStat(StatsGenerationService::TYPE_REPLIES, 2);
     }
 
     public function test_replies_excludes_senders_on_the_spammer_list(): void
@@ -215,12 +204,11 @@ class StatsGenerationServiceTest extends TestCase
         // On 2026-09-06 one throwaway account sent 2,155 blank replies in twenty minutes;
         // every one was rejected and the account listed, and the day's Replies stat still
         // more than doubled. The listing is the verdict the stat honours.
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
         $genuine = $this->createTestUser();
         $spammer = $this->createTestUser();
         // Arrives on $date so Activity (approved messages + replies) has both terms.
-        $msg = $this->createTestMessage($poster, $group, ['arrival' => $this->date.' 09:00:00']);
+        $msg = $this->createTestMessage($poster, ['arrival' => $this->date.' 09:00:00']);
 
         $genuineRoom = $this->createTestChatRoom($poster, $genuine);
         $spamRoom = $this->createTestChatRoom($poster, $spammer);
@@ -243,21 +231,20 @@ class StatsGenerationServiceTest extends TestCase
             'reason' => 'Spam messages in multiple chats',
         ]);
 
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
 
-        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 1);
+        $this->assertStat(StatsGenerationService::TYPE_REPLIES, 1);
         // Activity is approved messages + replies, so it must not carry the spam either.
-        $this->assertStat($group->id, StatsGenerationService::TYPE_ACTIVITY, 2);
+        $this->assertStat(StatsGenerationService::TYPE_ACTIVITY, 2);
     }
 
     public function test_replies_still_counts_a_whitelisted_or_pending_listing(): void
     {
         // Only the Spammer collection is a verdict; Whitelisted and the pending states
         // are not, and a reply from such a member counts as it always did.
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
         $replier = $this->createTestUser();
-        $msg = $this->createTestMessage($poster, $group);
+        $msg = $this->createTestMessage($poster);
         $room = $this->createTestChatRoom($poster, $replier);
         $this->createTestChatMessage($room, $replier, [
             'type' => ChatMessage::TYPE_INTERESTED,
@@ -271,20 +258,19 @@ class StatsGenerationServiceTest extends TestCase
             'reason' => 'Trusted',
         ]);
 
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
 
-        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 1);
+        $this->assertStat(StatsGenerationService::TYPE_REPLIES, 1);
     }
 
     public function test_activity_is_approved_message_count_plus_replies(): void
     {
-        $group = $this->createTestGroup();
         $u1 = $this->createTestUser();
         $u2 = $this->createTestUser();
         // 3 approved + 1 reply -> activity = 4.
-        $this->createTestMessage($u1, $group, ['arrival' => $this->date.' 09:00:00']);
-        $this->createTestMessage($u1, $group, ['arrival' => $this->date.' 10:00:00']);
-        $msg = $this->createTestMessage($u1, $group, ['arrival' => $this->date.' 11:00:00']);
+        $this->createTestMessage($u1, ['arrival' => $this->date.' 09:00:00']);
+        $this->createTestMessage($u1, ['arrival' => $this->date.' 10:00:00']);
+        $msg = $this->createTestMessage($u1, ['arrival' => $this->date.' 11:00:00']);
         $room = $this->createTestChatRoom($u1, $u2);
         $this->createTestChatMessage($room, $u2, [
             'type' => ChatMessage::TYPE_INTERESTED,
@@ -292,26 +278,25 @@ class StatsGenerationServiceTest extends TestCase
             'date' => $this->date.' 12:00:00',
         ]);
 
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
 
-        $this->assertStat($group->id, StatsGenerationService::TYPE_ACTIVITY, 4);
+        $this->assertStat(StatsGenerationService::TYPE_ACTIVITY, 4);
     }
 
     public function test_post_method_breakdown_is_30_day_window_histogram(): void
     {
-        $group = $this->createTestGroup();
         $user = $this->createTestUser();
 
         // Three within the 30-day window ending tomorrow-of-$date:
-        $this->createTestMessage($user, $group, ['arrival' => $this->date.' 09:00:00', 'sourceheader' => 'Web']);
-        $this->createTestMessage($user, $group, ['arrival' => '2026-03-15 09:00:00', 'sourceheader' => 'Web']);
-        $this->createTestMessage($user, $group, ['arrival' => '2026-03-20 09:00:00', 'sourceheader' => 'Platform']);
+        $this->createTestMessage($user, ['arrival' => $this->date.' 09:00:00', 'sourceheader' => 'Web']);
+        $this->createTestMessage($user, ['arrival' => '2026-03-15 09:00:00', 'sourceheader' => 'Web']);
+        $this->createTestMessage($user, ['arrival' => '2026-03-20 09:00:00', 'sourceheader' => 'Platform']);
         // Outside the 30-day window — not counted.
-        $this->createTestMessage($user, $group, ['arrival' => '2026-02-15 09:00:00', 'sourceheader' => 'Email']);
+        $this->createTestMessage($user, ['arrival' => '2026-02-15 09:00:00', 'sourceheader' => 'Email']);
 
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
 
-        $this->assertBreakdown($group->id, StatsGenerationService::TYPE_POST_METHOD_BREAKDOWN, [
+        $this->assertBreakdown(StatsGenerationService::TYPE_POST_METHOD_BREAKDOWN, [
             'Platform' => 1,
             'Web' => 2,
         ]);
@@ -319,17 +304,15 @@ class StatsGenerationServiceTest extends TestCase
 
     public function test_message_breakdown_is_30_day_window_histogram_by_type(): void
     {
-        $group = $this->createTestGroup();
         $user = $this->createTestUser();
-        $this->createTestMessage($user, $group, ['arrival' => $this->date.' 09:00:00', 'type' => Message::TYPE_OFFER]);
-        $this->createTestMessage($user, $group, ['arrival' => '2026-03-15 09:00:00', 'type' => Message::TYPE_OFFER]);
-        $this->createTestMessage($user, $group, ['arrival' => '2026-03-20 09:00:00', 'type' => Message::TYPE_WANTED]);
+        $this->createTestMessage($user, ['arrival' => $this->date.' 09:00:00', 'type' => Message::TYPE_OFFER]);
+        $this->createTestMessage($user, ['arrival' => '2026-03-15 09:00:00', 'type' => Message::TYPE_OFFER]);
+        $this->createTestMessage($user, ['arrival' => '2026-03-20 09:00:00', 'type' => Message::TYPE_WANTED]);
 
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
 
         $row = DB::table('stats')
             ->where('date', $this->date)
-            ->where('groupid', $group->id)
             ->where('type', StatsGenerationService::TYPE_MESSAGE_BREAKDOWN)
             ->first();
         $this->assertNotNull($row);
@@ -338,71 +321,54 @@ class StatsGenerationServiceTest extends TestCase
         $this->assertEquals(1, $breakdown[Message::TYPE_WANTED]);
     }
 
-    public function test_searches_count_tallies_rows_for_the_group(): void
+    public function test_searches_count_tallies_rows_for_the_day(): void
     {
-        // search_history.groups is an INT on production and holds a single group
-        // id, so a row can never carry a comma-separated list. This test used to
-        // insert one, which was only possible while the migrations declared the
-        // column as TEXT.
-        //
-        // StatsGenerationService still explodes the value on commas, described in
-        // its own comment as V1 behaviour. That branch is unreachable against
-        // production's schema. See the PR that brought the migrations into parity:
-        // if searches really should record several groups, the column needs to
-        // change on live rather than the code keep pretending it already has.
-        $group = $this->createTestGroup();
-        $otherGroup = $this->createTestGroup();
-
         DB::table('search_history')->insert([
-            ['date' => $this->date.' 10:00:00', 'term' => 'sofa', 'groups' => $group->id],
-            ['date' => $this->date.' 11:00:00', 'term' => 'chair', 'groups' => $group->id],
-            ['date' => $this->date.' 12:00:00', 'term' => 'table', 'groups' => $otherGroup->id],
+            ['date' => $this->date.' 10:00:00', 'term' => 'sofa'],
+            ['date' => $this->date.' 11:00:00', 'term' => 'chair'],
+            ['date' => $this->date.' 12:00:00', 'term' => 'table'],
             // Wrong date — ignored.
-            ['date' => '2026-04-02 10:00:00', 'term' => 'desk', 'groups' => $group->id],
+            ['date' => '2026-04-02 10:00:00', 'term' => 'desk'],
         ]);
 
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
 
-        $this->assertStat($group->id, StatsGenerationService::TYPE_SEARCHES, 2);
+        $this->assertStat(StatsGenerationService::TYPE_SEARCHES, 3);
     }
 
     public function test_zero_counts_are_not_written(): void
     {
-        // Empty group, no activity → V1 setCount skipped 0-valued rows; preserve.
-        $group = $this->createTestGroup();
-        $this->service->generate($group->id, $this->date);
-        $this->assertNoStat($group->id, StatsGenerationService::TYPE_APPROVED_MESSAGE_COUNT);
-        $this->assertNoStat($group->id, StatsGenerationService::TYPE_OUTCOMES);
+        // No activity → V1 setCount skipped 0-valued rows; preserve.
+        $this->service->generate($this->date);
+        $this->assertNoStat(StatsGenerationService::TYPE_APPROVED_MESSAGE_COUNT);
+        $this->assertNoStat(StatsGenerationService::TYPE_OUTCOMES);
     }
 
     public function test_running_twice_for_same_date_replaces_not_duplicates(): void
     {
-        $group = $this->createTestGroup();
         $user = $this->createTestUser();
-        $this->createTestMessage($user, $group, ['arrival' => $this->date.' 09:00:00']);
+        $this->createTestMessage($user, ['arrival' => $this->date.' 09:00:00']);
 
-        $this->service->generate($group->id, $this->date);
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
+        $this->service->generate($this->date);
 
         $rows = DB::table('stats')
             ->where('date', $this->date)
-            ->where('groupid', $group->id)
             ->where('type', StatsGenerationService::TYPE_APPROVED_MESSAGE_COUNT)
             ->count();
 
-        $this->assertEquals(1, $rows, 'REPLACE INTO should leave exactly one row per (date,group,type)');
+        $this->assertEquals(1, $rows, 'REPLACE INTO should leave exactly one row per (date,type)');
     }
 
     public function test_regeneration_removes_a_row_whose_count_fell_to_zero(): void
     {
         // A re-run that brings a count down to nothing must take the old row with
-        // it: after the 2026-09-06 spam wave was excluded, 117 groups whose only
+        // it: after the 2026-09-06 spam wave was excluded, 117 communities whose only
         // "replies" had been the bot's kept their inflated Replies rows through
         // the regeneration, because a zero count was skipped rather than written.
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
         $replier = $this->createTestUser();
-        $msg = $this->createTestMessage($poster, $group, ['arrival' => '2026-03-20 09:00:00']);
+        $msg = $this->createTestMessage($poster, ['arrival' => '2026-03-20 09:00:00']);
         $room = $this->createTestChatRoom($poster, $replier);
         $this->createTestChatMessage($room, $replier, [
             'type' => ChatMessage::TYPE_INTERESTED,
@@ -410,8 +376,8 @@ class StatsGenerationServiceTest extends TestCase
             'date' => $this->date.' 10:00:00',
         ]);
 
-        $this->service->generate($group->id, $this->date);
-        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 1);
+        $this->service->generate($this->date);
+        $this->assertStat(StatsGenerationService::TYPE_REPLIES, 1);
 
         DB::table('spam_users')->insert([
             'userid' => $replier->id,
@@ -421,196 +387,27 @@ class StatsGenerationServiceTest extends TestCase
         ]);
 
         // A dry run reports what it would do and touches nothing, stale row included.
-        $this->service->generate($group->id, $this->date, true);
-        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 1);
+        $this->service->generate($this->date, true);
+        $this->assertStat(StatsGenerationService::TYPE_REPLIES, 1);
 
-        $this->service->generate($group->id, $this->date);
-        $this->assertNoStat($group->id, StatsGenerationService::TYPE_REPLIES);
+        $this->service->generate($this->date);
+        $this->assertNoStat(StatsGenerationService::TYPE_REPLIES);
         // Activity is approved messages + replies; with no post on $date it is zero too.
-        $this->assertNoStat($group->id, StatsGenerationService::TYPE_ACTIVITY);
-    }
-
-    public function test_generate_for_all_groups_returns_counts(): void
-    {
-        // Just confirm the orchestrator returns the right shape.
-        $group = $this->createTestGroup();
-        $user = $this->createTestUser();
-        $this->createTestMessage($user, $group, ['arrival' => $this->date.' 09:00:00']);
-
-        $result = $this->service->generateForAllGroups($this->date);
-
-        $this->assertArrayHasKey('groups', $result);
-        $this->assertArrayHasKey('rows_written', $result);
-        $this->assertGreaterThanOrEqual(1, $result['groups']);
-        $this->assertGreaterThanOrEqual(1, $result['rows_written']);
+        $this->assertNoStat(StatsGenerationService::TYPE_ACTIVITY);
     }
 
     public function test_dry_run_does_not_write_to_stats(): void
     {
-        $group = $this->createTestGroup();
         $user = $this->createTestUser();
-        $this->createTestMessage($user, $group, ['arrival' => $this->date.' 09:00:00']);
+        $this->createTestMessage($user, ['arrival' => $this->date.' 09:00:00']);
 
-        $rowsBefore = DB::table('stats')->where('date', $this->date)->where('groupid', $group->id)->count();
-        $this->service->generate($group->id, $this->date, true);
-        $rowsAfter = DB::table('stats')->where('date', $this->date)->where('groupid', $group->id)->count();
+        $rowsBefore = DB::table('stats')->where('date', $this->date)->count();
+        $this->service->generate($this->date, true);
+        $rowsAfter = DB::table('stats')->where('date', $this->date)->count();
 
         $this->assertEquals($rowsBefore, $rowsAfter, 'dry-run must not write');
     }
 
-    // ── Rippling-out: rippled-in copies must not inflate a group's stats ──────
-    //
-    // Rippling inserts an extra messages_groups row (rippled_in=1, collection
-    // 'Approved') for each group a post is spread into. Those copies are not
-    // native activity for the receiving group, and when the dashboard SUMs the
-    // per-group rows for a systemwide figure one post is otherwise counted once
-    // per group it reached (avg fan-out ~7). Every count/breakdown that joins
-    // messages_groups must therefore exclude rippled_in=1 rows.
-
-    /**
-     * Add a rippled-in messages_groups copy of an existing message to a group.
-     */
-    private function rippleMessageInto(int $msgId, int $groupId, string $arrival): void
-    {
-        DB::table('messages_groups')->insert([
-            'msgid' => $msgId,
-            'groupid' => $groupId,
-            'collection' => Membership::COLLECTION_APPROVED,
-            'arrival' => $arrival,
-            'rippled_in' => 1,
-        ]);
-    }
-
-    public function test_approved_message_count_excludes_rippled_in_copies(): void
-    {
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $user = $this->createTestUser();
-
-        // One native post on B (counts) plus a post native on A rippled into B (must not count).
-        $this->createTestMessage($user, $groupB, ['arrival' => $this->date.' 09:00:00']);
-        $rippled = $this->createTestMessage($user, $groupA, ['arrival' => $this->date.' 10:00:00']);
-        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 10:00:00');
-
-        $this->service->generate($groupB->id, $this->date);
-
-        $this->assertStat($groupB->id, StatsGenerationService::TYPE_APPROVED_MESSAGE_COUNT, 1);
-    }
-
-    public function test_outcomes_excludes_rippled_in_copies(): void
-    {
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $user = $this->createTestUser();
-
-        $native = $this->createTestMessage($user, $groupB);
-        $rippled = $this->createTestMessage($user, $groupA);
-        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
-
-        DB::table('messages_outcomes')->insert([
-            ['msgid' => $native->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => $this->date.' 10:00:00'],
-            ['msgid' => $rippled->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => $this->date.' 11:00:00'],
-        ]);
-
-        $this->service->generate($groupB->id, $this->date);
-
-        $this->assertStat($groupB->id, StatsGenerationService::TYPE_OUTCOMES, 1);
-    }
-
-    public function test_replies_excludes_rippled_in_copies(): void
-    {
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $u1 = $this->createTestUser();
-        $u2 = $this->createTestUser();
-
-        $native = $this->createTestMessage($u1, $groupB);
-        $rippled = $this->createTestMessage($u1, $groupA);
-        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
-
-        $room = $this->createTestChatRoom($u1, $u2);
-        $this->createTestChatMessage($room, $u2, [
-            'type' => ChatMessage::TYPE_INTERESTED,
-            'refmsgid' => $native->id,
-            'date' => $this->date.' 10:00:00',
-        ]);
-        $this->createTestChatMessage($room, $u2, [
-            'type' => ChatMessage::TYPE_INTERESTED,
-            'refmsgid' => $rippled->id,
-            'date' => $this->date.' 11:00:00',
-        ]);
-
-        $this->service->generate($groupB->id, $this->date);
-
-        $this->assertStat($groupB->id, StatsGenerationService::TYPE_REPLIES, 1);
-    }
-
-    public function test_feedback_happiness_excludes_rippled_in_copies(): void
-    {
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $user = $this->createTestUser();
-
-        // Only a rippled-in copy with happy feedback — B has no native feedback.
-        $rippled = $this->createTestMessage($user, $groupA);
-        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
-        DB::table('messages_outcomes')->insert([
-            ['msgid' => $rippled->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'happiness' => 'Happy', 'timestamp' => $this->date.' 10:00:00'],
-        ]);
-
-        $this->service->generate($groupB->id, $this->date);
-
-        $this->assertNoStat($groupB->id, StatsGenerationService::TYPE_FEEDBACK_HAPPY);
-    }
-
-    public function test_weight_excludes_rippled_in_copies(): void
-    {
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $user = $this->createTestUser();
-
-        // A taken item native on A, rippled into B. Its weight must not be attributed to B.
-        $rippled = $this->createTestMessage($user, $groupA);
-        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
-        $itemId = DB::table('items')->insertGetId(['name' => 'TestItem_'.uniqid(), 'weight' => 25.0, 'popularity' => 1.0]);
-        DB::table('messages_items')->insert(['msgid' => $rippled->id, 'itemid' => $itemId]);
-        DB::table('messages_outcomes')->insert([
-            ['msgid' => $rippled->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => $this->date.' 10:00:00'],
-        ]);
-
-        $this->service->generate($groupB->id, $this->date);
-
-        $this->assertNoStat($groupB->id, StatsGenerationService::TYPE_WEIGHT);
-    }
-
-    public function test_message_breakdown_excludes_rippled_in_copies(): void
-    {
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $user = $this->createTestUser();
-
-        $rippled = $this->createTestMessage($user, $groupA, ['arrival' => $this->date.' 09:00:00', 'type' => Message::TYPE_OFFER]);
-        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
-
-        $this->service->generate($groupB->id, $this->date);
-
-        // The rippled-in copy must not appear in B's type histogram.
-        $this->assertBreakdown($groupB->id, StatsGenerationService::TYPE_MESSAGE_BREAKDOWN, []);
-    }
-
-    public function test_post_method_breakdown_excludes_rippled_in_copies(): void
-    {
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $user = $this->createTestUser();
-
-        $rippled = $this->createTestMessage($user, $groupA, ['arrival' => $this->date.' 09:00:00', 'sourceheader' => 'Web']);
-        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
-
-        $this->service->generate($groupB->id, $this->date);
-
-        $this->assertBreakdown($groupB->id, StatsGenerationService::TYPE_POST_METHOD_BREAKDOWN, []);
-    }
 
     // ── Bulk-offer per-item counting ──────────────────────────────────────────
     //
@@ -626,13 +423,12 @@ class StatsGenerationServiceTest extends TestCase
 
     public function test_bulk_offer_per_item_counting(): void
     {
-        $group = $this->createTestGroup();
         $owner = $this->createTestUser();
         $replier1 = $this->createTestUser();
         $freeTextReplier = $this->createTestUser();
 
         // ── Control: one normal message with one Interested reply ──────────────
-        $control = $this->createTestMessage($owner, $group, ['arrival' => $this->date.' 08:00:00']);
+        $control = $this->createTestMessage($owner, ['arrival' => $this->date.' 08:00:00']);
         $controlRoom = $this->createTestChatRoom($owner, $replier1);
         $this->createTestChatMessage($controlRoom, $replier1, [
             'type' => ChatMessage::TYPE_INTERESTED,
@@ -644,7 +440,7 @@ class StatsGenerationServiceTest extends TestCase
         // 1 unit of item1 was collected in-app (quantity decremented to 2), then
         // the offerer flipped the remainder to available=0 on $date. Item2 is still
         // available.
-        $bulk = $this->createTestMessage($owner, $group, [
+        $bulk = $this->createTestMessage($owner, [
             'arrival' => $this->date.' 10:00:00',
             'availableinitially' => 6,
         ]);
@@ -707,25 +503,25 @@ class StatsGenerationServiceTest extends TestCase
             'date' => $this->date.' 10:45:00',
         ]);
 
-        $this->service->generate($group->id, $this->date);
+        $this->service->generate($this->date);
 
         // ApprovedMessageCount uses availableinitially (not current quantity):
         //   base = 2 (control + bulk message), top-up = availableinitially(6) - 1 = 5
         //   total = 2 + 5 = 7.
-        $this->assertStat($group->id, StatsGenerationService::TYPE_APPROVED_MESSAGE_COUNT, 7);
+        $this->assertStat(StatsGenerationService::TYPE_APPROVED_MESSAGE_COUNT, 7);
 
         // Outcomes = 2 (flip arm: item1 qty=2 remaining) + 1 (collected arm: interest qty=1) = 3.
-        $this->assertStat($group->id, StatsGenerationService::TYPE_OUTCOMES, 3);
+        $this->assertStat(StatsGenerationService::TYPE_OUTCOMES, 3);
 
         // Weight = 10*2 (flip arm) + 10*1 (collected arm) = 30.
-        $this->assertStat($group->id, StatsGenerationService::TYPE_WEIGHT, 30);
+        $this->assertStat(StatsGenerationService::TYPE_WEIGHT, 30);
 
         // Replies = 1 (control) + 2 (interest rows: item1 Collected + item2 Interested,
         //   both counted by created_at) + 1 (free-text bulk) = 4.
-        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 4);
+        $this->assertStat(StatsGenerationService::TYPE_REPLIES, 4);
 
         // Activity = approvedMessages + replies = 7 + 4 = 11.
-        $this->assertStat($group->id, StatsGenerationService::TYPE_ACTIVITY, 11);
+        $this->assertStat(StatsGenerationService::TYPE_ACTIVITY, 11);
     }
 
     // ── Collation guard ───────────────────────────────────────────────────────
@@ -767,9 +563,8 @@ class StatsGenerationServiceTest extends TestCase
 
     public function test_bulk_item_name_join_forces_unicode_collation_in_daily_context(): void
     {
-        $group = $this->createTestGroup();
         $owner = $this->createTestUser();
-        $bulk = $this->createTestMessage($owner, $group, ['arrival' => $this->date.' 10:00:00']);
+        $bulk = $this->createTestMessage($owner, ['arrival' => $this->date.' 10:00:00']);
         $itemName = 'CollationItem_'.uniqid();
         DB::table('messages_bulk_items')->insert([
             'msgid' => $bulk->id,
@@ -781,7 +576,7 @@ class StatsGenerationServiceTest extends TestCase
         ]);
         DB::table('items')->insert(['name' => $itemName, 'weight' => 10.0, 'popularity' => 1.0]);
 
-        $joins = $this->captureItemNameJoins(fn () => $this->service->generateForAllGroups($this->date));
+        $joins = $this->captureItemNameJoins(fn () => $this->service->generateForDate($this->date));
 
         $this->assertNotEmpty($joins, 'Expected the daily context to run the items-by-name join');
         foreach ($joins as $sql) {
@@ -795,9 +590,8 @@ class StatsGenerationServiceTest extends TestCase
 
     public function test_bulk_item_name_join_forces_unicode_collation_in_weight_regen(): void
     {
-        $group = $this->createTestGroup();
         $owner = $this->createTestUser();
-        $bulk = $this->createTestMessage($owner, $group, ['arrival' => $this->date.' 10:00:00']);
+        $bulk = $this->createTestMessage($owner, ['arrival' => $this->date.' 10:00:00']);
         $itemName = 'CollationItem_'.uniqid();
         DB::table('messages_bulk_items')->insert([
             'msgid' => $bulk->id,

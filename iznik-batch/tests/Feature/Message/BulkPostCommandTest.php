@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Message;
 
+use Illuminate\Support\Facades\DB;
 use App\Models\Location;
 use App\Services\FreegleApiClient;
 use App\Services\TusService;
@@ -25,11 +26,7 @@ class BulkPostCommandTest extends TestCase
         $this->email = $user->emails()->where('preferred', 1)->first()->email;
 
         // Create a test group.
-        $group = $this->createTestGroup([
-            'lat' => 50.8225,
-            'lng' => -0.1372,
-        ]);
-        $this->createMembership($user, $group);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
 
         // Create a postcode location.
         Location::create([
@@ -489,7 +486,6 @@ class BulkPostCommandTest extends TestCase
         $this->writeBody();
 
         $primaryGroup = $this->app->make('test.group');
-        $crossGroup = $this->createTestGroup(['lat' => 50.83, 'lng' => -0.17]);
 
         $result = $this->withoutMockingConsoleOutput()->artisan('messages:bulk-post', [
             'folder'              => $this->folder,
@@ -513,7 +509,6 @@ class BulkPostCommandTest extends TestCase
         $this->writeBody();
 
         $primaryGroup = $this->app->make('test.group');
-        $crossGroup = $this->createTestGroup(['lat' => 50.83, 'lng' => -0.17]);
 
         $result = $this->withoutMockingConsoleOutput()->artisan('messages:bulk-post', [
             'folder'               => $this->folder,
@@ -555,7 +550,6 @@ class BulkPostCommandTest extends TestCase
         $this->writeBody('Original body text.');
 
         $primaryGroup = $this->app->make('test.group');
-        $crossGroup = $this->createTestGroup(['lat' => 50.83, 'lng' => -0.17]);
 
         FreegleApiClient::fake([
             ['body' => ['ret' => 0, 'jwt' => 'test-jwt-token']],  // Auth
@@ -583,7 +577,6 @@ class BulkPostCommandTest extends TestCase
         $this->writeBody('Original body text.');
 
         $primaryGroup = $this->app->make('test.group');
-        $crossGroup = $this->createTestGroup(['lat' => 50.83, 'lng' => -0.17]);
 
         FreegleApiClient::fake([
             ['body' => ['ret' => 0, 'jwt' => 'test-jwt-token']],  // Auth
@@ -648,8 +641,6 @@ class BulkPostCommandTest extends TestCase
         $this->writeBody('Original body.');
 
         // Create a primary group with empty namedisplay; nameshort is auto-generated.
-        $primaryGroup = $this->createTestGroup(['namedisplay' => '']);
-        $crossGroup = $this->createTestGroup(['lat' => 50.83, 'lng' => -0.17]);
 
         // Summary line must show nameshort (not blank) in the X-post prefix notice.
         $result = $this->withoutMockingConsoleOutput()->artisan('messages:bulk-post', [

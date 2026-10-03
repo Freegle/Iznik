@@ -41,7 +41,6 @@ class UnifiedDigestTest extends TestCase
         return $data ?? [];
     }
 
-
     public function test_can_be_constructed(): void
     {
         $user = $this->createTestUser();
@@ -1228,14 +1227,13 @@ class UnifiedDigestTest extends TestCase
         // long-form trackedImageUrl path. Compact URLs without s= meant scroll depth
         // was never populated for digest recipients (Fix 15).
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
+        DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
-        $msg1 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Bicycle (London)']);
-        $msg2 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Table (London)']);
+        $msg1 = $this->createTestMessage($poster, ['subject' => 'OFFER: Bicycle (London)']);
+        $msg2 = $this->createTestMessage($poster, ['subject' => 'OFFER: Table (London)']);
 
         // Give msg1 an internal attachment (externaluid set, no externalurl) so
         // prepareCard() takes the compact URL path instead of the fallback URL.
@@ -1251,8 +1249,8 @@ class UnifiedDigestTest extends TestCase
         $msg1->load(['attachments', 'fromUser']);
 
         $posts = collect([
-            ['message' => $msg1, 'postedToGroups' => [$group->id]],
-            ['message' => $msg2, 'postedToGroups' => [$group->id]],
+            ['message' => $msg1],
+            ['message' => $msg2],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);

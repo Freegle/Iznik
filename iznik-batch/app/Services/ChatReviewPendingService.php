@@ -12,17 +12,10 @@ class ChatReviewPendingService
     // Messages stuck in review for more than this many days are auto-rejected.
     public const AUTO_REJECT_DAYS = 7;
 
-    // Messages pending review for more than this many hours trigger a mod notification.
-    public const NOTIFY_HOURS = 48;
-
     /**
-     * Auto-reject stale review messages.
+     * Auto-reject stale review messages. No mail chases a moderator about them.
      *
-     * There is no national mod notification for messages pending review yet —
-     * that was previously sent per group, and has no group-free equivalent —
-     * so groups_notified is always 0 until one is built.
-     *
-     * @return array{auto_rejected: int, groups_notified: int}
+     * @return array{auto_rejected: int}
      */
     public function processReview(bool $dryRun = false): array
     {
@@ -32,7 +25,6 @@ class ChatReviewPendingService
 
         return [
             'auto_rejected' => $autoRejected,
-            'groups_notified' => 0,
         ];
     }
 

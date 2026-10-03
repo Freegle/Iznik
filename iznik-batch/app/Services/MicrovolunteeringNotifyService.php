@@ -10,8 +10,7 @@ use Illuminate\Support\Facades\Log;
  *
  * Migrated from the legacy V1 PHP microvolunteering cron script → MicroVolunteering::notifyForMessages().
  *
- * For each recent message from a microvolunteering-enabled group that has not yet
- * had a notification sent today, finds up to 10 eligible users per message and
+ * For each recent message that has not yet had a notification sent today, finds up to 10 eligible users per message and
  * inserts a users_notifications row of type 'Exhort' for each.
  *
  * Pending-collection messages require Moderate or Advanced trustlevel.
@@ -32,7 +31,7 @@ class MicrovolunteeringNotifyService
     // index range-scans this cheaply, so a 7-day bound keeps it correct + tiny.
     private const MARK_SEEN_WINDOW_DAYS = 7;
 
-    /** @var array<string, int[]> "{groupid}:{P|A}" => active member userid[] cache for the current run */
+    /** @var array<string, int[]> "P|A" => active member userid[] cache for the current run */
     private array $eligibleCache = [];
 
     /** @var array<int, bool> userid => true for users with any Exhort microvolunteering notification today */
@@ -83,25 +82,12 @@ class MicrovolunteeringNotifyService
         // distinct message ids in 7 chunked lookups, returning a result set identical row
         // for row (23,926 rows both ways).
         $msgs = DB::select("
-            SELECT messages.id, messages.fromuser, messages_groups.groupid, messages.subject, messages_groups.collection
+            SELECT messages.id, messages.fromuser, messages.subject, messages.collection
             FROM messages
-            INNER JOIN messages_groups ON messages.id = messages_groups.msgid
-            INNER JOIN `groups` ON messages_groups.groupid = groups.id
-            WHERE messages_groups.arrival > DATE_SUB(NOW(), INTERVAL 1 DAY)
+            WHERE messages.arrival > DATE_SUB(NOW(), INTERVAL 1 DAY)
               AND messages.deleted IS NULL
-              -- A hold is per-group. Every other predicate here is already
-              -- scoped to this messages_groups row (arrival, and groupid via
-              -- the SELECT above); this one wasn't. messages.heldby is a
-              -- legacy message-wide mirror that nothing writes any more, so
-              -- checking it here let a copy held on this row's group still
-              -- be offered up for \"please review\" - the hold only ever
-              -- belonged to the group it was placed on.
-              AND messages_groups.heldby IS NULL
-              -- Only a copy a member can still vote on. A copy retracted from a
-              -- group keeps its arrival time, and the vote is refused for a group
-              -- whose copy is gone, so asking there only produced a 403 (SR-DYS36).
-              AND messages_groups.deleted = 0
-              AND messages_groups.collection IN ('Pending', 'Approved')
+              AND messages.heldby IS NULL
+              AND messages.collection IN ('Pending', 'Approved')
               -- Nor a post that is finished: its latest outcome is Taken, Received
               -- or Withdrawn (a later Repost makes it live again).
               AND NOT EXISTS (
@@ -113,7 +99,6 @@ class MicrovolunteeringNotifyService
                           WHERE later.msgid = mo.msgid AND later.id > mo.id
                      )
               )
-              AND groups.microvolunteering = 1
         ");
 
         $msgs = $this->withoutMessagesNotifiedToday($msgs);
@@ -121,11 +106,8 @@ class MicrovolunteeringNotifyService
         $stats['messages_considered'] = count($msgs);
 
         // Users who have already recorded a CheckMessage microaction for a message
-        // must never be re-notified about it. Without this, a rippling post - whose
-        // messages_groups.arrival is refreshed each time it ripples into a new group -
-        // keeps re-entering the "arrival within 1 day" gate and re-lights the same
-        // person's "post to check" badge for ever, even after they have reviewed it.
-        // See Discourse 9856.
+        // must never be re-notified about it: a repost refreshes arrival, which would
+        // otherwise re-light the same person's "post to check" badge. See Discourse 9856.
         $this->reviewedByMessage = $this->loadReviewedByMessage(
             array_values(array_unique(array_map(fn ($m) => (int) $m->id, $msgs)))
         );
@@ -193,9 +175,8 @@ class MicrovolunteeringNotifyService
      *
      * This version replaces that with three cheap pieces:
      *
-     *   1. The active-member pool per (group, collection) — fetched once
-     *      per pair from `memberships ⨝ users` with the lastaccess/trust/
-     *      role predicates only. Cached for the run.
+     *   1. The active-member pool per collection — fetched once from `users`
+     *      with the lastaccess/trust/role predicates only. Cached for the run.
      *   2. The set of users who already received any microvolunteering
      *      Exhort notification in the last 24 h — fetched once at the
      *      start of the run and held as a {userid => true} map.
@@ -212,7 +193,7 @@ class MicrovolunteeringNotifyService
      */
     private function pickCandidates(object $msg, array $notifiedThisRun): array
     {
-        $pool = $this->getActivePoolForGroup($msg->groupid, $msg->collection);
+        $pool = $this->getActivePool($msg->collection);
 
         if (empty($pool)) {
             return [];
@@ -256,12 +237,12 @@ class MicrovolunteeringNotifyService
     }
 
     /**
-     * Active members for (group, collection-type), cached per run.
+     * Active members for a collection type, cached per run.
      *
      * For a Pending message: members active in the past 31 days with
      * trustlevel Moderate/Advanced (any role).
      *
-     * For non-Pending: members active in the past 31 days with role=Member
+     * For non-Pending: members active in the past 31 days who are not moderators
      * and trustlevel Basic/Moderate/Advanced.
      *
      * The "no microvolunteering notification today" filter is applied
@@ -270,32 +251,32 @@ class MicrovolunteeringNotifyService
      *
      * @return int[]
      */
-    private function getActivePoolForGroup(int $groupid, string $collection): array
+    private function getActivePool(string $collection): array
     {
-        $key = $groupid . ':' . ($collection === 'Pending' ? 'P' : 'A');
+        $key = $collection === 'Pending' ? 'P' : 'A';
 
         if (isset($this->eligibleCache[$key])) {
             return $this->eligibleCache[$key];
         }
 
         if ($collection === 'Pending') {
-            $sql = "SELECT DISTINCT memberships.userid
-                    FROM memberships
-                    INNER JOIN users ON memberships.userid = users.id
-                    WHERE memberships.groupid = ?
+            $sql = "SELECT users.id AS userid
+                    FROM users
+                    WHERE users.deleted IS NULL
+                      AND users.banned IS NULL
                       AND users.lastaccess >= DATE_SUB(NOW(), INTERVAL 31 DAY)
                       AND users.trustlevel IN ('Moderate', 'Advanced')";
         } else {
-            $sql = "SELECT DISTINCT memberships.userid
-                    FROM memberships
-                    INNER JOIN users ON memberships.userid = users.id
-                    WHERE memberships.groupid = ?
-                      AND memberships.role = 'Member'
+            $sql = "SELECT users.id AS userid
+                    FROM users
+                    WHERE users.deleted IS NULL
+                      AND users.banned IS NULL
+                      AND users.systemrole = 'User'
                       AND users.lastaccess >= DATE_SUB(NOW(), INTERVAL 31 DAY)
                       AND users.trustlevel IN ('Basic', 'Moderate', 'Advanced')";
         }
 
-        $rows = DB::select($sql, [$groupid]);
+        $rows = DB::select($sql);
         $this->eligibleCache[$key] = array_map(fn ($r) => (int) $r->userid, $rows);
 
         return $this->eligibleCache[$key];
@@ -305,11 +286,6 @@ class MicrovolunteeringNotifyService
      * Drop candidate rows whose message already had a microvolunteering Exhort
      * notification in the last day. This is the anti-join that used to sit in the
      * candidate query as a correlated LEFT JOIN.
-     *
-     * The exclusion is by MESSAGE, not by message and group, which is what the join it
-     * replaces did: `users_notifications.id IS NULL` against a condition naming only
-     * messages.id. A notification about a message therefore takes it out of the running
-     * for every group it sits on, the same as before.
      *
      * Chunked because the point is that every url is a constant: an IN list of constants
      * is a ref lookup per value on the url index, where the computed CONCAT the join used

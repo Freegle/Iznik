@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\DB;
 /**
  * Reads the data behind the per-authority statistics report that councils
  * receive: membership, weight reused, CO2 and financial benefit, gifts made,
- * a per-postcode breakdown, shortlink clicks and member stories.
+ * a per-postcode breakdown and member stories.
  *
  * The spreadsheet rendering lives in the AuthorityStatsCommand; this service
  * returns plain arrays so the numbers can be asserted in isolation.
@@ -22,13 +22,9 @@ use Illuminate\Support\Facades\DB;
 class AuthorityStatsService
 {
     // Stat types (match the `stats`.`type` enum).
-    public const APPROVED_MEMBER_COUNT = 'ApprovedMemberCount';
     public const WEIGHT = 'Weight';
     public const OUTCOMES = 'Outcomes';
     public const SEARCHES = 'Searches';
-
-    // Only Freegle groups, published and on the map, count towards an authority.
-    public const GROUP_FREEGLE = 'Freegle';
 
     // Fallback location (roughly the centre of the UK) used when a member's
     // location cannot be resolved any other way.
@@ -93,254 +89,65 @@ class AuthorityStatsService
      * Everything the report needs for one authority, as plain arrays.
      *
      * Weights are raw kilograms; the command applies the WRAP CO2/benefit
-     * conversions when rendering. Members are rounded per group and then summed
-     * for the authority total.
+     * conversions when rendering.
      *
      * @return array{
      *   name:string, quarter:int, year:string,
      *   months:array<int, array{start:string,end:string,formatted:string}>,
      *   benefitPerTonne:float, co2PerTonne:float,
      *   totals:array<int, array{members:int, weight:float, outcomes:float}>,
-     *   groups:array<int, array{namedisplay:string, members:array<int,int>, weight:array<int,float>, outcomes:array<int,float>}>,
-     *   shortlinks:array<int, array{id:int, name:string, clicks:array<int,int>}>,
      *   stories:array<int, array{headline:string, story:string}>,
      *   postcodes:array<string, array{Offer:int,Wanted:int,Searches:int,Outcomes:int,Weight:float}>
      * }|null
      */
-    public function computeReport(int $authorityId, string $quarterStart, ?int $partnershipId = null): ?array
+    public function computeReport(int $authorityId, string $quarterStart): ?array
     {
         $months = $this->getMonths($quarterStart);
-        $authority = $this->getAuthority($authorityId);
-        if ($authority === null) {
+        $name = DB::table('authorities')->where('id', $authorityId)->value('name');
+        if ($name === null) {
             return null;
         }
 
-        // A council we have a deal with gets exactly the communities the Partnerships page
-        // shows for that deal, so what they are told they sponsor and what the spreadsheet
-        // reports always match. Otherwise, derive them from the boundary and keep only groups
-        // that reused more than 3 kg over the whole quarter, so trivial overlaps do not clutter
-        // the report.
-        $fromPartnership = $partnershipId !== null;
-        if ($fromPartnership) {
-            $authority['groups'] = $this->getPartnershipGroups($partnershipId);
-        }
-
-        $nontrivial = [];
-        foreach ($authority['groups'] as $group) {
-            if ($fromPartnership) {
-                $nontrivial[] = $group;
-
-                continue;
-            }
-
-            $stats = $this->getMultiStats([$group['id']], $months[0]['start'], $months[2]['end'], [self::WEIGHT]);
-            $totWeight = 0.0;
-            foreach ($stats[self::WEIGHT] as $stat) {
-                $totWeight += $stat['count'] * $group['overlap'];
-            }
-            if ($totWeight > 3) {
-                $nontrivial[] = $group;
-            }
-        }
-
-        $types = [self::APPROVED_MEMBER_COUNT, self::WEIGHT, self::OUTCOMES];
+        // Every figure is about the authority's own area: members who live inside it and
+        // posts made inside it. There are no communities to apportion by overlap.
         $totals = [];
-        $perGroup = [];
-
         for ($m = 0; $m < 3; $m++) {
-            $totals[$m] = ['members' => 0, 'weight' => 0.0, 'outcomes' => 0.0];
+            $byPostcode = $this->getByAuthority([$authorityId], $months[$m]['start'], date('Y-m-d', strtotime($months[$m]['end'] . ' -1 day')));
 
-            foreach ($nontrivial as $group) {
-                $gid = $group['id'];
-                $overlap = $group['overlap'];
-                $stats = $this->getMultiStats([$gid], $months[$m]['start'], $months[$m]['end'], $types);
-
-                // Members: the count on the latest date in the month.
-                $members = 0.0;
-                foreach ($stats[self::APPROVED_MEMBER_COUNT] as $stat) {
-                    $members = round($stat['count'] * $overlap);
-                }
-
-                // Weight and outcomes: summed across the month.
-                $weight = 0.0;
-                foreach ($stats[self::WEIGHT] as $stat) {
-                    $weight += $stat['count'] * $overlap;
-                }
-                $outcomes = 0.0;
-                foreach ($stats[self::OUTCOMES] as $stat) {
-                    $outcomes += $stat['count'] * $overlap;
-                }
-
-                $perGroup[$gid][$m] = [
-                    'members' => (int) $members,
-                    'weight' => $weight,
-                    'outcomes' => $outcomes,
-                ];
-
-                $totals[$m]['members'] += (int) $members;
-                $totals[$m]['weight'] += $weight;
-                $totals[$m]['outcomes'] += $outcomes;
-            }
-        }
-
-        // Per-group rows and shortlinks, only for groups that still have members
-        // in the final month (this drops the tiniest overlaps).
-        $groups = [];
-        $links = [];
-        foreach ($nontrivial as $group) {
-            $gid = $group['id'];
-            if (!$fromPartnership && empty($perGroup[$gid][2]['members'])) {
-                continue;
-            }
-
-            $groups[] = [
-                'namedisplay' => $group['namedisplay'] . ($group['overlap'] < 1 ? ' *' : ''),
-                'members' => [$perGroup[$gid][0]['members'], $perGroup[$gid][1]['members'], $perGroup[$gid][2]['members']],
-                'weight' => [$perGroup[$gid][0]['weight'], $perGroup[$gid][1]['weight'], $perGroup[$gid][2]['weight']],
-                'outcomes' => [$perGroup[$gid][0]['outcomes'], $perGroup[$gid][1]['outcomes'], $perGroup[$gid][2]['outcomes']],
+            $totals[$m] = [
+                'members' => $this->getMemberCount($authorityId, $months[$m]['end']),
+                'weight' => (float) array_sum(array_column($byPostcode, self::WEIGHT)),
+                'outcomes' => (float) array_sum(array_column($byPostcode, self::OUTCOMES)),
             ];
-
-            foreach ($this->getShortlinks($gid) as $link) {
-                $links[] = [
-                    'id' => $link['id'],
-                    'name' => $link['name'],
-                    'clicks' => $this->bucketClicksByMonth($this->getClickHistory($link['id']), $months),
-                ];
-            }
         }
-
-        usort($links, static fn ($a, $b) => strcmp(strtolower($a['name']), strtolower($b['name'])));
 
         return [
-            'name' => $authority['name'],
+            'name' => $name,
             'quarter' => $this->getQuarterNumber($quarterStart),
             'year' => date('Y'),
             'months' => $months,
             'benefitPerTonne' => $this->getBenefitPerTonne(),
             'co2PerTonne' => $this->getCo2PerTonne(),
             'totals' => $totals,
-            'groups' => $groups,
-            'shortlinks' => $links,
             'stories' => $this->getStories($authorityId, 10),
             'postcodes' => $this->getByAuthority([$authorityId], $months[0]['start'], $months[2]['end']),
         ];
     }
 
     /**
-     * Authority name plus the Freegle groups overlapping it.
-     *
-     * Each returned group: id, namedisplay, overlap (fraction of the group's
-     * area inside the authority, rounded up to 1 when above 0.95).
-     *
-     * @return array{name:string, groups:array<int, array{id:int, namedisplay:string, overlap:float}>}|null
+     * Members whose home location lies inside the authority and who had joined, and not
+     * left, before $before.
      */
-    public function getAuthority(int $id): ?array
+    public function getMemberCount(int $authorityId, string $before): int
     {
-        $auth = DB::table('authorities')->where('id', $id)->first(['id', 'name']);
-        if (!$auth) {
-            return null;
-        }
-
-        // Overlap of each group's polyindex with the authority polygon, in both
-        // directions, so we can keep any group that meaningfully intersects.
-        $rows = DB::select(
-            "SELECT groups.id AS id, nameshort, namefull,
-                CASE WHEN ST_GeometryType(ST_Intersection(polyindex, COALESCE(simplified, polygon))) IN ('POLYGON', 'MULTIPOLYGON') THEN
-                    CASE WHEN polyindex = COALESCE(simplified, polygon) THEN 1
-                    ELSE ST_Area(ST_Intersection(polyindex, COALESCE(simplified, polygon))) / ST_Area(polyindex)
-                    END
-                ELSE 0
-                END AS overlap,
-                CASE WHEN ST_GeometryType(ST_Intersection(polyindex, COALESCE(simplified, polygon))) IN ('POLYGON', 'MULTIPOLYGON') THEN
-                    CASE WHEN polyindex = COALESCE(simplified, polygon) THEN 1
-                    ELSE ST_Area(polyindex) / ST_Area(ST_Intersection(polyindex, COALESCE(simplified, polygon)))
-                    END
-                ELSE 0
-                END AS overlap2
-            FROM `groups`
-            INNER JOIN authorities ON ( polyindex = COALESCE(simplified, polygon) OR ST_Intersects(polyindex, COALESCE(simplified, polygon)) )
-            WHERE type = ? AND publish = 1 AND onmap = 1 AND authorities.id = ?",
-            [self::GROUP_FREEGLE, $id]
-        );
-
-        $groups = [];
-        foreach ($rows as $row) {
-            $overlap = (float) $row->overlap;
-            $overlap2 = (float) $row->overlap2;
-
-            if ($overlap > 0.95) {
-                $overlap = 1.0;
-            }
-
-            // Keep groups with a meaningful overlap in either direction.
-            if ($overlap >= 0.05 || $overlap2 >= 0.05) {
-                $groups[] = [
-                    'id' => (int) $row->id,
-                    'namedisplay' => $row->namefull ?: $row->nameshort,
-                    'overlap' => $overlap,
-                ];
-            }
-        }
-
-        return ['name' => $auth->name, 'groups' => $groups];
-    }
-
-    /**
-     * The communities a partnership covers, in the same shape as getAuthority()'s groups.
-     * One inside the boundary is weighted by how much of it lies inside; one added by hand
-     * from outside the boundary counts in full, because the council is sponsoring all of it.
-     *
-     * @return array<int, array{id:int, namedisplay:string, overlap:float}>
-     */
-    public function getPartnershipGroups(int $partnershipId): array
-    {
-        $rows = DB::table('partnerships_groups')
-            ->join('groups', 'groups.id', '=', 'partnerships_groups.groupid')
-            ->where('partnerships_groups.partnershipid', $partnershipId)
-            ->where('partnerships_groups.source', '!=', 'Removed')
-            ->orderBy('groups.nameshort')
-            ->get(['groups.id', 'groups.nameshort', 'groups.namefull', 'partnerships_groups.overlap']);
-
-        return $rows->map(static function ($row) {
-            $overlap = $row->overlap === null ? 1.0 : (float) $row->overlap;
-
-            return [
-                'id' => (int) $row->id,
-                'namedisplay' => $row->namefull ?: $row->nameshort,
-                'overlap' => $overlap > 0.95 ? 1.0 : $overlap,
-            ];
-        })->all();
-    }
-
-    /**
-     * Aggregate `stats` rows by date for the given groups over [$start, $end)
-     * (end exclusive), one entry per stat type.
-     *
-     * @param  array<int>  $groupids
-     * @param  array<string>  $types
-     * @return array<string, array<int, array{date:string, count:float}>>
-     */
-    public function getMultiStats(array $groupids, string $start, string $end, array $types): array
-    {
-        $start = date('Y-m-d', strtotime($start));
-        $end = date('Y-m-d', strtotime($end));
-
-        $ret = [];
-        foreach ($types as $type) {
-            $rows = DB::select(
-                'SELECT SUM(count) AS count, date FROM stats
-                 WHERE date >= ? AND date < ? AND groupid IN (' . $this->placeholders($groupids) . ') AND type = ?
-                 GROUP BY date ORDER BY date ASC',
-                array_merge([$start, $end], $groupids, [$type])
-            );
-
-            $ret[$type] = array_map(static fn ($r) => [
-                'date' => $r->date,
-                'count' => (float) $r->count,
-            ], $rows);
-        }
-
-        return $ret;
+        return (int) (DB::selectOne(
+            'SELECT COUNT(*) AS count FROM users
+             INNER JOIN locations_spatial ON locations_spatial.locationid = users.lastlocation
+             INNER JOIN authorities ON authorities.id = ?
+             WHERE ST_Contains(authorities.polygon, locations_spatial.geometry)
+             AND users.added < ? AND (users.deleted IS NULL OR users.deleted >= ?)',
+            [$authorityId, $before, $before]
+        )->count ?? 0);
     }
 
     /**
@@ -465,35 +272,6 @@ class AuthorityStatsService
     }
 
     /**
-     * Shortlinks for a group (id + name), case-insensitively ordered.
-     *
-     * @return array<int, array{id:int, name:string}>
-     */
-    public function getShortlinks(int $groupid): array
-    {
-        return DB::table('shortlinks')
-            ->where('groupid', $groupid)
-            ->orderByRaw('LOWER(name) ASC')
-            ->get(['id', 'name'])
-            ->map(static fn ($r) => ['id' => (int) $r->id, 'name' => $r->name])
-            ->all();
-    }
-
-    /**
-     * Per-day click counts for a shortlink.
-     *
-     * @return array<int, object{date:string, count:int}>
-     */
-    public function getClickHistory(int $shortlinkid): array
-    {
-        return DB::select(
-            'SELECT DATE(timestamp) AS date, COUNT(*) AS count FROM shortlink_clicks
-             WHERE shortlinkid = ? GROUP BY date ORDER BY date ASC',
-            [$shortlinkid]
-        );
-    }
-
-    /**
      * Up to $limit reviewed, public stories whose author's location falls inside
      * the authority, most recent first.
      *
@@ -546,8 +324,7 @@ class AuthorityStatsService
     /**
      * Resolve a lat/lng for each user, in priority order: an explicit location
      * in their settings, then their last known location, then the most recent
-     * message they geolocated, then their most recent group's location, then the
-     * UK-centre fallback.
+     * message they geolocated, then the UK-centre fallback.
      *
      * @param  array<int>  $userids
      * @return array<int, array{lat:float, lng:float}>
@@ -598,21 +375,7 @@ class AuthorityStatsService
             $remaining = array_values(array_diff($userids, array_keys($ret)));
         }
 
-        // 4. Most recent group membership's group location.
-        if ($remaining) {
-            $rows = DB::select(
-                'SELECT userid, `groups`.lat AS lat, `groups`.lng AS lng
-                 FROM `groups` INNER JOIN memberships ON memberships.groupid = `groups`.id
-                 WHERE userid IN (' . $this->placeholders($remaining) . ') ORDER BY added ASC',
-                $remaining
-            );
-            foreach ($rows as $r) {
-                $ret[(int) $r->userid] = ['lat' => (float) $r->lat, 'lng' => (float) $r->lng];
-            }
-            $remaining = array_values(array_diff($userids, array_keys($ret)));
-        }
-
-        // 5. UK-centre fallback.
+        // 4. UK-centre fallback.
         foreach ($remaining as $uid) {
             $ret[$uid] = ['lat' => self::DEFAULT_LAT, 'lng' => self::DEFAULT_LNG];
         }
@@ -656,27 +419,6 @@ class AuthorityStatsService
         }
 
         return $inside;
-    }
-
-    /**
-     * Total clicks in each of the three months for a shortlink's day-by-day
-     * click history.
-     *
-     * @param  array<int, object{date:string, count:int}>  $history
-     * @param  array<int, array{start:string, end:string}>  $months
-     * @return array<int, int>
-     */
-    private function bucketClicksByMonth(array $history, array $months): array
-    {
-        $clicks = [0, 0, 0];
-        foreach ($history as $hist) {
-            for ($i = 0; $i < 3; $i++) {
-                if ($hist->date >= $months[$i]['start'] && $hist->date < $months[$i]['end']) {
-                    $clicks[$i] += (int) $hist->count;
-                }
-            }
-        }
-        return $clicks;
     }
 
     /** Build a comma-separated list of `?` placeholders for an IN() clause. */

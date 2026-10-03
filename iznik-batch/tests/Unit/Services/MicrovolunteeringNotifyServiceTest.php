@@ -24,21 +24,13 @@ use Tests\TestCase;
  */
 class MicrovolunteeringNotifyServiceTest extends TestCase
 {
-    private function createGroup(bool $microvolunteering = true): int
+    protected function setUp(): void
     {
-        $nameshort = 'TestGroup' . uniqid();
+        parent::setUp();
 
-        return DB::table('groups')->insertGetId([
-            'nameshort'         => $nameshort,
-            // namefull carries a unique key, so it must vary per group - the
-            // cross-group hold tests create two groups in one test.
-            'namefull'          => 'Test Group ' . $nameshort,
-            'type'              => 'Freegle',
-            'publish'           => 1,
-            'onhere'            => 1,
-            'microvolunteering' => $microvolunteering ? 1 : 0,
-            'polyindex'         => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
-        ]);
+        // Reviewers are picked from every active member, so the fixture members are made
+        // inactive and each test sees only the members it creates.
+        DB::table('users')->update(['lastaccess' => now()->subYear()]);
     }
 
     private function createUser(string $trustlevel = 'Basic'): int
@@ -62,18 +54,7 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
         return $userId;
     }
 
-    private function addMembership(int $userId, int $groupId, string $role = 'Member'): void
-    {
-        DB::table('memberships')->insert([
-            'userid'     => $userId,
-            'groupid'    => $groupId,
-            'role'       => $role,
-            'collection' => 'Approved',
-            'added'      => now(),
-        ]);
-    }
-
-    private function createMessage(int $groupId, int $fromuser, string $collection = 'Approved', ?int $heldBy = null): int
+    private function createMessage(int $fromuser, string $collection = 'Approved', ?int $heldBy = null): int
     {
         $msgId = DB::table('messages')->insertGetId([
             'subject'  => 'OFFER: Test item (Test Area)',
@@ -81,16 +62,9 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
             'type'     => 'Offer',
             'fromuser' => $fromuser,
             'deleted'  => null,
-        ]);
-
-        DB::table('messages_groups')->insert([
-            'msgid'      => $msgId,
-            'groupid'    => $groupId,
             'collection' => $collection,
-            'arrival'    => now(),
-            // Per-group hold - the real source of truth. messages.heldby is a
-            // dead column nothing writes any more; don't seed it.
-            'heldby'     => $heldBy,
+            'arrival'  => now(),
+            'heldby'   => $heldBy,
         ]);
 
         return $msgId;
@@ -116,14 +90,10 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
 
     public function test_stats_reflect_a_single_notification(): void
     {
-        $groupId  = $this->createGroup();
         $fromUser = $this->createUser('Basic');
         $reviewer = $this->createUser('Moderate');
 
-        $this->addMembership($fromUser, $groupId);
-        $this->addMembership($reviewer, $groupId);
-
-        $this->createMessage($groupId, $fromUser, 'Pending');
+        $this->createMessage($fromUser, 'Pending');
 
         $service = new MicrovolunteeringNotifyService();
         $stats   = $service->notifyForMessages();
@@ -144,13 +114,10 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
      */
     public function test_a_withdrawn_post_notifies_nobody(): void
     {
-        $groupId  = $this->createGroup();
         $fromUser = $this->createUser('Basic');
         $reviewer = $this->createUser('Basic');
-        $this->addMembership($fromUser, $groupId);
-        $this->addMembership($reviewer, $groupId);
 
-        $msgId = $this->createMessage($groupId, $fromUser, 'Approved');
+        $msgId = $this->createMessage($fromUser, 'Approved');
         DB::table('messages_outcomes')->insert(['msgid' => $msgId, 'outcome' => 'Withdrawn', 'timestamp' => now()]);
 
         $stats = (new MicrovolunteeringNotifyService())->notifyForMessages();
@@ -159,35 +126,12 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
         $this->assertSame(0, DB::table('users_notifications')->where('touser', $reviewer)->count());
     }
 
-    /**
-     * A rippled copy retracted from a group keeps its arrival time, so without this
-     * the group's members were asked about a post that is no longer on it.
-     */
-    public function test_a_copy_removed_from_a_group_notifies_nobody_there(): void
-    {
-        $groupId  = $this->createGroup();
-        $fromUser = $this->createUser('Basic');
-        $reviewer = $this->createUser('Basic');
-        $this->addMembership($fromUser, $groupId);
-        $this->addMembership($reviewer, $groupId);
-
-        $msgId = $this->createMessage($groupId, $fromUser, 'Approved');
-        DB::table('messages_groups')->where('msgid', $msgId)->update(['deleted' => 1]);
-
-        $stats = (new MicrovolunteeringNotifyService())->notifyForMessages();
-
-        $this->assertSame(0, $stats['users_notified']);
-    }
-
     public function test_a_rejected_copy_notifies_nobody(): void
     {
-        $groupId  = $this->createGroup();
         $fromUser = $this->createUser('Basic');
         $reviewer = $this->createUser('Basic');
-        $this->addMembership($fromUser, $groupId);
-        $this->addMembership($reviewer, $groupId);
 
-        $this->createMessage($groupId, $fromUser, 'Rejected');
+        $this->createMessage($fromUser, 'Rejected');
 
         $stats = (new MicrovolunteeringNotifyService())->notifyForMessages();
 
@@ -200,16 +144,13 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
 
     public function test_candidates_are_capped_at_ten_per_message(): void
     {
-        $groupId  = $this->createGroup();
         $fromUser = $this->createUser('Basic');
-        $this->addMembership($fromUser, $groupId);
 
         for ($i = 0; $i < 15; $i++) {
             $reviewer = $this->createUser('Moderate');
-            $this->addMembership($reviewer, $groupId);
         }
 
-        $msgId = $this->createMessage($groupId, $fromUser, 'Pending');
+        $msgId = $this->createMessage($fromUser, 'Pending');
 
         $service = new MicrovolunteeringNotifyService();
         $stats   = $service->notifyForMessages();
@@ -229,12 +170,8 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
 
     public function test_user_notified_about_another_message_today_is_excluded_from_new_message(): void
     {
-        $groupId  = $this->createGroup();
         $fromUser = $this->createUser('Basic');
         $reviewer = $this->createUser('Moderate');
-
-        $this->addMembership($fromUser, $groupId);
-        $this->addMembership($reviewer, $groupId);
 
         // Reviewer already got an Exhort notification today about a different message.
         DB::table('users_notifications')->insert([
@@ -244,7 +181,7 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
             'timestamp' => now(),
         ]);
 
-        $msgId = $this->createMessage($groupId, $fromUser, 'Pending');
+        $msgId = $this->createMessage($fromUser, 'Pending');
 
         $service = new MicrovolunteeringNotifyService();
         $stats   = $service->notifyForMessages();
@@ -266,66 +203,6 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
     // held group itself.
     // ─────────────────────────────────────────────────────────────────────────
 
-    public function test_hold_on_one_group_does_not_suppress_notification_for_unheld_group(): void
-    {
-        $groupA    = $this->createGroup();
-        $groupB    = $this->createGroup();
-        $fromUser  = $this->createUser('Basic');
-        // Separate reviewers per group, each a member of only their own group,
-        // so notifiedThisRun dedup cannot mask a bug that lets B's held row
-        // into the candidate set: if it does, reviewerB gets notified too.
-        $reviewerA = $this->createUser('Moderate');
-        $reviewerB = $this->createUser('Moderate');
-        $holder    = $this->createUser('Moderate');
-
-        $this->addMembership($fromUser, $groupA);
-        $this->addMembership($reviewerA, $groupA);
-        $this->addMembership($reviewerB, $groupB);
-
-        $msgId = DB::table('messages')->insertGetId([
-            'subject'  => 'OFFER: Test item (Test Area)',
-            'message'  => 'Test item description.',
-            'type'     => 'Offer',
-            'fromuser' => $fromUser,
-            'deleted'  => null,
-        ]);
-
-        // Same message, rippled to two groups: held on B only, A untouched.
-        DB::table('messages_groups')->insert([
-            'msgid'      => $msgId,
-            'groupid'    => $groupA,
-            'collection' => 'Pending',
-            'arrival'    => now(),
-            'heldby'     => null,
-        ]);
-        DB::table('messages_groups')->insert([
-            'msgid'      => $msgId,
-            'groupid'    => $groupB,
-            'collection' => 'Pending',
-            'arrival'    => now(),
-            'heldby'     => $holder,
-        ]);
-
-        $service = new MicrovolunteeringNotifyService();
-        $stats   = $service->notifyForMessages();
-
-        // Group B's row is filtered out of the candidate set before the loop
-        // even runs - it never becomes a "considered" message at all.
-        $this->assertSame(1, $stats['messages_considered']);
-        $this->assertSame(1, $stats['users_notified']);
-
-        $this->assertDatabaseHas('users_notifications', [
-            'touser' => $reviewerA,
-            'type'   => 'Exhort',
-            'url'    => '/microvolunteering/message/' . $msgId,
-        ]);
-        $this->assertDatabaseMissing('users_notifications', [
-            'touser' => $reviewerB,
-            'type'   => 'Exhort',
-            'url'    => '/microvolunteering/message/' . $msgId,
-        ]);
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
     // users_skipped++ for the per-message MAX_PER_USER existing-count check
     // (distinct from the alreadyNotifiedToday pool-filter path: the existing
@@ -335,14 +212,10 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
 
     public function test_users_skipped_increments_when_existing_notifications_for_this_message_hit_cap(): void
     {
-        $groupId  = $this->createGroup();
         $fromUser = $this->createUser('Basic');
         $reviewer = $this->createUser('Moderate');
 
-        $this->addMembership($fromUser, $groupId);
-        $this->addMembership($reviewer, $groupId);
-
-        $msgId = $this->createMessage($groupId, $fromUser, 'Pending');
+        $msgId = $this->createMessage($fromUser, 'Pending');
         $url   = '/microvolunteering/message/' . $msgId;
 
         for ($i = 0; $i < 3; $i++) {
@@ -370,14 +243,10 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
 
     public function test_dry_run_counts_stale_notifications_without_clearing_them(): void
     {
-        $groupId  = $this->createGroup();
         $fromUser = $this->createUser('Basic');
         $reviewer = $this->createUser('Moderate');
 
-        $this->addMembership($fromUser, $groupId);
-        $this->addMembership($reviewer, $groupId);
-
-        $msgId = $this->createMessage($groupId, $fromUser, 'Pending');
+        $msgId = $this->createMessage($fromUser, 'Pending');
 
         DB::table('microactions')->insert([
             'actiontype'     => 'CheckMessage',
@@ -406,14 +275,10 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
 
     public function test_non_dry_run_actually_clears_stale_notifications_and_matches_stat(): void
     {
-        $groupId  = $this->createGroup();
         $fromUser = $this->createUser('Basic');
         $reviewer = $this->createUser('Moderate');
 
-        $this->addMembership($fromUser, $groupId);
-        $this->addMembership($reviewer, $groupId);
-
-        $msgId = $this->createMessage($groupId, $fromUser, 'Pending');
+        $msgId = $this->createMessage($fromUser, 'Pending');
 
         DB::table('microactions')->insert([
             'actiontype'     => 'CheckMessage',
@@ -456,10 +321,8 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
      */
     public function test_the_candidate_query_does_not_correlate_notifications_per_row(): void
     {
-        $groupId  = $this->createGroup();
         $fromUser = $this->createUser('Basic');
-        $this->addMembership($fromUser, $groupId);
-        $this->createMessage($groupId, $fromUser, 'Pending');
+        $this->createMessage($fromUser, 'Pending');
 
         $joined = [];
         $constantLookup = [];
@@ -497,13 +360,10 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
      */
     public function test_message_with_its_own_notification_is_not_considered_again(): void
     {
-        $groupId  = $this->createGroup();
         $fromUser = $this->createUser('Basic');
         $reviewer = $this->createUser('Moderate');
-        $this->addMembership($fromUser, $groupId);
-        $this->addMembership($reviewer, $groupId);
 
-        $msgId = $this->createMessage($groupId, $fromUser, 'Pending');
+        $msgId = $this->createMessage($fromUser, 'Pending');
 
         DB::table('users_notifications')->insert([
             'touser'    => $reviewer,

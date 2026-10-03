@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-01
+last_reviewed: 2026-10-03
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/UnsubscribeService.php
@@ -61,9 +61,9 @@ mailable declares its category with `unsubscribeType()`; both arms of the header
 
 | Category | Stops | Switch |
 |---|---|---|
-| `digest` | What's New digests | `memberships.emailfrequency = 0`, all their groups |
-| `events` | community events | `memberships.eventsallowed = 0` |
-| `volunteering` | volunteer opportunities | `memberships.volunteeringallowed = 0` |
+| `digest` | What's New digests | `users.emailfrequency = 0` |
+| `events` | community events | `users.eventsallowed = 0` |
+| `volunteering` | volunteer opportunities | `users.volunteeringallowed = 0` |
 | `newsletter` | newsletters, stories, community news | `users.newslettersallowed = 0` |
 | `relevant` | matched/suggested posts | `users.relevantallowed = 0` |
 | `chat` | chat message notifications | `settings.notifications.email = false` |
@@ -79,9 +79,9 @@ the two cannot be collapsed.
 An unknown or mangled category falls back to `all`, so a truncated address stops mail
 rather than silently doing nothing.
 
-`digest`, `events` and `volunteering` are per-membership, and the opt-out covers **every**
-group the member belongs to. The unified digest spans communities, so turning it off for
-one group would leave the same email arriving from the others.
+`digest`, `events` and `volunteering` are columns on the member's own row in `users`. Before the
+community model was removed in this experiment they were per membership, and the opt-out had to
+cover every community the member belonged to; now there is one switch.
 
 **Every switch in that table has to be honoured by the sender.** An opt-out that no sender
 reads is worse than none, because the member is told it worked. `settings.engagement` was
