@@ -32,7 +32,7 @@ import { modelForAdversarialReview } from '../policy.js'
 import { groundingActions } from '../grounding.js'
 import { proseProblems } from '../prose.js'
 import { assessReportSpecifics, detailRequestBody, CONTEXT_QUESTION } from '../specifics.js'
-import { assessPrEvidence } from '../evidence.js'
+import { assessPrEvidence, readEvidence, reviewGroundingSection } from '../evidence.js'
 
 const exec = promisify(execFile)
 
@@ -450,6 +450,12 @@ const TERMINAL_BLOCKER_PATTERNS = [
   'auth bypass',
   'path traversal',
   'wrong', // "wrong approach", "fixes the wrong thing"
+  // The diagnosis is not what the reporter described, is not shown by production, or
+  // rests on a claim about the system that is untrue. More code on the same branch
+  // cannot fix any of these (PRs #1664, #1665).
+  'misread',
+  'ungrounded',
+  'false premise',
 ]
 
 /**
@@ -4392,6 +4398,16 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           return null
         }
 
+        // A Discourse bug fix is also judged against what the reporter wrote and the
+        // production reads behind it (see reviewGroundingSection).
+        const bugRow = getDb().prepare('SELECT topic, post FROM discourse_bug WHERE pr_number = ? LIMIT 1').get(prNumber) as { topic: number; post: number } | undefined
+        let grounding = ''
+        if (bugRow) {
+          let words = ''
+          try { words = (await questionAnswerDeps.fetchReporterQuote(bugRow.topic, bugRow.post, 4000)) ?? '' } catch { words = '' }
+          grounding = reviewGroundingSection(words, readEvidence(bugRow.topic, bugRow.post))
+        }
+
         // Review with Opus
         const phaseInfo = getPhaseInfo()
         const reviewModel = modelForAdversarialReview(phaseInfo)
@@ -4407,7 +4423,10 @@ CRITICAL (passed = false, must fix before merge):
 - Known regression: the diff removes or weakens an existing test that was passing
 - Incomplete diff: the PR description claims to fix X but the diff doesn't touch the relevant code path
 - Duplicate implementation: the fix reimplements logic that already exists as a helper elsewhere in the same codebase (look for similar function names or patterns in the diff context)
-
+${grounding ? `- Misread report (category "misread report"): the failure the PR fixes is not the one the reporter describes. Check WHO saw the problem and WHERE: e.g. a post missing from other members' digests is not the author's own digest.
+- Ungrounded diagnosis (category "ungrounded diagnosis"): the evidence record does not show the specific failure the PR claims happening in production - only context (volumes, schema, how many rows exist), an absence ("no errors found", 0 rows), a failed read, or a wrong log label. A diagnosis needs a production instance of the reported failure or of the exact state the fix assumes.
+- False premise (category "false premise"): the PR asserts the system behaves in a way the code or the evidence shows it does not (for example, that something is never released or never shown when another code path does release or show it).
+` : ''}
 WARNING (passed = true, should be noted in PR):
 - Other call sites with the same bug: the pattern fixed here appears to exist in adjacent files or sibling handlers — list the paths
 - Dead code: unused variables, commented-out blocks, unreachable branches left over from the fix
@@ -4435,7 +4454,10 @@ Return ONLY a JSON object with exactly these keys:
 passed = false if and only if blockers is non-empty.
 Be specific: "the test on line 47 only asserts status 200, not that the bug condition is absent" is useful; "tests could be improved" is not.
 
-DIFF:
+${grounding ? `THE REPORT AND ITS PRODUCTION EVIDENCE:
+${grounding}
+
+` : ''}DIFF:
 \`\`\`
 ${diff.slice(0, 20000)}
 \`\`\`
