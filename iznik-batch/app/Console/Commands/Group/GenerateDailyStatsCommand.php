@@ -53,19 +53,16 @@ class GenerateDailyStatsCommand extends Command
         $this->info("{$verb} stats for " . count($dates) . ' date(s): ' . implode(', ', $dates));
 
         $grandTotalRows = 0;
-        $grandTotalGroups = 0;
         foreach ($dates as $date) {
             $start = microtime(true);
-            $result = $service->generateForAllGroups($date, $dryRun);
+            $result = $service->generateForDate($date, $dryRun);
             $elapsed = round(microtime(true) - $start, 1);
 
             $grandTotalRows += $result['rows_written'];
-            $grandTotalGroups = $result['groups'];
 
             $this->line(sprintf(
-                '  %s: %d groups, %d rows %s (%.1fs)',
+                '  %s: %d rows %s (%.1fs)',
                 $date,
-                $result['groups'],
                 $result['rows_written'],
                 $dryRun ? 'would be written' : 'written',
                 $elapsed,
@@ -74,7 +71,6 @@ class GenerateDailyStatsCommand extends Command
             if (!$dryRun) {
                 Log::info('stats:generate-daily', [
                     'date' => $date,
-                    'groups' => $result['groups'],
                     'rows' => $result['rows_written'],
                     'elapsed' => $elapsed,
                 ]);
@@ -82,10 +78,9 @@ class GenerateDailyStatsCommand extends Command
         }
 
         $this->info(sprintf(
-            'Done. %d total rows %s across %d groups.',
+            'Done. %d total rows %s.',
             $grandTotalRows,
             $dryRun ? 'would be written' : 'written',
-            $grandTotalGroups,
         ));
 
         return Command::SUCCESS;

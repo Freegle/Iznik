@@ -54,8 +54,7 @@ class MessageIllustrationsServiceTest extends TestCase
             'arrival' => now()->subMinutes(10),
         ]);
 
-        MessageGroup::create([
-            'msgid' => $message->id,
+        DB::table('messages')->where('id', $message->id)->update([
             'collection' => Message::COLLECTION_APPROVED,
             'arrival' => now()->subMinutes(10),
         ]);
@@ -87,8 +86,7 @@ class MessageIllustrationsServiceTest extends TestCase
             'arrival' => now()->subMinutes($minutesAgo),
         ]);
 
-        MessageGroup::create([
-            'msgid' => $message->id,
+        DB::table('messages')->where('id', $message->id)->update([
             'collection' => Message::COLLECTION_PENDING,
             'arrival' => now()->subMinutes($minutesAgo),
         ]);
@@ -271,8 +269,7 @@ class MessageIllustrationsServiceTest extends TestCase
             'arrival' => $arrival,
         ]);
 
-        MessageGroup::create([
-            'msgid' => $message->id,
+        DB::table('messages')->where('id', $message->id)->update([
             'collection' => Message::COLLECTION_APPROVED,
             'arrival' => $arrival,
         ]);

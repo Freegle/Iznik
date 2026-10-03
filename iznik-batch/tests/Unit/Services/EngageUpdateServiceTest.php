@@ -145,11 +145,10 @@ class EngageUpdateServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now()->subDays(5),
             'arrival' => now()->subDays(5),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
         ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
+        DB::table('messages')->where('id', $message->id)->update([
             'collection' => Message::COLLECTION_APPROVED,
             'arrival' => now()->subDays(5),
         ]);
@@ -194,11 +193,10 @@ class EngageUpdateServiceTest extends TestCase
                 'source' => 'Platform',
                 'date' => now()->subDays(35 + $i),
                 'arrival' => now()->subDays(35 + $i),
-                'lat' => $group->lat,
-                'lng' => $group->lng,
+                'lat' => 51.5074,
+                'lng' => -0.1278,
             ]);
-            MessageGroup::create([
-                'msgid' => $message->id,
+            DB::table('messages')->where('id', $message->id)->update([
                 'collection' => Message::COLLECTION_APPROVED,
                 'arrival' => now()->subDays(35 + $i),
             ]);
@@ -228,11 +226,10 @@ class EngageUpdateServiceTest extends TestCase
                 'source' => 'Platform',
                 'date' => now()->subDays(10 + $i),
                 'arrival' => now()->subDays(10 + $i),
-                'lat' => $group->lat,
-                'lng' => $group->lng,
+                'lat' => 51.5074,
+                'lng' => -0.1278,
             ]);
-            MessageGroup::create([
-                'msgid' => $message->id,
+            DB::table('messages')->where('id', $message->id)->update([
                 'collection' => Message::COLLECTION_APPROVED,
                 'arrival' => now()->subDays(10 + $i),
             ]);
@@ -263,11 +260,10 @@ class EngageUpdateServiceTest extends TestCase
                 'source' => 'Platform',
                 'date' => now()->subDays(5 + $i),
                 'arrival' => now()->subDays(5 + $i),
-                'lat' => $group->lat,
-                'lng' => $group->lng,
+                'lat' => 51.5074,
+                'lng' => -0.1278,
             ]);
-            MessageGroup::create([
-                'msgid' => $message->id,
+            DB::table('messages')->where('id', $message->id)->update([
                 'collection' => Message::COLLECTION_APPROVED,
                 'arrival' => now()->subDays(5 + $i),
             ]);
@@ -299,11 +295,10 @@ class EngageUpdateServiceTest extends TestCase
                 'source' => 'Platform',
                 'date' => now()->subDays(10 + $i),
                 'arrival' => now()->subDays(10 + $i),
-                'lat' => $group->lat,
-                'lng' => $group->lng,
+                'lat' => 51.5074,
+                'lng' => -0.1278,
             ]);
-            MessageGroup::create([
-                'msgid' => $message->id,
+            DB::table('messages')->where('id', $message->id)->update([
                 'collection' => Message::COLLECTION_APPROVED,
                 'arrival' => now()->subDays(10 + $i),
             ]);

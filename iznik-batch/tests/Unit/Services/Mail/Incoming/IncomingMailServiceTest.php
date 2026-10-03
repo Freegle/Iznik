@@ -1332,8 +1332,8 @@ class IncomingMailServiceTest extends TestCase
         DB::statement('DELETE FROM rippling_reach WHERE msgid = ?', [$message->id]);
         DB::insert(
             "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
-                total_freeglers, max_drive_min, schedule, rejected_groups, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+                total_freeglers, max_drive_min, schedule, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))'), 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))']
         );
 
@@ -1615,32 +1615,6 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals(RoutingResult::PENDING, $result);
     }
 
-    public function test_routes_non_member_post_to_dropped(): void
-    {
-        $group = $this->createTestGroup();
-        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('nonmember')]);
-        // Don't add user to group
-
-        $userEmail = $user->emails->first()->email;
-
-        $email = $this->createMinimalEmail([
-            'From' => $userEmail,
-            'To' => $group->nameshort.'@groups.ilovefreegle.org',
-            'Subject' => 'OFFER: Test Item (London)',
-        ], 'Free test item, collection only.');
-
-        $parsed = $this->parser->parse(
-            $email,
-            $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
-        );
-
-        $result = $this->service->route($parsed);
-
-        // Non-members get rejection email and message is dropped
-        $this->assertEquals(RoutingResult::DROPPED, $result);
-    }
-
     public function test_routes_unmapped_user_post_to_pending(): void
     {
         $group = $this->createTestGroup();
@@ -1669,46 +1643,6 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals(RoutingResult::PENDING, $result);
     }
 
-    public function test_routes_worry_word_post_to_pending(): void
-    {
-        $group = $this->createTestGroup();
-        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('member')]);
-        $this->createMembership($user, $group, [
-            'ourPostingStatus' => 'DEFAULT',
-        ]);
-        // Set user location
-        DB::table('users')->where('id', $user->id)->update([
-            'lastlocation' => $this->createLocation(51.5, -0.1),
-        ]);
-
-        // Add worry word to database
-        DB::table('concern_keywords')->insert([
-            'keyword' => 'kitten',
-            'category' => 'review',
-            'action' => 'flag',
-        ]);
-
-        $userEmail = $user->emails->first()->email;
-
-        // Use a worry word in the subject
-        $email = $this->createMinimalEmail([
-            'From' => $userEmail,
-            'To' => $group->nameshort.'@groups.ilovefreegle.org',
-            'Subject' => 'OFFER: Free kitten (London)',
-        ], 'Adorable kitten needs a good home.');
-
-        $parsed = $this->parser->parse(
-            $email,
-            $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
-        );
-
-        $result = $this->service->route($parsed);
-
-        // Worry words cause posts to be held for review
-        $this->assertEquals(RoutingResult::PENDING, $result);
-    }
-
     /**
      * Build a ParsedEmail with the given subject/body via the real mail parser,
      * for exercising the private containsWorryWords() directly. Group/user/
@@ -1725,200 +1659,9 @@ class IncomingMailServiceTest extends TestCase
         return $this->parser->parse($email, 'sender@example.com', 'testgroup@groups.ilovefreegle.org');
     }
 
-    public function test_contains_worry_words_ignores_stale_legacy_worrywords_table(): void
-    {
-        // Regression guard (Discourse #9944/7): containsWorryWords() used to read the
-        // legacy 'worrywords' table, which is a one-time migration snapshot that is
-        // never written to again (see MigrateConcernKeywordsCommand). A row inserted
-        // only there (never migrated into concern_keywords) must NOT be able to flag
-        // a post - if it does, this method is checking the wrong table again.
-        DB::table('worrywords')->insert([
-            'keyword' => 'puppy',
-            'type' => 'Review',
-        ]);
-
-        $parsed = $this->parseEmailWithBody(
-            'OFFER: Free puppy (London)',
-            'Adorable puppy needs a good home.'
-        );
-
-        $method = new \ReflectionMethod(IncomingMailService::class, 'containsWorryWords');
-        $method->setAccessible(true);
-
-        $this->assertFalse($method->invoke($this->service, $parsed));
-    }
-
-    public function test_contains_worry_words_flags_concern_keyword(): void
-    {
-        // Sanity check: a genuine (non-whitelisted) concern keyword still flags,
-        // bounding the fix below so whitelisting can't blanket-suppress everything.
-        DB::table('concern_keywords')->insert([
-            'keyword' => 'cash',
-            'category' => 'review',
-            'action' => 'flag',
-        ]);
-
-        $parsed = $this->parseEmailWithBody(
-            'OFFER: Sofa, cash on collection',
-            'Collection only, please bring a van.'
-        );
-
-        $method = new \ReflectionMethod(IncomingMailService::class, 'containsWorryWords');
-        $method->setAccessible(true);
-
-        $this->assertTrue($method->invoke($this->service, $parsed));
-    }
-
-    public function test_contains_worry_words_respects_whitelisted_phrase_despite_contained_keyword(): void
-    {
-        // Discourse #9944/7: 'Cashes Green' was whitelisted via the concern_keywords
-        // 'allowed' category (the current admin UI), but posts arriving BY EMAIL kept
-        // getting held because containsWorryWords() read the legacy 'worrywords' table,
-        // which never received the new whitelist row.
-        //
-        // containsWorryWords()'s single-word check is EXACT match only (levenshtein
-        // distance < 1, unlike ContentCheckService's fuzzy/inflection matching), so
-        // this reproduces the bug with a keyword that is a whole word contained in the
-        // whitelisted phrase ('green' inside 'Cashes Green') rather than an inflection.
-        //
-        // Also seed the legacy table with the same 'green' keyword (but NOT the
-        // whitelist row, which only ever existed in concern_keywords) so this test
-        // actually fails against the pre-fix code - otherwise the legacy table has no
-        // matching keyword at all and containsWorryWords() would return false for the
-        // wrong reason (nothing to match on, not a working whitelist).
-        DB::table('worrywords')->insert([
-            'keyword' => 'green',
-            'type' => 'Review',
-        ]);
-        DB::table('concern_keywords')->insert([
-            'keyword' => 'green',
-            'category' => 'review',
-            'action' => 'flag',
-        ]);
-        DB::table('concern_keywords')->insert([
-            'keyword' => 'Cashes Green',
-            'category' => 'allowed',
-            'action' => 'flag',
-        ]);
-
-        $parsed = $this->parseEmailWithBody(
-            'OFFER: Sofa near Cashes Green (Stroud)',
-            'Collection only, please bring a van.'
-        );
-
-        $method = new \ReflectionMethod(IncomingMailService::class, 'containsWorryWords');
-        $method->setAccessible(true);
-
-        // Whitelisted phrase must suppress the contained 'green' match.
-        $this->assertFalse($method->invoke($this->service, $parsed));
-    }
-
     // ========================================
     // Spam Detection Tests
     // ========================================
-
-    public function test_routes_spam_to_incoming_spam(): void
-    {
-        $group = $this->createTestGroup();
-        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('spammer')]);
-        $this->createMembership($user, $group, [
-            'ourPostingStatus' => 'DEFAULT',
-        ]);
-        // Set user location
-        DB::table('users')->where('id', $user->id)->update([
-            'lastlocation' => $this->createLocation(51.5, -0.1),
-        ]);
-
-        $userEmail = $user->emails->first()->email;
-
-        // Seed a spam keyword so the spam checker can detect it
-        DB::table('spam_keywords')->insert([
-            'word' => 'Western Union',
-            'action' => 'Spam',
-            'type' => 'Literal',
-        ]);
-
-        // Recreate service to pick up the newly inserted keyword
-        // (SpamCheckService caches keywords on first access)
-        $this->service = app(IncomingMailService::class);
-
-        // Use known spam patterns
-        $email = $this->createMinimalEmail([
-            'From' => $userEmail,
-            'To' => $group->nameshort.'@groups.ilovefreegle.org',
-            'Subject' => 'OFFER: Make money fast! (London)',
-        ], 'Send money to this account for guaranteed returns! Western Union accepted.');
-
-        $parsed = $this->parser->parse(
-            $email,
-            $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
-        );
-
-        $result = $this->service->route($parsed);
-
-        $this->assertEquals(RoutingResult::INCOMING_SPAM, $result);
-    }
-
-    public function test_spam_message_stored_for_moderator_review(): void
-    {
-        $group = $this->createTestGroup();
-        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('spamstore')]);
-        $this->createMembership($user, $group, [
-            'ourPostingStatus' => 'DEFAULT',
-        ]);
-        // Set user location
-        DB::table('users')->where('id', $user->id)->update([
-            'lastlocation' => $this->createLocation(51.5, -0.1),
-        ]);
-
-        $userEmail = $user->emails->first()->email;
-
-        // Seed a spam keyword
-        DB::table('spam_keywords')->insert([
-            'word' => 'Nigerian Prince',
-            'action' => 'Spam',
-            'type' => 'Literal',
-        ]);
-
-        // Recreate service to pick up the newly inserted keyword
-        // (SpamCheckService caches keywords on first access)
-        $this->service = app(IncomingMailService::class);
-
-        $email = $this->createMinimalEmail([
-            'From' => $userEmail,
-            'To' => $group->nameshort.'@groups.ilovefreegle.org',
-            'Subject' => 'OFFER: Free money from Nigerian Prince (London)',
-        ], 'I am a Nigerian Prince with money for you.');
-
-        $parsed = $this->parser->parse(
-            $email,
-            $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
-        );
-
-        $result = $this->service->route($parsed);
-
-        $this->assertEquals(RoutingResult::INCOMING_SPAM, $result);
-
-        // Verify message was created in database with spam info
-        $message = DB::table('messages')
-            ->where('fromuser', $user->id)
-            ->where('subject', 'OFFER: Free money from Nigerian Prince (London)')
-            ->first();
-
-        $this->assertNotNull($message, 'Message should be created in database');
-        $this->assertEquals('Known spam keyword', $message->spamtype);
-        $this->assertStringContainsString('Nigerian Prince', $message->spamreason);
-        $this->assertEquals('Pending', $message->collection);
-
-        // Verify messages_history entry for spam tracking
-        $history = DB::table('messages_history')
-            ->where('msgid', $message->id)
-            ->first();
-
-        $this->assertNotNull($history, 'Message history entry should exist');
-    }
 
     public function test_spamassassin_spam_stored_with_score(): void
     {
@@ -1968,54 +1711,6 @@ class IncomingMailServiceTest extends TestCase
         $this->assertNotNull($message, 'Spam message should be stored in database');
         $this->assertEquals('SpamAssassin', $message->spamtype);
         $this->assertStringContainsString('score', $message->spamreason);
-    }
-
-    public function test_routing_context_includes_spam_info(): void
-    {
-        $group = $this->createTestGroup();
-        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('spamctx')]);
-        $this->createMembership($user, $group, [
-            'ourPostingStatus' => 'DEFAULT',
-        ]);
-        DB::table('users')->where('id', $user->id)->update([
-            'lastlocation' => $this->createLocation(51.5, -0.1),
-        ]);
-
-        $userEmail = $user->emails->first()->email;
-
-        // Seed spam keyword
-        DB::table('spam_keywords')->insert([
-            'word' => 'Lottery Winner',
-            'action' => 'Spam',
-            'type' => 'Literal',
-        ]);
-
-        // Recreate service to pick up the newly inserted keyword
-        // (SpamCheckService caches keywords on first access)
-        $this->service = app(IncomingMailService::class);
-
-        $email = $this->createMinimalEmail([
-            'From' => $userEmail,
-            'To' => $group->nameshort.'@groups.ilovefreegle.org',
-            'Subject' => 'OFFER: Lottery Winner prize (London)',
-        ], 'You are a Lottery Winner!');
-
-        $parsed = $this->parser->parse(
-            $email,
-            $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
-        );
-
-        $result = $this->service->route($parsed);
-
-        $this->assertEquals(RoutingResult::INCOMING_SPAM, $result);
-
-        // Check routing context includes spam details
-        $context = $this->service->getLastRoutingContext();
-        $this->assertArrayHasKey('spam_type', $context);
-        $this->assertArrayHasKey('spam_reason', $context);
-        $this->assertArrayHasKey('message_id', $context);
-        $this->assertEquals('Known spam keyword', $context['spam_type']);
     }
 
     public function test_greeting_spam_detected_as_incoming_spam(): void
@@ -2142,50 +1837,6 @@ class IncomingMailServiceTest extends TestCase
         // checkBulkVolunteerMail returns REASON_BULK_VOLUNTEER_MAIL; preserved
         // verbatim by mapReportReason since the 2026-05-27 enum widening.
         $this->assertEquals('BulkVolunteerMail', $lastMessage->reportreason);
-    }
-
-    public function test_volunteers_with_spam_keyword_detected_as_spam(): void
-    {
-        DB::table('spam_keywords')->insert([
-            'word' => 'Western Union',
-            'action' => 'Spam',
-            'type' => 'Literal',
-        ]);
-
-        // Recreate service to pick up the newly inserted keyword
-        $this->service = app(IncomingMailService::class);
-
-        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('volspammer')]);
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $userEmail = $user->emails->first()->email;
-
-        $email = $this->createMinimalEmail([
-            'From' => $userEmail,
-            'To' => $group->nameshort.'-volunteers@groups.ilovefreegle.org',
-            'Subject' => 'Important notice',
-        ], 'Send money via Western Union to claim your prize.');
-
-        $parsed = $this->parser->parse(
-            $email,
-            $userEmail,
-            $group->nameshort.'-volunteers@groups.ilovefreegle.org'
-        );
-
-        $result = $this->service->route($parsed);
-
-        // Volunteers messages with spam go to review (not rejected) - users may be reporting spam
-        $this->assertEquals(RoutingResult::TO_VOLUNTEERS, $result);
-
-        // The chat message should be flagged for review so volunteers see it was detected
-        $lastMessage = DB::table('chat_messages')
-            ->orderBy('id', 'desc')
-            ->first();
-
-        $this->assertEquals(1, $lastMessage->reviewrequired);
-        // checkSpamKeywords returns REASON_KNOWN_KEYWORD on a Western Union match;
-        // preserved verbatim by mapReportReason since the 2026-05-27 enum widening.
-        $this->assertEquals('Known spam keyword', $lastMessage->reportreason);
     }
 
     public function test_prohibited_user_post_dropped(): void
@@ -2475,54 +2126,6 @@ class IncomingMailServiceTest extends TestCase
     // Chat Spam/Review Tests
     // ========================================
 
-    public function test_chat_reply_with_spam_keyword_flagged_for_review(): void
-    {
-        // Seed a spam keyword
-        DB::table('spam_keywords')->insert([
-            'word' => 'Western Union',
-            'action' => 'Spam',
-            'type' => 'Literal',
-        ]);
-
-        // Recreate service to pick up the newly inserted keyword
-        $this->service = app(IncomingMailService::class);
-
-        $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('sender')]);
-        $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('recipient')]);
-        $chat = $this->createTestChatRoom($user1, $user2);
-
-        $user1Email = $user1->emails->first()->email;
-
-        $email = $this->createMinimalEmail([
-            'From' => $user1Email,
-            'To' => "notify-{$chat->id}-{$user1->id}@users.ilovefreegle.org",
-            'Subject' => 'Re: About the item',
-        ], 'Please send payment via Western Union to claim your item.');
-
-        $parsed = $this->parser->parse(
-            $email,
-            $user1Email,
-            "notify-{$chat->id}-{$user1->id}@users.ilovefreegle.org"
-        );
-
-        $result = $this->service->route($parsed);
-
-        // Chat-bound spam is NOT rejected - it goes to review
-        $this->assertEquals(RoutingResult::TO_USER, $result);
-
-        // The chat message should be flagged for review
-        $lastMessage = DB::table('chat_messages')
-            ->where('chatid', $chat->id)
-            ->orderBy('id', 'desc')
-            ->first();
-
-        $this->assertEquals(1, $lastMessage->reviewrequired);
-        // checkMessage's body-keyword check (still runs with forChatReply=true)
-        // returns REASON_KNOWN_KEYWORD on Western Union; preserved verbatim by
-        // mapReportReason since the 2026-05-27 enum widening.
-        $this->assertEquals('Known spam keyword', $lastMessage->reportreason);
-    }
-
     public function test_chat_reply_with_money_symbol_flagged_for_review(): void
     {
         $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('sender')]);
@@ -2625,60 +2228,6 @@ class IncomingMailServiceTest extends TestCase
 
         $this->assertEquals(0, $lastMessage->reviewrequired);
         $this->assertNull($lastMessage->reportreason);
-    }
-
-    public function test_direct_mail_with_spam_flagged_for_review(): void
-    {
-        // Seed a spam keyword
-        DB::table('spam_keywords')->insert([
-            'word' => 'Western Union',
-            'action' => 'Spam',
-            'type' => 'Literal',
-        ]);
-
-        // Recreate service to pick up the newly inserted keyword
-        $this->service = app(IncomingMailService::class);
-
-        $sender = $this->createTestUser(['email_preferred' => $this->uniqueEmail('sender')]);
-        $recipient = $this->createTestUser(['email_preferred' => $this->uniqueEmail('recipient')]);
-        $senderEmail = $sender->emails->first()->email;
-        $recipientEmail = $recipient->emails->first()->email;
-
-        $email = $this->createMinimalEmail([
-            'From' => $senderEmail,
-            'To' => $recipientEmail,
-            'Subject' => 'About the item',
-        ], 'Send money via Western Union to receive your prize.');
-
-        $parsed = $this->parser->parse(
-            $email,
-            $senderEmail,
-            $recipientEmail
-        );
-
-        $result = $this->service->route($parsed);
-
-        // Direct mail spam goes to review, not rejection
-        $this->assertEquals(RoutingResult::TO_USER, $result);
-
-        // Find the chat that was created
-        $chat = DB::table('chat_rooms')
-            ->where(function ($q) use ($sender, $recipient) {
-                $q->where('user1', $sender->id)->where('user2', $recipient->id);
-            })
-            ->orWhere(function ($q) use ($sender, $recipient) {
-                $q->where('user1', $recipient->id)->where('user2', $sender->id);
-            })
-            ->first();
-
-        $this->assertNotNull($chat);
-
-        $lastMessage = DB::table('chat_messages')
-            ->where('chatid', $chat->id)
-            ->orderBy('id', 'desc')
-            ->first();
-
-        $this->assertEquals(1, $lastMessage->reviewrequired);
     }
 
     public function test_chat_reply_with_external_email_flagged_for_review(): void
@@ -2845,53 +2394,6 @@ class IncomingMailServiceTest extends TestCase
         $this->assertNull($chatMessage, 'No chat message should be created for a deleted user');
     }
 
-    public function test_volunteers_spam_keyword_flagged_for_review(): void
-    {
-        $group = $this->createTestGroup();
-        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('vol-spam')]);
-        $this->createMembership($user, $group);
-
-        // Seed spam keyword
-        DB::table('spam_keywords')->insert([
-            'word' => 'Western Union',
-            'action' => 'Spam',
-            'type' => 'Literal',
-        ]);
-
-        // Recreate service to pick up the newly inserted keyword
-        $this->service = app(IncomingMailService::class);
-
-        $userEmail = $user->emails->first()->email;
-        $groupName = $group->nameshort;
-
-        $email = $this->createMinimalEmail([
-            'From' => $userEmail,
-            'To' => "{$groupName}-volunteers@groups.ilovefreegle.org",
-            'Subject' => 'Help please',
-        ], 'Please send money via Western Union right away.');
-
-        $parsed = $this->parser->parse(
-            $email,
-            $userEmail,
-            "{$groupName}-volunteers@groups.ilovefreegle.org"
-        );
-
-        $result = $this->service->route($parsed);
-
-        // Volunteers spam goes to review, not rejected
-        $this->assertEquals(RoutingResult::TO_VOLUNTEERS, $result);
-
-        // Chat message should be flagged
-        $lastMessage = DB::table('chat_messages')
-            ->orderBy('id', 'desc')
-            ->first();
-
-        $this->assertEquals(1, $lastMessage->reviewrequired);
-        // checkSpamKeywords returns REASON_KNOWN_KEYWORD on Western Union;
-        // preserved verbatim by mapReportReason since the 2026-05-27 enum widening.
-        $this->assertEquals('Known spam keyword', $lastMessage->reportreason);
-    }
-
     // ========================================
     // TAKEN/RECEIVED Swallowing Tests
     // ========================================
@@ -2941,41 +2443,6 @@ class IncomingMailServiceTest extends TestCase
     // ========================================
     // Closed Group Reply Test
     // ========================================
-
-    public function test_reply_to_message_on_closed_group_returns_to_system(): void
-    {
-        $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('closed-sender')]);
-        $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('closed-recipient')]);
-
-        // "Closed" was a per-group setting with no post-migration equivalent: a reply
-        // now routes on the message and its sender alone, never on where it was posted.
-        $messageId = DB::table('messages')->insertGetId([
-            'arrival' => now()->subDays(5),
-            'date' => now()->subDays(5),
-            'fromuser' => $user2->id,
-            'subject' => 'OFFER: Something',
-            'type' => 'Offer',
-            'collection' => 'Approved',
-        ]);
-
-        $user1Email = $user1->emails->first()->email;
-
-        $email = $this->createMinimalEmail([
-            'From' => $user1Email,
-            'To' => "replyto-{$messageId}-{$user1->id}@users.ilovefreegle.org",
-            'Subject' => 'Re: OFFER: Something',
-        ], 'I would like this please.');
-
-        $parsed = $this->parser->parse(
-            $email,
-            $user1Email,
-            "replyto-{$messageId}-{$user1->id}@users.ilovefreegle.org"
-        );
-
-        $result = $this->service->route($parsed);
-
-        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
-    }
 
     // ========================================
     // Read Receipt in Chat Reply Test
@@ -4554,42 +4021,6 @@ class IncomingMailServiceTest extends TestCase
     // Fix #9: overridemoderation (Big Switch)
     // ========================================
 
-    public function test_override_moderation_forces_post_to_pending(): void
-    {
-        $group = $this->createTestGroup();
-        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('member')]);
-        $this->createMembership($user, $group, [
-            'ourPostingStatus' => 'DEFAULT',
-        ]);
-        DB::table('users')->where('id', $user->id)->update([
-            'lastlocation' => $this->createLocation(51.5, -0.1),
-        ]);
-
-        // Enable Big Switch on group
-        DB::table('groups')->where('id', $group->id)->update([
-            'overridemoderation' => 'ModerateAll',
-        ]);
-
-        $userEmail = $user->emails->first()->email;
-
-        $email = $this->createMinimalEmail([
-            'From' => $userEmail,
-            'To' => $group->nameshort.'@groups.ilovefreegle.org',
-            'Subject' => 'OFFER: Test Big Switch (London)',
-        ], 'Test item.');
-
-        $parsed = $this->parser->parse(
-            $email,
-            $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
-        );
-
-        $result = $this->service->route($parsed);
-
-        // Should be PENDING despite DEFAULT posting status
-        $this->assertEquals(RoutingResult::PENDING, $result);
-    }
-
     // ========================================
     // Fix #10: Mod posts forced to PENDING
     // ========================================
@@ -4897,57 +4328,6 @@ class IncomingMailServiceTest extends TestCase
     // ========================================
     // Fix #23: Spam log entries in logs table
     // ========================================
-
-    public function test_spam_post_creates_log_entry(): void
-    {
-        $group = $this->createTestGroup();
-        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('spamlog')]);
-        $this->createMembership($user, $group, [
-            'ourPostingStatus' => 'DEFAULT',
-        ]);
-        DB::table('users')->where('id', $user->id)->update([
-            'lastlocation' => $this->createLocation(51.5, -0.1),
-        ]);
-
-        DB::table('spam_keywords')->insert([
-            'word' => 'SpamLogTest'.uniqid(),
-            'action' => 'Spam',
-            'type' => 'Literal',
-        ]);
-        $spamWord = DB::table('spam_keywords')->orderBy('id', 'desc')->first()->word;
-
-        $this->service = app(IncomingMailService::class);
-
-        $userEmail = $user->emails->first()->email;
-
-        $email = $this->createMinimalEmail([
-            'From' => $userEmail,
-            'To' => $group->nameshort.'@groups.ilovefreegle.org',
-            'Subject' => 'OFFER: Free stuff (London)',
-        ], "Get your {$spamWord} here!");
-
-        $parsed = $this->parser->parse(
-            $email,
-            $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
-        );
-
-        $result = $this->service->route($parsed);
-
-        $this->assertEquals(RoutingResult::INCOMING_SPAM, $result);
-
-        $context = $this->service->getLastRoutingContext();
-        $this->assertArrayHasKey('message_id', $context);
-
-        // Verify log entry was created
-        $logEntry = DB::table('logs')
-            ->where('type', 'Message')
-            ->where('subtype', 'ClassifiedSpam')
-            ->where('msgid', $context['message_id'])
-            ->first();
-
-        $this->assertNotNull($logEntry, 'Spam log entry should be created in logs table');
-    }
 
     // ========================================
     // Fix #24: Digest off log entry

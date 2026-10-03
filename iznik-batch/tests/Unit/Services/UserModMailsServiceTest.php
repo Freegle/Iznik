@@ -28,7 +28,6 @@ class UserModMailsServiceTest extends TestCase
             'subtype' => 'Rejected',
             'byuser' => null,
             'user' => null,
-            'groupid' => null,
         ], $attrs));
     }
 
@@ -185,7 +184,7 @@ class UserModMailsServiceTest extends TestCase
     public function test_prune_deletes_old_entries(): void
     {
         $user = $this->createTestUser();
-        $logId = $this->insertLog(['user' => $user->id, 'groupid' => $group->id]);
+        $logId = $this->insertLog(['user' => $user->id]);
 
         DB::table('users_modmails')->insert([
             'userid' => $user->id,
@@ -202,7 +201,7 @@ class UserModMailsServiceTest extends TestCase
     public function test_prune_keeps_recent_entries(): void
     {
         $user = $this->createTestUser();
-        $logId = $this->insertLog(['user' => $user->id, 'groupid' => $group->id]);
+        $logId = $this->insertLog(['user' => $user->id]);
 
         DB::table('users_modmails')->insert([
             'userid' => $user->id,

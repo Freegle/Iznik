@@ -95,7 +95,6 @@ class PurgeCommandsTest extends TestCase
             ->expectsOutputToContain('Purging messages_history')
             ->expectsOutputToContain('Purging pending messages')
             ->expectsOutputToContain('Purging old drafts')
-            ->expectsOutputToContain('Purging non-Freegle messages')
             ->expectsOutputToContain('Purging deleted messages')
             ->expectsOutputToContain('Purging stranded messages')
             ->expectsOutputToContain('Purging HTML body')

@@ -43,13 +43,12 @@ class MessageRemapSubjectsServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now()->subDays(5),
             'arrival' => now()->subDays(5),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
             'locationid' => $locationId,
         ]);
         DB::table('messages_items')->insertOrIgnore(['msgid' => $message->id, 'itemid' => $itemId]);
-        MessageGroup::create([
-            'msgid' => $message->id,
+        DB::table('messages')->where('id', $message->id)->update([
             'collection' => Message::COLLECTION_APPROVED,
             'arrival' => now()->subDays(5),
         ]);
@@ -83,13 +82,12 @@ class MessageRemapSubjectsServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now()->subDays(5),
             'arrival' => now()->subDays(5),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
             'locationid' => $locationId,
         ]);
         DB::table('messages_items')->insertOrIgnore(['msgid' => $message->id, 'itemid' => $itemId]);
-        MessageGroup::create([
-            'msgid' => $message->id,
+        DB::table('messages')->where('id', $message->id)->update([
             'collection' => Message::COLLECTION_APPROVED,
             'arrival' => now()->subDays(5),
         ]);
@@ -119,12 +117,11 @@ class MessageRemapSubjectsServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now()->subDays(91),
             'arrival' => now()->subDays(91),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
             'locationid' => $locationId,
         ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
+        DB::table('messages')->where('id', $message->id)->update([
             'collection' => Message::COLLECTION_APPROVED,
             'arrival' => now()->subDays(91),
         ]);

@@ -154,7 +154,7 @@ class PurgeServiceTest extends TestCase
         $message = $this->createTestMessage($user);
 
         // Set to pending and old.
-        MessageGroup::where('msgid', $message->id)
+        DB::table('messages')->where('id', $message->id)
             ->update([
                 'collection' => Message::COLLECTION_PENDING,
                 'arrival' => now()->subDays(100),
@@ -275,7 +275,6 @@ class PurgeServiceTest extends TestCase
         $this->assertArrayHasKey('messages_history', $results);
         $this->assertArrayHasKey('pending_messages', $results);
         $this->assertArrayHasKey('old_drafts', $results);
-        $this->assertArrayHasKey('non_freegle_messages', $results);
         $this->assertArrayHasKey('deleted_messages', $results);
         $this->assertArrayHasKey('stranded_messages', $results);
         $this->assertArrayHasKey('html_body', $results);
@@ -379,32 +378,13 @@ class PurgeServiceTest extends TestCase
 
         $message = $this->createTestMessage($user);
 
-        // Remove from all groups (making it stranded).
-        MessageGroup::where('msgid', $message->id)->delete();
-
-        // Make it old enough.
-        $message->update(['arrival' => now()->subDays(5)]);
+        // Never got past Incoming (stranded), and old enough.
+        DB::table('messages')->where('id', $message->id)->update([
+            'collection' => Message::COLLECTION_INCOMING,
+            'arrival' => now()->subDays(5),
+        ]);
 
         $count = $this->service->purgeStrandedMessages();
-
-        $this->assertEquals(1, $count);
-    }
-
-    public function test_purge_non_freegle_messages(): void
-    {
-        $user = $this->createTestUser();
-
-        // Create non-Freegle group.
-        $group->update(['type' => 'Reuse']);
-
-        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
-        $message = $this->createTestMessage($user);
-
-        // Make it old.
-        MessageGroup::where('msgid', $message->id)
-            ->update(['arrival' => now()->subDays(100)]);
-
-        $count = $this->service->purgeNonFreegleMessages();
 
         $this->assertEquals(1, $count);
     }
@@ -593,22 +573,6 @@ class PurgeServiceTest extends TestCase
         $this->assertDatabaseMissing('logs_emails', ['id' => $logId]);
     }
 
-    public function test_purge_non_freegle_group_logs(): void
-    {
-        // Create non-Freegle group.
-        $group->update(['type' => 'Reuse']);
-
-        $logId = DB::table('logs')->insertGetId([
-            'type' => 'Group',
-            'timestamp' => now()->subDays(60),
-        ]);
-
-        $count = $this->service->purgeNonFreegleGroupLogs();
-
-        $this->assertGreaterThanOrEqual(1, $count);
-        $this->assertDatabaseMissing('logs', ['id' => $logId]);
-    }
-
     public function test_purge_src_logs(): void
     {
         $logId = DB::table('logs_src')->insertGetId([
@@ -690,7 +654,6 @@ class PurgeServiceTest extends TestCase
         $this->assertArrayHasKey('bounce_logs', $results);
         $this->assertArrayHasKey('old_bounce_emails', $results);
         $this->assertArrayHasKey('email_logs', $results);
-        $this->assertArrayHasKey('non_freegle_group_logs', $results);
         $this->assertArrayHasKey('orphaned_message_logs', $results);
         $this->assertArrayHasKey('src_logs', $results);
         $this->assertArrayHasKey('js_error_logs', $results);

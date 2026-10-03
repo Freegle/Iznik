@@ -1173,14 +1173,6 @@ class IncomingMailService
                 'created_new' => true,
             ]);
         } else {
-            $user = User::find($userEmail->userid);
-            if ($user === null) {
-                Log::warning('User email exists but user not found', [
-                    'email' => $envFrom,
-                ]);
-
-                return $this->dropped('User email exists but user not found for subscribe');
-            }
             // It may have matched on canon rather than on the address itself - another
             // per-group alias of the same member. Attach this one so later mail from it
             // matches outright.

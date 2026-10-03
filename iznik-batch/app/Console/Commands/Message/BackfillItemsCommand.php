@@ -128,11 +128,10 @@ class BackfillItemsCommand extends Command
 
         for ($d = $startDay; $d->lte($endDay); $d = $d->addDay()) {
             $date = $d->toDateString();
-            $result = $stats->generateForAllGroups($date, $dryRun);
+            $result = $stats->generateForDate($date, $dryRun);
             $this->line(sprintf(
-                '  %s: %d groups, %d rows %s',
+                '  %s: %d rows %s',
                 $date,
-                $result['groups'],
                 $result['rows_written'],
                 $dryRun ? 'would be written' : 'written',
             ));
