@@ -35,7 +35,7 @@ func ownWithdrawnAndPending(t *testing.T, prefix string) (withdrawn, pending uin
 	return withdrawn, pending, token
 }
 
-func feedIDs(t *testing.T, url string) map[uint64]bool {
+func browseFeedIDs(t *testing.T, url string) map[uint64]bool {
 	resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil))
 	assert.Equal(t, 200, resp.StatusCode)
 	var msgs []message.MessageSummary
@@ -49,14 +49,14 @@ func feedIDs(t *testing.T, url string) map[uint64]bool {
 
 func TestMyGroupsOmitsOwnPostWithdrawnWhilePending(t *testing.T) {
 	withdrawn, pending, token := ownWithdrawnAndPending(t, uniquePrefix("mygroups_withdrawn"))
-	ids := feedIDs(t, "/api/message/mygroups?jwt="+token)
+	ids := browseFeedIDs(t, "/api/message/mygroups?jwt="+token)
 	assert.False(t, ids[withdrawn], "a post withdrawn while Pending is not in the mygroups feed")
 	assert.True(t, ids[pending], "a post still Pending is in the mygroups feed")
 }
 
 func TestBoundsOmitsOwnPostWithdrawnWhilePending(t *testing.T) {
 	withdrawn, pending, token := ownWithdrawnAndPending(t, uniquePrefix("bounds_withdrawn"))
-	ids := feedIDs(t, "/api/message/inbounds?swlat=51.4&swlng=-0.2&nelat=51.6&nelng=0.0&jwt="+token)
+	ids := browseFeedIDs(t, "/api/message/inbounds?swlat=51.4&swlng=-0.2&nelat=51.6&nelng=0.0&jwt="+token)
 	assert.False(t, ids[withdrawn], "a post withdrawn while Pending is not in the bounds feed")
 	assert.True(t, ids[pending], "a post still Pending is in the bounds feed")
 }
