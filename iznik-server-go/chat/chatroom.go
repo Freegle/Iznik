@@ -1113,7 +1113,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				if groupName == "" {
 					groupName = chat.Namefull
 				}
-				chats[ix].Name = tnre.ReplaceAllString(chat.Fullname, "$1")
+				chats[ix].Name = tnre.ReplaceAllString(safeChatName(db, chat.Otheruid, chat.Fullname), "$1")
 				if groupName != "" {
 					chats[ix].Name += " (" + groupName + ")"
 				}
@@ -1124,7 +1124,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 					groupName = chat.Namefull
 				}
 				name := strings.TrimSpace(chat.Firstname + " " + chat.Lastname)
-				chats[ix].Name = tnre.ReplaceAllString(name, "$1")
+				chats[ix].Name = tnre.ReplaceAllString(safeChatName(db, chat.Otheruid, name), "$1")
 				if groupName != "" {
 					chats[ix].Name += " (" + groupName + ")"
 				}
@@ -1147,9 +1147,9 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 		} else {
 			if chat.Otherdeleted == nil {
 				if len(chat.Fullname) > 0 {
-					chats[ix].Name = chat.Fullname
+					chats[ix].Name = safeChatName(db, chat.Otheruid, chat.Fullname)
 				} else {
-					chats[ix].Name = chat.Firstname + " " + chat.Lastname
+					chats[ix].Name = safeChatName(db, chat.Otheruid, chat.Firstname+" "+chat.Lastname)
 				}
 			} else {
 				chats[ix].Name = "Deleted User #" + strconv.FormatUint(chat.Otheruid, 10)
@@ -2106,4 +2106,19 @@ func ChatRoomListFrom(idlist string) string {
 		" FROM chat_messages WHERE chatid IN " + idlist + " AND (reviewrequired = 0 AND reviewrejected = 0 AND (processingsuccessful = 1 OR chat_messages.userid = ?) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') OR userid = ?)) " +
 		"  SELECT * FROM cm WHERE rn = 1) rcm ON rcm.chatid = chat_rooms.id " +
 		"WHERE chat_rooms.id IN " + idlist
+}
+
+// safeChatName applies the same brand/authority-name rewrite the user profile
+// applies on display, so a chat's header and the Profile link it leads to agree.
+// The exemption lookup only happens for a suspicious name.
+func safeChatName(db *gorm.DB, userid uint64, name string) string {
+	return sanitizeChatName(name, func() bool { return user.IsNameExempt(db, userid) })
+}
+
+func sanitizeChatName(name string, isExempt func() bool) string {
+	if user.SanitizeDisplayName(name, false) == name {
+		return name
+	}
+
+	return user.SanitizeDisplayName(name, isExempt())
 }

@@ -339,3 +339,16 @@ func TestGetSnippetReportWithEmptyCommentFallsThrough(t *testing.T) {
 	assert.Equal(t, 100, len(snippet))
 	assert.Equal(t, chatmsg[:100], snippet)
 }
+
+func TestSanitizeChatName(t *testing.T) {
+	notExempt := func() bool { return false }
+	exempt := func() bool { return true }
+	notCalled := func() bool { t.Fatal("exemption looked up for a clean name"); return false }
+
+	// A brand-word name is rewritten the same way the profile rewrites it.
+	assert.Equal(t, "A freegler", sanitizeChatName("ilovefreegle", notExempt))
+	// Freegle's own accounts and moderators keep their name.
+	assert.Equal(t, "ilovefreegle", sanitizeChatName("ilovefreegle", exempt))
+	// Ordinary names pass through without a lookup.
+	assert.Equal(t, "Test User", sanitizeChatName("Test User", notCalled))
+}
