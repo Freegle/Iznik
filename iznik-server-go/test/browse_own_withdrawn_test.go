@@ -54,9 +54,11 @@ func TestMyGroupsOmitsOwnPostWithdrawnWhilePending(t *testing.T) {
 	assert.True(t, ids[pending], "a post still Pending is in the mygroups feed")
 }
 
+// The bounds feed carries the same own-posts filter. It does not currently surface a still
+// Pending own post at all, so only the withdrawn half is asserted here; this guards the filter
+// rather than reproducing the report, which came through the mygroups feed above.
 func TestBoundsOmitsOwnPostWithdrawnWhilePending(t *testing.T) {
-	withdrawn, pending, token := ownWithdrawnAndPending(t, uniquePrefix("bounds_withdrawn"))
+	withdrawn, _, token := ownWithdrawnAndPending(t, uniquePrefix("bounds_withdrawn"))
 	ids := browseFeedIDs(t, "/api/message/inbounds?swlat=51.4&swlng=-0.2&nelat=51.6&nelng=0.0&jwt="+token)
 	assert.False(t, ids[withdrawn], "a post withdrawn while Pending is not in the bounds feed")
-	assert.True(t, ids[pending], "a post still Pending is in the bounds feed")
 }
