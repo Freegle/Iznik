@@ -791,6 +791,19 @@ export async function postDiscourseReply(
  * stored excerpt/title.
  */
 export async function fetchReporterQuote(topicId: number, postNumber: number, maxLen = 300): Promise<string> {
+  return (await fetchReporterPost(topicId, postNumber, maxLen)).text
+}
+
+// An uploaded picture in a post. Emoji are images too, and say nothing.
+const POST_IMAGE = /<img\b(?![^>]*\bclass="[^"]*\bemoji\b)[^>]*>|class="lightbox"/i
+
+/**
+ * The reporting post as plain text, and whether it holds a picture. The text alone
+ * loses the picture, and a vagueness check judged on it asked two reporters (4290/12,
+ * 10216/2) for screenshots they had already posted.
+ */
+export async function fetchReporterPost(topicId: number, postNumber: number, maxLen = 300): Promise<{ text: string; hasImage: boolean }> {
+  const none = { text: '', hasImage: false }
   let apiKey: string | null = null
   try {
     const profile = JSON.parse(await readFile(PROFILE_PATH, 'utf8')) as {
@@ -798,10 +811,10 @@ export async function fetchReporterQuote(topicId: number, postNumber: number, ma
     }
     apiKey = profile.auth_pairs?.[0]?.user_api_key ?? null
   } catch { /* no profile / unreadable */ }
-  if (!apiKey) return ''
+  if (!apiKey) return none
   try {
     const resp = await fetch(`${DISCOURSE_BASE}/t/${topicId}.json`, { headers: { 'Api-Key': apiKey } })
-    if (!resp.ok) return ''
+    if (!resp.ok) return none
     const j = (await resp.json()) as {
       posts_count?: number
       highest_post_number?: number
@@ -822,7 +835,8 @@ export async function fetchReporterQuote(topicId: number, postNumber: number, ma
         if (r2.ok) cooked = ((await r2.json()) as { cooked?: string }).cooked
       }
     }
-    if (!cooked) return ''
+    if (!cooked) return none
+    const hasImage = POST_IMAGE.test(cooked.replace(/<aside[\s\S]*?<\/aside>/gi, ' '))
     let text = cooked
       .replace(/<aside[\s\S]*?<\/aside>/gi, ' ') // drop nested quote blocks — never quote a quote
       .replace(/<[^>]+>/g, ' ')
@@ -832,9 +846,9 @@ export async function fetchReporterQuote(topicId: number, postNumber: number, ma
       .replace(/\s+/g, ' ')
       .trim()
     if (text.length > maxLen) text = text.slice(0, maxLen).replace(/\s+\S*$/, '') + '…'
-    return text
+    return { text, hasImage }
   } catch {
-    return ''
+    return none
   }
 }
 
@@ -1322,6 +1336,7 @@ async function refuseUngroundedPr(
 
 export const questionAnswerDeps = {
   fetchReporterQuote,
+  fetchReporterPost,
   postDiscourseReply,
 }
 
@@ -4248,8 +4263,16 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           }
           let quote = ''
           // Judged on the whole post: the line that gives it away is often near the end.
-          try { quote = (await questionAnswerDeps.fetchReporterQuote(Number(b.topic), Number(b.post), 4000)) ?? '' } catch { quote = '' }
-          const specifics = quote.trim() ? assessReportSpecifics({ text: quote, anchorText: `${b.excerpt ?? ''} ${quote}` }) : null
+          // And with its pictures: the plain text loses a screenshot, which counts.
+          let hasImage = false
+          try {
+            const got = await questionAnswerDeps.fetchReporterPost(Number(b.topic), Number(b.post), 4000)
+            quote = got?.text ?? ''
+            hasImage = got?.hasImage === true
+          } catch { quote = '' }
+          const specifics = quote.trim()
+            ? assessReportSpecifics({ text: quote, anchorText: `${b.excerpt ?? ''} ${quote}`, hasScreenshot: hasImage })
+            : null
           if (!specifics?.isVague) {
             if (specifics) recheckedSpecific.add(key)
             dispatchable.push(b)
