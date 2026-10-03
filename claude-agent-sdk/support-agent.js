@@ -10,8 +10,11 @@
 
 const { query, createSdkMcpServer } = require('@anthropic-ai/claude-agent-sdk')
 const { buildTools, audit } = require('./tools')
-const { driverMode, billableCostUsd } = require('./auth')
+const { driverMode, billableCostUsd, FREEGLE_API_URL } = require('./auth')
 const { systemPrompt } = require('./prompt')
+const { subscriptionToken, fetchQuota, quotaFields, transcriptEntries, serialiseTranscript, recordRun } = require('./run-record')
+// Where runs are recorded: the same Go API that verifies the caller.
+const API_URL = process.env.API_URL || FREEGLE_API_URL
 
 // Use an unpinned alias, not a dated snapshot: snapshots get retired and then
 // the SDK 404s on the model. On the Claude subscription (session mode) we can
@@ -66,10 +69,26 @@ async function runSupportQuery({ query: userQuery, userId, jwt, agentSessionId, 
   let costUsd = 0
   let usage = {}
   let resultSessionId = agentSessionId || null
+  let runId = null
+  let model = MODEL
+  let status = 'Success'
+  let errorText = ''
+  const transcript = []
+  const started = Date.now()
+
+  // The subscription's utilisation before and after, so each run carries what
+  // it used. Fetched alongside the first model call rather than ahead of it,
+  // so the volunteer does not wait for it.
+  const quotaToken = subscriptionToken(driverMode())
+  const quotaBefore = fetchQuota(quotaToken)
 
   progress('status', `Investigating (driver=${driverMode()})…`)
   try {
     for await (const message of query({ prompt: userQuery, options })) {
+      transcript.push(...transcriptEntries(message))
+      if (message.type === 'system' && message.subtype === 'init' && message.model) {
+        model = message.model
+      }
       if (message.type === 'assistant') {
         for (const block of message.message?.content || []) {
           if (block.type === 'tool_use') {
@@ -89,17 +108,48 @@ async function runSupportQuery({ query: userQuery, userId, jwt, agentSessionId, 
             cacheRead: message.usage?.cache_read_input_tokens || 0,
             durationMs: message.duration_ms || 0,
           }
-          resultSessionId = message.sessionId || resultSessionId
+          resultSessionId = message.session_id || resultSessionId
         } else {
-          analysis = `Investigation error: ${(message.errors || []).map((e) => e.message).join('; ') || message.subtype}`
+          status = 'Error'
+          errorText = (message.errors || []).map((e) => (e && e.message) || String(e)).join('; ') || message.subtype
+          analysis = `Investigation error: ${errorText}`
+          resultSessionId = message.session_id || resultSessionId
         }
       }
     }
+  } catch (e) {
+    status = 'Error'
+    errorText = e.message || String(e)
+    throw e
   } finally {
     cleanup()
+    // Record even a run that threw, so failures can be found as well as poor
+    // answers. The run id goes back to the browser for the thumbs up/down.
+    runId = await recordRun({
+      apiUrl: API_URL,
+      jwt,
+      run: {
+        userid: userId || 0,
+        sessionid: resultSessionId || '',
+        query: String(userQuery || ''),
+        analysis,
+        transcript: serialiseTranscript(transcript),
+        status,
+        error: errorText,
+        driver: driverMode(),
+        model,
+        input_tokens: usage.inputTokens || 0,
+        output_tokens: usage.outputTokens || 0,
+        cache_creation_tokens: usage.cacheCreation || 0,
+        cache_read_tokens: usage.cacheRead || 0,
+        duration_ms: usage.durationMs || Date.now() - started,
+        cost_usd: costUsd,
+        ...quotaFields(await quotaBefore, await fetchQuota(quotaToken)),
+      },
+    })
   }
 
-  return { analysis, costUsd, usage, claudeSessionId: resultSessionId, isNewSession, driver: driverMode() }
+  return { analysis, costUsd, usage, claudeSessionId: resultSessionId, isNewSession, driver: driverMode(), runId }
 }
 
 module.exports = { runSupportQuery, driverMode }

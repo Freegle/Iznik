@@ -102,3 +102,58 @@ describe('create_pr live-evidence gate', () => {
     expect(closed()).toHaveLength(0)
   })
 })
+
+// #1664 was closed by a reviewer for lack of evidence, then reopened by the monitor's retry
+// with no word about what had changed. A reopen is allowed, but it has to explain itself.
+describe('create_pr on a reopened PR', () => {
+  const timeline = (events: Array<{ event: string; created_at: string }>, comments: Array<{ created_at: string }>) => {
+    return async (args: string[]) => {
+      ghCalls.push(args)
+      const path = args.find(a => a.startsWith('repos/')) ?? ''
+      if (args[0] === 'pr' && args[1] === 'view') {
+        return { code: 0, stderr: '', stdout: JSON.stringify({
+          number: 1700, title: 't', url: 'u', author: {}, headRefName: 'fix/x', files: [{ path: 'a.php' }], body: prBody,
+        }) }
+      }
+      if (path.endsWith('/events')) return { code: 0, stderr: '', stdout: JSON.stringify(events) }
+      if (path.endsWith('/comments')) return { code: 0, stderr: '', stdout: JSON.stringify(comments) }
+      if (path.endsWith('/commits')) return { code: 0, stderr: '', stdout: JSON.stringify([
+        { commit: { message: 'fix(x): first attempt', committer: { date: '2026-10-02T10:00:00Z' } } },
+        { commit: { message: 'fix(x): guard a repeat confirm\n\nbody', committer: { date: '2026-10-03T12:00:00Z' } } },
+      ]) }
+      return { code: 0, stderr: '', stdout: '' }
+    }
+  }
+  const posted = () => ghCalls.filter(a => a[0] === 'pr' && a[1] === 'comment')
+
+  it('explains a reopen nobody has commented on: what changed and the evidence', async () => {
+    const mod = await import('../actions/index.js')
+    vi.spyOn(mod.prGateDeps, 'gh').mockImplementation(timeline(
+      [{ event: 'closed', created_at: '2026-10-02T20:00:00Z' }, { event: 'reopened', created_at: '2026-10-03T12:40:00Z' }],
+      [{ created_at: '2026-10-02T20:00:00Z' }],
+    ))
+    await createPr({ prNumber: 1700, topic: 9600, post: 2 }, {})
+    expect(posted()).toHaveLength(1)
+    const body = posted()[0].join(' ')
+    expect(body).toContain('guard a repeat confirm')
+    expect(body).not.toContain('first attempt')
+    expect(body).toMatch(/Checked against production/)
+  })
+
+  it('leaves a reopen alone once someone has explained it', async () => {
+    const mod = await import('../actions/index.js')
+    vi.spyOn(mod.prGateDeps, 'gh').mockImplementation(timeline(
+      [{ event: 'closed', created_at: '2026-10-02T20:00:00Z' }, { event: 'reopened', created_at: '2026-10-03T12:40:00Z' }],
+      [{ created_at: '2026-10-03T12:45:00Z' }],
+    ))
+    await createPr({ prNumber: 1700, topic: 9600, post: 2 }, {})
+    expect(posted()).toHaveLength(0)
+  })
+
+  it('does nothing for a PR that was never closed', async () => {
+    const mod = await import('../actions/index.js')
+    vi.spyOn(mod.prGateDeps, 'gh').mockImplementation(timeline([], []))
+    await createPr({ prNumber: 1700, topic: 9600, post: 2 }, {})
+    expect(posted()).toHaveLength(0)
+  })
+})

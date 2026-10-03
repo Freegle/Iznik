@@ -145,6 +145,9 @@ func Groups(c *fiber.Ctx) error {
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? " +
 		"WHERE fromuser = ? AND messages_groups.arrival >= ? " +
 		"AND messages_outcomes.id IS NULL " +
+		// A post withdrawn while Pending keeps its group row as deleted=1 and gets no
+		// outcome, so the outcome check alone let it back in (Discourse 10216/2).
+		"AND messages_groups.deleted = 0 " +
 		// This arm exists for posts that are not in messages_spatial yet (Pending, or
 		// brand-new and awaiting the spatial insert). Once a post IS in spatial the arm
 		// above serves it, so admitting it here too handed the client duplicate rows

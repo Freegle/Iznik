@@ -43,6 +43,7 @@ import type ShortlinksAPI from './ShortlinksAPI.js'
 import type SpammersAPI from './SpammersAPI.js'
 import type StatusAPI from './StatusAPI.js'
 import type StoriesAPI from './StoriesAPI.js'
+import type SupportAIAPI from './SupportAIAPI.js'
 import type SystemLogsAPI from './SystemLogsAPI.js'
 import type TeamAPI from './TeamAPI.js'
 import type TrystAPI from './TrystAPI.js'
@@ -87,6 +88,7 @@ interface API {
   spammers: SpammersAPI
   status: StatusAPI
   stories: StoriesAPI
+  supportai: SupportAIAPI
   systemlogs: SystemLogsAPI
   team: TeamAPI
   tryst: TrystAPI

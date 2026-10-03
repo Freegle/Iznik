@@ -179,6 +179,10 @@ describe('ModSupportAIAssistant', () => {
             template: '<div class="notice-message"><slot /></div>',
             props: ['variant'],
           },
+          ModSupportAIRating: {
+            template: '<div class="ai-rating-stub" :data-run-id="runId" />',
+            props: ['runId'],
+          },
         },
       },
     })
@@ -1081,6 +1085,27 @@ describe('ModSupportAIAssistant', () => {
 
       expect(wrapper.text()).toContain('Cost: $0.0120')
       expect(wrapper.text()).toContain('100 in / 40 out tokens')
+      // Not recorded, so nothing to rate.
+      expect(wrapper.find('.ai-rating-stub').exists()).toBe(false)
+    })
+
+    it('offers a thumbs up/down on an answer the helper recorded', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.selectedUser = { id: 7, displayname: 'User Seven' }
+      await nextTick()
+
+      mockFetch.mockReset()
+      mockFetch.mockResolvedValue(
+        sseResponse([{ type: 'result', analysis: 'Answer.', runId: 42 }])
+      )
+
+      wrapper.vm.query = 'Why blocked?'
+      await wrapper.vm.submitQuery()
+      await flushPromises()
+
+      const rating = wrapper.find('.ai-rating-stub')
+      expect(rating.exists()).toBe(true)
+      expect(rating.attributes('data-run-id')).toBe('42')
     })
 
     it('does not submit when no member is selected', async () => {
