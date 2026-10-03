@@ -3078,11 +3078,27 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return err
 	}
 
+	// With no community in the request, Support or Admin access resolves to every copy of
+	// the post. A holder who moderates some of those communities is acting as their
+	// moderator there, so the hold stays on those copies (Discourse 10102/14: a Support
+	// user's hold landed on another community's copy). Every copy is only the fallback,
+	// for someone who moderates none of them.
+	// The role is read from memberships directly: auth.IsModOfGroup answers yes for every
+	// group to a Support or Admin user, which is the very widening this undoes.
+	if reqGid == 0 && len(authorizedGroups) > 0 {
+		var mine []uint64
+		db.Table("memberships").Select("groupid").
+			Where("userid = ? AND groupid IN ? AND role IN ?", myid, authorizedGroups,
+				[]string{utils.ROLE_MODERATOR, utils.ROLE_OWNER}).
+			Scan(&mine)
+		if len(mine) > 0 {
+			authorizedGroups = mine
+		}
+	}
+
 	// A hold is a pending-queue concept, so only Pending copies take one. A copy that is
-	// already Approved (auto-approval or another moderator got there first, or an
-	// admin/support hold fanning out over every group on the post) would otherwise show
-	// "Held by" on a live post, possibly held by someone who does not moderate that group
-	// (Discourse 10102/14). Back to pending sets its hold itself, before flipping the copy.
+	// already Approved would otherwise show "Held by" on a live post. Back to pending sets
+	// its hold itself, before flipping the copy.
 	var pendingGroups []uint64
 	db.Table("messages_groups").Select("groupid").
 		Where("msgid = ? AND groupid IN ? AND collection = ?", req.ID, authorizedGroups, utils.COLLECTION_PENDING).

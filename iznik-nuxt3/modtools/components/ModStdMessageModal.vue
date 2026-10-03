@@ -33,7 +33,12 @@
         class="d-flex justify-content-start"
       >
         <!-- eslint-disable-next-line -->
-        <b-form-select v-model="message.type" :options="typeOptions" class="type me-1" size="lg" />
+        <b-form-select
+          v-model="message.type"
+          :options="typeOptions"
+          class="type me-1"
+          size="lg"
+        />
         <!-- eslint-disable-next-line -->
         <b-form-input v-model="message.item.name" size="lg" class="me-1" />
         <b-input-group>
@@ -1062,8 +1067,11 @@ async function process(callback) {
       case 'Hold Message':
         changingHold.value = true
 
+        // The community matters: without it the server holds every copy of a
+        // rippled post (Discourse 10102/14).
         await messageStore.hold({
           id: message.value.id,
+          groupid: groupid.value,
         })
 
         changingHold.value = false
