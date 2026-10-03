@@ -11166,3 +11166,37 @@ func TestModerationAllowedWhenHeldBySelf(t *testing.T) {
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&collection)
 	assert.Equal(t, utils.COLLECTION_REJECTED, collection)
 }
+
+// A Hold that lands on a copy already Approved (auto-approval or another mod got
+// there first, or an admin/support hold fans out over every group on the post) must
+// not leave the live post showing "Held by" someone, and must not hold a copy on a
+// group where the holder is not a moderator (Discourse 10102/14).
+func TestPostMessageHoldIgnoresApprovedCopy(t *testing.T) {
+	prefix := uniquePrefix("hold_appr")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	_, supportToken := CreateTestSession(t, supportID)
+
+	// Pending on A, already Approved on B.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Hold"})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", supportToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var heldA, heldB *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&heldA)
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldB)
+	assert.NotNil(t, heldA, "the pending copy is held")
+	assert.Nil(t, heldB, "the approved copy must not be held")
+}

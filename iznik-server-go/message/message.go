@@ -3078,11 +3078,21 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return err
 	}
 
-	// Per-group hold: set heldby on the authorized groups' rows.
-	// Identical golden to
-	// 1a12de474647 (handleBackToPending); converted together per gate (h).
-	db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
-		Update("heldby", myid)
+	// A hold is a pending-queue concept, so only Pending copies take one. A copy that is
+	// already Approved (auto-approval or another moderator got there first, or an
+	// admin/support hold fanning out over every group on the post) would otherwise show
+	// "Held by" on a live post, possibly held by someone who does not moderate that group
+	// (Discourse 10102/14). Back to pending sets its hold itself, before flipping the copy.
+	var pendingGroups []uint64
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND groupid IN ? AND collection = ?", req.ID, authorizedGroups, utils.COLLECTION_PENDING).
+		Scan(&pendingGroups)
+	authorizedGroups = pendingGroups
+
+	if len(authorizedGroups) > 0 {
+		db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
+			Update("heldby", myid)
+	}
 
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
