@@ -120,3 +120,10 @@ server is `dev`. Server-side secrets go in `.env` (development, see `.env.exampl
 are read through `iznik-batch/config/freegle.php` rather than `env()` at the point of use.
 `.env.example` also holds settings for the local stack itself that are not services, such
 as `PERCONA_STORAGE`, which keeps the development database in memory or on disk.
+
+## Experiment switches
+
+`GROUPLESS` in `nuxt.config.ts` (and `CHAT_WARN_NOT_HOLD`, `REPLY_GATE_AFTER`, `REPORTS_RESOLVE`
+for the API and batch) are the self-moderating community thought experiment's switches. They
+are not external services; they are listed in
+[deployment-switches.md](deployment-switches.md#self-moderating-community-experiment-switches).

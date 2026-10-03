@@ -375,6 +375,8 @@ export default defineNuxtConfig({
       GOOGLE_CLIENT_ID: config.GOOGLE_CLIENT_ID,
       GOOGLE_IOS_CLIENT_ID: config.GOOGLE_IOS_CLIENT_ID,
       USER_SITE: config.USER_SITE,
+      // Experiment: a member site with no communities (composables/useGroupless.js).
+      GROUPLESS: process.env.GROUPLESS || '',
       USER_DOMAIN: config.USER_DOMAIN,
       MODTOOLS_SITE: config.MODTOOLS_SITE,
       IMAGE_SITE: config.IMAGE_SITE,
