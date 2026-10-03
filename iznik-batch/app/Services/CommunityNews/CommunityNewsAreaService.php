@@ -23,7 +23,8 @@ use Illuminate\Support\Facades\Schema;
  * into one 400-group component spanning 300+ miles. Town anchoring can't chain,
  * so it still works when all groups are active (~240 areas). A group with no
  * town within the cap — and every group, when the towns table is empty (dev) —
- * stands alone as its own area, named from the group.
+ * stands alone as its own area, named from the group. A town in a different
+ * nation from the group (Wrexham for Oswestry) is never eligible.
  *
  * Areas are keyed by `anchorgroupid` (the lowest enabled groupid on the town)
  * so a re-run upserts the same row and keeps its cadence timers.
@@ -125,10 +126,22 @@ class CommunityNewsAreaService
         // alone. O(groups × towns) haversines — trivial at this scale.
         $byTown = [];
         $standalone = [];
+        $townNations = [];
         foreach ($groups as $g) {
             $best = null;
             $bestDist = INF;
+            $groupNation = $this->nationAt((float) $g->lat, (float) $g->lng);
             foreach ($towns as $t) {
+                // Never anchor across a national border: Oswestry (England)
+                // must not be credited to Wrexham (Wales) 12.7 miles away.
+                // Unknown nation on either side (rough outlines, no polygon)
+                // leaves the town eligible, as before.
+                if ($groupNation !== null) {
+                    $townNation = $townNations[$t->id] ??= ($this->nationAt((float) $t->lat, (float) $t->lng) ?? '');
+                    if ($townNation !== '' && $townNation !== $groupNation) {
+                        continue;
+                    }
+                }
                 $d = $this->haversineMiles((float) $g->lat, (float) $g->lng, (float) $t->lat, (float) $t->lng);
                 if ($d < $bestDist) {
                     $bestDist = $d;
@@ -209,6 +222,54 @@ class CommunityNewsAreaService
         }
 
         return $areas;
+    }
+
+    /**
+     * The nation (England, Scotland, Wales, Northern Ireland) containing a
+     * point, or null if unknown. The `CUN` country outlines are only drawn to a
+     * few kilometres, so near a border they are not trusted: the detailed Welsh
+     * Assembly (WAC/WAE) and Scottish Parliament (SPC/SPE) polygons decide
+     * Wales and Scotland first, and a point the rough outline puts in Wales or
+     * Scotland but the detailed ones do not is England if a Westminster
+     * constituency (WMC) contains it. Otherwise the rough outline is used. The
+     * all-encompassing United Kingdom row is excluded or it would match
+     * everything. Geometries are SRID 3857 holding WGS84 degrees.
+     */
+    protected function nationAt(float $lat, float $lng): ?string
+    {
+        $in = function (array $codes) use ($lat, $lng): bool {
+            $marks = implode(',', array_fill(0, count($codes), '?'));
+
+            return (bool) DB::selectOne(
+                "SELECT id FROM authorities
+                 WHERE area_code IN ($marks) AND ST_Contains(polygon, ST_SRID(POINT(?, ?), 3857))
+                 LIMIT 1",
+                [...$codes, $lng, $lat]
+            );
+        };
+
+        if ($in(['WAC', 'WAE'])) {
+            return 'Wales';
+        }
+
+        if ($in(['SPC', 'SPE'])) {
+            return 'Scotland';
+        }
+
+        $row = DB::selectOne(
+            "SELECT name FROM authorities
+             WHERE area_code = 'CUN' AND name <> 'United Kingdom'
+             AND ST_Contains(polygon, ST_SRID(POINT(?, ?), 3857))
+             LIMIT 1",
+            [$lng, $lat]
+        );
+        $rough = $row ? (string) $row->name : null;
+
+        if (($rough === 'Wales' || $rough === 'Scotland') && $in(['WMC'])) {
+            return 'England';
+        }
+
+        return $rough;
     }
 
     public function haversineMiles(float $lat1, float $lng1, float $lat2, float $lng2): float
