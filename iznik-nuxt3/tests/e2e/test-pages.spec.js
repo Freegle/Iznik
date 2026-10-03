@@ -25,6 +25,7 @@ const publicPages = [
   { path: '/security', title: 'Security Policy' },
   { path: '/partnerships', title: 'Partnerships' },
   { path: '/donated', title: 'Donate to Freegle' },
+  { path: '/rules', title: 'Rules' },
 ]
 
 test.describe('Public pages tests', () => {
