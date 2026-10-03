@@ -108,6 +108,10 @@ const messages = computed(() => {
   // is virtual — its messages are Approved on the group with a pending row
   // in messages_edits — so a string-equality filter would strip everything.
   const REAL_COLLECTIONS = ['Pending', 'Approved', 'Spam', 'Rejected']
+  const authStore = useAuthStore()
+  const moderates = (gid) =>
+    typeof authStore?.member !== 'function' ||
+    ['Moderator', 'Owner'].includes(authStore.member(gid))
   if (collection.value && REAL_COLLECTIONS.includes(collection.value)) {
     const allowed =
       collection.value === 'Pending'
@@ -120,7 +124,11 @@ const messages = computed(() => {
         const g = m.groups.find((g) => parseInt(g.groupid) === contextGid)
         return g ? allowed.includes(g.collection) : true
       }
-      return m.groups.some((g) => allowed.includes(g.collection))
+      // Across all my communities, only a copy on a group I moderate keeps the post: the
+      // pending copies a rippled post has elsewhere are other moderators' work.
+      return m.groups.some(
+        (g) => allowed.includes(g.collection) && moderates(g.groupid)
+      )
     })
   }
 
