@@ -50,11 +50,11 @@ class CommunityNewsAreaServiceTest extends TestCase
         return (int) DB::table('towns')->insertGetId(['name' => $name, 'lat' => $lat, 'lng' => $lng]);
     }
 
-    private function nation(string $name, string $wkt): int
+    private function nation(string $name, string $wkt, string $code = 'CUN'): int
     {
         return (int) DB::table('authorities')->insertGetId([
             'name' => $name,
-            'area_code' => 'CUN',
+            'area_code' => $code,
             'polygon' => DB::raw("ST_GeomFromText('$wkt', 3857)"),
         ]);
     }
@@ -83,6 +83,30 @@ class CommunityNewsAreaServiceTest extends TestCase
 
         $this->assertSame('Shrewsburylike', $o->name);
         $this->assertSame('Wrexhamlike', $w->name);
+    }
+
+    public function test_detailed_polygons_override_rough_outline_near_border(): void
+    {
+        // The rough country outlines overreach: here the rough Wales outline
+        // swallows an English group (Oswestry) and its English neighbour town.
+        // The detailed Welsh Assembly polygon (WAE) stops at lng -60, and a
+        // Westminster constituency (WMC) covers the English side, so the group
+        // is England and must anchor to the English town, not Wrexham.
+        DB::table('authorities')->whereIn('area_code', ['CUN', 'WAE', 'WMC'])
+            ->where('name', 'like', 'Detail%')->delete();
+        $this->nation('Wales', 'POLYGON((-62 50, -57 50, -57 52, -62 52, -62 50))');
+        $this->nation('Detail Wales', 'POLYGON((-62 50, -60 50, -60 52, -62 52, -62 50))', 'WAE');
+        $this->nation('Detail Constituency', 'POLYGON((-60 50, -57 50, -57 52, -60 52, -60 50))', 'WMC');
+
+        $this->town('Wrexhamlike', 51.0, -60.15);    // Welsh side, ~7 miles from the group
+        $this->town('Shrewsburylike', 51.0, -59.55); // English side, ~15 miles away
+
+        $oswestry = $this->createTestGroup(['lat' => 51.0, 'lng' => -59.95, 'settings' => ['communitynews' => 1]]);
+
+        config(['freegle.communitynews.area_cluster_miles' => 20]);
+        $this->svc()->rebuildAreas();
+
+        $this->assertSame('Shrewsburylike', $this->areasContaining([$oswestry->id])->first()->name);
     }
 
     public function test_groups_assign_to_nearest_town(): void

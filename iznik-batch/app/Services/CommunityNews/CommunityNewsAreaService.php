@@ -137,8 +137,8 @@ class CommunityNewsAreaService
                 // Unknown nation on either side (rough outlines, no polygon)
                 // leaves the town eligible, as before.
                 if ($groupNation !== null) {
-                    $townNation = $townNations[$t->id] ??= ($this->nationAt((float) $t->lat, (float) $t->lng) ?? 0);
-                    if ($townNation !== 0 && $townNation !== $groupNation) {
+                    $townNation = $townNations[$t->id] ??= ($this->nationAt((float) $t->lat, (float) $t->lng) ?? '');
+                    if ($townNation !== '' && $townNation !== $groupNation) {
                         continue;
                     }
                 }
@@ -226,21 +226,50 @@ class CommunityNewsAreaService
 
     /**
      * The nation (England, Scotland, Wales, Northern Ireland) containing a
-     * point, from the `CUN` country polygons, or null if none does. The
+     * point, or null if unknown. The `CUN` country outlines are only drawn to a
+     * few kilometres, so near a border they are not trusted: the detailed Welsh
+     * Assembly (WAC/WAE) and Scottish Parliament (SPC/SPE) polygons decide
+     * Wales and Scotland first, and a point the rough outline puts in Wales or
+     * Scotland but the detailed ones do not is England if a Westminster
+     * constituency (WMC) contains it. Otherwise the rough outline is used. The
      * all-encompassing United Kingdom row is excluded or it would match
      * everything. Geometries are SRID 3857 holding WGS84 degrees.
      */
-    protected function nationAt(float $lat, float $lng): ?int
+    protected function nationAt(float $lat, float $lng): ?string
     {
+        $in = function (array $codes) use ($lat, $lng): bool {
+            $marks = implode(',', array_fill(0, count($codes), '?'));
+
+            return (bool) DB::selectOne(
+                "SELECT id FROM authorities
+                 WHERE area_code IN ($marks) AND ST_Contains(polygon, ST_SRID(POINT(?, ?), 3857))
+                 LIMIT 1",
+                [...$codes, $lng, $lat]
+            );
+        };
+
+        if ($in(['WAC', 'WAE'])) {
+            return 'Wales';
+        }
+
+        if ($in(['SPC', 'SPE'])) {
+            return 'Scotland';
+        }
+
         $row = DB::selectOne(
-            "SELECT id FROM authorities
+            "SELECT name FROM authorities
              WHERE area_code = 'CUN' AND name <> 'United Kingdom'
              AND ST_Contains(polygon, ST_SRID(POINT(?, ?), 3857))
              LIMIT 1",
             [$lng, $lat]
         );
+        $rough = $row ? (string) $row->name : null;
 
-        return $row ? (int) $row->id : null;
+        if (($rough === 'Wales' || $rough === 'Scotland') && $in(['WMC'])) {
+            return 'England';
+        }
+
+        return $rough;
     }
 
     public function haversineMiles(float $lat1, float $lng1, float $lat2, float $lng2): float
