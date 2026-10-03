@@ -629,6 +629,25 @@ describe('ModStdMessageModal', () => {
       expect(wrapper.find('textarea.seg-text').exists()).toBe(true)
     })
 
+    // Discourse 10102/14: without a community the server applied a Support user's hold to
+    // every copy of the post, so another community saw it "Held by" someone not its moderator.
+    it('holds only the copy for the community it was sent from', async () => {
+      const wrapper = mountComponent(
+        {},
+        { stdmsgData: createStdmsg({ action: 'Hold Message' }) }
+      )
+      await wrapper.vm.fillin()
+      // Long enough to get past the "reply too short" check.
+      wrapper.vm.body +=
+        ' We are holding this post while we check a couple of details with you.'
+      await wrapper.vm.process()
+
+      expect(mockMessageStore.hold).toHaveBeenCalled()
+      const arg = mockMessageStore.hold.mock.calls[0][0]
+      expect(arg.groupid).toBeDefined()
+      expect(arg.groupid).not.toBeNull()
+    })
+
     it('includes edits to the fixed prose in the message that is sent', async () => {
       const wrapper = mountComponent({}, { stdmsgData: directiveStdmsg() })
       await wrapper.vm.fillin()

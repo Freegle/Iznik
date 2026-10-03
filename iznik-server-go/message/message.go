@@ -3078,11 +3078,37 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return err
 	}
 
-	// Per-group hold: set heldby on the authorized groups' rows.
-	// Identical golden to
-	// 1a12de474647 (handleBackToPending); converted together per gate (h).
-	db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
-		Update("heldby", myid)
+	// With no community in the request, Support or Admin access resolves to every copy of
+	// the post. A holder who moderates some of those communities is acting as their
+	// moderator there, so the hold stays on those copies (Discourse 10102/14: a Support
+	// user's hold landed on another community's copy). Every copy is only the fallback,
+	// for someone who moderates none of them.
+	// The role is read from memberships directly: auth.IsModOfGroup answers yes for every
+	// group to a Support or Admin user, which is the very widening this undoes.
+	if reqGid == 0 && len(authorizedGroups) > 0 {
+		var mine []uint64
+		db.Table("memberships").Select("groupid").
+			Where("userid = ? AND groupid IN ? AND role IN ?", myid, authorizedGroups,
+				[]string{utils.ROLE_MODERATOR, utils.ROLE_OWNER}).
+			Scan(&mine)
+		if len(mine) > 0 {
+			authorizedGroups = mine
+		}
+	}
+
+	// A hold is a pending-queue concept, so only Pending copies take one. A copy that is
+	// already Approved would otherwise show "Held by" on a live post. Back to pending sets
+	// its hold itself, before flipping the copy.
+	var pendingGroups []uint64
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND groupid IN ? AND collection = ?", req.ID, authorizedGroups, utils.COLLECTION_PENDING).
+		Scan(&pendingGroups)
+	authorizedGroups = pendingGroups
+
+	if len(authorizedGroups) > 0 {
+		db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
+			Update("heldby", myid)
+	}
 
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
@@ -3128,9 +3154,9 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		return err
 	}
 
-	// Per-group hold for re-review.
-	// Identical golden to
-	// 8c1766162f86 (handleHold); converted together per gate (h).
+	// Per-group hold for re-review. Unlike handleHold this is not limited to Pending
+	// copies: the copy is about to be flipped back to Pending below, so setting the hold
+	// first is what stops it ever showing as an Approved copy "Held by" someone.
 	db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
 		Update("heldby", myid)
 

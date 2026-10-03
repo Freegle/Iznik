@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-30
+last_reviewed: 2026-10-03
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
