@@ -10,6 +10,7 @@
 
 import AIImagesAPI from './AIImagesAPI.js'
 import AddressAPI from './AddressAPI.js'
+import AssistantAPI from './AssistantAPI.js'
 import AdminsAPI from './AdminsAPI.js'
 import AlertAPI from './AlertAPI.js'
 import AuthorityAPI from './AuthorityAPI.js'
@@ -65,6 +66,7 @@ export default (config) => {
   return {
     aiimages: new AIImagesAPI(options),
     address: new AddressAPI(options),
+    assistant: new AssistantAPI(options),
     admins: new AdminsAPI(options),
     alert: new AlertAPI(options),
     authority: new AuthorityAPI(options),

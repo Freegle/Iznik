@@ -851,6 +851,16 @@ services:
       - DONATION_TARGET=${DONATION_TARGET:-}
       - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
+      # Freegle chat assistant: the model composes the words; no key means template lines.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_AUTH_TOKEN=${ASSISTANT_GATEWAY_TOKEN:-}
+      - ANTHROPIC_BASE_URL=${ASSISTANT_GATEWAY_URL:-}
+      - ASSISTANT_SYSTEM_PREFIX=${ASSISTANT_SYSTEM_PREFIX:-}
+      - ASSISTANT_MODEL=${ASSISTANT_MODEL:-claude-opus-5}
+      - ASSISTANT_EFFORT=${ASSISTANT_EFFORT:-low}
+      - ASSISTANT_PER_HOUR=${ASSISTANT_PER_HOUR:-60}
+      - ASSISTANT_ANON_DAILY_CAP=${ASSISTANT_ANON_DAILY_CAP:-500}
+      - ASSISTANT_DAILY_CAP=${ASSISTANT_DAILY_CAP:-20000}
       # Native ONNX pool: set both vars to bypass the HTTP sidecar for queries.
       # Model cache volume is shared with embedding-sidecar so no re-download needed.
       - EMBEDDING_ONNX_MODEL_PATH=${EMBEDDING_ONNX_MODEL_PATH:-}

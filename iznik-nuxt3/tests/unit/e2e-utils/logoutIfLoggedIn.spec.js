@@ -43,7 +43,10 @@ function makePage(url = 'http://example.com/', overrides = {}) {
     waitForLoadState: waitForLoadStateMock,
     waitForURL: waitForURLMock,
     evaluate: vi.fn().mockResolvedValue(undefined),
-    context: () => ({ clearCookies: vi.fn().mockResolvedValue(undefined) }),
+    context: () => ({
+      clearCookies: vi.fn().mockResolvedValue(undefined),
+      addCookies: vi.fn().mockResolvedValue(undefined),
+    }),
     locator: vi.fn().mockImplementation((selector) => {
       if (selector === '#menu-option-logout') {
         return makeLocator(false)

@@ -3612,6 +3612,27 @@ type trystResponse struct {
 //	400: errorResponse
 //	401: errorResponse
 
+// swagger:route POST /assistant/turn assistant assistantTurn
+// One turn of the Freegle chat assistant, streamed as server-sent events
+//
+// Responses:
+//
+//	200: genericResponse
+
+// swagger:route GET /assistant/workflow assistant assistantWorkflow
+// The ai-flower workflow definition the assistant runs
+//
+// Responses:
+//
+//	200: genericResponse
+
+// swagger:route GET /assistant/widgets assistant assistantWidgets
+// Chips and cards attached to assistant chat messages
+//
+// Responses:
+//
+//	200: genericResponse
+
 // swagger:route POST /tryst tryst postTryst
 // Tryst actions
 //

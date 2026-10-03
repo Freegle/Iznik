@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref, reactive } from 'vue'
 
-import ChitchatPage from '~/pages/chitchat/[[id]].vue'
+import ChitchatPage from '~/components/ClassicChitChat.vue'
 
 // Mock all component imports BEFORE the page loads to prevent Nuxt internal imports.
 vi.mock('~/components/NewsCommunityEventVolunteerSummary', () => ({

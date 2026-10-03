@@ -1,3 +1,4 @@
+import { useUiMode } from '~/composables/useUiMode'
 import pluralize from 'pluralize'
 import { useMiscStore } from '~/stores/misc'
 import { useNewsfeedStore } from '~/stores/newsfeed'
@@ -261,6 +262,13 @@ export function useNavbar() {
     authStore.forceLogin = true
   }
 
+  // The reverse of "Classic Freegle" in the chat shell's menu.
+  const uiMode = useUiMode()
+  const switchToChat = async () => {
+    await uiMode.setMode('chat')
+    router.push('/')
+  }
+
   const logout = async () => {
     await authStore.logout()
     authStore.forceLogin = false
@@ -461,6 +469,7 @@ export function useNavbar() {
   })
 
   return {
+    switchToChat,
     online,
     distance,
     unreadNotificationCount,

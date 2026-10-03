@@ -136,6 +136,11 @@ Some chats are held because a post has not yet rippled out to the member who rep
 Those release automatically; you do not need to do anything. See
 [./rippling-out.md](./rippling-out.md).
 
+Members using the chat version of Freegle talk to a Freegle assistant to give, ask and
+find their way around. What they type and what it replies is stored as an ordinary chat
+between the member and Freegle, so it shows in the member's chat history here like any
+other chat. The assistant never posts, replies or joins anything itself: a post it helps
+write goes through the same checks and moderation as one made on the website.
 A message that matches a Freegle-wide **block** keyword does not come to this queue at
 all. It is dropped: the other person never receives it, and it is marked rejected with
 the reason recorded, exactly as if you had rejected it yourself. That applies whatever
@@ -166,7 +171,9 @@ Approving a held message with **approve all future** turns the setting off for t
 so use plain approve if you want them to stay under review.
 
 (This is different from moderating the **ChitChat** discussion feed, which is done on the
-main Freegle site by the ChitChat Moderation team, not in ModTools.)
+main Freegle site by the ChitChat Moderation team, not in ModTools. ChitChat posts that
+trip a worry word are reported automatically to that team, with the words named, and stay
+out of the feed until the team has looked.)
 
 ## Notes about members
 

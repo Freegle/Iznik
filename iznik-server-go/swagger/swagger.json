@@ -79,6 +79,57 @@
     }
    }
   },
+  "/assistant/turn": {
+   "post": {
+    "description": "Takes typed text, a chip tap or a host event; streams the reply as server-sent events (delta, then turn).",
+    "consumes": [
+     "application/json"
+    ],
+    "produces": [
+     "text/event-stream"
+    ],
+    "tags": [
+     "assistant"
+    ],
+    "summary": "One turn of the Freegle chat assistant, streamed as server-sent events",
+    "operationId": "assistantTurn",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     }
+    }
+   }
+  },
+  "/assistant/widgets": {
+   "get": {
+    "description": "Chips and cards attached to the assistant chat messages the caller can see.",
+    "tags": [
+     "assistant"
+    ],
+    "summary": "Chips and cards attached to assistant chat messages",
+    "operationId": "assistantWidgets",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     }
+    }
+   }
+  },
+  "/assistant/workflow": {
+   "get": {
+    "description": "The ai-flower workflow definition the assistant runs, for the editor and viewer.",
+    "tags": [
+     "assistant"
+    ],
+    "summary": "The ai-flower workflow definition the assistant runs",
+    "operationId": "assistantWorkflow",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     }
+    }
+   }
+  },
   "/address": {
    "get": {
     "description": "Returns all addresses for the authenticated user",
