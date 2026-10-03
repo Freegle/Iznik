@@ -799,8 +799,17 @@ export const useMessageStore = defineStore('message', {
       } catch (e) {
         message = null
       }
-      const stillInReviewQueue = !!message?.groups?.some((g) =>
-        ['Pending', 'PendingOther', 'Spam'].includes(g.collection)
+      // Only copies on groups this moderator moderates. A rippled post's other copies are
+      // mostly pending on communities they do not run, and keeping the post for those left
+      // its card showing the copy just approved in "All my communities".
+      const authStore = useAuthStore()
+      const moderates = (g) =>
+        typeof authStore?.member !== 'function' ||
+        ['Moderator', 'Owner'].includes(authStore.member(g.groupid))
+      const stillInReviewQueue = !!message?.groups?.some(
+        (g) =>
+          ['Pending', 'PendingOther', 'Spam'].includes(g.collection) &&
+          moderates(g)
       )
       if (stillInReviewQueue) {
         this.list[message.id] = message

@@ -648,6 +648,32 @@ describe('message store - refreshOrRemoveFromMTList()', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    // The moderator moderates groups 1 and 2, and is only a member of group 3.
+    useAuthStore.mockReturnValue({
+      user: { id: 99 },
+      member: (gid) =>
+        ({ 1: 'Moderator', 2: 'Owner', 3: 'Member' })[parseInt(gid)] || null,
+    })
+  })
+
+  // After an approve, the copies a rippled post still has pending are mostly on communities
+  // the moderator does not moderate (133 of 138 in a day of production approvals). Counting
+  // them kept the post in "All my communities" with its card showing the copy just approved.
+  it('removes the message when the only pending copies are on groups I do not moderate', async () => {
+    const store = useMessageStore()
+    store.list[500] = { id: 500 }
+    store.fetchMT = vi.fn().mockResolvedValue({
+      id: 500,
+      groups: [
+        { groupid: 1, collection: 'Approved' },
+        { groupid: 3, collection: 'Pending' },
+        { groupid: 77, collection: 'Pending' },
+      ],
+    })
+
+    await store.refreshOrRemoveFromMTList(500)
+
+    expect(store.list[500]).toBeUndefined()
   })
 
   it('keeps the (refreshed) message when a group copy is still pending', async () => {
