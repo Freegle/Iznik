@@ -3138,9 +3138,9 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		return err
 	}
 
-	// Per-group hold for re-review.
-	// Identical golden to
-	// 8c1766162f86 (handleHold); converted together per gate (h).
+	// Per-group hold for re-review. Unlike handleHold this is not limited to Pending
+	// copies: the copy is about to be flipped back to Pending below, so setting the hold
+	// first is what stops it ever showing as an Approved copy "Held by" someone.
 	db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
 		Update("heldby", myid)
 
