@@ -947,6 +947,23 @@ describe('PostMap', () => {
       expect(mockMessageStore.fetchInBounds).not.toHaveBeenCalled()
     })
 
+    it('fetches the reach feed as soon as a late location arrives, without waiting for a touch (Discourse 10091/2)', async () => {
+      mockAuthStore.user = { id: 1, lat: null, lng: null, settings: {} }
+      mockMyGroups.value = [{ id: 1 }]
+      await createWrapper({ showIsochrones: true })
+      mockNearbyFetchMessages.mockClear()
+
+      mockAuthStore.user = {
+        id: 1,
+        lat: 53.945,
+        lng: -2.5209,
+        settings: { mylocation: { name: 'AB1 2CD' } },
+      }
+      await flushPromises()
+
+      expect(mockNearbyFetchMessages).toHaveBeenCalled()
+    })
+
     it('asks for the posts in the map bounds once when the map settles, not once per listener', async () => {
       // LMap is wired with both v-model:bounds and @update:bounds="idle". One settled map
       // therefore runs getMessages() twice with identical bounds, and the two fetches

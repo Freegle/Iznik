@@ -575,6 +575,18 @@ watch(bounds, (newVal, oldVal) => {
   }
 })
 
+// A location that arrives after mount (the app restores its session from a token, so
+// authStore.user is often still empty at setup) must fetch the reach feed straight away,
+// not wait for the member to touch the map.
+watch(
+  () => !!(me.value?.lat || me.value?.lng),
+  (known, wasKnown) => {
+    if (known && !wasKnown && props.showIsochrones && !showGroups.value) {
+      getMessages()
+    }
+  }
+)
+
 watch(showGroups, (newVal) => {
   if (!newVal && !props.authorityid) {
     getMessages()
