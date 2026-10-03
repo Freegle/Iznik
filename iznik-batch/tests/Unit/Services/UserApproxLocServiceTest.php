@@ -2,7 +2,6 @@
 
 namespace Tests\Unit\Services;
 
-use App\Models\Group;
 use App\Models\User;
 use App\Services\UserApproxLocService;
 use App\Support\GreatCircle;
@@ -19,22 +18,18 @@ class UserApproxLocServiceTest extends TestCase
 {
     protected UserApproxLocService $service;
 
-    protected Group $group;
-
     protected function setUp(): void
     {
         parent::setUp();
         $this->service = new UserApproxLocService();
-        $this->group = $this->createTestGroup();
     }
 
     /**
-     * An active member: has a membership and a lastaccess inside the cutoff. Returns the user.
+     * An active member: a lastaccess inside the cutoff. Returns the user.
      */
     private function activeMember(array $attributes = []): User
     {
         $user = $this->createTestUser();
-        $this->createMembership($user, $this->group);
         DB::table('users')->where('id', $user->id)->update(array_merge([
             'lastaccess' => now()->subDay(),
         ], $attributes));

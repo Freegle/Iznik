@@ -4,8 +4,8 @@ package systemlogs
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 )
@@ -31,7 +31,6 @@ type LogEntry struct {
 	Level     string                 `json:"level,omitempty"`
 	UserID    *uint64                `json:"user_id,omitempty"`
 	ByUserID  *uint64                `json:"byuser_id,omitempty"`
-	GroupID   *uint64                `json:"group_id,omitempty"`
 	MessageID *uint64                `json:"message_id,omitempty"`
 	Text      string                 `json:"text,omitempty"`
 	TraceID   string                 `json:"trace_id,omitempty"`
@@ -64,9 +63,9 @@ type TraceSummary struct {
 type SummaryResponse struct {
 	Summaries []TraceSummary `json:"summaries"`
 	Stats     struct {
-		TotalTraces   int   `json:"total_traces"`
-		TotalLogs     int   `json:"total_logs"`
-		QueryTimeMs   int64 `json:"query_time_ms"`
+		TotalTraces int   `json:"total_traces"`
+		TotalLogs   int   `json:"total_logs"`
+		QueryTimeMs int64 `json:"query_time_ms"`
 	} `json:"stats"`
 }
 
@@ -82,7 +81,7 @@ type LokiQueryResponse struct {
 	} `json:"data"`
 }
 
-// RequireModeratorMiddleware checks that the user has at least Mod role on some group.
+// RequireModeratorMiddleware checks that the user has the national Moderator, Support or Admin role.
 func RequireModeratorMiddleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userID, sessionID, _ := user.GetJWTFromRequest(c)
@@ -109,18 +108,7 @@ func RequireModeratorMiddleware() fiber.Handler {
 			return fiber.NewError(fiber.StatusUnauthorized, "Invalid session")
 		}
 
-		// Admin and Support can access everything.
-		if userInfo.Systemrole == utils.SYSTEMROLE_SUPPORT || userInfo.Systemrole == utils.SYSTEMROLE_ADMIN {
-			c.Locals("systemrole", userInfo.Systemrole)
-			c.Locals("userid", userID)
-			return c.Next()
-		}
-
-		// Check if user is a moderator of any group.
-		var modCount int64
-		db.Table("memberships").Where("userid = ? AND role IN (?, ?)", userID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
-
-		if modCount == 0 {
+		if !auth.IsModerator(userID) {
 			return fiber.NewError(fiber.StatusForbidden, "Moderator role required")
 		}
 
@@ -150,7 +138,6 @@ func GetLogs(c *fiber.Ctx) error {
 	limitStr := c.Query("limit", "100")
 	direction := c.Query("direction", "backward")
 	userIDStr := c.Query("userid", "")
-	groupIDStr := c.Query("groupid", "")
 	msgIDStr := c.Query("msgid", "")
 	traceID := c.Query("trace_id", "")
 	sessionID := c.Query("session_id", "")
@@ -161,26 +148,6 @@ func GetLogs(c *fiber.Ctx) error {
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit <= 0 || limit > 1000 {
 		limit = 100
-	}
-
-	// Access control: check if user can view these logs.
-	currentUserID := c.Locals("userid").(uint64)
-	systemRole, _ := c.Locals("systemrole").(string)
-
-	// If filtering by specific user, check access.
-	if userIDStr != "" {
-		targetUserID, _ := strconv.ParseUint(userIDStr, 10, 64)
-		if !canViewUserLogs(currentUserID, targetUserID, systemRole) {
-			return fiber.NewError(fiber.StatusForbidden, "Cannot view logs for this user")
-		}
-	}
-
-	// If filtering by specific group, check access.
-	if groupIDStr != "" {
-		targetGroupID, _ := strconv.ParseUint(groupIDStr, 10, 64)
-		if !canViewGroupLogs(currentUserID, targetGroupID, systemRole) {
-			return fiber.NewError(fiber.StatusForbidden, "Cannot view logs for this group")
-		}
 	}
 
 	// Parse time range.
@@ -202,16 +169,16 @@ func GetLogs(c *fiber.Ctx) error {
 	// Find logs matching user_id OR logs containing the email.
 	// Run two queries in parallel and merge results.
 	if userIDStr != "" && email != "" {
-		logs = queryLokiUserOrEmail(lokiURL, sources, types, subtypes, levels, search, userIDStr, groupIDStr, msgIDStr, traceID, sessionID, ipAddress, email, startTs, endTs, fetchLimit, direction)
+		logs = queryLokiUserOrEmail(lokiURL, sources, types, subtypes, levels, search, userIDStr, msgIDStr, traceID, sessionID, ipAddress, email, startTs, endTs, fetchLimit, direction)
 	} else {
 		// Standard query with all filters as AND conditions.
-		query := buildLogQLQuery(sources, types, subtypes, levels, search, userIDStr, groupIDStr, msgIDStr, traceID, sessionID, ipAddress, email)
+		query := buildLogQLQuery(sources, types, subtypes, levels, search, userIDStr, msgIDStr, traceID, sessionID, ipAddress, email)
 
 		// Use parallel source queries when we have multiple sources and need balanced results:
 		// - Summary mode with entity filters (user, group, message, IP)
 		// - Trace-specific queries (fetching all logs for a trace)
 		// This ensures we get representative samples from all sources, not just the most frequent.
-		hasEntityFilter := userIDStr != "" || groupIDStr != "" || msgIDStr != "" || ipAddress != ""
+		hasEntityFilter := userIDStr != "" || msgIDStr != "" || ipAddress != ""
 		hasTraceFilter := traceID != ""
 		needsBalancedSources := (summaryMode && hasEntityFilter) || hasTraceFilter
 
@@ -406,7 +373,7 @@ func GetLogCounts(c *fiber.Ctx) error {
 }
 
 // buildLogQLQuery constructs a LogQL query from parameters.
-func buildLogQLQuery(sources, types, subtypes, levels, search, userID, groupID, msgID, traceID, sessionID, ipAddress, email string) string {
+func buildLogQLQuery(sources, types, subtypes, levels, search, userID, msgID, traceID, sessionID, ipAddress, email string) string {
 	// Build label selector.
 	labelParts := []string{`app="freegle"`}
 
@@ -451,11 +418,6 @@ func buildLogQLQuery(sources, types, subtypes, levels, search, userID, groupID, 
 		} else {
 			labelParts = append(labelParts, fmt.Sprintf(`level=~"%s"`, strings.Join(levelList, "|")))
 		}
-	}
-
-	// Group ID label filter.
-	if groupID != "" {
-		labelParts = append(labelParts, fmt.Sprintf(`groupid="%s"`, groupID))
 	}
 
 	// User ID label filter (indexed, fast).
@@ -697,7 +659,7 @@ func queryLokiMultipleSources(lokiURL string, baseQuery string, sources []string
 
 // queryLokiUserOrEmail runs two queries in parallel: one filtering by user_id, one by email.
 // Results are merged and deduplicated, supporting OR logic for user/email searches.
-func queryLokiUserOrEmail(lokiURL, sources, types, subtypes, levels, search, userID, groupID, msgID, traceID, sessionID, ipAddress, email string, startNs, endNs int64, limit int, direction string) []LogEntry {
+func queryLokiUserOrEmail(lokiURL, sources, types, subtypes, levels, search, userID, msgID, traceID, sessionID, ipAddress, email string, startNs, endNs int64, limit int, direction string) []LogEntry {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var allLogs []LogEntry
@@ -707,7 +669,7 @@ func queryLokiUserOrEmail(lokiURL, sources, types, subtypes, levels, search, use
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		query := buildLogQLQuery(sources, types, subtypes, levels, search, userID, groupID, msgID, traceID, sessionID, ipAddress, "")
+		query := buildLogQLQuery(sources, types, subtypes, levels, search, userID, msgID, traceID, sessionID, ipAddress, "")
 		logs, err := queryLoki(lokiURL, query, startNs, endNs, limit, direction)
 		if err != nil {
 			log.Printf("Error querying by user_id: %v", err)
@@ -727,7 +689,7 @@ func queryLokiUserOrEmail(lokiURL, sources, types, subtypes, levels, search, use
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		query := buildLogQLQuery(sources, types, subtypes, levels, search, "", groupID, msgID, traceID, sessionID, ipAddress, email)
+		query := buildLogQLQuery(sources, types, subtypes, levels, search, "", msgID, traceID, sessionID, ipAddress, email)
 		logs, err := queryLoki(lokiURL, query, startNs, endNs, limit, direction)
 		if err != nil {
 			log.Printf("Error querying by email: %v", err)
@@ -807,18 +769,6 @@ func parseLogEntry(timestampNs int64, logLine string, labels map[string]string, 
 				entry.ByUserID = &u
 			}
 		}
-		if v, ok := raw["group_id"]; ok {
-			if gid, ok := v.(float64); ok {
-				g := uint64(gid)
-				entry.GroupID = &g
-			}
-		}
-		if v, ok := raw["groupid"]; ok {
-			if gid, ok := v.(float64); ok {
-				g := uint64(gid)
-				entry.GroupID = &g
-			}
-		}
 		if v, ok := raw["msg_id"]; ok {
 			if mid, ok := v.(float64); ok {
 				m := uint64(mid)
@@ -853,42 +803,6 @@ func parseLogEntry(timestampNs int64, logLine string, labels map[string]string, 
 	}
 
 	return entry
-}
-
-// canViewUserLogs checks if the current user can view logs for the target user.
-func canViewUserLogs(currentUserID, targetUserID uint64, systemRole string) bool {
-	if systemRole == utils.SYSTEMROLE_SUPPORT || systemRole == utils.SYSTEMROLE_ADMIN {
-		return true
-	}
-
-	db := database.DBConn
-
-	// Check if current user moderates any group that target user is a member of.
-	var count int64
-	db.Table("memberships m1").
-		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
-		Where("m1.userid = ? AND m1.role IN (?, ?) AND m2.userid = ?",
-			currentUserID, utils.ROLE_MODERATOR, utils.ROLE_OWNER, targetUserID).
-		Count(&count)
-
-	return count > 0
-}
-
-// canViewGroupLogs checks if the current user can view logs for the target group.
-func canViewGroupLogs(currentUserID, targetGroupID uint64, systemRole string) bool {
-	if systemRole == utils.SYSTEMROLE_SUPPORT || systemRole == utils.SYSTEMROLE_ADMIN {
-		return true
-	}
-
-	db := database.DBConn
-
-	// Check if current user moderates the target group.
-	var count int64
-	db.Table("memberships").
-		Where("userid = ? AND groupid = ? AND role IN (?, ?)", currentUserID, targetGroupID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
-		Count(&count)
-
-	return count > 0
 }
 
 // countBySources counts logs by source for stats.

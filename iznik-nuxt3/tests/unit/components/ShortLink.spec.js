@@ -14,10 +14,8 @@ vi.mock('~/stores/shortlinks', () => ({
 describe('ShortLink', () => {
   const mockShortlink = {
     id: 1,
-    type: 'Group',
     name: 'test-link',
-    nameshort: 'Test Group',
-    url: 'https://example.com/group',
+    url: 'https://example.com/destination',
   }
 
   beforeEach(() => {
@@ -52,23 +50,33 @@ describe('ShortLink', () => {
   }
 
   describe('rendering', () => {
-    it('renders for Group type shortlinks', () => {
+    it('renders when a shortlink is found', () => {
       const wrapper = createWrapper()
       expect(wrapper.find('.row').exists()).toBe(true)
     })
 
-    it('does not render for non-Group type shortlinks', () => {
-      mockShortlinkStore.byId.mockReturnValue({
-        ...mockShortlink,
-        type: 'Other',
-      })
+    it('does not render when no shortlink is found', () => {
+      mockShortlinkStore.byId.mockReturnValue(undefined)
       const wrapper = createWrapper()
       expect(wrapper.find('.row').exists()).toBe(false)
     })
 
-    it('displays the shortlink nameshort', () => {
+    it('displays the destination URL', () => {
       const wrapper = createWrapper()
-      expect(wrapper.text()).toContain('Test Group')
+      expect(wrapper.text()).toContain('https://example.com/destination')
+    })
+
+    it('does not render a destination link when the shortlink has no url', () => {
+      mockShortlinkStore.byId.mockReturnValue({
+        ...mockShortlink,
+        url: null,
+      })
+      const wrapper = createWrapper()
+      const links = wrapper.findAll('a')
+      const urlLink = links.find(
+        (l) => l.attributes('href') === 'https://example.com/destination'
+      )
+      expect(urlLink).toBeFalsy()
     })
 
     it('displays the freegle.in URL', () => {
@@ -110,11 +118,11 @@ describe('ShortLink', () => {
   })
 
   describe('external links', () => {
-    it('links to original URL', () => {
+    it('links to the destination URL', () => {
       const wrapper = createWrapper()
       const links = wrapper.findAll('a')
       const urlLink = links.find(
-        (l) => l.attributes('href') === 'https://example.com/group'
+        (l) => l.attributes('href') === 'https://example.com/destination'
       )
       expect(urlLink).toBeTruthy()
     })
@@ -130,16 +138,6 @@ describe('ShortLink', () => {
   })
 
   describe('edge cases', () => {
-    it('handles shortlink with non-Group type', () => {
-      mockShortlinkStore.byId.mockReturnValue({
-        ...mockShortlink,
-        type: 'User',
-      })
-      const wrapper = createWrapper()
-      // Should render but show nothing for non-Group types
-      expect(wrapper.find('.row').exists()).toBe(false)
-    })
-
     it('handles shortlink with special characters in name', () => {
       mockShortlinkStore.byId.mockReturnValue({
         ...mockShortlink,

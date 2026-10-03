@@ -169,7 +169,6 @@ export function useNavbar() {
       route.path !== '/browse' &&
       route.path !== '/chitchat' &&
       route.path !== '/myposts' &&
-      !route.path.startsWith('/explore/') &&
       route.path !== '/'
     )
   })
@@ -324,11 +323,7 @@ export function useNavbar() {
           throw new Error('Not logged in')
         }
 
-        await messageStore.fetchCount(
-          me?.settings?.browseView,
-          me?.settings?.browseMaxDistance,
-          false
-        )
+        await messageStore.fetchCount(me?.settings?.browseMaxDistance, false)
 
         if (!myid.value) {
           throw new Error('Not logged in')

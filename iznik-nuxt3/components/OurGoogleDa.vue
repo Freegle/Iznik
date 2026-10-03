@@ -28,7 +28,6 @@
 <script setup>
 import { ref, computed, onBeforeUnmount } from '#imports'
 import { useMiscStore } from '~/stores/misc'
-import { useMe } from '~/composables/useMe'
 
 const miscStore = useMiscStore()
 
@@ -127,30 +126,9 @@ const adSenseSlot = computed(() => {
 })
 
 const pageUrl = computed(() => {
-  // Our ads are shown behind login, so we want to give AdSense a page containing similar content.
-  // If we are a member of a group then we can give that, otherwise default to Croydon as that's
-  // an active group.
-  //
-  // This isn't quite as good as using the home group, but it's quick and good enough for most
-  // users.
-  // Use the myGroups computed from useMe composable for consistency
-  const { myGroups } = useMe()
-
-  let added = null
-  let nameshort = null
-
-  if (myGroups.value?.length) {
-    myGroups.value.forEach((g) => {
-      if (!added || g.added > added) {
-        added = g.added
-        nameshort = g.nameshort
-      }
-    })
-  }
-
-  return nameshort
-    ? 'https://www.ilovefreegle.org/explore/' + nameshort
-    : 'https://www.ilovefreegle.org/explore/Croydon-Freegle'
+  // Our ads are shown behind login, so we want to give AdSense a page containing similar
+  // content. There's one national Freegle now, so a single fixed URL is fine.
+  return 'https://www.ilovefreegle.org/browse'
 })
 
 // We want to spot when an ad has been rendered and whether it's filled.  isUnfilled is supposed to be exposed

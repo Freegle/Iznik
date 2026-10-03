@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { ref } from 'vue'
 import NotesPage from '~/modtools/pages/members/notes/[[id]].vue'
+
+// Self-moderating rework: this page used to filter mod notes by a chosen
+// community (ModGroupSelect + groupid), always showing flagged/own notes
+// as an exception. Moderators are national now, so every note is visible
+// to every moderator - there is no group filter left to test.
 
 // Mock comment store
 const mockCommentStore = {
@@ -14,15 +18,6 @@ const mockCommentStore = {
 
 vi.mock('~/stores/comment', () => ({
   useCommentStore: () => mockCommentStore,
-}))
-
-// Mock useMe composable
-const mockMyid = ref(1)
-
-vi.mock('~/composables/useMe', () => ({
-  useMe: () => ({
-    myid: mockMyid,
-  }),
 }))
 
 describe('members/notes/[[id]].vue page', () => {
@@ -39,10 +34,6 @@ describe('members/notes/[[id]].vue page', () => {
           },
           ModHelpComments: {
             template: '<div class="mod-help-comments" />',
-          },
-          ModGroupSelect: {
-            template: '<div class="mod-group-select" />',
-            props: ['modelValue', 'modonly', 'all'],
           },
           ModCommentUser: {
             template:
@@ -73,7 +64,6 @@ describe('members/notes/[[id]].vue page', () => {
     setActivePinia(createPinia())
     mockCommentStore.sortedList = []
     mockCommentStore.context = null
-    mockMyid.value = 1
   })
 
   describe('rendering', () => {
@@ -87,13 +77,18 @@ describe('members/notes/[[id]].vue page', () => {
 
     it('renders comment components for visible comments', async () => {
       mockCommentStore.sortedList = [
-        { id: 1, groupid: null, flag: false, byuserid: 2 },
-        { id: 2, groupid: null, flag: false, byuserid: 3 },
+        { id: 1, flag: false, byuserid: 2 },
+        { id: 2, flag: false, byuserid: 3 },
       ]
       const wrapper = mountComponent()
       wrapper.vm.show = 10
       await wrapper.vm.$nextTick()
       expect(wrapper.findAll('.mod-comment-user')).toHaveLength(2)
+    })
+
+    it('has no community picker - moderators are national', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.find('.mod-group-select').exists()).toBe(false)
     })
   })
 
@@ -112,88 +107,29 @@ describe('members/notes/[[id]].vue page', () => {
       expect(wrapper.vm.comments).toHaveLength(2)
     })
 
-    it('filteredComments returns all when no groupid filter', () => {
+    it('visibleComments returns every comment, regardless of group', () => {
       mockCommentStore.sortedList = [
         { id: 1, groupid: 10 },
         { id: 2, groupid: 20 },
       ]
       const wrapper = mountComponent()
-      wrapper.vm.groupid = null
-      expect(wrapper.vm.filteredComments).toHaveLength(2)
-    })
-
-    it('filteredComments filters by groupid', () => {
-      mockCommentStore.sortedList = [
-        { id: 1, groupid: 10 },
-        { id: 2, groupid: 20 },
-      ]
-      const wrapper = mountComponent()
-      wrapper.vm.groupid = 10
-      expect(wrapper.vm.filteredComments).toHaveLength(1)
-      expect(wrapper.vm.filteredComments[0].id).toBe(1)
-    })
-
-    it('filteredComments includes flagged comments regardless of group', () => {
-      mockCommentStore.sortedList = [
-        { id: 1, groupid: 10, flag: true },
-        { id: 2, groupid: 20, flag: false },
-      ]
-      const wrapper = mountComponent()
-      wrapper.vm.groupid = 20
-      const filtered = wrapper.vm.filteredComments
-      expect(filtered).toHaveLength(2)
-    })
-
-    it('filteredComments includes my own comments regardless of group', () => {
-      mockMyid.value = 5
-      mockCommentStore.sortedList = [
-        { id: 1, groupid: 10, flag: false, byuserid: 5 },
-        { id: 2, groupid: 20, flag: false, byuserid: 3 },
-      ]
-      const wrapper = mountComponent()
-      wrapper.vm.groupid = 20
-      const filtered = wrapper.vm.filteredComments
-      expect(filtered).toHaveLength(2)
-    })
-
-    it('visibleComments limits to show value', () => {
-      mockCommentStore.sortedList = [
-        { id: 1, groupid: null },
-        { id: 2, groupid: null },
-        { id: 3, groupid: null },
-      ]
-      const wrapper = mountComponent()
-      wrapper.vm.groupid = null
       wrapper.vm.show = 2
       expect(wrapper.vm.visibleComments).toHaveLength(2)
     })
-  })
 
-  describe('watchers', () => {
-    it('clears and resets when groupid changes', async () => {
+    it('visibleComments limits to show value', () => {
+      mockCommentStore.sortedList = [{ id: 1 }, { id: 2 }, { id: 3 }]
       const wrapper = mountComponent()
-      await flushPromises()
-      const initialBump = wrapper.vm.bump
-      vi.clearAllMocks()
-
-      wrapper.vm.groupid = 123
-      await wrapper.vm.$nextTick()
-
-      expect(mockCommentStore.clear).toHaveBeenCalled()
-      expect(wrapper.vm.context).toBe(null)
-      expect(wrapper.vm.bump).toBe(initialBump + 1)
+      wrapper.vm.show = 2
+      expect(wrapper.vm.visibleComments).toHaveLength(2)
     })
   })
 
   describe('methods', () => {
     describe('loadMore', () => {
       it('increments show when more comments available', async () => {
-        mockCommentStore.sortedList = [
-          { id: 1, groupid: null },
-          { id: 2, groupid: null },
-        ]
+        mockCommentStore.sortedList = [{ id: 1 }, { id: 2 }]
         const wrapper = mountComponent()
-        wrapper.vm.groupid = null
         wrapper.vm.show = 1
         const mockState = { loaded: vi.fn(), complete: vi.fn() }
 
@@ -203,10 +139,9 @@ describe('members/notes/[[id]].vue page', () => {
         expect(mockState.loaded).toHaveBeenCalled()
       })
 
-      it('fetches more comments when show equals comments length', async () => {
-        mockCommentStore.sortedList = [{ id: 1, groupid: null }]
+      it('fetches more comments nationally when show equals comments length', async () => {
+        mockCommentStore.sortedList = [{ id: 1 }]
         const wrapper = mountComponent()
-        wrapper.vm.groupid = null
         wrapper.vm.show = 1
         const mockState = { loaded: vi.fn(), complete: vi.fn() }
 
@@ -214,14 +149,12 @@ describe('members/notes/[[id]].vue page', () => {
 
         expect(mockCommentStore.fetch).toHaveBeenCalledWith({
           context: null,
-          groupid: null,
         })
       })
 
       it('completes when no new comments returned', async () => {
         mockCommentStore.sortedList = []
         const wrapper = mountComponent()
-        wrapper.vm.groupid = null
         wrapper.vm.show = 0
         const mockState = { loaded: vi.fn(), complete: vi.fn() }
 

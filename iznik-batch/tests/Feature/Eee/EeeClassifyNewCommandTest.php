@@ -43,7 +43,6 @@ class EeeClassifyNewCommandTest extends TestCase
         DB::table('messages_outcomes')->delete();
         DB::table('messages_items')->delete();
         DB::table('messages_eee')->delete();
-        DB::table('messages_groups')->delete();
         DB::table('messages')->delete();
 
         $vision = $this->createMock(EeeVisionService::class);
@@ -72,17 +71,13 @@ class EeeClassifyNewCommandTest extends TestCase
         $this->instance(EeeClassificationService::class, $classifier);
     }
 
-    private function makeOffer(array $groupRow = [], array $messageRow = []): int
+    private function makeOffer(array $messageRow = []): int
     {
-        $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $id    = (int) $this->createTestMessage($user, $group)->id;
+        $user = $this->createTestUser();
+        $id   = (int) $this->createTestMessage($user)->id;
 
         if ($messageRow) {
             DB::table('messages')->where('id', $id)->update($messageRow);
-        }
-        if ($groupRow) {
-            DB::table('messages_groups')->where('msgid', $id)->update($groupRow);
         }
 
         return $id;
@@ -97,16 +92,14 @@ class EeeClassifyNewCommandTest extends TestCase
     {
         $approved   = $this->makeOffer();
         $pending    = $this->makeOffer(['collection' => 'Pending']);
-        $deleted    = $this->makeOffer([], ['deleted' => now()->toDateTimeString()]);
-        $groupGone  = $this->makeOffer(['deleted' => 1]);
-        $wanted     = $this->makeOffer([], ['type' => 'Wanted']);
+        $deleted    = $this->makeOffer(['deleted' => now()->toDateTimeString()]);
+        $wanted     = $this->makeOffer(['type' => 'Wanted']);
 
         $this->runCommand()->assertExitCode(0);
 
         $this->assertContains($approved, $this->classified);
         $this->assertNotContains($pending, $this->classified, 'unapproved content must never be sent out');
         $this->assertNotContains($deleted, $this->classified);
-        $this->assertNotContains($groupGone, $this->classified);
         $this->assertNotContains($wanted, $this->classified);
     }
 
@@ -145,7 +138,6 @@ class EeeClassifyNewCommandTest extends TestCase
     {
         $held = $this->makeOffer(
             ['arrival' => '2000-01-01 00:00:00', 'approvedat' => now()->toDateTimeString()],
-            ['arrival' => '2000-01-01 00:00:00'],
         );
 
         // No --since: the mark defaults to 24 hours ago, well after the arrival.

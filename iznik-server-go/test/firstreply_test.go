@@ -78,9 +78,8 @@ func TestFirstReplyPassthrough_RoutingDownFailsClosed(t *testing.T) {
 	roadblur.ResetRoutingBreaker()
 	t.Cleanup(roadblur.ResetRoutingBreaker)
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough down test", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: passthrough down test", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	seedRipplingReach(t, msgID, true)
@@ -102,9 +101,8 @@ func TestFirstReplyPassthrough_FirstReplyInsideEventualReach(t *testing.T) {
 	// Whole-network arm; the rollout split is exercised separately.
 	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough test", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: passthrough test", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	seedRipplingReach(t, msgID, true)
@@ -124,16 +122,15 @@ func TestFirstReplyPassthrough_SecondReplyIsStillHeld(t *testing.T) {
 	// Whole-network arm; the rollout split is exercised separately.
 	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough second", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: passthrough second", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	seedRipplingReach(t, msgID, true)
 	stubReachEvalMax(t, "in")
 
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, type, refmsgid, date, "+
 		"reviewrequired, processingrequired, processingsuccessful) "+
 		"VALUES (?, ?, 'I would like this', 'Interested', ?, NOW(), 0, 0, 1)",
@@ -154,9 +151,8 @@ func TestFirstReplyPassthrough_OutsideEventualReachIsHeld(t *testing.T) {
 	// Whole-network arm; the rollout split is exercised separately.
 	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough far", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: passthrough far", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	seedRipplingReach(t, msgID, true)
@@ -171,9 +167,8 @@ func TestFirstReplyPassthrough_DisabledAndUnpopulatedBothHold(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpass4")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough off", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: passthrough off", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	// Switched off: unchanged behaviour.
@@ -203,9 +198,8 @@ func TestFirstReplyPassthrough_RespectsTheRolloutPercentage(t *testing.T) {
 	t.Setenv("FIRSTREPLY_ENABLED", "true")
 	t.Setenv("FIRSTREPLY_PASSTHROUGH_ENABLED", "true")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: rollout", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: rollout", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	seedRipplingReach(t, msgID, true)

@@ -148,34 +148,10 @@ describe('DonationThermometer', () => {
     })
   })
 
-  describe('props', () => {
-    it('has groupid prop defaulting to null', async () => {
-      await createWrapper()
-      // Verify default by checking fetch was called with null
-      expect(mockFetch).toHaveBeenCalledWith(null)
-    })
-
-    it('accepts custom groupid', async () => {
-      await createWrapper({ groupid: 123 })
-      // Verify groupid passed to fetch
-      expect(mockFetch).toHaveBeenCalledWith(123)
-    })
-  })
-
   describe('store interaction', () => {
     it('calls donationStore.fetch on mount', async () => {
       await createWrapper()
       expect(mockFetch).toHaveBeenCalled()
-    })
-
-    it('passes groupid to fetch', async () => {
-      await createWrapper({ groupid: 456 })
-      expect(mockFetch).toHaveBeenCalledWith(456)
-    })
-
-    it('passes null groupid when not provided', async () => {
-      await createWrapper()
-      expect(mockFetch).toHaveBeenCalledWith(null)
     })
   })
 

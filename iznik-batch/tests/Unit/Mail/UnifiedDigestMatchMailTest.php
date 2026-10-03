@@ -41,13 +41,10 @@ class UnifiedDigestMatchMailTest extends TestCase
     private function digestFor(?string $matchReason, string $subject = 'OFFER: Bookcase (Ealing)'): array
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
-        $message = $this->createTestMessage($poster, $group, ['subject' => $subject]);
-        $posts = collect([['message' => $message, 'postedToGroups' => [$group->id]]]);
+        $message = $this->createTestMessage($poster, ['subject' => $subject]);
+        $posts = collect([['message' => $message]]);
 
         return [
             new UnifiedDigest(

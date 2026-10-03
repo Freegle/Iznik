@@ -12,12 +12,6 @@
               rel="noopener noreferrer"
               >{{ 'https://freegle.in/' + shortlink.name }}</a
             >
-            <span v-if="shortlink.nameshort">
-              is a shortlink for the community
-              <nuxt-link :to="'/explore/' + shortlink.nameshort">
-                {{ shortlink.nameshort }} </nuxt-link
-              >.
-            </span>
           </p>
           <p>
             Here's a graph of clicks on this shortlink over time. If you don't

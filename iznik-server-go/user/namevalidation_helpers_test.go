@@ -6,48 +6,31 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// ── IsExemptBySystemroleAndMod ────────────────────────────────────────────────
+// ── IsExemptBySystemrole ────────────────────────────────────────────────────
 
-func TestIsExemptBySystemroleAndMod_ModeratorRole(t *testing.T) {
-	assert.True(t, IsExemptBySystemroleAndMod("Moderator", false))
+func TestIsExemptBySystemrole_ModeratorRole(t *testing.T) {
+	assert.True(t, IsExemptBySystemrole("Moderator"))
 }
 
-func TestIsExemptBySystemroleAndMod_SupportRole(t *testing.T) {
-	assert.True(t, IsExemptBySystemroleAndMod("Support", false))
+func TestIsExemptBySystemrole_SupportRole(t *testing.T) {
+	assert.True(t, IsExemptBySystemrole("Support"))
 }
 
-func TestIsExemptBySystemroleAndMod_AdminRole(t *testing.T) {
-	assert.True(t, IsExemptBySystemroleAndMod("Admin", false))
+func TestIsExemptBySystemrole_AdminRole(t *testing.T) {
+	assert.True(t, IsExemptBySystemrole("Admin"))
 }
 
-func TestIsExemptBySystemroleAndMod_UserRoleWithGroupMod(t *testing.T) {
-	// Ordinary user who is a group moderator is exempt.
-	assert.True(t, IsExemptBySystemroleAndMod("User", true))
+func TestIsExemptBySystemrole_UserRoleNotMod(t *testing.T) {
+	// Ordinary user is NOT exempt.
+	assert.False(t, IsExemptBySystemrole("User"))
 }
 
-func TestIsExemptBySystemroleAndMod_UserRoleNotMod(t *testing.T) {
-	// Ordinary user who is not a group moderator is NOT exempt.
-	assert.False(t, IsExemptBySystemroleAndMod("User", false))
+func TestIsExemptBySystemrole_EmptyRoleNotMod(t *testing.T) {
+	assert.False(t, IsExemptBySystemrole(""))
 }
 
-func TestIsExemptBySystemroleAndMod_EmptyRoleNotMod(t *testing.T) {
-	// Empty systemrole and not a group mod: NOT exempt.
-	assert.False(t, IsExemptBySystemroleAndMod("", false))
-}
-
-func TestIsExemptBySystemroleAndMod_EmptyRoleIsGroupMod(t *testing.T) {
-	// Empty systemrole but is a group mod: exempt.
-	assert.True(t, IsExemptBySystemroleAndMod("", true))
-}
-
-func TestIsExemptBySystemroleAndMod_UnknownRoleNotMod(t *testing.T) {
-	// Unrecognised systemrole and not a mod: NOT exempt.
-	assert.False(t, IsExemptBySystemroleAndMod("Guest", false))
-}
-
-func TestIsExemptBySystemroleAndMod_UnknownRoleIsGroupMod(t *testing.T) {
-	// Unrecognised systemrole but is a group mod: exempt.
-	assert.True(t, IsExemptBySystemroleAndMod("Guest", true))
+func TestIsExemptBySystemrole_UnknownRoleNotMod(t *testing.T) {
+	assert.False(t, IsExemptBySystemrole("Guest"))
 }
 
 // ── normalise ─────────────────────────────────────────────────────────────────

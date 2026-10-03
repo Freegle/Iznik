@@ -2,25 +2,15 @@
 
 namespace Tests\Feature\User;
 
-use App\Models\Group;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class UpdateApproxLocsCommandTest extends TestCase
 {
-    protected Group $group;
-
-    protected function setUp(): void
-    {
-        parent::setUp();
-        $this->group = $this->createTestGroup();
-    }
-
     private function activeMemberAt(float $lat, float $lng): User
     {
         $user = $this->createTestUser();
-        $this->createMembership($user, $this->group);
         DB::table('users')->where('id', $user->id)->update([
             'lastaccess' => now()->subDay(),
             'settings' => json_encode(['mylocation' => ['lat' => $lat, 'lng' => $lng]]),

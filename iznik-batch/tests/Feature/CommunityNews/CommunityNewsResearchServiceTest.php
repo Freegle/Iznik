@@ -15,10 +15,10 @@ class CommunityNewsResearchServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->app->instance(NewsfeedLinkPreviewService::class, new UnreachableLinkPreviewService());
+        $this->app->instance(NewsfeedLinkPreviewService::class, new UnreachableLinkPreviewService);
         // Isolate from the repo's curated source store so these tests exercise
         // pure web-search research with no seed sources.
-        config(['freegle.communitynews.sources_path' => sys_get_temp_dir() . '/cn-none-' . uniqid()]);
+        config(['freegle.communitynews.sources_path' => sys_get_temp_dir().'/cn-none-'.uniqid()]);
         // Default to the API path (no subscription token) so these tests are
         // deterministic even when CLAUDE_CODE_OAUTH_TOKEN leaks in from the env,
         // and never actually exec the CLI.
@@ -29,12 +29,9 @@ class CommunityNewsResearchServiceTest extends TestCase
     private function area(): CommunityNewsArea
     {
         return CommunityNewsArea::create([
-            'anchorgroupid' => 1,
             'name' => 'Testville',
             'lat' => 51.5,
             'lng' => -0.12,
-            'groupids' => [],
-            'groupcount' => 0,
         ]);
     }
 
@@ -57,7 +54,7 @@ class CommunityNewsResearchServiceTest extends TestCase
 
         Http::fake(['api.anthropic.com/*' => Http::response([
             'stop_reason' => 'end_turn',
-            'content' => [['type' => 'text', 'text' => "Here you go:\n\n" . $json]],
+            'content' => [['type' => 'text', 'text' => "Here you go:\n\n".$json]],
         ], 200)]);
 
         $area = $this->area();
@@ -176,7 +173,7 @@ class CommunityNewsResearchServiceTest extends TestCase
                 && str_contains($cmd, 'WebSearch')
                 && str_contains($cmd, '--output-format')
                 // ...and the token travels in the environment, never on the argv.
-                && !str_contains($cmd, 'sk-ant-oat01-test')
+                && ! str_contains($cmd, 'sk-ant-oat01-test')
                 // Subscription must win: the inherited metered key is stripped from the child
                 // env (false => Symfony Process removes it) so `claude` uses the setup-token.
                 && array_key_exists('ANTHROPIC_API_KEY', $env)
@@ -203,14 +200,14 @@ class CommunityNewsResearchServiceTest extends TestCase
 
     public function test_parse_strips_fence_and_drops_unsafe_url(): void
     {
-        $text = "```json\n" . json_encode([
+        $text = "```json\n".json_encode([
             'intro' => 'x',
             'items' => [
                 ['title' => 'A', 'blurb' => 'a', 'url' => 'javascript:alert(1)', 'source' => 'S'],
                 ['title' => 'B', 'blurb' => 'b', 'url' => 'https://ok.org', 'source' => 'S'],
                 ['title' => '', 'blurb' => 'no title -> skipped', 'url' => 'https://z.org', 'source' => 'S'],
             ],
-        ]) . "\n```";
+        ])."\n```";
 
         [$intro, $items] = $this->svc()->parse($text, 6);
 
@@ -341,14 +338,14 @@ class CommunityNewsResearchServiceTest extends TestCase
     /** Make item URLs reachable so the source-freshness check actually runs. */
     private function makeSourcesReachable(): void
     {
-        $this->app->instance(NewsfeedLinkPreviewService::class, new FetchableLinkPreviewService());
+        $this->app->instance(NewsfeedLinkPreviewService::class, new FetchableLinkPreviewService);
     }
 
     private function articlePage(string $published): string
     {
         return '<html><head><meta property="og:type" content="article" />'
-            . '<meta property="article:published_time" content="' . $published . '" />'
-            . '</head><body>x</body></html>';
+            .'<meta property="article:published_time" content="'.$published.'" />'
+            .'</head><body>x</body></html>';
     }
 
     private function researchReturning(array $items): array
@@ -438,12 +435,9 @@ class CommunityNewsResearchServiceTest extends TestCase
         config(['freegle.communitynews.anthropic_api_key' => 'test-key']);
 
         $other = CommunityNewsArea::create([
-            'anchorgroupid' => 2,
             'name' => 'Nextville',
             'lat' => 51.6,
             'lng' => -0.2,
-            'groupids' => [],
-            'groupcount' => 0,
         ]);
         CommunityNewsItem::create([
             'areaid' => $other->id,

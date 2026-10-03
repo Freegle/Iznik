@@ -233,6 +233,13 @@ const SYSTEMROLE_MODERATOR = "Moderator"
 const SYSTEMROLE_SUPPORT = "Support"
 const SYSTEMROLE_ADMIN = "Admin"
 
+// users.postingstatus - a national, per-member posting restriction (replaces
+// the old per-membership moderated/prohibited flags).
+const POSTINGSTATUS_MODERATED = "MODERATED"
+const POSTINGSTATUS_DEFAULT = "DEFAULT"
+const POSTINGSTATUS_PROHIBITED = "PROHIBITED"
+const POSTINGSTATUS_UNMODERATED = "UNMODERATED"
+
 const FREQUENCY_NEVER = 0
 const FREQUENCY_IMMEDIATE = -1
 const FREQUENCY_HOUR1 = 1

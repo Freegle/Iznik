@@ -11,50 +11,24 @@
       <b-row>
         <b-col>
           <p>Sorry you're having trouble.</p>
-          <div v-if="loading" class="text-center my-3">
-            <b-spinner />
-          </div>
-          <template v-else>
-            <template v-if="commonGroups.length && !groupless">
-              <h4>Which community is this about?</h4>
-              <b-form-select
-                v-model="groupid"
-                class="mt-1 mb-1"
-                data-testid="group-select"
-              >
-                <option :value="null">-- Please choose --</option>
-                <option v-for="g in commonGroups" :key="g.id" :value="g.id">
-                  {{ g.namedisplay }}
-                </option>
-              </b-form-select>
-            </template>
-            <p v-else-if="groupless" class="text-muted">
-              Tell us what's wrong and we'll let you know what happens.
-            </p>
-            <p v-else class="text-muted">
-              We'll pass this to our central volunteers who deal with this kind
-              of thing.
-            </p>
-            <h4>Why are you reporting this?</h4>
-            <b-form-select
-              v-model="reason"
-              class="mt-1 mb-1"
-              data-testid="reason-select"
-            >
-              <option :value="null">-- Please choose --</option>
-              <option value="Spam">It's Spam</option>
-              <option value="Other">Something else</option>
-            </b-form-select>
-            <h4>What's wrong?</h4>
-            <b-form-textarea
-              v-model="comments"
-              :placeholder="
-                groupless
-                  ? 'Please tell us what\'s wrong.'
-                  : 'Please tell us what\'s wrong.  This will go to our lovely volunteers, who will try to help you.'
-              "
-            />
-          </template>
+          <p class="text-muted">
+            Tell us what's wrong and we'll let you know what happens.
+          </p>
+          <h4>Why are you reporting this?</h4>
+          <b-form-select
+            v-model="reason"
+            class="mt-1 mb-1"
+            data-testid="reason-select"
+          >
+            <option :value="null">-- Please choose --</option>
+            <option value="Spam">It's Spam</option>
+            <option value="Other">Something else</option>
+          </b-form-select>
+          <h4>What's wrong?</h4>
+          <b-form-textarea
+            v-model="comments"
+            placeholder="Please tell us what's wrong."
+          />
         </b-col>
       </b-row>
     </template>
@@ -67,13 +41,9 @@
   </b-modal>
 </template>
 <script setup>
-import { useGroupless } from '~/composables/useGroupless'
-
-import { ref, onMounted } from 'vue'
+import { ref } from 'vue'
 import { useChatStore } from '~/stores/chat'
 import { useOurModal } from '~/composables/useOurModal'
-// Experiment: no community identity on the member site.
-const groupless = useGroupless()
 
 const props = defineProps({
   user: {
@@ -89,50 +59,22 @@ const props = defineProps({
 const chatStore = useChatStore()
 const { modal, hide } = useOurModal()
 
-const groupid = ref(null)
 const reason = ref(null)
 const comments = ref(null)
-const commonGroups = ref([])
-const loading = ref(true)
-
-onMounted(async () => {
-  try {
-    const groups = await chatStore.commonGroups(props.chatid)
-    commonGroups.value = Array.isArray(groups) ? groups : []
-    // With no community identity the member is never asked; the first shared
-    // community is used as the routing label.
-    if (
-      commonGroups.value.length === 1 ||
-      (groupless && commonGroups.value.length)
-    ) {
-      groupid.value = commonGroups.value[0].id
-    }
-  } catch (e) {
-    commonGroups.value = []
-  } finally {
-    loading.value = false
-  }
-})
+const loading = ref(false)
 
 async function send() {
   if (!reason.value) {
     return
   }
 
-  if (commonGroups.value.length) {
-    // Route to the chosen community's moderators (existing flow).
-    if (!groupid.value || !comments.value) {
-      return
-    }
-    const chatid = await chatStore.openChatToMods(groupid.value)
-    await chatStore.report(chatid, reason.value, comments.value, props.chatid)
-  } else {
-    // No group in common: route to the central spam team. Comment optional.
-    await chatStore.reportNoGroup(
-      props.chatid,
-      reason.value,
-      comments.value || ''
-    )
+  loading.value = true
+
+  try {
+    const chatid = await chatStore.openChatToMods()
+    await chatStore.report(chatid, reason.value, comments.value || '', props.chatid)
+  } finally {
+    loading.value = false
   }
 
   hide()

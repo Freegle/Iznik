@@ -69,7 +69,7 @@ describe('useDonationAskModal', () => {
 
   it('ignores outcomes that are neither Taken nor Received', async () => {
     useDonationAskModal()
-    await outcomeHandler({ groupid: 5, outcome: 'Ongoing' })
+    await outcomeHandler({ outcome: 'Ongoing' })
     expect(mockMiscSet).not.toHaveBeenCalled()
     expect(mockBanditShown).not.toHaveBeenCalled()
   })
@@ -78,9 +78,8 @@ describe('useDonationAskModal', () => {
     'shows the ask on a %s outcome when nothing blocks it',
     async (outcome) => {
       const c = useDonationAskModal()
-      await outcomeHandler({ groupid: 9, outcome })
+      await outcomeHandler({ outcome })
       await vi.waitFor(() => expect(mockBanditShown).toHaveBeenCalled())
-      expect(c.groupId.value).toBe(9)
       expect(c.showDonationAskModal.value).toBe(true)
     }
   )
@@ -88,7 +87,7 @@ describe('useDonationAskModal', () => {
   it('does not ask again if the user has recurring donations set up', async () => {
     mockUser = { donorrecurring: true }
     useDonationAskModal()
-    await outcomeHandler({ groupid: 1, outcome: 'Taken' })
+    await outcomeHandler({ outcome: 'Taken' })
     expect(mockMiscSet).not.toHaveBeenCalled()
     expect(mockBanditShown).not.toHaveBeenCalled()
   })
@@ -96,14 +95,14 @@ describe('useDonationAskModal', () => {
   it('does not ask again within a week of the last ask', async () => {
     mockMiscGet.mockReturnValue(new Date().getTime() - 1000)
     useDonationAskModal()
-    await outcomeHandler({ groupid: 1, outcome: 'Taken' })
+    await outcomeHandler({ outcome: 'Taken' })
     expect(mockBanditShown).not.toHaveBeenCalled()
   })
 
   it('asks again once a week has passed since the last ask', async () => {
     mockMiscGet.mockReturnValue(new Date().getTime() - 60 * 60 * 1000 * 24 * 8)
     useDonationAskModal()
-    await outcomeHandler({ groupid: 1, outcome: 'Taken' })
+    await outcomeHandler({ outcome: 'Taken' })
     await vi.waitFor(() => expect(mockBanditShown).toHaveBeenCalled())
   })
 

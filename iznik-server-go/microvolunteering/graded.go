@@ -1,6 +1,7 @@
 package microvolunteering
 
 import (
+	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 )
 
@@ -72,23 +73,18 @@ func HasRecentGradedPass(db *gorm.DB, userid uint64) bool {
 	return false
 }
 
-// getGradedMessageChallenge picks a settled post in the member's communities that they have
-// not answered on and did not write. Newest first, so the post is still recognisable.
-func getGradedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *Challenge {
-	if len(groupIDs) == 0 {
-		return nil
-	}
+// getGradedMessageChallenge picks a settled post that the member has not answered on and did
+// not write. Newest first, so the post is still recognisable.
+func getGradedMessageChallenge(db *gorm.DB, userID uint64) *Challenge {
 	var candidates []uint64
-	db.Table("messages_groups AS mg").
-		Select("mg.msgid").
-		Joins("INNER JOIN messages m ON m.id = mg.msgid").
-		Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL "+
+	db.Table("messages AS m").
+		Select("m.id").
+		Where("m.collection = ? AND m.deleted IS NULL "+
 			"AND COALESCE(m.fromuser, 0) <> ? "+
-			"AND NOT EXISTS (SELECT 1 FROM microactions mine WHERE mine.msgid = mg.msgid AND mine.userid = ? AND mine.actiontype = ?) "+
-			"AND (SELECT COUNT(*) FROM microactions o WHERE o.msgid = mg.msgid AND o.actiontype = ? AND o.userid <> ?) >= ?",
-			groupIDs, "Approved", userID, userID, ChallengeCheckMessage, ChallengeCheckMessage, userID, ApprovalQuorum).
-		Group("mg.msgid").
-		Order("MAX(mg.arrival) DESC").
+			"AND NOT EXISTS (SELECT 1 FROM microactions mine WHERE mine.msgid = m.id AND mine.userid = ? AND mine.actiontype = ?) "+
+			"AND (SELECT COUNT(*) FROM microactions o WHERE o.msgid = m.id AND o.actiontype = ? AND o.userid <> ?) >= ?",
+			utils.COLLECTION_APPROVED, userID, userID, ChallengeCheckMessage, ChallengeCheckMessage, userID, ApprovalQuorum).
+		Order("m.arrival DESC").
 		Limit(25).
 		Scan(&candidates)
 

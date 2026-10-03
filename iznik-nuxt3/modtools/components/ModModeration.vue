@@ -19,13 +19,9 @@
 <script setup>
 import { computed, watch } from 'vue'
 import { useUserStore } from '~/stores/user'
-import { useMemberStore } from '~/stores/member'
+import { useMemberStore } from '~/modtools/stores/member'
 
 const props = defineProps({
-  membership: {
-    type: Object,
-    required: true,
-  },
   userid: {
     type: Number,
     required: true,
@@ -52,17 +48,13 @@ watch(
 
 const postingStatus = computed({
   get() {
-    // Go API resolves NULL → 'MODERATED' (V1 parity). Always returns
-    // a non-null string: MODERATED, DEFAULT, or PROHIBITED.
-    return props.membership.ourpostingstatus
+    // National users.postingstatus - one of MODERATED, DEFAULT,
+    // UNMODERATED or PROHIBITED (member/member.go PatchMember). Null
+    // means "moderated" (no override set) - match that in the select.
+    return user.value?.postingstatus ?? 'MODERATED'
   },
   async set(val) {
-    const groupid = props.membership.groupid
-    await memberStore.updateMembership({
-      userid: props.userid,
-      groupid,
-      ourPostingStatus: val,
-    })
+    await memberStore.setPostingStatus(props.userid, val)
   },
 })
 
@@ -86,7 +78,11 @@ const options = computed(() => {
     },
     {
       value: 'DEFAULT',
-      text: 'Group Settings',
+      text: 'Default',
+    },
+    {
+      value: 'UNMODERATED',
+      text: 'Unmoderated',
     },
     {
       value: 'PROHIBITED',

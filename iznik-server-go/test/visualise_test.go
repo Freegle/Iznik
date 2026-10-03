@@ -18,7 +18,7 @@ func createTestVisualiseData(t *testing.T, prefix string) (uint64, uint64, uint6
 	toUserID := CreateTestUser(t, prefix+"_to", "User")
 
 	// Create a message for the visualisation.
-	msgID := CreateTestMessage(t, fromUserID, CreateTestGroup(t, prefix), prefix+"_offer", 55.957, -3.205)
+	msgID := CreateTestMessage(t, fromUserID, prefix+"_offer", 55.957, -3.205)
 
 	// Create an attachment for the message.
 	attID := CreateTestAttachment(t, msgID)

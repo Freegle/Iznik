@@ -190,8 +190,7 @@ func TestEditMessageCreatesNewItemAndLinks(t *testing.T) {
 	// Create isolated owner, group, and message.
 	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
-	groupID := CreateTestGroup(t, prefix)
-	msgID := CreateTestMessage(t, userID, groupID, "OFFER: old-subject ("+prefix+")", 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, userID, "OFFER: old-subject ("+prefix+")", 55.9533, -3.1883)
 
 	// Confirm the item does not exist before the PATCH.
 	newItemName := fmt.Sprintf("UniqueWidget_%s", prefix)
@@ -311,9 +310,8 @@ func TestConvertToStoryReturnsItsOwnNewId(t *testing.T) {
 
 	// ConvertToStory is mod-only, so the requesting user needs a Moderator
 	// membership in at least one group.
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Two distinct newsfeed authors with distinct messages, so we can tell apart

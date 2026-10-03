@@ -101,11 +101,10 @@ func TestPatchSpammerBlockedWhenHeldByAnotherMod(t *testing.T) {
 
 func adminHoldSetup(t *testing.T, prefix string) (uint64, uint64, string, string) {
 	t.Helper()
-	groupID := CreateTestGroup(t, prefix)
 	modA := CreateTestUser(t, prefix+"_moda", "User")
 	modB := CreateTestUser(t, prefix+"_modb", "User")
-	CreateTestMembership(t, modA, groupID, "Moderator")
-	CreateTestMembership(t, modB, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modA)
+	PromoteTestUserToModerator(t, modB)
 	_, tokenA := CreateTestSession(t, modA)
 	_, tokenB := CreateTestSession(t, modB)
 
@@ -156,13 +155,11 @@ func TestAdminHoldDoesNotStealAnotherModsHold(t *testing.T) {
 
 func membershipHoldSetup(t *testing.T, prefix string) (uint64, uint64, uint64, string) {
 	t.Helper()
-	groupID := CreateTestGroup(t, prefix)
 	modA := CreateTestUser(t, prefix+"_moda", "User")
 	modB := CreateTestUser(t, prefix+"_modb", "User")
 	target := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, modA, groupID, "Moderator")
-	CreateTestMembership(t, modB, groupID, "Moderator")
-	CreateTestMembership(t, target, groupID, "Member")
+	PromoteTestUserToModerator(t, modA)
+	PromoteTestUserToModerator(t, modB)
 	_, tokenB := CreateTestSession(t, modB)
 
 	database.DBConn.Exec("UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",
@@ -205,11 +202,9 @@ func TestMembershipReleaseAllowedWhenHeldByAnotherMod(t *testing.T) {
 // are flagged.
 func TestMembershipReviewIgnoreClearsOwnHold(t *testing.T) {
 	prefix := uniquePrefix("mem_rvign")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	target := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, target, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	database.DBConn.Exec("UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",

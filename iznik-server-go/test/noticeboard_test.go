@@ -461,8 +461,6 @@ func createTestNoticeboard(t *testing.T, addedby uint64) uint64 {
 func TestDeleteNoticeboard(t *testing.T) {
 	prefix := uniquePrefix("nb_del")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, modToken := CreateTestSession(t, modID)
 
 	// We need systemrole to be Moderator for the check

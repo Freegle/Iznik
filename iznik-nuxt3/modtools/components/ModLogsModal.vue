@@ -42,7 +42,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useUserStore } from '~/stores/user'
 import { useLogsStore } from '~/stores/logs'
-import { useMemberStore } from '~/stores/member'
+import { useMemberStore } from '~/modtools/stores/member'
 import { useOurModal } from '~/composables/useOurModal'
 
 const props = defineProps({

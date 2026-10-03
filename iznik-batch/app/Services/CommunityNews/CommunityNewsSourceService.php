@@ -3,7 +3,6 @@
 namespace App\Services\CommunityNews;
 
 use App\Models\CommunityNewsArea;
-use App\Models\Group;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -38,57 +37,38 @@ class CommunityNewsSourceService
     public function allPlaces(): array
     {
         $dir = $this->path();
-        if ($dir === '' || !is_dir($dir)) {
+        if ($dir === '' || ! is_dir($dir)) {
             return [];
         }
 
         $out = [];
-        foreach (glob($dir . '/*.json') ?: [] as $file) {
+        foreach (glob($dir.'/*.json') ?: [] as $file) {
             $data = json_decode((string) @file_get_contents($file), true);
             if (is_array($data) && isset($data['sources']) && is_array($data['sources'])) {
                 $out[] = ['file' => $file, 'data' => $data];
             }
         }
+
         return $out;
     }
 
     /**
-     * Place files matching an area — by group short-name intersection, or (as a
-     * fallback) the place name appearing in the area name.
+     * Place files matching an area — the place name appearing in the area name.
      */
     public function placesForArea(CommunityNewsArea $area): array
     {
-        $groupShorts = $this->areaGroupShortNames($area);
         $areaName = mb_strtolower($area->name);
 
         $matched = [];
         foreach ($this->allPlaces() as $place) {
-            $groups = array_map('mb_strtolower', (array) ($place['data']['groups'] ?? []));
             $placeName = mb_strtolower((string) ($place['data']['place'] ?? ''));
 
-            $byGroup = !empty(array_intersect($groups, $groupShorts));
-            $byName = $placeName !== '' && str_contains($areaName, $placeName);
-
-            if ($byGroup || $byName) {
+            if ($placeName !== '' && str_contains($areaName, $placeName)) {
                 $matched[] = $place;
             }
         }
+
         return $matched;
-    }
-
-    /** @return array<int, string> lower-cased group short names in the area. */
-    private function areaGroupShortNames(CommunityNewsArea $area): array
-    {
-        $ids = array_map('intval', $area->groupids ?? []);
-        if (empty($ids)) {
-            return [];
-        }
-
-        return Group::whereIn('id', $ids)->pluck('nameshort')
-            ->filter()
-            ->map(fn ($n) => mb_strtolower($n))
-            ->values()
-            ->all();
     }
 
     /**
@@ -115,6 +95,7 @@ class CommunityNewsSourceService
                 ];
             }
         }
+
         return $sources;
     }
 
@@ -151,6 +132,7 @@ class CommunityNewsSourceService
             $totals['ok'] += $s['ok'];
             $totals['dead'] += $s['dead'];
         }
+
         return $totals;
     }
 
@@ -169,7 +151,7 @@ class CommunityNewsSourceService
 
         foreach ($data['sources'] as &$src) {
             $last = $src['last_checked'] ?? null;
-            if (!$force && $last && Carbon::parse($last)->gt(now()->subHours($recheckHours))) {
+            if (! $force && $last && Carbon::parse($last)->gt(now()->subHours($recheckHours))) {
                 continue; // checked recently — don't hammer it
             }
 
@@ -212,7 +194,7 @@ class CommunityNewsSourceService
     /** True if the URL fetches with a 2xx response. */
     public function fetchOk(string $url): bool
     {
-        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+        if ($url === '' || ! preg_match('#^https?://#i', $url)) {
             return false;
         }
         try {
@@ -230,7 +212,7 @@ class CommunityNewsSourceService
         $days = (int) config('freegle.communitynews.source_discovery_days', 90);
         $last = $data['last_discovered'] ?? null;
 
-        return !$last || Carbon::parse($last)->lt(now()->subDays($days));
+        return ! $last || Carbon::parse($last)->lt(now()->subDays($days));
     }
 
     /**
@@ -243,12 +225,13 @@ class CommunityNewsSourceService
     {
         $totals = ['places' => 0, 'added' => 0];
         foreach ($this->allPlaces() as $place) {
-            if (!$force && !$this->dueForDiscovery($place['data'])) {
+            if (! $force && ! $this->dueForDiscovery($place['data'])) {
                 continue;
             }
             $totals['places']++;
             $totals['added'] += $this->discoverForPlace($place['file'], $place['data']);
         }
+
         return $totals;
     }
 
@@ -270,13 +253,13 @@ class CommunityNewsSourceService
         $added = 0;
         foreach ($candidates as $c) {
             $url = trim((string) ($c['url'] ?? ''));
-            if ($url === '' || !preg_match('#^https?://#i', $url)) {
+            if ($url === '' || ! preg_match('#^https?://#i', $url)) {
                 continue;
             }
             if (in_array(mb_strtolower($url), $existingLc, true)) {
                 continue; // already have it
             }
-            if (!$this->fetchOk($url)) {
+            if (! $this->fetchOk($url)) {
                 continue; // verify it's live before adding
             }
 
@@ -310,6 +293,7 @@ class CommunityNewsSourceService
         $apiKey = config('freegle.communitynews.anthropic_api_key');
         if (empty($apiKey)) {
             Log::warning('CommunityNews: ANTHROPIC_API_KEY not set; cannot discover sources', ['place' => $place]);
+
             return [];
         }
 
@@ -345,11 +329,13 @@ class CommunityNewsSourceService
                 ]);
         } catch (\Throwable $e) {
             Log::warning('CommunityNews source discovery threw', ['place' => $place, 'error' => $e->getMessage()]);
+
             return [];
         }
 
-        if (!$response->successful()) {
+        if (! $response->successful()) {
             Log::warning('CommunityNews source discovery failed', ['place' => $place, 'status' => $response->status()]);
+
             return [];
         }
 
@@ -386,7 +372,7 @@ class CommunityNewsSourceService
     {
         @file_put_contents(
             $file,
-            json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n"
+            json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n"
         );
     }
 }

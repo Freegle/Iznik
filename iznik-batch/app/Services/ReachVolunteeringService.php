@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Models\Group;
 use App\Models\Location;
 use Html2Text\Html2Text;
 use Illuminate\Support\Facades\DB;
@@ -12,7 +11,8 @@ use Illuminate\Support\Facades\Log;
 class ReachVolunteeringService
 {
     private const EXPIRE_AGE_DAYS = 31;
-    private const POSTCODE        = '/([Gg][Ii][Rr] 0[Aa]{2})|((([A-Za-z][0-9]{1,2})|(([A-Za-z][A-Ha-hJ-Yj-y][0-9]{1,2})|(([A-Za-z][0-9][A-Za-z])|([A-Za-z][A-Ha-hJ-Yj-y][0-9][A-Za-z]?))))\s?[0-9][A-Za-z]{2})/mi';
+
+    private const POSTCODE = '/([Gg][Ii][Rr] 0[Aa]{2})|((([A-Za-z][0-9]{1,2})|(([A-Za-z][A-Ha-hJ-Yj-y][0-9]{1,2})|(([A-Za-z][0-9][A-Za-z])|([A-Za-z][A-Ha-hJ-Yj-y][0-9][A-Za-z]?))))\s?[0-9][A-Za-z]{2})/mi';
 
     protected function fetchFeedData(string $feedUrl): string
     {
@@ -23,7 +23,7 @@ class ReachVolunteeringService
             )
             ->get($feedUrl);
 
-        if (!$response->successful()) {
+        if (! $response->successful()) {
             throw new \RuntimeException("Reach Volunteering feed request failed: HTTP {$response->status()}");
         }
 
@@ -46,13 +46,13 @@ class ReachVolunteeringService
     protected function fetchOpportunities(string $feedUrl): array
     {
         $attempts = max(1, (int) config('freegle.reach_volunteering.fetch_attempts', 3));
-        $delay    = max(0, (int) config('freegle.reach_volunteering.retry_delay_seconds', 30));
+        $delay = max(0, (int) config('freegle.reach_volunteering.retry_delay_seconds', 30));
 
-        $body    = '';
+        $body = '';
         $decoded = null;
 
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
-            $body    = $this->fetchFeedData($feedUrl);
+            $body = $this->fetchFeedData($feedUrl);
             $decoded = json_decode($body, true, 512, JSON_INVALID_UTF8_IGNORE);
 
             if (is_array($decoded)) {
@@ -60,12 +60,12 @@ class ReachVolunteeringService
             }
 
             Log::warning('ReachVolunteering: feed did not decode to array', [
-                'attempt'      => $attempt,
-                'attempts'     => $attempts,
-                'json_error'   => json_last_error_msg(),
+                'attempt' => $attempt,
+                'attempts' => $attempts,
+                'json_error' => json_last_error_msg(),
                 'decoded_type' => gettype($decoded),
-                'body_length'  => strlen($body),
-                'body_sample'  => substr($body, 0, 500),
+                'body_length' => strlen($body),
+                'body_sample' => substr($body, 0, 500),
             ]);
 
             if ($attempt < $attempts && $delay > 0) {
@@ -76,17 +76,17 @@ class ReachVolunteeringService
         // All attempts exhausted — the body still isn't a JSON array. Capture
         // enough context to triage without a repro (Sentry doesn't record
         // `$body` as a frame var) and throw to protect the deletion phase.
-        $type    = gettype($decoded);
+        $type = gettype($decoded);
         $jsonErr = json_last_error_msg();
         $bodyLen = strlen($body);
-        $sample  = substr($body, 0, 200);
+        $sample = substr($body, 0, 200);
 
         Log::error('ReachVolunteering: unexpected feed payload', [
-            'attempts'     => $attempts,
-            'json_error'   => $jsonErr,
+            'attempts' => $attempts,
+            'json_error' => $jsonErr,
             'decoded_type' => $type,
-            'body_length'  => $bodyLen,
-            'body_sample'  => substr($body, 0, 500),
+            'body_length' => $bodyLen,
+            'body_sample' => substr($body, 0, 500),
         ]);
 
         throw new \RuntimeException(sprintf(
@@ -101,70 +101,56 @@ class ReachVolunteeringService
 
     public function sync(bool $dryRun = false): array
     {
-        $added   = 0;
+        $added = 0;
         $updated = 0;
         $deleted = 0;
 
         $feedUrl = config('freegle.reach_volunteering.feed_url');
-        $opps    = $this->fetchOpportunities($feedUrl);
+        $opps = $this->fetchOpportunities($feedUrl);
 
         $externalsSeen = [];
-        $urlsSeen      = [];
+        $urlsSeen = [];
 
         foreach ($opps as $opp) {
-            $jobId      = $opp['job_id'] ?? null;
+            $jobId = $opp['job_id'] ?? null;
             $externalId = "reach-{$jobId}";
-            $url        = $opp['url'] ?? '';
+            $url = $opp['url'] ?? '';
 
             // Track as seen BEFORE any early returns to avoid spurious deletes.
             $externalsSeen[$externalId] = true;
-            $urlsSeen[$url]             = true;
+            $urlsSeen[$url] = true;
 
             $datePosted = $opp['date_posted'] ?? null;
-            $ageInDays  = $datePosted
+            $ageInDays = $datePosted
                 ? (time() - strtotime($datePosted)) / 86400
                 : PHP_INT_MAX;
 
             if ($ageInDays > self::EXPIRE_AGE_DAYS) {
                 Log::debug('ReachVolunteering: skipping old opportunity', ['job_id' => $jobId, 'date_posted' => $datePosted]);
+
                 continue;
             }
 
             // New format: location field contains "Town, Postcode, Country"
             $locationField = $opp['location'] ?? '';
-            if (!preg_match(self::POSTCODE, $locationField, $matches)) {
+            if (! preg_match(self::POSTCODE, $locationField, $matches)) {
                 Log::debug('ReachVolunteering: no postcode in location', ['location' => $locationField]);
+
                 continue;
             }
 
             $postcode = strtoupper($matches[0]);
-            $locRow   = Location::getByName($postcode);
+            $locRow = Location::getByName($postcode);
 
-            if (!$locRow) {
+            if (! $locRow) {
                 Log::debug('ReachVolunteering: postcode not found', ['postcode' => $postcode]);
+
                 continue;
             }
 
-            $groupIds = Location::groupsNear((float) $locRow->lat, (float) $locRow->lng);
-
-            if (empty($groupIds)) {
-                Log::debug('ReachVolunteering: no groups near postcode', ['postcode' => $postcode]);
-                continue;
-            }
-
-            $group = Group::find($groupIds[0]);
-            if (!$group) {
-                continue;
-            }
-
-            if (!$group->getSetting('volunteering', 1)) {
-                Log::debug('ReachVolunteering: volunteering disabled', ['group' => $group->nameshort]);
-                continue;
-            }
-
-            $title    = $opp['title'] ?? '';
-            $descRaw  = $opp['description'] ?? '';
-            $desc     = (new Html2Text($descRaw))->getText();
+            $title = $opp['title'] ?? '';
+            $descRaw = $opp['description'] ?? '';
+            $desc = (new Html2Text($descRaw))->getText();
 
             $organisation = $opp['organisation'] ?? null;
             if ($organisation) {
@@ -172,7 +158,7 @@ class ReachVolunteeringService
             }
 
             // Strip country suffix from location display.
-            $location   = preg_replace('/,\s*(United Kingdom|UK|England|Scotland|Wales|Northern Ireland)\s*$/i', '', $locationField);
+            $location = preg_replace('/,\s*(United Kingdom|UK|England|Scotland|Wales|Northern Ireland)\s*$/i', '', $locationField);
             $commitment = $opp['other_details'] ?? null;
 
             // Match by externalid OR contacturl (handles migration from old format).
@@ -184,15 +170,16 @@ class ReachVolunteeringService
             if ($existing) {
                 if ($dryRun) {
                     $updated++;
+
                     continue;
                 }
 
                 DB::table('volunteering')->where('id', $existing->id)->update([
-                    'title'         => $title,
-                    'location'      => $location,
-                    'description'   => $desc,
-                    'contacturl'    => $url,
-                    'externalid'    => $externalId,
+                    'title' => $title,
+                    'location' => $location,
+                    'description' => $desc,
+                    'contacturl' => $url,
+                    'externalid' => $externalId,
                     'timecommitment' => $commitment,
                 ]);
 
@@ -200,26 +187,21 @@ class ReachVolunteeringService
             } else {
                 if ($dryRun) {
                     $added++;
+
                     continue;
                 }
 
-                $vid = DB::table('volunteering')->insertGetId([
-                    'title'         => $title,
-                    'location'      => $location,
-                    'description'   => $desc,
-                    'contacturl'    => $url,
+                DB::table('volunteering')->insert([
+                    'title' => $title,
+                    'location' => $location,
+                    'description' => $desc,
+                    'contacturl' => $url,
                     'timecommitment' => $commitment,
-                    'externalid'    => $externalId,
-                    'pending'       => true,
-                    'online'        => false,
-                    'deleted'       => 0,
-                    'added'         => now(),
-                ]);
-
-                DB::table('volunteering_groups')->insertOrIgnore([
-                    'volunteeringid' => $vid,
-                    'groupid'        => $groupIds[0],
-                    'arrival'        => now(),
+                    'externalid' => $externalId,
+                    'pending' => true,
+                    'online' => false,
+                    'deleted' => 0,
+                    'added' => now(),
                 ]);
 
                 $added++;
@@ -240,7 +222,7 @@ class ReachVolunteeringService
 
         foreach ($existings as $e) {
             $seenByExternalId = array_key_exists($e->externalid, $externalsSeen);
-            $seenByUrl        = $e->contacturl && array_key_exists($e->contacturl, $urlsSeen);
+            $seenByUrl = $e->contacturl && array_key_exists($e->contacturl, $urlsSeen);
 
             if ($seenByExternalId || $seenByUrl) {
                 continue;
@@ -248,6 +230,7 @@ class ReachVolunteeringService
 
             if ($dryRun) {
                 $deleted++;
+
                 continue;
             }
 

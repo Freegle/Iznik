@@ -33,7 +33,7 @@ final class MentionedDates
     public static function latest(string $text, CarbonInterface $now): ?Carbon
     {
         $months = implode('|', array_keys(self::MONTHS));
-        if (!preg_match_all(
+        if (! preg_match_all(
             "/\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+({$months})(?:\\s+(\\d{4}))?\\b/i",
             $text,
             $matches,
@@ -50,7 +50,7 @@ final class MentionedDates
             $explicitYear = isset($m[3]) && $m[3] !== '' ? (int) $m[3] : null;
 
             $year = $explicitYear ?? (int) $now->year;
-            if (!checkdate($month, $day, $year)) {
+            if (! checkdate($month, $day, $year)) {
                 continue;
             }
             $candidate = Carbon::create($year, $month, $day)->startOfDay();
@@ -59,7 +59,7 @@ final class MentionedDates
             // year ("8 January" written in December): research writes about the
             // near future, never the distant past.
             if ($explicitYear === null && $candidate->lt($now->copy()->subMonths(6)->startOfDay())) {
-                if (!checkdate($month, $day, $year + 1)) {
+                if (! checkdate($month, $day, $year + 1)) {
                     continue;
                 }
                 $candidate = Carbon::create($year + 1, $month, $day)->startOfDay();
@@ -83,7 +83,7 @@ final class MentionedDates
             return false;
         }
 
-        $mentioned = self::latest(trim($item->title . ' ' . $item->snippet), $now);
+        $mentioned = self::latest(trim($item->title.' '.$item->snippet), $now);
 
         return $mentioned !== null && $mentioned->lt($now->copy()->startOfDay());
     }

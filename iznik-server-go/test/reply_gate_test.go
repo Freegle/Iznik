@@ -13,32 +13,28 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// Experiment: micro-volunteering as the reply gate. A member who has already replied to
+// Micro-volunteering as the reply gate. A member who has already replied to
 // REPLY_GATE_AFTER posts in the last day must pass a graded check (a micro-volunteering task
 // whose answer is already settled by other members) before the next reply is accepted.
 // Nobody has to be there for the gate to work, and a wrong answer does not open it.
 
 type replyGateFixture struct {
-	groupID   uint64
 	replierID uint64
 	token     string
 }
 
 func setupReplyGate(t *testing.T, prefix string) replyGateFixture {
-	groupID := CreateTestGroup(t, prefix)
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, replierID, groupID, "Member")
 	_, token := CreateTestSession(t, replierID)
-	return replyGateFixture{groupID: groupID, replierID: replierID, token: token}
+	return replyGateFixture{replierID: replierID, token: token}
 }
 
 // A post by somebody else, with a User2User chat between the replier and the poster, ready
 // for an Interested reply.
 func postAndRoom(t *testing.T, f replyGateFixture, prefix string, n int) (msgID uint64, chatID uint64) {
 	posterID := CreateTestUser(t, fmt.Sprintf("%s_poster%d", prefix, n), "User")
-	CreateTestMembership(t, posterID, f.groupID, "Member")
-	msgID = CreateTestMessage(t, posterID, f.groupID, fmt.Sprintf("OFFER: gate item %d", n), 51.5, -0.1)
-	chatID = CreateTestChatRoom(t, f.replierID, &posterID, nil, "User2User")
+	msgID = CreateTestMessage(t, posterID, fmt.Sprintf("OFFER: gate item %d", n), 51.5, -0.1)
+	chatID = CreateTestChatRoom(t, f.replierID, &posterID, "User2User")
 	return
 }
 
@@ -69,11 +65,9 @@ func sendInterested(t *testing.T, f replyGateFixture, chatID, msgID uint64) int 
 func settledPost(t *testing.T, f replyGateFixture, prefix string, verdict string, n int) uint64 {
 	db := database.DBConn
 	posterID := CreateTestUser(t, prefix+"_settledposter_"+verdict, "User")
-	CreateTestMembership(t, posterID, f.groupID, "Member")
-	msgID := CreateTestMessage(t, posterID, f.groupID, "OFFER: settled "+verdict+" item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: settled "+verdict+" item", 51.5, -0.1)
 	for i := 0; i < n; i++ {
 		voterID := CreateTestUser(t, fmt.Sprintf("%s_voter_%s_%d", prefix, verdict, i), "User")
-		CreateTestMembership(t, voterID, f.groupID, "Member")
 		db.Exec("INSERT INTO microactions (actiontype, userid, msgid, result, comments, timestamp, score_negative) VALUES ('CheckMessage', ?, ?, ?, 'settled', NOW(), 0)",
 			voterID, msgID, verdict)
 	}
@@ -86,17 +80,22 @@ func recordVerdict(t *testing.T, f replyGateFixture, msgID uint64, result string
 		f.replierID, msgID, result)
 }
 
-func TestReplyGate_OffByDefault(t *testing.T) {
+func TestReplyGate_DefaultsToFiveWhenUnset(t *testing.T) {
 	t.Setenv("REPLY_GATE_AFTER", "")
-	assert.Equal(t, 0, chat.ReplyGateAfter(), "off unless switched on")
+	assert.Equal(t, 5, chat.ReplyGateAfter(), "default is 5 when the gate isn't configured")
+}
+
+func TestReplyGate_ExplicitZeroDisables(t *testing.T) {
+	t.Setenv("REPLY_GATE_AFTER", "0")
+	assert.Equal(t, 0, chat.ReplyGateAfter(), "an explicit 0 turns the gate off")
 
 	prefix := uniquePrefix("gateoff")
 	f := setupReplyGate(t, prefix)
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 6; i++ {
 		priorReply(t, f, prefix, i)
 	}
 	msgID, chatID := postAndRoom(t, f, prefix, 99)
-	assert.Equal(t, 200, sendInterested(t, f, chatID, msgID), "with the gate off every reply is accepted")
+	assert.Equal(t, 200, sendInterested(t, f, chatID, msgID), "with the gate off every reply is accepted, even above the default threshold")
 }
 
 func TestReplyGate_RefusesFrequentReplierWithoutAPass(t *testing.T) {

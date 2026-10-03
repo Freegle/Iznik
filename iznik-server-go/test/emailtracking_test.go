@@ -230,10 +230,10 @@ func TestEmailTrackingClickExternalURLCuratedCommunityNewsItem(t *testing.T) {
 
 	// community_news_items.areaid has an FK to community_news_areas, so
 	// create a throwaway area first; deleting it cascades to the item.
-	db.Exec("INSERT INTO community_news_areas (anchorgroupid, name, lat, lng, groupids) VALUES (?, ?, ?, ?, ?)",
-		999999901, "Test area", 51.5, -0.1, "[]")
+	db.Exec("INSERT INTO community_news_areas (authorityid, name, lat, lng) VALUES (?, ?, ?, ?)",
+		999999901, "Test area", 51.5, -0.1)
 	var areaID uint64
-	db.Raw("SELECT id FROM community_news_areas WHERE anchorgroupid = ?", 999999901).Scan(&areaID)
+	db.Raw("SELECT id FROM community_news_areas WHERE authorityid = ?", 999999901).Scan(&areaID)
 	defer db.Exec("DELETE FROM community_news_areas WHERE id = ?", areaID)
 
 	db.Exec("INSERT INTO community_news_items (areaid, title, snippet, url) VALUES (?, ?, ?, ?)",

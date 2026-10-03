@@ -4,16 +4,15 @@ namespace App\Mail\Reengage;
 
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\TrackableEmail;
+use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 use Symfony\Component\Mime\Email;
-use App\Services\UnsubscribeService;
 
 /**
  * One email in the first-week onboarding tip sequence. Every day shares the one
- * 'tip' template; the per-day copy (and the local-volunteer sign-off) is resolved
- * up front by ReengageContentService and passed in as $content, so the Mailable
- * itself stays dumb and serialisable.
+ * 'tip' template; the per-day copy is resolved up front by ReengageContentService
+ * and passed in as $content, so the Mailable itself stays dumb and serialisable.
  *
  * Tracked: participates in the shared email_tracking system (open pixel + wrapped
  * links) so the re-engagement flow's opens/clicks/effectiveness are visible in
@@ -151,7 +150,7 @@ class ReengageMail extends MjmlMailable
         }
 
         $footerLinks = [
-            'settingsUrl'    => 'settings',
+            'settingsUrl' => 'settings',
             'unsubscribeUrl' => 'unsubscribe',
         ];
         foreach ($footerLinks as $key => $action) {
@@ -170,8 +169,8 @@ class ReengageMail extends MjmlMailable
         }
 
         $data = array_merge([
-            'name'              => $this->recipientName,
-            'email'             => $this->recipientEmail,
+            'name' => $this->recipientName,
+            'email' => $this->recipientEmail,
             'trackingPixelMjml' => $this->getTrackingPixelMjml(),
         ], $content);
 

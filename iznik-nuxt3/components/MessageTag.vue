@@ -11,12 +11,11 @@
       'text-start': true,
     }"
   >
-    {{ tagForGroup }}
+    {{ tag }}
   </div>
 </template>
 <script setup>
 import { computed, onMounted } from 'vue'
-import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 
 const props = defineProps({
@@ -37,20 +36,10 @@ const props = defineProps({
 })
 
 const messageStore = useMessageStore()
-const groupStore = useGroupStore()
 
 // Fetch data on mount
 onMounted(async () => {
-  const message = await messageStore.fetch(props.id)
-  const fetching = []
-
-  if (message?.groups) {
-    message.groups.forEach((group) => {
-      fetching.push(groupStore.fetch(group.groupid))
-    })
-  }
-
-  await Promise.all(fetching)
+  await messageStore.fetch(props.id)
 })
 
 const message = computed(() => {
@@ -61,29 +50,10 @@ const isWanted = computed(() => {
   return message.value?.type === 'Wanted'
 })
 
-const tagForGroup = computed(() => {
-  let ret = null
-
-  message.value?.groups?.forEach((g) => {
-    const group = groupStore?.get(g.groupid)
-
-    if (group) {
-      switch (message.value?.type) {
-        case 'Offer':
-          ret = group.settings?.keywords?.offer
-            ? group.settings.keywords.offer
-            : 'OFFER'
-          break
-        case 'Wanted':
-          ret = group.settings?.keywords?.wanted
-            ? group.settings.keywords.wanted
-            : 'WANTED'
-          break
-      }
-    }
-  })
-
-  return ret
+const tag = computed(() => {
+  if (message.value?.type === 'Offer') return 'OFFER'
+  if (message.value?.type === 'Wanted') return 'WANTED'
+  return null
 })
 </script>
 <style scoped lang="scss">

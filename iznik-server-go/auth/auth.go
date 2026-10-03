@@ -207,48 +207,24 @@ func HasPermission(userid uint64, perm string) bool {
 	return false
 }
 
-// IsSystemMod checks if the user has system-level Moderator, Support, or Admin role.
-func IsSystemMod(myid uint64) bool {
+// IsModerator checks if the user has system-level Moderator, Support, or Admin role.
+// This is the single authorisation check for moderator-only actions: moderators
+// are a national pool, never scoped to a community.
+func IsModerator(myid uint64) bool {
 	db := database.DBConn
 	var systemrole string
 	result := db.Table("users").Select("systemrole").Where("id = ?", myid).Scan(&systemrole)
 	if result.Error != nil {
-		log.Printf("Failed to check system mod role for user %d: %v", myid, result.Error)
+		log.Printf("Failed to check moderator role for user %d: %v", myid, result.Error)
 		return false
 	}
 	return systemrole == utils.SYSTEMROLE_MODERATOR || systemrole == utils.SYSTEMROLE_SUPPORT || systemrole == utils.SYSTEMROLE_ADMIN
 }
 
-// IsModOfGroup checks if the user is a Moderator or Owner of the given group, or is Admin/Support.
-func IsModOfGroup(myid uint64, groupid uint64) bool {
-	if IsAdminOrSupport(myid) {
-		return true
-	}
-
-	if groupid == 0 {
-		return false
-	}
-
-	db := database.DBConn
-	var role string
-	result := db.Table("memberships").Select("role").Where("userid = ? AND groupid = ?", myid, groupid).Scan(&role)
-	if result.Error != nil {
-		log.Printf("Failed to check mod role for user %d group %d: %v", myid, groupid, result.Error)
-		return false
-	}
-	return role == utils.ROLE_MODERATOR || role == utils.ROLE_OWNER
-}
-
-// IsModOfAnyGroup checks if the user is a Moderator or Owner of any group, or is Admin/Support.
-func IsModOfAnyGroup(myid uint64) bool {
-	if IsAdminOrSupport(myid) {
-		return true
-	}
-
-	db := database.DBConn
-	var count int64
-	db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&count)
-	return count > 0
+// IsSystemMod is an alias for IsModerator, kept while other packages migrate
+// their call sites over.
+func IsSystemMod(myid uint64) bool {
+	return IsModerator(myid)
 }
 
 // HashPassword computes sha1(password + salt).

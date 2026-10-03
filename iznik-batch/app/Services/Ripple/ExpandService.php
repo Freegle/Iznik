@@ -2,7 +2,6 @@
 
 namespace App\Services\Ripple;
 
-use App\Services\ContentCheckService;
 use App\Services\MessageSpatialService;
 use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
@@ -19,16 +18,11 @@ use Illuminate\Support\Facades\Log;
  * ReachService) — no new container.
  *
  * PR A scope: compute + persist reach only ("dark" — nothing reads it yet).
- * Immediate mails (PR B), cross-group insertion (PR D engine hook), held-reply
- * release (PR C) all bolt onto this same per-tick loop later.
+ * Immediate mails (PR B) and held-reply release (PR C) bolt onto this same
+ * per-tick loop later.
  */
 class ExpandService
 {
-    /**
-     * Where the leave-check keeps its place in `logs`. See pullRippledPostsFromLeftGroups.
-     */
-    private const LEAVE_CHECK_WATERMARK_KEY = 'ripple_leave_check_last_log_id';
-
     /**
      * The wall-clock moment this run must stop taking new rows, or null when
      * unboxed. Set per process() call from freegle.ripple.expand_time_box_seconds;
@@ -57,33 +51,18 @@ class ExpandService
     /** Chooses each post's reach budget from how thinly freeglers are spread around it. */
     private DensityService $density;
 
-    /** Which communities have switched rippling off, per direction (groups.settings.rippling). */
-    private GroupRippleOptOut $optOut;
-
-    /** Releases held replies when a post's reach is dropped by an opt-out. */
-    private RippleReplyService $replies;
-
     /** Compact cell-set form of the reach polygon (plans/2026-08-24-rippling-reach-raster-storage.md). */
     private CellSetService $cellSets;
-
-    /** The receiving group's own rules, applied as a post ripples in. */
-    private ContentCheckService $contentCheck;
 
     public function __construct(
         private ReachService $reach,
         ?ReachBoundsService $bounds = null,
         ?DensityService $density = null,
-        ?GroupRippleOptOut $optOut = null,
-        ?RippleReplyService $replies = null,
-        ?CellSetService $cellSets = null,
-        ?ContentCheckService $contentCheck = null
+        ?CellSetService $cellSets = null
     ) {
-        $this->bounds = $bounds ?? new ReachBoundsService();
-        $this->density = $density ?? new DensityService();
-        $this->optOut = $optOut ?? new GroupRippleOptOut();
-        $this->replies = $replies ?? new RippleReplyService(new ReachQueryService());
-        $this->cellSets = $cellSets ?? new CellSetService();
-        $this->contentCheck = $contentCheck ?? app(ContentCheckService::class);
+        $this->bounds = $bounds ?? new ReachBoundsService;
+        $this->density = $density ?? new DensityService;
+        $this->cellSets = $cellSets ?? new CellSetService;
     }
 
     /**
@@ -94,27 +73,12 @@ class ExpandService
         try {
             DB::statement(
                 'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) '
-                . 'ON DUPLICATE KEY UPDATE count = count + ?',
+                .'ON DUPLICATE KEY UPDATE count = count + ?',
                 [$event, $by, $by]
             );
         } catch (\Throwable $e) {
             // best-effort; never affect the expander
         }
-    }
-
-    /**
-     * SQL fragment (leading " AND ...") excluding the communities that have opted out of
-     * the given rippling direction, or '' when none have. Every id is a DB int, so the
-     * inline list cannot inject — same shape as the reachable-gate clause below.
-     */
-    private function optOutClause(string $column, string $direction): string
-    {
-        $ids = $this->optOut->excludedGroupIds($direction);
-        if (empty($ids)) {
-            return '';
-        }
-
-        return ' AND ' . $column . ' NOT IN (' . implode(',', $ids) . ')';
     }
 
     /**
@@ -157,10 +121,12 @@ class ExpandService
         foreach ($bounds as $lane => $rings) {
             if (! is_array($rings)) {
                 $out[(string) $lane] = $rings; // fairness_budget_min, a scalar
+
                 continue;
             }
             if ($lane === 'bbox') {
                 $out['bbox'] = $rings; // four floats, not a lane
+
                 continue;
             }
             $converted = [];
@@ -190,11 +156,11 @@ class ExpandService
      */
     private function boundsSetSql(string $storeWkt): array
     {
-        $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
+        $poly = 'ST_GeomFromText(?, '.self::SRID.')';
 
         return [
-            ', outer_bound = ' . ReachBoundsService::outerExpr($poly)
-            . ', inner_bound = ' . ReachBoundsService::innerExpr($poly),
+            ', outer_bound = '.ReachBoundsService::outerExpr($poly)
+            .', inner_bound = '.ReachBoundsService::innerExpr($poly),
             [$storeWkt, $storeWkt],
         ];
     }
@@ -210,7 +176,7 @@ class ExpandService
     private function boundsEnvelopeSql(string $storeWkt): array
     {
         return [
-            ', outer_bound = ST_Envelope(ST_GeomFromText(?, ' . self::SRID . ')), inner_bound = NULL',
+            ', outer_bound = ST_Envelope(ST_GeomFromText(?, '.self::SRID.')), inner_bound = NULL',
             [$storeWkt],
         ];
     }
@@ -219,19 +185,17 @@ class ExpandService
      * @return array{initialized:int,expanded:int,completed:int,removed:int,skipped:int,errors:int}
      */
     /**
-     * @param int|null    $onlyMsgid     Restrict the whole run to one message ID (controlled testing).
-     * @param string|null $withinPolyWkt Restrict the whole run to posts whose origin point falls within
-     *                                   this WKT polygon (SRID self::SRID) — the area test (e.g. ripple
-     *                                   the recent posts near Edinburgh). The go-live arrival cutoff
-     *                                   still applies (an area scope filters where, not when).
+     * @param  int|null  $onlyMsgid  Restrict the whole run to one message ID (controlled testing).
+     * @param  string|null  $withinPolyWkt  Restrict the whole run to posts whose origin point falls within
+     *                                      this WKT polygon (SRID self::SRID) — the area test (e.g. ripple
+     *                                      the recent posts near Edinburgh). The go-live arrival cutoff
+     *                                      still applies (an area scope filters where, not when).
      */
     public function process(bool $dryRun = false, int $limit = 500, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): array
     {
         $stats = [
             'initialized' => 0, 'expanded' => 0, 'completed' => 0,
-            'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0, 'mailed' => 0,
-            'memberships_added' => 0, 'pulled_on_leave' => 0,
-            'pulled_on_removal' => 0, 'memberships_removed' => 0, 'timeboxed' => 0,
+            'removed' => 0, 'skipped' => 0, 'errors' => 0, 'timeboxed' => 0,
         ];
 
         // Time-box the run BELOW the command's single-instance lock TTL (3600s in
@@ -248,44 +212,23 @@ class ExpandService
         $this->runDeadline = $box !== 0 ? now()->addSeconds($box) : null;
 
         // A scoped run ($onlyMsgid or $withinPolyWkt) targets a chosen subset of posts (controlled/area
-        // testing): init, advance AND retraction are all restricted to the same subset, so the group
-        // experiment retracts a rejected/removed post (drops reach + pulls its rippled copies) instead
-        // of leaving live copies behind and continuing to ripple it into yet more groups.
+        // testing): init, advance AND retraction are all restricted to the same subset.
         $scoped = $onlyMsgid !== null || $withinPolyWkt !== null;
 
         // Master activation switch. While rippling is globally disabled an UNSCOPED run does nothing
         // (no reach computed, nothing rippled). A SCOPED run is still allowed through while global is
-        // off - this is how the group experiment runs: RIPPLE_WITHIN_GROUPS set + RIPPLE_ENABLED false
-        // ripples ONLY the scoped (experiment) groups, everyone else stays dark. The unscoped cron is
-        // also unscheduled when off (routes/console.php); this gate is defence-in-depth.
-        if (!config('freegle.ripple.enabled') && !$scoped) {
+        // off, for controlled/area testing. The unscoped cron is also unscheduled when off
+        // (routes/console.php); this gate is defence-in-depth.
+        if (! config('freegle.ripple.enabled') && ! $scoped) {
             return $stats;
         }
 
-        // 1. Stop-and-retract for posts that have left the browsable set — rejected/removed on
-        //    their origin group, withdrawn, expired or deleted (Taken/Received stay in
-        //    messages_spatial and are excluded): drop reach AND pull every rippled-in copy,
-        //    removing now-purposeless ripple-joined memberships.
-        // Retraction is deliberately NOT area-scoped (only --msgid restricts it). A rippled_in
-        // copy is a committed artifact whose cleanup must complete even after the post's origin
-        // group leaves the trial - at which point its origin drops out of $withinPolyWkt. Area-
-        // scoping the retraction stranded copies in receiving groups when a group was removed
-        // from the experiment (poster had already left, but the post stayed live there). See
-        // ExpandServiceTest::test_*_retraction_*_not_gated_by_current_area_scope.
+        // 1. Stop-and-retract for posts that have left the browsable set — rejected, withdrawn,
+        //    expired or deleted (Taken/Received stay in messages_spatial and are excluded): drop
+        //    the post's reach row, which both stops further expansion and lets
+        //    ripple:release-replies treat the post as gone.
+        // Retraction is deliberately NOT area-scoped (only --msgid restricts it).
         $this->removeStaleAndRetract($dryRun, $stats, $onlyMsgid);
-        // 1a. Pull rippled-in copies stranded when the HOME post is deleted or moved back to
-        //     pending on its origin group. Those actions leave the rippled-in copies Approved
-        //     (so the post still has messages_spatial rows) while the origin row is gone or
-        //     Pending, so the spatial-null trigger in removeStaleAndRetract never sees them.
-        $this->retractCopiesOrphanedByOriginRemoval($dryRun, $stats, $onlyMsgid);
-        // 1b. Pull rippled-in posts from any group whose poster has actively left it, so a
-        //     leave removes the poster's post from that group (not just their membership).
-        $this->pullRippledPostsFromLeftGroups($dryRun, $stats, $onlyMsgid);
-        // 1c. Stop-and-retract for posts on a community that has since switched ripple-OUT off
-        //     (groups.settings.rippling.out). initialiseNew's gate only stops NEW posts, so
-        //     without this a community that opts out keeps expanding everything it had already
-        //     started - including on the deploy that first gives it the setting.
-        $this->retractOptedOutCommunities($dryRun, $stats, $onlyMsgid);
 
         // 2. Initialise reach for posts new to messages_spatial.
         $this->initialiseNew($dryRun, $limit, $stats, $onlyMsgid, $withinPolyWkt);
@@ -298,7 +241,6 @@ class ExpandService
         return $stats;
     }
 
-
     /**
      * Backfill: shrink the stored reach of EXISTING active posts whose reach was
      * computed before the audience-budget cap (config freegle.ripple.extent) was
@@ -307,11 +249,11 @@ class ExpandService
      *
      * Pure reach-geometry shrink: it re-fetches the now-capped schedule for each
      * post and overwrites the stored polygon + schedule at the post's CURRENT
-     * tick. It deliberately does NOT ripple into/out of groups, touch
-     * memberships, or bump updated_at — so it generates no mail (sendReachDigests
-     * only scans recently-updated rows, and the rippling_reach_notified ledger
-     * blocks re-notification regardless) and never retracts copies already
-     * delivered to far groups (we shrink future reach, we don't claw back).
+     * tick. It deliberately does not bump updated_at — so it generates no mail
+     * (sendReachDigests only scans recently-updated rows, and the
+     * rippling_reach_notified ledger blocks re-notification regardless) and
+     * never retracts visibility already given at the wider reach (we shrink
+     * future reach, we don't claw back).
      *
      * No-op unless the cap is active. Only rows whose pool (total_freeglers)
      * exceeds the cap are candidates — nothing else can be over it. Galera-safe:
@@ -321,18 +263,15 @@ class ExpandService
      */
     public function recomputeReach(bool $dryRun = false, int $limit = 1000, ?int $onlyMsgid = null): array
     {
-        $stats = ['candidates' => 0, 'shrunk' => 0, 'skipped' => 0, 'groups_before' => 0, 'groups_after' => 0];
+        $stats = ['candidates' => 0, 'shrunk' => 0, 'skipped' => 0];
 
         $target = (int) config('freegle.ripple.extent.target_users', 0);
-        if (!config('freegle.ripple.extent.enabled') || $target <= 0) {
+        if (! config('freegle.ripple.extent.enabled') || $target <= 0) {
             return $stats; // cap not active — there is nothing smaller to shrink to
         }
 
         $q = DB::table('rippling_reach')
-            // Current footprint, for the crosspost-breadth stat: the stored
-            // grid, counted via the spatial server's groups-intersecting
-            // answer. Absent (retired rows) the stat skips the before-count.
-            ->select(['msgid', 'lat', 'lng', 'tick', 'total_freeglers', 'rejected_groups', 'status', 'max_minutes_cap', 'polygon_cells'])
+            ->select(['msgid', 'lat', 'lng', 'tick', 'total_freeglers', 'status', 'max_minutes_cap'])
             ->where('status', '!=', 'rejected')            // active reach rows only
             ->where('total_freeglers', '>', $target);      // only rows that can exceed the cap
         if ($onlyMsgid !== null) {
@@ -357,6 +296,7 @@ class ExpandService
             );
             if ($schedule === null || empty($schedule['ticks'])) {
                 $stats['skipped']++;
+
                 continue; // routing unreachable this run — safe to retry later
             }
 
@@ -366,6 +306,7 @@ class ExpandService
             // (i.e. the cap actually bound for this origin).
             if ($newMax <= 0 || $newMax >= (int) $row->total_freeglers) {
                 $stats['skipped']++;
+
                 continue;
             }
 
@@ -373,23 +314,16 @@ class ExpandService
             $tickGeom = $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng);
             if ($tickGeom === null) {
                 $stats['skipped']++;
+
                 continue;
             }
             $tickWkt = $tickGeom['wkt'];
 
-            $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
-
-            // Cross-post breadth: how many groups the post hits under its CURRENT reach
-            // vs under the CAPPED reach, counted with the SAME selection the live ripple
-            // uses (rippleIntoNewGroups). Accumulated for both dry-run and live so a
-            // dry-run reports the cap's headline impact on crossposting before any write.
-            if (($row->polygon_cells ?? null) !== null) {
-                $stats['groups_before'] += $this->countCrosspostGroupsFromCells($row->polygon_cells);
-            }
-            $stats['groups_after'] += $this->countCrosspostGroups($storeWkt);
+            $storeWkt = $tickWkt;
 
             if ($dryRun) {
                 $stats['shrunk']++;
+
                 continue;
             }
 
@@ -418,19 +352,19 @@ class ExpandService
                 $cells = $this->cellSets->rasterize($storeWkt);
                 if ($cells === null) {
                     $stats['skipped']++;
+
                     continue;
                 }
             }
             // Anchored on updated_at so the SET clause is never empty.
             $gridSet = ', polygon_cells = ?';
             $shrinkSql = fn (string $set): string => 'UPDATE rippling_reach
-                    SET updated_at = updated_at' . $gridSet . $set . ',
-                        schedule = ?, reachable_group_ids = ?, total_freeglers = ?, max_drive_min = ?'
-                        . $ovCellsSet . '
+                    SET updated_at = updated_at'.$gridSet.$set.',
+                        schedule = ?, total_freeglers = ?, max_drive_min = ?'
+                        .$ovCellsSet.'
                   WHERE msgid = ?';
             $shrinkTail = [
                 json_encode($ticks),
-                json_encode($this->tickReachableIds($entry, $schedule)),
                 (int) $schedule['total_freeglers'],
                 $schedule['max_drive_min'],
                 $this->overflowCellsJson($schedule),
@@ -446,10 +380,7 @@ class ExpandService
                 DB::statement($shrinkSql($envSet), array_merge($gridLead, $envParams, $shrinkTail));
             }
 
-            // Preserve any secondary-group "out of area" rejection clips (the clip
-            // statement shrinks polygon and NULLs inner_bound atomically).
-            $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
-            // Routing-provided bounds upgrade the columns after the clips, verified
+            // Routing-provided bounds upgrade the columns, verified
             // against the FINAL stored polygon.
             if ($tickGeom['outer'] !== null) {
                 $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
@@ -463,89 +394,16 @@ class ExpandService
     }
 
     /**
-     * Count the Freegle groups a reach polygon would crosspost into — the same
-     * publish/type/onhere/playground/polyindex + ST_Intersects selection
-     * rippleIntoNewGroups uses (minus the per-poster re-ripple guards, which are
-     * post-specific and not part of a breadth measure). Used by recomputeReach to
-     * report how the audience cap narrows cross-posting.
-     */
-    /**
-     * countCrosspostGroups for a stored grid: which groups the reach touches,
-     * asked of the spatial server, then narrowed by the SAME predicate the SQL
-     * form applies.
-     *
-     * The narrowing is the point. The spatial server's groups index selects on
-     * publish=1 AND listable=1 only (dataset_groups.go), while the SQL form
-     * additionally requires type='Freegle' and onhere=1, excludes
-     * playground-named groups, excludes POINT-geometry sentinels and honours
-     * the ripple-in opt-out. Counting the raw answer would make
-     * groups_before and groups_after in ripple:recompute-reach's output two
-     * different populations, so the audience-cap effectiveness figure an
-     * operator reads would be measuring the wrong difference.
-     *
-     * @param string $cells encoded cell set
-     */
-    private function countCrosspostGroupsFromCells(string $cells): int
-    {
-        $touching = $this->cellSets->groupsIntersecting($cells);
-        if ($touching === null || $touching === []) {
-            return 0;
-        }
-        $ids = array_map(static fn ($g) => (int) $g['id'], $touching);
-
-        // keep-raw: the opt-out clause is an SQL fragment built by
-        // GroupRippleOptOut, and ST_GeometryType is a spatial predicate - the
-        // builder can render neither.
-        $row = DB::selectOne(
-            "SELECT COUNT(*) AS c
-             FROM `groups` g
-             WHERE g.id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")
-               AND g.publish = 1
-               AND g.type = 'Freegle'
-               AND g.onhere = 1
-               AND g.nameshort NOT LIKE '%playground%'
-               AND g.polyindex IS NOT NULL
-               AND ST_GeometryType(g.polyindex) <> 'POINT'"
-            . $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN),
-            $ids
-        );
-
-        return (int) ($row->c ?? 0);
-    }
-
-    private function countCrosspostGroups(string $wkt): int
-    {
-        if ($wkt === '') {
-            return 0;
-        }
-        // keep-raw: ST_Intersects/ST_GeometryType against a WKT literal - spatial predicates the builder cannot render
-        $row = DB::selectOne(
-            "SELECT COUNT(*) AS c
-             FROM `groups` g
-             WHERE g.publish = 1
-               AND g.type = 'Freegle'
-               AND g.onhere = 1
-               AND g.nameshort NOT LIKE '%playground%'
-               AND g.polyindex IS NOT NULL
-               AND ST_GeometryType(g.polyindex) <> 'POINT'
-               AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))"
-            . $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN),
-            [$wkt]
-        );
-        return (int) ($row->c ?? 0);
-    }
-
-    /**
-     * Stop-and-retract for every post that has left messages_spatial — rejected/removed on its
-     * origin group, withdrawn, expired or deleted (Taken/Received stay in messages_spatial and
-     * are intentionally excluded). For each such post we drop its rippling_reach row (which both
-     * stops further expansion and lets ripple:release-replies treat the post as gone, releasing
-     * any held replies) and retract every rippled-in copy (see retractRippledCopiesForRemovedPost).
+     * Stop-and-retract for every post that has left messages_spatial - rejected, withdrawn,
+     * expired or deleted (Taken/Received stay in messages_spatial and are intentionally
+     * excluded). For each such post we drop its rippling_reach row, which both stops further
+     * expansion and lets ripple:release-replies treat the post as gone, releasing any held
+     * replies.
      *
      * Scope: only --msgid restricts this (controlled single-post testing). It is intentionally
-     * NOT area-scoped - retracting an already-rippled copy must complete regardless of whether the
-     * post's origin is still inside the current trial polygon, otherwise copies are stranded in
-     * receiving groups when a group leaves the experiment. $stats['removed'] = reach rows dropped.
+     * NOT area-scoped - a post that has genuinely gone is retracted regardless of whether its
+     * origin is still inside the current run's target area. $stats['removed'] = reach rows
+     * dropped.
      */
     private function removeStaleAndRetract(bool $dryRun, array &$stats, ?int $onlyMsgid = null): void
     {
@@ -561,7 +419,7 @@ class ExpandService
                 'SELECT mr.msgid AS msgid
                  FROM rippling_reach mr
                  LEFT JOIN messages_spatial ms ON ms.msgid = mr.msgid
-                 WHERE ms.msgid IS NULL AND mr.status <> \'held\'' . $scopeSql,
+                 WHERE ms.msgid IS NULL AND mr.status <> \'held\''.$scopeSql,
                 $params
             );
 
@@ -569,16 +427,15 @@ class ExpandService
 
             // Absent from messages_spatial does not mean gone. The index job can be
             // down, or die between its delete and add passes - and historically its age
-            // pass deleted ~3,000 still-qualifying posts at the end of every run off
-            // their dead memberships' arrivals (retracted-copy tombstones; fixed in
-            // removeOldMessages alongside this check). Treating each absence as "the
-            // post has gone" deleted the reach row, retracted the post's copies from
-            // every group it had rippled into (leaving MORE tombstones, feeding the
-            // loop), and then initialiseNew built the whole thing again from scratch -
-            // routing searches and a large polygon write to the cluster's write node,
-            // per post. On production that was about 85% of all initialisation work:
-            // 11,656 initialisations in one day against 1,635 genuinely new posts, with
-            // 8,802 reach rows dropped.
+            // pass deleted ~3,000 still-qualifying posts at the end of every run (fixed
+            // in removeOldMessages alongside this check). Treating each absence as "the
+            // post has gone" deleted the reach row and retracted the post everywhere it
+            // had rippled (feeding the same churn back into the index), and then
+            // initialiseNew built the whole thing again from scratch - routing searches
+            // and a large polygon write to the cluster's write node, per post. On
+            // production that was about 85% of all initialisation work: 11,656
+            // initialisations in one day against 1,635 genuinely new posts, with 8,802
+            // reach rows dropped.
             //
             // So rather than trust the index, ask the tables it is built from whether each
             // of these posts is supposed to be in it. A post that no longer qualifies has
@@ -591,17 +448,11 @@ class ExpandService
 
             if ($dryRun) {
                 $stats['removed'] += count($msgids);
-                $stats['pulled_on_removal'] += (int) DB::table('messages_groups')
-                    ->whereIn('msgid', $msgids)
-                    ->where('rippled_in', 1)
-                    ->where('deleted', 0)
-                    ->count();
 
                 return;
             }
 
             foreach ($msgids as $msgid) {
-                $this->retractRippledCopiesForRemovedPost($msgid, $stats);
                 DB::table('rippling_reach')->where('msgid', $msgid)->delete();
                 $stats['removed']++;
             }
@@ -633,7 +484,7 @@ class ExpandService
 
         $gone = [];
         foreach ($absent as $msgid) {
-            if (!isset($alive[$msgid])) {
+            if (! isset($alive[$msgid])) {
                 $gone[] = $msgid;
             }
         }
@@ -646,458 +497,6 @@ class ExpandService
         }
 
         return $gone;
-    }
-
-    /**
-     * Stop-and-retract every post whose community has switched ripple-OUT off
-     * (groups.settings.rippling.out) since the post started rippling.
-     *
-     * initialiseNew's opt-out gate only keeps NEW posts from starting, so on its own it would
-     * leave a phantom or training community's in-flight ripples expanding for the rest of their
-     * life - and on the deploy that first writes the setting, EVERY live practice post there
-     * would keep going. This closes that: drop the reach row (which stops expansion and takes the
-     * post out of every reach-driven read path), pull the copies already delivered - exactly as
-     * removeStaleAndRetract does for a post that has left the browsable set - and release any
-     * replies still held against the reach we are dropping.
-     *
-     * Skips 'held' rows for the same reason the other retraction paths do: their copies are
-     * deliberately Pending for per-group moderation. Freezing is one-way: nothing clears
-     * 'held' (FreezeReachIfOriginPending in iznik-server-go's microvolunteering package is
-     * the only writer, and freezes precisely so that re-approving a copy cannot re-reach and
-     * re-notify), so a frozen post stays outside this pass for the rest of its life.
-     *
-     * Scope: only --msgid restricts it, matching removeStaleAndRetract - retracting a committed
-     * copy must complete regardless of the current area scope.
-     */
-    private function retractOptedOutCommunities(bool $dryRun, array &$stats, ?int $onlyMsgid = null): void
-    {
-        try {
-            $excluded = $this->optOut->excludedGroupIds(GroupRippleOptOut::DIRECTION_OUT);
-            if (empty($excluded)) {
-                return;
-            }
-
-            // ms.groupid is the post's own community (messages_spatial.msgid is UNIQUE). A post
-            // whose community opted out is matched here however far it had already spread.
-            $q = DB::table('rippling_reach as mr')
-                ->join('messages_spatial as ms', 'ms.msgid', '=', 'mr.msgid')
-                ->where('mr.status', '<>', 'held')
-                ->whereIn('ms.groupid', $excluded);
-            if ($onlyMsgid !== null) {
-                $q->where('mr.msgid', $onlyMsgid);
-            }
-            $msgids = $q->pluck('mr.msgid')->map(static fn ($id) => (int) $id)->all();
-            if (empty($msgids)) {
-                return;
-            }
-
-            if ($dryRun) {
-                $stats['removed'] += count($msgids);
-                $stats['pulled_on_removal'] += (int) DB::table('messages_groups')
-                    ->whereIn('msgid', $msgids)
-                    ->where('rippled_in', 1)
-                    ->where('deleted', 0)
-                    ->count();
-
-                return;
-            }
-
-            foreach ($msgids as $msgid) {
-                $this->retractRippledCopiesForRemovedPost($msgid, $stats);
-                // Release any still-held replies BEFORE dropping the reach row. The post is live
-                // (it is still in messages_spatial), so these replies are real people waiting on
-                // a ripple that is never coming: with no reach row, ripple:release-replies takes
-                // the "transiently absent, wait for re-initialisation" branch and would hold them
-                // for ever, and initialiseNew will never re-create the row. Releasing hands them
-                // to the offerer, which is what would have happened when the reach reached them.
-                // (Replies made from here on are not held at all - the Go gate only holds when a
-                // reach row exists, so it fails open.)
-                $stats['released_on_opt_out'] = ($stats['released_on_opt_out'] ?? 0)
-                    + $this->replies->releaseAll($msgid, 'community-opted-out');
-                DB::table('rippling_reach')->where('msgid', $msgid)->delete();
-                $stats['removed']++;
-                Log::info("ripple: retracted $msgid - its community has rippling switched off");
-            }
-        } catch (\Throwable $e) {
-            $stats['errors']++;
-            Log::warning("ripple: retract-opted-out-communities failed: {$e->getMessage()}");
-        }
-    }
-
-    /**
-     * Pull rippled-in copies stranded when the HOME post is no longer live-approved on its
-     * origin group. removeStaleAndRetract only fires once a post has left messages_spatial
-     * entirely, but a mod Delete or Back-to-Pending on the origin group leaves the rippled-in
-     * copies Approved (so the msgid still has spatial rows) while the origin row is gone (Delete
-     * hard-deletes it) or Pending (Back-to-Pending) - so that trigger never sees them and the
-     * copies are stranded on the neighbouring groups. This catches exactly that case: an
-     * active-reach post with a live rippled_in copy but NO live Approved origin row. Reuses the
-     * same retraction (soft-delete + Message/Deleted log + ripple-membership cleanup, no
-     * Group/Left) and drops the reach row so it stops spreading; a later re-approval on the home
-     * group re-ripples it afresh. Best-effort: never breaks the run.
-     */
-    private function retractCopiesOrphanedByOriginRemoval(bool $dryRun, array &$stats, ?int $onlyMsgid = null): void
-    {
-        try {
-            $scopeSql = '';
-            $params = ['Approved'];
-            if ($onlyMsgid !== null) {
-                $scopeSql = ' AND mr.msgid = ?';
-                $params[] = $onlyMsgid;
-            }
-
-            $orphaned = DB::select(
-                'SELECT DISTINCT mr.msgid AS msgid
-                   FROM rippling_reach mr
-                   JOIN messages_groups mg
-                     ON mg.msgid = mr.msgid AND mg.rippled_in = 1 AND mg.deleted = 0
-                  WHERE mr.status <> \'held\' AND NOT EXISTS (
-                          SELECT 1 FROM messages_groups o
-                           WHERE o.msgid = mr.msgid AND o.rippled_in = 0
-                             AND o.deleted = 0 AND o.collection = ?
-                        )' . $scopeSql,
-                $params
-            );
-            if (empty($orphaned)) {
-                return;
-            }
-            $msgids = array_map(static fn ($r) => (int) $r->msgid, $orphaned);
-
-            if ($dryRun) {
-                $stats['pulled_on_removal'] += (int) DB::table('messages_groups')
-                    ->whereIn('msgid', $msgids)
-                    ->where('rippled_in', 1)
-                    ->where('deleted', 0)
-                    ->count();
-
-                return;
-            }
-
-            foreach ($msgids as $msgid) {
-                $this->retractRippledCopiesForRemovedPost($msgid, $stats);
-                DB::table('rippling_reach')->where('msgid', $msgid)->delete();
-                $stats['removed']++;
-            }
-        } catch (\Throwable $e) {
-            $stats['errors']++;
-            Log::warning("ripple: retract-orphaned-copies failed: {$e->getMessage()}");
-        }
-    }
-
-    /**
-     * Pull every rippled-in copy of a post that has left the browsable set and clean up the
-     * memberships rippling created for it. Soft-deletes (deleted=1) each rippled_in
-     * messages_groups copy with a Message/Deleted audit log, then — for each group the copy was
-     * pulled from — removes the poster's ripple-joined (rippled=1) membership IFF they have no
-     * other live post on that group, so a retracted post does not strand the poster in groups
-     * they only joined to carry it.
-     *
-     * Deliberately writes NO Group/Left log for the membership removal. The re-ripple guard
-     * (rippleIntoNewGroups / addPosterMembershipToRippledGroups / pullRippledPostsFromLeftGroups)
-     * treats ANY Group/Left after a Group/Joined text='Rippled' as the poster opting out of that
-     * group, so a Left here would permanently bar this poster's FUTURE posts from rippling into
-     * the group (the trigger also fires on withdraw/expire, not just rejection). The removal is a
-     * system cleanup, not an opt-out — the retraction itself is audited by Message/Deleted, and
-     * the dangling Joined='Rippled' (no Left, no membership) is exactly what lets a later ripple
-     * re-add the membership. Idempotent (only touches deleted=0 rows). Best-effort: never breaks
-     * the run.
-     */
-    private function retractRippledCopiesForRemovedPost(int $msgid, array &$stats): void
-    {
-        $posterId = DB::table('messages')->where('id', $msgid)->value('fromuser');
-
-        $groupids = DB::table('messages_groups')
-            ->where('msgid', $msgid)
-            ->where('rippled_in', 1)
-            ->where('deleted', 0)
-            ->pluck('groupid');
-
-        foreach ($groupids as $groupid) {
-            $this->retractRippledCopyInGroup(
-                $msgid,
-                (int) $groupid,
-                $posterId,
-                'Rippling: removed on origin removal',
-                'pulled_on_removal',
-                $stats
-            );
-        }
-    }
-
-    /**
-     * Reach-scoped retraction (cap-backlog cleanup): for an ACTIVE rippled post,
-     * soft-delete its rippled-in copies in the groups whose polygon no longer
-     * intersects the post's (capped) reach polygon, while leaving the post live on
-     * the origin group and every still-reached group. The underlying message row is
-     * untouched, so existing chats/replies (keyed on msgid) keep working and still
-     * link to the open post — removing a copy only takes it out of that group's
-     * browse. Skips posts with a terminal outcome (taken/promised/received): those
-     * are complete and must not be disturbed. Galera-safe (one row per statement).
-     *
-     * @return int groups retracted for this post (also accumulates into $stats)
-     */
-    public function retractOutOfReachCopies(int $msgid, bool $dryRun, array &$stats): int
-    {
-        if ($this->hasTerminalOutcome($msgid)) {
-            $stats['skipped_terminal'] = ($stats['skipped_terminal'] ?? 0) + 1;
-            return 0;
-        }
-
-        // Rippled-in groups whose polyindex no longer intersects the post's current
-        // (capped) reach polygon — i.e. groups we would NOT ripple into now. With the
-        // reachable-gate on, ALSO retract groups the polygon still covers but which are
-        // no longer in the node-reachable set (rr.reachable_group_ids), so a reach that
-        // overshot water self-heals. The `rr.reachable_group_ids IS NOT NULL` guard means
-        // reaches computed before the gate rolled out (NULL column) are never retracted by
-        // it - only polygon-based retraction applies to them.
-        // JSON_LENGTH > 0: an EMPTY stored set means "gate could not compute" (zero
-        // members found is indistinguishable from a transient members-query failure),
-        // and targeting already treats [] as unavailable - so retraction must never
-        // act on it either, or one bad routing-side query would retract every copy
-        // of the post. Polygon-based retraction still applies to such rows.
-        // "Which groups does the reach still intersect" is answered by the
-        // spatial server on the same lattice the reach is stored on
-        // (CellSetService::groupsIntersecting). Failure retracts NOTHING -
-        // over-coverage for one more pass is visible and self-heals;
-        // retracting on a guess is not.
-        $rows = $this->outOfReachRippledGroupsFromCells($msgid);
-        if ($rows === null) {
-            $stats['retract_check_unavailable'] = ($stats['retract_check_unavailable'] ?? 0) + 1;
-
-            return 0;
-        }
-
-        if ($dryRun) {
-            $n = count($rows);
-            $stats['would_retract_groups'] = ($stats['would_retract_groups'] ?? 0) + $n;
-            return $n;
-        }
-
-        $posterId = DB::table('messages')->where('id', $msgid)->value('fromuser');
-        $retracted = 0;
-        foreach ($rows as $r) {
-            $before = $stats['pulled_out_of_reach'] ?? 0;
-            $this->retractRippledCopyInGroup(
-                $msgid,
-                (int) $r->id,
-                $posterId,
-                'Rippling: out of capped reach',
-                'pulled_out_of_reach',
-                $stats
-            );
-            if (($stats['pulled_out_of_reach'] ?? 0) > $before) {
-                $retracted++;
-            }
-        }
-        return $retracted;
-    }
-
-    /**
-     * The cells-only form of retractOutOfReachCopies' candidate query: the
-     * post's rippled-in groups that its current grid no longer intersects
-     * (plus, with the reachable gate on, groups outside the node-reachable
-     * set - the same JSON rule as the SQL form, applied here in PHP). Returns
-     * null when the question cannot be answered (no cells, spatial down), and
-     * the caller retracts nothing.
-     *
-     * @return array<int,object>|null rows shaped {id: groupid}
-     */
-    private function outOfReachRippledGroupsFromCells(int $msgid): ?array
-    {
-        $cols = ['polygon_cells', 'reachable_group_ids'];
-        $rr = DB::table('rippling_reach')
-            ->where('msgid', $msgid)
-            ->where('status', '<>', 'held')
-            ->first($cols);
-        if ($rr === null) {
-            return [];
-        }
-
-        // The cells arm: which groups the current grid still intersects. A
-        // RETIRED row has no grid, so only the reachable-ids arm below can
-        // retract for it - the ids ARE part of the reach record and need no
-        // geometry. With neither arm answerable, retract nothing.
-        $stillCovered = null;
-        if (($rr->polygon_cells ?? null) !== null) {
-            $intersecting = $this->cellSets->groupsIntersecting($rr->polygon_cells);
-            if ($intersecting !== null) {
-                $stillCovered = [];
-                foreach ($intersecting as $g) {
-                    $stillCovered[(int) $g['id']] = true;
-                }
-            }
-        }
-
-        $reachable = null;
-        if ($this->reachableGateEnabled() && is_string($rr->reachable_group_ids)) {
-            $decoded = json_decode($rr->reachable_group_ids, true);
-            // Same rule as the SQL form: an EMPTY set means "gate could not
-            // compute" and must never retract anything.
-            if (is_array($decoded) && $decoded !== []) {
-                $reachable = array_fill_keys(array_map('intval', $decoded), true);
-            }
-        }
-
-        $rippled = DB::table('messages_groups as mg')
-            ->join('groups as g', 'g.id', '=', 'mg.groupid')
-            ->where('mg.msgid', $msgid)
-            ->where('mg.rippled_in', 1)
-            ->where('mg.deleted', 0)
-            ->whereNotNull('g.polyindex')
-            ->pluck('g.id');
-
-        if ($stillCovered === null && $reachable === null) {
-            // Neither arm can answer (no grid and no usable ids set): the
-            // caller retracts nothing rather than guessing.
-            return null;
-        }
-
-        $rows = [];
-        foreach ($rippled as $gid) {
-            $gid = (int) $gid;
-            $gone = ($stillCovered !== null && !isset($stillCovered[$gid]))
-                || ($reachable !== null && !isset($reachable[$gid]));
-            if ($gone) {
-                $rows[] = (object) ['id' => $gid];
-            }
-        }
-
-        return $rows;
-    }
-
-    /**
-     * Soft-delete one rippled-in copy and, when the poster has no OTHER live post on
-     * the group, remove the ripple-join membership (rippled=1; an organic membership
-     * is never touched). Writes a Message/Deleted log but deliberately NO Group/Left
-     * log, so a later ripple can re-add the membership. Shared by the origin-removal
-     * and out-of-reach retraction paths. Galera-safe: one row per statement.
-     */
-    private function retractRippledCopyInGroup(int $msgid, int $groupid, $posterId, string $reason, string $statKey, array &$stats): void
-    {
-        $n = DB::affectingStatement(
-            'UPDATE messages_groups SET deleted = 1
-             WHERE msgid = ? AND groupid = ? AND rippled_in = 1 AND deleted = 0',
-            [$msgid, $groupid]
-        );
-        if ($n < 1) {
-            return;
-        }
-        $stats[$statKey] = ($stats[$statKey] ?? 0) + 1;
-        DB::table('logs')->insert([
-            'timestamp' => now(),
-            'type' => 'Message',
-            'subtype' => 'Deleted',
-            'user' => $posterId,
-            'byuser' => null,
-            'groupid' => $groupid,
-            'msgid' => $msgid,
-            'text' => $reason,
-        ]);
-
-        if (!$posterId) {
-            return;
-        }
-        // Only remove the membership when this poster has no OTHER live post on the group
-        // (the copy we just pulled is now deleted=1, so it is excluded by deleted=0).
-        $hasOtherPost = DB::table('messages_groups as mg')
-            ->join('messages as m', 'm.id', '=', 'mg.msgid')
-            ->where('m.fromuser', $posterId)
-            ->where('mg.groupid', $groupid)
-            ->where('mg.deleted', 0)
-            ->exists();
-        if ($hasOtherPost) {
-            return;
-        }
-        // Only a ripple-join (rippled=1) is removed; an organic membership is never touched.
-        $removed = DB::table('memberships')
-            ->where('userid', $posterId)
-            ->where('groupid', $groupid)
-            ->where('rippled', 1)
-            ->delete();
-        if ($removed > 0) {
-            $stats['memberships_removed'] = ($stats['memberships_removed'] ?? 0) + 1;
-        }
-    }
-
-    /**
-     * One-off remediation for the window before rippling honoured users_banned: for every
-     * ripple-join (memberships.rippled=1) into a group the member is now banned from, soft-delete
-     * that member's rippled-in post copies still live there and remove the ripple-join membership.
-     *
-     * A ban (users_banned row, no expiry) is an explicit mod ejection that deletes the membership
-     * and withdraws the poster's posts; the unguarded ripple used to re-join the banned poster and
-     * re-insert their post. Only ripple-joins (rippled=1) are removed — an organic membership is
-     * never touched. Driven off the membership rows, so it targets exactly "banned users who were
-     * (re-)joined by rippling". Galera-safe: one row per statement; honours --dry-run.
-     *
-     * @return array{pairs:int,memberships_removed:int,posts_pulled:int}
-     */
-    public function pullBannedRippleMemberships(?int $userId, int $limit, bool $dryRun, array &$stats): array
-    {
-        $q = DB::table('memberships as m')
-            ->join('users_banned as ub', function ($j) {
-                $j->on('ub.userid', '=', 'm.userid')->on('ub.groupid', '=', 'm.groupid');
-            })
-            ->where('m.rippled', 1);
-        if ($userId !== null) {
-            $q->where('m.userid', $userId);
-        }
-        $pairs = $q->orderBy('m.userid')->orderBy('m.groupid')
-            ->limit($limit)
-            ->get(['m.userid', 'm.groupid']);
-
-        foreach ($pairs as $p) {
-            $stats['pairs'] = ($stats['pairs'] ?? 0) + 1;
-            $userid = (int) $p->userid;
-            $groupid = (int) $p->groupid;
-
-            // Soft-delete this banned member's rippled-in post copies still live in the group.
-            $msgids = DB::table('messages_groups as mg')
-                ->join('messages as msg', 'msg.id', '=', 'mg.msgid')
-                ->where('msg.fromuser', $userid)
-                ->where('mg.groupid', $groupid)
-                ->where('mg.rippled_in', 1)
-                ->where('mg.deleted', 0)
-                ->pluck('mg.msgid');
-            foreach ($msgids as $msgid) {
-                if ($dryRun) {
-                    $stats['posts_pulled'] = ($stats['posts_pulled'] ?? 0) + 1;
-                    continue;
-                }
-                // Reuses the shared retraction (Message/Deleted log, no Group/Left). It removes the
-                // membership only when no OTHER live post remains; the explicit delete below covers
-                // the case where an organic post keeps it, since a banned member must be off entirely.
-                $this->retractRippledCopyInGroup(
-                    (int) $msgid,
-                    $groupid,
-                    $userid,
-                    'Rippling: pulled - poster banned from group',
-                    'posts_pulled',
-                    $stats
-                );
-            }
-
-            // Remove the ripple-join membership itself (idempotent with the above).
-            if ($dryRun) {
-                $exists = DB::table('memberships')
-                    ->where('userid', $userid)->where('groupid', $groupid)->where('rippled', 1)
-                    ->exists();
-                if ($exists) {
-                    $stats['memberships_removed'] = ($stats['memberships_removed'] ?? 0) + 1;
-                }
-                continue;
-            }
-            $removed = DB::table('memberships')
-                ->where('userid', $userid)
-                ->where('groupid', $groupid)
-                ->where('rippled', 1)
-                ->delete();
-            if ($removed > 0) {
-                $stats['memberships_removed'] = ($stats['memberships_removed'] ?? 0) + 1;
-            }
-        }
-
-        return $stats;
     }
 
     private function initialiseNew(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
@@ -1122,16 +521,16 @@ class ExpandService
             // cutoff still applies, so an area run ripples only the recent (post-cutoff) posts inside
             // the polygon rather than the whole historical backlog there.
             if ($withinPolyWkt !== null) {
-                $scopeSql = ' AND ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ms.point)';
+                $scopeSql = ' AND ST_Contains(ST_GeomFromText(?, '.self::SRID.'), ms.point)';
                 $params[] = $withinPolyWkt;
             }
-            if (!empty($enabledAt)) {
+            if (! empty($enabledAt)) {
                 $cutoffSql = ' AND ms.arrival >= ?';
                 $params[] = $enabledAt;
             }
             // Reply-saturation stop (extent-governor T1.1): a post that already has >= threshold
             // distinct repliers never starts rippling - it has enough interest without reach.
-            // 0 disables. Applies to normal and scoped (experiment) runs alike.
+            // 0 disables. Applies to normal and scoped runs alike.
             $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
             if ($satStop > 0) {
                 $satSql = " AND (SELECT COUNT(DISTINCT cm.userid) FROM chat_messages cm
@@ -1140,22 +539,6 @@ class ExpandService
             }
         }
         $params[] = $limit;
-
-        // Ripple-OUT opt-out (groups.settings.rippling.out): a post on a community that has
-        // switched rippling off never gets a reach row, so it is never crossposted and never
-        // appears in another member's nearby feed (both read paths hang off rippling_reach).
-        // This is a community-level policy rather than a rollout guard, so unlike the arrival
-        // cutoff and the saturation stop it applies to --msgid and area runs too.
-        //
-        // messages_spatial.msgid is UNIQUE, so ms.groupid is the post's single recorded
-        // community. A candidate here has no reach row, hence has never rippled, so that
-        // recorded community is one it was posted to directly rather than rippled into. The
-        // NULL arm matters: groupid is nullable and `NULL NOT IN (...)` is NULL, which would
-        // silently drop every group-less row from the candidate set.
-        $outOptOut = $this->optOut->excludedGroupIds(GroupRippleOptOut::DIRECTION_OUT);
-        $optOutSql = empty($outOptOut)
-            ? ''
-            : ' AND (ms.groupid IS NULL OR ms.groupid NOT IN (' . implode(',', $outOptOut) . '))';
 
         // Candidate source: live posts with NO reach row yet (anti-join).
         // keep-raw: ANY_VALUE + the ST_X/ST_Y spatial accessors on a GROUP BY the builder cannot render
@@ -1166,7 +549,7 @@ class ExpandService
                     MIN(ms.arrival) AS arrival
              FROM messages_spatial ms
              LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
-             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . $satSql . $optOutSql . '
+             WHERE mr.msgid IS NULL'.$scopeSql.$cutoffSql.$satSql.'
              GROUP BY ms.msgid
              LIMIT ?',
             $params
@@ -1191,8 +574,8 @@ class ExpandService
                 continue; // handled (with the warning) in Phase 2
             }
             [$lat, $lng] = $this->blurOrigin((float) $row->lat, (float) $row->lng);
-            $blurredByRow[$i] = ['lat' => $lat, 'lng' => $lng, 'key' => $lat . ',' . $lng];
-            $distinctOrigins[$lat . ',' . $lng] = ['lat' => $lat, 'lng' => $lng];
+            $blurredByRow[$i] = ['lat' => $lat, 'lng' => $lng, 'key' => $lat.','.$lng];
+            $distinctOrigins[$lat.','.$lng] = ['lat' => $lat, 'lng' => $lng];
         }
 
         // Every reach grows to the SAME budget: the widest any band earns. The cap
@@ -1223,7 +606,7 @@ class ExpandService
         // Exact because blurOrigin quantises to 4dp and only the blurred origin + global config feed
         // the schedule. If that config (curve/max_minutes/extent) ever changes, set
         // freegle.ripple.reuse_reach=false to disable if stale reuse is ever suspected.
-        if (config('freegle.ripple.reuse_reach', true) && !empty($distinctOrigins)) {
+        if (config('freegle.ripple.reuse_reach', true) && ! empty($distinctOrigins)) {
             $pairs = array_values($distinctOrigins);
             $placeholders = implode(',', array_fill(0, count($pairs), '(?, ?)'));
             $reuseParams = [];
@@ -1242,14 +625,14 @@ class ExpandService
             $existing = DB::select(
                 'SELECT lat, lng, schedule, total_freeglers, max_drive_min, max_minutes_cap, overflow_cells
                  FROM rippling_reach
-                 WHERE schedule IS NOT NULL AND (lat, lng) IN (' . $placeholders . ')',
+                 WHERE schedule IS NOT NULL AND (lat, lng) IN ('.$placeholders.')',
                 $reuseParams
             );
             foreach ($existing as $e) {
                 // Rebuild the same 4dp key the distinctOrigins map uses, so PHP-float and DB-double
                 // string formatting agree (both sides are round(...,4)).
-                $k = round((float) $e->lat, 4) . ',' . round((float) $e->lng, 4);
-                if (!isset($distinctOrigins[$k]) || isset($scheduleByKey[$k])) {
+                $k = round((float) $e->lat, 4).','.round((float) $e->lng, 4);
+                if (! isset($distinctOrigins[$k]) || isset($scheduleByKey[$k])) {
                     continue; // not one of this batch's origins, or already reused
                 }
                 // A stored schedule computed under a DIFFERENT reach budget is not this
@@ -1262,7 +645,7 @@ class ExpandService
                     continue;
                 }
                 $ticks = json_decode($e->schedule, true);
-                if (!is_array($ticks) || empty($ticks)) {
+                if (! is_array($ticks) || empty($ticks)) {
                     continue;
                 }
                 $reusedOverflowCells = ! empty($e->overflow_cells)
@@ -1308,8 +691,7 @@ class ExpandService
         }
 
         // ── Phase 2: apply each post's schedule serially (one DB writer - Galera-safe) ──
-        // DO NOT parallelise this loop: the rippling_reach / messages_groups / memberships
-        // writes must stay single-writer and in order.
+        // DO NOT parallelise this loop: the rippling_reach writes must stay single-writer and in order.
         foreach ($rows as $i => $row) {
             if ($this->pastRunDeadline()) {
                 // Time box expired (see process()): stop at the row boundary; the
@@ -1325,6 +707,7 @@ class ExpandService
                     // Without arrival we cannot place the post on its hazard schedule.
                     Log::warning("ripple: null arrival for msg {$row->msgid}, skipping");
                     $stats['skipped']++;
+
                     continue;
                 }
 
@@ -1357,6 +740,7 @@ class ExpandService
                 if ($schedule === null) {
                     // Genuinely unreachable (raw origin off-graph too) — retry next run.
                     $stats['skipped']++;
+
                     continue;
                 }
 
@@ -1373,21 +757,23 @@ class ExpandService
                 $entry = $this->entryForTick($schedule['ticks'], $tick);
                 if ($entry === null) {
                     $stats['skipped']++;
+
                     continue;
                 }
                 $next = $this->reach->nextExpansionAfter($arrival, $tick);
                 $status = $next === null ? 'done' : 'expanding';
 
-                if (!$dryRun) {
+                if (! $dryRun) {
                     $tickGeom = $this->resolveTickGeometry($entry, (float) $lat, (float) $lng);
                     if ($tickGeom === null) {
                         // Routing unreachable mid-run - leave the post for the next pass
                         // rather than storing a reach with no polygon.
                         $stats['skipped']++;
+
                         continue;
                     }
                     $tickWkt = $tickGeom['wkt'];
-                    $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
+                    $storeWkt = $tickWkt;
                     // Upsert, not plain INSERT: the anti-join guarantees no existing row so this
                     // behaves exactly like INSERT, while staying safe against a concurrent run
                     // seeding the same msgid (created_at is preserved - not in the SET).
@@ -1402,21 +788,20 @@ class ExpandService
                     // derivation - but on the SCRATCH WKT parameter, which is
                     // never stored.
                     $overflowCellsJson = $this->overflowCellsJson($schedule);
-                    $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
+                    $poly = 'ST_GeomFromText(?, '.self::SRID.')';
                     $initSql = function (string $outerExpr, string $innerExpr): string {
                         return 'INSERT INTO rippling_reach
                            (msgid, lat, lng, polygon_cells, outer_bound, inner_bound, arrival, mode, tick, total_ticks,
-                            total_freeglers, max_drive_min, schedule, reachable_group_ids,
+                            total_freeglers, max_drive_min, schedule,
                             next_expansion_at, status, density_band, density_radius_miles, max_minutes_cap,
                             overflow_cells, created_at, updated_at)
-                         VALUES (?, ?, ?, ?, ' . $outerExpr . ', ' . $innerExpr . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                         VALUES (?, ?, ?, ?, '.$outerExpr.', '.$innerExpr.', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                          ON DUPLICATE KEY UPDATE
                             lat = VALUES(lat), lng = VALUES(lng), polygon_cells = VALUES(polygon_cells),
                             outer_bound = VALUES(outer_bound), inner_bound = VALUES(inner_bound),
                             arrival = VALUES(arrival), mode = VALUES(mode), tick = VALUES(tick),
                             total_ticks = VALUES(total_ticks), total_freeglers = VALUES(total_freeglers),
                             max_drive_min = VALUES(max_drive_min), schedule = VALUES(schedule),
-                            reachable_group_ids = VALUES(reachable_group_ids),
                             next_expansion_at = VALUES(next_expansion_at), status = VALUES(status),
                             density_band = VALUES(density_band),
                             density_radius_miles = VALUES(density_radius_miles),
@@ -1428,7 +813,6 @@ class ExpandService
                         $arrival, $this->reach->mode(), $tick, $total,
                         $schedule['total_freeglers'], $schedule['max_drive_min'],
                         json_encode($schedule['ticks']),
-                        json_encode($this->tickReachableIds($entry, $schedule)),
                         $next, $status,
                         $cap['band'], $cap['radius_miles'], $ceiling,
                         $overflowCellsJson,
@@ -1453,7 +837,7 @@ class ExpandService
                         } catch (\Throwable $e) {
                             // keep-raw: envelope-fallback variant of the same spatial upsert
                             DB::statement(
-                                $initSql('ST_Envelope(' . $poly . ')', 'NULL'),
+                                $initSql('ST_Envelope('.$poly.')', 'NULL'),
                                 array_merge($head, [$wkt], $initTail)
                             );
                         }
@@ -1471,10 +855,6 @@ class ExpandService
                     if ($tickGeom['outer'] !== null) {
                         $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
                     }
-                    $this->rippleIntoNewGroups(
-                        (int) $row->msgid, $storeWkt, $stats,
-                        $this->tickReachableIdsOrNull($entry, $schedule)
-                    );
                     // Reach mail is decoupled into the sharded `mail:digest:unified --mode=reach`
                     // pass (UnifiedDigestService::sendReachDigests). It must NOT run inline here:
                     // the 2026-06-24 live profile showed it was ~75% of this serial Phase-2 loop's
@@ -1502,11 +882,9 @@ class ExpandService
         // blow the 1GB limit. schedule - the one big column each advance
         // genuinely needs - is fetched per row inside the loop, so at most one
         // row's schedule is in memory at a time. This list must cover every
-        // $row-> use to the END of this function - rejected_groups is read
-        // ~60 lines down for the secondary-reject clip, and leaving it out
-        // silently skipped the clip (caught by the two clip tests in CI).
+        // $row-> use to the END of this function.
         $rows = DB::table('rippling_reach')
-            ->select(['msgid', 'lat', 'lng', 'tick', 'min_tick', 'total_ticks', 'arrival', 'rejected_groups'])
+            ->select(['msgid', 'lat', 'lng', 'tick', 'min_tick', 'total_ticks', 'arrival'])
             ->addSelect(DB::raw('reach_labels IS NOT NULL AS has_labels'))
             ->addSelect('origin_union_secs')
             ->where('status', 'expanding')
@@ -1515,7 +893,7 @@ class ExpandService
             ->when($onlyMsgid !== null, fn ($q) => $q->where('msgid', $onlyMsgid))
             // keep-raw: ST_Contains/ST_GeomFromText are spatial functions the builder cannot render
             ->when($withinPolyWkt !== null, fn ($q) => $q->whereRaw(
-                'ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ST_SRID(POINT(lng, lat), ' . self::SRID . '))',
+                'ST_Contains(ST_GeomFromText(?, '.self::SRID.'), ST_SRID(POINT(lng, lat), '.self::SRID.'))',
                 [$withinPolyWkt]
             ))
             ->limit($limit)
@@ -1561,13 +939,15 @@ class ExpandService
                 try {
                     $schedule = DB::table('rippling_reach')->where('msgid', $row->msgid)->value('schedule');
                     $ticks = json_decode($schedule, true);
-                    if (!is_array($ticks) || empty($ticks)) {
+                    if (! is_array($ticks) || empty($ticks)) {
                         $stats['skipped']++;
+
                         continue;
                     }
 
                     if ($row->arrival === null) {
                         $stats['skipped']++;
+
                         continue;
                     }
                     $arrival = Carbon::parse($row->arrival);
@@ -1577,7 +957,7 @@ class ExpandService
                     // do not fan out further. Type-agnostic; 0 disables.
                     $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
                     if ($satStop > 0 && $this->distinctReplierCount((int) $row->msgid) >= $satStop) {
-                        if (!$dryRun) {
+                        if (! $dryRun) {
                             DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
                                 'status' => 'done',
                                 'next_expansion_at' => null,
@@ -1586,6 +966,7 @@ class ExpandService
                         }
                         $stats['completed']++;
                         $this->logEvent($row->msgid, 'reply_saturated', (int) $row->tick, []);
+
                         continue;
                     }
 
@@ -1594,9 +975,9 @@ class ExpandService
                     // here against messages_outcomes (not just via removeStale) because removeStale
                     // runs on UNSCOPED runs only and keys off messages_spatial, which the separate
                     // messages:update-spatial-index cron lags - so without this an already-taken post
-                    // keeps rippling into new groups for a tick or two after the outcome is recorded.
+                    // keeps rippling for a tick or two after the outcome is recorded.
                     if ($this->hasTerminalOutcome((int) $row->msgid)) {
-                        if (!$dryRun) {
+                        if (! $dryRun) {
                             DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
                                 'status' => 'done',
                                 'next_expansion_at' => null,
@@ -1605,6 +986,7 @@ class ExpandService
                         }
                         $stats['completed']++;
                         $this->logEvent($row->msgid, 'outcome_stop', (int) $row->tick, []);
+
                         continue;
                     }
 
@@ -1626,7 +1008,7 @@ class ExpandService
 
                     if ($target <= (int) $row->tick) {
                         // Not actually due for a new tick yet — reschedule and move on.
-                        if (!$dryRun) {
+                        if (! $dryRun) {
                             $next = $this->reach->nextExpansionAfter($arrival, (int) $row->tick, $total);
                             DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
                                 'next_expansion_at' => $next,
@@ -1635,12 +1017,14 @@ class ExpandService
                             ]);
                         }
                         $stats['skipped']++;
+
                         continue;
                     }
 
                     $entry = $this->entryForTick($ticks, $target);
                     if ($entry === null) {
                         $stats['skipped']++;
+
                         continue;
                     }
                     $next = $this->reach->nextExpansionAfter($arrival, $target, $total);
@@ -1668,7 +1052,7 @@ class ExpandService
             // in the apply pass. Dry runs never touch geometry at all. A null
             // result is stored so the apply pass sees the same "routing
             // unreachable - retry next sweep" signal the serial call gave.
-            if (!$dryRun) {
+            if (! $dryRun) {
                 $jobs = [];
                 $jobPlanIdx = [];
                 foreach ($plans as $i => $plan) {
@@ -1678,12 +1062,12 @@ class ExpandService
                             'lat' => (float) $plan['row']->lat,
                             'lng' => (float) $plan['row']->lng,
                             'minutes' => (float) $planEntry['drive_min'],
-                            'coarse' => $this->coarseTickGeometryOk($planEntry),
+                            'coarse' => false,
                         ];
                         $jobPlanIdx[] = $i;
                     }
                 }
-                if (!empty($jobs)) {
+                if (! empty($jobs)) {
                     $geoms = $this->reach->catchmentGeometriesBatch($jobs);
                     foreach ($jobPlanIdx as $j => $i) {
                         $plans[$i]['geom'] = $geoms[$j] ?? null;
@@ -1700,108 +1084,80 @@ class ExpandService
                 $next = $plan['next'];
                 $status = $plan['status'];
                 try {
-                if (!$dryRun) {
-                    $tickGeom = array_key_exists('geom', $plan)
-                        ? $plan['geom']
-                        : $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng);
-                    if ($tickGeom === null) {
-                        // Routing unreachable - keep the previous polygon and retry this
-                        // tick on the next run (next_expansion_at is already due).
-                        $stats['skipped']++;
-                        continue;
-                    }
-                    $tickWkt = $tickGeom['wkt'];
-                    // Retired rows (label + union threshold stored) do not
-                    // re-derive the >=90% coverage test geometrically every
-                    // tick - the stored threshold IS that answer. The union
-                    // itself still applies to the scratch WKT where active,
-                    // because the group-crossing test and the bounds below
-                    // still consume it.
-                    $retired = $this->rowRetired($row);
-                    $storeWkt = $retired
-                        ? $this->unionByThreshold((int) $row->msgid, $tickWkt, (float) ($entry['drive_min'] ?? 0) * 60, $row->origin_union_secs ?? null)
-                        : $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
-                    // Grid + derived bounds in ONE statement (no stale-bounds
-                    // window); envelope retry if the derivation throws on
-                    // pathological geometry. The stored reach is the grid,
-                    // bound as a plain parameter; the WKT is scratch for the
-                    // derived bounds only. The old undo-log split/shrink
-                    // machinery is gone with the polygons - a ~23KB grid plus
-                    // ~19KB bounds cannot approach the 16KB-per-column undo
-                    // page problem megabyte polygons had.
-                    $gridSet = ', polygon_cells = ?';
-                    $advanceSql = fn (string $set): string => 'UPDATE rippling_reach
-                         SET updated_at = NOW()' . $gridSet . $set . ',
-                             reachable_group_ids = COALESCE(?, reachable_group_ids),
+                    if (! $dryRun) {
+                        $tickGeom = array_key_exists('geom', $plan)
+                            ? $plan['geom']
+                            : $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng);
+                        if ($tickGeom === null) {
+                            // Routing unreachable - keep the previous polygon and retry this
+                            // tick on the next run (next_expansion_at is already due).
+                            $stats['skipped']++;
+
+                            continue;
+                        }
+                        $tickWkt = $tickGeom['wkt'];
+                        // Retired rows (label + union threshold stored) do not
+                        // re-derive the >=90% coverage test geometrically every
+                        // tick - the stored threshold IS that answer.
+                        $retired = $this->rowRetired($row);
+                        $storeWkt = $tickWkt;
+                        // Grid + derived bounds in ONE statement (no stale-bounds
+                        // window); envelope retry if the derivation throws on
+                        // pathological geometry. The stored reach is the grid,
+                        // bound as a plain parameter; the WKT is scratch for the
+                        // derived bounds only. The old undo-log split/shrink
+                        // machinery is gone with the polygons - a ~23KB grid plus
+                        // ~19KB bounds cannot approach the 16KB-per-column undo
+                        // page problem megabyte polygons had.
+                        $gridSet = ', polygon_cells = ?';
+                        $advanceSql = fn (string $set): string => 'UPDATE rippling_reach
+                         SET updated_at = NOW()'.$gridSet.$set.',
                              tick = ?, next_expansion_at = ?, status = ?
                          WHERE msgid = ?';
-                    $advanceTail = [$this->tickReachableIdsJson($entry), $target, $next, $status, $row->msgid];
-                    $advanceStore = function (string $wkt) use ($advanceSql, $advanceTail, $retired): void {
-                        if ($retired) {
-                            // Labels + union threshold answer everything the
-                            // grid did; drain it and skip the rasterise.
-                            $cells = null;
-                        } else {
-                            // A failed rasterise fails the advance: the post
-                            // keeps its previous reach and is retried next
-                            // sweep. Never write a reach nobody can read.
-                            $cells = $this->cellSets->rasterize($wkt);
-                            if ($cells === null) {
-                                throw new \RuntimeException('rasterise failed; advance left for the next pass');
+                        $advanceTail = [$target, $next, $status, $row->msgid];
+                        $advanceStore = function (string $wkt) use ($advanceSql, $advanceTail, $retired): void {
+                            if ($retired) {
+                                // Labels + union threshold answer everything the
+                                // grid did; drain it and skip the rasterise.
+                                $cells = null;
+                            } else {
+                                // A failed rasterise fails the advance: the post
+                                // keeps its previous reach and is retried next
+                                // sweep. Never write a reach nobody can read.
+                                $cells = $this->cellSets->rasterize($wkt);
+                                if ($cells === null) {
+                                    throw new \RuntimeException('rasterise failed; advance left for the next pass');
+                                }
                             }
+                            $lead = [$cells];
+                            [$boundsSet, $boundsParams] = $this->boundsSetSql($wkt);
+                            try {
+                                // keep-raw: UPDATE with derived-bounds SQL expressions in SET - the builder cannot render these
+                                DB::statement($advanceSql($boundsSet), array_merge($lead, $boundsParams, $advanceTail));
+                            } catch (\Throwable $e) {
+                                [$envSet, $envParams] = $this->boundsEnvelopeSql($wkt);
+                                // keep-raw: envelope-fallback variant of the same spatial UPDATE
+                                DB::statement($advanceSql($envSet), array_merge($lead, $envParams, $advanceTail));
+                            }
+                        };
+                        $advanceStore($storeWkt);
+                        // Routing-provided bounds (tighter than the derived ones) upgrade the
+                        // columns, verified against the stored polygon.
+                        // Retired rows take the direct write: the verify/fallback dance reads
+                        // the grid this row no longer has, and every probe of it would waste
+                        // three round trips to conclude nothing (adversarial review 2026-08-28).
+                        if ($tickGeom['outer'] !== null) {
+                            $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner'], $retired);
                         }
-                        $lead = [$cells];
-                        [$boundsSet, $boundsParams] = $this->boundsSetSql($wkt);
-                        try {
-                            // keep-raw: UPDATE with derived-bounds SQL expressions in SET - the builder cannot render these
-                            DB::statement($advanceSql($boundsSet), array_merge($lead, $boundsParams, $advanceTail));
-                        } catch (\Throwable $e) {
-                            [$envSet, $envParams] = $this->boundsEnvelopeSql($wkt);
-                            // keep-raw: envelope-fallback variant of the same spatial UPDATE
-                            DB::statement($advanceSql($envSet), array_merge($lead, $envParams, $advanceTail));
-                        }
-                    };
-                    $advanceStore($storeWkt);
-                    if (!$retired) {
-                        // The polygon was just overwritten from the cached schedule, which does NOT
-                        // include any secondary-group rejection clips. Re-subtract every rejected
-                        // group so a secondary "out of area" rejection survives expansion (#9).
-                        // (The clip statement shrinks polygon and NULLs inner_bound atomically.)
-                        // Retired rows skip this: there is no grid to clip, and the
-                        // rejection is enforced by the label evaluator (rejected_groups).
-                        $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
+                        // Reach mail decoupled into `mail:digest:unified --mode=reach` — see
+                        // initialiseNew and UnifiedDigestService::sendReachDigests.
                     }
-                    // Routing-provided bounds (tighter than the derived ones) upgrade the
-                    // columns AFTER the clips, verified against the FINAL stored polygon.
-                    // Retired rows take the direct write: the verify/fallback dance reads
-                    // the grid this row no longer has, and every probe of it would waste
-                    // three round trips to conclude nothing (adversarial review 2026-08-28).
-                    if ($tickGeom['outer'] !== null) {
-                        $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner'], $retired);
-                    }
-                    // Targeting ids for THIS tick: prefer the stored slim schedule's
-                    // per-tick set (exact for this drive-time); fall back to the cached
-                    // column (schedules stored before per-tick ids existed).
-                    $cachedReachable = null;
-                    if ($this->reachableGateEnabled()) {
-                        $cachedReachable = is_array($entry['reachable_group_ids'] ?? null)
-                            ? array_map('intval', $entry['reachable_group_ids'])
-                            : null;
-                        if ($cachedReachable === null) {
-                            $raw = DB::table('rippling_reach')->where('msgid', $row->msgid)->value('reachable_group_ids');
-                            $cachedReachable = $raw ? json_decode($raw, true) : null;
-                        }
-                    }
-                    $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats, $cachedReachable);
-                    // Reach mail decoupled into `mail:digest:unified --mode=reach` — see
-                    // initialiseNew and UnifiedDigestService::sendReachDigests.
-                }
 
-                $stats['expanded']++;
-                if ($status === 'done') {
-                    $stats['completed']++;
-                }
-                $this->logEvent($row->msgid, 'expand', $target, $entry);
+                    $stats['expanded']++;
+                    if ($status === 'done') {
+                        $stats['completed']++;
+                    }
+                    $this->logEvent($row->msgid, 'expand', $target, $entry);
                 } catch (\Throwable $e) {
                     $stats['errors']++;
                     Log::warning("ripple: advance failed for msg {$row->msgid}: {$e->getMessage()}");
@@ -1811,906 +1167,13 @@ class ExpandService
     }
 
     /**
-     * True when the road-reachable ripple gate is enabled (plan 2026-07-06). Off by
-     * default and independent of RIPPLE_ENABLED; enable only once the routing server
-     * that returns reachable_group_ids is deployed and validated.
-     */
-    private function reachableGateEnabled(): bool
-    {
-        return (bool) config('freegle.ripple.reachable_gate', false);
-    }
-
-    /**
-     * The groups this member has opted out of rippling by leaving a ripple-join.
-     *
-     * "Most recent join wins": a group blocks rippling only when the member's LATEST
-     * Group/Joined log for it is a ripple-join (text='Rippled') and a Group/Left follows it.
-     * A group they last joined manually and then left does NOT block - they treated it as an
-     * ordinary group, so an ordinary leave is not a statement about rippling.
-     *
-     * Deliberately ONE indexed read of this member's own log rows, bucketed in PHP. Asked as a
-     * correlated NOT EXISTS per candidate group it becomes three nested probes of a 22M-row
-     * table, and the two inner ones have no usable composite index - `logs` carries `user`,
-     * `groupid` and `(type,subtype)` separately, so MySQL falls back to deciding per row
-     * whether an index helps. That plan has now stalled the pipeline twice: 4-minute stalls in
-     * addPosterMembershipToRippledGroups (2026-08-31, BATCH-83) and a 1,022-second query in
-     * rippleIntoNewGroups. Both call this instead. Do not inline it back.
-     *
-     * @return int[] groupids, ascending, deduplicated
-     */
-    private function rippleOptOutGroupIds(int $userid): array
-    {
-        $blocked = [];
-        $latestJoinText = [];
-
-        // Ordered by id, so the stream replays the member's history oldest-first and the last
-        // verdict written for a group is the one that stands.
-        foreach (DB::select(
-            "SELECT groupid, subtype, text FROM logs
-             WHERE user = ? AND type = 'Group' AND subtype IN ('Joined', 'Left')
-             ORDER BY id",
-            [$userid]
-        ) as $l) {
-            if ($l->subtype === 'Joined') {
-                $latestJoinText[$l->groupid] = $l->text;
-                // Any later join (manual or rippled) supersedes an earlier block:
-                // "most recent join wins".
-                unset($blocked[$l->groupid]);
-            } elseif (($latestJoinText[$l->groupid] ?? null) === 'Rippled') {
-                // A Left whose most recent prior Joined was a ripple-join.
-                $blocked[$l->groupid] = true;
-            }
-        }
-
-        return array_map('intval', array_keys($blocked));
-    }
-
-    /**
-     * Ripple a post INTO every published group whose area the reach now covers (#6).
-     *
-     * "Crosses into a new group" = the reach polygon intersects the group's area. A
-     * group's area is its DPA (poly) if present, else its CGA (polyofficial) — exactly
-     * what groups.polyindex holds (GroupStatsService stores
-     * ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'))), so we test the
-     * spatial-indexed polyindex and skip the (0,0) point sentinel.
-     *
-     * Inserts a messages_groups row idempotently (INSERT IGNORE + NOT EXISTS on the existing
-     * (msgid,groupid) rows, so the origin group and already-rippled groups are never touched
-     * or duplicated). The row is inserted Approved when ripple.rippled_in_pending_hours = 0
-     * (the default - no Pending flicker, since the post was already vetted on origin), else
-     * Pending so AutoApproveService approves it after the mod-veto window.
-     */
-    private function rippleIntoNewGroups(int $msgid, string $reachWkt, array &$stats, ?array $reachableGroupIds = null): void
-    {
-        try {
-            // Never ripple a post that has already been taken/received/withdrawn into new groups,
-            // even if its reach row has not yet been stopped - covers the tick-0 ripple from
-            // initialiseNew and the manual `ripple:expand --msgid=...` path, both of which reach
-            // here without advanceDue's outcome-stop having run. messages_outcomes is the source of
-            // truth; messages_spatial lags the outcome (see hasTerminalOutcome).
-            if ($this->hasTerminalOutcome($msgid)) {
-                return;
-            }
-
-            // A TrashNothing item cross-posted to several groups is one message, so it
-            // ripples like any other. Copies predating that are still in the database and
-            // would each ripple on their own account, reaching people once per copy, so a
-            // message sharing its post id with another live one sits out until
-            // tn:merge-crossposts has collapsed the set. Self-limiting: once a set is
-            // merged there is nothing to match and this never fires again.
-            $sharesTnPostId = DB::table('messages')
-                ->join('messages as other', function ($join) {
-                    $join->on('other.tnpostid', '=', 'messages.tnpostid')
-                        ->whereColumn('other.id', '!=', 'messages.id')
-                        ->whereNull('other.deleted');
-                })
-                ->where('messages.id', $msgid)
-                ->whereNotNull('messages.tnpostid')
-                ->where('messages.tnpostid', '!=', '')
-                ->exists();
-
-            if ($sharesTnPostId) {
-                return;
-            }
-
-            // rippled_in_pending_hours = 0 (default) approves the rippled-in row AT ripple-in
-            // time, so it never flickers into the Pending mod queue (the post was already
-            // vetted on its origin group; matches AutoApproveService::approveOnGroup -
-            // collection='Approved', approvedby NULL, approvedat NOW; spatial indexing follows
-            // via the message_spatial cron). >0 inserts Pending for the mod-veto window.
-            // Overridden per group below for a poster the receiving group has set to
-            // MODERATED.
-            $immediateApprove = ((int) config('freegle.ripple.rippled_in_pending_hours', 0)) <= 0;
-
-            // Resolve the target groups with a plain, NON-LOCKING snapshot SELECT first, then
-            // insert each membership row on its own. The previous single INSERT ... SELECT took
-            // shared next-key locks on EVERY source row it read - the groups scan, the
-            // messages_groups dup check and the triple-nested `logs` "rippled-then-left" scan
-            // (100k-2.6M rows) - and held them for the whole statement under REPEATABLE READ. Run
-            // concurrently (the scheduler piled up dozens of overlapping runs) those locks collided
-            // on the messages_groups msgid index and on `logs`, starving the serial background
-            // worker's audit inserts (2026-06-26 1205 lock-wait storm + backlog). A read SELECT
-            // takes no row locks; each per-row INSERT IGNORE locks only the row it writes, briefly,
-            // and is Galera-safe (one row per statement). Mirrors addPosterMembershipToRippledGroups.
-            $msg = DB::table('messages')->where('id', $msgid)->first(['type', 'fromuser']);
-            if (!$msg) {
-                return;
-            }
-
-            // Reachable-gate (plan 2026-07-06): when enabled AND the routing server sent a
-            // reachable-group set, restrict targets to groups containing a road node
-            // reachable from the origin - so a reach polygon that overshoots water can't
-            // ripple across an uncrossable barrier. The polygon ST_Intersects stays as the
-            // cheap spatial-index prefilter; this is an AND gate on top. IDs are
-            // server-sourced int64s, cast via (int) so they can't inject. Empty set or gate
-            // off => clause omitted => unchanged behaviour (fall back to polygon only).
-            $reachableGate = ($this->reachableGateEnabled() && !empty($reachableGroupIds))
-                ? ' AND g.id IN (' . implode(',', array_map('intval', $reachableGroupIds)) . ')'
-                : '';
-
-            // Ripple-IN opt-out (groups.settings.rippling.in): never crosspost into a community
-            // that has switched rippling off. The `%playground%` name test below predates this
-            // and stays as belt-and-braces for a playground community created before anyone gives
-            // it the setting; the setting is the deliberate, per-community mechanism (set by
-            // ripple:opt-out), and the only one that also covers ripple-OUT (see initialiseNew).
-            $inOptOut = $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN);
-
-            // Groups this poster has already opted out of by leaving a ripple-join, worked out
-            // in PHP from ONE indexed pass over their own Group Joined/Left logs. As a
-            // correlated NOT EXISTS here it was three nested `logs` probes per candidate group,
-            // two of which MySQL re-planned per row ("Range checked for each record") across
-            // 22.4M rows: one such query was measured running for 1,022 seconds, holding a core
-            // of a saturated db2 for the whole time. The same rewrite was applied to
-            // addPosterMembershipToRippledGroups on 2026-08-31 (BATCH-83); this is the call
-            // site it missed, and both now share rippleOptOutGroupIds().
-            $leftAfterRipple = $this->rippleOptOutGroupIds((int) $msg->fromuser);
-            $leftAfterRippleSql = $leftAfterRipple === []
-                ? ''
-                : 'AND g.id NOT IN (' . implode(',', $leftAfterRipple) . ')';
-
-            // keep-raw: ST_Intersects/ST_GeometryType plus the correlated logs/ban NOT EXISTS arms the builder cannot render
-            $targetGroups = DB::select(
-                "SELECT g.id
-                 FROM `groups` g
-                 WHERE g.publish = 1
-                   AND g.type = 'Freegle'
-                   AND g.onhere = 1
-                   AND g.nameshort NOT LIKE '%playground%'" . $inOptOut . "
-                   AND g.polyindex IS NOT NULL
-                   AND ST_GeometryType(g.polyindex) <> 'POINT'
-                   AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))" . $reachableGate . "
-                   AND NOT EXISTS (
-                       SELECT 1 FROM messages_groups mg WHERE mg.msgid = ? AND mg.groupid = g.id
-                   )
-                   AND NOT EXISTS (
-                       -- A community that has already turned this post away does not get it
-                       -- again. Rejecting leaves a messages_groups row, so the guard above
-                       -- covers it; DELETING removes the row outright, and without this the
-                       -- next tick would ripple the post straight back in over the top of a
-                       -- moderator's decision.
-                       SELECT 1 FROM rippling_reach rr
-                       WHERE rr.msgid = ?
-                         AND JSON_CONTAINS(COALESCE(rr.rejected_groups, JSON_ARRAY()), CAST(g.id AS JSON))
-                   )
-                   {$leftAfterRippleSql}
-                   AND NOT EXISTS (
-                       -- A ban is an explicit mod ejection: it withdraws the poster's live posts
-                       -- and (modern ban) deletes their membership while recording a users_banned
-                       -- row. Never ripple a poster's post into a group they are banned from - that
-                       -- would silently re-insert the post (and, via addPosterMembershipToRippledGroups,
-                       -- re-join the banned poster). Cover both representations: the users_banned
-                       -- table (authoritative, no expiry) and a legacy collection='Banned' membership.
-                       SELECT 1 FROM users_banned ub
-                       WHERE ub.userid = ? AND ub.groupid = g.id
-                   )
-                   AND NOT EXISTS (
-                       SELECT 1 FROM memberships mb
-                       WHERE mb.userid = ? AND mb.groupid = g.id AND mb.collection = 'Banned'
-                   )
-                   AND NOT EXISTS (
-                       -- PROHIBITED means the mods have stopped this person posting to this
-                       -- group. Both direct paths already refuse: the API tells them they are
-                       -- not allowed to post here, and incoming mail drops the post
-                       -- (IncomingMailService routes PROHIBITED to DROPPED). Rippling a copy in
-                       -- would post it for them anyway.
-                       SELECT 1 FROM memberships mp
-                       WHERE mp.userid = ? AND mp.groupid = g.id
-                         AND UPPER(mp.ourPostingStatus) = 'PROHIBITED'
-                   )",
-                // One binding per placeholder, in query order: the reach shape, the
-                // msgid twice (already on the group; turned away by the group), then the
-                // poster three times (users_banned, Banned membership, PROHIBITED posting
-                // status). The ripple opt-out is spliced in as a group-id list above, so it
-                // has no placeholder.
-                [$reachWkt, $msgid, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser]
-            );
-
-            // A stored MODERATED posting status on the receiving group does NOT hold the copy.
-            // It would be the natural signal - "this group has taken a view of the poster" -
-            // but the column cannot carry it: the v1 join path wrote MODERATED as its default,
-            // and 1.95M of the 1.96M rows holding it were added 2004-2018 with no moderator
-            // action behind them (a random sample of 500 had no OurPostingStatus log at all,
-            // where 475 of the 500 most recent did). Holding on it would hold every
-            // long-standing member of a neighbouring group. PROHIBITED stays a hard stop, in
-            // the query above: blocking was always an explicit act.
-            $collection = $immediateApprove ? 'Approved' : 'Pending';
-            $approvedAt = $immediateApprove ? 'NOW()' : 'NULL';
-
-            // The post was vetted against the rules of the community it was posted on. Each
-            // receiving group's OWN rules have never been applied to it, so ask them here: a
-            // group that bans live animals should get the chance to say no before its members
-            // see a rabbit, rather than finding it already on the board
-            // (Discourse 10102, and 9829 before it). A match makes THAT group's copy Pending;
-            // every other group's copy is unaffected.
-            $subject = '';
-            $textbody = '';
-            if (!empty($targetGroups)) {
-                $text = DB::table('messages')->where('id', $msgid)->first(['subject', 'textbody']);
-                $subject = $text->subject ?? '';
-                $textbody = $text->textbody ?? '';
-            }
-
-            $n = 0;
-            foreach ($targetGroups as $g) {
-                // The group's own rules are asked first: a breach holds the copy with its
-                // reasons recorded. Otherwise the copy lands where the origin's vetting put it.
-                // contentcheck_checked_at is deliberately left NULL here (unlike the recordCheckOnly()
-                // "never fight a mod" path): checkGroupOwnRules() only re-checks this group's own
-                // keywords, so stamping it would permanently exclude the row from processUnprocessed()'s
-                // periodic full checkMessage() pipeline - silently skipping money/phone/PII/URL/spam
-                // checks for every rippled-in post held this way (Discourse 10063/4).
-                $breaches = $this->contentCheck->checkGroupOwnRules($subject, $textbody, (int) $g->id);
-
-                if (!empty($breaches)) {
-                    $inserted = DB::affectingStatement(
-                        "INSERT IGNORE INTO messages_groups
-                            (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in,
-                             contentcheck_reasons)
-                         VALUES (?, ?, 'Pending', NULL, NOW(), 0, ?, 1, ?)",
-                        [$msgid, $g->id, $msg->type, json_encode($breaches)]
-                    );
-
-                    if ($inserted > 0) {
-                        $this->recordEvent('rippled_in_held_by_group_rules');
-                        Log::info("ripple: held on group rules msgid={$msgid} groupid={$g->id}");
-                    }
-                } else {
-                    $inserted = DB::affectingStatement(
-                        "INSERT IGNORE INTO messages_groups
-                            (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in)
-                         VALUES (?, ?, '$collection', $approvedAt, NOW(), 0, ?, 1)",
-                        [$msgid, $g->id, $msg->type]
-                    );
-                }
-
-                $n += $inserted;
-            }
-            if ($n > 0) {
-                $stats['rippled_in'] += $n;
-                // §15/§16 instrumentation: count groups a post was rippled into.
-                $this->recordEvent('rippled_in', $n);
-            }
-
-            // The poster becomes a member of every group their post has rippled into, exactly
-            // as if they had posted there directly. Backfills any rippled-in group they're not
-            // yet on (idempotent), so it also catches posts rippled before this existed.
-            $this->addPosterMembershipToRippledGroups($msgid, $stats);
-        } catch (\Throwable $e) {
-            $stats['errors']++;
-            Log::warning("ripple: ripple-into-groups failed for msg {$msgid}: {$e->getMessage()}");
-        }
-    }
-
-    /**
-     * Best-effort: computes and stores the "quicker to get to" moderator note for a freshly
-     * rippled-in (msgid,groupid) pair. Silently no-ops (leaves the columns NULL) when the
-     * routing/KNN calls fail, the group is unreachable within the routing horizon, or
-     * quicker is false — a missing note simply means the notice line is not shown. Never
-     * throws: a failure here must never break the expander or the caller's insert loop.
-     */
-    /**
-     * Add the poster as a member of every group their post has rippled into (role Member,
-     * collection Approved), marked rippled=1. Email settings come from the poster's home/origin
-     * group membership, except immediate (-1) is downgraded to daily (24) so an unrequested
-     * membership never starts a flood of immediate mail (a no-email 0 or daily 24 home setting is
-     * preserved). A poster who has left every group on the post falls back to any membership they
-     * still hold (organic before ripple-created), and one who holds none at all is in no community,
-     * so defaults to no email rather than to the daily digest. Existing memberships - including a
- * Banned row - are left untouched (INSERT IGNORE
-     * + NOT EXISTS), and a group whose most recent join was a ripple-join the poster then LEFT is
-     * never re-joined ("most recent join wins"; an ordinary last membership they left does not block
-     * rippling).
-     * Writes a memberships_history row (rippled=1) so abuse detection still runs while the per-group
-     * welcome is suppressed, and sends one bundled intro email per post. Best-effort: never breaks
-     * the expander.
-     */
-    private function addPosterMembershipToRippledGroups(int $msgid, array &$stats): void
-    {
-        try {
-            $msg = DB::table('messages')->where('id', $msgid)->first(['fromuser']);
-            $posterId = $msg->fromuser ?? null;
-            if (!$posterId) {
-                return;
-            }
-
-            // Email settings = the poster's settings on their home group: the earliest-arrival
-            // group on this message where they're already a member.
-            $home = DB::selectOne(
-                'SELECT m.emailfrequency, m.eventsallowed, m.volunteeringallowed
-                 FROM messages_groups mg
-                 JOIN memberships m ON m.groupid = mg.groupid AND m.userid = ?
-                 WHERE mg.msgid = ?
-                 ORDER BY mg.arrival ASC
-                 LIMIT 1',
-                [$posterId, $msgid]
-            );
-            // No row means they have left every group this post is on. They may still be a member
-            // elsewhere, and that setting is a choice they made, so it beats any default. An organic
-            // membership (rippled = 0) is preferred over a ripple-created one, which only ever held a
-            // previous ripple's guess - otherwise a wrong default propagates itself forward every time
-            // another post ripples.
-            if (!$home) {
-                $home = DB::selectOne(
-                    'SELECT emailfrequency, eventsallowed, volunteeringallowed
-                     FROM memberships WHERE userid = ?
-                     ORDER BY rippled ASC, added DESC
-                     LIMIT 1',
-                    [$posterId]
-                );
-            }
-            // Email frequency: preserve the poster's setting, but DOWNGRADE ONLY immediate (-1) to
-            // daily (24). A rippled-into group is a lower-priority, unrequested membership, so we never
-            // start a flood of immediate emails from it - but we also never silently start emailing a
-            // no-email (0) member, nor change a daily (24) member. Events and volunteering are copied
-            // verbatim: they are one-email-per-user roundups with their own cadence guard, so leaving
-            // them at the member's setting adds no extra emails. eventsallowed is nullable and a NULL
-            // there has always meant on, so the ?? default belongs to the column, not to the member.
-            if ($home) {
-                $emailfrequency = ((int) $home->emailfrequency === -1) ? 24 : $home->emailfrequency;
-                $eventsallowed = $home->eventsallowed ?? 1;
-                $volunteeringallowed = $home->volunteeringallowed ?? 1;
-            } else {
-                // No membership anywhere: they are in no community at all. Defaulting that to daily
-                // would re-subscribe the member who has done the one thing that most clearly asks for
-                // none, so an auto-join for them starts silent.
-                $emailfrequency = 0;
-                $eventsallowed = 0;
-                $volunteeringallowed = 0;
-            }
-
-            // Groups this post has rippled into where the poster has no membership row yet AND
-            // which the poster has not "rippled in then left". Only a group whose MOST RECENT
-            // Group/Joined log is a ripple-join (text='Rippled') that the poster then LEFT is a
-            // durable "do not ripple me back here" signal ("most recent join wins"); a group they
-            // last joined manually/ordinarily and then left must NOT block rippling. (The post
-            // itself is also pulled from such groups by pullRippledPostsFromLeftGroups; here we only
-            // gate the membership.)
-            // The left-group gate is computed in PHP from ONE indexed pass over the
-            // poster's Group Joined/Left logs. Its previous form - correlated NOT
-            // EXISTS with two nested logs probes per candidate group - resolved every
-            // probe through the single-column `user` index, i.e. a rescan of the
-            // poster's ENTIRE log history per probe; a poster with a long history
-            // stalled the serial expand pipeline for minutes per post (2026-08-31:
-            // 4-minute stalls, engine idle, zero advances, Sentry BATCH-83 window).
-            $blocked = $this->rippleOptOutGroupIds((int) $posterId);
-            $notBlockedSql = $blocked === []
-                ? ''
-                : 'AND mg.groupid NOT IN (' . implode(',', $blocked) . ')';
-
-            $targets = DB::select(
-                "SELECT mg.groupid
-                 FROM messages_groups mg
-                 WHERE mg.msgid = ? AND mg.rippled_in = 1
-                   {$notBlockedSql}
-                   AND NOT EXISTS (
-                       SELECT 1 FROM memberships m WHERE m.userid = ? AND m.groupid = mg.groupid
-                   )
-                   AND NOT EXISTS (
-                       -- Never re-join a poster to a group they are banned from. A ban deletes
-                       -- their membership and withdraws their posts; site A already stops the post
-                       -- rippling in, but this guards the membership backfill independently (it
-                       -- runs for every already-rippled group, incl. pre-guard ones). No expiry.
-                       SELECT 1 FROM users_banned ub
-                       WHERE ub.userid = ? AND ub.groupid = mg.groupid
-                   )",
-                [$msgid, $posterId, $posterId]
-            );
-
-            $addedThisCall = 0;
-            foreach ($targets as $t) {
-                $added = DB::affectingStatement(
-                    "INSERT IGNORE INTO memberships
-                        (userid, groupid, role, collection, emailfrequency, eventsallowed, volunteeringallowed, rippled, added)
-                     VALUES (?, ?, 'Member', 'Approved', ?, ?, ?, 1, NOW())",
-                    [$posterId, $t->groupid, $emailfrequency, $eventsallowed, $volunteeringallowed]
-                );
-                if ($added > 0) {
-                    $addedThisCall++;
-                    $stats['memberships_added'] = ($stats['memberships_added'] ?? 0) + 1;
-                    // A rippled-in membership is a join like any other for reach mail: the
-                    // poster may now be inside the reach of other posts on this group.
-                    ReachMemberQueueService::enqueue((int) $posterId, ReachMemberQueueService::REASON_JOINED);
-                    // memberships_history with rippled=1: abuse detection still runs (processingrequired=1),
-                    // but MembershipsProcessingService reads rippled to SUPPRESS the per-group welcome -
-                    // a single bundled intro email (RippleIntroMail) is sent below instead.
-                    DB::statement(
-                        "INSERT INTO memberships_history (userid, groupid, collection, processingrequired, rippled)
-                         VALUES (?, ?, 'Approved', 1, 1)",
-                        [$posterId, $t->groupid]
-                    );
-                    // Log the join with a rippling-specific reason. V1 addMembership logs a
-                    // Group/Joined entry whose text is 'Manual' (clicked join) or 'Auto'; we use
-                    // 'Rippled' so the modlog - and MembershipsProcessingService, which reads
-                    // Group/Joined logs - can tell a rippled-in auto-join apart from those (and the
-                    // 'seen on many groups' spam check excludes text='Rippled').
-                    // byuser is NULL: the system joined them off their post rippling in, no actor.
-                    DB::table('logs')->insert([
-                        'timestamp' => now(),
-                        'type' => 'Group',
-                        'subtype' => 'Joined',
-                        'user' => $posterId,
-                        'byuser' => null,
-                        'groupid' => $t->groupid,
-                        'text' => 'Rippled',
-                    ]);
-                }
-            }
-
-            // One bundled intro email per post, the first time the poster is actually auto-joined
-            // anywhere off this post. Explains what happened, the email defaults we applied, and how
-            // to change them. Replaces the per-group welcome storm (suppressed above).
-            if ($addedThisCall > 0) {
-                $this->maybeSendRippleIntro($posterId, $msgid);
-            }
-        } catch (\Throwable $e) {
-            Log::warning("ripple: add-poster-membership failed for msg {$msgid}: {$e->getMessage()}");
-        }
-    }
-
-    /**
-     * Send the bundled "your post is reaching nearby communities" intro email at most once per
-     * post. Claims the send atomically via rippling_reach.ripple_intro_sent (0 -> 1) so it fires
-     * exactly once no matter how many ticks/groups the post ripples into. Best-effort: a spool
-     * failure never breaks the expander (the spooler has its own durable retry).
-     */
-    private function maybeSendRippleIntro(int $posterId, int $msgid): void
-    {
-        // Atomic claim: only the run that flips 0 -> 1 gets to send. No row (e.g. backfill path)
-        // => nothing to claim here => no send (the backfill command sends those).
-        $claimed = DB::affectingStatement(
-            'UPDATE rippling_reach SET ripple_intro_sent = 1 WHERE msgid = ? AND ripple_intro_sent = 0',
-            [$msgid]
-        );
-        if ($claimed < 1) {
-            return;
-        }
-
-        try {
-            $user = \App\Models\User::find($posterId);
-            if (!$user || !$user->email_preferred) {
-                return;
-            }
-            $message = \App\Models\Message::find($msgid);
-
-            // Each rippled-into community's own welcome text (groups.welcomemail), so the one
-            // bundled intro carries what each community wanted to say - instead of a separate
-            // per-group welcome email (which MembershipsProcessingService suppresses for rippled
-            // joins). Limited to the rippled groups the poster is now a member of that have a
-            // welcome configured and are live here.
-            $welcomeGroups = array_map(
-                static fn ($r) => ['name' => $r->name, 'welcome' => $r->welcome],
-                DB::select(
-                    "SELECT COALESCE(g.namefull, g.nameshort) AS name, g.welcomemail AS welcome
-                     FROM messages_groups mg
-                     JOIN `groups` g ON g.id = mg.groupid
-                     JOIN memberships m ON m.groupid = g.id AND m.userid = ?
-                     WHERE mg.msgid = ? AND mg.rippled_in = 1 AND m.rippled = 1
-                       AND g.onhere = 1 AND g.welcomemail IS NOT NULL AND g.welcomemail <> ''
-                     ORDER BY mg.arrival ASC",
-                    [$posterId, $msgid]
-                )
-            );
-
-            app(\App\Services\EmailSpoolerService::class)
-                ->spool(new \App\Mail\Ripple\RippleIntroMail($user, $message, $welcomeGroups));
-        } catch (\Throwable $e) {
-            Log::warning("ripple: intro email failed for msg {$msgid}: {$e->getMessage()}");
-        }
-    }
-
-    /**
-     * Leaving a group the post was RIPPLED into also pulls the POST from that group (the product
-     * decision: leaving a group you were rippled into means "I want nothing to do with this group",
-     * not just "stop my membership"). Soft-deletes (deleted=1) every rippled-in messages_groups row
-     * whose author's MOST RECENT Group/Joined log for that group is a ripple-join (text='Rippled')
-     * that they then LEFT (a later Group/Left log) - "most recent join wins". An author whose last
-     * join was ordinary, or who manually rejoined after a rippled leave, is left alone (matching
-     * sites A/B) - so a fresh ripple into a group they once normally-left is not immediately pulled
-     * back out. Audits each removal with a Message/Deleted log. Idempotent (only touches deleted=0
-     * rows); the membership re-join and any future re-ripple are blocked by the same
-     * most-recent-join-wins rule. Best-effort: never breaks the run.
-     */
-    private function pullRippledPostsFromLeftGroups(bool $dryRun, array &$stats, ?int $onlyMsgid = null): void
-    {
-        try {
-            // Scope: only --msgid restricts this (controlled single-post testing). Deliberately NOT
-            // area-scoped - a poster who left a rippled-into group must have their post pulled even
-            // after the post's origin group leaves the trial (its origin then falls outside the
-            // current area), otherwise the copy is stranded in a group they explicitly opted out of.
-            // Drive from RECENT Group/Left events, not from every rippled copy. The old
-            // shape scanned all rippled_in=1 rows (10k+ and growing daily) and ran the
-            // nested logs subquery per row — O(all rippled copies ever), which crept past
-            // 80s and hung every tick once the experiment had rippled enough. Leaves are
-            // the trigger and are rare, so we start from the recent Left logs and only touch
-            // a rippled copy when its poster actually left that group. Cost is bounded by
-            // leave volume, not by the rippled-copy population. Idempotent — a copy already
-            // pulled (deleted=1) is simply skipped.
-            //
-            // Two bounds, doing different jobs:
-            //
-            //   ll.id > watermark   is the scan bound. Without it every tick re-examined the
-            //                       whole window - ~1,200 log rows, each driving the two
-            //                       nested EXISTS below against a 42.6M-row table, to act on
-            //                       about one an hour.
-            //   ll.timestamp >= ?   is the STALL BACKSTOP, and stays at two days. It is what
-            //                       bounds a cold start (watermark 0 reads only the window,
-            //                       exactly as before), and what recovers leaves missed while
-            //                       the job was stopped. Narrowing it would not save anything
-            //                       the watermark has not already saved, and would strand
-            //                       rippled copies outright after any stall longer than the
-            //                       window: nothing else revisits a copy whose poster left.
-            $watermark = $this->getLeaveCheckWatermark();
-
-            // Read the high-water mark BEFORE the query so leaves arriving mid-run land above
-            // it and are picked up next tick rather than skipped.
-            $highWater = (int) (DB::table('logs')->max('id') ?? 0);
-
-            $scopeSql = '';
-            $params = [now()->subDays(2)->toDateTimeString(), $watermark];
-            if ($onlyMsgid !== null) {
-                $scopeSql = ' AND mg.msgid = ?';
-                $params[] = $onlyMsgid;
-            }
-
-            $rows = DB::select(
-                "SELECT DISTINCT mg.msgid, mg.groupid, m.fromuser
-                 FROM logs ll
-                 JOIN messages_groups mg ON mg.groupid = ll.groupid AND mg.rippled_in = 1 AND mg.deleted = 0
-                 JOIN messages m ON m.id = mg.msgid AND m.fromuser = ll.user
-                 WHERE ll.type = 'Group' AND ll.subtype = 'Left' AND ll.timestamp >= ?
-                   AND ll.id > ?" . $scopeSql . "
-                   AND EXISTS (
-                       SELECT 1 FROM logs lj
-                       WHERE lj.user = ll.user AND lj.groupid = ll.groupid
-                         AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled'
-                         AND lj.id < ll.id
-                         AND NOT EXISTS (
-                             SELECT 1 FROM logs lj2
-                             WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid
-                               AND lj2.type = 'Group' AND lj2.subtype = 'Joined'
-                               AND lj2.id > lj.id
-                         )
-                   )",
-                $params
-            );
-
-            // A scoped run examined a single post, so it has not covered the leaves it
-            // filtered out - moving the shared mark would make the next global tick skip them.
-            $mayAdvance = $onlyMsgid === null && ! $dryRun;
-
-            if (empty($rows)) {
-                if ($mayAdvance) {
-                    $this->setLeaveCheckWatermark($highWater);
-                }
-
-                return;
-            }
-
-            if ($dryRun) {
-                $stats['pulled_on_leave'] += count($rows);
-                return;
-            }
-
-            foreach ($rows as $r) {
-                $n = DB::affectingStatement(
-                    'UPDATE messages_groups SET deleted = 1
-                     WHERE msgid = ? AND groupid = ? AND rippled_in = 1 AND deleted = 0',
-                    [$r->msgid, $r->groupid]
-                );
-                if ($n > 0) {
-                    DB::table('logs')->insert([
-                        'timestamp' => now(),
-                        'type' => 'Message',
-                        'subtype' => 'Deleted',
-                        'user' => $r->fromuser,
-                        'byuser' => null,
-                        'groupid' => $r->groupid,
-                        'msgid' => $r->msgid,
-                        'text' => 'Rippling: removed on leave',
-                    ]);
-                    $stats['pulled_on_leave']++;
-                }
-            }
-
-            // Only after the pulls have been written, so a throw mid-loop leaves the mark
-            // where it was and the next tick redoes the batch.
-            if ($mayAdvance) {
-                $this->setLeaveCheckWatermark($highWater);
-            }
-        } catch (\Throwable $e) {
-            $stats['errors']++;
-            Log::warning("ripple: pull-on-leave failed: {$e->getMessage()}");
-        }
-    }
-
-    private function getLeaveCheckWatermark(): int
-    {
-        return (int) (DB::table('config')->where('key', self::LEAVE_CHECK_WATERMARK_KEY)->value('value') ?? 0);
-    }
-
-    private function setLeaveCheckWatermark(int $id): void
-    {
-        DB::table('config')->upsert(
-            ['key' => self::LEAVE_CHECK_WATERMARK_KEY, 'value' => (string) $id],
-            ['key'],
-            ['value']
-        );
-    }
-
-    /**
-     * Union the isochrone WKT with the origin group's area when the isochrone already
-     * covers >= 90% of that area, so the stored reach polygon fills in the whole group
-     * rather than leaving a thin uncovered sliver at the edge.
-     *
-     * The "origin group" is the earliest-arrival group for the post (the group the post
-     * was originally submitted to). Its area is groups.polyindex (COALESCE(poly, polyofficial)),
-     * skipping the (0,0) point sentinel.
-     *
-     * If anything goes wrong (bad geometry, routing query failure, etc.) the method
-     * returns the original WKT unchanged — it must never throw.
-     */
-    private function unionWithOriginGroupArea(int $msgid, string $wkt): string
-    {
-        try {
-            $groupRow = DB::selectOne(
-                'SELECT ST_AsText(g.polyindex) AS group_wkt
-                 FROM messages_groups mg
-                 JOIN `groups` g ON g.id = mg.groupid
-                 WHERE mg.msgid = ? AND mg.deleted = 0
-                   AND g.polyindex IS NOT NULL
-                   AND ST_GeometryType(g.polyindex) <> \'POINT\'
-                 ORDER BY mg.arrival ASC
-                 LIMIT 1',
-                [$msgid]
-            );
-
-            if ($groupRow === null || empty($groupRow->group_wkt)) {
-                return $wkt;
-            }
-
-            $groupWkt = $groupRow->group_wkt;
-
-            // ST_Intersection of two polygons that touch along a line or at a
-            // point yields a GEOMETRYCOLLECTION, and ST_Area on that throws
-            // error 3516. CASE evaluates lazily, so guarding on the geometry
-            // type means ST_Area only ever sees polygonal input; a NULL frac
-            // simply fails the >= 0.90 test below and the WKT passes through
-            // unchanged - the same outcome the exception path produced, minus
-            // the exception.
-            $result = DB::selectOne(
-                'SELECT CASE WHEN ST_GeometryType(inter) IN (\'POLYGON\', \'MULTIPOLYGON\')
-                             THEN ST_Area(inter) / NULLIF(ST_Area(grp), 0)
-                        END AS frac,
-                        ST_AsText(ST_Union(iso, grp)) AS u
-                 FROM (SELECT ST_Intersection(iso, grp) AS inter, iso, grp
-                       FROM (SELECT ST_GeomFromText(?, ' . self::SRID . ') AS iso,
-                                    ST_GeomFromText(?, ' . self::SRID . ') AS grp) s) t',
-                [$wkt, $groupWkt]
-            );
-
-            if ($result !== null && ($result->frac ?? 0) >= 0.90 && !empty($result->u)) {
-                return $result->u;
-            }
-
-            return $wkt;
-        } catch (\Throwable $e) {
-            // Retry once with ST_Buffer(geom, 0) geometry repair to handle invalid polygons.
-            try {
-                $groupRow = DB::selectOne(
-                    'SELECT ST_AsText(g.polyindex) AS group_wkt
-                     FROM messages_groups mg
-                     JOIN `groups` g ON g.id = mg.groupid
-                     WHERE mg.msgid = ? AND mg.deleted = 0
-                       AND g.polyindex IS NOT NULL
-                       AND ST_GeometryType(g.polyindex) <> \'POINT\'
-                     ORDER BY mg.arrival ASC
-                     LIMIT 1',
-                    [$msgid]
-                );
-
-                if ($groupRow === null || empty($groupRow->group_wkt)) {
-                    return $wkt;
-                }
-
-                $groupWkt = $groupRow->group_wkt;
-
-                $result = DB::selectOne(
-                    'SELECT CASE WHEN ST_GeometryType(inter) IN (\'POLYGON\', \'MULTIPOLYGON\')
-                                 THEN ST_Area(inter) / NULLIF(ST_Area(grp), 0)
-                            END AS frac,
-                            ST_AsText(ST_Union(iso, grp)) AS u
-                     FROM (SELECT ST_Intersection(iso, grp) AS inter, iso, grp
-                           FROM (SELECT ST_Buffer(ST_GeomFromText(?, ' . self::SRID . '), 0) AS iso,
-                                        ST_Buffer(ST_GeomFromText(?, ' . self::SRID . '), 0) AS grp) s) t',
-                    [$wkt, $groupWkt]
-                );
-
-                if ($result !== null && ($result->frac ?? 0) >= 0.90 && !empty($result->u)) {
-                    return $result->u;
-                }
-            } catch (\Throwable $e2) {
-                Log::warning("ripple: unionWithOriginGroupArea retry failed for msg {$msgid}: {$e2->getMessage()}");
-            }
-
-            return $wkt;
-        }
-    }
-
-
-
-
-
-    /**
      * The cached schedule entry for a target tick: the one with the largest `tick`
      * number ≤ target (so a higher tick whose polygon was filtered out falls back to
      * the most-grown reach available), or the first entry if none qualify. Indexing by
      * tick number — not array position — survives filtered/empty-polygon ticks.
      *
-     * @param array<int,array{tick:int,wkt:string}> $ticks
+     * @param  array<int,array{tick:int,wkt:string}>  $ticks
      */
-    /**
-     * Backfill: re-derive EVERY active post's stored reach under the current
-     * algorithm - fine no-smoothing polygon, slim schedule with per-tick
-     * reachable_group_ids - and retract what the new targeting no longer covers:
-     * rippled-in copies, and the ripple-created memberships that existed only for
-     * them (via retractOutOfReachCopies' existing rules: latest-join-was-Rippled,
-     * no other live post, held reaches untouched).
-     *
-     * Mirrors recomputeReach's safety properties: updated_at is preserved so the
-     * reach mailer never reconsiders the row, writes are one row per statement
-     * (Galera-safe), and a routing failure skips the row for a later run rather
-     * than degrading it. Idempotent: a second run finds nothing left to change.
-     * The budget used is the post's CURRENT tick re-read from a fresh schedule,
-     * so a post mid-expansion keeps its place in the hazard timetable.
-     *
-     * Resumable and shardable: by default only rows the new algorithm has not yet
-     * touched are candidates - reachable_group_ids IS NULL, which is exactly the
-     * pre-gate population (init/advance now populate it) - so each run continues
-     * where the last stopped and a drained run finds nothing. $all overrides that
-     * for a full re-sweep (e.g. after a later algorithm change). $shardCount/$shardIndex
-     * partition candidates by msgid % shardCount so disjoint shards run in parallel;
-     * total routing load ~= shards, so keep it within the routing server's headroom.
-     *
-     * @return array{candidates:int,updated:int,skipped:int,would_retract_groups:int,pulled_out_of_reach:int,memberships_removed:int}
-     */
-    public function backfillReach(
-        bool $dryRun = false,
-        int $limit = 500,
-        ?int $onlyMsgid = null,
-        ?int $shardCount = null,
-        ?int $shardIndex = null,
-        bool $all = false
-    ): array {
-        $stats = [
-            'candidates' => 0, 'updated' => 0, 'skipped' => 0,
-            'would_retract_groups' => 0, 'pulled_out_of_reach' => 0,
-            'memberships_removed' => 0, 'pulled_on_removal' => 0, 'skipped_terminal' => 0,
-        ];
-
-        $rows = DB::table('rippling_reach')
-            ->select(['msgid', 'lat', 'lng', 'tick', 'rejected_groups', 'status'])
-            ->whereIn('status', ['expanding', 'stopped', 'done']) // held = frozen for moderation
-            ->when(!$all, fn ($q) => $q->whereNull('reachable_group_ids'))
-            ->when($shardCount !== null && $shardCount > 1,
-                fn ($q) => $q->whereRaw('msgid % ? = ?', [$shardCount, (int) $shardIndex]))
-            ->when($onlyMsgid !== null, fn ($q) => $q->where('msgid', $onlyMsgid))
-            ->orderBy('msgid')
-            ->limit($limit)
-            ->get();
-
-        foreach ($rows as $row) {
-            $stats['candidates']++;
-            try {
-                $schedule = $this->reach->computeSchedule((float) $row->lat, (float) $row->lng);
-                if ($schedule === null || empty($schedule['ticks'])) {
-                    $stats['skipped']++;
-                    continue; // routing unreachable/off-graph - safe to retry later
-                }
-                $ticks = $schedule['ticks'];
-                $tick = min(max((int) $row->tick, 1), count($ticks));
-                $entry = $this->entryForTick($ticks, $tick);
-                $tickGeom = $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng);
-                if ($tickGeom === null) {
-                    $stats['skipped']++;
-                    continue;
-                }
-                $tickWkt = $tickGeom['wkt'];
-                $ids = $this->tickReachableIds($entry, $schedule);
-
-                if ($dryRun) {
-                    // Preview the retraction the new ids would drive (ids-based only;
-                    // the tighter polygon can retract further copies on the live run).
-                    if (!empty($ids)) {
-                        $ph = implode(',', array_fill(0, count($ids), '?'));
-                        $stats['would_retract_groups'] += (int) DB::selectOne(
-                            "SELECT COUNT(*) AS n FROM messages_groups
-                              WHERE msgid = ? AND rippled_in = 1 AND deleted = 0
-                                AND groupid NOT IN ({$ph})",
-                            array_merge([$row->msgid], $ids)
-                        )->n;
-                    }
-                    $stats['updated']++;
-                    continue;
-                }
-
-                $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
-                // Grid + derived bounds in ONE statement; envelope retry on
-                // throw. This pass RE-DERIVES (it may shrink), so a failed
-                // rasterise skips the row rather than writing a reach nobody
-                // can read.
-                [$boundsSet, $boundsParams] = $this->boundsSetSql($storeWkt);
-                if ($this->gridRetired((int) $row->msgid)) {
-                    $cells = null;
-                } else {
-                    $cells = $this->cellSets->rasterize($storeWkt);
-                    if ($cells === null) {
-                        $stats['skipped']++;
-                        continue;
-                    }
-                }
-                $gridSet = ', polygon_cells = ?';
-                $lead = [$cells];
-                $backfillSql = fn (string $set): string => 'UPDATE rippling_reach
-                        SET updated_at = updated_at' . $gridSet . $set . ',
-                            schedule = ?, reachable_group_ids = ?,
-                            total_freeglers = ?, max_drive_min = ?
-                      WHERE msgid = ?';
-                $backfillTail = [
-                    json_encode($ticks),
-                    json_encode($ids),
-                    (int) $schedule['total_freeglers'],
-                    $schedule['max_drive_min'],
-                    $row->msgid,
-                ];
-                try {
-                    // keep-raw: UPDATE with ST_GeomFromText/derived-bounds SQL expressions in SET - the builder cannot render these
-                    DB::statement($backfillSql($boundsSet), array_merge($lead, $boundsParams, $backfillTail));
-                } catch (\Throwable $e) {
-                    [$envSet, $envParams] = $this->boundsEnvelopeSql($storeWkt);
-                    // keep-raw: envelope-fallback variant of the same spatial UPDATE
-                    DB::statement($backfillSql($envSet), array_merge($lead, $envParams, $backfillTail));
-                }
-
-                // Secondary "out of area" rejection clips must survive the rewrite
-                // (the clip statement shrinks polygon and NULLs inner_bound atomically).
-                $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
-                // Routing-provided bounds upgrade the columns after the clips.
-                if ($tickGeom['outer'] !== null) {
-                    $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
-                }
-                // Retract copies (and their ripple-only memberships) the new reach no
-                // longer covers - polygon-based always, ids-based when the gate is on.
-                $this->retractOutOfReachCopies((int) $row->msgid, false, $stats);
-                $stats['updated']++;
-            } catch (\Throwable $e) {
-                Log::warning("ripple: backfillReach failed for msg {$row->msgid}: {$e->getMessage()}");
-                $stats['skipped']++;
-            }
-        }
-
-        return $stats;
-    }
-
     /**
      * The geometry for a schedule tick: ['wkt' => string, 'outer' => ?string,
      * 'inner' => ?string]. Full schedules (old servers / rows stored before the slim
@@ -2725,73 +1188,15 @@ class ExpandService
         if ($entry === null) {
             return null;
         }
-        if (!empty($entry['wkt'])) {
+        if (! empty($entry['wkt'])) {
             return ['wkt' => (string) $entry['wkt'], 'outer' => null, 'inner' => null];
         }
         $driveMin = (float) ($entry['drive_min'] ?? 0);
         if ($driveMin <= 0) {
             return null;
         }
-        return $this->reach->catchmentGeometry($lat, $lng, $driveMin, $this->coarseTickGeometryOk($entry));
-    }
 
-    /**
-     * Whether this tick can be served by the cheap region-scale catchment.
-     *
-     * Everything expansion does with the geometry is region-scale - the sandwich bounds,
-     * the union with the origin group's area, and the ST_Intersects that picks out the
-     * groups the reach now touches - with one caveat, which is what this decides.
-     *
-     * The coarse outline is drawn on cells at least as big as the finest the exact path
-     * would use, so it can sit outside the exact one by about a cell along the boundary.
-     * On its own that could hand a group to ST_Intersects that the exact outline would
-     * have missed. But when the reachable gate is on AND this tick carries its own set of
-     * road-reachable group ids, that ST_Intersects is only a spatial-index prefilter: the
-     * gate ANDs the exact set on top, and a superset prefilter intersected with an exact
-     * set is exact (see rippleIntoNewGroups). Without the gate the outline IS the answer,
-     * so we pay for the exact one - which is the same rule the gate itself follows, and
-     * keeps the groups a post reaches identical either way.
-     *
-     * @param  array<string, mixed>  $entry
-     */
-    private function coarseTickGeometryOk(array $entry): bool
-    {
-        if (!config('freegle.ripple.coarse_tick_geometry', true)) {
-            return false;
-        }
-
-        return $this->reachableGateEnabled() && !empty($entry['reachable_group_ids']);
-    }
-
-    /**
-     * The reachable-group ids to store for the row's CURRENT tick: the per-tick set
-     * when the schedule carries one (slim form), else the schedule's max-extent set
-     * (older servers). Stored on rippling_reach so retraction tests copies against
-     * the current extent.
-     *
-     * @return int[]
-     */
-    private function tickReachableIds(?array $entry, array $schedule): array
-    {
-        return $this->tickReachableIdsOrNull($entry, $schedule) ?? [];
-    }
-
-    /** As tickReachableIds, but null when neither source has a set (gate unavailable). */
-    private function tickReachableIdsOrNull(?array $entry, array $schedule): ?array
-    {
-        if (is_array($entry['reachable_group_ids'] ?? null)) {
-            return array_map('intval', $entry['reachable_group_ids']);
-        }
-        $top = $schedule['reachable_group_ids'] ?? null;
-        return is_array($top) ? array_map('intval', $top) : null;
-    }
-
-    /** The per-tick ids as JSON for a COALESCE update, or null to keep the stored set. */
-    private function tickReachableIdsJson(?array $entry): ?string
-    {
-        return is_array($entry['reachable_group_ids'] ?? null)
-            ? json_encode(array_map('intval', $entry['reachable_group_ids']))
-            : null;
+        return $this->reach->catchmentGeometry($lat, $lng, $driveMin, false);
     }
 
     private function entryForTick(array $ticks, int $target): ?array
@@ -2807,145 +1212,18 @@ class ExpandService
     }
 
     /**
-     * Re-subtract every secondary-group rejection from a post's reach after the polygon has
-     * been rewritten from the cached schedule (which is clip-unaware). Mirrors the Go
-     * ClipReachForRejectedGroup partial-clip; never deletes the row (advanceDue must not
-     * resurrect it via initialiseNew), so a fully-clipped post keeps its last partial reach.
-     *
-     * @param string|null $rejectedGroupsJson JSON array of rejected group ids, or null.
-     */
-    private function reapplyClips(int $msgid, ?string $rejectedGroupsJson): void
-    {
-        if ($rejectedGroupsJson === null) {
-            return;
-        }
-        $gids = json_decode($rejectedGroupsJson, true);
-        if (!is_array($gids) || empty($gids)) {
-            return;
-        }
-
-        // The clip is pure grid arithmetic - fetch the row's grid, subtract
-        // each rejecting group's rasterised area, write the survivor back
-        // with the inner bound NULLed in the same statement (a stale inner
-        // could cheap-accept viewers in the clipped-out area; the outer stays
-        // a valid superset). On any failure the row is left UNCLIPPED and
-        // logged: over-reaching into a rejecting group is visible and retried
-        // next tick, where a wrong grid would silently misgate replies
-        // everywhere.
-        $this->reapplyClipsCellsOnly($msgid, array_map('intval', $gids));
-    }
-
-    /**
-     * reapplyClips for the cells-only era: one read of the row's grid, one
-     * Subtract per rejecting group (each group's area rasterised once per run,
-     * cached), one write. A reach left wholly inside the union of its
-     * rejecting groups keeps an EMPTY grid rather than being deleted here -
-     * the advance that called this just wrote the row and owns its lifecycle;
-     * an empty grid admits nobody, which is the correct behaviour for a post
-     * every rejecting group has squeezed out.
-     *
-     * @param array<int,int> $gids
-     */
-    private function reapplyClipsCellsOnly(int $msgid, array $gids): void
-    {
-        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first(['polygon_cells']);
-        if ($row === null || $row->polygon_cells === null) {
-            return;
-        }
-
-        // subtractEncoded, NEVER decode(): decode's memory follows the covered
-        // AREA (one array entry per set cell), and the rejecting group's area
-        // here can be a county - ~10M cells, ~1GB of PHP arrays. Six
-        // ripple:expand OOMs in three hours on the first post-drop evening
-        // (2026-08-26) came from exactly this loop; the streaming subtract
-        // holds only the run boundaries.
-        $cells = (string) $row->polygon_cells;
-        $clipped = false;
-        foreach ($gids as $gid) {
-            $gwkt = DB::table('groups')->where('id', $gid)->value(DB::raw('ST_AsText(polyindex)'));
-            if (!is_string($gwkt) || $gwkt === '' || str_starts_with($gwkt, 'POINT')) {
-                continue;
-            }
-            $groupCells = $this->rasterizedGroupCells($gid, $gwkt);
-            if ($groupCells === null) {
-                Log::warning('ripple: reapplyClips could not rasterise rejecting group; its clip skipped this tick', [
-                    'msgid' => $msgid, 'gid' => $gid,
-                ]);
-                continue;
-            }
-            $next = $this->cellSets->subtractEncoded($cells, $groupCells);
-            if ($next === null) {
-                Log::warning('ripple: reapplyClips subtract failed; that clip skipped this tick', [
-                    'msgid' => $msgid, 'gid' => $gid,
-                ]);
-                continue;
-            }
-            $cells = $next;
-            $clipped = true;
-        }
-        if (!$clipped) {
-            return;
-        }
-
-        DB::table('rippling_reach')->where('msgid', $msgid)->update([
-            'polygon_cells' => $cells,
-            'inner_bound' => null,
-        ]);
-    }
-
-    /**
      * Grid retirement, per row: once a post has BOTH its stored label and its
      * road-native union threshold (origin_union_secs, including -1 = never),
-     * the label evaluator answers everything the current-reach grid did -
-     * membership, the origin-group union, rejections - so the writers above
-     * stop materialising the grid (NULL drains the blob) and skip the
-     * rasterise round trip. Rows without the threshold keep their grid: it
-     * still carries the union those members depend on. False on any doubt.
+     * the label evaluator answers everything the current-reach grid did, so
+     * the writers above stop materialising the grid (NULL drains the blob)
+     * and skip the rasterise round trip. Rows without the threshold keep
+     * their grid: it still carries the reach test the label alone cannot
+     * answer. False on any doubt.
      */
     /** gridRetired from an already-fetched row - no query in the hot loop. */
     private function rowRetired(object $row): bool
     {
-        return !empty($row->has_labels) && ($row->origin_union_secs ?? null) !== null;
-    }
-
-    /**
-     * The origin-group union for a RETIRED row: the stored threshold decides
-     * (no per-tick ST_Intersection/ST_Area coverage recompute - that is what
-     * origin_union_secs replaced); only the ST_Union itself still runs, and
-     * only while the union is active, because the scratch WKT still feeds the
-     * group-crossing test and the sandwich bounds.
-     */
-    private function unionByThreshold(int $msgid, string $wkt, float $budgetSecs, $unionSecs): string
-    {
-        if ($unionSecs === null || (float) $unionSecs < 0 || $budgetSecs < (float) $unionSecs) {
-            return $wkt;
-        }
-        try {
-            $groupRow = DB::selectOne(
-                'SELECT ST_AsText(g.polyindex) AS group_wkt
-                 FROM messages_groups mg
-                 JOIN `groups` g ON g.id = mg.groupid
-                 WHERE mg.msgid = ? AND mg.deleted = 0
-                   AND g.polyindex IS NOT NULL
-                   AND ST_GeometryType(g.polyindex) <> \'POINT\'
-                 ORDER BY mg.arrival ASC
-                 LIMIT 1',
-                [$msgid]
-            );
-            if ($groupRow === null || empty($groupRow->group_wkt)) {
-                return $wkt;
-            }
-            $result = DB::selectOne(
-                'SELECT ST_AsText(ST_Union(ST_GeomFromText(?, ' . self::SRID . '), ST_GeomFromText(?, ' . self::SRID . '))) AS u',
-                [$wkt, $groupRow->group_wkt]
-            );
-
-            return !empty($result->u) ? $result->u : $wkt;
-        } catch (\Throwable $e) {
-            Log::warning("ripple: unionByThreshold failed for msg {$msgid}: {$e->getMessage()}");
-
-            return $wkt;
-        }
+        return ! empty($row->has_labels) && ($row->origin_union_secs ?? null) !== null;
     }
 
     private function gridRetired(int $msgid): bool
@@ -2959,30 +1237,6 @@ class ExpandService
         } catch (\Throwable) {
             return false;
         }
-    }
-
-    /** Per-request cache: a rejecting group's own area is expensive to rasterise and does not change within one run. */
-    private array $groupCellsCache = [];
-
-    /**
-     * Rasterise (and cache) one group's polyindex WKT into cells, reused across
-     * every post this run clips against it. Only a SUCCESS is cached: caching a
-     * transient rasterise failure would silently disable cells-clipping for
-     * every later post rejected by the same group for the rest of the run, long
-     * after the spatial server recovered - a failed lookup stays eligible for
-     * retry on the next post instead.
-     */
-    private function rasterizedGroupCells(int $gid, string $wkt): ?string
-    {
-        if (isset($this->groupCellsCache[$gid])) {
-            return $this->groupCellsCache[$gid];
-        }
-        $bytes = $this->cellSets->rasterize($wkt);
-        if ($bytes !== null) {
-            $this->groupCellsCache[$gid] = $bytes;
-        }
-
-        return $bytes;
     }
 
     /**

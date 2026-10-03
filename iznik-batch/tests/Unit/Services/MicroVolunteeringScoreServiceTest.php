@@ -29,8 +29,7 @@ class MicroVolunteeringScoreServiceTest extends TestCase
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
         $user3 = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($user1, $group);
+        $message = $this->createTestMessage($user1);
 
         // Three users all say 'Approve' for the same message.
         foreach ([$user1, $user2, $user3] as $user) {
@@ -60,8 +59,7 @@ class MicroVolunteeringScoreServiceTest extends TestCase
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
         $user3 = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($user1, $group);
+        $message = $this->createTestMessage($user1);
 
         // user1 says 'Reject', user2 and user3 say 'Approve' — user1 is in the minority.
         DB::table('microactions')->insert([

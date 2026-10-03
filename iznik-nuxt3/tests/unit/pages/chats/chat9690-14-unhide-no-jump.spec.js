@@ -55,9 +55,6 @@ vi.mock('~/api', () => ({
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({ user: { id: 1 } }),
 }))
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({ fetch: vi.fn(), get: vi.fn(), list: {} }),
-}))
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({ fetch: vi.fn() }),
 }))

@@ -48,13 +48,11 @@ import (
 	"github.com/freegle/iznik-server-go/communityevent"
 	"github.com/freegle/iznik-server-go/config"
 	"github.com/freegle/iznik-server-go/donations"
-	"github.com/freegle/iznik-server-go/group"
 	"github.com/freegle/iznik-server-go/housekeeper"
 	"github.com/freegle/iznik-server-go/image"
 	"github.com/freegle/iznik-server-go/isochrone"
 	"github.com/freegle/iznik-server-go/job"
 	"github.com/freegle/iznik-server-go/location"
-	"github.com/freegle/iznik-server-go/membership"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
@@ -1038,23 +1036,6 @@ type communityEventsResponse struct {
 	Body []communityevent.CommunityEvent
 }
 
-// swagger:route GET /communityevent/group/{id} communityevent listCommunityEventsForGroup
-// List community events for group
-//
-// Returns all community events for a specific group
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Group ID
-//     required: true
-//     type: integer
-//     format: int64
-//
-// Responses:
-//
-//	200: communityEventsResponse
-
 // swagger:route GET /communityevent/{id} communityevent getCommunityEvent
 // Get community event by ID
 //
@@ -1527,120 +1508,6 @@ type giftAidResponse struct {
 //	401: errorResponse
 
 // ============================================================================
-// Group
-// ============================================================================
-
-// swagger:route GET /group group listGroups
-// List groups
-//
-// Returns all groups
-//
-// Responses:
-//
-//	200: groupsResponse
-//
-// groupsResponse is the response for group list
-// swagger:response groupsResponse
-type groupsResponse struct {
-	// List of groups
-	// in:body
-	Body []group.GroupEntry
-}
-
-// swagger:route GET /group/work group getGroupWork
-// Get group work counts
-//
-// Returns per-group work counts for moderators
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: groupWorkResponse
-//	401: errorResponse
-//
-// groupWorkResponse is the response for group work counts
-// swagger:response groupWorkResponse
-type groupWorkResponse struct {
-	// Group work counts
-	// in:body
-	Body []group.GroupWork
-}
-
-// swagger:route GET /group/{id} group getGroup
-// Get group by ID
-//
-// Returns a single group by ID
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Group ID
-//     required: true
-//     type: integer
-//     format: int64
-//
-// Responses:
-//
-//	200: groupResponse
-//	404: errorResponse
-//
-// groupResponse is the response for a single group
-// swagger:response groupResponse
-type groupResponse struct {
-	// Group data
-	// in:body
-	Body group.Group
-}
-
-// swagger:route POST /group group createGroup
-// Create a new group
-//
-// Creates a new freegle group
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: genericResponse
-//	400: errorResponse
-//	401: errorResponse
-
-// swagger:route GET /group/{id}/message group getGroupMessages
-// Get messages for group
-//
-// Returns messages for a specific group
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Group ID
-//     required: true
-//     type: integer
-//     format: int64
-//
-// Responses:
-//
-//	200: messagesResponse
-
-// swagger:route PATCH /group group patchGroup
-// Update group settings
-//
-// Updates group fields. Requires mod/owner role or admin/support.
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-//	400: errorResponse
-//	401: errorResponse
-//	403: errorResponse
-
-// ============================================================================
 // Image
 // ============================================================================
 
@@ -1998,131 +1865,41 @@ type locationsResponse struct {
 // Membership
 // ============================================================================
 
-// swagger:route GET /memberships membership getMemberships
-// Get memberships
+// swagger:route PUT /memberships membership joinViaPartner
+// Join via TrashNothing partner
 //
-// Returns group memberships for the authenticated user or members of a group
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: membershipsResponse
-//	401: errorResponse
-//
-// membershipsResponse is the response for memberships
-// swagger:response membershipsResponse
-type membershipsResponse struct {
-	// Memberships data
-	// in:body
-	Body []membership.GetMembershipsMember
-}
-
-// swagger:route PUT /memberships membership joinGroup
-// Subscribe user to group
-//
-// Adds a user to a group. Supports three auth modes:
-// (1) Partner key auth via query params for TN integration — no JWT needed.
-// (2) Mod-add-member: JWT auth where userid in body differs from authenticated user and caller is mod of the group.
-// (3) Self-join: JWT auth where userid matches authenticated user or is omitted.
+// Gives a TrashNothing member a Freegle account and, if they have no
+// location yet, one from their TrashNothing area's centroid. Partner key
+// auth only.
 //
 // Parameters:
 //   + name: partner
 //     in: query
-//     description: Partner API key (alternative to JWT auth)
-//     required: false
+//     description: Partner API key
+//     required: true
 //     type: string
 //   + name: tnuserid
 //     in: query
-//     description: Trash Nothing user ID (partner auth only)
+//     description: Trash Nothing user ID
 //     required: false
 //     type: integer
 //   + name: email
 //     in: query
-//     description: User email address (partner auth only)
+//     description: User email address
 //     required: false
 //     type: string
 //   + name: groupid
 //     in: query
-//     description: Group ID (partner auth only; JWT auth uses request body)
+//     description: Trash Nothing area ID, resolved against partner_areas
 //     required: false
 //     type: integer
-//
-// security:
-// - BearerAuth: []
 //
 // Responses:
 //
 //	200: successResponse
 //	400: errorResponse
-//	401: errorResponse
 //	403: errorResponse
-
-// swagger:route DELETE /memberships membership leaveGroup
-// Unsubscribe user from group
-//
-// Removes a user from a group. Supports JWT auth and partner key auth for TN integration.
-//
-// Parameters:
-//   + name: partner
-//     in: query
-//     description: Partner API key (alternative to JWT auth)
-//     required: false
-//     type: string
-//   + name: tnuserid
-//     in: query
-//     description: Trash Nothing user ID (partner auth only)
-//     required: false
-//     type: integer
-//   + name: email
-//     in: query
-//     description: User email address (partner auth only)
-//     required: false
-//     type: string
-//   + name: groupid
-//     in: query
-//     description: Group ID (partner auth only; JWT auth uses request body)
-//     required: false
-//     type: integer
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-//	401: errorResponse
-//	403: errorResponse
-
-// swagger:route PATCH /memberships membership updateMembership
-// Update membership settings
-//
-// Updates email frequency, events allowed, volunteering allowed
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-//	400: errorResponse
-//	401: errorResponse
-
-// swagger:route POST /memberships membership postMemberships
-// Membership moderation actions
-//
-// Handles member moderation: approve, reject, ban, hold, spam, delete
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-//	400: errorResponse
-//	401: errorResponse
-//	403: errorResponse
+//	500: errorResponse
 
 // ============================================================================
 // Merge
@@ -2186,44 +1963,6 @@ type membershipsResponse struct {
 // Message
 // ============================================================================
 
-// swagger:route GET /messages message listPublicMessages
-// List messages
-//
-// Returns messages for a group with pagination. Response includes tnpostid (Trash Nothing post ID)
-// and expiresat (computed expiry date based on group settings) for each message.
-//
-// Parameters:
-//   + name: groupid
-//     in: query
-//     description: Group ID to list messages from
-//     required: false
-//     type: integer
-//   + name: collection
-//     in: query
-//     description: Message collection (Approved, Pending, Rejected, Spam)
-//     required: false
-//     type: string
-//   + name: limit
-//     in: query
-//     description: Max messages to return (1-100, default 20)
-//     required: false
-//     type: integer
-//   + name: context
-//     in: query
-//     description: Pagination cursor (JSON with Date and id)
-//     required: false
-//     type: string
-//
-// Responses:
-//
-//	200: listMessagesResponse
-
-// listMessagesResponse is the response for the message list endpoint
-// swagger:response listMessagesResponse
-type listMessagesResponse struct {
-	// in:body
-	Body message.ListMessagesResponse
-}
 
 // swagger:route GET /modtools/messages modtools listMessages
 // List messages
@@ -2269,25 +2008,6 @@ type listMessagesResponse struct {
 //     description: Northeast longitude
 //     required: true
 //     type: number
-//
-// Responses:
-//
-//	200: messagesResponse
-
-// swagger:route GET /message/mygroups/{id} message getMessagesByGroup
-// Get messages by group
-//
-// Returns messages for user's groups, optionally filtered by group ID
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Group ID
-//     required: true
-//     type: integer
-//
-// security:
-// - BearerAuth: []
 //
 // Responses:
 //
@@ -3244,23 +2964,6 @@ type storyResponse struct {
 	Body story.Story
 }
 
-// swagger:route GET /story/group/{id} story getStoriesForGroup
-// Get stories for group
-//
-// Returns stories for a specific group
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Group ID
-//     required: true
-//     type: integer
-//     format: int64
-//
-// Responses:
-//
-//	200: storiesResponse
-
 // swagger:route PUT /story story createStory
 // Create a story
 //
@@ -3806,23 +3509,6 @@ type volunteeringListResponse struct {
 	// in:body
 	Body []volunteering.Volunteering
 }
-
-// swagger:route GET /volunteering/group/{id} volunteering listVolunteeringForGroup
-// List volunteering opportunities for group
-//
-// Returns volunteering opportunities for a specific group
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Group ID
-//     required: true
-//     type: integer
-//     format: int64
-//
-// Responses:
-//
-//	200: volunteeringListResponse
 
 // swagger:route GET /volunteering/{id} volunteering getVolunteering
 // Get volunteering opportunity by ID

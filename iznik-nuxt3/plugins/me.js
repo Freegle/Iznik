@@ -6,13 +6,10 @@ export default defineNuxtPlugin((nuxtApp) => {
   const meComposable = useMe()
 
   // Register all the properties from the composable as global properties
-  // This maintains compatibility with components that use this.me, this.myGroups, etc.
+  // This maintains compatibility with components that use this.me, etc.
   Object.keys(meComposable).forEach((key) => {
     // Skip functions (except those that should be exposed)
-    if (
-      typeof meComposable[key] === 'function' &&
-      !['oneOfMyGroups', 'myGroup', 'fetchMe'].includes(key)
-    ) {
+    if (typeof meComposable[key] === 'function' && key !== 'fetchMe') {
       return
     }
 

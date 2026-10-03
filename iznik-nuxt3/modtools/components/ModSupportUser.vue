@@ -283,28 +283,8 @@
         Last push notification: {{ timeago(user.lastpush) }}
       </div>
       <div v-else>No push notifications sent.</div>
-      <h3 class="mt-2">Memberships</h3>
-      <div v-if="memberships && memberships.length">
-        <div
-          v-for="membership in memberships"
-          :key="'membership-' + membership.id"
-        >
-          <ModSupportMembership
-            :membershipid="membership.id"
-            :userid="user.id"
-            @fetchuser="fetchUser"
-          />
-        </div>
-        <b-button
-          v-if="!showAllMemberships && membershipsUnshown"
-          variant="white"
-          class="mt-1"
-          @click="showAllMemberships = true"
-        >
-          Show +{{ membershipsUnshown }}
-        </b-button>
-      </div>
-      <p v-else>No memberships.</p>
+      <h3 class="mt-2">Moderation status</h3>
+      <ModModeration :userid="user.id" size="sm" />
       <div v-if="supportBans.length">
         <div
           v-for="ban in supportBans"
@@ -327,61 +307,6 @@
         </div>
       </div>
       <p v-else>No other emails.</p>
-      <h3 class="mt-2">Membership History</h3>
-      <h4>Recent Applications</h4>
-      <div v-if="supportApplied.length">
-        <div
-          v-for="applied in supportApplied"
-          :key="'applied-' + id + '-' + applied.added"
-        >
-          {{ applied.nameshort }}
-          <span class="text-muted" :title="applied.added.toLocaleString()">
-            {{ timeago(applied.added) }}
-          </span>
-        </div>
-      </div>
-      <div v-else>No recent applications.</div>
-      <h4 class="mt-2">Full History</h4>
-      <div v-if="membershipHistoriesShown.length">
-        <div
-          v-for="membershiphistory in membershipHistoriesShown"
-          :key="
-            'membershiphistory-' +
-            (membershiphistory.timestamp || membershiphistory.added)
-          "
-        >
-          {{ membershiphistory.nameshort }}
-          <span
-            class="text-muted"
-            :title="
-              (
-                membershiphistory.timestamp ||
-                membershiphistory.added ||
-                ''
-              ).toLocaleString()
-            "
-          >
-            {{
-              timeago(membershiphistory.timestamp || membershiphistory.added)
-            }}
-          </span>
-          <span
-            v-if="membershiphistory.type === 'Joined' && membershiphistory.text"
-            class="text-muted small ms-1 join-method"
-          >
-            ({{ membershiphistory.text }})
-          </span>
-        </div>
-        <b-button
-          v-if="!showAllMembershipHistories && membershipHistoriesUnshown"
-          variant="white"
-          class="mt-1"
-          @click="showAllMembershipHistories = true"
-        >
-          Show +{{ membershipHistoriesUnshown }}
-        </b-button>
-      </div>
-      <div v-else>No application history.</div>
       <h3 class="mt-2">Posting History</h3>
       <ModMemberSummary :userid="user.id" />
       <div v-if="messageHistoriesShown.length">
@@ -634,8 +559,6 @@ const user = computed(() => userStore.byId(props.id))
 const expanded = ref(true)
 const purgeConfirm = ref(false)
 const unsubscribeConfirm = ref(false)
-const showAllMemberships = ref(false)
-const showAllMembershipHistories = ref(false)
 const showAllMessageHistories = ref(false)
 const showAllEmailHistories = ref(false)
 const showAllNewsfeed = ref(false)
@@ -654,8 +577,6 @@ const supportChatrooms = ref([])
 const supportEmailHistory = ref([])
 const supportBans = ref([])
 const supportNewsfeed = ref([])
-const supportApplied = ref([])
-const supportMembershipHistory = ref([])
 const supportLogins = ref([])
 const showProfile = ref(false)
 
@@ -674,31 +595,6 @@ const admin = computed(() => {
   return user.value && user.value.systemrole === 'Admin'
 })
 
-const freegleMemberships = computed(() => {
-  return user.value && user.value.memberships
-    ? user.value.memberships
-        .filter((m) => m.type === 'Freegle')
-        .sort(function (a, b) {
-          return a.nameshort
-            .toLowerCase()
-            .localeCompare(b.nameshort.toLowerCase())
-        })
-    : []
-})
-
-const memberships = computed(() => {
-  return showAllMemberships.value
-    ? freegleMemberships.value
-    : freegleMemberships.value.slice(0, SHOW)
-})
-
-const membershipsUnshown = computed(() => {
-  const ret =
-    freegleMemberships.value.length > SHOW
-      ? freegleMemberships.value.length - SHOW
-      : 0
-  return ret
-})
 
 const otherEmails = computed(() => {
   return (user.value?.emails || []).filter((e) => {
@@ -706,34 +602,6 @@ const otherEmails = computed(() => {
   })
 })
 
-const membershiphistories = computed(() => {
-  const times = []
-  const ret = []
-
-  supportMembershipHistory.value.forEach((h) => {
-    const ts = h.added || h.timestamp
-    if (!times.includes(ts)) {
-      times.push(ts)
-      ret.push(h)
-    }
-  })
-
-  return ret
-})
-
-const membershipHistoriesShown = computed(() => {
-  return showAllMembershipHistories.value
-    ? membershiphistories.value
-    : membershiphistories.value.slice(0, SHOW)
-})
-
-const membershipHistoriesUnshown = computed(() => {
-  const ret =
-    membershiphistories.value.length > SHOW
-      ? membershiphistories.value.length - SHOW
-      : 0
-  return ret
-})
 
 const newsfeedShown = computed(() => {
   return showAllNewsfeed.value
@@ -869,12 +737,6 @@ async function fetchSupportExtras() {
     }),
     userApi.fetchNewsfeed(props.id).then((d) => {
       supportNewsfeed.value = d || []
-    }),
-    userApi.fetchApplied(props.id).then((d) => {
-      supportApplied.value = d || []
-    }),
-    userApi.fetchMembershipHistory(props.id).then((d) => {
-      supportMembershipHistory.value = d || []
     }),
     userApi.fetchLogins(props.id).then((d) => {
       supportLogins.value = d || []

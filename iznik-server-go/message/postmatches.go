@@ -152,7 +152,7 @@ func PostMatches(c *fiber.Ctx) error {
 	swlng := float32(srcLng - matchBoxDegrees)
 	nelat := float32(srcLat + matchBoxDegrees)
 	nelng := float32(srcLng + matchBoxDegrees)
-	candidates := embedding.Global.Search(srcVec, limit*3, opp, nil, nil, swlat, swlng, nelat, nelng)
+	candidates := embedding.Global.Search(srcVec, limit*3, opp, nil, swlat, swlng, nelat, nelng)
 
 	// Reach-filter against the post's location (the owner is the recipient): drop
 	// opposite posts that haven't rippled out to where the post is, so we never
@@ -175,7 +175,6 @@ func PostMatches(c *fiber.Ctx) error {
 		lat, lng := roadblur.RoadBlur(cnd.Lat, cnd.Lng, utils.BLUR_USER)
 		out = append(out, SimilarResult{
 			Msgid:   cnd.Msgid,
-			Groupid: cnd.Groupid,
 			Score:   cnd.SubjectCos,
 			Lat:     lat,
 			Lng:     lng,

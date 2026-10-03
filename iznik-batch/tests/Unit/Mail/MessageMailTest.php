@@ -4,7 +4,6 @@ namespace Tests\Unit\Mail;
 
 use App\Mail\Message\DeadlineReached;
 use App\Models\Message;
-use App\Models\MessageGroup;
 use Tests\TestCase;
 
 class MessageMailTest extends TestCase
@@ -12,9 +11,7 @@ class MessageMailTest extends TestCase
     public function test_deadline_reached_can_be_constructed(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $mail = new DeadlineReached($message, $user);
 
@@ -24,9 +21,7 @@ class MessageMailTest extends TestCase
     public function test_deadline_reached_has_message(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $mail = new DeadlineReached($message, $user);
 
@@ -36,9 +31,7 @@ class MessageMailTest extends TestCase
     public function test_deadline_reached_has_user(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $mail = new DeadlineReached($message, $user);
 
@@ -48,9 +41,7 @@ class MessageMailTest extends TestCase
     public function test_deadline_reached_has_correct_urls(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $mail = new DeadlineReached($message, $user);
 
@@ -62,9 +53,7 @@ class MessageMailTest extends TestCase
     public function test_deadline_reached_offer_has_taken_outcome(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'type' => Message::TYPE_OFFER,
         ]);
 
@@ -73,43 +62,10 @@ class MessageMailTest extends TestCase
         $this->assertEquals(Message::OUTCOME_TAKEN, $mail->outcomeType);
     }
 
-    public function test_deadline_reached_names_the_origin_group_not_a_rippled_copy(): void
-    {
-        // Rippling adds messages_groups rows (rippled_in=1, arrival=ripple time)
-        // and auto-joins the poster to those groups, so the old "recipient's
-        // membership with the most recent arrival" pick told a poster their
-        // deadline was on whichever distant group the post last rippled into.
-        $user = $this->createTestUser();
-        $origin = $this->createTestGroup();
-        $rippled = $this->createTestGroup();
-        $this->createMembership($user, $origin);
-        $this->createMembership($user, $rippled);
-
-        $message = $this->createTestMessage($user, $origin, [
-            'arrival' => now()->subDays(2),
-        ]);
-        // A rippled-in copy with a NEWER arrival - the bait the old pick took.
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $rippled->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now(),
-            'rippled_in' => 1,
-        ]);
-
-        $mail = new DeadlineReached($message->fresh(), $user);
-        $mail->build();
-
-        $mjmlData = (new \ReflectionProperty($mail, 'mjmlData'))->getValue($mail);
-        $this->assertEquals($origin->nameshort, $mjmlData['groupName']);
-    }
-
     public function test_deadline_reached_wanted_has_received_outcome(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'type' => Message::TYPE_WANTED,
         ]);
 
@@ -121,9 +77,7 @@ class MessageMailTest extends TestCase
     public function test_deadline_reached_build_returns_self(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $mail = new DeadlineReached($message, $user);
         $result = $mail->build();
@@ -134,9 +88,7 @@ class MessageMailTest extends TestCase
     public function test_deadline_reached_has_correct_subject(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'subject' => 'OFFER: Test Item (Location)',
         ]);
 
@@ -146,67 +98,12 @@ class MessageMailTest extends TestCase
         $this->assertEquals('Deadline reached: OFFER: Test Item (Location)', $envelope->subject);
     }
 
-    public function test_deadline_reached_tracking_uses_origin_group_for_cross_post(): void
-    {
-        // Message posted to groupA, also on groupB; recipient (the poster) is a
-        // member of groupB only. Tracking must reference the ORIGIN group (where
-        // they posted), not whichever copy their memberships happen to match -
-        // under rippling that heuristic picked the most-recently-rippled group.
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-
-        $user = $this->createTestUser();
-        $this->createMembership($user, $groupB);
-
-        $message = $this->createTestMessage($user, $groupA);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $groupB->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now(),
-            'rippled_in' => 1,
-        ]);
-        $message = Message::with('groups')->find($message->id);
-
-        $mail = new DeadlineReached($message, $user);
-
-        $this->assertEquals($groupA->id, $mail->getTracking()->groupid);
-        $this->assertNotEquals($groupB->id, $mail->getTracking()->groupid);
-    }
-
-    public function test_deadline_reached_falls_back_to_first_group_when_no_membership_overlap(): void
-    {
-        // Defensive: if the recipient is somehow not a member of any of the message's
-        // groups, fall back to groups->first() rather than returning null.
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-
-        $user = $this->createTestUser();
-        // No memberships at all — complete mismatch.
-
-        $message = $this->createTestMessage($user, $groupA);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $groupB->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now(),
-        ]);
-        $message = Message::with('groups')->find($message->id);
-
-        $mail = new DeadlineReached($message, $user);
-
-        // Should not be null — falls back to groups->first().
-        $this->assertNotNull($mail->getTracking()->groupid);
-    }
-
     // ─── Preheader (mj-preview) assertions ────────────────────────────────────
 
     public function test_deadline_reached_preheader_contains_post_subject(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'subject' => 'OFFER: Vintage Sofa (Bristol)',
         ]);
 
@@ -214,7 +111,7 @@ class MessageMailTest extends TestCase
             'post'         => $message,
             'user'         => $user,
             'outcomeType'  => 'taken',
-            'groupName'    => $group->nameshort,
+            'groupName'    => 'Freegle',
             'extendUrl'    => 'https://example.com/extend',
             'completedUrl' => 'https://example.com/completed',
             'withdrawUrl'  => 'https://example.com/withdraw',

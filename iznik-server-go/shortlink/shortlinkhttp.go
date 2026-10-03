@@ -46,9 +46,6 @@ func RedirectShortlink(c *fiber.Ctx) error {
 		return c.Redirect(defaultURL, fiber.StatusFound)
 	}
 
-	// Resolve the URL the same way as the API handler.
-	resolveShortlinkURL(&s, userSite)
-
 	var redirectURL string
 	if s.Url != nil && *s.Url != "" {
 		redirectURL = *s.Url

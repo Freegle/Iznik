@@ -4,14 +4,13 @@ import { defineComponent, Suspense, h } from 'vue'
 import ChatMessageSummary from '~/components/ChatMessageSummary.vue'
 
 // Use vi.hoisted for mock setup
-const { mockData, mockFetchMessage, mockFetchGroup } = vi.hoisted(() => ({
+const { mockData, mockFetchMessage } = vi.hoisted(() => ({
   mockData: {
     message: null,
     chat: null,
     userId: 1,
   },
   mockFetchMessage: vi.fn().mockResolvedValue(),
-  mockFetchGroup: vi.fn().mockResolvedValue(),
 }))
 
 // Mock message store
@@ -19,13 +18,6 @@ vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({
     fetch: mockFetchMessage,
     byId: () => mockData.message,
-  }),
-}))
-
-// Mock group store
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({
-    fetch: mockFetchGroup,
   }),
 }))
 
@@ -53,7 +45,6 @@ describe('ChatMessageSummary', () => {
       type: 'Offer',
       subject: 'Test item',
       outcomes: [],
-      groups: [{ groupid: 1 }],
       fromuser: 2,
       promised: false,
       promisedtoyou: false,
@@ -133,7 +124,6 @@ describe('ChatMessageSummary', () => {
         id: 123,
         type: 'Offer',
         outcomes: [{ outcome: 'Taken' }],
-        groups: [],
         fromuser: 2,
         promised: false,
       }
@@ -146,7 +136,6 @@ describe('ChatMessageSummary', () => {
         id: 123,
         type: 'Wanted',
         outcomes: [{ outcome: 'Received' }],
-        groups: [],
         fromuser: 2,
         promised: false,
       }
@@ -160,7 +149,6 @@ describe('ChatMessageSummary', () => {
         type: 'Offer',
         deleted: true,
         outcomes: [],
-        groups: [],
         fromuser: 2,
         promised: false,
       }
@@ -176,7 +164,6 @@ describe('ChatMessageSummary', () => {
         id: 123,
         type: 'Offer',
         outcomes: [],
-        groups: [],
         fromuser: 1, // current user posted
         promised: true,
         promises: [{ userid: 2 }],
@@ -203,7 +190,6 @@ describe('ChatMessageSummary', () => {
         id: 123,
         type: 'Offer',
         outcomes: [],
-        groups: [],
         fromuser: 2, // other user posted
         promised: true,
         promisedtoyou: false,
@@ -230,21 +216,6 @@ describe('ChatMessageSummary', () => {
     it('fetches message on mount', async () => {
       await createWrapper({ id: 789 })
       expect(mockFetchMessage).toHaveBeenCalledWith(789)
-    })
-
-    it('fetches groups for message', async () => {
-      mockData.message = {
-        id: 123,
-        type: 'Offer',
-        outcomes: [],
-        groups: [{ groupid: 10 }, { groupid: 20 }],
-        fromuser: 2,
-        promised: false,
-      }
-      await createWrapper()
-      // Group fetch happens for each group in the message
-      expect(mockFetchGroup).toHaveBeenCalledWith(10)
-      expect(mockFetchGroup).toHaveBeenCalledWith(20)
     })
   })
 })

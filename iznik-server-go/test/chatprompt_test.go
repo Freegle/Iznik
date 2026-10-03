@@ -98,12 +98,11 @@ func TestAnswerChatPrompt_DeliveryPatchesThePost(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frprompt")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: prompt test", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: prompt test", 51.5, -0.1)
 
-	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
 	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "delivery", deliveryOptions)
 	defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)
 	defer db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
@@ -137,12 +136,11 @@ func TestAnswerChatPrompt_DeadlineSetsADate(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptdl")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: deadline test", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: deadline test", 51.5, -0.1)
 
-	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
 	options := `[{"value":"week","label":"Within a week"},{"value":"norush","label":"There's no rush"}]`
 	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "deadline", options)
 	defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)
@@ -174,13 +172,12 @@ func TestAnswerChatPrompt_OnlyTheMemberAskedMayAnswer(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptauth")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
 	strangerID := CreateTestUser(t, prefix+"_stranger", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: prompt auth", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: prompt auth", 51.5, -0.1)
 
-	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
 	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "delivery", deliveryOptions)
 	defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)
 	defer db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
@@ -206,12 +203,11 @@ func TestAnswerChatPrompt_RejectsAnAnswerThatWasNotOffered(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptbad")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: prompt bad answer", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: prompt bad answer", 51.5, -0.1)
 
-	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
 	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "delivery", deliveryOptions)
 	defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)
 	defer db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
@@ -233,12 +229,11 @@ func TestAnswerChatPrompt_CannotBeAnsweredTwice(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frprompttwice")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: prompt twice", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: prompt twice", 51.5, -0.1)
 
-	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
 	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "delivery", deliveryOptions)
 	defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)
 	defer db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
@@ -273,12 +268,11 @@ func TestFetchChatMessages_PromptIsServedWithItsOptions(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptfetch")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: prompt fetch", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: prompt fetch", 51.5, -0.1)
 
-	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
 	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "delivery", deliveryOptions)
 	defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)
 	defer db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
@@ -324,12 +318,11 @@ func TestAnswerChatPrompt_AcceptsAPickedDate(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptpick")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: picked date", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: picked date", 51.5, -0.1)
 
-	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
 	options := `[{"value":"date","label":"Pick a date","input":"date"},{"value":"norush","label":"There's no rush"}]`
 	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "deadline", options)
 	defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)
@@ -360,12 +353,11 @@ func TestAnswerChatPrompt_RejectsAnOutOfRangeDate(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptbaddate")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: bad date", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: bad date", 51.5, -0.1)
 
-	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
 	options := `[{"value":"date","label":"Pick a date","input":"date"}]`
 	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "deadline", options)
 	defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)
@@ -400,12 +392,11 @@ func TestAnswerChatPrompt_RefusesAnExpiredPrompt(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptexpired")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: expired prompt", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: expired prompt", 51.5, -0.1)
 
-	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
 	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "delivery", deliveryOptions)
 	defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)
 	defer db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
@@ -445,12 +436,11 @@ func TestAnswerChatPrompt_NoRushRecordsWithoutPatchingThePost(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptnorush")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: no rush", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: no rush", 51.5, -0.1)
 
-	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
 	options := `[{"value":"date","label":"Pick a date","input":"date"},{"value":"norush","label":"There's no rush"}]`
 	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "deadline", options)
 	defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)

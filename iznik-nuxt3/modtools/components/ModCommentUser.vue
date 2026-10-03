@@ -7,7 +7,7 @@
       </div>
       <div>
         <!-- eslint-disable-next-line -->
-        <nuxt-link :to="'/members/approved/' + (comment.groupid || 0) + '/' + comment.userid">
+        <nuxt-link :to="'/members/approved/' + comment.userid">
           <ProfileImage
             :image="
               comment.user.profile?.turl || comment.user.profile?.paththumb

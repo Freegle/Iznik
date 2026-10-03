@@ -44,6 +44,7 @@
         <env name="CACHE_STORE" value="array"/>
         <env name="DB_CONNECTION" value="mysql"/>
         <env name="DB_DATABASE" value="iznik_batch_test" force="true"/>
+        <env name="ANTHROPIC_API_KEY" value="" force="true"/>
         <env name="MAIL_MAILER" value="array" force="true"/>
         <!-- Rollout flags now DEFAULT TRUE in config/freegle.php, because that is
              what production runs and a committed default of false meant a rebuilt

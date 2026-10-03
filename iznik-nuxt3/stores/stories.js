@@ -67,10 +67,6 @@ export const useStoryStore = defineStore('story', {
       await Promise.all(ids.map((id) => this.fetch(id, true)))
       return ids.map((id) => this.list[id]).filter(Boolean)
     },
-    async fetchByGroup(groupid, limit) {
-      // Not used enough to bother caching.
-      this.recent = await api(this.config).stories.byGroupv2(groupid, limit)
-    },
     add(headline, story, photo, allowpublic) {
       return api(this.config).stories.add({
         headline,

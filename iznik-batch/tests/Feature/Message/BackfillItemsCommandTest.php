@@ -16,9 +16,8 @@ class BackfillItemsCommandTest extends TestCase
 {
     private function seedTakenOfferWithoutItem(string $subject, string $date): Message
     {
-        $group = $this->createTestGroup();
         $user = $this->createTestUser();
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'type' => Message::TYPE_OFFER,
             'subject' => $subject,
             'source' => Message::SOURCE_EMAIL,
@@ -85,7 +84,6 @@ class BackfillItemsCommandTest extends TestCase
     {
         DB::table('weights')->insert(['name' => 'table', 'simplename' => null, 'weight' => 30.00]);
         $message = $this->seedTakenOfferWithoutItem('OFFER: Vintage Oak Table (Bristol BS1)', '2026-02-10');
-        $groupId = DB::table('messages_groups')->where('msgid', $message->id)->value('groupid');
 
         $this->artisan('messages:backfill-items', [
             '--from' => '2026-02-01',
@@ -95,7 +93,6 @@ class BackfillItemsCommandTest extends TestCase
 
         $weightRow = DB::table('stats')
             ->where('date', '2026-02-10')
-            ->where('groupid', $groupId)
             ->where('type', StatsGenerationService::TYPE_WEIGHT)
             ->first();
         $this->assertNotNull($weightRow, 'Weight stat should be regenerated for the affected date');

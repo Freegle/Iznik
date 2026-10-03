@@ -117,7 +117,6 @@ class EmailDeliveryIntegrationTest extends TestCase
 
         $recipientEmail = $this->uniqueEmail('admin');
         $user = $this->createTestUser(['email_preferred' => $recipientEmail]);
-        $group = $this->createTestGroup();
         $userSite = config('freegle.sites.user');
 
         $admin = [
@@ -127,11 +126,10 @@ class EmailDeliveryIntegrationTest extends TestCase
             'text' => 'This is an important admin message for testing.',
             'ctalink' => $userSite . '/explore',
             'ctatext' => 'Explore Freegle',
-            'groupid' => $group->id,
             'essential' => true,
         ];
 
-        $mail = new AdminMail($user, $admin, $group->namefull, $group->nameshort . '-mods@test.com', $group->nameshort);
+        $mail = new AdminMail($user, $admin, 'Freegle', 'freegle-mods@test.com', 'Freegle');
         Mail::send($mail);
 
         $message = $this->mailpit->assertMessageSentTo($recipientEmail, 20);
@@ -162,9 +160,7 @@ class EmailDeliveryIntegrationTest extends TestCase
 
         $recipientEmail = $this->uniqueEmail('deadline');
         $user = $this->createTestUser(['email_preferred' => $recipientEmail]);
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'subject' => 'OFFER: Vintage Lamp (TestLocation)',
         ]);
 
@@ -276,14 +272,13 @@ class EmailDeliveryIntegrationTest extends TestCase
 
         $recipientEmail = $this->uniqueEmail('modstd');
         $user = $this->createTestUser(['email_preferred' => $recipientEmail]);
-        $group = $this->createTestGroup();
 
         $stdBody = 'Your post has been approved by a moderator. Thank you for freegling!';
 
         $mail = new ModStdMessageMail(
             modName: 'Test Moderator',
-            groupName: $group->namefull,
-            groupNameShort: $group->nameshort,
+            groupName: 'Freegle',
+            groupNameShort: 'Freegle',
             stdSubject: 'Re: OFFER: Test Item (TestLocation)',
             stdBody: $stdBody,
             messageSubject: 'OFFER: Test Item (TestLocation)',

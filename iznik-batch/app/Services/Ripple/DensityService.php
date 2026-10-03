@@ -65,7 +65,9 @@ use Illuminate\Support\Facades\Log;
 class DensityService
 {
     public const BAND_DENSE = 'dense';
+
     public const BAND_MEDIUM = 'medium';
+
     public const BAND_SPARSE = 'sparse';
 
     /** No usable measurement: the flat cap applies and the row says so. */
@@ -94,7 +96,7 @@ class DensityService
     {
         $flat = (float) config('freegle.ripple.max_minutes', 30);
 
-        if (!config('freegle.ripple.density.enabled', true)) {
+        if (! config('freegle.ripple.density.enabled', true)) {
             return $flat;
         }
 
@@ -118,11 +120,11 @@ class DensityService
     {
         $flat = (float) config('freegle.ripple.max_minutes', 30);
 
-        if (!config('freegle.ripple.density.enabled', true)) {
+        if (! config('freegle.ripple.density.enabled', true)) {
             return ['band' => self::BAND_UNKNOWN, 'radius_miles' => null, 'max_minutes' => $flat];
         }
 
-        $key = round($lat, 4) . ',' . round($lng, 4);
+        $key = round($lat, 4).','.round($lng, 4);
         if (array_key_exists($key, $this->memo)) {
             return $this->memo[$key];
         }
@@ -199,7 +201,7 @@ class DensityService
             return $none;
         }
 
-        if (!$response->successful()) {
+        if (! $response->successful()) {
             Log::warning("ripple: density knn HTTP {$response->status()}", ['lat' => $lat, 'lng' => $lng]);
 
             return $none;

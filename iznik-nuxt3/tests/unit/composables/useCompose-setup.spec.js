@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const mockComposeStore = {
-  group: null,
   postcode: null,
   email: null,
   all: [],
@@ -14,15 +13,11 @@ const mockComposeStore = {
   setType: vi.fn(),
   attachments: vi.fn(() => ({})),
   messageValid: vi.fn(() => true),
-  noGroups: false,
   postcodeValid: true,
   message: vi.fn(),
   clearMessage: vi.fn(),
   submit: vi.fn(),
 }
-
-const mockGroupStoreGet = vi.fn()
-const mockGroupStoreFetch = vi.fn()
 
 let mockAuthUser = null
 const mockLogin = vi.fn()
@@ -37,13 +32,6 @@ const mockTrackConversion = vi.fn()
 
 vi.mock('~/stores/compose', () => ({
   useComposeStore: () => mockComposeStore,
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({
-    get: mockGroupStoreGet,
-    fetch: mockGroupStoreFetch,
-  }),
 }))
 
 vi.mock('~/stores/message', () => ({
@@ -70,15 +58,12 @@ describe('useCompose setup()/clearItem()/postcodeClear()/freegleIt()', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
     vi.stubGlobal('useRoute', () => ({ query: {} }))
-    mockComposeStore.group = null
     mockComposeStore.postcode = null
     mockComposeStore.email = null
     mockComposeStore.all = []
     mockComposeStore.messages = []
-    mockComposeStore.noGroups = false
     mockComposeStore.postcodeValid = true
     mockAuthUser = null
-    mockGroupStoreGet.mockReturnValue(null)
     mod = await import('~/composables/useCompose.js')
   })
 
@@ -129,13 +114,6 @@ describe('useCompose setup()/clearItem()/postcodeClear()/freegleIt()', () => {
       expect(api.loggedIn.value).toBe(false)
     })
 
-    it('fetches the group when the compose store already has one set', () => {
-      mockComposeStore.group = 55
-      mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
-      mod.setup('Offer')
-      expect(mockGroupStoreFetch).toHaveBeenCalledWith(55)
-    })
-
     it('takes the initial postcode from the route query when present', () => {
       vi.stubGlobal('useRoute', () => ({ query: { postcode: 'SW1A 1AA' } }))
       mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
@@ -148,29 +126,6 @@ describe('useCompose setup()/clearItem()/postcodeClear()/freegleIt()', () => {
       mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
       const api = mod.setup('Offer')
       expect(api.initialPostcode.value).toBe('EH1 1AA')
-    })
-
-    describe('group computed', () => {
-      it('resolves via the group store when a group id is set', () => {
-        mockComposeStore.group = 7
-        mockGroupStoreGet.mockReturnValue({ id: 7, settings: {} })
-        mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
-        const api = mod.setup('Offer')
-        expect(api.group.value).toEqual({ id: 7, settings: {} })
-      })
-
-      it('is null when no group id is set', () => {
-        mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
-        const api = mod.setup('Offer')
-        expect(api.group.value).toBeNull()
-      })
-
-      it('setting the group writes back to the compose store', () => {
-        mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
-        const api = mod.setup('Offer')
-        api.group.value = 12
-        expect(mockComposeStore.group).toBe(12)
-      })
     })
 
     describe('postcode computed', () => {
@@ -251,22 +206,6 @@ describe('useCompose setup()/clearItem()/postcodeClear()/freegleIt()', () => {
         mockComposeStore.all = [{ id: 1, type: 'Offer', savedBy: 1 }]
         const api = mod.setup('Offer')
         expect(api.ids.value).toEqual([1])
-      })
-    })
-
-    describe('closed computed', () => {
-      it('reflects the current group settings', () => {
-        mockComposeStore.group = 7
-        mockGroupStoreGet.mockReturnValue({ id: 7, settings: { closed: true } })
-        mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
-        const api = mod.setup('Offer')
-        expect(api.closed.value).toBe(true)
-      })
-
-      it('is undefined when there is no group', () => {
-        mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
-        const api = mod.setup('Offer')
-        expect(api.closed.value).toBeUndefined()
       })
     })
 
@@ -371,14 +310,13 @@ describe('useCompose setup()/clearItem()/postcodeClear()/freegleIt()', () => {
   })
 
   describe('postcodeClear', () => {
-    it('nulls both postcode and group', () => {
+    it('nulls the postcode', () => {
       mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
       mod.setup('Offer')
 
       mod.postcodeClear()
 
       expect(mockComposeStore.setPostcode).toHaveBeenCalledWith(null)
-      expect(mockComposeStore.group).toBeNull()
     })
   })
 
@@ -410,6 +348,18 @@ describe('useCompose setup()/clearItem()/postcodeClear()/freegleIt()', () => {
       expect(api.notAllowed.value).toBe(true)
     })
 
+    it('flags notAllowed on any "not allowed to post" error, regardless of wording', async () => {
+      mockComposeStore.submit.mockRejectedValue(
+        new Error('You are not allowed to post right now')
+      )
+      mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
+      const api = mod.setup('Offer')
+
+      await mod.freegleIt('Offer', router)
+
+      expect(api.notAllowed.value).toBe(true)
+    })
+
     it('flags wentWrong for any other error message', async () => {
       mockComposeStore.submit.mockRejectedValue(new Error('server exploded'))
       mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
@@ -431,7 +381,7 @@ describe('useCompose setup()/clearItem()/postcodeClear()/freegleIt()', () => {
     })
 
     it('tracks a Give conversion and navigates to myposts on success', async () => {
-      mockComposeStore.submit.mockResolvedValue([{ id: 1, groupid: 5 }])
+      mockComposeStore.submit.mockResolvedValue([{ id: 1 }])
       mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
       mod.setup('Offer')
 

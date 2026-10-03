@@ -199,9 +199,7 @@ func TestLostPasswordDeletedUser(t *testing.T) {
 
 func TestGetSession(t *testing.T) {
 	prefix := uniquePrefix("get_sess")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
@@ -255,10 +253,8 @@ func TestGetSessionMicrovolunteeringallowed(t *testing.T) {
 	// MicroVolunteering.vue gate can decide whether to offer challenges.
 	prefix := uniquePrefix("sess_mv")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	db.Exec("UPDATE `groups` SET microvolunteering = 1 WHERE id = ?", groupID)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
@@ -1611,9 +1607,8 @@ func TestPostSessionForget(t *testing.T) {
 
 func TestPostSessionForgetMod(t *testing.T) {
 	prefix := uniquePrefix("forget_mod")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, userID)
 	_, token := CreateTestSession(t, userID)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -1665,7 +1660,6 @@ func TestForgetPreservesMessagesDuringGrace(t *testing.T) {
 	assert.NotZero(t, msgID)
 
 	// Create a messages_groups row — must remain deleted=0 after Forget.
-	groupID := CreateTestGroup(t, prefix)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupID)
 
 	// POST Forget action.
@@ -1715,9 +1709,7 @@ func TestForgetPreservesMessagesDuringGrace(t *testing.T) {
 // (otherwise mod tools still show them as a current member).
 func TestForgetRemovesApprovedMemberships(t *testing.T) {
 	prefix := uniquePrefix("forget_membs")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -1765,9 +1757,7 @@ func TestForgetPartnerFlow(t *testing.T) {
 	db := database.DBConn
 
 	// Create a user linked to the test partner (ljuserid is the partner-side id).
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	partnerUID := uint64(time.Now().UnixNano())
 	db.Exec("UPDATE users SET ljuserid = ? WHERE id = ?", partnerUID, userID)
 
@@ -1892,14 +1882,12 @@ func getSessionWork(t *testing.T, token string) map[string]interface{} {
 func TestWorkCountStoriesBasic(t *testing.T) {
 	prefix := uniquePrefix("wc_stories")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a regular user who is a member of the same group and writes a story.
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
 	storyID := CreateTestStory(t, memberID, "Test headline", "Great story", false, true)
 	defer db.Exec("DELETE FROM users_stories WHERE id = ?", storyID)
 
@@ -1916,12 +1904,10 @@ func TestWorkCountPendingHeldPerGroup(t *testing.T) {
 	prefix := uniquePrefix("wc_heldpg")
 	db := database.DBConn
 
-	groupA := CreateTestGroup(t, prefix+"_a")
-	groupB := CreateTestGroup(t, prefix+"_b")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	holderID := CreateTestUser(t, prefix+"_holder", "User")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	PromoteTestUserToModerator(t, modID)
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
@@ -1955,10 +1941,9 @@ func TestWorkCountHeldPendingCountsBeforeContentCheck(t *testing.T) {
 	prefix := uniquePrefix("wc_heldnocheck")
 	db := database.DBConn
 
-	groupA := CreateTestGroup(t, prefix+"_a")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	holderID := CreateTestUser(t, prefix+"_holder", "User")
-	CreateTestMembership(t, modID, groupA, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
@@ -1980,14 +1965,12 @@ func TestWorkCountHeldPendingCountsBeforeContentCheck(t *testing.T) {
 func TestWorkCountStoriesDateFilter(t *testing.T) {
 	prefix := uniquePrefix("wc_stories_date")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a member with a story dated 60 days ago (outside 31-day window).
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
 	var storyID uint64
 	db.Exec("INSERT INTO users_stories (userid, headline, story, reviewed, public, date) "+
 		"VALUES (?, 'Old story', 'Long ago', 0, 0, DATE_SUB(NOW(), INTERVAL 60 DAY))",
@@ -2003,15 +1986,12 @@ func TestWorkCountStoriesDateFilter(t *testing.T) {
 func TestWorkCountStoriesGroupFilter(t *testing.T) {
 	prefix := uniquePrefix("wc_stories_grp")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
-	otherGroupID := CreateTestGroup(t, prefix+"_other")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a member in a DIFFERENT group that the mod doesn't moderate.
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, otherGroupID, "Member")
 	storyID := CreateTestStory(t, memberID, "Other group story", "Not my group", false, false)
 	defer db.Exec("DELETE FROM users_stories WHERE id = ?", storyID)
 
@@ -2023,9 +2003,8 @@ func TestWorkCountStoriesGroupFilter(t *testing.T) {
 func TestWorkCountStoriesInactiveGroupNotCounted(t *testing.T) {
 	prefix := uniquePrefix("wc_stories_inact")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	memID := CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Set mod as INACTIVE on this group.
@@ -2033,7 +2012,6 @@ func TestWorkCountStoriesInactiveGroupNotCounted(t *testing.T) {
 
 	// Create a member with an unreviewed story.
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
 	storyID := CreateTestStory(t, memberID, "Inactive group story", "Should not count", false, true)
 	defer db.Exec("DELETE FROM users_stories WHERE id = ?", storyID)
 
@@ -2049,9 +2027,8 @@ func TestWorkCountStoriesInactiveGroupNotCounted(t *testing.T) {
 func TestWorkCountNewsletterStories(t *testing.T) {
 	prefix := uniquePrefix("wc_newsletter")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	// Grant newsletter permission so this mod can see the count.
 	db.Exec("UPDATE users SET permissions = 'Newsletter' WHERE id = ?", modID)
 	defer db.Exec("UPDATE users SET permissions = NULL WHERE id = ?", modID)
@@ -2059,7 +2036,6 @@ func TestWorkCountNewsletterStories(t *testing.T) {
 
 	// Create a reviewed, public story not yet newsletter-reviewed.
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
 	var storyID uint64
 	db.Exec("INSERT INTO users_stories (userid, headline, story, reviewed, public, newsletterreviewed, date) "+
 		"VALUES (?, 'Newsletter story', 'Ready for newsletter', 1, 1, 0, NOW())", memberID)
@@ -2074,15 +2050,13 @@ func TestWorkCountNewsletterStories(t *testing.T) {
 func TestWorkCountNewsletterStoriesRequiresPermission(t *testing.T) {
 	prefix := uniquePrefix("wc_nl_perm")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	// No newsletter permission — regular mod.
 	_, token := CreateTestSession(t, modID)
 
 	// Create a reviewed, public story not yet newsletter-reviewed.
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
 	var storyID uint64
 	db.Exec("INSERT INTO users_stories (userid, headline, story, reviewed, public, newsletterreviewed, date) "+
 		"VALUES (?, 'Perm test story', 'Should not appear', 1, 1, 0, NOW())", memberID)
@@ -2097,9 +2071,8 @@ func TestWorkCountNewsletterStoriesRequiresPermission(t *testing.T) {
 func TestWorkCountNewsletterStoriesExcludesDeletedUsers(t *testing.T) {
 	prefix := uniquePrefix("wc_nl_deleted")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Get baseline count before inserting any data.
@@ -2126,14 +2099,13 @@ func TestWorkCountNewsletterStoriesExcludesDeletedUsers(t *testing.T) {
 func TestWorkCountHappinessBasic(t *testing.T) {
 	prefix := uniquePrefix("wc_happy")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a message in the group and add a happiness outcome with a real comment.
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	msgID := CreateTestMessage(t, memberID, groupID, "OFFER: Test happy item", 55.95, -3.19)
+	msgID := CreateTestMessage(t, memberID, "OFFER: Test happy item", 55.95, -3.19)
 	var outcomeID uint64
 	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, happiness, comments, reviewed, timestamp) "+
 		"VALUES (?, 'Taken', 'Happy', 'This was brilliant, thank you!', 0, NOW())", msgID)
@@ -2148,13 +2120,12 @@ func TestWorkCountHappinessBasic(t *testing.T) {
 func TestWorkCountHappinessAutoCommentExcluded(t *testing.T) {
 	prefix := uniquePrefix("wc_happy_auto")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	msgID := CreateTestMessage(t, memberID, groupID, "OFFER: Auto comment item", 55.95, -3.19)
+	msgID := CreateTestMessage(t, memberID, "OFFER: Auto comment item", 55.95, -3.19)
 
 	// Insert outcomes with each of the auto-generated comments that should be excluded.
 	autoComments := []string{
@@ -2196,9 +2167,8 @@ func TestWorkCountHappinessAutoCommentExcluded(t *testing.T) {
 func TestWorkCountGiftAid(t *testing.T) {
 	prefix := uniquePrefix("wc_giftaid")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a giftaid declaration pending review.
@@ -2217,9 +2187,8 @@ func TestWorkCountGiftAid(t *testing.T) {
 func TestWorkCountGiftAidDeclinedExcluded(t *testing.T) {
 	prefix := uniquePrefix("wc_giftaid_dec")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a Declined giftaid - should not be counted.
@@ -2245,19 +2214,16 @@ func TestWorkCountGiftAidDeclinedExcluded(t *testing.T) {
 func TestWorkCountChatReview(t *testing.T) {
 	prefix := uniquePrefix("wc_chatrev")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create two users who are members of the group.
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
 
 	// Create a chat room and a message that requires review.
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	var msgID uint64
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, reviewrejected) "+
 		"VALUES (?, ?, 'Suspicious message', NOW(), 1, 0)", chatID, user1ID)
@@ -2276,9 +2242,8 @@ func TestWorkCountChatReview(t *testing.T) {
 func TestWorkCountPendingMessages(t *testing.T) {
 	prefix := uniquePrefix("wc_pending")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	memberID := CreateTestUser(t, prefix+"_member", "User")
@@ -2309,9 +2274,8 @@ func TestWorkCountPendingMessages(t *testing.T) {
 func TestWorkCountSpamMessages(t *testing.T) {
 	prefix := uniquePrefix("wc_spam")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	memberID := CreateTestUser(t, prefix+"_member", "User")
@@ -2341,9 +2305,8 @@ func TestWorkCountSpamMessages(t *testing.T) {
 func TestWorkCountSpamMessagesAgedOutNotCounted(t *testing.T) {
 	prefix := uniquePrefix("wc_spam_old")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	memberID := CreateTestUser(t, prefix+"_member", "User")
@@ -2378,17 +2341,16 @@ func TestWorkCountHousekeepingAdminOnly(t *testing.T) {
 	db.Exec("INSERT INTO housekeeper_tasks (task_key, name, interval_hours, enabled, placeholder, last_status) VALUES (?, ?, 1, 1, 0, 'failure')", taskKey, "WC test overdue")
 	defer db.Exec("DELETE FROM housekeeper_tasks WHERE task_key = ?", taskKey)
 
-	groupID := CreateTestGroup(t, prefix)
 
 	supportID := CreateTestUser(t, prefix+"_sup", "User")
-	CreateTestMembership(t, supportID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, supportID)
 	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
 	_, supTok := CreateTestSession(t, supportID)
 	assert.Equal(t, float64(0), getSessionWork(t, supTok)["housekeeping"].(float64),
 		"Support must not get the housekeeping count (Admin-only)")
 
 	adminID := CreateTestUser(t, prefix+"_adm", "User")
-	CreateTestMembership(t, adminID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, adminID)
 	db.Exec("UPDATE users SET systemrole = 'Admin' WHERE id = ?", adminID)
 	_, admTok := CreateTestSession(t, adminID)
 	assert.GreaterOrEqual(t, getSessionWork(t, admTok)["housekeeping"].(float64), float64(1),
@@ -2401,7 +2363,6 @@ func TestWorkCountHousekeepingAdminOnly(t *testing.T) {
 func TestWorkCountSpammerPendingAddRequiresSpamAdmin(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("wc_spa")
-	groupID := CreateTestGroup(t, prefix)
 
 	// A pending-add spam_users row to count (the count is system-wide).
 	flaggedID := CreateTestUser(t, prefix+"_flagged", "User")
@@ -2410,7 +2371,7 @@ func TestWorkCountSpammerPendingAddRequiresSpamAdmin(t *testing.T) {
 
 	// Support user WITHOUT SpamAdmin permission → 0.
 	supportID := CreateTestUser(t, prefix+"_sup", "User")
-	CreateTestMembership(t, supportID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, supportID)
 	db.Exec("UPDATE users SET systemrole = 'Support', permissions = NULL WHERE id = ?", supportID)
 	_, supTok := CreateTestSession(t, supportID)
 	assert.Equal(t, float64(0), getSessionWork(t, supTok)["spammerpendingadd"].(float64),
@@ -2418,7 +2379,7 @@ func TestWorkCountSpammerPendingAddRequiresSpamAdmin(t *testing.T) {
 
 	// User WITH SpamAdmin permission → counts.
 	spamAdminID := CreateTestUser(t, prefix+"_spa", "User")
-	CreateTestMembership(t, spamAdminID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, spamAdminID)
 	db.Exec("UPDATE users SET permissions = 'SpamAdmin' WHERE id = ?", spamAdminID)
 	_, spaTok := CreateTestSession(t, spamAdminID)
 	assert.GreaterOrEqual(t, getSessionWork(t, spaTok)["spammerpendingadd"].(float64), float64(1),
@@ -2432,9 +2393,8 @@ func TestWorkCountSpamMembersReFlaggedAfterRecentReview(t *testing.T) {
 	// must appear in spammembers.
 	prefix := uniquePrefix("wc_reflg")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	spamUserID := CreateTestUser(t, prefix+"_spam", "User")
@@ -2460,9 +2420,8 @@ func TestWorkCountPendingExcludesDeletedMessages(t *testing.T) {
 	// a Pending messages_groups row were being counted in the pending badge.
 	prefix := uniquePrefix("wc_delpend")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	memberID := CreateTestUser(t, prefix+"_member", "User")
@@ -2506,9 +2465,8 @@ func TestWorkCountSpamExcludesDeletedMessages(t *testing.T) {
 	// Regression: same missing m.deleted IS NULL check in the spam count query.
 	prefix := uniquePrefix("wc_delspam")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	memberID := CreateTestUser(t, prefix+"_member", "User")
@@ -2541,15 +2499,14 @@ func TestWorkCountPendingExcludesDeletedUsers(t *testing.T) {
 	// messages_groups rows remain. Count queries must exclude these.
 	prefix := uniquePrefix("wc_delusr")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 
 	// Create a pending message from this member.
-	msgID := CreateTestMessage(t, memberID, groupID, "OFFER: Limbo pending", 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, memberID, "OFFER: Limbo pending", 55.9533, -3.1883)
 	// Set collection = 'Pending' and contentcheck_checked_at so the fix counts it.
 	db.Exec("UPDATE messages_groups SET collection = 'Pending', contentcheck_checked_at = NOW() WHERE msgid = ?", msgID)
 
@@ -2580,13 +2537,11 @@ func TestWorkCountPendingExcludesDeletedUsers(t *testing.T) {
 func TestWorkCountPendingExcludesUnchecked(t *testing.T) {
 	prefix := uniquePrefix("wc_unchk")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
 
 	workBefore := getSessionWork(t, token)
 	pendingBefore := workBefore["pending"].(float64)
@@ -2633,9 +2588,8 @@ func TestWorkCountPendingExcludesUnchecked(t *testing.T) {
 
 func TestWorkCountTotalExcludesInformational(t *testing.T) {
 	prefix := uniquePrefix("wc_total")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	work := getSessionWork(t, token)
@@ -2678,9 +2632,7 @@ func TestWorkCountTotalExcludesInformational(t *testing.T) {
 
 func TestWorkCountsNotReturnedForNonMod(t *testing.T) {
 	prefix := uniquePrefix("wc_nonmod")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
@@ -2711,16 +2663,13 @@ func TestWorkCountsNotReturnedForNonMod(t *testing.T) {
 func TestWorkCountRelatedMembers(t *testing.T) {
 	prefix := uniquePrefix("wc_related")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create two regular users in the mod's group who are related.
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
 
 	// Both users must have login history to be counted (matches list filter).
 	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user1ID, prefix+"_u1_login")
@@ -2747,15 +2696,12 @@ func TestWorkCountRelatedMembers(t *testing.T) {
 func TestWorkCountRelatedMembersNoLogins(t *testing.T) {
 	prefix := uniquePrefix("wc_rel_nologin")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
 	// No users_logins rows — neither user can log in.
 
 	u1, u2 := user1ID, user2ID
@@ -2772,8 +2718,6 @@ func TestWorkCountRelatedMembersNoLogins(t *testing.T) {
 	// Add a second pair with logins to establish baseline.
 	user3ID := CreateTestUser(t, prefix+"_u3", "User")
 	user4ID := CreateTestUser(t, prefix+"_u4", "User")
-	CreateTestMembership(t, user3ID, groupID, "Member")
-	CreateTestMembership(t, user4ID, groupID, "Member")
 	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user3ID, prefix+"_u3_login")
 	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user4ID, prefix+"_u4_login")
 	defer db.Exec("DELETE FROM users_logins WHERE uid IN (?, ?)", prefix+"_u3_login", prefix+"_u4_login")
@@ -2798,9 +2742,8 @@ func TestWorkCountRelatedMembersNoLogins(t *testing.T) {
 func TestWorkCountPendingEvents(t *testing.T) {
 	prefix := uniquePrefix("wc_events")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	memberID := CreateTestUser(t, prefix+"_member", "User")
@@ -2830,9 +2773,8 @@ func TestWorkCountPendingEvents(t *testing.T) {
 func TestWorkCountPendingVolunteering(t *testing.T) {
 	prefix := uniquePrefix("wc_vol")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	memberID := CreateTestUser(t, prefix+"_member", "User")
@@ -2860,9 +2802,8 @@ func TestWorkCountPendingVolunteering(t *testing.T) {
 
 func TestWorkCountAllFieldsPresent(t *testing.T) {
 	prefix := uniquePrefix("wc_fields")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	work := getSessionWork(t, token)
@@ -2899,9 +2840,8 @@ func setMembershipSettings(t *testing.T, membershipID uint64, settings string) {
 func TestWorkCountInactiveModPendingGoesToOther(t *testing.T) {
 	prefix := uniquePrefix("wc_inactive_pend")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	memID := CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Set mod as INACTIVE on this group.
@@ -2932,9 +2872,8 @@ func TestWorkCountInactiveModPendingGoesToOther(t *testing.T) {
 func TestWorkCountActiveModPendingGoesToPrimary(t *testing.T) {
 	prefix := uniquePrefix("wc_active_pend")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	memID := CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Set mod as ACTIVE on this group.
@@ -2963,9 +2902,8 @@ func TestWorkCountActiveModPendingGoesToPrimary(t *testing.T) {
 func TestWorkCountInactiveModSpamNotCounted(t *testing.T) {
 	prefix := uniquePrefix("wc_inactive_spam")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	memID := CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Set mod as INACTIVE on this group.
@@ -2994,9 +2932,8 @@ func TestWorkCountInactiveModSpamNotCounted(t *testing.T) {
 func TestWorkCountInactiveModChatReviewGoesToOther(t *testing.T) {
 	prefix := uniquePrefix("wc_inactive_chat")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	memID := CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Set mod as INACTIVE on this group.
@@ -3005,11 +2942,9 @@ func TestWorkCountInactiveModChatReviewGoesToOther(t *testing.T) {
 	// Create two users who are members of the group.
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
 
 	// Create a chat room and a review-required message.
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	var msgID uint64
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, reviewrejected) "+
 		"VALUES (?, ?, 'Inactive review msg', NOW(), 1, 0)", chatID, user1ID)
@@ -3028,22 +2963,20 @@ func TestWorkCountWiderChatReviewGoesToOther(t *testing.T) {
 	db := database.DBConn
 
 	// Create a group with widerchatreview=1.
-	widerGroupID := CreateTestGroup(t, prefix+"_wider")
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.widerchatreview', 1) WHERE id = ?", widerGroupID)
 
 	// Create a mod ON the wider group (they must be on a group with
 	// widerchatreview=1 to participate in wider review, matching PHP).
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, widerGroupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create two users — user1 on the wider group, user2 elsewhere.
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, widerGroupID, "Member")
 
 	// Create a chat and review-required message.
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	var msgID uint64
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, reviewrejected, reportreason) "+
 		"VALUES (?, ?, 'Wider review msg', NOW(), 1, 0, 'Spam')", chatID, user2ID)
@@ -3063,21 +2996,17 @@ func TestWorkCountWiderChatReviewGoesToOther(t *testing.T) {
 func TestWorkCountChatReviewRecipientMatching(t *testing.T) {
 	prefix := uniquePrefix("wc_chat_recip")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
-	otherGroupID := CreateTestGroup(t, prefix+"_other")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// user1 is in the mod's group, user2 is in a different group.
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, otherGroupID, "Member")
 
 	// user2 (non-member) sends a message TO user1 (member of mod's group).
 	// Recipient is user1 → recipient IS in mod's group → should be counted.
-	chatID := CreateTestChatRoom(t, user2ID, &user1ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user2ID, &user1ID, "User2User")
 	var msgID uint64
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, reviewrejected) "+
 		"VALUES (?, ?, 'Message to group member', NOW(), 1, 0)", chatID, user2ID)
@@ -3093,17 +3022,13 @@ func TestWorkCountChatReviewRecipientMatching(t *testing.T) {
 func TestWorkCountChatReviewSenderOnlyNotCounted(t *testing.T) {
 	prefix := uniquePrefix("wc_chat_sender")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
-	otherGroupID := CreateTestGroup(t, prefix+"_other")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// user1 is in the mod's group, user2 is in a different group.
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, otherGroupID, "Member")
 
 	// user1 (member of mod's group) sends a message TO user2 (non-member).
 	// Recipient is user2 → NOT in mod's group.
@@ -3111,7 +3036,7 @@ func TestWorkCountChatReviewSenderOnlyNotCounted(t *testing.T) {
 	// With recipient matching this should NOT count (primary path).
 	// It may count via secondary path (sender fallback when recipient not a member),
 	// but only if recipient is not a member of ANY Freegle group.
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	var msgID uint64
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, reviewrejected) "+
 		"VALUES (?, ?, 'Message from group member', NOW(), 1, 0)", chatID, user1ID)
@@ -3136,20 +3061,17 @@ func TestWorkCountWiderChatReviewNoDoubleCounting(t *testing.T) {
 	db := database.DBConn
 
 	// groupA: mod's own group, NO widerchatreview.
-	groupA := CreateTestGroup(t, prefix+"_A")
 
 	// groupB: different group WITH widerchatreview=1. Mod is NOT on this group.
-	groupB := CreateTestGroup(t, prefix+"_B")
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.widerchatreview', 1) WHERE id = ?", groupB)
 
 	// A third group where the mod IS a member, with widerchatreview=1
 	// (needed so the mod qualifies for wider review via HasWiderReview).
-	groupC := CreateTestGroup(t, prefix+"_C")
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.widerchatreview', 1) WHERE id = ?", groupC)
 
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupC, "Moderator")
+	PromoteTestUserToModerator(t, modID)
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Step 1: Get baseline counts with NO review messages.
@@ -3160,11 +3082,9 @@ func TestWorkCountWiderChatReviewNoDoubleCounting(t *testing.T) {
 	// user1 (the recipient) is on BOTH groupA (mod's group) and groupB (wider review).
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, groupA, "Member")
-	CreateTestMembership(t, user1ID, groupB, "Member")
 
 	// user2 sends a message TO user1. Recipient = user1.
-	chatID := CreateTestChatRoom(t, user2ID, &user1ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user2ID, &user1ID, "User2User")
 	var msgID uint64
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, reviewrejected) "+
 		"VALUES (?, ?, 'Dedup test msg', NOW(), 1, 0)", chatID, user2ID)
@@ -3194,19 +3114,16 @@ func TestWorkCountWiderChatReviewNoDoubleCounting(t *testing.T) {
 func TestWorkCountChatReviewExcludesDeletedUser(t *testing.T) {
 	prefix := uniquePrefix("wc_chatdel")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create two users who are members of the group.
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
 
 	// Create a chat room and a review-required message from user1.
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	var msgID uint64
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, reviewrejected) "+
 		"VALUES (?, ?, 'Message from soon-deleted user', NOW(), 1, 0)", chatID, user1ID)
@@ -3239,26 +3156,23 @@ func TestWorkCountWiderChatReviewExcludesDeletedUser(t *testing.T) {
 	db := database.DBConn
 
 	// Create a group with widerchatreview=1.
-	widerGroupID := CreateTestGroup(t, prefix+"_wider")
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.widerchatreview', 1) WHERE id = ?", widerGroupID)
 
 	// Mod on the wider group.
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, widerGroupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create another wider group that the mod is NOT on (so recipient qualifies
 	// for wider review, not base review).
-	otherWiderGroupID := CreateTestGroup(t, prefix+"_ow")
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.widerchatreview', 1) WHERE id = ?", otherWiderGroupID)
 
 	// user1 (recipient) is on otherWiderGroupID only (not mod's group).
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, otherWiderGroupID, "Member")
 
 	// user2 (sender) sends to user1. sender on no group.
-	chatID := CreateTestChatRoom(t, user2ID, &user1ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user2ID, &user1ID, "User2User")
 	var msgID uint64
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, reviewrejected) "+
 		"VALUES (?, ?, 'Wider msg from deletable user', NOW(), 1, 0)", chatID, user2ID)
@@ -3285,9 +3199,8 @@ func TestWorkCountWiderChatReviewExcludesDeletedUser(t *testing.T) {
 func TestWorkCountEditReviewCountsDistinctMessages(t *testing.T) {
 	prefix := uniquePrefix("wc_editdistinct")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a message.

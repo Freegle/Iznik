@@ -8,17 +8,8 @@ const mockLogsStore = {
   clear: vi.fn(),
 }
 
-// Mock mod group store
-const mockModGroupStore = {
-  getModGroups: vi.fn().mockResolvedValue([]),
-}
-
 vi.mock('~/stores/logs', () => ({
   useLogsStore: () => mockLogsStore,
-}))
-
-vi.mock('~/stores/modgroup', () => ({
-  useModGroupStore: () => mockModGroupStore,
 }))
 
 describe('Logs Page', () => {
@@ -40,11 +31,6 @@ describe('Logs Page', () => {
               '<div class="tab" @click="$emit(\'click\')"><slot /><slot name="title" /></div>',
             props: ['to'],
           },
-          ModGroupSelect: {
-            template:
-              '<select class="group-select" :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"></select>',
-            props: ['modelValue', 'modonly'],
-          },
           'b-input-group': {
             template: '<div class="input-group"><slot /></div>',
           },
@@ -61,8 +47,7 @@ describe('Logs Page', () => {
           'v-icon': { template: '<i :data-icon="icon"></i>', props: ['icon'] },
           ModLogs: {
             template:
-              '<div class="mod-logs" :data-groupid="groupid" @busy="$emit(\'busy\')" @idle="$emit(\'idle\')"></div>',
-            props: ['groupid'],
+              '<div class="mod-logs" @busy="$emit(\'busy\')" @idle="$emit(\'idle\')"></div>',
           },
         },
       },
@@ -76,31 +61,19 @@ describe('Logs Page', () => {
       expect(wrapper.text()).toContain('Members')
     })
 
-    it('renders group select for each tab', () => {
-      const wrapper = mountComponent()
-      const selects = wrapper.findAll('.group-select')
-      expect(selects.length).toBe(2)
-    })
-
     it('renders search input in each tab', () => {
       const wrapper = mountComponent()
       const inputs = wrapper.findAll('.search-input')
       expect(inputs.length).toBe(2)
     })
 
-    it('does not render ModLogs when groupid is null', () => {
+    it('always renders ModLogs (single national community, no group gate)', () => {
       const wrapper = mountComponent()
-      expect(wrapper.find('.mod-logs').exists()).toBe(false)
+      expect(wrapper.find('.mod-logs').exists()).toBe(true)
     })
   })
 
   describe('mounted lifecycle', () => {
-    it('calls getModGroups on mount', async () => {
-      mountComponent()
-      await flushPromises()
-      expect(mockModGroupStore.getModGroups).toHaveBeenCalled()
-    })
-
     it('clears logs store with messages type on mount', async () => {
       mountComponent()
       await flushPromises()
@@ -138,38 +111,6 @@ describe('Logs Page', () => {
         type: 'memberships',
         search: null,
       })
-      expect(mockLogsStore.clear).toHaveBeenCalled()
-    })
-  })
-
-  describe('groupid changes', () => {
-    it('renders ModLogs when groupid is set', async () => {
-      const wrapper = mountComponent()
-
-      // Set groupid
-      wrapper.vm.groupid = 123
-      await wrapper.vm.$nextTick()
-
-      expect(wrapper.find('.mod-logs').exists()).toBe(true)
-    })
-
-    it('passes groupid to ModLogs', async () => {
-      const wrapper = mountComponent()
-
-      wrapper.vm.groupid = 456
-      await wrapper.vm.$nextTick()
-
-      expect(wrapper.find('.mod-logs').attributes('data-groupid')).toBe('456')
-    })
-
-    it('clears logs when groupid changes', async () => {
-      const wrapper = mountComponent()
-      vi.clearAllMocks()
-
-      wrapper.vm.groupid = 789
-      await wrapper.vm.$nextTick()
-
-      expect(mockLogsStore.setParams).toHaveBeenCalled()
       expect(mockLogsStore.clear).toHaveBeenCalled()
     })
   })

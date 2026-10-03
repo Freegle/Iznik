@@ -73,7 +73,6 @@ class GenerateEmbeddingsCommandTest extends TestCase
     private function seedLiveMessage(string $subject, string $body): int
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = \App\Models\Message::create([
             'type' => \App\Models\Message::TYPE_OFFER,
@@ -83,15 +82,15 @@ class GenerateEmbeddingsCommandTest extends TestCase
             'source' => 'Platform',
             'date' => now(),
             'arrival' => now(),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
         ]);
 
         DB::statement(
-            'INSERT INTO messages_spatial (msgid, groupid, msgtype, successful, promised, arrival, point)
-             VALUES (?, ?, ?, 0, 0, ?, ST_GeomFromText(?, 3857))',
-            [$message->id, $group->id, 'Offer', now(),
-             sprintf('POINT(%F %F)', $group->lng, $group->lat)]
+            'INSERT INTO messages_spatial (msgid, msgtype, successful, promised, arrival, point)
+             VALUES (?, ?, 0, 0, ?, ST_GeomFromText(?, 3857))',
+            [$message->id, 'Offer', now(),
+             sprintf('POINT(%F %F)', -0.1278, 51.5074)]
         );
 
         return (int) $message->id;

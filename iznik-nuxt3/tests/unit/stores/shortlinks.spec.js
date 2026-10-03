@@ -31,7 +31,7 @@ describe('shortlink store', () => {
   })
 
   describe('fetch', () => {
-    it('fetches shortlinks for a group and stores them', async () => {
+    it('fetches all shortlinks and stores them', async () => {
       const store = useShortlinkStore()
       store.init({ public: {} })
       mockFetch.mockResolvedValue({
@@ -41,19 +41,9 @@ describe('shortlink store', () => {
         ],
       })
 
-      await store.fetch(null, 10)
+      await store.fetch()
       expect(store.list[1].name).toBe('link1')
       expect(store.list[2].name).toBe('link2')
-    })
-
-    it('clears list when groupid is provided', async () => {
-      const store = useShortlinkStore()
-      store.init({ public: {} })
-      store.list[99] = { id: 99, name: 'old' }
-      mockFetch.mockResolvedValue({ shortlinks: [] })
-
-      await store.fetch(null, 10)
-      expect(store.list[99]).toBeUndefined()
     })
 
     it('fetches single shortlink by id', async () => {
@@ -77,7 +67,7 @@ describe('shortlink store', () => {
         shortlink: { id: 42, name: 'newlink' },
       })
 
-      const id = await store.add(10, 'newlink')
+      const id = await store.add('newlink', 'https://example.com')
       expect(id).toBe(42)
       expect(store.list[42].name).toBe('newlink')
     })
@@ -87,7 +77,7 @@ describe('shortlink store', () => {
       store.init({ public: {} })
       mockAdd.mockResolvedValue(null)
 
-      const id = await store.add(10, 'test')
+      const id = await store.add('test', 'https://example.com')
       expect(id).toBeNull()
       expect(mockFetch).not.toHaveBeenCalled()
     })

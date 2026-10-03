@@ -49,7 +49,7 @@ final class IntroLanguage
         ));
         // From the start (quotes allowed), a greeting on a word boundary, then
         // the rest of that sentence up to and including its end punctuation.
-        $pattern = '/^["\'\x{201C}\x{201D}\x{2018}\x{2019}]*\s*(?:' . $alternation . ')\b[^.!?]*[.!?\x{2026}]*\s*/iu';
+        $pattern = '/^["\'\x{201C}\x{201D}\x{2018}\x{2019}]*\s*(?:'.$alternation.')\b[^.!?]*[.!?\x{2026}]*\s*/iu';
 
         $text = trim($intro);
         // Loop: the model sometimes stacks greetings ("Shwmae! Croeso i...").

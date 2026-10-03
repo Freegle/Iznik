@@ -68,8 +68,6 @@ use OwenIt\Auditing\Contracts\Auditable;
  * @property-read string|null $first_name
  * @property-read \App\Models\GiftAid|null $giftAid
  * @property-read \App\Models\Location|null $lastLocation
- * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\Membership> $memberships
- * @property-read int|null $memberships_count
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\Message> $messages
  * @property-read int|null $messages_count
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\Notification> $notifications
@@ -122,7 +120,7 @@ class User extends Model implements Auditable
     protected $guarded = ['id'];
     public $timestamps = FALSE;
 
-    // Group membership roles.
+    // Historic membership role ranking, used only by merge() to pick the higher role.
     public const ROLE_NONMEMBER = 'Non-member';
     public const ROLE_MEMBER = 'Member';
     public const ROLE_MODERATOR = 'Moderator';
@@ -168,14 +166,6 @@ class User extends Model implements Auditable
     public function emails(): HasMany
     {
         return $this->hasMany(UserEmail::class, 'userid');
-    }
-
-    /**
-     * Get user's memberships.
-     */
-    public function memberships(): HasMany
-    {
-        return $this->hasMany(Membership::class, 'userid');
     }
 
     /**
@@ -330,13 +320,10 @@ class User extends Model implements Auditable
 
     /**
      * A user is exempt from the display-name sanitiser when they are a
-     * platform mod/support/admin or Owner/Moderator on any group.
+     * platform mod/support/admin.
      */
     public function isNameExempt(): bool
     {
-        if (in_array($this->systemrole, ['Moderator', 'Support', 'Admin'], TRUE)) {
-            return TRUE;
-        }
         return $this->isModerator();
     }
 
@@ -350,24 +337,16 @@ class User extends Model implements Auditable
     }
 
     /**
-     * Check if user is a moderator of any group.
+     * Check if user is a national moderator (Moderator, Support or Admin
+     * systemrole). Freegle has one moderator pool, not one per community.
      */
     public function isModerator(): bool
     {
-        return $this->memberships()
-            ->whereIn('role', ['Moderator', 'Owner'])
-            ->exists();
-    }
-
-    /**
-     * Check if user is a moderator of a specific group.
-     */
-    public function isModeratorOf(int $groupId): bool
-    {
-        return $this->memberships()
-            ->where('groupid', $groupId)
-            ->whereIn('role', ['Moderator', 'Owner'])
-            ->exists();
+        return in_array($this->systemrole, [
+            self::SYSTEMROLE_MODERATOR,
+            self::SYSTEMROLE_SUPPORT,
+            self::SYSTEMROLE_ADMIN,
+        ], TRUE);
     }
 
     /**
@@ -630,9 +609,8 @@ class User extends Model implements Auditable
      * Check if a notification type is enabled for this user.
      *
      * @param string $type The notification type (email, emailmine, push)
-     * @param int|null $groupId Optional group ID for mod-specific checks
      */
-    public function notifsOn(string $type, ?int $groupId = NULL): bool
+    public function notifsOn(string $type): bool
     {
         // emailmine is never honoured for TN or LJ proxy users. Their "real"
         // inbox is the partner's proxy address, so a self-copy is delivered
@@ -652,14 +630,7 @@ class User extends Model implements Auditable
         $settings = $this->settings ?? [];
         $notifs = $settings['notifications'] ?? [];
 
-        $result = isset($notifs[$type]) ? (bool) $notifs[$type] : ($defaults[$type] ?? TRUE);
-
-        // For group-specific checks, verify user is an active mod.
-        if ($result && $groupId) {
-            $result = $this->isModeratorOf($groupId);
-        }
-
-        return $result;
+        return isset($notifs[$type]) ? (bool) $notifs[$type] : ($defaults[$type] ?? TRUE);
     }
 
     /**
@@ -756,10 +727,8 @@ class User extends Model implements Auditable
             return $simpleMail !== self::SIMPLE_MAIL_NONE;
         }
 
-        // Fall back to checking if any membership has a non-zero email frequency.
-        return $this->memberships()
-            ->where('emailfrequency', '!=', 0)
-            ->exists();
+        // Fall back to the user's email frequency setting.
+        return $this->emailfrequency != 0;
     }
 
     /**
@@ -823,10 +792,8 @@ class User extends Model implements Auditable
             return $simpleMail === self::SIMPLE_MAIL_FULL;
         }
 
-        // Fall back to checking if any membership has immediate frequency (-1).
-        return $this->memberships()
-            ->where('emailfrequency', -1)
-            ->exists();
+        // Fall back to the user's email frequency setting.
+        return $this->emailfrequency === -1;
     }
 
     /**
@@ -1092,8 +1059,7 @@ class User extends Model implements Auditable
     /**
      * Merge two user accounts, consolidating $id2 into $id1.
      *
-     * Merges memberships (taking highest role, oldest join date), emails,
-     * chat rooms, user attributes, logs, gift aid, and 40+ foreign key tables.
+     * Merges emails, chat rooms, user attributes, logs, gift aid, and 40+ foreign key tables.
      * The secondary user ($id2) is deleted after a successful merge.
      *
      * Ported from the legacy V1 PHP User::merge().
@@ -1126,7 +1092,7 @@ class User extends Model implements Auditable
 
         try {
 
-            # We want to merge two users.  At present we just merge the memberships, comments, emails and logs; we don't try to
+            # We want to merge two users.  At present we just merge the comments, emails and logs; we don't try to
             # merge any conflicting settings.
             #
             # Both users might have membership of the same group, including at different levels.
@@ -1139,61 +1105,6 @@ class User extends Model implements Auditable
             # perform slowly.
 
             DB::beginTransaction();
-
-            // --- Merge memberships ---
-            $id2Memberships = Membership::where('userid', $id2)->get();
-
-            // Conflict memberships (id1 was already a member, so id2's row is merged
-            // into id1's and then removed) are collected here and deleted AFTER commit.
-            // We keep the in-memory models rather than re-querying by userid post-commit:
-            // under the read/write split that re-query hits a possibly-lagging replica,
-            // where a just-reparented membership can still show userid=$id2 and would be
-            // wrongly deleted, silently dropping a membership that should survive on id1.
-            $membershipsToDelete = [];
-
-            # Merge the top-level memberships
-            foreach ($id2Memberships as $id2Memb) {
-                $id1Memb = Membership::where('userid', $id1)
-                    ->where('groupid', $id2Memb->groupid)
-                    ->first();
-
-                if (!$id1Memb) {
-                    // id1 is not already a member — just reassign the membership.
-                    $id2Memb->userid = $id1;
-                    Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id2},groupid={$id2Memb->groupid} set=userid={$id1}");
-                    if (!$dryRun) {
-                        $id2Memb->save();
-                    }
-                } else {
-                    // Both are members — merge: take highest role, oldest date, non-NULL attributes.
-                    $role = self::roleMax($id1Memb->role, $id2Memb->role);
-
-                    if ($role !== $id1Memb->role) {
-                        $id1Memb->role = $role;
-                        Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set=role={$role}");
-                    }
-
-                    // Keep the older added date.
-                    $date = min(strtotime($id1Memb->added), strtotime($id2Memb->added));
-                    $id1Memb->added = date('Y-m-d H:i:s', $date);
-                    Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set=added={$id1Memb->added}");
-
-                    // Take non-NULL values from id2 for these attributes.
-                    foreach (['configid', 'settings', 'heldby'] as $key) {
-                        if ($id2Memb->$key !== NULL) {
-                            $id1Memb->$key = $id2Memb->$key;
-                            Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set={$key}=" . (is_string($id2Memb->$key) && strlen($id2Memb->$key) > 50 ? ('len=' . strlen($id2Memb->$key)) : $id2Memb->$key));
-                        }
-                    }
-
-                    if (!$dryRun) {
-                        $id1Memb->save();
-                    }
-
-                    // id2's row for this group is now redundant — delete it after commit.
-                    $membershipsToDelete[] = $id2Memb;
-                }
-            }
 
             // --- Merge emails ---
             // Both might have a primary (preferred) address; id1 wins.
@@ -1309,19 +1220,13 @@ class User extends Model implements Auditable
             EloquentUtils::reparentRowIgnore(IsochroneUser::class, 'userid', $id2, $id1, $dryRun);
             EloquentUtils::reparentRowIgnore(Microaction::class, 'userid', $id2, $id1, $dryRun);
 
-            // --- Handle bans ---
-            EloquentUtils::reparentRowIgnore(UserBanned::class, 'userid', $id2, $id1, $dryRun);
-            EloquentUtils::reparentRowIgnore(UserBanned::class, 'byuser', $id2, $id1, $dryRun);
-
-            // Remove memberships for groups the merged user is banned from.
-            $bans = UserBanned::where('userid', $id1)->get();
-            foreach ($bans as $ban) {
-                Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$id1},groupid={$ban->groupid}");
-                $banMembership = Membership::where('userid', $id1)
-                    ->where('groupid', $ban->groupid)
-                    ->first();
+            // --- Handle bans (keep the earliest ban; carry it over if id1 isn't banned) ---
+            if ($u2->banned && (!$u1->banned || $u2->banned < $u1->banned)) {
+                $u1->banned = $u2->banned;
+                $u1->bannedby = $u2->bannedby;
+                Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id1} set=banned={$u2->banned},bannedby=" . ($u2->bannedby ?? 'NULL'));
                 if (!$dryRun) {
-                    $banMembership?->delete();
+                    $u1->save();
                 }
             }
 
@@ -1337,7 +1242,7 @@ class User extends Model implements Auditable
 
                 if ($room->chattype === ChatRoom::TYPE_USER2MOD) {
                     $existing = ChatRoom::where('user1', $id1)
-                        ->where('groupid', $room->groupid)
+                        ->where('chattype', ChatRoom::TYPE_USER2MOD)
                         ->first();
                 } elseif ($room->chattype === ChatRoom::TYPE_USER2USER) {
                     $other = ($room->user1 == $id2) ? $room->user2 : $room->user1;
@@ -1429,7 +1334,6 @@ class User extends Model implements Auditable
 
             // --- Merge history ---
             EloquentUtils::reparentRow(MessageHistory::class, 'fromuser', $id2, $id1, $dryRun);
-            EloquentUtils::reparentRow(MembershipHistory::class, 'userid', $id2, $id1, $dryRun);
 
             // --- Merge system role (take highest) ---
             $u1->refresh();
@@ -1555,16 +1459,6 @@ class User extends Model implements Auditable
         # Make sure we don't pick up an old cached version, as we've just changed it quite a bit.
         try {
             Logger::info("Merged {$id1} < {$id2}, {$reason}");
-            // Delete the conflict memberships collected during the merge loop above.
-            // These are in-memory models, so $m->delete() removes them by primary key
-            // (firing model events for auditing) WITHOUT a fresh SELECT — avoiding the
-            // read-split replica-lag hazard described where $membershipsToDelete is built.
-            foreach ($membershipsToDelete as $m) {
-                Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$m->userid},groupid={$m->groupid}");
-                if (!$dryRun) {
-                    $m->delete();
-                }
-            }
             Logger::info("TN-SYNC-TRACE [WRITE] table=users op=delete where=id={$id2}");
             if (!$dryRun) {
                 User::find($id2)?->delete();
@@ -1590,7 +1484,6 @@ class User extends Model implements Auditable
      * - Chat message content cleared
      * - Community events, volunteering, newsfeed posts, stories, searches,
      *   about-me entries and ratings deleted
-     * - All group memberships removed
      * - Postal addresses and profile images deleted
      * - Message promises deleted
      * - Sessions deleted
@@ -1653,14 +1546,6 @@ class User extends Model implements Auditable
                 $message->save();
             }
 
-            // Mark the message group as deleted
-            $messageGroup = MessageGroup::find($msgId);
-            $messageGroup->deleted = 1;
-            Logger::info("TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid={$msgId} set=deleted=1");
-            if (!$dryRun) {
-                $messageGroup->save();
-            }
-
             // Clear any outcome comments that might contain personal data.
             foreach ($message->outcomes()->get() as $messageOutcome) {
                 $messageOutcome->comments = NULL;
@@ -1719,13 +1604,6 @@ class User extends Model implements Auditable
             Rating::where('ratee', $this->id)->get()->each->delete();
         }
 
-        // --- Remove all group memberships ---
-        $groupIds = collect($this->getMembershipList())->pluck('id');
-        foreach ($groupIds as $groupId) {
-            Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$this->id},groupid={$groupId}");
-            $this->removeMembership($groupId, dryRun: $dryRun);
-        }
-
         // --- Delete postal addresses and profile images ---
         Logger::info("TN-SYNC-TRACE [WRITE] table=users_addresses op=delete where=userid={$this->id}");
         if (!$dryRun) {
@@ -1773,340 +1651,5 @@ class User extends Model implements Auditable
         if (!$dryRun) {
             UserDeletion::record($this->id, UserDeletion::TYPE_FORGOTTEN, $reason);
         }
-    }
-
-    /**
-     * Remove a user's membership from a group, optionally banning them.
-     *
-     * When banning, also inserts into users_banned and withdraws any active
-     * Offer/Wanted messages the user has on the group.
-     *
-     * Ported from the legacy V1 PHP User::removeMembership().
-     *
-     * @param int $groupId The group to remove the user from
-     * @param bool $ban If TRUE, also ban the user from the group and withdraw their messages
-     * @param bool $spam If TRUE, log the removal as an automated spammer removal
-     * @param int|null $byUserId The user performing the removal (for logging)
-     * @param bool $byEmail If TRUE, send a farewell email to the user (also sent to TN users automatically)
-     * @return bool TRUE if the membership was deleted (or a ban was recorded)
-     */
-    public function removeMembership(int $groupId, bool $ban = FALSE, bool $spam = FALSE, ?int $byUserId = NULL, bool $byEmail = FALSE, bool $dryRun = false): bool
-    {
-        // Notify TN users or email-triggered removals so they know they can no longer see messages.
-        if ($byEmail || $this->isTN()) {
-            Logger::info("TN-SYNC-TRACE [EMAIL] action=send-farewell user={$this->id} groupid={$groupId} to=" . ($this->email_preferred ?? 'NULL'));
-
-            if (!$dryRun) {
-                $group = Group::find($groupId);
-                $preferredEmail = $this->email_preferred;
-
-                // The one send path left that reaches a member's own mailbox
-                // without going through EmailSpoolerService, so it needs the
-                // deferral gate applied by hand. Not counted for catch-up:
-                // there is nothing to catch up on, since by the time a
-                // provider recovers they have already left the group.
-                if ($group && $preferredEmail
-                    && app(\App\Services\Mail\MailSuppressionService::class)->isSuppressed($preferredEmail)) {
-                    Logger::info("Skipping farewell email for user {$this->id} on group {$groupId}: their provider is deferring our mail");
-                    $group = NULL;
-                }
-
-                if ($group && $preferredEmail) {
-                    try {
-                        \Illuminate\Support\Facades\Mail::raw('Parting is such sweet sorrow.', function ($message) use ($group, $preferredEmail) {
-                            $message->subject('Farewell from ' . $group->nameshort)
-                                ->from($group->getAutoEmail())
-                                ->replyTo($group->getModsEmail())
-                                ->to($preferredEmail);
-                        });
-                    } catch (\Exception $e) {
-                        Logger::warning("Failed to send farewell email for user {$this->id} on group {$groupId}: " . $e->getMessage());
-                    }
-                }
-            }
-        }
-
-        if ($ban) {
-            // Record the ban.
-            $userBanned = new UserBanned();
-            $userBanned->userid = $this->id;
-            $userBanned->groupid = $groupId;
-            $userBanned->byuser = $byUserId;
-            Logger::info("TN-SYNC-TRACE [WRITE] table=users_banned op=insert where=userid={$this->id},groupid={$groupId},byuser=" . ($byUserId ?? 'NULL'));
-            if (!$dryRun) {
-                $userBanned->save();
-            }
-
-            // Withdraw active Offer/Wanted messages on this group that have no outcome yet.
-            $msgIds = MessageGroup::join('messages', 'messages_groups.msgid', '=', 'messages.id')
-                ->where('messages.fromuser', $this->id)
-                ->where('messages_groups.groupid', $groupId)
-                ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
-                ->pluck('messages_groups.msgid');
-
-            foreach ($msgIds as $msgId) {
-                $m = Message::find($msgId);
-
-                if ($m && !$m->hasOutcome()) {
-                    $m->withdraw('Marked as withdrawn by ban', NULL, $byUserId, $dryRun);
-                }
-            }
-        }
-
-        // Remove the membership.
-        Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$this->id},groupid={$groupId}");
-        $membership = Membership::where('userid', $this->id)
-            ->where('groupid', $groupId)
-            ->first();
-        $deleted = $membership ? 1 : 0;
-        if (!$dryRun) {
-            $membership?->delete();
-        }
-
-        if ($deleted || $ban) {
-            $log = new Log();
-            $log->timestamp = now();
-            $log->type = 'Group';
-            $log->subtype = 'Left';
-            $log->user = $this->id;
-            $log->byuser = $byUserId;
-            $log->groupid = $groupId;
-            $log->text = $spam ? 'Autoremoved spammer' : ($ban ? 'via ban' : NULL);
-            Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Group,subtype=Left,user={$this->id},byuser=" . ($byUserId ?? 'NULL') . ",groupid={$groupId},text=" . ($spam ? 'Autoremoved spammer' : ($ban ? 'via ban' : 'NULL')));
-            if (!$dryRun) {
-                $log->save();
-            }
-        }
-
-        return $deleted > 0 || $ban;
-    }
-
-    /**
-     * Return the group IDs where this user is a Moderator or Owner.
-     *
-     * Ported from the legacy V1 PHP User::getModeratorships().
-     *
-     * @param bool $activeOnly When TRUE, only include groups where the user is actively modding
-     *                         (i.e. their membership settings have active=1 or showmessages=1).
-     * @return array<int> Array of group IDs
-     */
-    public function getModeratorships(bool $activeOnly = false): array
-    {
-        $ret = [];
-
-        foreach ($this->memberships()->get() as $membership) {
-            if ($membership->role === self::ROLE_OWNER || $membership->role === self::ROLE_MODERATOR) {
-                if (!$activeOnly || $this->activeModForGroup($membership->groupid)) {
-                    $ret[] = $membership->groupid;
-                }
-            }
-        }
-
-        return $ret;
-    }
-
-    /**
-     * Check whether this user is actively modding a given group.
-     *
-     * Uses the 'active' flag in membership settings if present; falls back to the legacy
-     * 'showmessages' flag; defaults to TRUE (active) if neither is set.
-     *
-     * Ported from the legacy V1 PHP User::activeModForGroup().
-     *
-     * @param int $groupId
-     * @return bool
-     */
-    public function activeModForGroup(int $groupId): bool
-    {
-        $settings = $this->getGroupSettings($groupId);
-
-        if (array_key_exists('active', $settings)) {
-            return (bool) $settings['active'];
-        }
-
-        // Legacy fallback: showmessages=0 means inactive; absent or 1 means active.
-        return !array_key_exists('showmessages', $settings) || (bool) $settings['showmessages'];
-    }
-
-    /**
-     * Check whether this user participates in wider chat review.
-     *
-     * Returns TRUE if the user is an active moderator on at least one group that has
-     * the 'widerchatreview' group setting enabled.
-     *
-     * Ported from the legacy V1 PHP User::widerReview().
-     *
-     * @return bool
-     */
-    public function widerReview(): bool
-    {
-        foreach ($this->getModeratorships() as $groupId) {
-            if ($this->activeModForGroup($groupId)) {
-                $group = Group::find($groupId);
-
-                if ($group && $group->getSetting('widerchatreview', false)) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Get the user's per-group membership settings.
-     *
-     * Ported from the legacy V1 PHP User::getGroupSettings().
-     *
-     * @param int $groupId
-     * @param int|null $configId Optional mod config ID (used for mod config lookup)
-     * @return array
-     */
-    public function getGroupSettings(int $groupId, ?int $configId = NULL): array
-    {
-        $defaults = [
-            'active' => 1,
-            'showchat' => 1,
-            'pushnotify' => 1,
-            'eventsallowed' => 1,
-            'volunteeringallowed' => 1,
-        ];
-
-        $membership = $this->memberships()->where('groupid', $groupId)->first();
-
-        if (!$membership) {
-            return $defaults;
-        }
-
-        $settings = $membership->settings ?? [];
-
-        if (!empty($settings) && !$configId && in_array($membership->role, [self::ROLE_OWNER, self::ROLE_MODERATOR])) {
-            $settings['configid'] = $membership->configid ?? ModConfig::getForGroup($this->id, $groupId);
-        }
-
-        // Base active setting on legacy showmessages setting if not present.
-        $settings['active'] = array_key_exists('active', $settings)
-            ? $settings['active']
-            : (!array_key_exists('showmessages', $settings) || $settings['showmessages']);
-        $settings['active'] = $settings['active'] ? 1 : 0;
-
-        // Merge defaults for missing keys.
-        foreach ($defaults as $key => $val) {
-            if (!array_key_exists($key, $settings)) {
-                $settings[$key] = $val;
-            }
-        }
-
-        $settings['emailfrequency'] = $membership->emailfrequency;
-        $settings['eventsallowed'] = $membership->eventsallowed;
-        $settings['volunteeringallowed'] = $membership->volunteeringallowed ?? 1;
-
-        return $settings;
-    }
-
-    /**
-     * Get this user's group memberships with group details.
-     *
-     * Returns an array of group data enriched with membership info (role, collection,
-     * configid, mysettings). This is distinct from the memberships() Eloquent relationship
-     * which returns Membership models.
-     *
-     * Ported from the legacy V1 PHP User::getMemberships().
-     *
-     * @param bool $modOnly Only return groups where user is Moderator or Owner
-     * @param string|null $groupType Filter by group type (e.g. Group::TYPE_FREEGLE)
-     * @param bool $getWork Include work counts for moderator groups
-     * @param bool $isModTools Whether this is a ModTools context (affects publish filtering)
-     * @return array Array of group data with membership details
-     */
-    public function getMembershipList(bool $modOnly = FALSE, ?string $groupType = NULL, bool $getWork = FALSE, bool $isModTools = FALSE): array
-    {
-        $query = DB::table('memberships')
-            ->join('groups', 'groups.id', '=', 'memberships.groupid')
-            ->where('memberships.userid', $this->id);
-
-        if ($modOnly) {
-            $query->whereIn('memberships.role', [self::ROLE_MODERATOR, self::ROLE_OWNER]);
-        }
-
-        if ($groupType) {
-            $query->where('groups.type', $groupType);
-        }
-
-        if (!$isModTools) {
-            $query->where('groups.publish', 1);
-        }
-
-        $rows = $query->select([
-            'groups.type',
-            'memberships.heldby',
-            'memberships.settings AS membership_settings',
-            'memberships.collection',
-            'memberships.emailfrequency',
-            'memberships.eventsallowed',
-            'memberships.volunteeringallowed',
-            'memberships.groupid',
-            'memberships.role',
-            'memberships.configid',
-            'memberships.ourPostingStatus',
-            DB::raw("CASE WHEN groups.namefull IS NOT NULL THEN groups.namefull ELSE groups.nameshort END AS namedisplay"),
-        ])
-            ->orderByRaw('LOWER(namedisplay) ASC')
-            ->get();
-
-        $ret = [];
-        $getWorkIds = [];
-        $groupSettings = [];
-
-        // Eager-load Group models for all membership group IDs.
-        $groupIdList = $rows->pluck('groupid')->filter()->all();
-        $groups = Group::whereIn('id', $groupIdList)->get()->keyBy('id');
-
-        foreach ($rows as $row) {
-            $group = $groups->get($row->groupid);
-
-            if (!$group) {
-                continue;
-            }
-
-            $one = $group->getPublic();
-
-            $one['role'] = $row->role;
-            $one['collection'] = $row->collection;
-            $amod = ($one['role'] === self::ROLE_MODERATOR || $one['role'] === self::ROLE_OWNER);
-            $one['configid'] = $row->configid;
-
-            if ($amod && !$one['configid']) {
-                # Get a config using defaults.
-                $one['configid'] = ModConfig::getForGroup($this->id, $row->groupid);
-            }
-
-            $one['mysettings'] = $this->getGroupSettings($row->groupid, $row->configid);
-
-            $one['mysettings']['emailfrequency'] = ($row->type === Group::TYPE_FREEGLE && $this->sendOurMails(false, false))
-                ? ($one['mysettings']['emailfrequency'] ?? 24)
-                : 0;
-
-            $groupSettings[$row->groupid] = $one['mysettings'];
-
-            if ($getWork && $amod) {
-                $getWorkIds[] = $row->groupid;
-            }
-
-            $ret[] = $one;
-        }
-
-        if ($getWork && !empty($getWorkIds)) {
-            $workcounts = Group::getWorkCounts($this, $groupSettings, $getWorkIds);
-            foreach ($ret as &$one) {
-                $gid = $one['id'];
-                if (isset($workcounts[$gid])) {
-                    $one = array_merge($one, $workcounts[$gid]);
-                }
-            }
-            unset($one);
-        }
-
-        return $ret;
     }
 }

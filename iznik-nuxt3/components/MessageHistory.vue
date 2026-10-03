@@ -1,50 +1,16 @@
 <template>
   <div>
-    <div
-      v-for="group in displayGroups"
-      :key="'message-' + message.id + '-' + group.id"
-      class="text--small"
-    >
+    <div class="text--small">
       <client-only>
-        <span :title="group.arrival" class="time"
-          >{{ grouparrivalago(group.arrival) }}
-          <span v-if="showSummaryDetails && !groupless">on </span>
+        <span :title="message.arrival" class="time">
+          {{ arrivalago }}
         </span>
       </client-only>
-      <v-icon
-        v-if="
-          showSummaryDetails &&
-          !groupless &&
-          parseInt(group.groupid) === postHomeGroupId
-        "
-        icon="home"
-        class="me-1 text-muted"
-        title="Home community (where this was originally posted)"
-      />
-      <nuxt-link
-        v-if="group.groupid in groups && showSummaryDetails && !groupless"
-        no-prefetch
-        :to="'/explore/' + groups[group.groupid].exploreLink + '?noguard=true'"
-        :title="'Click to view ' + groups[group.groupid].namedisplay"
-      >
-        {{ groups[group.groupid].namedisplay }}
-      </nuxt-link>
       <client-only>
         <b-button
           v-if="showSummaryDetails"
           variant="link"
-          :to="
-            modinfo && group.groupid
-              ? '/messages/' +
-                (['Pending', 'PendingOther', 'Spam'].includes(group.collection)
-                  ? 'pending'
-                  : 'approved') +
-                '/' +
-                group.groupid +
-                '/' +
-                message.id
-              : '/message/' + message.id
-          "
+          :to="'/message/' + message.id"
           class="text-faded text-decoration-none p-0 ms-2"
           size="xs"
         >
@@ -85,28 +51,21 @@
       class="small"
     >
       <span v-if="!today">
-        First posted on {{ message.postings[0].namedisplay }} on
-        {{ datetime(message.postings[0].date) }}
+        First posted on {{ datetime(message.postings[0].date) }}
       </span>
     </div>
   </div>
 </template>
 <script setup>
-import { useGroupless } from '~/composables/useGroupless'
-
 import dayjs from 'dayjs' // MT
 import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '~/stores/auth'
 import { useUserStore } from '~/stores/user'
 import { useMessageStore } from '~/stores/message'
-import { useGroupStore } from '~/stores/group'
 import { timeago } from '~/composables/useTimeFormat'
 import { useMiscStore } from '~/stores/misc'
 import { useMe } from '~/composables/useMe'
-import { homeGroupFirst, homeGroupId } from '~/composables/rippleStatus'
-// Experiment: no community identity on the member site.
-const groupless = useGroupless()
 
 const props = defineProps({
   id: {
@@ -129,30 +88,8 @@ const props = defineProps({
     required: false,
     default: false,
   },
-  // When set (mod multi-group view), show only this group's arrival line instead of
-  // listing every group the post is on - the mod administers one group's copy at a time.
-  onlyGroupid: {
-    type: Number,
-    required: false,
-    default: null,
-  },
 })
 
-// The groups to list: just the current group when onlyGroupid is set, else all of them.
-// `message` is a computed declared below; the closure resolves it at access time.
-const displayGroups = computed(() => {
-  const groups = message.value?.groups || []
-  if (props.onlyGroupid) {
-    return groups.filter((g) => parseInt(g.groupid) === props.onlyGroupid)
-  }
-  // Home/origin group first, so it leads the list of communities the post appears on.
-  return homeGroupFirst(groups)
-})
-
-// The post's home/origin group id, used to mark it with a home icon in the list.
-const postHomeGroupId = computed(() => homeGroupId(message.value?.groups || []))
-
-const groupStore = useGroupStore()
 const messageStore = useMessageStore()
 const authStore = useAuthStore()
 const userStore = useUserStore()
@@ -171,19 +108,17 @@ if (
     me.systemrole === 'Support' ||
     me.systemrole === 'Admin')
 ) {
-  // Fetch any approving mod. No need to wait.
+  // A message has one moderation decision, not one per group
+  // (messages.approvedby). Fetch the approving mod. Might fail, e.g.
+  // network, but we don't much mind if it does - we'd just not show them.
   const currentMessage = messageStore.byId(props.id)
+  const approver = currentMessage?.approvedby
 
-  if (currentMessage?.groups) {
-    // Might fail, e.g. network, but we don't much mind if it does - we'd just not show the approving mod.
-    for (const group of currentMessage.groups) {
-      if (group?.approvedby) {
-        const approver = Number.isInteger(group.approvedby) // MT
-          ? group.approvedby
-          : group.approvedby.id
-        userStore.fetch(approver)
-      }
-    }
+  if (approver) {
+    const approverId = Number.isInteger(approver) // MT
+      ? approver
+      : approver.id
+    userStore.fetch(approverId)
   }
 }
 
@@ -202,17 +137,17 @@ const approvedby = computed(() => {
   let result = ''
 
   if (mod.value) {
-    for (const group of message.value?.groups || []) {
-      if (group.approvedby) {
-        // Handle both Go API (numeric ID) and PHP API (object with displayname)
-        if (Number.isInteger(group.approvedby)) {
-          // Go API returns numeric ID - look up in userStore
-          const user = userStore.byId(group.approvedby)
-          result = user?.displayname || ''
-        } else {
-          // PHP API returns object with displayname
-          result = group.approvedby.displayname
-        }
+    const approver = message.value?.approvedby
+
+    if (approver) {
+      // Handle both Go API (numeric ID) and PHP API (object with displayname)
+      if (Number.isInteger(approver)) {
+        // Go API returns numeric ID - look up in userStore
+        const user = userStore.byId(approver)
+        result = user?.displayname || ''
+      } else {
+        // PHP API returns object with displayname
+        result = approver.displayname
       }
     }
   }
@@ -220,29 +155,9 @@ const approvedby = computed(() => {
   return result
 })
 
-const groups = computed(() => {
-  const ret = {}
-
-  message.value?.groups.forEach((g) => {
-    const thegroup = groupStore?.get(g.groupid)
-
-    if (thegroup) {
-      ret[g.groupid] = thegroup
-
-      // Better to link to the group by name if possible to avoid nuxt generate creating explore pages for the
-      // id variants.
-      ret[g.groupid].exploreLink = thegroup ? thegroup.nameshort : g.groupid
-    }
-  })
-
-  return ret
+const arrivalago = computed(() => {
+  return timeago(message.value?.arrival, true)
 })
-
-// Each row in the v-for is a specific group, so show that group's own
-// arrival time rather than collapsing every row onto the first group.
-function grouparrivalago(arrival) {
-  return timeago(arrival, true)
-}
 
 const today = computed(() => {
   // MT

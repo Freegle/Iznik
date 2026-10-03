@@ -4,6 +4,7 @@ namespace App\Services\Ripple;
 
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -11,21 +12,28 @@ use Illuminate\Support\Facades\Log;
  *
  * Three jobs, run weekly by `ripple:tune`:
  *   1. rollup()         - aggregate the period's rippling metrics into rippling_live_metrics
- *                         (overall + per-group), so trends are cheap to read.
- *   2. detectHotspots() - flag geographically UNUSUAL areas: groups whose metric deviates far
- *                         from the population, using a robust median + MAD modified z-score. This
- *                         catches a LOCAL problem the aggregate average hides - e.g. one area
- *                         rejecting nearly every rippled-in post while the network looks fine.
+ *                         (overall + per deprivation fifth), so trends are cheap to read.
+ *   2. detectHotspots() - flag geographically UNUSUAL areas: deprivation fifths whose metric
+ *                         deviates far from the population, using a robust median + MAD modified
+ *                         z-score. This catches a LOCAL problem the aggregate average hides - e.g.
+ *                         one fifth's reach running far shorter than the rest while the network
+ *                         looks fine.
  *   3. proposeParams()  - write PROPOSED per-category parameter changes (rippling_params), within
  *                         the volume guard-rail band. Advisory only: a human promotes to active.
  *
- * Source tables that belong to earlier PRs (rippling_reach, messages_groups.rippled_in) are read
- * defensively so this is inert until they exist.
+ * Stratifies by deprivation fifth (1 = most deprived, 5 = least deprived), asked per point from
+ * the spatial server the same way App\Services\Ripple\ReachQueryService's fairness lane does.
+ * With one national moderation pool and one spread mechanism (the reach polygon), a geographic
+ * fifth is what "an area doing worse than the rest" now means.
+ *
+ * Source tables: messages_spatial (approved OFFER/WANTED posts with locations) and rippling_reach
+ * (per-message reach state), read directly - both already carry their own lat/lng.
  */
 class RippleTuneService
 {
     /** Modified z-score thresholds (Iglewicz-Hoaglin: 3.5 is the standard outlier cut). */
     public const HOTSPOT_WATCH = 3.0;
+
     public const HOTSPOT_ALERT = 3.5;
 
     /** Need at least this many areas before "unusual" is meaningful. */
@@ -33,7 +41,11 @@ class RippleTuneService
 
     /** Volume guard-rail band (ripple-thresholds): never propose cutting a cohort > 10%, allow +50%. */
     public const BAND_LOW = -0.10;
+
     public const BAND_HIGH = 0.50;
+
+    /** In-request cache for quintileFor(), keyed by a coarse rounding of (lat,lng). */
+    private array $quintileCache = [];
 
     /**
      * Run the full weekly tune: rollup, hotspot detection, advisory param proposals.
@@ -66,46 +78,44 @@ class RippleTuneService
     }
 
     /**
-     * Aggregate the period into rippling_live_metrics: per-group volume + the overall p50/p90.
-     * Returns the number of metric rows written.
+     * Aggregate the period into rippling_live_metrics: per deprivation fifth volume + the overall
+     * p50/p90. Returns the number of metric rows written.
      */
     public function rollup(Carbon $start, Carbon $end, string $periodType = 'weekly'): int
     {
         $periodStart = $start->toDateString();
         $written = 0;
 
-        $volumes = $this->groupPostVolumes($start, $end); // [groupid => count]
-        if (!empty($volumes)) {
-            foreach ($volumes as $groupid => $count) {
-                $written += $this->writeMetric($periodStart, $periodType, 'group', (string) $groupid, 'volume_posts', (float) $count, 1);
+        $volumes = $this->quintilePostVolumes($start, $end); // [quintile => count]
+        if (! empty($volumes)) {
+            foreach ($volumes as $quintile => $count) {
+                $written += $this->writeMetric($periodStart, $periodType, 'imd_quintile', (string) $quintile, 'volume_posts', (float) $count, 1);
             }
             $vals = array_values($volumes);
             $written += $this->writeMetric($periodStart, $periodType, 'overall', 'all', 'volume_posts_p50', $this->percentile($vals, 0.50), count($vals));
             $written += $this->writeMetric($periodStart, $periodType, 'overall', 'all', 'volume_posts_p90', $this->percentile($vals, 0.90), count($vals));
         }
 
-        // Reach size per group, only if the reach engine (PR A) is live.
-        $reach = $this->groupReachDriveMin($start, $end);
-        foreach ($reach as $groupid => $driveMin) {
-            $written += $this->writeMetric($periodStart, $periodType, 'group', (string) $groupid, 'reach_drive_min', (float) $driveMin, 1);
+        $reach = $this->quintileReachDriveMin($start, $end);
+        foreach ($reach as $quintile => $driveMin) {
+            $written += $this->writeMetric($periodStart, $periodType, 'imd_quintile', (string) $quintile, 'reach_drive_min', (float) $driveMin, 1);
         }
 
         return $written;
     }
 
     /**
-     * Detect hotspots across every per-group metric we have for the period.
+     * Detect hotspots across every per deprivation fifth metric we have for the period.
      * Returns the number of hotspot rows written.
      */
     public function detectAllHotspots(Carbon $start, Carbon $end): int
     {
         $periodStart = $start->toDateString();
-        $names = $this->groupNames();
+        $names = $this->quintileLabels();
         $found = 0;
 
-        $found += $this->detectHotspots($this->groupPostVolumes($start, $end), 'volume_posts', $periodStart, 'group', $names);
-        $found += $this->detectHotspots($this->groupReachDriveMin($start, $end), 'reach_drive_min', $periodStart, 'group', $names);
-        $found += $this->detectHotspots($this->groupSecondaryRejectRates($start, $end), 'secondary_reject_rate', $periodStart, 'group', $names);
+        $found += $this->detectHotspots($this->quintilePostVolumes($start, $end), 'volume_posts', $periodStart, 'imd_quintile', $names);
+        $found += $this->detectHotspots($this->quintileReachDriveMin($start, $end), 'reach_drive_min', $periodStart, 'imd_quintile', $names);
 
         return $found;
     }
@@ -118,10 +128,10 @@ class RippleTuneService
      * aggregate mean can sit comfortably in band while one area is wildly off - the median+MAD score
      * surfaces exactly those, and is resistant to the very outliers it is looking for.
      *
-     * @param array<int|string,float> $areaValues   areaId => metric value
-     * @param array<int|string,string> $areaNames   areaId => display name (optional)
+     * @param  array<int|string,float>  $areaValues  areaId => metric value
+     * @param  array<int|string,string>  $areaNames  areaId => display name (optional)
      */
-    public function detectHotspots(array $areaValues, string $metric, string $periodStart, string $areaType = 'group', array $areaNames = []): int
+    public function detectHotspots(array $areaValues, string $metric, string $periodStart, string $areaType = 'imd_quintile', array $areaNames = []): int
     {
         if (count($areaValues) < self::MIN_AREAS) {
             return 0; // too few areas for "unusual" to mean anything
@@ -204,55 +214,83 @@ class RippleTuneService
         return $proposals;
     }
 
-    // ---- source data (defensive: earlier-PR tables may not exist yet) -------------------------
+    // ---- source data ---------------------------------------------------------------------------
 
-    /** @return array<int,int> groupid => approved OFFER/WANTED post count in the window */
-    private function groupPostVolumes(Carbon $start, Carbon $end): array
+    /** @return array<int,int> deprivation fifth (1-5) => approved OFFER/WANTED post count in the window */
+    private function quintilePostVolumes(Carbon $start, Carbon $end): array
     {
-        $rows = DB::table('messages_groups as mg')
-            ->join('messages as m', 'm.id', '=', 'mg.msgid')
-            ->where('mg.collection', 'Approved')
-            ->where('mg.deleted', 0)
-            ->whereNull('m.deleted')
-            ->whereIn('m.type', ['Offer', 'Wanted'])
-            ->whereBetween('mg.arrival', [$start, $end])
-            ->groupBy('mg.groupid')
-            ->select('mg.groupid', DB::raw('COUNT(*) as n'))
-            ->pluck('n', 'mg.groupid')
-            ->toArray();
+        $rows = DB::table('messages_spatial')
+            ->whereIn('msgtype', ['Offer', 'Wanted'])
+            ->whereBetween('arrival', [$start, $end])
+            ->select(DB::raw('ST_Y(point) as lat'), DB::raw('ST_X(point) as lng'))
+            ->get();
 
-        return array_map('intval', $rows);
+        $counts = [];
+        foreach ($rows as $row) {
+            $quintile = $this->quintileFor((float) $row->lat, (float) $row->lng);
+            if ($quintile === null) {
+                continue;
+            }
+            $counts[$quintile] = ($counts[$quintile] ?? 0) + 1;
+        }
+
+        return $counts;
     }
 
-    /** @return array<int,float> groupid => mean reach drive-minutes */
-    private function groupReachDriveMin(Carbon $start, Carbon $end): array
+    /** @return array<int,float> deprivation fifth (1-5) => mean reach drive-minutes */
+    private function quintileReachDriveMin(Carbon $start, Carbon $end): array
     {
-        $rows = DB::table('rippling_reach as rr')
-            ->join('messages_groups as mg', 'mg.msgid', '=', 'rr.msgid')
-            ->whereBetween('rr.created_at', [$start, $end])
-            ->groupBy('mg.groupid')
-            ->select('mg.groupid', DB::raw('AVG(rr.max_drive_min) as d'))
-            ->pluck('d', 'mg.groupid')
-            ->toArray();
+        $rows = DB::table('rippling_reach')
+            ->whereBetween('created_at', [$start, $end])
+            ->whereNotNull('max_drive_min')
+            ->select('lat', 'lng', 'max_drive_min')
+            ->get();
 
-        return array_map('floatval', $rows);
+        $sums = [];
+        $counts = [];
+        foreach ($rows as $row) {
+            $quintile = $this->quintileFor((float) $row->lat, (float) $row->lng);
+            if ($quintile === null) {
+                continue;
+            }
+            $sums[$quintile] = ($sums[$quintile] ?? 0.0) + (float) $row->max_drive_min;
+            $counts[$quintile] = ($counts[$quintile] ?? 0) + 1;
+        }
+
+        $means = [];
+        foreach ($sums as $quintile => $sum) {
+            $means[$quintile] = $sum / $counts[$quintile];
+        }
+
+        return $means;
     }
 
-    /** @return array<int,float> groupid => secondary-reject rate (rejected rippled-in / rippled-in) */
-    private function groupSecondaryRejectRates(Carbon $start, Carbon $end): array
+    /**
+     * A point's deprivation fifth (1-5), or null if the spatial server cannot say. Mirrors
+     * App\Services\Ripple\ReachQueryService::quintileFor(), with a cache added: this runs once per
+     * row of a weekly batch rather than once per reply, and the fifth is an LSOA-sized statistic, so
+     * nearby points share an answer and a coarse rounding of the coordinates avoids repeating the
+     * same lookup for every post in a neighbourhood.
+     */
+    private function quintileFor(float $lat, float $lng): ?int
     {
-        $rows = DB::table('messages_groups as mg')
-            ->where('mg.rippled_in', 1)
-            ->whereBetween('mg.arrival', [$start, $end])
-            ->groupBy('mg.groupid')
-            ->select(
-                'mg.groupid',
-                DB::raw("SUM(CASE WHEN mg.collection = 'Rejected' THEN 1 ELSE 0 END) / COUNT(*) as rate")
-            )
-            ->pluck('rate', 'mg.groupid')
-            ->toArray();
+        $key = round($lat, 3).','.round($lng, 3);
+        if (array_key_exists($key, $this->quintileCache)) {
+            return $this->quintileCache[$key];
+        }
 
-        return array_map('floatval', $rows);
+        try {
+            $base = rtrim((string) config('freegle.routing_server_url'), '/');
+            $r = Http::timeout(5)->get($base.'/v1/quintile', ['lat' => $lat, 'lng' => $lng]);
+            if (! $r->successful() || ! $r->json('available')) {
+                return $this->quintileCache[$key] = null;
+            }
+            $q = (int) $r->json('quintile');
+
+            return $this->quintileCache[$key] = ($q >= 1 && $q <= 5 ? $q : null);
+        } catch (\Throwable $e) {
+            return $this->quintileCache[$key] = null;
+        }
     }
 
     /**
@@ -267,9 +305,20 @@ class RippleTuneService
         return [];
     }
 
-    private function groupNames(): array
+    /**
+     * Static labels for the five deprivation fifths (1 = most deprived, 5 = least deprived - the
+     * same ordering as config('freegle.ripple.fairness') and ReachQueryService's fairness lane).
+     * The fifth is a fixed axis, not a queried set of areas, so this needs no table.
+     */
+    private function quintileLabels(): array
     {
-        return DB::table('groups')->pluck('nameshort', 'id')->toArray();
+        return [
+            1 => 'Deprivation fifth 1 (most deprived)',
+            2 => 'Deprivation fifth 2',
+            3 => 'Deprivation fifth 3',
+            4 => 'Deprivation fifth 4',
+            5 => 'Deprivation fifth 5 (least deprived)',
+        ];
     }
 
     private function writeMetric(string $periodStart, string $periodType, string $stratumType, string $stratumKey, string $metric, float $value, int $sampleSize): int

@@ -15,10 +15,8 @@ import (
 // a genuine system moderator still receives modtools data, so this focuses on the leak being closed.
 func TestUserModtoolsFlagRequiresMod(t *testing.T) {
 	prefix := uniquePrefix("ModtoolsGate")
-	groupID := CreateTestGroup(t, prefix)
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, targetID, groupID, "Member")
-	CreateTestMessage(t, targetID, groupID, "History post "+prefix, 55.9533, -3.1883)
+	CreateTestMessage(t, targetID, "History post "+prefix, 55.9533, -3.1883)
 
 	// Anonymous caller passing ?modtools=true must NOT receive posting history.
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/user/%d?modtools=true", targetID), nil))

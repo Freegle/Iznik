@@ -313,18 +313,10 @@ if (me.value && !miscStore.modtools) {
     Date.now() - new Date(lastAsk).getTime() > 60 * 60 * 1000 ||
     debug
 
-  // Check if we're on a group with microvolunteering enabled.
-  // Use the myGroups computed from useMe composable for consistency
-  const { myGroups } = useMe()
-  let allowed = debug
-
-  if (myGroups.value && myGroups.value.length) {
-    myGroups.value.forEach((g) => {
-      if (g.microvolunteeringallowed) {
-        allowed = true
-      }
-    })
-  }
+  // Microvolunteering used to be gated per-community (only groups with
+  // microvolunteeringallowed set could ask). There's one national community now, so this is
+  // a hardcoded constant rather than a check against the member's groups.
+  const allowed = true
 
   console.log(
     'Ask due',
@@ -341,9 +333,6 @@ if (me.value && !miscStore.modtools) {
     // The reply gate: nothing about opt-in or timing applies. Fetch a graded task.
     todo.value = 1
     fetchTask.value = true
-  } else if (!allowed) {
-    gateOutcome = 'not_allowed'
-    // Not on a group with this function enabled.
   } else if (!askDue) {
     gateOutcome = 'ask_too_recent'
     // Challenged recently, so return verified. That's true even for if it's forced - we don't want to bombard
@@ -381,7 +370,6 @@ if (me.value && !miscStore.modtools) {
     trustlevel: me.value?.trustlevel || null,
     invite_accepted: inviteAccepted.value,
     forced: props.force,
-    num_groups: myGroups.value?.length || 0,
   })
 }
 

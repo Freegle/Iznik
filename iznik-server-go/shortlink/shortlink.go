@@ -1,7 +1,6 @@
 package shortlink
 
 import (
-	"os"
 	"strconv"
 	"strings"
 
@@ -9,18 +8,15 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
-	"gorm.io/gorm"
 )
 
 type Shortlink struct {
-	ID        uint64  `json:"id" gorm:"primary_key"`
-	Name      string  `json:"name"`
-	Type      string  `json:"type"`
-	Groupid   *uint64 `json:"groupid"`
-	Url       *string `json:"url"`
-	Clicks    int64   `json:"clicks"`
-	Created   string  `json:"created"`
-	Nameshort string  `json:"nameshort,omitempty" gorm:"-"`
+	ID      uint64  `json:"id" gorm:"primary_key"`
+	Name    string  `json:"name"`
+	Type    string  `json:"type"`
+	Url     *string `json:"url"`
+	Clicks  int64   `json:"clicks"`
+	Created string  `json:"created"`
 }
 
 type ClickHistory struct {
@@ -28,25 +24,18 @@ type ClickHistory struct {
 	Count int    `json:"count"`
 }
 
-// GetShortlink handles GET /shortlink with optional id and groupid parameters.
+// GetShortlink handles GET /shortlink with an optional id parameter.
 //
 // @Summary Get shortlinks
-// @Description Returns a single shortlink by ID, or lists all shortlinks (optionally filtered by group)
+// @Description Returns a single shortlink by ID, or lists all shortlinks
 // @Tags shortlink
 // @Produce json
 // @Param id query integer false "Shortlink ID"
-// @Param groupid query integer false "Filter by group ID"
 // @Success 200 {object} map[string]interface{}
 // @Router /api/shortlink [get]
 func GetShortlink(c *fiber.Ctx) error {
 	db := database.DBConn
 	id, _ := strconv.ParseUint(c.Query("id", "0"), 10, 64)
-	groupid, _ := strconv.ParseUint(c.Query("groupid", "0"), 10, 64)
-
-	userSite := os.Getenv("USER_SITE")
-	if userSite == "" {
-		userSite = "www.ilovefreegle.org"
-	}
 
 	if id > 0 {
 		// Single shortlink with click history.
@@ -56,8 +45,6 @@ func GetShortlink(c *fiber.Ctx) error {
 		if s.ID == 0 {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Not found"})
 		}
-
-		resolveShortlinkURL(&s, userSite)
 
 		// Get click history.
 		var clicks []ClickHistory
@@ -75,11 +62,9 @@ func GetShortlink(c *fiber.Ctx) error {
 				"id":           s.ID,
 				"name":         s.Name,
 				"type":         s.Type,
-				"groupid":      s.Groupid,
 				"url":          s.Url,
 				"clicks":       s.Clicks,
 				"created":      s.Created,
-				"nameshort":    s.Nameshort,
 				"clickhistory": clicks,
 			},
 		})
@@ -87,18 +72,10 @@ func GetShortlink(c *fiber.Ctx) error {
 
 	// List all shortlinks.
 	var links []Shortlink
-	if groupid > 0 {
-		db.Table("shortlinks").Where("groupid = ?", groupid).Order("LOWER(name) ASC").Scan(&links)
-	} else {
-		db.Table("shortlinks").Order("LOWER(name) ASC").Scan(&links)
-	}
+	db.Table("shortlinks").Order("LOWER(name) ASC").Scan(&links)
 
 	if links == nil {
 		links = make([]Shortlink, 0)
-	}
-
-	for i := range links {
-		resolveShortlinkURL(&links[i], userSite)
 	}
 
 	return c.JSON(fiber.Map{
@@ -120,8 +97,8 @@ func PostShortlink(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	type CreateRequest struct {
-		Name    string `json:"name"`
-		Groupid uint64 `json:"groupid"`
+		Name string `json:"name"`
+		Url  string `json:"url"`
 	}
 
 	var req CreateRequest
@@ -133,23 +110,20 @@ func PostShortlink(c *fiber.Ctx) error {
 	if req.Name == "" {
 		req.Name = c.FormValue("name", c.Query("name", ""))
 	}
-	if req.Groupid == 0 {
-		req.Groupid, _ = strconv.ParseUint(c.FormValue("groupid", c.Query("groupid", "0")), 10, 64)
+	if req.Url == "" {
+		req.Url = c.FormValue("url", c.Query("url", ""))
 	}
 
-	if req.Name == "" || req.Groupid == 0 {
+	if req.Name == "" || req.Url == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Invalid parameters"})
 	}
 
-	// SECURITY: shortlinks are a per-group moderator tool; creation was previously
-	// unauthenticated. Require the caller to be a mod/owner of the target group
-	// (admin/support included via IsModOfGroup).
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"ret": 1, "status": "Not logged in"})
 	}
-	if !auth.IsModOfGroup(myid, req.Groupid) {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Not a moderator of this group"})
+	if !auth.IsModerator(myid) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Must be a moderator"})
 	}
 
 	// Check if name already exists.
@@ -159,14 +133,10 @@ func PostShortlink(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"ret": 3, "status": "Name already in use"})
 	}
 
-	// Create the shortlink.
-	// Plain, isolated, literal single-row
-	// INSERT ('Group' is a fixed literal, not a bind); id read back via GORM's
-	// map-Create "@id" writeback.
+	// Create the shortlink; id read back via GORM's map-Create "@id" writeback.
 	row := map[string]interface{}{
-		"name":    req.Name,
-		"type":    gorm.Expr("'Group'"),
-		"groupid": req.Groupid,
+		"name": req.Name,
+		"url":  req.Url,
 	}
 	if err := db.Table("shortlinks").Create(row).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Failed to create shortlink"})
@@ -179,28 +149,4 @@ func PostShortlink(c *fiber.Ctx) error {
 		"status": "Success",
 		"id":     newID,
 	})
-}
-
-// resolveShortlinkURL computes the URL for a Group-type shortlink based on group settings.
-func resolveShortlinkURL(s *Shortlink, userSite string) {
-	if s.Type == "Group" && s.Groupid != nil {
-		var g struct {
-			Nameshort string
-			External  *string
-			Onhere    int
-		}
-		database.DBConn.Table("groups").Select("nameshort, external, onhere").Where("id = ?", *s.Groupid).Scan(&g)
-
-		s.Nameshort = g.Nameshort
-
-		if g.External != nil && *g.External != "" {
-			s.Url = g.External
-		} else if g.Onhere > 0 {
-			url := "https://" + userSite + "/explore/" + g.Nameshort
-			s.Url = &url
-		} else {
-			url := "https://groups.yahoo.com/neo/groups/" + g.Nameshort
-			s.Url = &url
-		}
-	}
 }

@@ -22,19 +22,6 @@ use Illuminate\Support\Facades\Log;
  */
 class ReachService
 {
-    /** groupProximity() status: definitive answer; body carries closest/furthest/quicker. */
-    public const PROX_OK = 'ok';
-
-    /** groupProximity() status: definitive answer - group not reachable within the budget. */
-    public const PROX_UNREACHABLE = 'unreachable';
-
-    /**
-     * groupProximity() status: no usable answer (exception, timeout, non-2xx - e.g. the routing
-     * server mid-restart). NOT definitive: callers must retry later and never memoize this,
-     * otherwise a routing restart would permanently suppress notes for rows checked during it.
-     */
-    public const PROX_ERROR = 'error';
-
     /**
      * config key holding the partition fingerprint the stored reach_labels
      * were computed against - the pairing record. The routing server refuses
@@ -231,7 +218,7 @@ class ReachService
      * how the density-conditional cap (DensityService) shortens city posts and
      * lengthens country ones. Null keeps the flat cap.
      *
-     * @return array{total_freeglers:int,max_drive_min:float,ticks:array<int,array{tick:int,drive_min:float,cumulative_users:int,wkt:string}>,reachable_group_ids:int[]}|null
+     * @return array{total_freeglers:int,max_drive_min:float,ticks:array<int,array{tick:int,drive_min:float,cumulative_users:int,wkt:string}>}|null
      */
     public function computeSchedule(float $lat, float $lng, ?float $maxMinutes = null): ?array
     {
@@ -320,82 +307,6 @@ class ReachService
         return $out;
     }
 
-    /**
-     * P/Q proximity for a post rippling into a group: P = nearest in-group point to the offer,
-     * Q = the in-group point furthest FROM P, each with road drive-time. Backs the moderator
-     * "quicker to get to" line. Never throws.
-     *
-     * Tri-state so callers can tell a definitive "no" (safe to memoize checked-once-forever)
-     * from a failed call (must retry): PROX_OK carries the routing body, PROX_UNREACHABLE means
-     * the routing server answered that the group is beyond the budget, PROX_ERROR means no
-     * usable answer was obtained (timeout/non-2xx/exception) and nothing may be memoized.
-     *
-     * @return array{status:string, body:?array{closest:array{lat:float,lng:float,drive_min:float},furthest:array{lat:float,lng:float,drive_min:float},quicker:bool}}
-     */
-    public function groupProximity(float $lat, float $lng, int $groupid, ?float $maxMinutes = null): array
-    {
-        // Best-effort moderator note, computed OUT of the hot ripple:expand cron (by the
-        // ripple:proximity-notes command), so a slacker timeout is fine here. Slow or failed calls
-        // are surfaced to Sentry for visibility rather than silently swallowed. Never throws.
-        $timeout = (int) config('freegle.ripple.proximity_timeout', 15);
-        $started = microtime(true);
-        $query = [
-            'groupid' => $groupid,
-            'lat' => $lat,
-            'lng' => $lng,
-            'mode' => $this->mode,
-        ];
-        // Scope the isochrone exploration to the post's own reach budget rather than the
-        // routing server default (120 min). Over-exploring made every note call ~4x slower
-        // and, on dense-urban high-ripple groups, tripped the 3s slow-warning en masse
-        // (Sentry storm 2026-07-06, groupid=21521). A post only rippled into groups within
-        // its reach, so the note never needs to look further than that.
-        if ($maxMinutes !== null && $maxMinutes > 0) {
-            $query['max_minutes'] = (int) ceil($maxMinutes);
-        }
-        try {
-            $response = Http::timeout($timeout)
-                ->get("{$this->url}/v1/group-proximity", $query);
-        } catch (\Throwable $e) {
-            $this->reportProximityTiming($groupid, (microtime(true) - $started) * 1000, $e->getMessage());
-            return ['status' => self::PROX_ERROR, 'body' => null];
-        }
-
-        $elapsedMs = (microtime(true) - $started) * 1000;
-        if (!$response->successful()) {
-            $this->reportProximityTiming($groupid, $elapsedMs, "HTTP {$response->status()}");
-            return ['status' => self::PROX_ERROR, 'body' => null];
-        }
-        $this->reportProximityTiming($groupid, $elapsedMs, null);
-
-        $body = $response->json() ?? [];
-        if (!($body['reachable'] ?? false)) {
-            return ['status' => self::PROX_UNREACHABLE, 'body' => null];
-        }
-
-        return ['status' => self::PROX_OK, 'body' => $body];
-    }
-
-    /**
-     * Report a slow or failed group-proximity call to Sentry (and the log) for monitoring. The note
-     * is best-effort so we never fail on it, but a routing server that is slow/erroring for proximity
-     * is worth surfacing. Fast, successful calls are silent.
-     */
-    private function reportProximityTiming(int $groupid, float $ms, ?string $error): void
-    {
-        $slowMs = (float) config('freegle.ripple.proximity_slow_ms', 3000);
-        if ($error === null && $ms < $slowMs) {
-            return;
-        }
-        $msg = $error !== null
-            ? 'ripple: group-proximity failed after ' . round($ms) . 'ms (groupid=' . $groupid . '): ' . $error
-            : 'ripple: slow group-proximity ' . round($ms) . 'ms (groupid=' . $groupid . ')';
-        Log::warning($msg);
-        if (function_exists('\Sentry\captureMessage')) {
-            \Sentry\captureMessage($msg);
-        }
-    }
-
     /** Query parameters for a /v1/ripple-schedule request at the given origin. */
     private function scheduleParams(float $lat, float $lng, ?float $maxMinutes = null): array
     {
@@ -406,9 +317,9 @@ class ReachService
             'ticks' => $this->totalTicks(),
             'max_minutes' => $maxMinutes !== null && $maxMinutes > 0 ? $maxMinutes : $this->maxMinutes,
             'curve' => $this->curve,
-            // Slim form: the batch needs per-tick drive_min / cumulative_users /
-            // reachable_group_ids, not a ~20k-vertex polygon per tick (which made a
-            // London schedule call ~24MB and dominated the stored schedule size).
+            // Slim form: the batch needs per-tick drive_min / cumulative_users, not
+            // a ~20k-vertex polygon per tick (which made a London schedule call
+            // ~24MB and dominated the stored schedule size).
             // Tick polygons are fetched one at a time as ticks are actually reached
             // (see catchmentWkt). Old servers ignore the parameter and return
             // polygons, which parseScheduleResponse still accepts.
@@ -452,7 +363,7 @@ class ReachService
      * Parse a /v1/ripple-schedule JSON body into the schedule structure, or null if it
      * carries no usable ticks. Shared by the single and batch paths.
      *
-     * @return array{total_freeglers:int,max_drive_min:float,ticks:array<int,array{tick:int,drive_min:float,cumulative_users:int,wkt:string}>,reachable_group_ids:int[]}|null
+     * @return array{total_freeglers:int,max_drive_min:float,ticks:array<int,array{tick:int,drive_min:float,cumulative_users:int,wkt:string}>}|null
      */
     public function parseScheduleResponse(array $body, ?float $maxMinutes = null): ?array
     {
@@ -475,11 +386,6 @@ class ReachService
             if ($wkt !== null) {
                 $tick['wkt'] = $wkt;
             }
-            // Per-tick targeting decision: groups with >=1 active in-polygon member
-            // road-reachable within THIS tick's drive-time. Absent on older servers.
-            if (isset($entry['reachable_group_ids']) && is_array($entry['reachable_group_ids'])) {
-                $tick['reachable_group_ids'] = array_map('intval', $entry['reachable_group_ids']);
-            }
             $ticks[] = $tick;
         }
         if (empty($ticks)) {
@@ -492,10 +398,6 @@ class ReachService
                 $maxMinutes !== null && $maxMinutes > 0 ? $maxMinutes : $this->maxMinutes
             )),
             'ticks' => $ticks,
-            // Groups containing a road node reachable from the origin - the
-            // water/toll-correct ripple-targeting signal. Empty when the server
-            // omits it (older build); the gate treats [] as "not available".
-            'reachable_group_ids' => array_map('intval', $body['reachable_group_ids'] ?? []),
             // The overflow lanes' rings, when a lane was asked for and applied. Absent on
             // older servers and whenever every lane is off, so null means "no lane", never
             // "a lane with nothing in it".

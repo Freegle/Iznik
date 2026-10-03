@@ -4,7 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use OwenIt\Auditing\Contracts\Auditable;
 
 class ModConfig extends Model implements Auditable
@@ -32,42 +31,30 @@ class ModConfig extends Model implements Auditable
     }
 
     /**
-     * Get memberships using this config.
-     */
-    public function memberships(): HasMany
-    {
-        return $this->hasMany(Membership::class, 'configid');
-    }
-
-    /**
-     * Resolve the config ID for a moderator on a group.
+     * Resolve the config ID for a moderator.
      *
      * Fallback chain:
-     * 1. The mod's own configid on that membership
-     * 2. Any other mod/owner's configid on the same group
+     * 1. The mod's own modconfigid
+     * 2. Any other moderator's configid
      * 3. The first config created by this mod
      * 4. A default config
      *
-     * When a fallback is used, the membership is updated so the lookup is
-     * cached for next time.
+     * When a fallback is used, the user's modconfigid is updated so the lookup
+     * is cached for next time.
      */
-    public static function getForGroup(int $modId, int $groupId): ?int
+    public static function getForMod(int $modId): ?int
     {
-        $membership = Membership::where('userid', $modId)
-            ->where('groupid', $groupId)
-            ->first();
-
-        $configId = $membership?->configid;
+        $mod = User::find($modId);
+        $configId = $mod?->modconfigid;
 
         $save = FALSE;
 
         if (is_null($configId)) {
-            # This user has no config.  If there is another mod with one, then we use that.  This handles the case
+            # This mod has no config.  If there is another mod with one, then we use that.  This handles the case
             # of a new floundering mod who doesn't quite understand what's going on.  Well, partially.
-            $configId = Membership::where('groupid', $groupId)
-                ->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
-                ->whereNotNull('configid')
-                ->value('configid');
+            $configId = User::whereIn('systemrole', [User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN])
+                ->whereNotNull('modconfigid')
+                ->value('modconfigid');
 
             if (!is_null($configId)) {
                 $save = TRUE;
@@ -92,9 +79,9 @@ class ModConfig extends Model implements Auditable
             }
         }
 
-        if ($save && $membership) {
+        if ($save && $mod) {
             # Record that for next time.
-            $membership->update(['configid' => $configId]);
+            $mod->update(['modconfigid' => $configId]);
         }
 
         return $configId;

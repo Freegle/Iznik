@@ -45,9 +45,8 @@ func TestGetStdMsg(t *testing.T) {
 
 func TestPostStdMsg(t *testing.T) {
 	prefix := uniquePrefix("StdMsgPost")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -66,9 +65,8 @@ func TestPostStdMsg(t *testing.T) {
 
 func TestPatchStdMsg(t *testing.T) {
 	prefix := uniquePrefix("StdMsgPatch")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -87,9 +85,8 @@ func TestPatchStdMsg(t *testing.T) {
 
 func TestDeleteStdMsg(t *testing.T) {
 	prefix := uniquePrefix("StdMsgDel")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -111,9 +108,8 @@ func TestDeleteStdMsg(t *testing.T) {
 
 func TestPostStdMsgMissingTitle(t *testing.T) {
 	prefix := uniquePrefix("StdMsgNoTitle")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -131,10 +127,9 @@ func TestPostStdMsgMissingTitle(t *testing.T) {
 
 func TestDeleteStdMsgUnauthorized(t *testing.T) {
 	prefix := uniquePrefix("StdMsgDelUnauth")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	otherModID := CreateTestUser(t, prefix+"_other", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	PromoteTestUserToModerator(t, modID)
 	_, otherToken := CreateTestSession(t, otherModID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -195,9 +190,8 @@ func TestGetStdMsgV2Path(t *testing.T) {
 
 func TestDeleteStdMsgWithJSONBody(t *testing.T) {
 	prefix := uniquePrefix("StdMsgDelJSON")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)

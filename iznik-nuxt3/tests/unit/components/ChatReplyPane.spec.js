@@ -76,7 +76,6 @@ vi.mock('~/stores/auth', () => ({
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: ref({ id: 1 }),
-    myGroups: ref({ 100: { id: 100, namedisplay: 'Test Group' } }),
   }),
 }))
 

@@ -148,24 +148,21 @@
         <!-- Contact form for usage help -->
         <div v-if="contactMode === 'usage'" class="contact-content">
           <p class="contact-text">
-            Your local volunteer team are happy to help with questions about
-            using Freegle.
+            Our volunteer team are happy to help with questions about using
+            Freegle.
           </p>
           <div v-if="loggedIn" class="contact-card">
-            <GroupRememberSelect
-              v-model="contactGroupId"
-              remember="contactmods"
-              class="mb-3"
-            />
-            <ChatButton
-              :groupid="contactGroupId"
-              size="md"
-              title="Contact community volunteers"
-              variant="primary"
-            />
+            <button
+              class="contact-submit-btn"
+              :disabled="contactingMods"
+              @click="contactMods"
+            >
+              <v-icon icon="comment" class="me-2" />
+              {{ contactingMods ? 'Opening chat...' : 'Message Freegle volunteers' }}
+            </button>
           </div>
           <NoticeMessage v-else variant="info">
-            Please log in to contact your community volunteers.
+            Please log in to contact our volunteer team.
           </NoticeMessage>
         </div>
 
@@ -190,19 +187,31 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import GroupRememberSelect from '~/components/GroupRememberSelect'
-import ChatButton from '~/components/ChatButton'
 import NoticeMessage from '~/components/NoticeMessage'
 import SupportLink from '~/components/SupportLink'
 import ExternalLink from '~/components/ExternalLink'
 import WhichPostsExplanation from '~/components/WhichPostsExplanation.vue'
 import { useAuthStore } from '~/stores/auth'
+import { useChatStore } from '~/stores/chat'
 import { useClientLog } from '~/composables/useClientLog'
+import { useRouter } from '#imports'
 
 const authStore = useAuthStore()
+const chatStore = useChatStore()
 const loggedIn = computed(() => authStore.user !== null)
 const { action: logAction } = useClientLog()
-const contactGroupId = ref(null)
+const contactingMods = ref(false)
+
+async function contactMods() {
+  contactingMods.value = true
+  try {
+    const chatid = await chatStore.openChatToMods()
+    const router = useRouter()
+    router.push('/chats/' + chatid)
+  } finally {
+    contactingMods.value = false
+  }
+}
 
 // Contact section state (separate from main flow)
 const contactExpanded = ref(false)
@@ -767,6 +776,28 @@ function goBack(index) {
   padding: 1rem;
   background: $color-gray--lighter;
   border-radius: var(--radius-md, 0.5rem);
+}
+
+.contact-submit-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.6rem 1.1rem;
+  background: $color-green--darker;
+  color: $color-white;
+  border: none;
+  border-radius: var(--radius-md, 0.5rem);
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+
+  &:hover:not(:disabled) {
+    background: $color-green-background;
+  }
+
+  &:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
 }
 
 .support-note {

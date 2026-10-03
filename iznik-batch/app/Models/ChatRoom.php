@@ -14,7 +14,6 @@ use OwenIt\Auditing\Contracts\Auditable;
  * @property int $id
  * @property string|null $name
  * @property string $chattype
- * @property int|null $groupid Restricted to a group
  * @property \App\Models\User|null $user1 For DMs
  * @property \App\Models\User|null $user2 For DMs
  * @property string|null $description
@@ -26,7 +25,6 @@ use OwenIt\Auditing\Contracts\Auditable;
  * @property int $msginvalid
  * @property bool $flaggedspam
  * @property int|null $ljofferid
- * @property-read \App\Models\Group|null $group
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\ChatImage> $images
  * @property-read int|null $images_count
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\ChatMessage> $messages
@@ -45,7 +43,6 @@ use OwenIt\Auditing\Contracts\Auditable;
  * @method static Builder<static>|ChatRoom whereCreated($value)
  * @method static Builder<static>|ChatRoom whereDescription($value)
  * @method static Builder<static>|ChatRoom whereFlaggedspam($value)
- * @method static Builder<static>|ChatRoom whereGroupid($value)
  * @method static Builder<static>|ChatRoom whereId($value)
  * @method static Builder<static>|ChatRoom whereLatestmessage($value)
  * @method static Builder<static>|ChatRoom whereLjofferid($value)
@@ -69,7 +66,6 @@ class ChatRoom extends Model implements Auditable
     public const TYPE_MOD2MOD = 'Mod2Mod';
     public const TYPE_USER2MOD = 'User2Mod';
     public const TYPE_USER2USER = 'User2User';
-    public const TYPE_GROUP = 'Group';
 
     // chat_roster.status values. A blocked roster entry excludes the user from
     // reply chase-ups (see ChatChaseupExpectedService).
@@ -97,14 +93,6 @@ class ChatRoom extends Model implements Auditable
     public function user2(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user2');
-    }
-
-    /**
-     * Get the group (for mod chats).
-     */
-    public function group(): BelongsTo
-    {
-        return $this->belongsTo(Group::class, 'groupid');
     }
 
     /**
@@ -208,13 +196,17 @@ class ChatRoom extends Model implements Auditable
      * The unique key (user1, user2, chattype) does NOT prevent User2Mod duplicates
      * because user2 is NULL and MySQL treats NULLs as distinct in unique indexes.
      */
-    public static function getOrCreateUser2Mod(int $userId, int $groupId): ?self
+    // keep-raw: SELECT ... FOR UPDATE row lock and INSERT IGNORE idempotent
+    // roster inserts pre-date this edit, which only drops the group scoping;
+    // the query builder has no row-lock-then-conditionally-create primitive
+    // that preserves the same single-transaction race protection.
+    public static function getOrCreateUser2Mod(int $userId): ?self
     {
-        $room = DB::transaction(function () use ($userId, $groupId) {
+        $room = DB::transaction(function () use ($userId) {
             // Lock any existing row to close the timing window.
             $chat = DB::selectOne(
-                'SELECT id FROM chat_rooms WHERE user1 = ? AND groupid = ? AND chattype = ? FOR UPDATE',
-                [$userId, $groupId, self::TYPE_USER2MOD]
+                'SELECT id FROM chat_rooms WHERE user1 = ? AND chattype = ? FOR UPDATE',
+                [$userId, self::TYPE_USER2MOD]
             );
 
             if ($chat) {
@@ -226,20 +218,20 @@ class ChatRoom extends Model implements Auditable
             return self::create([
                 'chattype' => self::TYPE_USER2MOD,
                 'user1' => $userId,
-                'groupid' => $groupId,
                 'latestmessage' => now(),
             ]);
         });
 
         if ($room) {
-            // Ensure the member and all group mods are in the roster so that
-            // chat notifications reach everyone.
+            // Ensure the member and all national moderators are in the roster
+            // so that chat notifications reach everyone.
             DB::statement('INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)', [$room->id, $userId]);
 
-            $modUserIds = DB::table('memberships')
-                ->where('groupid', $groupId)
-                ->whereIn('role', ['Owner', 'Moderator'])
-                ->pluck('userid');
+            $modUserIds = User::whereIn('systemrole', [
+                User::SYSTEMROLE_MODERATOR,
+                User::SYSTEMROLE_SUPPORT,
+                User::SYSTEMROLE_ADMIN,
+            ])->pluck('id');
 
             foreach ($modUserIds as $modUserId) {
                 DB::statement('INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)', [$room->id, $modUserId]);

@@ -42,7 +42,6 @@ class UpdateVisualiseCommandTest extends TestCase
 
     public function test_inserts_record_for_nearby_taken_offer(): void
     {
-        $group  = $this->createTestGroup(['publish' => 1, 'onmap' => 1]);
 
         $locIdA = $this->insertLocation(51.5074, -0.1278);
         $locIdB = $this->insertLocation(51.5200, -0.1000);
@@ -50,7 +49,7 @@ class UpdateVisualiseCommandTest extends TestCase
         $giver  = $this->createTestUser(['lastlocation' => $locIdA]);
         $taker  = $this->createTestUser(['lastlocation' => $locIdB]);
 
-        $msg  = $this->createTestMessage($giver, $group, ['type' => Message::TYPE_OFFER]);
+        $msg  = $this->createTestMessage($giver, ['type' => Message::TYPE_OFFER]);
         $this->insertAttachment($msg->id);
         $this->insertReceivedBy($msg->id, $taker->id);
 
@@ -61,7 +60,6 @@ class UpdateVisualiseCommandTest extends TestCase
 
     public function test_skips_message_already_in_visualise_table(): void
     {
-        $group  = $this->createTestGroup(['publish' => 1, 'onmap' => 1]);
 
         $locIdA = $this->insertLocation(51.5074, -0.1278);
         $locIdB = $this->insertLocation(51.5200, -0.1000);
@@ -69,7 +67,7 @@ class UpdateVisualiseCommandTest extends TestCase
         $giver  = $this->createTestUser(['lastlocation' => $locIdA]);
         $taker  = $this->createTestUser(['lastlocation' => $locIdB]);
 
-        $msg  = $this->createTestMessage($giver, $group);
+        $msg  = $this->createTestMessage($giver);
         $attId = $this->insertAttachment($msg->id);
         $this->insertReceivedBy($msg->id, $taker->id);
 
@@ -94,12 +92,11 @@ class UpdateVisualiseCommandTest extends TestCase
 
     public function test_skips_users_without_location(): void
     {
-        $group = $this->createTestGroup(['publish' => 1, 'onmap' => 1]);
 
         $giver = $this->createTestUser(['lastlocation' => null]);
         $taker = $this->createTestUser(['lastlocation' => null]);
 
-        $msg = $this->createTestMessage($giver, $group);
+        $msg = $this->createTestMessage($giver);
         $this->insertAttachment($msg->id);
         $this->insertReceivedBy($msg->id, $taker->id);
 
@@ -112,7 +109,6 @@ class UpdateVisualiseCommandTest extends TestCase
 
     public function test_skips_messages_without_attachments(): void
     {
-        $group = $this->createTestGroup(['publish' => 1, 'onmap' => 1]);
 
         $locIdA = $this->insertLocation(51.5074, -0.1278);
         $locIdB = $this->insertLocation(51.5200, -0.1000);
@@ -120,7 +116,7 @@ class UpdateVisualiseCommandTest extends TestCase
         $giver = $this->createTestUser(['lastlocation' => $locIdA]);
         $taker = $this->createTestUser(['lastlocation' => $locIdB]);
 
-        $msg = $this->createTestMessage($giver, $group);
+        $msg = $this->createTestMessage($giver);
         // No attachment inserted.
         $this->insertReceivedBy($msg->id, $taker->id);
 
@@ -131,7 +127,6 @@ class UpdateVisualiseCommandTest extends TestCase
 
     public function test_dry_run_does_not_write_to_database(): void
     {
-        $group  = $this->createTestGroup(['publish' => 1, 'onmap' => 1]);
 
         $locIdA = $this->insertLocation(51.5074, -0.1278);
         $locIdB = $this->insertLocation(51.5200, -0.1000);
@@ -139,7 +134,7 @@ class UpdateVisualiseCommandTest extends TestCase
         $giver  = $this->createTestUser(['lastlocation' => $locIdA]);
         $taker  = $this->createTestUser(['lastlocation' => $locIdB]);
 
-        $msg = $this->createTestMessage($giver, $group);
+        $msg = $this->createTestMessage($giver);
         $this->insertAttachment($msg->id);
         $this->insertReceivedBy($msg->id, $taker->id);
 

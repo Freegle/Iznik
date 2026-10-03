@@ -6,38 +6,38 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Removes spam members and their content from Freegle groups.
+ * Bans spam members and removes their content, in a Freegle with no groups.
  *
- * Mirrors the legacy V1 PHP Spam::removeSpamMembers().
+ * Mirrors the legacy V1 PHP Spam::removeSpamMembers(), rewritten for the single
+ * global user (memberships/messages_groups/groups/users_banned dropped by
+ * 2026_09_20_000001_remove_group_model.php - ai-judgement.md).
  *
  * Actions taken for each known spammer (spam_users.collection = 'Spammer'):
- *   1. Member-role memberships are removed and the user is banned from those groups.
- *   2. Messages they authored (on any group, not yet deleted) are soft-deleted.
+ *   1. The user is banned globally (users.banned/bannedby), once, if not already.
+ *   2. Messages they authored, not yet deleted, are soft-deleted.
  *   3. Chat messages they sent are rejected (reviewrejected=1, reviewrequired=0).
  *   4. Newsfeed posts are deleted.
  *   5. Site notifications sent from them are deleted.
  *   6. "Waiting for reply" (users_expected) records where they are the expecter are deleted.
  *   7. Active sessions are deleted.
  *
- * Returns the number of removed memberships + deleted messages (matching V1 return value).
+ * Returns the number of newly-banned users + deleted messages (matching V1 return value).
  */
 class SpamCleanupService
 {
     private const SPAMMER_COLLECTION = 'Spammer';
 
-    private const MEMBER_ROLE = 'Member';
-
     /**
-     * Remove spammers from groups and clean up their content.
+     * Ban spammers globally and clean up their content.
      *
-     * Returns the same value as before (memberships + messages count) for
-     * backwards compat with the existing command, plus the full stats array
-     * is available via the second return position for the dry-run path.
+     * Returns the full stats array; see CheckSpammersCommand for how each key is
+     * reported. 'banned' used to be 'memberships' (V1 counted memberships removed,
+     * one per group) - there is one Freegle now, so it counts users newly banned.
      */
     public function removeSpamMembers(bool $dryRun = false): array
     {
         $stats = [
-            'memberships'   => $this->removeSpamMemberships($dryRun),
+            'banned'        => $this->removeSpamMemberships($dryRun),
             'messages'      => $this->deleteSpamMessages($dryRun),
             'chat_messages' => $this->rejectSpamChatMessages($dryRun),
             'newsfeed'      => $this->deleteSpamNewsfeedItems($dryRun),
@@ -50,111 +50,85 @@ class SpamCleanupService
     }
 
     /**
-     * Find member-role memberships for known spammers, ban them, remove the membership,
-     * and log the action. Mirrors the first loop in V1 removeSpamMembers().
+     * Ban known spammers globally and log the action. Used to remove the member-role
+     * membership from each group and users_banned that row per group (V1's first loop
+     * in removeSpamMembers()); memberships, messages_groups and users_banned were
+     * dropped by 2026_09_20_000001_remove_group_model.php in favour of a single
+     * users.banned/bannedby pair (ai-judgement.md) - there is one Freegle now, so a
+     * spammer is banned once rather than evicted group by group. Matches the log
+     * shape iznik-server-go/member/member.go's BanMember/UnbanMember already write
+     * (type=User, subtype=Banned) - see the open enum-extension flag to whoever owns
+     * the logs migration, this value has no logs.subtype ENUM member yet.
      */
     public function removeSpamMemberships(bool $dryRun = false): int
     {
-        $spammers = DB::select(
-            "SELECT memberships.userid, memberships.groupid
-             FROM memberships
-             INNER JOIN spam_users ON memberships.userid = spam_users.userid
-             WHERE spam_users.collection = ?
-               AND memberships.role = ?",
-            [self::SPAMMER_COLLECTION, self::MEMBER_ROLE]
-        );
+        $spammers = DB::table('spam_users')
+            ->join('users', 'users.id', '=', 'spam_users.userid')
+            ->where('spam_users.collection', self::SPAMMER_COLLECTION)
+            ->whereNull('users.banned')
+            ->pluck('spam_users.userid');
 
         if ($dryRun) {
-            return count($spammers);
+            return $spammers->count();
         }
 
-        foreach ($spammers as $spammer) {
-            Log::info('Removing spam member', [
-                'userid' => $spammer->userid,
-                'groupid' => $spammer->groupid,
+        foreach ($spammers as $userId) {
+            Log::info('Banning spam member', [
+                'userid' => $userId,
             ]);
 
-            DB::table('users_banned')->insertOrIgnore([
-                'userid' => $spammer->userid,
-                'groupid' => $spammer->groupid,
-                'byuser' => null,
-            ]);
-
-            DB::table('memberships')
-                ->where('userid', $spammer->userid)
-                ->where('groupid', $spammer->groupid)
-                ->delete();
+            DB::table('users')
+                ->where('id', $userId)
+                ->update(['banned' => now()]);
 
             DB::table('logs')->insert([
-                'user' => $spammer->userid,
-                'type' => 'Group',
-                'subtype' => 'Left',
-                'groupid' => $spammer->groupid,
+                'user' => $userId,
+                'type' => 'User',
+                'subtype' => 'Banned',
                 'text' => 'Autoremoved spammer',
                 'timestamp' => now(),
             ]);
         }
 
-        return count($spammers);
+        return $spammers->count();
     }
 
     /**
-     * Soft-delete messages authored by known spammers that are still on groups.
-     * Mirrors the second loop in V1 removeSpamMembers().
+     * Soft-delete messages authored by known spammers. Mirrors the second loop in
+     * V1 removeSpamMembers(), rewritten now a message has one collection/deleted
+     * state directly on `messages` rather than one row per group in the dropped
+     * messages_groups (ai-judgement.md) - no per-group tracking to fan out over,
+     * so this is a plain soft-delete by id.
      */
     public function deleteSpamMessages(bool $dryRun = false): int
     {
-        $msgs = DB::select(
-            "SELECT DISTINCT messages.id, messages_groups.groupid
-             FROM messages
-             INNER JOIN spam_users ON messages.fromuser = spam_users.userid
-               AND spam_users.collection = ?
-             INNER JOIN messages_groups ON messages.id = messages_groups.msgid
-             INNER JOIN users ON messages.fromuser = users.id
-               AND users.systemrole = 'User'
-             WHERE messages.deleted IS NULL",
-            [self::SPAMMER_COLLECTION]
-        );
+        $msgIds = DB::table('messages')
+            ->join('spam_users', function ($join) {
+                $join->on('messages.fromuser', '=', 'spam_users.userid')
+                    ->where('spam_users.collection', self::SPAMMER_COLLECTION);
+            })
+            ->join('users', 'messages.fromuser', '=', 'users.id')
+            ->where('users.systemrole', 'User')
+            ->whereNull('messages.deleted')
+            ->pluck('messages.id')
+            ->unique();
 
         if ($dryRun) {
-            return count($msgs);
+            return $msgIds->count();
         }
 
-        foreach ($msgs as $msg) {
+        foreach ($msgIds as $msgId) {
             Log::info('Deleting spam message', [
-                'msgid' => $msg->id,
-                'groupid' => $msg->groupid,
+                'msgid' => $msgId,
             ]);
 
-            DB::table('messages_groups')
-                ->where('msgid', $msg->id)
-                ->update(['deleted' => 1]);
+            DB::table('messages')
+                ->where('id', $msgId)
+                ->whereNull('deleted')
+                ->update(['deleted' => now()]);
         }
 
-        // Mark messages as deleted if all their group entries are deleted.
-        if (!empty($msgs)) {
-            $msgIds = array_unique(array_column($msgs, 'id'));
-            foreach ($msgIds as $msgId) {
-                // useWritePdo: this count gates the parent-message soft-delete below,
-                // and it reads the rows we just UPDATEd to deleted=1 above. Under the
-                // read/write split a plain read could hit a lagging replica that still
-                // shows those rows as deleted=0, leaving the spam message live.
-                $remainingGroups = DB::table('messages_groups')
-                    ->useWritePdo()
-                    ->where('msgid', $msgId)
-                    ->where('deleted', 0)
-                    ->count();
-
-                if ($remainingGroups === 0) {
-                    DB::table('messages')
-                        ->where('id', $msgId)
-                        ->whereNull('deleted')
-                        ->update(['deleted' => now()]);
-                }
-            }
-        }
-
-        return count($msgs);
+        return $msgIds->count();
     }
 
     /**

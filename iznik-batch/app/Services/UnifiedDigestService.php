@@ -5,9 +5,7 @@ namespace App\Services;
 use App\Mail\Digest\DigestStyle;
 use App\Mail\Digest\UnifiedDigest;
 use App\Mail\Traits\FeatureFlags;
-use App\Models\Membership;
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
 use App\Services\Ripple\DigestPostScorer;
@@ -34,7 +32,7 @@ class UnifiedDigestService
     public const EMAIL_TYPE = 'UnifiedDigest';
 
     /** The deferral gate, resolved once per run. */
-    private ?\App\Services\Mail\MailSuppressionService $suppressionService = NULL;
+    private ?\App\Services\Mail\MailSuppressionService $suppressionService = null;
 
     /**
      * Whether a provider is currently refusing our mail to this member.
@@ -45,7 +43,7 @@ class UnifiedDigestService
      */
     private function suppressions(): \App\Services\Mail\MailSuppressionService
     {
-        if ($this->suppressionService === NULL) {
+        if ($this->suppressionService === null) {
             $this->suppressionService = app(\App\Services\Mail\MailSuppressionService::class);
         }
 
@@ -59,7 +57,9 @@ class UnifiedDigestService
      * Digest mode constants.
      */
     public const MODE_IMMEDIATE = 'immediate';
+
     public const MODE_DAILY = 'daily';
+
     /** Reach-mail: decoupled, sharded pass that mails members newly inside a rippling post's reach. */
     public const MODE_REACH = 'reach';
 
@@ -68,9 +68,9 @@ class UnifiedDigestService
      *
      * A digest renders at most DigestStyle::DIGEST_POST_CAP (65) posts, but the load is
      * unbounded by nature: it fetches every post since the member's last-digest cursor.
-     * When the daily run falls behind (or a member is in many groups after rippling), that
-     * window grows to days × groups and the eager-loaded Collection (attachments/fromUser/
-     * groups) blows the PHP memory_limit — the run then dies part-way, so higher-id members
+     * When the daily run falls behind (or a member's reach covers a lot of posts), that
+     * window grows to days × posts-in-reach and the eager-loaded Collection (attachments/
+     * fromUser) blows the PHP memory_limit — the run then dies part-way, so higher-id members
      * are never reached, their cursor stays stale, and the next run's window is even bigger
      * (self-amplifying). Capping the LOAD bounds per-member memory regardless of backlog:
      * updateDigestTracker() advances the cursor past exactly what was loaded (oldest-first),
@@ -95,17 +95,17 @@ class UnifiedDigestService
     /**
      * Send unified digests to users who want them.
      *
-     * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
-     * @param int|null $userId Specific user ID to process (for testing)
+     * @param  string  $mode  One of MODE_IMMEDIATE, MODE_REACH or MODE_DAILY. MODE_IMMEDIATE and
+     *                        MODE_REACH both run the reach-mail pass: a user's location, not group membership,
+     *                        decides whether a post is in reach.
+     * @param  int|null  $userId  Specific user ID to process (for testing)
      * @return array Statistics about the operation
      */
     public function sendDigests(string $mode, ?int $userId = null, ?int $limit = null, bool $dryRun = false, ?int $groupId = null, int $shard = 0, int $shards = 1, ?callable $shouldStop = null): array
     {
-        if ($mode === self::MODE_IMMEDIATE) {
-            return $this->sendImmediateDigests($limit, $dryRun, $groupId, $userId, $shard, $shards, $shouldStop);
-        }
-
-        if ($mode === self::MODE_REACH) {
+        // $groupId is accepted but unused: reach is the only immediate-mail pathway, and it mails
+        // by location rather than by any single origin community, so there is nothing to scope by.
+        if ($mode === self::MODE_IMMEDIATE || $mode === self::MODE_REACH) {
             return $this->sendReachDigests($limit, $dryRun, $shard, $shards, $shouldStop);
         }
 
@@ -118,7 +118,7 @@ class UnifiedDigestService
         ];
 
         // Check if this email type is enabled.
-        if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
+        if (! self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
             Log::info('UnifiedDigest emails disabled via FREEGLE_MAIL_ENABLED_TYPES');
 
             return $stats;
@@ -136,10 +136,10 @@ class UnifiedDigestService
             // drains the current per-user spool write before exiting — at
             // worst one duplicate next run, never a torn write.
             if ($shouldStop !== null && $shouldStop()) {
-                $stats['stopped'] = TRUE;
+                $stats['stopped'] = true;
                 Log::info('UnifiedDigestService: Daily digest stopping on shutdown signal', [
                     'users_processed' => $stats['users_processed'],
-                    'emails_sent'     => $stats['emails_sent'],
+                    'emails_sent' => $stats['emails_sent'],
                 ]);
                 break;
             }
@@ -171,454 +171,6 @@ class UnifiedDigestService
     }
 
     /**
-     * V1-parity per-group iteration for immediate-mode digests.
-     *
-     * Mirrors the legacy V1 PHP Digest implementation exactly: walk the V1
-     * `groups_digests` table, find new messages per group since that group's
-     * cursor, send one notification to every member at emailfrequency=-1
-     * (minus the poster), then advance the cursor. Using V1's table directly
-     * (rather than a parallel per-user table) keeps both systems' notion of
-     * "where we got up to" in sync, so re-enabling V1 in an emergency
-     * fallback doesn't double-send.
-     *
-     * Cursor comparison uses a (arrival, msgid) tuple — V1 only uses arrival
-     * and relies on its microsecond uniqueness, but tightening this here is
-     * strictly safer for the rare collision case at no extra cost.
-     *
-     * @param int|null $groupLimit Cap groups processed per run (manual sanity)
-     * @param bool $dryRun Skip the spool write and cursor advance
-     * @param int|null $groupId Restrict to a single group (manual testing)
-     * @param int|null $userId Restrict recipients to one user (manual testing)
-     * @param int $shard Shard index (0..shards-1) for parallel workers
-     * @param int $shards Total shard count; groups partitioned by MOD(groupid, shards)
-     * @return array Statistics about the operation
-     */
-    public function sendImmediateDigests(?int $groupLimit = null, bool $dryRun = false, ?int $groupId = null, ?int $userId = null, int $shard = 0, int $shards = 1, ?callable $shouldStop = null): array
-    {
-        $stats = [
-            'groups_processed' => 0,
-            'users_processed' => 0,
-            'emails_sent' => 0,
-            'no_new_posts_groups' => 0,
-            'errors' => 0,
-        ];
-
-        if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
-            Log::info('UnifiedDigest emails disabled via FREEGLE_MAIL_ENABLED_TYPES');
-            return $stats;
-        }
-
-        // This used to carry an EXISTS against memberships, to skip groups with no
-        // immediate members at all. It was the single most expensive thing this service
-        // did: 0.61-0.88s per execution, run about 232,000 times a day across the shards,
-        // roughly one and a half to two cores of the database sustained - to skip 12
-        // groups out of 505.
-        //
-        // Dropping it is safe because it decided nothing. processGroupImmediate selects
-        // recipients with exactly the same condition (emailfrequency = Immediate,
-        // collection = Approved), so a group with none produces an empty recipient list
-        // and sends nothing. And a group that reaches that point with messages but no
-        // recipients still advances its cursor, so it cannot re-scan the same messages
-        // every tick.
-        //
-        // The 12 groups now cost one cursor-bounded message lookup each per pass, against
-        // a correlated subquery that ran for all 505.
-        $query = DB::table('groups_digests as gd')
-            ->where('gd.frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-            ->select('gd.groupid', 'gd.msgid as cursor_msgid', 'gd.msgdate as cursor_msgdate');
-
-        // Partition groups across parallel shards. MOD(groupid, shards) =
-        // shard means each group is owned by exactly one shard. Disjoint
-        // → safe to run shards concurrently with no overlap, no advisory
-        // locking between them.
-        if ($shards > 1) {
-            $query->whereRaw('MOD(gd.groupid, ?) = ?', [$shards, $shard]);
-        }
-
-        if ($groupId) {
-            $query->where('gd.groupid', $groupId);
-        }
-        if ($groupLimit) {
-            $query->limit($groupLimit);
-        }
-
-        $touchedUsers = [];
-
-        foreach ($query->cursor() as $row) {
-            // Graceful interrupt — check between groups so the in-flight
-            // group's cursor advance completes before exit.
-            if ($shouldStop !== null && $shouldStop()) {
-                $stats['stopped'] = TRUE;
-                Log::info('UnifiedDigestService: Immediate digest stopping on shutdown signal', [
-                    'groups_processed' => $stats['groups_processed'],
-                    'emails_sent'      => $stats['emails_sent'],
-                ]);
-                break;
-            }
-
-            try {
-                $result = $this->processGroupImmediate($row, $dryRun, $userId);
-                $stats['emails_sent'] += $result['emails'];
-                foreach ($result['users'] as $uid) {
-                    $touchedUsers[$uid] = true;
-                }
-                if ($result['emails'] === 0) {
-                    $stats['no_new_posts_groups']++;
-                }
-            } catch (\Exception $e) {
-                Log::error("UnifiedDigestService: Failed immediate send for group {$row->groupid}", [
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString(),
-                ]);
-                $stats['errors']++;
-            }
-            $stats['groups_processed']++;
-        }
-
-        $stats['users_processed'] = count($touchedUsers);
-        Log::info('UnifiedDigestService: Immediate digest send complete', $stats);
-        return $stats;
-    }
-
-    /**
-     * Process one group's immediate-mode notifications.
-     *
-     * A member gets at most one immediate email per post, however many of their groups it
-     * is on. This runs once per group, so a post on several of a member's groups would
-     * otherwise be mailed to them once per group - it reaches them as one item and should
-     * arrive once. The rippling_reach_notified ledger, which this path already writes to
-     * keep the reach mailer from re-mailing, is read here for the same purpose: a later
-     * group's pass sees the earlier one's row and skips the recipient.
-     *
-     * @return array{emails: int, users: int[]}
-     */
-    protected function processGroupImmediate(object $cursorRow, bool $dryRun, ?int $userFilter = null): array
-    {
-        $groupid = (int) $cursorRow->groupid;
-        $cursorMsgdate = $cursorRow->cursor_msgdate;
-        $cursorMsgid = (int) ($cursorRow->cursor_msgid ?? 0);
-
-        $messages = $this->getGroupMessagesSinceCursor($groupid, $cursorMsgdate, $cursorMsgid);
-
-        if ($messages->isEmpty()) {
-            // Every new message in this group is rippling-excluded (delivered by the
-            // expander-driven reach mailer instead). Advance the cursor past them to the
-            // latest approved post — otherwise, after full rippling rollout the cursor
-            // freezes here forever and the (unbounded) scan window grows every tick.
-            $this->advanceCursorPastExcluded($groupid, $cursorMsgdate, $cursorMsgid, $dryRun);
-            return ['emails' => 0, 'users' => []];
-        }
-
-        // Recipients: members at emailfrequency=-1, plus allowlist gate. The
-        // inactivity gate must match the daily path's V1-parity threshold
-        // (getUsersForDigest: Engage::USER_INACTIVE = 365*12*3600 = 182.5 days),
-        // NOT a stricter 90-day cutoff. A 90-day window silently dropped members
-        // who are inactive for 90-182.5 days from per-post emails even though V1
-        // (Digest.php recipient query had no lastaccess filter at all) and the
-        // daily digest would still mail them. NULL lastaccess (new users who have
-        // never logged in) are included so a brand-new immediate member gets posts
-        // right away.
-        $memberQuery = DB::table('memberships')
-            ->join('users', 'users.id', '=', 'memberships.userid')
-            ->where('memberships.groupid', $groupid)
-            ->where('memberships.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-            ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-            ->whereNull('users.deleted')
-            ->where(function ($q) {
-                $q->whereNull('users.lastaccess')
-                  ->orWhere('users.lastaccess', '>', now()->subSeconds(365 * 12 * 3600));
-            });
-
-        if ($userFilter) {
-            $memberQuery->where('memberships.userid', $userFilter);
-        }
-
-        $memberIds = $memberQuery->pluck('memberships.userid')->all();
-
-        $allowlist = $this->getImmediateAllowlist();
-        if ($allowlist !== ['*'] && !empty($memberIds)) {
-            $lower = array_map('strtolower', $allowlist);
-            $memberIds = DB::table('users_emails')
-                ->whereIn('userid', $memberIds)
-                ->whereIn(DB::raw('LOWER(email)'), $lower)
-                ->pluck('userid')->unique()->all();
-        }
-
-        if (empty($memberIds)) {
-            // Advance cursor anyway — there's nothing to mail in this group
-            // (config gate, allowlist), so we shouldn't re-scan the same
-            // messages forever. V1 advances the cursor unconditionally too.
-            $last = $messages->last();
-            $this->advanceGroupCursor($groupid, $last->mg_arrival, (int) $last->mg_msgid, $dryRun);
-            return ['emails' => 0, 'users' => []];
-        }
-
-        $users = User::whereIn('id', $memberIds)
-            ->with(['emails', 'memberships'])
-            ->get()
-            ->keyBy('id');
-
-        // Resolve each recipient's latlng ONCE, before the message loop — not once per
-        // message. $users is already a small, once-per-group collection, so this is a
-        // single extra pass, not a per-message cost. Used by the distance-preference
-        // filter below (settings.browseMaxDistance); see the design doc's insertion
-        // point B.
-        $recipientLatLng = [];
-        foreach ($users as $uid => $recipientUser) {
-            $recipientLatLng[$uid] = $this->resolveUserLatLng($recipientUser);
-        }
-
-        // Who has already had an immediate email about each of these ITEMS, from an earlier
-        // group's pass in this run or a previous one. Keyed on the item rather than on the
-        // message, so a second copy of one thing - a hand cross-post, an unmerged
-        // TrashNothing copy, a repost - counts as something the member has already been told
-        // about. One query for the whole batch rather than a lookup per (message, recipient).
-        $alreadyMailed = [];
-        $itemOf = [];
-        $batchMsgids = $messages->pluck('mg_msgid')->map(fn ($v) => (int) $v)->all();
-        if (!empty($batchMsgids)) {
-            // Every copy of a batch item maps to that item, so a ledger row written against
-            // any copy - including one that is not in this batch at all - is found.
-            $siblings = $this->itemSiblingMsgids($batchMsgids);
-            $ledgerItemOf = [];
-            foreach ($batchMsgids as $batchMsgid) {
-                $copies = $siblings[$batchMsgid] ?? [$batchMsgid];
-                $itemOf[$batchMsgid] = min($copies);
-                foreach ($copies as $copy) {
-                    $ledgerItemOf[$copy] = $itemOf[$batchMsgid];
-                }
-            }
-            foreach (
-                DB::table('rippling_reach_notified')
-                    ->whereIn('msgid', array_keys($ledgerItemOf))
-                    ->whereIn('userid', $memberIds)
-                    ->get(['msgid', 'userid']) as $row
-            ) {
-                $item = $ledgerItemOf[(int) $row->msgid] ?? (int) $row->msgid;
-                $alreadyMailed[$item][(int) $row->userid] = true;
-            }
-        }
-
-        $emailsSent = 0;
-        $touched = [];
-        $lastProcessed = null;
-        $deferred = false;
-
-        foreach ($messages as $message) {
-            // Defer messages without a usable attachment so the email
-            // doesn't render with a generic placeholder while AI image
-            // generation is still in flight. After
-            // ATTACHMENT_WAIT_DEADLINE_MINUTES we send anyway (the
-            // placeholder is a known-good static URL — never a broken
-            // link, just visually weaker). If we defer, STOP processing
-            // this group's batch so later messages don't leapfrog the
-            // deferred one and trigger a cursor jump that skips it.
-            if (!$this->isImmediateMessageReady($message)) {
-                $deferred = true;
-                break;
-            }
-
-            $sponsorsCache = null;
-            foreach ($users as $uid => $user) {
-                if (!$user->email_preferred) {
-                    continue;
-                }
-                // The member's provider is refusing our mail, so rendering
-                // this would only add to a queue that cannot drain. Skipped
-                // here rather than at send time because the MJML render below
-                // is what actually costs us. Nothing to catch up later: the
-                // group cursor advances regardless of individual recipients
-                // (see $lastProcessed below), and a three-day-old OFFER is
-                // taken or gone by the time a provider recovers anyway.
-                if ($this->suppressions()->shouldSkip($user->email_preferred, (int) $uid, 'digest_immediate')) {
-                    continue;
-                }
-                // Already mailed about this item - from another of their groups, from an
-                // earlier run, or from another copy of the same thing. A thing does not become
-                // two things by being posted to two groups the member is in, nor by being
-                // posted twice.
-                $item = $itemOf[(int) $message->mg_msgid] ?? (int) $message->mg_msgid;
-                if (isset($alreadyMailed[$item][(int) $uid])) {
-                    continue;
-                }
-                // Distance-preference filter (settings.browseMaxDistance) — skip
-                // spooling for this (message, recipient) pair when out of range, but
-                // the message is still counted as processed below ($lastProcessed is
-                // set outside this inner loop), so the group cursor advances
-                // regardless of how many recipients were filtered. Own posts always
-                // bypass (V1-parity own-post loop-back, test_immediate_includes_poster_own_post).
-                $isOwnPost = (int) $message->fromuser === (int) $uid;
-                if (!$this->passesDistancePreference(
-                    $recipientLatLng[$uid] ?? null,
-                    $message->lat,
-                    $message->lng,
-                    $user,
-                    $isOwnPost,
-                    $this->authorMaxMiles((int) $message->fromuser)
-                )) {
-                    continue;
-                }
-                if (!$dryRun) {
-                    if ($sponsorsCache === null) {
-                        // Immediate digest is about THIS group's post only, so
-                        // scope sponsors to the group (V1 parity), not the
-                        // recipient's whole membership union. The whole batch
-                        // is one $groupid, so a single lookup serves every
-                        // recipient in this loop.
-                        $sponsorsCache = $this->getSponsorsForGroup((int) $groupid);
-                    }
-                    $deduped = collect([
-                        ['message' => $message, 'postedToGroups' => [$groupid]],
-                    ]);
-                    // Spool through EmailSpoolerService so transient SMTP
-                    // failures get retried by the processor rather than
-                    // dropping a recipient. Permanent address-rejection
-                    // failures (non-ASCII local-part, 550 etc) are classified
-                    // + recorded as bounces inside spool() and return ''.
-                    //
-                    // spool() builds the message (incl. MJML render) up front
-                    // and re-throws anything that ISN'T a permanent address
-                    // failure (transient render/build error). That exception
-                    // must not escape this foreach: if it did, $lastProcessed
-                    // would not advance past this message, the group cursor
-                    // would stall, and the NEXT cron tick would re-send the
-                    // whole batch — exactly the bug that gave Penny Langley 27
-                    // copies of the same post in 13 min. Catch it, skip the one
-                    // recipient, and let the message still count as processed.
-                    $spooled = false;
-                    try {
-                        app(\App\Services\EmailSpoolerService::class)->spool(
-                            new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache),
-                            $user->email_preferred,
-                            emailType: 'digest_immediate',
-                        );
-                        $spooled = true;
-                    } catch (\Throwable $e) {
-                        Log::warning('Skipping immediate digest recipient after spool failure; continuing loop', [
-                            'user_id' => $uid,
-                            'email' => $user->email_preferred,
-                            'group' => $groupid,
-                            'msgid' => (int) $message->mg_msgid,
-                            'error' => $e->getMessage(),
-                        ]);
-                    }
-                    // Record this send. Two readers depend on it:
-                    //
-                    //  - the reach mailer (mailNewlyReachedForPost), which excludes anyone already
-                    //    here, so a rippled post is not mailed twice - once on arrival by this path
-                    //    and again by the reach engine minutes later once its reach row appears;
-                    //  - this path itself, on a later group's pass, so a post on several of the
-                    //    member's groups reaches them once.
-                    //
-                    // Written for every send, not only while rippling is switched on: the second
-                    // reader needs it either way, and a row for a post that never ripples is simply
-                    // never read by the first.
-                    if ($spooled) {
-                        // Coordinate with the expander-driven reach mailer: record this send so
-                        // mailNewlyReachedForPost never re-mails the same member once the post's
-                        // reach row appears (the post is cursor-mailed on arrival, before the reach
-                        // engine creates rippling_reach minutes later). Kept OUTSIDE the spool try so
-                        // a ledger-write failure can't masquerade as a spool failure or abort the
-                        // loop; harmless for non-rippling posts (the row is simply never read).
-                        try {
-                            DB::table('rippling_reach_notified')->insertOrIgnore([
-                                'msgid' => (int) $message->mg_msgid,
-                                'userid' => (int) $uid,
-                                'notified_at' => now(),
-                            ]);
-                        } catch (\Throwable $e) {
-                            Log::warning('Immediate digest: notified-ledger write failed (member may be re-mailed)', [
-                                'user_id' => $uid,
-                                'msgid' => (int) $message->mg_msgid,
-                                'error' => $e->getMessage(),
-                            ]);
-                        }
-
-                        $alreadyMailed[$item][(int) $uid] = true;
-                    }
-                }
-                $emailsSent++;
-                $touched[$uid] = true;
-            }
-
-            $lastProcessed = $message;
-        }
-
-        // Advance the cursor to the LAST SUCCESSFULLY PROCESSED message,
-        // not the last message in the candidate batch. If we deferred,
-        // the deferred message and everything after it stay in the
-        // "after cursor" range so the next tick re-considers them.
-        //
-        // Skip the advance entirely when --user is restricting recipients:
-        // only some members got mailed, so advancing would skip everyone
-        // else for these messages on the next unrestricted run. --user
-        // is a testing affordance and must not mutate prod cursor state.
-        if ($lastProcessed && $userFilter === null) {
-            $this->advanceGroupCursor(
-                $groupid,
-                $lastProcessed->mg_arrival,
-                (int) $lastProcessed->mg_msgid,
-                $dryRun
-            );
-        }
-
-        if ($deferred) {
-            Log::debug("UnifiedDigestService: deferred unattached messages in group {$groupid}");
-        }
-
-        return ['emails' => $emailsSent, 'users' => array_keys($touched)];
-    }
-
-    /**
-     * Number of minutes to wait for an AI-generated attachment before
-     * giving up and mailing with the offer/wanted placeholder. Long
-     * enough to cover normal generation latency, short enough that a
-     * permanently-stuck AI job doesn't hold immediate notifications
-     * back forever.
-     */
-    public const ATTACHMENT_WAIT_DEADLINE_MINUTES = 5;
-
-    /**
-     * Whether this message is ready to be mailed as part of an immediate
-     * digest. A message is ready if either:
-     *   - it has a usable attachment (user-uploaded or AI-generated and
-     *     fully written to messages_attachments), OR
-     *   - it arrived more than ATTACHMENT_WAIT_DEADLINE_MINUTES ago, in
-     *     which case we mail it with the type-specific placeholder
-     *     rather than holding the notification indefinitely.
-     *
-     * The placeholder fallback is a static URL hosted on the site
-     * (offer_placeholder / wanted_placeholder); known-good, never broken.
-     */
-    protected function isImmediateMessageReady(Message $message): bool
-    {
-        if ($message->attachments && $message->attachments->isNotEmpty()) {
-            $usable = $message->attachments->first(function ($a) {
-                return !empty($a->externaluid)
-                    || !empty($a->externalurl)
-                    || (int) ($a->archived ?? 0) === 1;
-            });
-            if ($usable) {
-                return true;
-            }
-        }
-
-        $arrival = $message->mg_arrival
-            ?? ($message->arrival instanceof \Carbon\Carbon ? $message->arrival : \Carbon\Carbon::parse($message->arrival ?? $message->date));
-        $arrival = $arrival instanceof \Carbon\Carbon ? $arrival : \Carbon\Carbon::parse($arrival);
-
-        return $arrival->lessThanOrEqualTo(now()->subMinutes(self::ATTACHMENT_WAIT_DEADLINE_MINUTES));
-    }
-
-    /**
-     * Fetch messages in a group since the (arrival, msgid) cursor.
-     *
-     * Tuple comparison (NOT V1's plain arrival > msgdate) so that two
-     * messages with identical microsecond-precision arrival timestamps
-     * can't both fall past the cursor and one of them be missed.
-     */
-
-    /**
      * Decoupled, sharded reach-mail pass. Mails members who are newly inside a rippling post's
      * reach polygon — the work that used to run inline in ExpandService's serial Phase-2 loop,
      * where (per the 2026-06-24 live profile) it was ~75% of the run's wall-clock. Pulling it out
@@ -626,21 +178,20 @@ class UnifiedDigestService
      *
      * Processes rippling_reach rows whose reach changed recently (updated_at within the configured
      * window — reach only changes on init/advance, never on this pass, which writes only
-     * rippling_reach_notified), partitioned across parallel workers by MOD(msgid, shards) exactly
-     * as the immediate-digest cron partitions by MOD(groupid, shards). Disjoint partitions → shards
-     * run concurrently with no locking. Idempotent regardless of window overlap: the
+     * rippling_reach_notified), partitioned across parallel workers by MOD(msgid, shards). Disjoint
+     * partitions → shards run concurrently with no locking. Idempotent regardless of window overlap: the
      * rippling_reach_notified ledger means an already-notified member is never re-mailed.
      *
-     * @param int|null $limit Cap on posts processed per run (null = no cap).
-     * @param int $shard Shard index (0..shards-1).
-     * @param int $shards Total shard count; posts partitioned by MOD(msgid, shards).
+     * @param  int|null  $limit  Cap on posts processed per run (null = no cap).
+     * @param  int  $shard  Shard index (0..shards-1).
+     * @param  int  $shards  Total shard count; posts partitioned by MOD(msgid, shards).
      * @return array{posts_processed:int,emails_sent:int,errors:int,stopped?:bool}
      */
     public function sendReachDigests(?int $limit = null, bool $dryRun = false, int $shard = 0, int $shards = 1, ?callable $shouldStop = null): array
     {
         $stats = ['posts_processed' => 0, 'members_processed' => 0, 'emails_sent' => 0, 'errors' => 0];
 
-        if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
+        if (! self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
             return $stats;
         }
 
@@ -663,8 +214,8 @@ class UnifiedDigestService
             ->whereIn('status', ['expanding', 'done'])
             ->where('updated_at', '>=', $mark->toDateTimeString());
 
-        // Disjoint MOD(msgid, shards) partition — same model as sendImmediateDigests' MOD(groupid,
-        // shards); each post is owned by exactly one shard, so shards run concurrently safely.
+        // Disjoint MOD(msgid, shards) partition: each post is owned by exactly one shard,
+        // so shards run concurrently safely.
         if ($shards > 1) {
             $query->whereRaw('MOD(msgid, ?) = ?', [$shards, $shard]);
         }
@@ -740,24 +291,16 @@ class UnifiedDigestService
                 $user = User::find($row->userid);
                 $point = $user ? $this->resolveUserLatLng($user) : null;
 
-                if ($point !== null) {
+                // emailfrequency -1 is the site-wide immediate setting; anyone else queued here
+                // (their location moved, or a post's reach grew over them) has nothing to be
+                // mailed about now regardless of what the reach covers.
+                if ($point !== null && $user->emailfrequency === -1) {
                     [$lat, $lng] = $point;
 
                     $candidates = DB::table('rippling_reach as mr')
                         ->whereIn('mr.status', ['expanding', 'done'])
                         ->whereRaw("ST_GeometryType(mr.outer_bound) <> 'POINT'")
                         ->whereRaw('ST_Contains(mr.outer_bound, ST_SRID(POINT(?, ?), ?))', [$lng, $lat, $srid])
-                        ->whereExists(function ($q) use ($row) {
-                            $q->select(DB::raw(1))
-                                ->from('messages_groups as mg')
-                                ->join('memberships as m', 'm.groupid', '=', 'mg.groupid')
-                                ->whereColumn('mg.msgid', 'mr.msgid')
-                                ->where('mg.collection', 'Approved')
-                                ->where('mg.deleted', 0)
-                                ->where('m.userid', $row->userid)
-                                ->where('m.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-                                ->where('m.collection', 'Approved');
-                        })
                         ->pluck('mr.msgid')
                         ->map(fn ($id) => (int) $id)
                         ->all();
@@ -807,22 +350,6 @@ class UnifiedDigestService
         );
     }
 
-    /**
-     * Newly-reached rippling immediate mail (#0 step 4). Called by the decoupled, sharded reach-mail
-     * pass (sendReachDigests) and by AutoApproveService (the post-'done' approval gap) — no longer
-     * inline in ExpandService's serial loop. Mails the post to every immediate-eligible member of a
-     * group it is APPROVED on whose location the reach NOW covers and who has not already been
-     * notified (rippling_reach_notified), recording each so a later tick — or another rippled-in
-     * group — never re-mails them. Because it re-runs every tick (no cursor), members the reach
-     * reaches later are picked up; the cursor digest excludes reach-row posts so neither path
-     * double-mails. Member point = settings.mylocation (both coords) else lastlocation. Returns
-     * the number spooled. Best-effort: any failure is logged, never aborts the expander.
-     *
-     * Members-only by design: the memberships JOIN restricts immediate reach-mail to users who
-     * have already joined a group this post is on. Cold-emailing non-members about a group they
-     * haven't joined is not appropriate; non-members within reach discover the post via browse and
-     * the daily digest. Do not "fix" the JOIN to include non-members.
-     */
     /**
      * The ring's BOUNDING BOX as a widening of who this post's mail enumerates.
      *
@@ -919,6 +446,7 @@ class UnifiedDigestService
         foreach ($rows as $i => $row) {
             if ((int) ($row->in_primary ?? 0) === 1) {
                 $kept[] = $row;                       // already in the committed reach
+
                 continue;
             }
             if ($row->resolved_lat === null || $row->resolved_lng === null) {
@@ -1010,9 +538,19 @@ class UnifiedDigestService
         return (int) config('freegle.srid', 3857);
     }
 
+    /**
+     * Newly-reached rippling immediate mail (#0 step 4). Called by the decoupled, sharded reach-mail
+     * pass (sendReachDigests) and by AutoApproveService (the post-'done' approval gap) — no longer
+     * inline in ExpandService's serial loop. Mails the post to every immediate-eligible user whose
+     * location the reach NOW covers and who has not already been notified (rippling_reach_notified),
+     * recording each so a later tick never re-mails them. Because it re-runs every tick (no cursor),
+     * users the reach reaches later are picked up; the cursor digest excludes reach-row posts so
+     * neither path double-mails. Member point = settings.mylocation (both coords) else lastlocation.
+     * Returns the number spooled. Best-effort: any failure is logged, never aborts the expander.
+     */
     public function mailNewlyReachedForPost(int $msgid, bool $dryRun = false, ?int $onlyUserid = null): int
     {
-        if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
+        if (! self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
             return 0;
         }
 
@@ -1063,8 +601,6 @@ class UnifiedDigestService
             // candidate's point in one routing call - the reach record, with
             // no grid fallback. No label, or routing unreachable, means
             // nobody is newly-reached this round; the next sweep re-asks.
-            // For a union-active post the origin group's whole area is
-            // admitted, so that flag rides along per candidate.
             $reachSvc = app(\App\Services\Ripple\ReachService::class);
             $reachRow = DB::table('rippling_reach')->where('msgid', $msgid)->first();
             // Staged-next label when its stamp is the live partition, else
@@ -1073,26 +609,14 @@ class UnifiedDigestService
             $currentSecs = $reachRow !== null
                 ? $reachSvc->currentBudgetSecs((int) ($reachRow->tick ?? 0), (float) ($reachRow->max_drive_min ?? 0), $reachRow->schedule ?? null)
                 : 0.0;
-            $unionSecs = $reachRow->origin_union_secs ?? null;
-            $unionActive = $unionSecs !== null && (float) $unionSecs >= 0 && $currentSecs >= (float) $unionSecs;
             $containSql = "(ST_GeometryType(mr.outer_bound) <> 'POINT' AND ST_Contains(mr.outer_bound, $point))";
-            $mrJoin = '';
-            $originAreaFlag = '';
-            if ($unionActive) {
-                $originAreaFlag = ", COALESCE(ST_Contains((SELECT g2.polyindex FROM messages_groups mg2
-                        JOIN `groups` g2 ON g2.id = mg2.groupid
-                        WHERE mg2.msgid = mr.msgid AND mg2.deleted = 0
-                          AND g2.polyindex IS NOT NULL AND ST_GeometryType(g2.polyindex) <> 'POINT'
-                        ORDER BY mg2.arrival ASC LIMIT 1), $point), 0) AS in_origin_area";
-            }
 
             // in_primary: from the outer bound, refined by the PHP probe
             // below. density_band rides along for the ring index whenever
             // either consumer needs post-filtering.
             $primaryFlag = ", $containSql AS in_primary"
-                . ", JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band"
-                . $originAreaFlag;
-            $primaryParams = $unionActive ? [$srid, $srid] : [$srid];
+                .", JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band";
+            $primaryParams = [$srid];
 
             // Every msgid that is the same item as this one. A member who already had an
             // immediate mail about any copy has had this post, so the ledger is read across the
@@ -1121,17 +645,14 @@ class UnifiedDigestService
                 "SELECT DISTINCT u.id AS id,
                        $latExpr AS resolved_lat,
                        $lngExpr AS resolved_lng$primaryFlag
-                 FROM messages_groups mg
-                 JOIN rippling_reach mr ON mr.msgid = mg.msgid$mrJoin
-                 JOIN memberships m ON m.groupid = mg.groupid
-                      AND m.emailfrequency = ? AND m.collection = 'Approved'
-                 JOIN users u ON u.id = m.userid
+                 FROM rippling_reach mr
+                 JOIN users u ON u.emailfrequency = ?
                  LEFT JOIN locations l ON l.id = u.lastlocation
-                 WHERE mg.msgid = ? AND mg.collection = 'Approved' AND mg.deleted = 0
+                 WHERE mr.msgid = ?
                    AND mr.status <> 'held'
                    AND NOT EXISTS (
                          SELECT 1 FROM messages_outcomes mo
-                         WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received', 'Withdrawn')
+                         WHERE mo.msgid = mr.msgid AND mo.outcome IN ('Taken', 'Received', 'Withdrawn')
                        )
                    AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)$onlySql
                    AND ($containSql$overflowSql)
@@ -1141,7 +662,7 @@ class UnifiedDigestService
                        )",
                 array_merge(
                     $primaryParams,
-                    [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90)],
+                    [-1, $msgid, now()->subDays(90)],
                     $onlyParams,
                     [$srid],
                     $overflowParams,
@@ -1151,12 +672,11 @@ class UnifiedDigestService
 
             // Refine the outer-bound superset to the exact reach. Labels
             // first: ONE routing call evaluates the stored label at every
-            // candidate point at the current budget, and a union-active
-            // post also admits candidates inside its origin group's area.
-            // The cell grid remains the fallback for unlabelled posts or
-            // when routing cannot answer; a candidate nothing can decide is
-            // only a recipient if a ring admits them, exactly like a
-            // candidate outside the reach.
+            // candidate point at the current budget. The cell grid remains
+            // the fallback for unlabelled posts or when routing cannot
+            // answer; a candidate nothing can decide is only a recipient
+            // if a ring admits them, exactly like a candidate outside the
+            // reach.
             $labelIn = [];
             if ($probeLabels !== null && $probeLabels !== '' && $currentSecs > 0) {
                 $points = [];
@@ -1171,7 +691,7 @@ class UnifiedDigestService
                 }
             }
             foreach ($recipientRows as $i => $row) {
-                $in = ($labelIn[$i] ?? false) || !empty($row->in_origin_area);
+                $in = ($labelIn[$i] ?? false);
                 $row->in_primary = ((int) ($row->in_primary ?? 0) === 1 && $in) ? 1 : 0;
             }
             $recipientRows = $recipientRows->filter(
@@ -1216,6 +736,7 @@ class UnifiedDigestService
             return count($this->spoolPostToRecipients($msg, $recipientIds, $recipientLatLng, $dryRun));
         } catch (\Throwable $e) {
             Log::warning('ripple: mailNewlyReachedForPost failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
+
             return 0;
         }
     }
@@ -1240,13 +761,13 @@ class UnifiedDigestService
      * Returns the ids actually mailed rather than a count, because the caller has
      * to know exactly who received it - not including anyone whose spool failed.
      *
-     * @param int[] $userIds
-     * @param array<int,string> $reasons
+     * @param  int[]  $userIds
+     * @param  array<int,string>  $reasons
      * @return int[]
      */
     public function mailPostToUsers(int $msgid, array $userIds, bool $dryRun = false, array $reasons = []): array
     {
-        if (!self::isEmailTypeEnabled(self::EMAIL_TYPE) || empty($userIds)) {
+        if (! self::isEmailTypeEnabled(self::EMAIL_TYPE) || empty($userIds)) {
             return [];
         }
 
@@ -1294,6 +815,7 @@ class UnifiedDigestService
             );
         } catch (\Throwable $e) {
             Log::warning('firstreply: mailPostToUsers failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
+
             return [];
         }
     }
@@ -1310,8 +832,8 @@ class UnifiedDigestService
      * mailed. Both public entry points count them; only first-reply scouting
      * needs the ids themselves.
      *
-     * @param int[] $recipientIds
-     * @param array<int,array{0:float,1:float}|null> $recipientLatLng
+     * @param  int[]  $recipientIds
+     * @param  array<int,array{0:float,1:float}|null>  $recipientLatLng
      * @return int[]
      */
     private function spoolPostToRecipients(
@@ -1324,12 +846,10 @@ class UnifiedDigestService
     ): array {
         $msgid = (int) $msg->id;
 
-        $postedToGroups = DB::table('messages_groups')->where('msgid', $msgid)
-            ->where('collection', MessageGroup::COLLECTION_APPROVED)->where('deleted', 0)
-            ->pluck('groupid')->map(fn ($v) => (int) $v)->all();
-        $sponsorsCache = !empty($postedToGroups) ? $this->getSponsorsForGroup((int) $postedToGroups[0]) : null;
+        // No group to fetch a sponsor for: reach mail is national, not per-community.
+        $sponsorsCache = null;
 
-        $users = User::whereIn('id', $recipientIds)->with(['emails', 'memberships'])->get();
+        $users = User::whereIn('id', $recipientIds)->with(['emails'])->get();
 
         // Anyone who has already had an immediate mail about this ITEM - this message, or
         // another copy of the same thing - is done. The reach query filters those members out
@@ -1342,7 +862,7 @@ class UnifiedDigestService
 
         $mailed = [];
         foreach ($users as $user) {
-            if (!$user->email_preferred) {
+            if (! $user->email_preferred) {
                 continue;
             }
             if (isset($alreadyHadItem[(int) $user->id])) {
@@ -1365,7 +885,7 @@ class UnifiedDigestService
             // of sendReachDigests' candidate query regardless, so the cost is bounded.
             // Own posts always bypass (mirrors the cursor path's own-post exception).
             $isOwnPost = (int) $user->id === (int) $msg->fromuser;
-            if (!$this->passesDistancePreference(
+            if (! $this->passesDistancePreference(
                 $recipientLatLng[(int) $user->id] ?? null,
                 $msg->lat,
                 $msg->lng,
@@ -1377,9 +897,10 @@ class UnifiedDigestService
             }
             if ($dryRun) {
                 $mailed[] = (int) $user->id;
+
                 continue;
             }
-            $deduped = collect([['message' => $msg, 'postedToGroups' => $postedToGroups]]);
+            $deduped = collect([['message' => $msg]]);
             try {
                 app(\App\Services\EmailSpoolerService::class)->spool(
                     new UnifiedDigest(
@@ -1405,7 +926,7 @@ class UnifiedDigestService
         }
 
         // #0 / §15 instrumentation: count immediate mails sent on expansion.
-        if (!empty($mailed) && !$dryRun) {
+        if (! empty($mailed) && ! $dryRun) {
             $count = count($mailed);
             $today = now()->toDateString();
 
@@ -1433,110 +954,6 @@ class UnifiedDigestService
         return $mailed;
     }
 
-    protected function getGroupMessagesSinceCursor(int $groupid, ?string $cursorMsgdate, int $cursorMsgid): Collection
-    {
-        $query = Message::select(
-                'messages.*',
-                'messages_groups.groupid as mg_groupid',
-                'messages_groups.arrival as mg_arrival',
-                'messages_groups.msgid as mg_msgid'
-            )
-            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
-            ->where('messages_groups.groupid', $groupid)
-            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
-            ->where('messages_groups.deleted', 0)
-            ->whereNull('messages.deleted')
-            // Rippling posts (those with a rippling_reach row) are mailed by the
-            // expander-driven reach mailer (mailNewlyReachedForPost) — reach-gated and
-            // ledger-deduped — so exclude them here or the cursor digest would double-mail.
-            // Inert until the reach engine populates rippling_reach (no rows → no exclusion).
-            ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))->from('rippling_reach')
-                    ->whereColumn('rippling_reach.msgid', 'messages.id');
-            })
-            // V1 parity (Digest.php:218): a post with any outcome
-            // (Taken/Received/Withdrawn/...) is no longer available, so it
-            // must not appear in the immediate digest either.
-            ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('messages_outcomes')
-                    ->whereColumn('messages_outcomes.msgid', 'messages.id');
-            })
-            ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED]);
-
-        if ($cursorMsgdate) {
-            // (arrival, msgid) > (cursorMsgdate, cursorMsgid)
-            $query->whereRaw(
-                '(messages_groups.arrival > ? OR (messages_groups.arrival = ? AND messages_groups.msgid > ?))',
-                [$cursorMsgdate, $cursorMsgdate, $cursorMsgid]
-            );
-        }
-
-        return $query
-            ->orderBy('messages_groups.arrival', 'asc')
-            ->orderBy('messages_groups.msgid', 'asc')
-            // Bound the per-tick scan; the cursor advances to the last processed message so
-            // the next tick continues. Prevents an unbounded window on a busy group.
-            ->limit(500)
-            ->with($this->digestPostEagerLoads())
-            ->get();
-    }
-
-    /**
-     * Advance the per-group cursor to the latest approved post when every new message was
-     * rippling-excluded (so getGroupMessagesSinceCursor returned nothing to mail). Without
-     * this the cursor would never move past reach posts and the scan window would grow
-     * without bound after full rippling rollout. Mirrors getGroupMessagesSinceCursor's
-     * filters minus the reach exclusion, taking the newest (arrival, msgid) as the watermark.
-     */
-    protected function advanceCursorPastExcluded(int $groupid, ?string $cursorMsgdate, int $cursorMsgid, bool $dryRun): void
-    {
-        $watermark = DB::table('messages_groups as mg')
-            ->join('messages', 'messages.id', '=', 'mg.msgid')
-            ->where('mg.groupid', $groupid)
-            ->where('mg.collection', MessageGroup::COLLECTION_APPROVED)
-            ->where('mg.deleted', 0)
-            ->whereNull('messages.deleted')
-            ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED]);
-
-        if ($cursorMsgdate) {
-            $watermark->whereRaw(
-                '(mg.arrival > ? OR (mg.arrival = ? AND mg.msgid > ?))',
-                [$cursorMsgdate, $cursorMsgdate, $cursorMsgid]
-            );
-        }
-
-        $row = $watermark
-            ->orderByDesc('mg.arrival')->orderByDesc('mg.msgid')
-            ->select('mg.arrival', 'mg.msgid')
-            ->first();
-
-        if ($row) {
-            $this->advanceGroupCursor($groupid, $row->arrival, (int) $row->msgid, $dryRun);
-        }
-    }
-
-    /**
-     * Advance the per-group cursor after processing immediate-mode messages.
-     *
-     * Writes both msgid and msgdate so the next tick's tuple comparison
-     * lines up correctly even if two messages share an arrival timestamp.
-     */
-    protected function advanceGroupCursor(int $groupid, $msgdate, int $msgid, bool $dryRun): void
-    {
-        if ($dryRun) {
-            return;
-        }
-        DB::table('groups_digests')
-            ->where('groupid', $groupid)
-            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-            ->update([
-                'msgid' => $msgid,
-                'msgdate' => $msgdate,
-                'ended' => now(),
-            ]);
-    }
-
     /**
      * Parse the immediate-mode allowlist from config.
      *
@@ -1559,6 +976,7 @@ class UnifiedDigestService
         if (in_array('*', $parts, true)) {
             return ['*'];
         }
+
         return $parts === [] ? ['*'] : array_values($parts);
     }
 
@@ -1572,7 +990,7 @@ class UnifiedDigestService
      * single recipient (in addition to V1's mail) before any cutover.
      *
      * @return array [] = send to nobody; ['*'] = everyone; otherwise the
-     *               list of opted-in email addresses (lower/exact as given).
+     *                  list of opted-in email addresses (lower/exact as given).
      */
     protected function getDailyAllowlist(): array
     {
@@ -1585,11 +1003,13 @@ class UnifiedDigestService
         if (in_array('*', $parts, true)) {
             return ['*'];
         }
+
         return array_values($parts);
     }
 
     /**
-     * Constrain a memberships query to the cadences a digest mode serves.
+     * Constrain a query to the cadences a digest mode serves, against the single
+     * site-wide users.emailfrequency column (no longer a per-group value).
      *
      * Immediate matches exactly emailfrequency = -1. Daily collapses EVERY
      * periodic cadence into one roll-up: any value > 0 (hourly=1, 2h, 4h,
@@ -1598,28 +1018,27 @@ class UnifiedDigestService
      * those members would have no sender and silently stop receiving mail.
      * emailfrequency = 0 (NEVER) is an opt-out and is excluded from both.
      *
-     * @param \Illuminate\Contracts\Database\Query\Builder|\Illuminate\Database\Eloquent\Builder $query
-     * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
-     * @param string $column Column to constrain (qualified when joining)
+     * @param  \Illuminate\Contracts\Database\Query\Builder|\Illuminate\Database\Eloquent\Builder  $query
+     * @param  string  $mode  One of MODE_IMMEDIATE or MODE_DAILY
+     * @param  string  $column  Column to constrain (qualified when joining)
      */
     protected function applyDigestFrequency($query, string $mode, string $column = 'emailfrequency'): void
     {
         if ($mode === self::MODE_IMMEDIATE) {
-            $query->where($column, Membership::EMAIL_FREQUENCY_IMMEDIATE);
+            $query->where($column, -1);
         } else {
             // Any positive cadence — fold 1/2/4/8/24h all into daily.
-            $query->where($column, '>', Membership::EMAIL_FREQUENCY_NEVER);
+            $query->where($column, '>', 0);
         }
     }
 
     /**
      * Get users who should receive digests based on mode.
      *
-     * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
-     * @param int|null $userId Specific user ID to process
-     * @param int $shard Shard index (0..shards-1) for parallel daily workers
-     * @param int $shards Total shard count; users partitioned by MOD(users.id, shards)
-     * @return \Illuminate\Support\LazyCollection
+     * @param  string  $mode  One of MODE_IMMEDIATE or MODE_DAILY
+     * @param  int|null  $userId  Specific user ID to process
+     * @param  int  $shard  Shard index (0..shards-1) for parallel daily workers
+     * @param  int  $shards  Total shard count; users partitioned by MOD(users.id, shards)
      */
     protected function getUsersForDigest(string $mode, ?int $userId = null, int $shard = 0, int $shards = 1): \Illuminate\Support\LazyCollection
     {
@@ -1646,9 +1065,9 @@ class UnifiedDigestService
         // Daily-mode horizontal sharding: partition the userbase across
         // parallel workers by MOD(users.id, shards) so each user is owned by
         // exactly one shard (disjoint partitions, no inter-worker locking).
-        // An explicit --user bypasses this. Immediate mode shards by group
-        // inside sendImmediateDigests instead, so don't double-shard here.
-        if ($mode === self::MODE_DAILY && !$userId && $shards > 1) {
+        // An explicit --user bypasses this. Immediate and reach mode shard by
+        // post inside sendReachDigests instead, so don't double-shard here.
+        if ($mode === self::MODE_DAILY && ! $userId && $shards > 1) {
             // Hash the id, don't MOD it directly. Under Galera/Percona the auto-increment
             // stride equals the cluster size (auto_increment_increment, 3 on a 3-node
             // cluster) and each node has a different offset, so users.id is NOT contiguous.
@@ -1659,32 +1078,15 @@ class UnifiedDigestService
             $query->whereRaw('CRC32(users.id) % ? = ?', [$shards, $shard]);
         }
 
-        // V1 parity (the legacy V1 PHP Digest implementation): per-group
-        // memberships.emailfrequency is authoritative at send time. The
-        // global users.settings.simplemail only acts as the join-time
-        // DEFAULT that populates a new membership's emailfrequency (see
-        // User.php SIMPLE_MAIL_* mapping) — once a per-group value
-        // exists, that value alone controls delivery. Without this
-        // alignment, a user with legacy simplemail='Full' who later
-        // switched some groups to Daily was being treated as a Full
-        // user for every group and getting immediate spam for groups
-        // they had explicitly downgraded.
-        //
-        // simplemail='None' remains an account-level opt-out per V1's
-        // User::sendOurMails(), so we exclude those users here.
-        //
-        // Daily mode collapses EVERY periodic cadence (hourly/2h/4h/8h/daily)
-        // into the one daily roll-up — see applyDigestFrequency(). With the
-        // per-group digest removed, those intermediate cadences would
-        // otherwise have no sender at all, so a member set to e.g. 4-hourly
-        // must still be picked up here rather than silently dropped.
-        $query->whereExists(function ($subquery) use ($mode) {
-            $subquery->select(DB::raw(1))
-                ->from('memberships')
-                ->whereColumn('memberships.userid', 'users.id')
-                ->where('memberships.collection', Membership::COLLECTION_APPROVED);
-            $this->applyDigestFrequency($subquery, $mode, 'memberships.emailfrequency');
-        })->where(function ($q) {
+        // users.emailfrequency is the single, site-wide authoritative cadence field
+        // (no longer per-group): -1 immediate, 0 never, >0 a periodic cadence
+        // (hourly=1, 2h, 4h, 8h, daily=24). Daily mode collapses EVERY periodic
+        // cadence into the one daily roll-up — see applyDigestFrequency(). With the
+        // per-group digest removed, those intermediate cadences would otherwise have
+        // no sender at all, so a user set to e.g. 4-hourly must still be picked up
+        // here rather than silently dropped.
+        $this->applyDigestFrequency($query, $mode, 'users.emailfrequency');
+        $query->where(function ($q) {
             $q->whereRaw("JSON_EXTRACT(users.settings, '$.simplemail') IS NULL")
                 ->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(users.settings, '$.simplemail')) != ?", [
                     User::SIMPLE_MAIL_NONE,
@@ -1711,7 +1113,7 @@ class UnifiedDigestService
                     'allowlist_count' => count($allowlist),
                 ]);
             }
-        } elseif ($mode === self::MODE_DAILY && !$userId) {
+        } elseif ($mode === self::MODE_DAILY && ! $userId) {
             // Once-per-day guard. The daily digest sends incrementally off the
             // per-user users_digests cursor (everything since lastmsgid), so if
             // the command is invoked more than once in a day — a manual resume,
@@ -1787,11 +1189,11 @@ class UnifiedDigestService
         // never gets a turn — while lower ids get re-sent. Overdue-first rotates the lag fairly
         // across everyone and self-corrects: as throughput rises (optimisation/hardware) the
         // window reaches further down the queue until it completes. See streamDailyOverdueFirst.
-        if ($mode === self::MODE_DAILY && !$userId) {
+        if ($mode === self::MODE_DAILY && ! $userId) {
             return $this->streamDailyOverdueFirst($query, 500);
         }
 
-        return $query->with(['emails', 'memberships'])->lazyById(500);
+        return $query->with(['emails'])->lazyById(500);
     }
 
     /**
@@ -1806,7 +1208,7 @@ class UnifiedDigestService
      */
     protected function streamDailyOverdueFirst(\Illuminate\Database\Eloquent\Builder $query, int $chunk): \Illuminate\Support\LazyCollection
     {
-        $eager = ['emails', 'memberships'];
+        $eager = ['emails'];
         $joinDaily = function ($j) {
             $j->on('ud_ord.userid', '=', 'users.id')->where('ud_ord.mode', '=', self::MODE_DAILY);
         };
@@ -1872,13 +1274,10 @@ class UnifiedDigestService
      * Send the daily roll-up to a specific user: every new post since their previous send,
      * bundled into one email.
      *
-     * DAILY ONLY. sendDigests() routes immediate to sendImmediateDigests (the per-group cursor
-     * walk) and reach to sendReachDigests, and each of those mails one post at a time itself.
-     * $mode is still carried because the tracker row and the mailable are keyed on it, not
-     * because this method branches on it.
+     * DAILY ONLY. sendDigests() routes both immediate and reach mode to sendReachDigests,
+     * which mails one post at a time itself. $mode is still carried because the tracker row
+     * and the mailable are keyed on it, not because this method branches on it.
      *
-     * @param User $user
-     * @param string $mode
      * @return array{status: 'sent'|'no_posts'|'skipped'|'suppressed', count: int}
      */
     protected function sendDigestToUser(User $user, string $mode, bool $dryRun = false): array
@@ -1891,8 +1290,9 @@ class UnifiedDigestService
 
         $email = $user->email_preferred;
 
-        if (!$email) {
+        if (! $email) {
             Log::debug("UnifiedDigestService: User {$user->id} has no email address");
+
             return ['status' => 'skipped', 'count' => 0];
         }
 
@@ -1902,7 +1302,7 @@ class UnifiedDigestService
         // gap and sends exactly one catch-up digest covering it, rather than
         // one stale digest per day missed. That is the entire catch-up
         // mechanism for digests - no replay queue needed.
-        if ($this->suppressions()->shouldSkip($email, (int) $user->id, 'digest_' . $mode)) {
+        if ($this->suppressions()->shouldSkip($email, (int) $user->id, 'digest_'.$mode)) {
             return ['status' => 'suppressed', 'count' => 0];
         }
 
@@ -1918,7 +1318,7 @@ class UnifiedDigestService
         // per-member reach-gate, so they recur every day until the goods are gone. Fetched and
         // deduplicated separately, and never fed to the cursor (updateDigestTracker uses only
         // $allPosts), so a pinned post never suppresses itself on the next run.
-        $pinnedCards = $this->deduplicatePosts($this->getPinnedOpenPostsForUser($user));
+        $pinnedCards = $this->deduplicatePosts($this->getPinnedOpenPostsForUser());
 
         if ($allPosts->isEmpty() && $pinnedCards->isEmpty()) {
             return ['status' => 'no_posts', 'count' => 0];
@@ -1927,7 +1327,7 @@ class UnifiedDigestService
         // available  = no outcome at all (the live posts)
         // completed  = a Taken/Received outcome (the "came and went" list, daily only)
         // withdrawn/expired (has_outcome && !has_success) appear in neither.
-        $posts = $allPosts->filter(fn ($p) => !$p->has_outcome)->values();
+        $posts = $allPosts->filter(fn ($p) => ! $p->has_outcome)->values();
 
         // Order the live posts by the rippling digest-preview score (nearer +
         // newer + less-seen float up), matching the /rippling "Digest preview".
@@ -1963,9 +1363,10 @@ class UnifiedDigestService
             // examined (incl. completed/withdrawn) so they don't re-surface,
             // and don't send a completed-only digest. Anything carried over was
             // examined too and did not make it, so it is not carried again.
-            if (!$dryRun) {
+            if (! $dryRun) {
                 $this->updateDigestTracker($digestTracker, $allPosts, false, []);
             }
+
             return ['status' => 'no_posts', 'count' => 0];
         }
 
@@ -1984,16 +1385,16 @@ class UnifiedDigestService
         if ($deduplicatedPosts->isEmpty() && $pinnedCards->isEmpty()) {
             // Nothing to send, but still advance the tracker past these posts
             // so the next tick doesn't re-fetch and re-filter the same set.
-            if (!$dryRun) {
+            if (! $dryRun) {
                 $this->updateDigestTracker($digestTracker, $allPosts, false, []);
             }
+
             return ['status' => 'no_posts', 'count' => 0];
         }
 
-        // Sponsors. The roll-up spans all the user's groups, so the cross-group union is
-        // right. (The immediate paths scope sponsors per-post to that post's group instead -
-        // V1 parity, one group's email, one group's sponsors.)
-        $sponsors = $this->getSponsorsForUser($user);
+        // No sponsors are attached to a digest: sponsorship was scoped per group, and
+        // there is no site-wide replacement now the site is national.
+        $sponsors = collect();
 
         // Put the pinned posts (paid bulk-offer clearances) at the very TOP of the daily
         // digest, dropping any that also appear in the normal window set so they are not
@@ -2009,7 +1410,7 @@ class UnifiedDigestService
 
         // Daily mode: one rolled-up digest. $completedPosts (the "came and
         // went" Taken/Received set) was partitioned from the same query above.
-        if (!$dryRun) {
+        if (! $dryRun) {
             $digest = new UnifiedDigest($user, $deduplicatedPosts, $mode, $sponsors, $completedPosts);
             app(\App\Services\EmailSpoolerService::class)->spool($digest, emailType: 'digest_daily');
             // Advance the cursor past everything examined this window (live,
@@ -2033,10 +1434,6 @@ class UnifiedDigestService
      *
      * A fresh tracker keeps the null sentinel, which getPostsForUser reads as "the last 24
      * hours", which is what a daily digest member expects on their first send.
-     *
-     * @param User $user
-     * @param string $mode
-     * @return UserDigest
      */
     protected function getOrCreateDigestTracker(User $user, string $mode): UserDigest
     {
@@ -2053,33 +1450,9 @@ class UnifiedDigestService
     }
 
     /**
-     * Get all posts for a user from their member groups since last digest.
-     *
-     * V1 parity (the legacy V1 PHP Digest implementation): per-group
-     * memberships.emailfrequency is authoritative at send time. The
-     * global users.settings.simplemail is NEVER consulted here — it
-     * only sets the join-time default for emailfrequency on new
-     * memberships. So a user with simplemail='Full' who later switched
-     * one group to Daily must receive ONLY a daily roll-up for that
-     * group from this method, not posts from every group they belong
-     * to. This is the bug that caused user 801 (Emma, Richmond Upon
-     * Thames) to be flooded with immediate emails for groups she had
-     * explicitly downgraded.
-     *
-     * @param User $user
-     * @param UserDigest $tracker
-     * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
-     * @return Collection
-     */
-    /**
      * Column-constrained eager-load spec for digest posts, shared by every digest
      * query so they load the same lean set.
      *
-     * - groups: only the display-name columns. The default (groups.*) pulls each
-     *   group's boundary polygons (poly/polyofficial/polyindex) plus settings/
-     *   welcomemail/description — none of which a digest renders — and that was
-     *   ~27% of per-user DB time. The digest only needs id + nameshort/namefull
-     *   (namedisplay derives from those).
      * - attachments: the primary-photo pointer columns plus externalmods. The email
      *   digest shows one photo per post (getPrimaryAttachment) and ignores externalmods,
      *   but the daily-posts PUSH shares this eager-load and its collage prefers a real
@@ -2093,7 +1466,6 @@ class UnifiedDigestService
         return [
             'attachments' => fn ($q) => $q->select('id', 'msgid', 'primary', 'externaluid', 'externalurl', 'archived', 'externalmods'),
             'fromUser',
-            'groups' => fn ($q) => $q->select('groups.id', 'groups.nameshort', 'groups.namefull'),
         ];
     }
 
@@ -2112,7 +1484,7 @@ class UnifiedDigestService
      * Fails closed, because RingIndex does: no rings means no rescue, which shows
      * the committed reach only rather than mailing a post nobody can open.
      *
-     * @param array $latlng [lat, lng] - the member's location.
+     * @param  array  $latlng  [lat, lng] - the member's location.
      * @return array{0: string, 1: array} SQL fragment (may be empty) and its bindings.
      */
     private function ringRescueIds(User $user, array $latlng): array
@@ -2136,7 +1508,7 @@ class UnifiedDigestService
         }
 
         return [
-            ' AND rr.msgid NOT IN (' . implode(',', array_fill(0, count($ids), '?')) . ')',
+            ' AND rr.msgid NOT IN ('.implode(',', array_fill(0, count($ids), '?')).')',
             $ids,
         ];
     }
@@ -2154,12 +1526,6 @@ class UnifiedDigestService
      */
     public function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
-        $groupIds = collect($this->digestGroupIdsForUser($user, $mode));
-
-        if ($groupIds->isEmpty()) {
-            return collect();
-        }
-
         // Two outcome flags come back with the posts so the caller can partition in
         // PHP rather than going back to the database:
         //   has_outcome   — any outcome row exists (Taken/Received/Withdrawn/…)
@@ -2168,11 +1534,11 @@ class UnifiedDigestService
         // withdrawn/expired (has_outcome && !has_success) are dropped by the
         // caller. V1 parity (Digest.php:218 only lists count(outcomes)==0 as
         // available); matches the platform browse/map dropping any outcome.
-        $successList = "'" . Message::OUTCOME_TAKEN . "','" . Message::OUTCOME_RECEIVED . "'";
+        $successList = "'".Message::OUTCOME_TAKEN."','".Message::OUTCOME_RECEIVED."'";
 
         // Built fresh per arm. The window and the carryover are two queries, not one, and
         // each needs its own builder - see the comment on the two arms below.
-        $baseQuery = fn () => Message::select('messages.*', 'messages_groups.groupid', 'messages_groups.arrival')
+        $baseQuery = fn () => Message::select('messages.*')
             ->selectRaw('EXISTS(SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = messages.id) AS has_outcome')
             ->selectRaw("EXISTS(SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = messages.id AND mo.outcome IN ($successList)) AS has_success")
             // Engagement signal for the rippling 'budget' (underexposure) score term;
@@ -2186,13 +1552,10 @@ class UnifiedDigestService
             // already-seen posts in the daily order, mirroring the browse feed's
             // unseen-first sort which reads the same signal.
             ->selectRaw('EXISTS(SELECT 1 FROM messages_likes mlseen WHERE mlseen.msgid = messages.id AND mlseen.userid = ? AND mlseen.type = ?) AS seen_by_user', [$user->id, 'View'])
-            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
-            ->whereIn('messages_groups.groupid', $groupIds)
-            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
-            ->where('messages_groups.deleted', 0)
+            ->where('messages.collection', Message::COLLECTION_APPROVED)
             ->whereNull('messages.deleted')
             ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
-            ->orderBy('messages_groups.arrival', 'asc');
+            ->orderBy('messages.arrival', 'asc');
 
         // The exclusions both arms share. Resolved ONCE - the reach gate calls the spatial
         // index and the routing labels, and asking them twice would be both slower and
@@ -2253,7 +1616,7 @@ class UnifiedDigestService
             $inSql = '';
             $inParams = [];
             if ($containing !== []) {
-                $inSql = ' AND rr.msgid NOT IN (' . implode(',', array_fill(0, count($containing), '?')) . ')';
+                $inSql = ' AND rr.msgid NOT IN ('.implode(',', array_fill(0, count($containing), '?')).')';
                 $inParams = $containing;
             }
             // Exclude a post when a reach row exists, the member is not in
@@ -2279,24 +1642,26 @@ class UnifiedDigestService
 
         // TWO ARMS, DELIBERATELY TWO QUERIES.
         //
-        // The window is everything since the cursor. The carryover is the posts the member's
-        // last digest had to leave out at the post cap, which are older than the cursor by
-        // construction. They used to be one query with the carryover ORed into the window.
-        // That cost the groupid(groupid,collection,deleted,arrival) index: the OR puts a
-        // predicate on messages.id inside a range whose column is messages_groups.arrival,
-        // MySQL cannot index-merge across the two tables, and with ORDER BY arrival ASC LIMIT
-        // it falls back to walking the arrival index from the oldest of 11M rows. Measured on
-        // production, same member and same moment: 60-74s ORed against 0.29s with the
-        // carryover arm taken out. At that cost every daily shard sits inside this one query
-        // and the run cannot finish inside its window at all.
+        // The window is everything since the cursor: a range on messages.arrival, filtered
+        // by collection and type. The carryover is the posts the member's last digest had to
+        // leave out at the post cap, which are older than the cursor by construction: a
+        // primary-key lookup of at most DIGEST_POST_CAP ids.
         //
-        // Split, each arm gets the plan it should have: the window is a range on the groupid
-        // index, and the carryover is a primary-key lookup of at most DIGEST_POST_CAP ids.
+        // messages carries single-column indexes on collection and on arrival, not a
+        // composite of the two. ORing the carryover's id predicate into the window's arrival
+        // range gives MySQL no merge-friendly plan across the two single-column indexes, and
+        // with ORDER BY arrival ASC LIMIT it falls back to walking the arrival index from the
+        // oldest of 11M rows: measured 60-74s combined against 0.29s split across two queries,
+        // same member and same moment.
+        //
+        // Split, each arm gets the plan it should have: the window is a range on the arrival
+        // index filtered by collection/type, and the carryover is a primary-key lookup of at
+        // most DIGEST_POST_CAP ids.
         $window = $armFor();
         if ($tracker->lastmsgdate) {
-            $window->where('messages_groups.arrival', '>', $tracker->lastmsgdate);
+            $window->where('messages.arrival', '>', $tracker->lastmsgdate);
         } else {
-            $window->where('messages_groups.arrival', '>=', now()->subDay());
+            $window->where('messages.arrival', '>=', now()->subDay());
         }
 
         // Bound the load (see DIGEST_LOAD_CAP): oldest-first + this limit means a member who
@@ -2319,13 +1684,11 @@ class UnifiedDigestService
                 ->concat($posts);
         }
 
-        // De-duplicate on the (msgid, groupid) PAIR. A carried post whose arrival is also
-        // inside the window satisfies both arms and comes back from both - 234 rows of 1,921
-        // in the production sample. It must NOT be collapsed by msgid alone: this query
-        // deliberately returns one row per copy of a cross-posted item, and deduplicatePosts()
-        // downstream needs all of them to pick the representative copy.
+        // De-duplicate on id. A carried post whose arrival is also inside the window
+        // satisfies both arms and comes back twice; the site is national, so a message has
+        // exactly one row and there is no per-copy id to distinguish.
         return $posts
-            ->unique(fn ($post) => (int) $post->id . ':' . (int) $post->groupid)
+            ->unique('id')
             ->sortBy('arrival')
             ->take(self::DIGEST_LOAD_CAP)
             ->values()
@@ -2333,37 +1696,27 @@ class UnifiedDigestService
     }
 
     /**
-     * Open pinned posts (paid bulk-offer clearances) on any of the recipient's approved groups,
-     * to be force-included at the TOP of their daily digest.
+     * Open pinned posts (paid bulk-offer clearances), force-included at the TOP of every
+     * member's daily digest.
      *
-     * "Open" mirrors getPostsForUser: Approved on the group, not deleted, an Offer/Wanted, and
-     * with NO outcome (Taken/Received/Withdrawn/Expired). Deliberately NOT window-limited and NOT
-     * reach-gated, so a pinned post recurs in every daily digest until it closes.
+     * "Open" mirrors getPostsForUser: Approved, not deleted, an Offer/Wanted, and with NO
+     * outcome (Taken/Received/Withdrawn/Expired). Deliberately NOT window-limited and NOT
+     * reach-gated, so a pinned post recurs in every daily digest, for every member, until it
+     * closes.
      *
-     * @return Collection of Message (each with ->groupid, ->arrival, and has_outcome/has_success=0)
+     * @return Collection of Message (each with has_outcome/has_success=0)
      */
-    private function getPinnedOpenPostsForUser(User $user): Collection
+    private function getPinnedOpenPostsForUser(): Collection
     {
-        $groupIds = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->pluck('groupid');
-
-        if ($groupIds->isEmpty()) {
-            return collect();
-        }
-
-        return Message::select('messages.*', 'messages_groups.groupid', 'messages_groups.arrival')
+        return Message::select('messages.*')
             // Live posts only: no outcome (so has_outcome/has_success are constant 0 — the caller
             // treats these as available, matching the flags getPostsForUser computes).
             ->selectRaw('0 AS has_outcome')
             ->selectRaw('0 AS has_success')
             ->selectRaw("(SELECT COALESCE(SUM(ml.count),0) FROM messages_likes ml WHERE ml.msgid = messages.id AND ml.type = 'View') AS views")
             ->selectRaw("(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = messages.id AND cm.type = 'Interested' AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies")
-            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
             ->join('messages_pinned', 'messages_pinned.msgid', '=', 'messages.id')
-            ->whereIn('messages_groups.groupid', $groupIds)
-            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
-            ->where('messages_groups.deleted', 0)
+            ->where('messages.collection', Message::COLLECTION_APPROVED)
             ->whereNull('messages.deleted')
             ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
             ->whereNotExists(function ($q) {
@@ -2371,7 +1724,7 @@ class UnifiedDigestService
                     ->from('messages_outcomes')
                     ->whereColumn('messages_outcomes.msgid', 'messages.id');
             })
-            ->orderBy('messages_groups.arrival', 'desc')
+            ->orderBy('messages.arrival', 'desc')
             ->with($this->digestPostEagerLoads())
             ->get();
     }
@@ -2419,9 +1772,9 @@ class UnifiedDigestService
      * (the overwhelming majority — checked via maxDistanceMiles() before any
      * haversine is computed, so that fast path costs nothing extra).
      *
-     * @param array{0:float,1:float}|null $recipientLatLng Recipient's resolved point.
-     * @param mixed $lat Post/message latitude (numeric or null).
-     * @param mixed $lng Post/message longitude (numeric or null).
+     * @param  array{0:float,1:float}|null  $recipientLatLng  Recipient's resolved point.
+     * @param  mixed  $lat  Post/message latitude (numeric or null).
+     * @param  mixed  $lng  Post/message longitude (numeric or null).
      */
     /**
      * Narrow a post collection to the ones inside the member's distance preference.
@@ -2479,7 +1832,7 @@ class UnifiedDigestService
             return true;
         }
 
-        if (!config('freegle.ripple.distance_filter.enabled', true)) {
+        if (! config('freegle.ripple.distance_filter.enabled', true)) {
             return true;
         }
 
@@ -2544,13 +1897,13 @@ class UnifiedDigestService
 
     private function driveMinutes(): \App\Services\Ripple\DriveMinutesService
     {
-        return $this->driveMinutesService ??= new \App\Services\Ripple\DriveMinutesService();
+        return $this->driveMinutesService ??= new \App\Services\Ripple\DriveMinutesService;
     }
 
     /**
      * The post author's OUTBOUND distance cap in miles (settings.browseMaxDistance),
      * memoised per author id so repeated posts by the same freegler — across
-     * recipients and groups within a run — cost a single lookup. Absent author or
+     * many recipients within a run — cost a single lookup. Absent author or
      * absent/sentinel setting resolves to DISTANCE_UNLIMITED (no outbound cap).
      *
      * Uses authorMaxDistanceMiles, NOT maxDistanceMiles: the latter falls back to the
@@ -2561,7 +1914,7 @@ class UnifiedDigestService
 
     private function authorMaxMiles(int $fromuser): float
     {
-        if (!array_key_exists($fromuser, $this->authorMaxMilesCache)) {
+        if (! array_key_exists($fromuser, $this->authorMaxMilesCache)) {
             $author = User::select('id', 'settings')->find($fromuser);
             $this->authorMaxMilesCache[$fromuser] = $author
                 ? app(DistancePreferenceFilter::class)->authorMaxDistanceMiles($author)
@@ -2612,10 +1965,10 @@ class UnifiedDigestService
      */
     private function reachRadiusFromRow(?object $row, float $default): float
     {
-        if (!$row) {
+        if (! $row) {
             return $default;
         }
-        if (!empty($row->outer_env) && preg_match_all('/(-?\d+\.?\d*) (-?\d+\.?\d*)/', (string) $row->outer_env, $m, PREG_SET_ORDER)) {
+        if (! empty($row->outer_env) && preg_match_all('/(-?\d+\.?\d*) (-?\d+\.?\d*)/', (string) $row->outer_env, $m, PREG_SET_ORDER)) {
             $best = 0.0;
             foreach ($m as $pt) {
                 $d = $this->haversineMetres((float) $row->oy, (float) $row->ox, (float) $pt[2], (float) $pt[1]);
@@ -2630,8 +1983,6 @@ class UnifiedDigestService
 
         return $default;
     }
-
-
 
     /**
      * Prime {@see $reachRadiusCache} for a whole batch of posts in a SINGLE query.
@@ -2650,7 +2001,7 @@ class UnifiedDigestService
         $ids = [];
         foreach ($posts as $post) {
             $mid = (int) $post->id;
-            if (!array_key_exists($mid, $this->reachRadiusCache)) {
+            if (! array_key_exists($mid, $this->reachRadiusCache)) {
                 $ids[$mid] = true;
             }
         }
@@ -2674,7 +2025,7 @@ class UnifiedDigestService
         // Any requested msgid with no rippling_reach row (rippling dark, or backlog
         // posts before go-live): cache the default so it isn't re-queried per recipient.
         foreach ($ids as $mid) {
-            if (!array_key_exists($mid, $this->reachRadiusCache)) {
+            if (! array_key_exists($mid, $this->reachRadiusCache)) {
                 $this->reachRadiusCache[$mid] = $default;
             }
         }
@@ -2747,7 +2098,7 @@ class UnifiedDigestService
                 $ageH,
                 (int) ($post->views ?? 0),
                 (int) ($post->replies ?? 0),
-                false, // anchor/home-group not yet implemented; see /rippling (digest_simulator.go homeGroups). Default weight 0.
+                false, // anchor/home-area not yet implemented; see /rippling (digest_simulator.go homeGroups). Default weight 0.
                 $weights,
                 $env,
                 $driveMinutes
@@ -2784,6 +2135,7 @@ class UnifiedDigestService
             ->sortBy('_dist')->take(2)->values();
         $closestIds = $closest->pluck('id')->all();
         $rest = $sorted->reject(fn ($p) => in_array($p->id, $closestIds, true))->values();
+
         return $closest->concat($rest)->values();
     }
 
@@ -2841,8 +2193,8 @@ class UnifiedDigestService
      * A card with no arrival is not carried: pinned clearances are force-included every day
      * regardless of the cursor (getPinnedOpenPostsForUser), so carrying one is pointless.
      *
-     * @param int[] $droppedIds msgids the email could not fit - UnifiedDigest::droppedPostIds()
-     * @param Collection $cards the cards the digest was built from ($card['message'] per card)
+     * @param  int[]  $droppedIds  msgids the email could not fit - UnifiedDigest::droppedPostIds()
+     * @param  Collection  $cards  the cards the digest was built from ($card['message'] per card)
      * @return int[]
      */
     private function carryoverFrom(array $droppedIds, Collection $cards): array
@@ -2858,7 +2210,7 @@ class UnifiedDigestService
             $card = $byId->get((int) $id);
             $post = $card['message'] ?? null;
 
-            if (!$post || !empty($post->seen_by_user) || empty($post->arrival)) {
+            if (! $post || ! empty($post->seen_by_user) || empty($post->arrival)) {
                 return false;
             }
 
@@ -2889,59 +2241,38 @@ class UnifiedDigestService
     }
 
     /**
-     * Deduplicate posts that are cross-posted to multiple groups.
+     * Collapse duplicate rows of the same item into one card per distinct body.
      *
-     * Two posts are considered duplicates when ALL of the following match:
-     * - Same fromuser
-     * - Same item name (from subject)
-     * - Same location
-     * - Same body, OR the same tnpostid (a definitive match for TN cross-posts)
+     * A single key can hold several distinct-body items (e.g. the same poster
+     * reposts one item with a slightly reworded body, or posts two genuinely
+     * different things at one location under the same subject), so every
+     * distinct-body representative is kept, not just the first (Discourse
+     * #9850: a reworded repost stopped collapsing into the original because
+     * only the first entry per key was ever tried as a merge target).
      *
-     * There is no time rule here: the window is whatever the caller passed, which for a digest
-     * is the digest's own window. The per-message paths, which have no such window of their
-     * own, get one from itemSiblingMsgids() (ITEM_DEDUP_DAYS).
-     *
-     * @param Collection $posts
-     * @return Collection Collection of deduplicated posts with 'groups' array
+     * @return Collection<int,array{message:Message}>
      */
     public function deduplicatePosts(Collection $posts): Collection
     {
         $deduplicated = collect();
-        // key => LIST of entry indices sharing that dedup key. A single key can hold several
-        // distinct-body items (e.g. the same poster reposts one item with slightly reworded body,
-        // or posts two genuinely different things at one location under the same subject), so we
-        // must keep every distinct-body representative — not just the first. Keying on only the
-        // first meant the SECOND item's cross-post/ripple copies kept failing bodiesMatch against
-        // the wrong representative and each got pushed as its own card, so a reposted item that
-        // rippled into N groups showed N times in the digest (Discourse #9850: linda_rowlands' bed
-        // 10x — one repost collapsed, the reworded repost's 10 rippled copies did not).
         $processed = [];
 
         foreach ($posts as $post) {
             $key = $this->getDeduplicationKey($post);
             $merged = false;
 
-            // Merge into the first same-key representative whose body matches (true duplicate,
-            // incl. every cross-post/ripple copy of the same message). bodiesMatch still keeps two
-            // genuinely different items sharing a subject+location apart.
             foreach ($processed[$key] ?? [] as $existingIndex) {
                 $existing = $deduplicated[$existingIndex];
                 if ($this->bodiesMatch($existing['message'], $post)) {
-                    $existing['postedToGroups'][] = $post->groupid;
-                    $deduplicated[$existingIndex] = $existing;
                     $merged = true;
                     break;
                 }
             }
 
-            if (!$merged) {
-                // No body-matching representative yet — a new distinct post. Register it under the
-                // key so its OWN later copies collapse into it (the fix: previously only the very
-                // first post per key was ever a merge target).
+            if (! $merged) {
                 $index = $deduplicated->count();
                 $deduplicated->push([
                     'message' => $post,
-                    'postedToGroups' => [$post->groupid],
                 ]);
                 $processed[$key][] = $index;
             }
@@ -2970,13 +2301,13 @@ class UnifiedDigestService
      * Group message ids by ITEM, the way the daily digest groups cards.
      *
      * The immediate paths mail one message at a time, so on their own they mail once per COPY:
-     * a member in two groups a poster hand-cross-posted to, or holding an unmerged
-     * TrashNothing set, gets the same thing twice within minutes. The daily digest already
+     * a member holding an unmerged TrashNothing set of the same post gets the same thing twice
+     * within minutes. The daily digest already
      * collapses copies (deduplicatePosts); this exposes the same decision to the per-message
      * paths, reusing getDeduplicationKey() and bodiesMatch() rather than restating them, so the
      * two can never drift.
      *
-     * @param int[] $msgids
+     * @param  int[]  $msgids
      * @return array<int,int[]> msgid => the msgids that are the same item, including itself
      */
     public function itemSiblingMsgids(array $msgids): array
@@ -2990,9 +2321,9 @@ class UnifiedDigestService
         // which asks about the same posts once per member of a group. Safe against a copy
         // appearing mid-run: the copy is a new id, so it gets its own lookup, and that lookup
         // sees the earlier post.
-        $wanted = array_values(array_filter($msgids, fn ($id) => !isset($this->itemSiblingMemo[$id])));
+        $wanted = array_values(array_filter($msgids, fn ($id) => ! isset($this->itemSiblingMemo[$id])));
 
-        if (!empty($wanted)) {
+        if (! empty($wanted)) {
             $this->lookUpItemSiblings($wanted);
         }
 
@@ -3007,7 +2338,7 @@ class UnifiedDigestService
     /**
      * Do the lookup for msgids the memo does not hold yet, and memo the answers.
      *
-     * @param int[] $msgids
+     * @param  int[]  $msgids
      */
     private function lookUpItemSiblings(array $msgids): void
     {
@@ -3033,7 +2364,7 @@ class UnifiedDigestService
             ->whereIn('type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
             ->where(function ($q) use ($locations) {
                 $known = $locations->reject(fn ($v) => $v === null)->values()->all();
-                if (!empty($known)) {
+                if (! empty($known)) {
                     $q->orWhereIn('locationid', $known);
                 }
                 if ($locations->contains(null)) {
@@ -3076,21 +2407,14 @@ class UnifiedDigestService
     private array $itemSiblingMemo = [];
 
     /**
-     * The groups a digest of this mode draws on for this member.
+     * The site is national now, so a digest run no longer scopes to a set of groups; kept
+     * only for callers built around the old per-group shape.
      *
-     * Immediate pulls only the member's immediate (-1) groups; daily pulls every group on a
-     * periodic cadence (hourly/2h/4h/8h/daily), folding them all into the single daily roll-up.
-     * See applyDigestFrequency().
-     *
-     * @return int[]
+     * @return int[] always empty
      */
     public function digestGroupIdsForUser(User $user, string $mode): array
     {
-        $membershipQuery = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED);
-        $this->applyDigestFrequency($membershipQuery, $mode);
-
-        return $membershipQuery->pluck('groupid')->map(fn ($v) => (int) $v)->all();
+        return [];
     }
 
     /**
@@ -3105,18 +2429,18 @@ class UnifiedDigestService
      * slider - therefore treat every copy alike. A copy the cursor has passed is one the member
      * either received or was never going to.
      *
-     * @param int[] $msgids
-     * @param int[] $groupIds The member's groups for this digest mode.
-     * @param \DateTimeInterface|string|null $cursorMsgdate Where their mail got to last time.
+     * @param  int[]  $msgids
+     * @param  int[]  $groupIds  Unused; the site is national now, kept for callers built around
+     *                           the old per-group shape.
+     * @param  \DateTimeInterface|string|null  $cursorMsgdate  Where their mail got to last time.
      * @return array<int,true> msgid => true for the ones already covered
      */
     public function itemsCoveredBeforeCursor(
         array $msgids,
         \DateTimeInterface|string|null $cursorMsgdate,
         array $groupIds
-    ): array
-    {
-        if ($cursorMsgdate === null || empty($msgids) || empty($groupIds)) {
+    ): array {
+        if ($cursorMsgdate === null || empty($msgids)) {
             // No cursor means this is the member's first run: nothing has been covered yet, so
             // suppressing anything here would silently lose them a post.
             return [];
@@ -3128,7 +2452,7 @@ class UnifiedDigestService
         $olderCopies = [];
         foreach ($siblings as $msgid => $copies) {
             foreach ($copies as $copy) {
-                if ($copy !== $msgid && !isset($inBatch[$copy])) {
+                if ($copy !== $msgid && ! isset($inBatch[$copy])) {
                     $olderCopies[$copy] = true;
                 }
             }
@@ -3138,14 +2462,12 @@ class UnifiedDigestService
             return [];
         }
 
-        // Only copies on the member's own groups, and only those the cursor has passed.
-        $covered = DB::table('messages_groups')
-            ->whereIn('msgid', array_keys($olderCopies))
-            ->whereIn('groupid', $groupIds)
-            ->where('collection', MessageGroup::COLLECTION_APPROVED)
-            ->where('deleted', 0)
+        // Only copies the cursor has passed.
+        $covered = Message::whereIn('id', array_keys($olderCopies))
+            ->where('collection', Message::COLLECTION_APPROVED)
+            ->whereNull('deleted')
             ->where('arrival', '<=', $cursorMsgdate)
-            ->pluck('msgid')->map(fn ($v) => (int) $v)->flip()->all();
+            ->pluck('id')->map(fn ($v) => (int) $v)->flip()->all();
 
         $alreadyCovered = [];
         foreach ($siblings as $msgid => $copies) {
@@ -3165,14 +2487,13 @@ class UnifiedDigestService
      * run. Shared by the daily digest and the daily push so the inbox and the phone cannot
      * disagree about what counts as something they have already seen.
      *
-     * @param Collection $cards Entries of ['message' => Message, 'postedToGroups' => int[]]
+     * @param  Collection  $cards  Entries of ['message' => Message]
      */
     public function dropCardsAlreadyCovered(
         Collection $cards,
         \DateTimeInterface|string|null $cursorMsgdate,
         array $groupIds
-    ): Collection
-    {
+    ): Collection {
         if ($cards->isEmpty()) {
             return $cards;
         }
@@ -3195,7 +2516,7 @@ class UnifiedDigestService
      * item?" is one array lookup. Stable across runs for every copy of an item (the lowest
      * msgid in the set), so two copies seen in different runs land on the same entry.
      *
-     * @param int[] $msgids
+     * @param  int[]  $msgids
      * @return array<int,int> msgid => item id
      */
     public function itemIdsForMsgids(array $msgids): array
@@ -3211,48 +2532,19 @@ class UnifiedDigestService
     /**
      * Deduplicate the "came and went" (Taken/Received) posts.
      *
-     * The greyed daily came-and-went section renders Message objects, but it
-     * must collapse cross-posted items exactly the way the live section does.
-     * The previous ->unique('id') only caught the *same* msgid (one message on
-     * several groups); it left an item that was cross-posted as separate
-     * messages (different msgids, but the same tnpostid or
-     * fromuser+subject+location) showing once per group. Reuse deduplicatePosts()
-     * so the decision is identical, then take the representative message of each
-     * deduplicated group.
+     * The greyed daily came-and-went section renders Message objects, and must
+     * collapse the same item shown twice (a repost with a reworded body) the
+     * way the live section does. Reuses deduplicatePosts() so the decision is
+     * identical, then takes the representative message of each group.
      *
-     * @param Collection $posts Message objects (each with a ->groupid).
+     * @param  Collection  $posts  Message objects.
      * @return Collection of Message
      */
     public function deduplicateCompletedPosts(Collection $posts): Collection
     {
-        // Resolve groupid -> Group from the loaded ->groups of the input posts so
-        // we can reflect the merged cross-post groups back onto each
-        // representative — the came-and-went card reads ->groups for its byline.
-        $groupModels = [];
-        foreach ($posts as $post) {
-            if ($post->relationLoaded('groups')) {
-                foreach ($post->groups as $group) {
-                    $groupModels[$group->id] = $group;
-                }
-            }
-        }
-
-        return $this->deduplicatePosts($posts)->map(function ($deduped) use ($groupModels) {
-            $message = $deduped['message'];
-
-            // Show every group the item was posted to — parity with the live
-            // section's merged "Posted to: A, B" — by overriding the
-            // representative's ->groups with the union deduplicatePosts() built.
-            $merged = collect($deduped['postedToGroups'])->unique()
-                ->map(fn ($gid) => $groupModels[$gid] ?? null)
-                ->filter()
-                ->values();
-            if ($merged->isNotEmpty()) {
-                $message->setRelation('groups', $merged);
-            }
-
-            return $message;
-        })->values();
+        return $this->deduplicatePosts($posts)
+            ->map(fn ($deduped) => $deduped['message'])
+            ->values();
     }
 
     /**
@@ -3285,9 +2577,6 @@ class UnifiedDigestService
 
     /**
      * Generate a deduplication key for a message.
-     *
-     * @param Message $message
-     * @return string
      */
     protected function getDeduplicationKey(Message $message): string
     {
@@ -3315,9 +2604,6 @@ class UnifiedDigestService
     /**
      * Normalize a subject line for comparison.
      * Removes OFFER/WANTED prefix and location suffix.
-     *
-     * @param string $subject
-     * @return string
      */
     protected function normalizeSubject(string $subject): string
     {
@@ -3335,9 +2621,6 @@ class UnifiedDigestService
 
     /**
      * Update the digest tracker after sending.
-     *
-     * @param UserDigest $tracker
-     * @param Collection $posts
      */
     protected function updateDigestTracker(UserDigest $tracker, Collection $posts, bool $emailWasSent = false, ?array $carryover = null): void
     {
@@ -3375,83 +2658,13 @@ class UnifiedDigestService
     }
 
     /**
-     * Format the "Posted to" text for display.
+     * The site is national now, so a post is never shown as posted to more than
+     * one place. Kept only because it remains part of the public service surface.
      *
-     * @param array $groupIds
-     * @return string
+     * @param  array  $groupIds  unused
      */
     public function formatPostedTo(array $groupIds): string
     {
-        if (count($groupIds) <= 1) {
-            return '';
-        }
-
-        $groupNames = DB::table('groups')
-            ->whereIn('id', $groupIds)
-            ->pluck('nameshort');
-
-        return 'Posted to: ' . $groupNames->implode(', ');
+        return '';
     }
-
-    /**
-     * Get active sponsors for a user's groups, deduplicated.
-     *
-     * A sponsor like Essex County Council may sponsor multiple groups in
-     * the same area. In a unified digest, we show each sponsor once
-     * (the highest-amount entry wins for ordering) rather than repeating
-     * them per group.
-     *
-     * @param User $user
-     * @return Collection Deduplicated sponsor records
-     */
-    public function getSponsorsForUser(User $user): Collection
-    {
-        $groupIds = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->pluck('groupid');
-
-        if ($groupIds->isEmpty()) {
-            return collect();
-        }
-
-        // Fetch all active, visible sponsors for the user's groups.
-        $sponsors = DB::table('groups_sponsorship')
-            ->whereIn('groupid', $groupIds)
-            ->where('visible', TRUE)
-            ->where('startdate', '<=', now())
-            ->where('enddate', '>=', now()->startOfDay())
-            ->orderByDesc('amount')
-            ->get();
-
-        // Deduplicate by name — same sponsor across multiple groups
-        // appears once. Keep the entry with the highest amount (first
-        // in the result set due to ORDER BY amount DESC).
-        return $sponsors->unique('name')->values();
-    }
-
-    /**
-     * Active, visible sponsors for a SINGLE group.
-     *
-     * V1 parity for the immediate digest: an immediate email is about one
-     * group's post, so it must carry only that group's sponsors — not the
-     * union across every group the recipient belongs to (which is what
-     * {@see getSponsorsForUser} returns for the combined daily digest). No
-     * name-dedupe here: a single group can't list the same sponsor twice in a
-     * way that needs collapsing, and dropping the dedupe keeps the query cheap.
-     */
-    public function getSponsorsForGroup(int $groupId): Collection
-    {
-        if ($groupId <= 0) {
-            return collect();
-        }
-
-        return DB::table('groups_sponsorship')
-            ->where('groupid', $groupId)
-            ->where('visible', TRUE)
-            ->where('startdate', '<=', now())
-            ->where('enddate', '>=', now()->startOfDay())
-            ->orderByDesc('amount')
-            ->get();
-    }
-
 }

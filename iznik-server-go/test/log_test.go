@@ -65,45 +65,13 @@ func TestLogCreatesEntry(t *testing.T) {
 	db.Exec("DELETE FROM logs WHERE user = ? AND text = ?", userID, text)
 }
 
-func TestLogWithGroupID(t *testing.T) {
-	prefix := uniquePrefix("loggrp")
-	db := database.DBConn
-
-	// Create test data.
-	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-
-	// Create a log entry with group ID.
-	text := "Test group log entry"
-	entry := log.LogEntry{
-		Type:    log.LOG_TYPE_GROUP,
-		Subtype: log.LOG_SUBTYPE_JOINED,
-		Groupid: &groupID,
-		User:    &userID,
-		Text:    &text,
-	}
-
-	log.Log(entry)
-
-	// Verify the log entry was created with the group ID.
-	var foundGroupID uint64
-	db.Raw("SELECT groupid FROM logs WHERE user = ? AND type = ? ORDER BY id DESC LIMIT 1",
-		userID, log.LOG_TYPE_GROUP).Scan(&foundGroupID)
-
-	assert.Equal(t, groupID, foundGroupID, "Log entry should have correct group ID")
-
-	// Clean up.
-	db.Exec("DELETE FROM logs WHERE user = ? AND text = ?", userID, text)
-}
-
 func TestLogWithMessageID(t *testing.T) {
 	prefix := uniquePrefix("logmsg")
 	db := database.DBConn
 
 	// Create test data.
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	messageID := CreateTestMessage(t, userID, groupID, "Test message for log", 55.9533, -3.1883)
+	messageID := CreateTestMessage(t, userID, "Test message for log", 55.9533, -3.1883)
 
 	// Create a log entry with message ID.
 	text := "Test message log entry"

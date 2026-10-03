@@ -31,8 +31,7 @@ func TestReplyEligibleReach(t *testing.T) {
 
 	prefix := uniquePrefix("repelig")
 	posterID := CreateTestUser(t, prefix, "Poster")
-	group := CreateTestGroup(t, prefix)
-	mid := CreateTestMessage(t, posterID, group, "OFFER: reply-eligible test", 51.5, -0.1)
+	mid := CreateTestMessage(t, posterID, "OFFER: reply-eligible test", 51.5, -0.1)
 
 	// A viewer with a known location at (51.5, -0.1) — GetLatLng reads settings.mylocation.
 	viewerID := CreateTestUser(t, prefix+"v", "Viewer")
@@ -119,8 +118,7 @@ func TestReplyEligibleReachWhenMasterSwitchOff(t *testing.T) {
 
 	prefix := uniquePrefix("repeligtrial")
 	posterID := CreateTestUser(t, prefix, "Poster")
-	group := CreateTestGroup(t, prefix)
-	mid := CreateTestMessage(t, posterID, group, "OFFER: reply-eligible trial test", 51.5, -0.1)
+	mid := CreateTestMessage(t, posterID, "OFFER: reply-eligible trial test", 51.5, -0.1)
 	viewerID := CreateTestUser(t, prefix+"v", "Viewer")
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
@@ -160,8 +158,7 @@ func TestReplyEligibleDarkWhenNotRippling(t *testing.T) {
 
 	prefix := uniquePrefix("repeligoff")
 	posterID := CreateTestUser(t, prefix, "Poster")
-	group := CreateTestGroup(t, prefix)
-	mid := CreateTestMessage(t, posterID, group, "OFFER: reply-eligible dark test", 51.5, -0.1)
+	mid := CreateTestMessage(t, posterID, "OFFER: reply-eligible dark test", 51.5, -0.1)
 	viewerID := CreateTestUser(t, prefix+"v", "Viewer")
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)

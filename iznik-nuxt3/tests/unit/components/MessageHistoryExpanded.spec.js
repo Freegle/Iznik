@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import MessageHistoryExpanded from '~/components/MessageHistoryExpanded.vue'
 
-const { mockMessage, mockUser, mockGroup } = vi.hoisted(() => {
+const { mockMessage, mockUser } = vi.hoisted(() => {
   return {
     mockMessage: {
       id: 1,
@@ -11,7 +11,7 @@ const { mockMessage, mockUser, mockGroup } = vi.hoisted(() => {
       lat: 51.5,
       lng: -0.1,
       interacted: null,
-      groups: [{ groupid: 100, arrival: '2024-01-15T10:00:00Z' }],
+      arrival: '2024-01-15T10:00:00Z',
     },
     mockUser: {
       id: 200,
@@ -22,11 +22,6 @@ const { mockMessage, mockUser, mockGroup } = vi.hoisted(() => {
         openoffers: 2,
         openwanteds: 1,
       },
-    },
-    mockGroup: {
-      id: 100,
-      namedisplay: 'Test Group',
-      nameshort: 'testgroup',
     },
   }
 })
@@ -40,20 +35,12 @@ const mockUserStore = {
   byId: vi.fn().mockReturnValue(mockUser),
 }
 
-const mockGroupStore = {
-  get: vi.fn().mockReturnValue(mockGroup),
-}
-
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
 }))
 
 vi.mock('~/stores/user', () => ({
   useUserStore: () => mockUserStore,
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
 }))
 
 vi.mock('~/composables/useMe', () => ({
@@ -75,7 +62,6 @@ describe('MessageHistoryExpanded', () => {
     vi.clearAllMocks()
     mockMessageStore.byId.mockReturnValue(mockMessage)
     mockUserStore.byId.mockReturnValue(mockUser)
-    mockGroupStore.get.mockReturnValue(mockGroup)
   })
 
   function createWrapper(props = {}) {
@@ -148,22 +134,10 @@ describe('MessageHistoryExpanded', () => {
     })
   })
 
-  describe('group info', () => {
-    it('shows group name', () => {
-      const wrapper = createWrapper()
-      expect(wrapper.text()).toContain('Test Group')
-    })
-
+  describe('arrival', () => {
     it('shows arrival time', () => {
       const wrapper = createWrapper()
       expect(wrapper.text()).toContain('2 days ago')
-    })
-
-    it('links to group explore page', () => {
-      const wrapper = createWrapper()
-      const link = wrapper.find('a[href*="/explore/"]')
-      expect(link.exists()).toBe(true)
-      expect(link.attributes('href')).toContain('testgroup')
     })
   })
 

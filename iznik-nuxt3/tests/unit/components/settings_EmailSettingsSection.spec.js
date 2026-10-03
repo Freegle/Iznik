@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import EmailSettingsSection from '~/components/settings/EmailSettingsSection.vue'
 
-const { mockMe, mockMyGroups } = vi.hoisted(() => {
+// There is one national community now, not a per-group list, so email settings
+// are a single site-wide switch backed directly by fields on the user object
+// (emailfrequency/eventsallowed/volunteeringallowed), the same convention
+// already used here for relevantallowed/newslettersallowed.
+const { mockMe } = vi.hoisted(() => {
   const { ref } = require('vue')
   return {
     mockMe: ref({
@@ -20,44 +24,25 @@ const { mockMe, mockMyGroups } = vi.hoisted(() => {
       },
       relevantallowed: true,
       newslettersallowed: true,
+      emailfrequency: 24,
+      eventsallowed: true,
+      volunteeringallowed: true,
     }),
-    mockMyGroups: ref([
-      {
-        id: 1,
-        nameshort: 'testgroup',
-        namedisplay: 'Test Group',
-        profile: 'https://example.com/group.jpg',
-        role: 'Member',
-        emailfrequency: 24,
-        eventsallowed: true,
-        volunteeringallowed: true,
-      },
-    ]),
   }
 })
 
 const mockSaveAndGet = vi.fn()
-const mockSetGroup = vi.fn()
-const mockLeaveGroup = vi.fn()
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: mockMe,
-    myGroups: mockMyGroups,
   }),
 }))
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({
     saveAndGet: mockSaveAndGet,
-    setGroup: mockSetGroup,
-    leaveGroup: mockLeaveGroup,
   }),
-}))
-
-const mockGroupless = { value: false }
-vi.mock('~/composables/useGroupless', () => ({
-  useGroupless: () => mockGroupless.value,
 }))
 
 describe('EmailSettingsSection', () => {
@@ -78,19 +63,10 @@ describe('EmailSettingsSection', () => {
       },
       relevantallowed: true,
       newslettersallowed: true,
+      emailfrequency: 24,
+      eventsallowed: true,
+      volunteeringallowed: true,
     }
-    mockMyGroups.value = [
-      {
-        id: 1,
-        nameshort: 'testgroup',
-        namedisplay: 'Test Group',
-        profile: 'https://example.com/group.jpg',
-        role: 'Member',
-        emailfrequency: 24,
-        eventsallowed: true,
-        volunteeringallowed: true,
-      },
-    ]
   })
 
   function createWrapper() {
@@ -110,10 +86,6 @@ describe('EmailSettingsSection', () => {
             template: '<option :value="value"><slot /></option>',
             props: ['value'],
           },
-          'b-img': {
-            template: '<img :src="src" class="b-img" />',
-            props: ['src', 'lazy', 'rounded', 'thumbnail'],
-          },
           'nuxt-link': {
             template: '<a :href="to"><slot /></a>',
             props: ['to', 'noPrefetch'],
@@ -125,16 +97,18 @@ describe('EmailSettingsSection', () => {
           },
           SettingsGroup: {
             template:
-              '<div class="settings-group" :data-groupid="groupid" :data-leave="leave" @leave="$emit(\'leave\')" />',
+              '<div class="settings-group" :data-emailfrequency="emailfrequency" :data-eventsallowed="eventsallowed" :data-volunteeringallowed="volunteeringallowed" />',
             props: [
-              'groupid',
-              'leave',
               'emailfrequency',
-              'eventshide',
-              'volunteerhide',
+              'eventsallowed',
+              'volunteeringallowed',
               'label',
             ],
-            emits: ['leave', 'update:emailfrequency'],
+            emits: [
+              'update:emailfrequency',
+              'update:eventsallowed',
+              'update:volunteeringallowed',
+            ],
           },
           SettingsEmailInfo: {
             template: '<div class="settings-email-info" />',
@@ -171,35 +145,20 @@ describe('EmailSettingsSection', () => {
       expect(wrapper.find('.v-icon[data-icon="envelope"]').exists()).toBe(true)
     })
 
-    it('renders section content when myGroups exists', () => {
+    it('renders section content unconditionally - there is one national community', () => {
       const wrapper = createWrapper()
       expect(wrapper.find('.section-content').exists()).toBe(true)
-    })
-
-    it('renders message when no groups', async () => {
-      mockMyGroups.value = null
-      const wrapper = createWrapper()
-      await wrapper.vm.$nextTick()
-      expect(wrapper.text()).toContain(
+      expect(wrapper.text()).not.toContain(
         "You're not a member of any communities yet"
       )
     })
   })
 
-  describe('simple settings view', () => {
-    it('renders simple settings by default', () => {
+  describe('email level and settings toggle', () => {
+    it('renders the email level dropdown', () => {
       const wrapper = createWrapper()
       expect(wrapper.find('.email-select').exists()).toBe(true)
-    })
-
-    it('renders email level label', () => {
-      const wrapper = createWrapper()
       expect(wrapper.text()).toContain('Email level:')
-    })
-
-    it('renders email level dropdown', () => {
-      const wrapper = createWrapper()
-      expect(wrapper.find('select').exists()).toBe(true)
     })
 
     it('renders three email level options', () => {
@@ -226,20 +185,32 @@ describe('EmailSettingsSection', () => {
       expect(wrapper.text()).toContain('Standard')
     })
 
-    it('renders Show advanced settings button', () => {
+    it('has no Show advanced settings button - the advanced options are always visible', () => {
       const wrapper = createWrapper()
-      expect(wrapper.find('.link-btn').exists()).toBe(true)
-      expect(wrapper.text()).toContain('Show advanced settings')
+      expect(wrapper.find('.link-btn').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Show advanced settings')
     })
 
-    it('renders SettingsGroup component when not None', () => {
+    it('renders SettingsGroup bound to the site-wide settings when not None', () => {
       const wrapper = createWrapper()
-      expect(wrapper.find('.settings-group').exists()).toBe(true)
+      const settingsGroup = wrapper.find('.settings-group')
+      expect(settingsGroup.exists()).toBe(true)
+      expect(settingsGroup.attributes('data-emailfrequency')).toBe('24')
+      expect(settingsGroup.attributes('data-eventsallowed')).toBe('true')
+      expect(settingsGroup.attributes('data-volunteeringallowed')).toBe('true')
     })
 
-    it('renders SettingsEmailInfo component when not None', () => {
+    it('renders SettingsEmailInfo when not None', () => {
       const wrapper = createWrapper()
       expect(wrapper.find('.settings-email-info').exists()).toBe(true)
+    })
+
+    it('hides SettingsGroup and SettingsEmailInfo when level is None', async () => {
+      const wrapper = createWrapper()
+      wrapper.vm.simpleEmailSettingLocal = 'None'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.settings-group').exists()).toBe(false)
+      expect(wrapper.find('.settings-email-info').exists()).toBe(false)
     })
   })
 
@@ -274,85 +245,7 @@ describe('EmailSettingsSection', () => {
     })
   })
 
-  describe('empty groups message', () => {
-    it('shows join message when no groups', async () => {
-      mockMyGroups.value = []
-      const wrapper = createWrapper()
-      await wrapper.vm.$nextTick()
-      expect(wrapper.text()).toContain(
-        'Join a community to set email preferences'
-      )
-    })
-  })
-
-  describe('advanced settings view', () => {
-    it('shows advanced settings when toggled', async () => {
-      const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
-      expect(wrapper.find('.advanced-options').exists()).toBe(true)
-    })
-
-    it('shows group settings when advanced', async () => {
-      const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
-      expect(wrapper.find('.group-settings').exists()).toBe(true)
-    })
-
-    it('renders group header with link', async () => {
-      const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
-      expect(wrapper.find('.group-header').exists()).toBe(true)
-      expect(wrapper.find('.group-link').exists()).toBe(true)
-    })
-
-    it('shows group name', async () => {
-      const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
-      expect(wrapper.text()).toContain('Test Group')
-    })
-
-    it('shows crown icon for moderators', async () => {
-      mockMyGroups.value = [{ ...mockMyGroups.value[0], role: 'Moderator' }]
-      const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
-      expect(wrapper.find('.v-icon[data-icon="crown"]').exists()).toBe(true)
-    })
-
-    it('does not show crown icon for members', async () => {
-      const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
-      expect(wrapper.find('.mod-icon').exists()).toBe(false)
-    })
-
-    // Leaving would drop the role, and the server now refuses that, so a moderator or
-    // owner is not offered Leave here at all (Discourse 10148).
-    it('does not offer Leave to a moderator', async () => {
-      mockMyGroups.value = [{ ...mockMyGroups.value[0], role: 'Moderator' }]
-      const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
-      expect(wrapper.find('.settings-group').attributes('data-leave')).toBe(
-        'false'
-      )
-    })
-
-    it('offers Leave to a plain member', async () => {
-      const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
-      expect(wrapper.find('.settings-group').attributes('data-leave')).toBe(
-        'true'
-      )
-    })
-  })
-
-  describe('advanced options toggles', () => {
+  describe('advanced options (always visible)', () => {
     beforeEach(() => {
       vi.useFakeTimers()
     })
@@ -361,52 +254,43 @@ describe('EmailSettingsSection', () => {
       vi.useRealTimers()
     })
 
-    it('renders email replies toggle', async () => {
+    it('renders the advanced options block without needing a toggle', () => {
       const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.advanced-options').exists()).toBe(true)
+    })
+
+    it('renders email replies toggle', () => {
+      const wrapper = createWrapper()
       expect(wrapper.text()).toContain('Email me replies to my posts')
     })
 
-    it('renders sent messages copy toggle', async () => {
+    it('renders sent messages copy toggle', () => {
       const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
       expect(wrapper.text()).toContain('Copy of my sent messages')
     })
 
-    it('renders chitchat toggle', async () => {
+    it('renders chitchat toggle', () => {
       const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
       expect(wrapper.text()).toContain('ChitChat & notifications')
     })
 
-    it('renders suggested posts toggle', async () => {
+    it('renders suggested posts toggle', () => {
       const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
       expect(wrapper.text()).toContain('Suggested posts for you')
     })
 
-    it('renders newsletters toggle', async () => {
+    it('renders newsletters toggle', () => {
       const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
       expect(wrapper.text()).toContain('Newsletters & stories')
     })
 
-    it('renders encouragement toggle', async () => {
+    it('renders encouragement toggle', () => {
       const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
       expect(wrapper.text()).toContain('Encouragement emails')
     })
 
-    it('renders admin note', async () => {
+    it('renders admin note', () => {
       const wrapper = createWrapper()
-      wrapper.vm.showAdvanced = true
-      await wrapper.vm.$nextTick()
       expect(wrapper.text()).toContain(
         'We may occasionally send important admin emails'
       )
@@ -501,81 +385,34 @@ describe('EmailSettingsSection', () => {
         expect(wrapper.vm.newslettersallowed).toBe(false)
       })
     })
-
-    describe('simpleSettings', () => {
-      it('returns true when simplemail is set', () => {
-        const wrapper = createWrapper()
-        expect(wrapper.vm.simpleSettings).toBe(true)
-      })
-
-      it('returns true when all groups have same settings and simplemail is null', () => {
-        const wrapper = createWrapper()
-        mockMe.value = {
-          ...mockMe.value,
-          settings: {
-            ...mockMe.value.settings,
-            simplemail: null,
-          },
-        }
-        mockMyGroups.value = [
-          {
-            id: 1,
-            emailfrequency: 24,
-            eventsallowed: true,
-            volunteeringallowed: true,
-          },
-          {
-            id: 2,
-            emailfrequency: 24,
-            eventsallowed: true,
-            volunteeringallowed: true,
-          },
-        ]
-        expect(wrapper.vm.simpleSettings).toBe(true)
-      })
-
-      it('returns false when groups have different settings and simplemail is null', () => {
-        const wrapper = createWrapper()
-        mockMe.value = {
-          ...mockMe.value,
-          settings: {
-            ...mockMe.value.settings,
-            simplemail: null,
-          },
-        }
-        mockMyGroups.value = [
-          {
-            id: 1,
-            emailfrequency: 24,
-            eventsallowed: true,
-            volunteeringallowed: true,
-          },
-          {
-            id: 2,
-            emailfrequency: 0,
-            eventsallowed: true,
-            volunteeringallowed: true,
-          },
-        ]
-        expect(wrapper.vm.simpleSettings).toBe(false)
-      })
-    })
   })
 
   describe('methods', () => {
-    describe('toggleAdvanced', () => {
-      it('toggles showAdvanced', () => {
+    describe('changeSetting', () => {
+      it('calls saveAndGet with the parsed emailfrequency value', async () => {
         const wrapper = createWrapper()
-        expect(wrapper.vm.showAdvanced).toBe(false)
-        wrapper.vm.toggleAdvanced({ preventDefault: vi.fn() })
-        expect(wrapper.vm.showAdvanced).toBe(true)
+        await wrapper.vm.changeSetting('emailfrequency', '0')
+        expect(mockSaveAndGet).toHaveBeenCalledWith({ emailfrequency: 0 })
       })
 
-      it('prevents default event', () => {
+      it('calls saveAndGet with the parsed eventsallowed value', async () => {
         const wrapper = createWrapper()
-        const mockEvent = { preventDefault: vi.fn() }
-        wrapper.vm.toggleAdvanced(mockEvent)
-        expect(mockEvent.preventDefault).toHaveBeenCalled()
+        await wrapper.vm.changeSetting('eventsallowed', 1)
+        expect(mockSaveAndGet).toHaveBeenCalledWith({ eventsallowed: 1 })
+      })
+
+      it('calls saveAndGet with the parsed volunteeringallowed value', async () => {
+        const wrapper = createWrapper()
+        await wrapper.vm.changeSetting('volunteeringallowed', 0)
+        expect(mockSaveAndGet).toHaveBeenCalledWith({
+          volunteeringallowed: 0,
+        })
+      })
+
+      it('emits update event', async () => {
+        const wrapper = createWrapper()
+        await wrapper.vm.changeSetting('emailfrequency', '24')
+        expect(wrapper.emitted('update')).toBeTruthy()
       })
     })
 
@@ -650,46 +487,9 @@ describe('EmailSettingsSection', () => {
         expect(wrapper.emitted('update')).toBeTruthy()
       })
     })
-
-    describe('leaveGroup', () => {
-      it('calls authStore.leaveGroup', async () => {
-        const wrapper = createWrapper()
-        await wrapper.vm.leaveGroup(1)
-        expect(mockLeaveGroup).toHaveBeenCalledWith(123, 1)
-      })
-
-      it('emits update event', async () => {
-        const wrapper = createWrapper()
-        await wrapper.vm.leaveGroup(1)
-        expect(wrapper.emitted('update')).toBeTruthy()
-      })
-    })
-
-    describe('changeAllGroups', () => {
-      it('calls setGroup for each group', async () => {
-        mockMyGroups.value = [
-          { id: 1, emailfrequency: 24 },
-          { id: 2, emailfrequency: 24 },
-        ]
-        const wrapper = createWrapper()
-        await wrapper.vm.changeAllGroups('emailfrequency', 0)
-        expect(mockSetGroup).toHaveBeenCalledTimes(2)
-      })
-
-      it('emits update event', async () => {
-        const wrapper = createWrapper()
-        await wrapper.vm.changeAllGroups('emailfrequency', 0)
-        expect(wrapper.emitted('update')).toBeTruthy()
-      })
-    })
   })
 
   describe('reactive state', () => {
-    it('initializes showAdvanced as false', () => {
-      const wrapper = createWrapper()
-      expect(wrapper.vm.showAdvanced).toBe(false)
-    })
-
     it('initializes simpleEmailSettingLocal from me', () => {
       const wrapper = createWrapper()
       expect(wrapper.vm.simpleEmailSettingLocal).toBe('Full')
@@ -712,16 +512,6 @@ describe('EmailSettingsSection', () => {
       }
       await wrapper.vm.$nextTick()
       expect(wrapper.vm.relevantallowedLocal).toBe(false)
-    })
-  })
-
-
-  describe('groupless site (experiment)', () => {
-    it('has one set of email settings and no per-community list', () => {
-      mockGroupless.value = true
-      const wrapper = createWrapper()
-      expect(wrapper.text()).not.toContain('Show advanced settings')
-      mockGroupless.value = false
     })
   })
 })

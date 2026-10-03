@@ -57,7 +57,6 @@ describe('ModCommentEditModal', () => {
   const defaultProps = {
     userid: 123,
     comment: createTestComment(),
-    groupname: 'Test Group',
   }
 
   function mountComponent(props = {}, userOverrides = {}) {
@@ -112,20 +111,6 @@ describe('ModCommentEditModal', () => {
       expect(wrapper.text()).toContain('John Doe')
     })
 
-    it('displays group name in title when provided', () => {
-      const wrapper = mountComponent({ groupname: 'Freegle Test Group' })
-      expect(wrapper.text()).toContain('on')
-      expect(wrapper.text()).toContain('Freegle Test Group')
-    })
-
-    it('does not display "on" before groupname when groupname is null', () => {
-      const wrapper = mountComponent({ groupname: null })
-      // When groupname is null, it should just show the user's name without "on" after it
-      expect(wrapper.text()).toContain('Edit Note for Test User')
-      // The v-if="groupname" ensures <span v-if="groupname">on</span> is not rendered
-      expect(wrapper.text()).not.toMatch(/Test User on\s+\s*You can add/)
-    })
-
     it('renders 11 form inputs for user comments', () => {
       const wrapper = mountComponent()
       const inputs = wrapper.findAll('.form-input')
@@ -155,16 +140,16 @@ describe('ModCommentEditModal', () => {
       expect(wrapper.text()).toContain('Save')
     })
 
-    it('displays toggle for alerting other groups', () => {
+    it('displays toggle for flagging the member', () => {
       const wrapper = mountComponent()
       const toggle = wrapper.find('.toggle')
       expect(toggle.exists()).toBe(true)
     })
 
-    it('displays instruction about alerting other groups', () => {
+    it('displays instruction about flagging', () => {
       const wrapper = mountComponent()
-      expect(wrapper.text()).toContain('alerted to other groups')
-      expect(wrapper.text()).toContain('Member->Review')
+      expect(wrapper.text()).toContain('Flagged members show up')
+      expect(wrapper.text()).toContain('Flagged Members section')
     })
 
     it('displays coloured box description', () => {
@@ -227,15 +212,6 @@ describe('ModCommentEditModal', () => {
       expect(wrapper.props('comment')).toEqual(testComment)
     })
 
-    it('accepts groupname prop (optional)', () => {
-      const wrapper = mountComponent({ groupname: 'My Group' })
-      expect(wrapper.props('groupname')).toBe('My Group')
-    })
-
-    it('accepts null groupname', () => {
-      const wrapper = mountComponent({ groupname: null })
-      expect(wrapper.props('groupname')).toBe(null)
-    })
   })
 
   describe('methods', () => {
@@ -477,7 +453,7 @@ describe('ModCommentEditModal', () => {
       })
       await flushPromises()
 
-      expect(wrapper.text()).toContain('Will not alert other groups')
+      expect(wrapper.text()).toContain('Not flagged')
     })
 
     it('displays checked label when flag is true', async () => {
@@ -486,7 +462,7 @@ describe('ModCommentEditModal', () => {
       })
       await flushPromises()
 
-      expect(wrapper.text()).toContain('Will alert other groups')
+      expect(wrapper.text()).toContain('Flagged')
     })
   })
 
@@ -667,14 +643,9 @@ describe('ModCommentEditModal', () => {
       expect(wrapper.text()).toContain('Edit Note for')
     })
 
-    it('combines user name and group name correctly', () => {
-      const wrapper = mountComponent(
-        { groupname: 'Freegle Cambridge' },
-        { displayname: 'Jane Smith' }
-      )
-      expect(wrapper.text()).toContain('Jane Smith')
-      expect(wrapper.text()).toContain('on')
-      expect(wrapper.text()).toContain('Freegle Cambridge')
+    it('shows the member display name in the title', () => {
+      const wrapper = mountComponent({}, { displayname: 'Jane Smith' })
+      expect(wrapper.text()).toContain('Edit Note for Jane Smith')
     })
   })
 })

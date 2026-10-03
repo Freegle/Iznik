@@ -24,7 +24,6 @@ export const useSystemLogsStore = defineStore('systemlogs', {
     search: '',
     timeRange: '24h',
     userid: null,
-    groupid: null,
     msgid: null,
     traceId: null,
     sessionId: null,
@@ -213,9 +212,6 @@ export const useSystemLogsStore = defineStore('systemlogs', {
       if (this.userid) {
         queryParams.userid = this.userid
       }
-      if (this.groupid) {
-        queryParams.groupid = this.groupid
-      }
       if (this.msgid) {
         queryParams.msgid = this.msgid
       }
@@ -265,11 +261,6 @@ export const useSystemLogsStore = defineStore('systemlogs', {
 
     setUserFilter(userid) {
       this.userid = userid
-      this.clear()
-    },
-
-    setGroupFilter(groupid) {
-      this.groupid = groupid
       this.clear()
     },
 
@@ -333,7 +324,6 @@ export const useSystemLogsStore = defineStore('systemlogs', {
     // Collect all entity IDs in a single pass for efficient batch fetching.
     entityIds: (state) => {
       const userIds = new Set()
-      const groupIds = new Set()
       const messageIds = new Set()
 
       // Collect from summaries.
@@ -342,7 +332,6 @@ export const useSystemLogsStore = defineStore('systemlogs', {
         if (log) {
           if (log.user_id) userIds.add(log.user_id)
           if (log.byuser_id) userIds.add(log.byuser_id)
-          if (log.group_id) groupIds.add(log.group_id)
           if (log.message_id) messageIds.add(log.message_id)
         }
       }
@@ -352,14 +341,12 @@ export const useSystemLogsStore = defineStore('systemlogs', {
         for (const log of logs) {
           if (log.user_id) userIds.add(log.user_id)
           if (log.byuser_id) userIds.add(log.byuser_id)
-          if (log.group_id) groupIds.add(log.group_id)
           if (log.message_id) messageIds.add(log.message_id)
         }
       }
 
       return {
         userIds: Array.from(userIds),
-        groupIds: Array.from(groupIds),
         messageIds: Array.from(messageIds),
       }
     },

@@ -367,7 +367,7 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 
 		// strip review/processing fields from non-mod responses.
 		if !modAccess {
-			if WarnNotHold() && a.Reviewrequired && a.Userid != userID {
+			if a.Reviewrequired && a.Userid != userID {
 				messages[ix].Sensitive = SensitiveReason(a.Reportreason)
 			}
 			messages[ix].Reviewrequired = false
@@ -397,12 +397,11 @@ func GetChatMessages(c *fiber.Ctx) error {
 	// $modaccess is true when user is NOT user1/user2 but has mod/admin access.
 	db := database.DBConn
 	type roomInfo struct {
-		User1   uint64
-		User2   uint64
-		Groupid uint64
+		User1 uint64
+		User2 uint64
 	}
 	var room roomInfo
-	db.Table("chat_rooms").Select("user1, user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&room)
+	db.Table("chat_rooms").Select("user1, user2").Where("id = ?", id).Scan(&room)
 
 	if room.User1 == 0 && room.User2 == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
@@ -412,7 +411,7 @@ func GetChatMessages(c *fiber.Ctx) error {
 	modAccess := false
 
 	if !isParticipant {
-		if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
+		if !canSeeChatRoom(myid, room.User1, room.User2) {
 			return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
 		}
 		modAccess = true
@@ -658,39 +657,18 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Message must be non-empty")
 	}
 
-	chatid := []ChatRoomListEntry{}
+	// Allow user1, user2, or any moderator - a national pool never scoped to a
+	// community, so a moderator can post to any room (used when adding mod
+	// messages from chat review, or replying in a User2Mod room).
+	type roomBasic struct {
+		User1 uint64
+		User2 uint64
+	}
+	var room roomBasic
+	db.Table("chat_rooms").Select("user1, user2").Where("id = ?", id).Scan(&room)
 
-	// Allow user1, user2, or (for User2Mod chats) a moderator of the chat's group.
-	// Top-level
-	// UNION, nothing wrapping it - same BuildClauses={"SELECT"} mechanism as
-	// amp.go's bare-EXISTS conversions (see the comment there and the retired
-	// ormharness's bareexists_test.go (removed in d22ba1d6c)); the whole
-	// "SELECT ... UNION SELECT ..."
-	// text goes to .Select() as one fragment.
-	tx33ad97a3417c := db.Table("chat_rooms").Select(
-		"id FROM chat_rooms WHERE id = ? AND user1 = ? "+
-			"UNION SELECT id FROM chat_rooms WHERE id = ? AND user2 = ? "+
-			"UNION SELECT cr.id FROM chat_rooms cr "+
-			"INNER JOIN memberships m ON m.groupid = cr.groupid AND m.userid = ? AND m.role IN (?, ?) "+
-			"WHERE cr.id = ? AND cr.chattype = ?",
-		id, myid, id, myid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, id, utils.CHAT_TYPE_USER2MOD)
-	tx33ad97a3417c.Statement.BuildClauses = []string{"SELECT"}
-	tx33ad97a3417c.Scan(&chatid)
-
-	if len(chatid) == 0 {
-		// mods can also post to User2User chats if they moderate
-		// either user's group (used when adding mod messages from chat review).
-		type roomBasic struct {
-			User1   uint64
-			User2   uint64
-			Groupid uint64
-		}
-		var room roomBasic
-		db.Table("chat_rooms").Select("user1, user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&room)
-
-		if room.User1 == 0 && room.User2 == 0 || !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
-			return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
-		}
+	if room.User1 == 0 && room.User2 == 0 || !canSeeChatRoom(myid, room.User1, room.User2) {
+		return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
 	}
 
 	// Guard a reply whose referenced post no longer exists. chat_messages.refmsgid has a FK to
@@ -913,88 +891,15 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		recordReplyAttribution(db, myid, *payload.Refmsgid, reach, payload.Replysource)
 	}
 
-	// Replying to a post joins the replier to its group. This is meant to happen in the Nuxt reply
-	// flow (useReplyStateMachine handleJoinGroup) via PUT /memberships, but a stale/racy client
-	// isMember check can skip it, leaving a replier with a chat but NO group membership and no
-	// location — the "member with no groups & no location" a mod flagged (Discourse #9969; ~2/day in
-	// prod). Enforce it here, atomic with the reply, so it can't be skipped by any client. Held
-	// (out-of-reach) replies are excluded: the post hasn't reached the replier yet. AddMembership is
-	// the same idempotent join the LoveJunk path and the /memberships endpoint use — it skips
-	// banned/already-member and writes the memberships_history processingrequired row that drives the
-	// welcome email + spam check. Params mirror a normal web join's DB defaults (emailfrequency
-	// 24=daily, events + volunteering allowed), NOT the LoveJunk FREQUENCY_NEVER. Best-effort: a join
-	// hiccup must never fail the reply.
-	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
-		// Already in one of the post's groups? Then nothing needs joining: they can
-		// see it and reply to it where they are. Without this check the join below
-		// picks the post's LOWEST GROUP ID, which is arbitrary — and once a post
-		// ripples, most of its groups are copies the replier has no connection to.
-		// A Leeds member replied to a Leeds post that had rippled to Bradford four
-		// minutes earlier; Bradford's id sorts first, so she was signed up to
-		// Bradford, unsubscribed, and said so on ChitChat (2026-08-17). Her Leeds
-		// membership was never consulted.
-		var alreadyIn int64
-		db.Table("messages_groups AS mg").
-			Joins("INNER JOIN memberships m ON m.groupid = mg.groupid AND m.userid = ?", myid).
-			Where("mg.msgid = ?", *payload.Refmsgid).
-			Count(&alreadyIn)
-
-		if alreadyIn == 0 {
-			var refGroup uint64
-
-			// Nearest to the replier, not lowest id. ST_Distance against a group's
-			// catchment is 0 when they are inside it, so the group whose area they
-			// actually live in wins, and failing that the closest one does — which
-			// is the group they would have joined by hand. Lowest id was a lottery:
-			// it is why a Leeds member replying to a Leeds post landed in Bradford.
-			// COALESCE keeps groups with no usable catchment last rather than first,
-			// where a NULL distance would otherwise sort them.
-			if reach.haveLocation {
-				db.Table("messages_groups AS mg").
-					Select("mg.groupid").
-					Joins("INNER JOIN `groups` g ON g.id = mg.groupid").
-					Where("mg.msgid = ?", *payload.Refmsgid).
-					// Must be wrapped in clause.OrderBy: GORM's Order() switches on
-					// clause.OrderBy, clause.OrderByColumn and string, with no default
-					// branch, so a bare clause.Expr is silently DROPPED and the query
-					// runs unordered — which returns the lowest group id, the very
-					// thing this is here to avoid. town.go and message.go order by
-					// distance the same way.
-					Order(clause.OrderBy{Expression: gorm.Expr(
-						"COALESCE(ST_Distance(g.polyindex, ST_SRID(POINT(?, ?), ?)), 1e9), mg.groupid",
-						reach.lng, reach.lat, utils.SRID)}).
-					Limit(1).Scan(&refGroup)
-			}
-
-			// No location, or the distance query found nothing: fall back to the
-			// original choice so a replier still ends up somewhere.
-			if refGroup == 0 {
-				db.Table("messages_groups").Select("groupid").Where("msgid = ?", *payload.Refmsgid).Order("groupid").Limit(1).Scan(&refGroup)
-			}
-
-			if refGroup > 0 {
-				user.AddMembership(myid, refGroup, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_DAILY, 1, 1, "Joined to reply to a post")
-			}
-		}
-	}
-
-	// A report from the website is a User2Mod chat message referencing the reported
-	// post (that's what the report flow sends). Treat it as a microvolunteering Reject
-	// verdict feeding the review quorum: a moderator of the reported community pulls that
-	// community's copy to Pending, and once the quorum of verdicts is reached the post is
-	// pulled to Pending on ALL its groups. The report's target community is the User2Mod
-	// chat's group. Only User2Mod refmsgid messages are reports - a User2User refmsgid
-	// message is an Interested reply to the poster, not a report. Best-effort: never
-	// blocks the report.
-	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
-		var reportRoom struct {
-			Chattype string
-			Groupid  uint64
-		}
-		db.Table("chat_rooms").Select("chattype, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&reportRoom)
-		if reportRoom.Chattype == utils.CHAT_TYPE_USER2MOD {
-			microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, reportRoom.Groupid, payload.Message)
-		}
+	// A report from the website is a message in the reporter's own User2Mod room
+	// (their Freegle room) referencing the reported post via refmsgid - that's what the
+	// report flow sends. Treat it as a microvolunteering Reject verdict feeding the review
+	// quorum: a moderator's report is quorum on its own, and once the quorum of verdicts
+	// is reached the post is pulled to Pending. Only User2Mod refmsgid messages are
+	// reports - a User2User refmsgid message is an Interested reply to the poster, not a
+	// report. Best-effort: never blocks the report.
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2MOD {
+		microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, payload.Message)
 	}
 
 	if payload.Imageid != nil {
@@ -1049,14 +954,12 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 	// Find the user who sent the message we are replying to.
 	type msgInfo struct {
 		Fromuser uint64
-		Groupid  uint64
 	}
 
 	var m msgInfo
 
 	db.Table("messages").
-		Select("fromuser, groupid").
-		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+		Select("fromuser").
 		Joins("INNER JOIN users ON users.id = messages.fromuser").
 		Where("messages.id = ? AND users.deleted IS NULL", payload.Refmsgid).
 		Scan(&m)
@@ -1065,17 +968,12 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "Invalid message id "+strconv.FormatUint(*payload.Refmsgid, 10))
 	}
 
-	// Find any groups in users_banned for this user and group.  If we find one, we can't reply.
-	var banned uint64
-	db.Table("users_banned").Select("userid").Where("userid = ? AND groupid = ?", myid, m.Groupid).Scan(&banned)
+	// Bans are a national attribute on the user now, not per-group.
+	var banned *time.Time
+	db.Table("users").Select("banned").Where("id = ?", myid).Scan(&banned)
 
-	if banned > 0 {
-		return fiber.NewError(fiber.StatusForbidden, "User banned from group")
-	}
-
-	// Ensure we're a member of the group.  This may fail if we're banned.
-	if !user.AddMembership(myid, m.Groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_NEVER, 0, 0, "LoveJunk user joining to reply") {
-		return fiber.NewError(fiber.StatusForbidden, "Failed to join relevant group")
+	if banned != nil {
+		return fiber.NewError(fiber.StatusForbidden, "User banned")
 	}
 
 	// Find the chat between m.Fromuser and myid (check both user orderings -
@@ -1272,14 +1170,8 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Check caller is a moderator on at least one group
-	var modCount int64
-	result := db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
-	if result.Error != nil {
-		stdlog.Printf("Failed to check moderator status for user %d: %v", myid, result.Error)
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
-	}
-	if modCount == 0 {
+	// Check caller is a moderator.
+	if !auth.IsModerator(myid) {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator")
 	}
 
@@ -1308,65 +1200,34 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 // canSeeChatRoom checks if a user can view a chat room.
 // Allows: direct participants, moderators of the chat's group, and moderators of any group
 // where either participant is a member (for User2User chats during review).
-func canSeeChatRoom(myid uint64, user1, user2, groupid uint64) bool {
+func canSeeChatRoom(myid uint64, user1, user2 uint64) bool {
 	if user1 == myid || user2 == myid {
 		return true
 	}
 
-	db := database.DBConn
-
-	// Admin and Support can see all chat rooms.
-	if auth.IsAdminOrSupport(myid) {
-		return true
-	}
-
-	if groupid > 0 {
-		var modCount int64
-		result := db.Table("memberships").Where("userid = ? AND groupid = ? AND role IN (?, ?)",
-			myid, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
-		if result.Error != nil {
-			stdlog.Printf("Failed to check chat room mod permission user %d group %d: %v", myid, groupid, result.Error)
-			return false
-		}
-		if modCount > 0 {
-			return true
-		}
-	}
-
-	// Fallback: check if mod of any group where either participant is a member.
-	var modCount int64
-	result := db.Table("memberships m1").
-		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
-		Where("m1.userid = ? AND m1.role IN (?, ?) AND m2.userid IN (?, ?)",
-			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, user1, user2).
-		Count(&modCount)
-	if result.Error != nil {
-		stdlog.Printf("Failed to check chat room fallback mod permission user %d: %v", myid, result.Error)
-		return false
-	}
-	return modCount > 0
+	// Moderators are a national pool, never scoped to a community, so any
+	// moderator (Moderator, Support or Admin) may see any chat room.
+	return auth.IsModerator(myid)
 }
 
 // getChatMessagesForRoom returns messages from a specific chat room (for MT viewing).
 func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 	db := database.DBConn
 
-	// Verify user can access this chat (participant or moderator of group).
+	// Verify user can access this chat (participant or moderator).
 	type roomCheck struct {
-		ID       uint64
-		User1    uint64
-		User2    uint64
-		Groupid  uint64
-		Chattype string
+		ID    uint64
+		User1 uint64
+		User2 uint64
 	}
 	var room roomCheck
-	db.Table("chat_rooms").Select("id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype").Where("id = ?", roomid).Scan(&room)
+	db.Table("chat_rooms").Select("id, user1, user2").Where("id = ?", roomid).Scan(&room)
 
 	if room.ID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Chat not found"})
 	}
 
-	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
+	if !canSeeChatRoom(myid, room.User1, room.User2) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Permission denied"})
 	}
 
@@ -1450,23 +1311,11 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 	})
 }
 
-// getReviewQueue returns chat messages pending moderation review.
+// getReviewQueue returns chat messages pending moderation review, nationally.
+// No group scoping: every national moderator sees every message awaiting
+// review. Action on a held message is Reject only (see PostReviewChatMessage).
 func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	db := database.DBConn
-
-	// Get groups where user is a moderator.
-	var groupIDs []uint64
-	db.Table("memberships").Select("groupid").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&groupIDs)
-
-	if len(groupIDs) == 0 {
-		return c.JSON(fiber.Map{
-			"ret":          0,
-			"status":       "Success",
-			"chatmessages": make([]interface{}, 0),
-			"chatreports":  make([]interface{}, 0),
-			"context":      fiber.Map{},
-		})
-	}
 
 	limit, _ := strconv.Atoi(c.Query("limit", "100"))
 	if limit <= 0 || limit > 1000 {
@@ -1475,184 +1324,48 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 
 	ctx, _ := strconv.ParseUint(c.Query("context", "0"), 10, 64)
 
-	ctxq := ""
-	if ctx > 0 {
-		ctxq = " AND cm.id < " + strconv.FormatUint(ctx, 10)
-	}
-
-	// Find messages pending review where either participant is in the mod's groups,
-	// or the chat is a User2Mod chat for one of the mod's groups.
 	type reviewRow struct {
-		ID              uint64          `json:"id"`
-		Chatid          uint64          `json:"chatid"`
-		Userid          uint64          `json:"userid"`
-		Type            string          `json:"type"`
-		Message         string          `json:"message"`
-		Date            *time.Time      `json:"date"`
-		Refmsgid        *uint64         `json:"refmsgid"`
-		Reportreason    *string         `json:"reportreason"`
-		Imageid         *uint64         `json:"-"`
-		ImageArchived   int             `json:"-"`
-		Imageuid        string          `json:"-"`
-		Imagemods       json.RawMessage `json:"-"`
-		RoomChattype    string          `json:"-"`
-		RoomUser1       uint64          `json:"-"`
-		RoomUser2       uint64          `json:"-"`
-		RoomGroupid     uint64          `json:"-"`
-		Widerchatreview int             `json:"-"`
-		HeldBy          uint64          `json:"-"`
-		HeldTimestamp   *time.Time      `json:"-"`
-		Msgid           *uint64         `json:"-"`
-		Groupid         uint64          `json:"-"`
-		Groupidfrom     uint64          `json:"-"`
+		ID            uint64          `json:"id"`
+		Chatid        uint64          `json:"chatid"`
+		Userid        uint64          `json:"userid"`
+		Type          string          `json:"type"`
+		Message       string          `json:"message"`
+		Date          *time.Time      `json:"date"`
+		Refmsgid      *uint64         `json:"refmsgid"`
+		Reportreason  *string         `json:"reportreason"`
+		Imageid       *uint64         `json:"-"`
+		ImageArchived int             `json:"-"`
+		Imageuid      string          `json:"-"`
+		Imagemods     json.RawMessage `json:"-"`
+		RoomChattype  string          `json:"-"`
+		RoomUser1     uint64          `json:"-"`
+		RoomUser2     uint64          `json:"-"`
+		HeldBy        uint64          `json:"-"`
+		HeldTimestamp *time.Time      `json:"-"`
+		Msgid         *uint64         `json:"-"`
 	}
 
-	// Check if this user participates in wider chat review.
-	widerReview := user.HasWiderReview(myid)
+	q := db.Table("chat_messages cm").
+		Select("cm.id, cm.chatid, cm.userid, cm.type, cm.message, cm.date, "+
+			"cm.refmsgid, cm.reportreason, "+
+			"cm.imageid, COALESCE(ci.archived, 0) AS image_archived, "+
+			"COALESCE(ci.externaluid, '') AS imageuid, ci.externalmods AS imagemods, "+
+			"cr.chattype AS room_chattype, cr.user1 AS room_user1, cr.user2 AS room_user2, "+
+			"COALESCE(cmh.userid, 0) AS held_by, cmh.timestamp AS held_timestamp, "+
+			"cme.msgid").
+		Joins("INNER JOIN chat_rooms cr ON cr.id = cm.chatid").
+		Joins("INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL").
+		Joins("LEFT JOIN chat_images ci ON ci.chatmsgid = cm.id").
+		Joins("LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id").
+		Joins("LEFT JOIN chat_messages_byemail cme ON cme.chatmsgid = cm.id").
+		Where("cm.reviewrequired = 1 AND cm.reviewrejected = 0")
 
-	// Base query: messages from mod's own groups.
-	//
-	// The four "IN (?)" group-id lists below are bound to groupIDs (a
-	// []uint64) rather than spliced in as a literal comma-joined string. This
-	// is a DELIBERATE BEHAVIOUR CHANGE alongside the ORM conversion, not just
-	// a mechanical rewrite: it changes the rendered statement text from
-	// "IN (1,2,3)" to native "IN (?,?,?)" placeholders (GORM's slice-bind
-	// expansion), same category as this file's own 62a2f6fa4bdb and
-	// isochrone/message.go's markPinned (site 032b7f1b9500) - each had an
-	// approved-diff entry in the retired
-	// tools/orm-migration/approved-diffs.json (removed in d22ba1d6c)
-	// recording exactly this kind of change; this site's two entries were
-	// 5da587b4234d (this branch) and 1ff296c8656c (the widerReview branch
-	// below, which shares this baseQuery). groupIDs here is always the
-	// calling moderator's own memberships (never external input), so this
-	// was not an exploitable injection in practice, but binding it is
-	// strictly safer and removes the pattern.
-	baseQuery := "SELECT DISTINCT cm.id, cm.chatid, cm.userid, cm.type, cm.message, cm.date, " +
-		"cm.refmsgid, cm.reportreason, " +
-		"cm.imageid, COALESCE(ci.archived, 0) AS image_archived, " +
-		"COALESCE(ci.externaluid, '') AS imageuid, ci.externalmods AS imagemods, " +
-		"cr.chattype AS room_chattype, cr.user1 AS room_user1, cr.user2 AS room_user2, " +
-		"COALESCE(cr.groupid, 0) AS room_groupid, " +
-		"0 AS widerchatreview, " +
-		"COALESCE(cmh.userid, 0) AS held_by, cmh.timestamp AS held_timestamp, " +
-		"cme.msgid, " +
-		"COALESCE((SELECT m1.groupid FROM memberships m1 WHERE m1.userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END AND m1.groupid IN (?) LIMIT 1), 0) AS groupid, " +
-		"COALESCE((SELECT m2.groupid FROM memberships m2 WHERE m2.userid = cm.userid AND m2.groupid IN (?) LIMIT 1), 0) AS groupidfrom " +
-		"FROM chat_messages cm " +
-		"INNER JOIN chat_rooms cr ON cr.id = cm.chatid " +
-		"INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL " +
-		"LEFT JOIN chat_images ci ON ci.chatmsgid = cm.id " +
-		"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id " +
-		"LEFT JOIN chat_messages_byemail cme ON cme.chatmsgid = cm.id " +
-		"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0" + ctxq +
-		" AND (" +
-		// User2Mod: group is one of mod's groups
-		"  (cr.chattype = ? AND cr.groupid IN (?))" +
-		// User2User case 1: recipient (other user) is on one of mod's groups
-		"  OR (cr.chattype = ? AND EXISTS (SELECT 1 FROM memberships WHERE userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END AND groupid IN (?)))" +
-		// User2User case 2: recipient has NO memberships, sender is on one of mod's groups (orphan safety net)
-		"  OR (cr.chattype = ? AND NOT EXISTS (SELECT 1 FROM memberships WHERE userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) AND EXISTS (SELECT 1 FROM memberships WHERE userid = cm.userid AND groupid IN (?)))" +
-		")"
+	if ctx > 0 {
+		q = q.Where("cm.id < ?", ctx)
+	}
 
 	var msgs []reviewRow
-
-	if widerReview {
-		// Add UNION for wider chat review: messages from any group with widerchatreview=1,
-		// excluding held messages and user-reported spam.
-		// Wider query: only include messages where the recipient is NOT already
-		// on the mod's own groups (those are covered by the base query with
-		// widerchatreview=0 and full actions).
-		recipientExpr := "(CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)"
-		widerQuery := " UNION " +
-			"SELECT DISTINCT cm.id, cm.chatid, cm.userid, cm.type, cm.message, cm.date, " +
-			"cm.refmsgid, cm.reportreason, " +
-			"cm.imageid, COALESCE(ci.archived, 0) AS image_archived, " +
-			"COALESCE(ci.externaluid, '') AS imageuid, ci.externalmods AS imagemods, " +
-			"cr.chattype AS room_chattype, cr.user1 AS room_user1, cr.user2 AS room_user2, " +
-			"COALESCE(cr.groupid, 0) AS room_groupid, " +
-			"1 AS widerchatreview, " +
-			"COALESCE(cmh.userid, 0) AS held_by, cmh.timestamp AS held_timestamp, " +
-			"cme.msgid, " +
-			"m1.groupid AS groupid, " +
-			"COALESCE(m2.groupid, 0) AS groupidfrom " +
-			"FROM chat_messages cm " +
-			"INNER JOIN chat_rooms cr ON cr.id = cm.chatid AND cm.reviewrequired = 1 AND cm.reviewrejected = 0 " +
-			"INNER JOIN memberships m1 ON m1.userid = " + recipientExpr + " " +
-			"INNER JOIN `groups` g ON m1.groupid = g.id AND g.type = 'Freegle' " +
-			"INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL " +
-			"LEFT JOIN memberships m2 ON m2.userid = cm.userid " +
-			"LEFT JOIN chat_images ci ON ci.chatmsgid = cm.id " +
-			"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id " +
-			"LEFT JOIN chat_messages_byemail cme ON cme.chatmsgid = cm.id " +
-			"WHERE JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 " +
-			"AND cmh.id IS NULL " +
-			"AND (cm.reportreason IS NULL OR cm.reportreason != 'User') " +
-			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (?))" + ctxq
-
-		// Top-level UNION wrapped as a derived table with a trailing GROUP
-		// BY/ORDER BY/LIMIT that applies to the combined result, not either
-		// arm - same BuildClauses={"SELECT"} mechanism as this file's other
-		// UNION conversions (see 33ad97a3417c above and modconfig.go's
-		// e9ea468dab80): the whole "SELECT * FROM (...) combined GROUP BY
-		// ... ORDER BY ... LIMIT ?" text goes to .Select() as one fragment,
-		// so GORM renders only the SELECT clause and none of .Table()'s
-		// implied FROM. Kept as one text blob (rather than decomposed into
-		// native Joins/Where) so this reuses the exact same baseQuery and
-		// widerQuery variables as the else-branch below - a single source of
-		// truth for the query text, not two hand-maintained copies that
-		// could drift apart.
-		//
-		// The manifest's own extracted goldenSql for this site was
-		// "{{expr}}{{expr}}" (baseQuery/widerQuery are runtime-built Go
-		// variables, not extractor-foldable literals), so there was nothing
-		// for Layer 1 to compare against out of the box. Same fix as
-		// 62a2f6fa4bdb above (see that site's approved-diff entry): an
-		// approved-diff entry for 1ff296c8656c in the retired
-		// tools/orm-migration/approved-diffs.json recorded the real
-		// post-conversion statement text, so Layer 1
-		// (TestGolden_1ff296c8656c, test/orm_reviewqueue_test.go) proved this
-		// after all. It also had a Layer 2 result-parity test
-		// (TestLayer2_1ff296c8656c, same file; all removed in d22ba1d6c) -
-		// the manifest's own keep-raw reason asked for that extra scrutiny
-		// given the query's size, on top of the text match.
-		tx1ff296c8656c := db.Table("chat_messages").Select(
-			"* FROM ("+baseQuery+widerQuery+") combined GROUP BY id ORDER BY widerchatreview ASC, id ASC LIMIT ?",
-			groupIDs, groupIDs,
-			utils.CHAT_TYPE_USER2MOD, groupIDs,
-			utils.CHAT_TYPE_USER2USER, groupIDs,
-			utils.CHAT_TYPE_USER2USER, groupIDs,
-			groupIDs,
-			limit)
-		tx1ff296c8656c.Statement.BuildClauses = []string{"SELECT"}
-		result := tx1ff296c8656c.Scan(&msgs)
-		if result.Error != nil {
-			stdlog.Printf("Failed to query wider chat review queue for user %d: %v", myid, result.Error)
-		}
-	} else {
-		// ORM migration site 5da587b4234d (Batch C keep-raw review,
-		// revisited). Non-wider twin of 1ff296c8656c above, sharing baseQuery
-		// - same BuildClauses={"SELECT"} mechanism, same reasoning: the
-		// manifest goldenSql for this site was "{{expr}} GROUP BY cm.id ORDER
-		// BY cm.id ASC LIMIT ?", so there was no fixed golden text to compare
-		// against out of the box. An approved-diff entry for 5da587b4234d in
-		// the retired tools/orm-migration/approved-diffs.json recorded the
-		// real post-conversion statement text, proved by Layer 1
-		// (TestGolden_5da587b4234d, test/orm_reviewqueue_test.go), plus a
-		// Layer 2 result-parity test (TestLayer2_5da587b4234d, same file; all
-		// removed in d22ba1d6c).
-		tx5da587b4234d := db.Table("chat_messages").Select(
-			strings.TrimPrefix(baseQuery, "SELECT ")+" GROUP BY cm.id ORDER BY cm.id ASC LIMIT ?",
-			groupIDs, groupIDs,
-			utils.CHAT_TYPE_USER2MOD, groupIDs,
-			utils.CHAT_TYPE_USER2USER, groupIDs,
-			utils.CHAT_TYPE_USER2USER, groupIDs,
-			limit)
-		tx5da587b4234d.Statement.BuildClauses = []string{"SELECT"}
-		result := tx5da587b4234d.Scan(&msgs)
-		if result.Error != nil {
-			stdlog.Printf("Failed to query chat review queue for user %d: %v", myid, result.Error)
-		}
-	}
+	q.Order("cm.id ASC").Limit(limit).Scan(&msgs)
 
 	if msgs == nil {
 		msgs = []reviewRow{}
@@ -1674,12 +1387,6 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	}
 	heldUsers := make(map[uint64]heldUserInfo)
 	if len(heldByUserIDs) > 0 {
-		// Was a literal
-		// (non-bind) IN-list, same shape markPinned had before it was
-		// switched to a bind (site 032b7f1b9500, isochrone/message.go) -
-		// swept into "INSERT id read back" only because getReviewQueue's
-		// other raw sites (the review-queue UNION itself) live in the same
-		// function; this statement is unrelated to those and reads no id.
 		ids := make([]uint64, 0, len(heldByUserIDs))
 		for id := range heldByUserIDs {
 			ids = append(ids, id)
@@ -1695,67 +1402,13 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		}
 	}
 
-	// The community the post being discussed actually lives on.
-	//
-	// The `groupid` on each row is the group through which the MODERATOR can act
-	// - the one the other member belongs to. That is not the same thing as where
-	// the post is, and moderators of many communities were having to click into
-	// each chat to work out whether it was theirs to handle: Discourse #10004,
-	// "I usually prefer to leave that for the mods on the group for the post.
-	// But I need to do a lot of clicking to work that out."
-	//
-	// Ordered rippled_in first so a rippled post reports the community it
-	// STARTED on rather than one it spread to - that origin group's moderators
-	// are the ones who know the post.
-	refmsgids := make([]uint64, 0, len(msgs))
-	seenRef := make(map[uint64]bool)
-	for _, m := range msgs {
-		if m.Refmsgid != nil && *m.Refmsgid > 0 && !seenRef[*m.Refmsgid] {
-			seenRef[*m.Refmsgid] = true
-			refmsgids = append(refmsgids, *m.Refmsgid)
-		}
-	}
-	type refGroupRow struct {
-		Msgid     uint64 `gorm:"column:msgid"`
-		ID        uint64 `gorm:"column:id"`
-		Nameshort string `gorm:"column:nameshort"`
-		Namefull  string `gorm:"column:namefull"`
-	}
-	refGroups := make(map[uint64][]fiber.Map)
-	if len(refmsgids) > 0 {
-		var refRows []refGroupRow
-		db.Table("messages_groups mg").
-			Select("mg.msgid, g.id, g.nameshort, COALESCE(g.namefull, '') AS namefull").
-			Joins("INNER JOIN `groups` g ON g.id = mg.groupid").
-			Where("mg.msgid IN ? AND mg.deleted = 0", refmsgids).
-			Order("mg.msgid, mg.rippled_in, mg.arrival").
-			Scan(&refRows)
-		// ALL the communities the post is on, not just the first. A rippled post
-		// is genuinely on several, and a moderator deciding whether a chat is
-		// theirs needs to see whether ANY of them is one of theirs - showing only
-		// the origin hides exactly the case where it is theirs by ripple. The
-		// ORDER carries the meaning instead: origin first (the query sorts on
-		// rippled_in, then arrival), so the community that knows the post reads
-		// first, the way group lists are shown elsewhere.
-		for _, r := range refRows {
-			namedisplay := r.Namefull
-			if namedisplay == "" {
-				namedisplay = r.Nameshort
-			}
-			refGroups[r.Msgid] = append(refGroups[r.Msgid], fiber.Map{
-				"id":          r.ID,
-				"nameshort":   r.Nameshort,
-				"namedisplay": namedisplay,
-			})
-		}
-	}
-
-	// Build response with inline chatroom info.
+	// Build response with inline chatroom info. National: no group scoping,
+	// no widerchatreview distinction, no per-post community list - every
+	// moderator sees every held message the same way.
 	result := make([]fiber.Map, 0, len(msgs))
 	for _, m := range msgs {
-		name := getChatName(db, m.RoomChattype, m.RoomGroupid, m.RoomUser1, m.RoomUser2, myid)
+		name := getChatName(db, m.RoomChattype, m.RoomUser1, m.RoomUser2, myid)
 
-		// Determine fromuser (sender) and touser (other participant).
 		fromuserid := m.Userid
 		var touserid uint64
 		if m.Userid == m.RoomUser1 {
@@ -1765,30 +1418,25 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		}
 
 		msg := fiber.Map{
-			"id":              m.ID,
-			"chatid":          m.Chatid,
-			"userid":          m.Userid,
-			"fromuserid":      fromuserid,
-			"touserid":        touserid,
-			"type":            m.Type,
-			"message":         m.Message,
-			"date":            m.Date,
-			"refmsgid":        m.Refmsgid,
-			"reviewreason":    enrichReviewReason(db, m.Message, m.Reportreason),
-			"widerchatreview": m.Widerchatreview > 0,
-			"groupid":         m.Groupid,
-			"groupidfrom":     m.Groupidfrom,
+			"id":           m.ID,
+			"chatid":       m.Chatid,
+			"userid":       m.Userid,
+			"fromuserid":   fromuserid,
+			"touserid":     touserid,
+			"type":         m.Type,
+			"message":      m.Message,
+			"date":         m.Date,
+			"refmsgid":     m.Refmsgid,
+			"reviewreason": enrichReviewReason(db, m.Message, m.Reportreason),
 			"chatroom": fiber.Map{
 				"id":       m.Chatid,
 				"chattype": m.RoomChattype,
 				"user1":    m.RoomUser1,
 				"user2":    m.RoomUser2,
-				"groupid":  m.RoomGroupid,
 				"name":     name,
 			},
 		}
 
-		// Add image if the message has one.
 		if m.Imageid != nil {
 			path, paththumb := misc.BuildChatImageUrl(*m.Imageid, m.Imageuid, string(m.Imagemods), m.ImageArchived)
 			image := &ChatAttachment{
@@ -1802,21 +1450,10 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			msg["imageid"] = *m.Imageid
 		}
 
-		// Add msgid if the message came via email.
 		if m.Msgid != nil {
 			msg["msgid"] = *m.Msgid
 		}
 
-		// The communities the post itself is on, so a moderator can see at a
-		// glance whether a chat is theirs to handle (Discourse #10004). Origin
-		// first; a rippled post lists every community it reached.
-		if m.Refmsgid != nil {
-			if g, ok := refGroups[*m.Refmsgid]; ok && len(g) > 0 {
-				msg["refmsggroups"] = g
-			}
-		}
-
-		// Add held info if message is held by a moderator.
 		if m.HeldBy > 0 {
 			held := fiber.Map{
 				"id": m.HeldBy,
@@ -1834,7 +1471,6 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		result = append(result, msg)
 	}
 
-	// Build context for pagination.
 	newCtx := fiber.Map{}
 	if len(msgs) > 0 {
 		newCtx["id"] = msgs[len(msgs)-1].ID
@@ -2142,54 +1778,8 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 		return reason
 	}
 
-	// Step 1: Check concern_keywords with literal/regex match modes.
-	//
-	// Mirror PHP ContentCheckService::checkConcernKeywords filters:
-	//   - scope='global' only (per-group worry words are scoped to a specific
-	//     group_id and must not match chat messages from other groups; chat
-	//     messages have no group context here, so per-group keywords are
-	//     dropped entirely)
-	//   - category != 'allowed' (allowed-category place names like 'road' /
-	//     'Butt Road' / 'Cock Lane' are tracked for context, not flagging)
-	//
-	// Without these filters, every chat message containing common place-name
-	// or per-group worry tokens (e.g. 'road', 'donate', 'charity') was
-	// labelled "Known spam keyword" in MT chat review even when the original
-	// flag came from a URL or other content check.
-	type spamWord struct {
-		Word    string  `gorm:"column:word"`
-		Type    string  `gorm:"column:type"`
-		Action  string  `gorm:"column:action"`
-		Exclude *string `gorm:"column:exclude"`
-	}
-	var keywords []spamWord
-	db.Table("concern_keywords").
-		Select("keyword AS word, match_mode AS type, action, exclude").
-		Where("match_mode IN ('literal', 'regex') AND action IN ('block', 'flag') AND scope = 'global' AND category != 'allowed' AND LENGTH(TRIM(keyword)) > 0").
-		Scan(&keywords)
-
-	for _, kw := range keywords {
-		word := strings.TrimSpace(kw.Word)
-		if len(word) == 0 {
-			continue
-		}
-		pattern := `(?i)\b` + regexp.QuoteMeta(word) + `\b`
-		re, err := regexp.Compile(pattern)
-		if err != nil {
-			continue
-		}
-		if re.MatchString(msg) {
-			if kw.Exclude != nil && *kw.Exclude != "" {
-				exRe, exErr := regexp.Compile(`(?i)` + *kw.Exclude)
-				if exErr == nil && exRe.MatchString(msg) {
-					continue
-				}
-			}
-			return "Known spam keyword"
-		}
-	}
-
-	// Step 2: checkReview-style pattern checks (matching PHP Spam::checkReview order).
+	// checkReview-style pattern checks (matching PHP Spam::checkReview order). Keyword-list
+	// checks (concern_keywords) are gone: rules are AI judgement now, not word lists.
 
 	// Script tags.
 	if strings.Contains(strings.ToLower(msg), "<script") {

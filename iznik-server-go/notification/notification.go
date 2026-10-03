@@ -73,7 +73,7 @@ func List(c *fiber.Ctx) error {
 
 	// V1 parity: notification.php GET calls $me->recordActive() which inserts a row into
 	// users_active (userid, timestamp) with timestamp truncated to the hour. This is used by
-	// Stats.php for active-users-per-group counts and the moderator activity leaderboard.
+	// Stats.php for active-user counts and the moderator activity leaderboard.
 	hourTimestamp := time.Now().UTC().Truncate(time.Hour).Format("2006-01-02 15:04:05")
 	db.Table("users_active").Clauses(clause.Insert{Modifier: "IGNORE"}).
 		Create(map[string]interface{}{"userid": myid, "timestamp": hourTimestamp})
@@ -140,7 +140,7 @@ func Seen(c *fiber.Ctx) error {
 
 	// TODO: Send push notification to update badge count on the user's devices.
 	// We don't have a user-level push notification task type yet (only
-	// TaskPushNotifyGroupMods for group mod notifications). When a
+	// TaskPushNotifyGroupMods for moderator notifications). When a
 	// TaskPushNotifyUser task type is added, queue it here.
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -173,7 +173,7 @@ func AllSeen(c *fiber.Ctx) error {
 
 	// TODO: Send push notification to update badge count on the user's devices.
 	// We don't have a user-level push notification task type yet (only
-	// TaskPushNotifyGroupMods for group mod notifications). When a
+	// TaskPushNotifyGroupMods for moderator notifications). When a
 	// TaskPushNotifyUser task type is added, queue it here.
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

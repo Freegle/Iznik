@@ -24,11 +24,14 @@ class RestoreUserCommand extends Command
     /**
      * Columns that hold user IDs in each table, and need remapping
      * when source_userid != target_userid.
+     *
+     * memberships/memberships_history/users_banned were dropped by
+     * 2026_09_20_000001_remove_group_model.php (ai-judgement.md); the ban is
+     * restored as the banned/bannedby pair on `users` itself, in
+     * findOrCreateUser() below, instead of a separate table.
      */
     private array $userIdColumns = [
-        'memberships'              => ['userid'],
         'spam_users'               => ['userid', 'byuserid'],
-        'users_banned'             => ['userid'],
         'users_donations'          => ['userid'],
         'microactions'             => ['userid'],
         'giftaid'                  => ['userid'],
@@ -43,7 +46,6 @@ class RestoreUserCommand extends Command
         'chat_roster'              => ['userid'],
         'chat_messages'            => ['userid'],
         'users_searches'           => ['userid'],
-        'memberships_history'      => ['userid'],
         'logs'                     => ['user'],
         'logs_sql'                 => ['userid'],
         'newsfeed'                 => ['userid'],
@@ -115,12 +117,12 @@ class RestoreUserCommand extends Command
 
         // Process all tables in order.
         $tableOrder = [
-            'memberships', 'spam_users', 'users_banned', 'users_donations',
+            'spam_users', 'users_donations',
             'microactions', 'giftaid', 'users_logins', 'users_emails',
             'users_comments', 'sessions', 'messages',
             'users_push_notifications', 'users_notifications',
             'chat_rooms', 'chat_roster', 'chat_messages',
-            'users_searches', 'memberships_history', 'logs', 'logs_sql', 'newsfeed',
+            'users_searches', 'logs', 'logs_sql', 'newsfeed',
         ];
 
         foreach ($tableOrder as $table) {
@@ -132,12 +134,6 @@ class RestoreUserCommand extends Command
 
             $this->processTable($table, $rows, $sourceUserId, $targetUserId, $chatRoomMap, $dryRun);
         }
-
-        // Restore messages_groups deleted status.
-        $this->restoreMessagesGroups(
-            $dump['tables']['messages_groups'] ?? [],
-            $dryRun
-        );
 
         $this->info('Restore complete.');
 
@@ -191,6 +187,8 @@ class RestoreUserCommand extends Command
             'yahooid'     => $userAttrs['yahooid'],
             'systemrole'  => $userAttrs['systemrole'],
             'permissions' => $userAttrs['permissions'],
+            'banned'      => $userAttrs['banned'] ?? null,
+            'bannedby'    => $userAttrs['bannedby'] ?? null,
             'deleted'     => null,
             'forgotten'   => null,
         ], fn ($v) => $v !== null || in_array($v, ['deleted', 'forgotten']));
@@ -211,7 +209,8 @@ class RestoreUserCommand extends Command
 
     /**
      * Build a mapping from source chat room ID to target chat room ID.
-     * Chat rooms are identified by their type + groupid + user1 + user2.
+     * Chat rooms are identified by their type + user1 + user2 (groupid was
+     * dropped from chat_rooms by 2026_09_20_000001_remove_group_model.php).
      */
     private function buildChatRoomMap(array $chatRooms, int $sourceUserId, int $targetUserId, bool $dryRun): array
     {
@@ -228,9 +227,6 @@ class RestoreUserCommand extends Command
             $query = DB::table('chat_rooms')
                 ->where('chattype', $room['chattype']);
 
-            if ($room['groupid'] ?? null) {
-                $query->where('groupid', $room['groupid']);
-            }
             if ($user1) {
                 $query->where('user1', $user1);
             }
@@ -357,39 +353,5 @@ class RestoreUserCommand extends Command
             $this->warn("  Warning: skipped row in $table: ".$e->getMessage());
             Log::warning('user:restore upsert failed', ['table' => $table, 'error' => $e->getMessage()]);
         }
-    }
-
-    /**
-     * Restore the deleted/arrival status of messages_groups entries.
-     * Mirrors the "undelete messages" section of user_restore.php.
-     */
-    private function restoreMessagesGroups(array $rows, bool $dryRun): void
-    {
-        if (empty($rows)) {
-            return;
-        }
-
-        $count = 0;
-
-        foreach ($rows as $row) {
-            if ($dryRun) {
-                $count++;
-
-                continue;
-            }
-
-            DB::table('messages_groups')
-                ->where('msgid', $row['msgid'])
-                ->where('groupid', $row['groupid'])
-                ->update([
-                    'deleted' => $row['deleted'],
-                    'arrival' => $row['arrival'],
-                ]);
-
-            $count++;
-        }
-
-        $prefix = $dryRun ? '[DRY RUN] Would restore' : 'Restored';
-        $this->line("  messages_groups: $prefix $count row(s)");
     }
 }

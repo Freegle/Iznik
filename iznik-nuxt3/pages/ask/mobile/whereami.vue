@@ -17,24 +17,12 @@
         />
       </div>
 
-      <div v-if="!closed && postcodeValid" class="form-section">
-        <label class="form-label">Your local community:</label>
-        <ComposeGroup />
-        <PostPersonalInfoWarning :group="group" :text="postText" />
-      </div>
-
-      <div v-if="postcodeValid && noGroups" class="no-groups-notice">
-        <NoticeMessage variant="info">
-          We're really sorry, but there are no communities near there. If you'd
-          like to start one, please
-          <ExternalLink href="mailto:newgroups@ilovefreegle.org">
-            get in touch!
-          </ExternalLink>
-        </NoticeMessage>
+      <div v-if="postcodeValid" class="form-section">
+        <PostPersonalInfoWarning :text="postText" />
       </div>
 
       <!-- Email section for logged out users -->
-      <div v-if="!loggedIn && postcodeValid && !noGroups" class="form-section">
+      <div v-if="!loggedIn && postcodeValid" class="form-section">
         <h2 class="section-title">Your email address</h2>
         <p class="section-subtitle">
           We need your email address to let you know when you have replies. We
@@ -111,7 +99,6 @@ import { ref, computed, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from '#imports'
 import PostCode from '~/components/PostCode.vue'
-import ComposeGroup from '~/components/ComposeGroup.vue'
 import NoticeMessage from '~/components/NoticeMessage.vue'
 import ExternalLink from '~/components/ExternalLink.vue'
 import EmailValidator from '~/components/EmailValidator.vue'
@@ -150,15 +137,12 @@ const {
   initialPostcode,
   messageValid,
   postcodeValid,
-  noGroups,
-  closed,
   submitting,
   loggedIn,
   emailIsntOurs,
   notAllowed,
   unvalidatedEmail,
   wentWrong,
-  group,
 } = await setup('Wanted')
 
 const postText = computed(() => {
@@ -174,8 +158,6 @@ const canSubmit = makeCanSubmit({
   emailValid,
   emailBelongsToSomeoneElse,
   postcodeValid,
-  closed,
-  noGroups,
   requirePostcode: true,
 })
 

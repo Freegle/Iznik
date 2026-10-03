@@ -1,47 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SettingsGroup from '~/components/SettingsGroup.vue'
 
-const mockAuthStore = {
-  user: { id: 1 },
-  setGroup: vi.fn().mockResolvedValue(undefined),
-}
-
-const mockMyGroups = [
-  {
-    id: 123,
-    emailfrequency: 24,
-    eventsallowed: 1,
-    volunteeringallowed: 1,
-  },
-]
-
-vi.mock('~/stores/auth', () => ({
-  useAuthStore: () => mockAuthStore,
-}))
-
-vi.mock('~/composables/useMe', () => ({
-  useMe: () => ({
-    myGroups: { value: mockMyGroups },
-  }),
-}))
-
+// SettingsGroup is a dumb emit-only control now: there is one national set of
+// settings, so it never looks anything up itself and never persists anything
+// itself. The national site backs it with props (emailfrequency/eventsallowed/
+// volunteeringallowed read from the current user); ModTools backs it with a
+// membershipMT object (the member row) so it can control persistence itself.
 describe('SettingsGroup', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mockAuthStore.user = { id: 1 }
-    mockMyGroups[0] = {
-      id: 123,
-      emailfrequency: 24,
-      eventsallowed: 1,
-      volunteeringallowed: 1,
-    }
-  })
-
   function createWrapper(props = {}) {
     return mount(SettingsGroup, {
       props: {
-        groupid: 123,
         ...props,
       },
       global: {
@@ -50,11 +19,6 @@ describe('SettingsGroup', () => {
             template:
               '<button class="our-toggle" :data-model-value="modelValue" @click="$emit(\'update:modelValue\', !modelValue)"><slot /></button>',
             props: ['modelValue', 'size', 'labels'],
-          },
-          SpinButton: {
-            template:
-              '<button class="spin-button" @click="$emit(\'handle\', () => {})"><slot />{{ label }}</button>',
-            props: ['variant', 'iconName', 'label'],
           },
           'b-form-select': {
             template:
@@ -107,55 +71,70 @@ describe('SettingsGroup', () => {
       expect(wrapper.text()).not.toContain('Volunteer opportunities')
     })
 
-    it('shows leave button when leave prop is true', () => {
-      const wrapper = createWrapper({ leave: true })
-      const leaveBtn = wrapper.find('.spin-button')
-      expect(leaveBtn.exists()).toBe(true)
-      expect(leaveBtn.text()).toContain('Leave this community')
-    })
-
-    it('hides leave button when leave prop is false', () => {
-      const wrapper = createWrapper({ leave: false })
-      expect(wrapper.text()).not.toContain('Leave this community')
+    it('has no leave button - there is one national community, so nobody leaves it', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.find('.leave-row').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Leave')
     })
   })
 
   describe('computed emailfreq', () => {
-    it('returns membership emailfrequency as string', () => {
+    it('returns the emailfrequency prop when no membershipMT', () => {
+      const wrapper = createWrapper({ emailfrequency: -1 })
+      expect(wrapper.vm.emailfreq).toBe('-1')
+    })
+
+    it('defaults to 24 (Daily) when no emailfrequency prop and no membershipMT', () => {
       const wrapper = createWrapper()
       expect(wrapper.vm.emailfreq).toBe('24')
     })
 
-    it('returns emailfrequency prop when no membership', () => {
-      mockMyGroups.length = 0
-      const wrapper = createWrapper({ emailfrequency: -1 })
-      expect(wrapper.vm.emailfreq).toBe('-1')
+    it('prefers membershipMT.emailfrequency over the emailfrequency prop', () => {
+      const wrapper = createWrapper({
+        emailfrequency: -1,
+        membershipMT: { emailfrequency: 0 },
+      })
+      expect(wrapper.vm.emailfreq).toBe('0')
     })
   })
 
   describe('computed eventsallowed', () => {
-    it('returns true when membership.eventsallowed is 1', () => {
-      const wrapper = createWrapper()
+    it('returns the eventsallowed prop when no membershipMT', () => {
+      const wrapper = createWrapper({ eventsallowed: true })
       expect(wrapper.vm.eventsallowed).toBe(true)
     })
 
-    it('returns false when membership.eventsallowed is 0', () => {
-      mockMyGroups[0].eventsallowed = 0
+    it('defaults to false', () => {
       const wrapper = createWrapper()
       expect(wrapper.vm.eventsallowed).toBe(false)
+    })
+
+    it('prefers membershipMT.eventsallowed over the eventsallowed prop', () => {
+      const wrapper = createWrapper({
+        eventsallowed: false,
+        membershipMT: { eventsallowed: 1 },
+      })
+      expect(wrapper.vm.eventsallowed).toBe(true)
     })
   })
 
   describe('computed volunteeringallowed', () => {
-    it('returns true when membership.volunteeringallowed is 1', () => {
-      const wrapper = createWrapper()
+    it('returns the volunteeringallowed prop when no membershipMT', () => {
+      const wrapper = createWrapper({ volunteeringallowed: true })
       expect(wrapper.vm.volunteeringallowed).toBe(true)
     })
 
-    it('returns false when membership.volunteeringallowed is 0', () => {
-      mockMyGroups[0].volunteeringallowed = 0
+    it('defaults to false', () => {
       const wrapper = createWrapper()
       expect(wrapper.vm.volunteeringallowed).toBe(false)
+    })
+
+    it('prefers membershipMT.volunteeringallowed over the volunteeringallowed prop', () => {
+      const wrapper = createWrapper({
+        volunteeringallowed: false,
+        membershipMT: { volunteeringallowed: 1 },
+      })
+      expect(wrapper.vm.volunteeringallowed).toBe(true)
     })
   })
 
@@ -172,44 +151,31 @@ describe('SettingsGroup', () => {
   })
 
   describe('emits', () => {
-    it('emits leave when leave button is clicked', async () => {
-      const wrapper = createWrapper({ leave: true })
-      await wrapper.find('.spin-button').trigger('click')
-      expect(wrapper.emitted('leave')).toBeTruthy()
-    })
-
-    it('emits update:emailfrequency when email frequency changes', async () => {
+    it('emits update:emailfrequency when email frequency changes, and persists nothing itself', async () => {
       const wrapper = createWrapper()
       wrapper.vm.emailfreq = '0'
       await wrapper.vm.$nextTick()
       expect(wrapper.emitted('update:emailfrequency')).toBeTruthy()
+      expect(wrapper.emitted('update:emailfrequency')[0]).toEqual(['0'])
     })
-  })
 
-  describe('changeValue method', () => {
-    it('calls authStore.setGroup with correct params', async () => {
+    it('emits update:eventsallowed as 1/0 when the events toggle changes', async () => {
       const wrapper = createWrapper()
-      wrapper.vm.emailfreq = '0'
+      wrapper.vm.eventsallowed = true
       await wrapper.vm.$nextTick()
-
-      expect(mockAuthStore.setGroup).toHaveBeenCalledWith({
-        userid: 1,
-        groupid: 123,
-        emailfrequency: 0,
-      })
+      expect(wrapper.emitted('update:eventsallowed')[0]).toEqual([1])
     })
 
-    it('does not call setGroup when no groupid', async () => {
-      const wrapper = createWrapper({ groupid: null })
-      wrapper.vm.emailfreq = '0'
+    it('emits update:volunteeringallowed as 1/0 when the volunteering toggle changes', async () => {
+      const wrapper = createWrapper()
+      wrapper.vm.volunteeringallowed = true
       await wrapper.vm.$nextTick()
-
-      expect(mockAuthStore.setGroup).not.toHaveBeenCalled()
+      expect(wrapper.emitted('update:volunteeringallowed')[0]).toEqual([1])
     })
   })
 
-  describe('membershipMT prop', () => {
-    it('uses membershipMT when provided', () => {
+  describe('membershipMT prop (used by ModTools)', () => {
+    it('uses membershipMT for emailfreq, eventsallowed and volunteeringallowed when provided', () => {
       const mtMembership = {
         emailfrequency: -1,
         eventsallowed: 0,
@@ -217,6 +183,8 @@ describe('SettingsGroup', () => {
       }
       const wrapper = createWrapper({ membershipMT: mtMembership })
       expect(wrapper.vm.emailfreq).toBe('-1')
+      expect(wrapper.vm.eventsallowed).toBe(false)
+      expect(wrapper.vm.volunteeringallowed).toBe(false)
     })
   })
 })

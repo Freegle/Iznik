@@ -13,22 +13,16 @@ import {
 
 const {
   mockClearReply,
-  mockMessageFetch,
-  mockMessageById,
   mockFetchMeFn,
   mockReplyToPostFn,
   mockSaveDraft,
   mockClearDraft,
-  mockGroupFetch,
 } = vi.hoisted(() => ({
   mockClearReply: vi.fn(),
-  mockMessageFetch: vi.fn(),
-  mockMessageById: vi.fn(),
   mockFetchMeFn: vi.fn(),
   mockReplyToPostFn: vi.fn(),
   mockSaveDraft: vi.fn(),
   mockClearDraft: vi.fn(),
-  mockGroupFetch: vi.fn(),
 }))
 
 // ============================================================
@@ -100,33 +94,11 @@ vi.mock('~/stores/reply', () => ({
 }))
 
 // ============================================================
-// MESSAGE STORE MOCK
-// ============================================================
-
-vi.mock('~/stores/message', () => ({
-  useMessageStore: () => ({
-    fetch: mockMessageFetch,
-    byId: mockMessageById,
-  }),
-}))
-
-// ============================================================
-// GROUP STORE MOCK — used to look up lat/lng for the "closest group" join pick
-// ============================================================
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({
-    fetch: mockGroupFetch,
-  }),
-}))
-
-// ============================================================
 // useMe MOCK — lazy getters avoid TDZ for mutable state
 // ============================================================
 
 let mockMeValue = null
 let mockMyidValue = null
-let mockMyGroupsValue = {}
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
@@ -138,11 +110,6 @@ vi.mock('~/composables/useMe', () => ({
     myid: {
       get value() {
         return mockMyidValue
-      },
-    },
-    myGroups: {
-      get value() {
-        return mockMyGroupsValue
       },
     },
     fetchMe: mockFetchMeFn,
@@ -229,7 +196,6 @@ beforeEach(() => {
   mockAuthStore = {
     forceLogin: mockForceLogin,
     loggedInEver: mockLoggedInEver,
-    joinGroup: vi.fn().mockResolvedValue(undefined),
     setAuth: vi.fn(),
     fetchUser: vi.fn().mockResolvedValue(undefined),
   }
@@ -264,18 +230,9 @@ beforeEach(() => {
   // useMe
   mockMeValue = null
   mockMyidValue = null
-  mockMyGroupsValue = {}
 
   // Other mocks
   mockFetchMeFn.mockResolvedValue(undefined)
-  mockMessageFetch.mockResolvedValue({
-    id: MSG_ID,
-    groups: [{ groupid: 100 }],
-  })
-  // Default: no group data (tests that care about distance configure this themselves).
-  mockGroupFetch.mockResolvedValue(null)
-  // Default: the post is reply-eligible (no reach block) unless a test overrides byId.
-  mockMessageById.mockReturnValue(null)
   mockReplyToPostFn.mockResolvedValue(MSG_ID)
 })
 
@@ -294,7 +251,6 @@ describe('ReplyState and ReplyEvent enums', () => {
     expect(ReplyState.COMPOSING).toBe('COMPOSING')
     expect(ReplyState.VALIDATING).toBe('VALIDATING')
     expect(ReplyState.AUTHENTICATING).toBe('AUTHENTICATING')
-    expect(ReplyState.JOINING_GROUP).toBe('JOINING_GROUP')
     expect(ReplyState.CREATING_CHAT).toBe('CREATING_CHAT')
     expect(ReplyState.SENDING).toBe('SENDING')
     expect(ReplyState.SHOWING_WELCOME).toBe('SHOWING_WELCOME')
@@ -325,7 +281,6 @@ describe('computed: canSend', () => {
     ['ERROR', true],
     ['VALIDATING', false],
     ['AUTHENTICATING', false],
-    ['JOINING_GROUP', false],
     ['CREATING_CHAT', false],
     ['SENDING', false],
     ['SHOWING_WELCOME', false],
@@ -345,7 +300,6 @@ describe('computed: isProcessing', () => {
   const cases = [
     ['VALIDATING', true],
     ['AUTHENTICATING', true],
-    ['JOINING_GROUP', true],
     ['CREATING_CHAT', true],
     ['SENDING', true],
     ['IDLE', false],
@@ -457,7 +411,7 @@ describe('reset', () => {
 })
 
 describe('fallbackToComposing', () => {
-  it.each(['VALIDATING', 'JOINING_GROUP', 'CREATING_CHAT', 'ERROR'])(
+  it.each(['VALIDATING', 'CREATING_CHAT', 'ERROR'])(
     'always transitions to COMPOSING from %s',
     (state) => {
       const { result } = mountComposable()
@@ -640,22 +594,22 @@ describe('initialize', () => {
     expect(result.state.value).toBe(ReplyState.COMPOSING)
   })
 
-  it('restores JOINING_GROUP + logged-in as COMPOSING (mid-process resume)', () => {
+  it('restores CREATING_CHAT + logged-in as COMPOSING (mid-process resume)', () => {
     mockReplyMsgId = MSG_ID
-    mockReplyMessage = 'Join reply'
+    mockReplyMessage = 'Chat reply'
     mockReplyingAt = Date.now() - 60 * 1000
-    mockMachineState = ReplyState.JOINING_GROUP
+    mockMachineState = ReplyState.CREATING_CHAT
     mockMeValue = { id: 7 }
     const { result } = mountComposable()
     result.initialize()
     expect(result.state.value).toBe(ReplyState.COMPOSING)
   })
 
-  it('restores JOINING_GROUP + not logged-in as COMPOSING (auth_state_mismatch)', () => {
+  it('restores CREATING_CHAT + not logged-in as COMPOSING (auth_state_mismatch)', () => {
     mockReplyMsgId = MSG_ID
-    mockReplyMessage = 'Join reply'
+    mockReplyMessage = 'Chat reply'
     mockReplyingAt = Date.now() - 60 * 1000
-    mockMachineState = ReplyState.JOINING_GROUP
+    mockMachineState = ReplyState.CREATING_CHAT
     mockMeValue = null
     const { result } = mountComposable()
     result.initialize()
@@ -840,14 +794,9 @@ describe('draft persistence (typing survives close/reopen)', () => {
 })
 
 describe('onLoginSuccess', () => {
-  it('from AUTHENTICATING with reply text: resumes to join-group → completed', async () => {
+  it('from AUTHENTICATING with reply text: resumes to chat creation → completed', async () => {
     mockMeValue = { id: 10 }
     mockMyidValue = 10
-    mockMyGroupsValue = { 0: { id: 100 } }
-    mockMessageFetch.mockResolvedValue({
-      id: MSG_ID,
-      groups: [{ groupid: 100 }],
-    })
     mockReplyToPostFn.mockResolvedValue(MSG_ID)
 
     const { result } = mountComposable()
@@ -901,17 +850,18 @@ describe('onLoginSuccess', () => {
     expect(result.state.value).toBe(ReplyState.IDLE)
   })
 
-  it('non-auth error in handleJoinGroup during resume transitions to ERROR', async () => {
-    // handleJoinGroup catches errors internally and transitions to ERROR without
+  it('non-auth error in handleCreateChat during resume transitions to ERROR', async () => {
+    // handleCreateChat catches errors internally and transitions to ERROR without
     // re-throwing, so onLoginSuccess's catch block is not reached.
     mockMeValue = { id: 10 }
     mockMyidValue = 10
-    mockMessageFetch.mockRejectedValue(new Error('Network error'))
+    mockReplyToPostFn.mockRejectedValue(new Error('Network error'))
 
     const { result } = mountComposable()
     result.initialize()
     result.state.value = ReplyState.AUTHENTICATING
     result.replyText.value = 'Reply text'
+    result.setRefs({ chatButton: makeChatButtonRef() })
 
     await result.onLoginSuccess()
     await flushPromises()
@@ -993,11 +943,6 @@ describe('submit', () => {
   it('logged-in + already a member → COMPLETED', async () => {
     mockMeValue = { id: 10 }
     mockMyidValue = 10
-    mockMyGroupsValue = { 0: { id: 100 } }
-    mockMessageFetch.mockResolvedValue({
-      id: MSG_ID,
-      groups: [{ groupid: 100 }],
-    })
     mockReplyToPostFn.mockResolvedValue(MSG_ID)
 
     const { result } = mountComposable()
@@ -1016,11 +961,6 @@ describe('submit', () => {
   it('logged-in new user → SHOWING_WELCOME after sending', async () => {
     mockMeValue = { id: 10 }
     mockMyidValue = 10
-    mockMyGroupsValue = { 0: { id: 100 } }
-    mockMessageFetch.mockResolvedValue({
-      id: MSG_ID,
-      groups: [{ groupid: 100 }],
-    })
     mockReplyToPostFn.mockResolvedValue(MSG_ID)
 
     const { result } = mountComposable()
@@ -1064,11 +1004,6 @@ describe('submit', () => {
     mockFetchMeFn.mockImplementation(() => {
       mockMeValue = { id: 99 }
       mockMyidValue = 99
-    })
-    mockMyGroupsValue = { 0: { id: 100 } }
-    mockMessageFetch.mockResolvedValue({
-      id: MSG_ID,
-      groups: [{ groupid: 100 }],
     })
     mockReplyToPostFn.mockResolvedValue(MSG_ID)
 
@@ -1149,255 +1084,10 @@ describe('submit', () => {
   })
 })
 
-describe('handleJoinGroup (via submit with logged-in user)', () => {
-  async function doLoggedInSubmit(result) {
-    result.startTyping()
-    result.replyText.value = 'My reply'
-    await result.submit()
-    await flushPromises()
-  }
-
-  it('joins group when user is not already a member', async () => {
-    mockMeValue = { id: 10 }
-    mockMyidValue = 10
-    mockMyGroupsValue = {} // no memberships
-    mockMessageFetch.mockResolvedValue({
-      id: MSG_ID,
-      groups: [{ groupid: 200 }],
-    })
-    mockReplyToPostFn.mockResolvedValue(MSG_ID)
-
-    const { result } = mountComposable()
-    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
-    await doLoggedInSubmit(result)
-
-    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(10, 200, false)
-    expect(result.state.value).toBe(ReplyState.COMPLETED)
-  })
-
-  it('skips joining when already a member', async () => {
-    mockMeValue = { id: 10 }
-    mockMyidValue = 10
-    mockMyGroupsValue = { 0: { id: 100 } }
-    mockMessageFetch.mockResolvedValue({
-      id: MSG_ID,
-      groups: [{ groupid: 100 }],
-    })
-    mockReplyToPostFn.mockResolvedValue(MSG_ID)
-
-    const { result } = mountComposable()
-    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
-    await doLoggedInSubmit(result)
-
-    expect(mockAuthStore.joinGroup).not.toHaveBeenCalled()
-    expect(result.state.value).toBe(ReplyState.COMPLETED)
-  })
-
-  it('transitions to ERROR when message has no groups', async () => {
-    mockMeValue = { id: 10 }
-    mockMyidValue = 10
-    mockMessageFetch.mockResolvedValue({ id: MSG_ID, groups: [] })
-
-    const { result } = mountComposable()
-    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
-    await doLoggedInSubmit(result)
-
-    expect(result.state.value).toBe(ReplyState.ERROR)
-    expect(result.error.value).toBeTruthy()
-  })
-
-  it('transitions to ERROR when message fetch fails', async () => {
-    mockMeValue = { id: 10 }
-    mockMyidValue = 10
-    mockMessageFetch.mockRejectedValue(new Error('Network error'))
-
-    const { result } = mountComposable()
-    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
-    await doLoggedInSubmit(result)
-
-    expect(result.state.value).toBe(ReplyState.ERROR)
-  })
-
-  it('triggers auth error flow when message fetch returns 401', async () => {
-    mockMeValue = { id: 10 }
-    mockMyidValue = 10
-    const authErr = Object.assign(new Error('session expired'), { status: 401 })
-    mockMessageFetch.mockRejectedValue(authErr)
-
-    const { result } = mountComposable()
-    result.setRefs({ form: makeFormRef(true) })
-    await doLoggedInSubmit(result)
-
-    expect(mockForceLogin.value).toBe(true)
-    expect(result.state.value).toBe(ReplyState.AUTHENTICATING)
-  })
-
-  it('triggers auth error when myid is null (session expired)', async () => {
-    mockMeValue = { id: 10 }
-    mockMyidValue = null // no ID despite me being set
-
-    const { result } = mountComposable()
-    result.setRefs({ form: makeFormRef(true) })
-    await doLoggedInSubmit(result)
-
-    expect(mockForceLogin.value).toBe(true)
-    expect(result.state.value).toBe(ReplyState.AUTHENTICATING)
-  })
-})
-
-// ============================================================
-// Multi-group posts: which group do we auto-join?
-//
-// Requirement (Edward, 2026-08-02): only join when the replier has no group in
-// common with the post, and when we do join, pick the group CLOSEST to the
-// replier - not the post's origin/home group, and not whichever group happens to
-// be first or last in msg.groups (API ordering is arbitrary). Regression case:
-// Glen replied to a post on Runcton-area Portsmouth_Freegle and was auto-joined
-// to Portsmouth, nowhere near him. See
-// plans/2026-08-02-reply-join-closest-group.md.
-// ============================================================
-describe('handleJoinGroup: closest-group selection for multi-group posts', () => {
-  async function doLoggedInSubmit(result) {
-    result.startTyping()
-    result.replyText.value = 'My reply'
-    await result.submit()
-    await flushPromises()
-  }
-
-  // Replier is in central London. GROUP_FAR (Edinburgh) is ~330 miles away,
-  // GROUP_MEDIUM (Birmingham) ~100 miles, GROUP_CLOSEST ~1 mile. The message lists
-  // them far/closest/medium - so the closest group sits in the MIDDLE of the
-  // array, not first (would pass under a naive "first wins" bug) and not last
-  // (today's actual bug - groupToJoin is overwritten on every loop iteration and
-  // ends up as the last entry).
-  const REPLIER_LAT = 51.5074
-  const REPLIER_LNG = -0.1278
-  const GROUP_FAR = { id: 301, lat: 55.9533, lng: -3.1883 } // Edinburgh
-  const GROUP_CLOSEST = { id: 302, lat: 51.51, lng: -0.13 } // Central London
-  const GROUP_MEDIUM = { id: 303, lat: 52.4862, lng: -1.8904 } // Birmingham
-
-  function mockGroupFixtures() {
-    mockGroupFetch.mockImplementation((id) =>
-      Promise.resolve(
-        {
-          [GROUP_FAR.id]: GROUP_FAR,
-          [GROUP_CLOSEST.id]: GROUP_CLOSEST,
-          [GROUP_MEDIUM.id]: GROUP_MEDIUM,
-        }[id] || null
-      )
-    )
-  }
-
-  it('no join at all when the replier is already a member of one of the groups', async () => {
-    mockMeValue = { id: 10, lat: REPLIER_LAT, lng: REPLIER_LNG }
-    mockMyidValue = 10
-    mockMyGroupsValue = { 0: { id: GROUP_MEDIUM.id } } // member of one of the three
-    mockGroupFixtures()
-    mockMessageFetch.mockResolvedValue({
-      id: MSG_ID,
-      groups: [
-        { groupid: GROUP_FAR.id },
-        { groupid: GROUP_CLOSEST.id },
-        { groupid: GROUP_MEDIUM.id },
-      ],
-    })
-
-    const { result } = mountComposable()
-    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
-    await doLoggedInSubmit(result)
-
-    expect(mockAuthStore.joinGroup).not.toHaveBeenCalled()
-    expect(result.state.value).toBe(ReplyState.COMPLETED)
-  })
-
-  it('joins the group closest to the replier when there is no overlap - not first, not last', async () => {
-    mockMeValue = { id: 10, lat: REPLIER_LAT, lng: REPLIER_LNG }
-    mockMyidValue = 10
-    mockMyGroupsValue = {} // no memberships at all
-    mockGroupFixtures()
-    mockMessageFetch.mockResolvedValue({
-      id: MSG_ID,
-      groups: [
-        { groupid: GROUP_FAR.id }, // first
-        { groupid: GROUP_CLOSEST.id }, // middle - the correct pick
-        { groupid: GROUP_MEDIUM.id }, // last
-      ],
-    })
-
-    const { result } = mountComposable()
-    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
-    await doLoggedInSubmit(result)
-
-    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(
-      10,
-      GROUP_CLOSEST.id,
-      false
-    )
-    expect(result.state.value).toBe(ReplyState.COMPLETED)
-  })
-
-  it('falls back to the last group in the list when the replier has no known location', async () => {
-    mockMeValue = { id: 10 } // no lat/lng
-    mockMyidValue = 10
-    mockMyGroupsValue = {}
-    mockGroupFixtures()
-    mockMessageFetch.mockResolvedValue({
-      id: MSG_ID,
-      groups: [
-        { groupid: GROUP_FAR.id },
-        { groupid: GROUP_CLOSEST.id },
-        { groupid: GROUP_MEDIUM.id }, // last - previous (arbitrary) behaviour
-      ],
-    })
-
-    const { result } = mountComposable()
-    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
-    await doLoggedInSubmit(result)
-
-    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(
-      10,
-      GROUP_MEDIUM.id,
-      false
-    )
-    expect(result.state.value).toBe(ReplyState.COMPLETED)
-    // No location known, so there's nothing to look distances up against.
-    expect(mockGroupFetch).not.toHaveBeenCalled()
-  })
-
-  it('joins a single-group post directly without any group-store lookup, even with a known location', async () => {
-    mockMeValue = { id: 10, lat: REPLIER_LAT, lng: REPLIER_LNG }
-    mockMyidValue = 10
-    mockMyGroupsValue = {} // no memberships
-    mockGroupFixtures()
-    mockMessageFetch.mockResolvedValue({
-      id: MSG_ID,
-      groups: [{ groupid: GROUP_CLOSEST.id }],
-    })
-
-    const { result } = mountComposable()
-    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
-    await doLoggedInSubmit(result)
-
-    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(
-      10,
-      GROUP_CLOSEST.id,
-      false
-    )
-    expect(result.state.value).toBe(ReplyState.COMPLETED)
-    // A single-group post has a forced answer - no need to look up distance.
-    expect(mockGroupFetch).not.toHaveBeenCalled()
-  })
-})
-
 describe('handleCreateChat (via submit with logged-in user)', () => {
   function setupLoggedIn() {
     mockMeValue = { id: 10 }
     mockMyidValue = 10
-    mockMyGroupsValue = { 0: { id: 100 } }
-    mockMessageFetch.mockResolvedValue({
-      id: MSG_ID,
-      groups: [{ groupid: 100 }],
-    })
   }
 
   it('transitions to ERROR when replyToPost returns falsy', async () => {
@@ -1468,9 +1158,8 @@ describe('processing timeout', () => {
   it('falls back to COMPOSING after 30s stuck in a processing state', async () => {
     mockMeValue = { id: 10 }
     mockMyidValue = 10
-    mockMyGroupsValue = { 0: { id: 100 } }
-    // Message fetch never resolves — keeps state machine stuck in JOINING_GROUP
-    mockMessageFetch.mockImplementation(() => new Promise(() => {}))
+    // replyToPost never resolves — keeps state machine stuck in CREATING_CHAT
+    mockReplyToPostFn.mockImplementation(() => new Promise(() => {}))
 
     const { result } = mountComposable()
     result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
@@ -1501,19 +1190,12 @@ describe('reach gate (rippling-out reply eligibility)', () => {
   function setupLoggedIn() {
     mockMeValue = { id: 10 }
     mockMyidValue = 10
-    mockMyGroupsValue = { 0: { id: 100 } }
-    mockMessageFetch.mockResolvedValue({
-      id: MSG_ID,
-      groups: [{ groupid: 100 }],
-    })
   }
 
   const CLOSEST = 'closest to it first'
 
   it('no longer blocks a replyeligible=false reply — it lets the send proceed (held server-side)', async () => {
     await setupLoggedIn()
-    // The message the member is replying to is flagged not-yet-reachable by the server.
-    mockMessageById.mockReturnValue({ id: MSG_ID, replyeligible: false })
 
     const { result } = mountComposable()
     result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
@@ -1531,7 +1213,6 @@ describe('reach gate (rippling-out reply eligibility)', () => {
 
   it('does NOT block when replyeligible is true / absent (normal reply proceeds)', async () => {
     await setupLoggedIn()
-    mockMessageById.mockReturnValue({ id: MSG_ID }) // no replyeligible => eligible
 
     const { result } = mountComposable()
     result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
@@ -1595,11 +1276,6 @@ describe('reach gate (rippling-out reply eligibility)', () => {
     function setupLoggedIn() {
       mockMeValue = { id: 10 }
       mockMyidValue = 10
-      mockMyGroupsValue = { 0: { id: 100 } }
-      mockMessageFetch.mockResolvedValue({
-        id: MSG_ID,
-        groups: [{ groupid: 100 }],
-      })
     }
 
     it('moves to REPLY_GATE instead of ERROR and keeps the reply', async () => {

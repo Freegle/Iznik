@@ -3,14 +3,12 @@ import { mount } from '@vue/test-utils'
 import {
   createMockAdminsStore,
   createMockUserStore,
-  createMockGroupStore,
 } from '../../mocks/stores'
 import ModAdmin from '~/modtools/components/ModAdmin.vue'
 
 // Create mock store instances
 const mockAdminsStore = createMockAdminsStore()
 const mockUserStore = createMockUserStore()
-const mockGroupStore = createMockGroupStore()
 const mockCheckWork = vi.fn()
 
 // Mock the store imports
@@ -20,10 +18,6 @@ vi.mock('~/stores/admins', () => ({
 
 vi.mock('~/stores/user', () => ({
   useUserStore: () => mockUserStore,
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
 }))
 
 // Mock the composables
@@ -62,7 +56,6 @@ describe('ModAdmin', () => {
     subject: 'Test Admin',
     text: 'Test body',
     created: '2024-01-01',
-    groupid: 1,
     pending: true,
   }
 
@@ -142,11 +135,6 @@ describe('ModAdmin', () => {
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain('1')
     })
-
-    it('displays group name', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.text()).toContain('Test Group')
-    })
   })
 
   describe('expand/collapse', () => {
@@ -179,11 +167,6 @@ describe('ModAdmin', () => {
     it('gets admin from store using id prop', () => {
       mountComponent({ id: 123 })
       expect(mockAdminsStore.get).toHaveBeenCalledWith(123)
-    })
-
-    it('gets group name from group store', () => {
-      mountComponent()
-      expect(mockGroupStore.get).toHaveBeenCalledWith(1)
     })
 
     it('returns holder when admin has heldby', () => {

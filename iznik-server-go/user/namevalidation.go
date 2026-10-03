@@ -7,7 +7,6 @@ import (
 
 	"github.com/freegle/iznik-server-go/utils"
 	"golang.org/x/text/unicode/norm"
-	"gorm.io/gorm"
 )
 
 // Detection of misleading display names — see Discourse thread #9587.
@@ -19,7 +18,7 @@ import (
 
 // tierA holds brand words. Any token matching one of these (exactly or via
 // Damerau-Levenshtein, per the rules in fuzzyHitTierA) is suspicious on its
-// own — legitimate volunteers are exempted via IsNameExempt instead.
+// own — legitimate volunteers (moderators) are exempted via IsExemptBySystemrole instead.
 var tierA = []string{
 	"freegle", "ilovefreegle", "thefreegle",
 	"trashnothing", "freecycle", "freshare",
@@ -270,35 +269,16 @@ func isSuspiciousName(raw string) bool {
 	return false
 }
 
-// IsNameExempt reports whether a user is exempt from name sanitisation —
-// i.e. a platform moderator/support/admin, or an Owner/Moderator on any
-// group. Exempt users keep whatever display name they set.
-func IsNameExempt(db *gorm.DB, userid uint64) bool {
-	var row struct {
-		Systemrole string
-		IsMod      int
-	}
-	db.Table("users u").
-		Select("u.systemrole, IF(EXISTS(SELECT 1 FROM memberships m WHERE m.userid = u.id AND m.role IN (?, ?)), 1, 0) AS is_mod",
-			utils.ROLE_OWNER, utils.ROLE_MODERATOR).
-		Where("u.id = ?", userid).
-		Scan(&row)
-	switch row.Systemrole {
-	case utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN:
-		return true
-	}
-	return row.IsMod == 1
-}
-
-// IsExemptBySystemroleAndMod is a convenience for call sites that already
-// have the systemrole in hand and know whether the user is a group mod —
-// avoids an extra DB round-trip.
-func IsExemptBySystemroleAndMod(systemrole string, isGroupMod bool) bool {
+// IsExemptBySystemrole is a convenience for call sites that already have the
+// systemrole in hand — avoids an extra DB round-trip. Moderators are a
+// national pool (users.systemrole), never scoped to a community, so this is
+// the whole exemption test.
+func IsExemptBySystemrole(systemrole string) bool {
 	switch systemrole {
 	case utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN:
 		return true
 	}
-	return isGroupMod
+	return false
 }
 
 // SanitizeDisplayName returns a safe rewrite of raw for non-exempt users,

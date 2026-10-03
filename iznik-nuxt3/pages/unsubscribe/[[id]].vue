@@ -24,52 +24,14 @@
           </div>
 
           <div v-if="loggedIn" class="mobile-body">
-            <div v-if="groupCount" class="mobile-section">
-              <p class="mobile-section__label">Leave a specific community:</p>
-              <GroupSelect
-                v-model="groupid"
-                size="lg"
-                class="mb-2"
-                memberonly
-              />
-              <SpinButton
-                v-if="groupid"
-                variant="primary"
-                icon-name="trash-alt"
-                label="Leave this community"
-                class="w-100"
-                @handle="leave"
-              />
-            </div>
-
-            <NoticeMessage
-              v-if="left"
-              class="mb-3 fs-4 fw-bold"
-              variant="success"
-            >
-              We've removed you from {{ left }}.
-            </NoticeMessage>
-
-            <div v-if="!groupid" class="mobile-section">
-              <p class="mobile-section__label">Or choose an option:</p>
+            <div class="mobile-section">
+              <p class="mobile-section__label">Choose an option:</p>
               <div class="mobile-actions">
-                <NuxtLink
-                  to="/settings"
-                  :class="[
-                    'mobile-btn',
-                    left ? 'mobile-btn--white' : 'mobile-btn--primary',
-                  ]"
-                >
+                <NuxtLink to="/settings" class="mobile-btn mobile-btn--primary">
                   <v-icon icon="cog" class="me-2" />
                   Get fewer emails
                 </NuxtLink>
-                <button
-                  :class="[
-                    'mobile-btn',
-                    left ? 'mobile-btn--white' : 'mobile-btn--danger',
-                  ]"
-                  @click="unsubscribe"
-                >
+                <button class="mobile-btn mobile-btn--danger" @click="unsubscribe">
                   <v-icon icon="trash-alt" class="me-2" />
                   Delete your account
                 </button>
@@ -154,54 +116,27 @@
               to let them go.
             </p>
             <div v-if="loggedIn">
-              <div v-if="groupCount" class="mt-2">
-                <p>You can leave individual communities:</p>
-                <div class="mb-2">
-                  <GroupSelect v-model="groupid" size="lg" memberonly />
-                  <SpinButton
-                    v-if="groupid"
-                    variant="primary"
-                    icon-name="trash-alt"
-                    label="Leave this community"
-                    class="mt-2"
-                    @handle="leave"
-                  />
-                </div>
-              </div>
-              <NoticeMessage
-                v-if="left"
-                class="mt-2 mb-3 fs-4 fw-bold"
-                variant="success"
-              >
-                We've removed you from {{ left }}.
-              </NoticeMessage>
-              <template v-if="!groupid">
-                <p>
-                  You can get fewer emails and stay a member, or you can leave
-                  Freegle completely:
-                </p>
-                <div class="d-flex justify-content-between flex-wrap">
-                  <nuxt-link to="/settings" no-prefetch>
-                    <b-button
-                      size="lg"
-                      :variant="left ? 'light' : 'primary'"
-                      class="mb-2 me-2"
-                    >
-                      <v-icon icon="cog" />
-                      <span class="ms-1"> Get fewer emails </span>
-                    </b-button>
-                  </nuxt-link>
-                  <b-button
-                    size="lg"
-                    :variant="left ? 'light' : 'danger'"
-                    class="mb-2"
-                    @click="unsubscribe"
-                  >
-                    <v-icon icon="trash-alt" />
-                    <span class="ms-1"> Delete your account </span>
+              <p>
+                You can get fewer emails and stay a member, or you can leave
+                Freegle completely:
+              </p>
+              <div class="d-flex justify-content-between flex-wrap">
+                <nuxt-link to="/settings" no-prefetch>
+                  <b-button size="lg" variant="primary" class="mb-2 me-2">
+                    <v-icon icon="cog" />
+                    <span class="ms-1"> Get fewer emails </span>
                   </b-button>
-                </div>
-              </template>
+                </nuxt-link>
+                <b-button
+                  size="lg"
+                  variant="danger"
+                  class="mb-2"
+                  @click="unsubscribe"
+                >
+                  <v-icon icon="trash-alt" />
+                  <span class="ms-1"> Delete your account </span>
+                </b-button>
+              </div>
               <p>If you need help, please mail <SupportLink />.</p>
             </div>
             <div v-else>
@@ -272,7 +207,7 @@
       <ConfirmModal
         v-if="showConfirmModal"
         title="Permanently delete your account?"
-        message="<p>This will delete all your personal data, chats and community memberships.</p><p><strong>It's permanent - you can't undo it or get your data back.</strong></p><p>If you just want to leave one community, please <em>Cancel</em> and select the community from the drop-down list.</p>"
+        message="<p>This will delete all your personal data, chats and membership.</p><p><strong>It's permanent - you can't undo it or get your data back.</strong></p>"
         @confirm="forget"
         @hidden="showConfirmModal = false"
       />
@@ -287,7 +222,6 @@
 <script setup>
 import {
   ref,
-  computed,
   onMounted,
   defineAsyncComponent,
   useRoute,
@@ -305,9 +239,6 @@ import { useMe } from '~/composables/useMe'
 
 const ForgetFailModal = defineAsyncComponent(
   () => import('~/components/ForgetFailModal.vue')
-)
-const GroupSelect = defineAsyncComponent(
-  () => import('~/components/GroupSelect.vue')
 )
 const ConfirmModal = defineAsyncComponent(
   () => import('~/components/ConfirmModal.vue')
@@ -329,7 +260,7 @@ const route = useRoute()
 const router = useRouter()
 const runtimeConfig = useRuntimeConfig()
 const authStore = useAuthStore()
-const { me, myid, myGroups, myGroup, loggedIn } = useMe()
+const { me, myid, loggedIn } = useMe()
 
 // Setup head
 useHead(
@@ -342,13 +273,11 @@ useHead(
 )
 
 // Data properties
-const groupid = ref(null)
 const email = ref(null)
 const emailValid = ref(false)
 const emailSent = ref(false)
 const emailProblem = ref(false)
 const wrongUser = ref(false)
-const left = ref(null)
 const unknown = ref(false)
 const showForgetFailModal = ref(false)
 const showConfirmModal = ref(false)
@@ -364,11 +293,6 @@ function openContactSupport() {
 const userid = parseInt(route.params.id)
 const confirmed = route.query.confirm
 
-// Computed properties
-const groupCount = computed(() => {
-  return myGroups.value.length
-})
-
 // Methods
 function unsubscribe() {
   if (!me.value) {
@@ -380,17 +304,6 @@ function unsubscribe() {
   } else {
     showConfirmModal.value = true
   }
-}
-
-async function leave(callback) {
-  if (groupid.value) {
-    const groupName = myGroup(groupid.value).namedisplay
-    await authStore.leaveGroup(myid.value, groupid.value)
-    left.value = groupName
-  }
-
-  groupid.value = 0
-  callback()
 }
 
 async function forget() {

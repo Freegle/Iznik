@@ -93,14 +93,12 @@ class ChatMaintenanceServiceTest extends TestCase
     public function test_reopens_closed_user2mod_chats(): void
     {
         $user1 = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user1, $group);
 
-        // Create a User2Mod chat room.
+        // Create a User2Mod chat room. There is one national mod chat per
+        // user now, with no group scoping.
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $user1->id,
-            'groupid' => $group->id,
             'created' => now()->subDays(10),
             'latestmessage' => now()->subDays(1),
         ]);

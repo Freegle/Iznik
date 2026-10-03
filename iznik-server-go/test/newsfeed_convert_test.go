@@ -287,7 +287,7 @@ func TestConvertedToPost_TypedNoticeMsgidAndHide(t *testing.T) {
 	makeChitChatMod(t, modID)
 
 	nfID := CreateTestNewsfeed(t, posterID, 55.9533, -3.1883, "Bunny ears wanted "+prefix)
-	msgID := CreateTestMessageWithoutGroup(t, posterID, "WANTED: bunny ears "+prefix)
+	msgID := CreateTestMessageIncoming(t, posterID, "WANTED: bunny ears "+prefix)
 	database.DBConn.Exec("UPDATE messages SET type = 'Wanted' WHERE id = ?", msgID)
 
 	body, _ := json2.Marshal(map[string]interface{}{
@@ -356,7 +356,7 @@ func TestConvertedToPost_CopiesThePhotoOntoTheMessage(t *testing.T) {
 	db := database.DBConn
 
 	nfID := CreateTestNewsfeed(t, posterID, 55.9533, -3.1883, "Bunny ears with photo "+prefix)
-	msgID := CreateTestMessageWithoutGroup(t, posterID, "WANTED: bunny ears photo "+prefix)
+	msgID := CreateTestMessageIncoming(t, posterID, "WANTED: bunny ears photo "+prefix)
 
 	uid := "freegletusd-" + prefix
 	db.Exec("INSERT INTO newsfeed_images (newsfeedid, contenttype, externaluid, externalmods) VALUES (?, 'image/jpeg', ?, '{}')", nfID, uid)
@@ -392,7 +392,7 @@ func TestConvertedToPost_NoPhotoIsFine(t *testing.T) {
 	makeChitChatMod(t, modID)
 
 	nfID := CreateTestNewsfeed(t, posterID, 55.9533, -3.1883, "Bunny ears no photo "+prefix)
-	msgID := CreateTestMessageWithoutGroup(t, posterID, "WANTED: bunny ears nophoto "+prefix)
+	msgID := CreateTestMessageIncoming(t, posterID, "WANTED: bunny ears nophoto "+prefix)
 
 	body, _ := json2.Marshal(map[string]interface{}{
 		"id":     nfID,
@@ -491,7 +491,6 @@ func TestJoinAndPostOnBehalf_LeavesTheMembersLoginsAlone(t *testing.T) {
 	prefix := uniquePrefix("cvtjapnopw")
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 	modID, modToken := CreateFullTestUser(t, prefix+"_mod")
 	makeChitChatMod(t, modID)

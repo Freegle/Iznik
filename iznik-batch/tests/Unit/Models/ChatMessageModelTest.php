@@ -471,10 +471,8 @@ class ChatMessageModelTest extends TestCase
     {
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user1, $group);
 
-        $refMessage = $this->createTestMessage($user1, $group);
+        $refMessage = $this->createTestMessage($user1);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2USER,

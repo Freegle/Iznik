@@ -22,10 +22,8 @@ func TestGetWords(t *testing.T) {
 func TestSearchExact(t *testing.T) {
 	// Create a message with searchable words
 	prefix := uniquePrefix("searchexact")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMessage(t, userID, groupID, "Vintage Sofa Available", 55.9533, -3.1883)
+	CreateTestMessage(t, userID, "Vintage Sofa Available", 55.9533, -3.1883)
 
 	// Search on a word in subject
 	words := message.GetWords("Vintage Sofa Available")
@@ -38,10 +36,8 @@ func TestSearchExact(t *testing.T) {
 func TestSearchTypo(t *testing.T) {
 	// Create a message with searchable words
 	prefix := uniquePrefix("searchtypo")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMessage(t, userID, groupID, "Beautiful Chair Free", 55.9533, -3.1883)
+	CreateTestMessage(t, userID, "Beautiful Chair Free", 55.9533, -3.1883)
 
 	words := message.GetWords("Beautiful Chair Free")
 	_ = message.GetWordsTypo(database.DBConn, words, 100, nil, nil, "All", 0, 0, 0, 0)
@@ -51,7 +47,6 @@ func TestSearchTypo(t *testing.T) {
 func TestSearchSounds(t *testing.T) {
 	// Create a group for sound search test
 	prefix := uniquePrefix("searchsound")
-	groupID := CreateTestGroup(t, prefix)
 
 	// Search for a nonsense word that shouldn't exist
 	results := message.GetWordsSounds(database.DBConn, []string{"zcz"}, 100, []uint64{groupID}, nil, "All", 0, 0, 0, 0)
@@ -61,10 +56,8 @@ func TestSearchSounds(t *testing.T) {
 func TestSearchStarts(t *testing.T) {
 	// Create a message with searchable words
 	prefix := uniquePrefix("searchstarts")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMessage(t, userID, groupID, "Bookshelf Wooden Large", 55.9533, -3.1883)
+	CreateTestMessage(t, userID, "Bookshelf Wooden Large", 55.9533, -3.1883)
 
 	// Search on prefix of a word
 	words := message.GetWords("Bookshelf Wooden Large")
@@ -81,10 +74,8 @@ func TestAPISearch(t *testing.T) {
 	_, token := CreateFullTestUser(t, prefix)
 
 	// Create a message with searchable words
-	groupID := CreateTestGroup(t, prefix+"_grp")
 	userID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMessage(t, userID, groupID, "Garden Table Offer", 55.9533, -3.1883)
+	CreateTestMessage(t, userID, "Garden Table Offer", 55.9533, -3.1883)
 
 	// Search on first word in subject
 	words := message.GetWords("Garden Table Offer")
@@ -122,15 +113,13 @@ func TestAPISearch(t *testing.T) {
 // without dedup-by-msgid every exact hit would be returned twice.
 func TestAPISearch_DedupsExactAndStartsMatch(t *testing.T) {
 	prefix := uniquePrefix("srch_dedup")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 
 	// A rare, short (<=10 char) coined word so the index hit is deterministic and stays
 	// within SEARCH_LIMIT in the shared DB. It is the word's own prefix, so it matches
 	// BOTH the exact and the starts-with pass.
 	word := fmt.Sprintf("zq%d", time.Now().UnixNano()%100000)
-	msgID := CreateTestMessage(t, userID, groupID, "OFFER: "+word+" gadget", 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, userID, "OFFER: "+word+" gadget", 55.9533, -3.1883)
 	defer func() {
 		db := database.DBConn
 		db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgID)
@@ -183,19 +172,15 @@ func TestAPISearch_SupportUserSearchesAllGroups(t *testing.T) {
 	db := database.DBConn
 
 	// Group A: the message lives here; the support user is NOT a member.
-	groupA := CreateTestGroup(t, prefix+"_a")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
 
 	// A unique word that won't appear in other test data.
 	uniqueWord := prefix + "zygote"
-	CreateTestMessage(t, posterID, groupA, "Offer "+uniqueWord+" widget", 55.9533, -3.1883)
+	CreateTestMessage(t, posterID, "Offer "+uniqueWord+" widget", 55.9533, -3.1883)
 
 	// Group B: the support user belongs to this group (not group A).
-	groupB := CreateTestGroup(t, prefix+"_b")
 	supportID := CreateTestUser(t, prefix+"_support", "User")
 	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
-	CreateTestMembership(t, supportID, groupB, "Member")
 	_, supportToken := CreateTestSession(t, supportID)
 
 	// Support user searches with groupids=0 (All communities).
@@ -215,7 +200,7 @@ func TestAPISearch_SupportUserSearchesAllGroups(t *testing.T) {
 
 	// Regular mod in group B searching with groupids=0 should NOT see group A messages.
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	url = fmt.Sprintf("/api/message/search/%s?groupids=0&jwt=%s", uniqueWord, modToken)
@@ -237,10 +222,8 @@ func TestSearchByMessageID(t *testing.T) {
 	// whose title merely contained those digits, not the message with that id. A
 	// purely-numeric term (with or without a leading "#") must return that message.
 	prefix := uniquePrefix("searchbyid")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-	msgID := CreateTestMessage(t, userID, groupID, "Exercise Bike Lewisham", 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, userID, "Exercise Bike Lewisham", 55.9533, -3.1883)
 	_, token := CreateTestSession(t, userID)
 
 	findsIt := func(term string) bool {
@@ -271,10 +254,8 @@ func TestAPISearch_OriginOnlyExcludesRippledIn(t *testing.T) {
 	prefix := uniquePrefix("searchorigin")
 	_, token := CreateFullTestUser(t, prefix)
 
-	origin := CreateTestGroup(t, prefix+"_origin")
-	rippled := CreateTestGroup(t, prefix+"_rippled")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	msgID := CreateTestMessage(t, posterID, origin, "Origin only search test", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "Origin only search test", 51.5, -0.1)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
 		"VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, rippled)
 

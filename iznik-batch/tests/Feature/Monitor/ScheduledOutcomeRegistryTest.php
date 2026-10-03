@@ -2,10 +2,10 @@
 
 namespace Tests\Feature\Monitor;
 
+use App\Models\Message;
 use App\Monitoring\OutcomeCheck;
 use App\Monitoring\OutcomeResult;
 use App\Monitoring\ScheduledOutcomeRegistry;
-use App\Models\MessageGroup;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -30,7 +30,7 @@ class ScheduledOutcomeRegistryTest extends TestCase
 
     public function test_registry_returns_checks(): void
     {
-        $checks = (new ScheduledOutcomeRegistry())->checks();
+        $checks = (new ScheduledOutcomeRegistry)->checks();
 
         $this->assertNotEmpty($checks);
         foreach ($checks as $check) {
@@ -40,7 +40,7 @@ class ScheduledOutcomeRegistryTest extends TestCase
 
     public function test_registry_slugs_are_unique(): void
     {
-        $slugs = array_map(fn (OutcomeCheck $c) => $c->slug(), (new ScheduledOutcomeRegistry())->checks());
+        $slugs = array_map(fn (OutcomeCheck $c) => $c->slug(), (new ScheduledOutcomeRegistry)->checks());
 
         $this->assertSame(
             array_values(array_unique($slugs)),
@@ -54,7 +54,7 @@ class ScheduledOutcomeRegistryTest extends TestCase
         // Mid-morning so daytime-windowed checks are active and actually run a query.
         Carbon::setTestNow(Carbon::create(2026, 6, 12, 14, 0, 0));
 
-        foreach ((new ScheduledOutcomeRegistry())->checks() as $check) {
+        foreach ((new ScheduledOutcomeRegistry)->checks() as $check) {
             $result = $check->evaluate(Carbon::now());
             $this->assertInstanceOf(
                 OutcomeResult::class,
@@ -76,7 +76,7 @@ class ScheduledOutcomeRegistryTest extends TestCase
         Carbon::setTestNow(Carbon::create(2026, 6, 12, 14, 0, 0));
 
         $check = null;
-        foreach ((new ScheduledOutcomeRegistry())->checks() as $c) {
+        foreach ((new ScheduledOutcomeRegistry)->checks() as $c) {
             if ($c->slug() === 'mail:digest:unified --mode=daily') {
                 $check = $c;
             }
@@ -99,7 +99,7 @@ class ScheduledOutcomeRegistryTest extends TestCase
 
     private function check(string $slug): \App\Monitoring\OutcomeCheck
     {
-        foreach ((new ScheduledOutcomeRegistry())->checks() as $c) {
+        foreach ((new ScheduledOutcomeRegistry)->checks() as $c) {
             if ($c->slug() === $slug) {
                 return $c;
             }
@@ -160,37 +160,25 @@ class ScheduledOutcomeRegistryTest extends TestCase
 
     /**
      * The contentcheck worker deliberately skips held-by-a-mod rows
-     * (->whereNull('mg.heldby')): a held post is pulled back for review and is
-     * never auto-checked until the mod releases it, so it can sit indefinitely
-     * without ever getting contentcheck_checked_at stamped. The backlog check
-     * must mirror that skip, otherwise every held post false-alarms as a stalled
-     * moderation pipeline. A non-held stale post, by contrast, must still breach.
+     * (->whereNull('messages.heldby')): a held post is pulled back for review
+     * and is never auto-checked until the mod releases it, so it can sit
+     * indefinitely without ever getting contentcheck_checked_at stamped. The
+     * backlog check must mirror that skip, otherwise every held post
+     * false-alarms as a stalled moderation pipeline. A non-held stale post,
+     * by contrast, must still breach.
      */
     public function test_contentcheck_check_ignores_held_pending_but_flags_unheld(): void
     {
         Carbon::setTestNow(Carbon::create(2026, 6, 12, 14, 0, 0));
 
-        $group = $this->createTestGroup();
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
 
-        $seedStalePending = function (?int $heldby) use ($group, $user): void {
-            $msgid = DB::table('messages')->insertGetId([
-                'fromuser' => $user->id,
-                'type'     => 'Offer',
-                'subject'  => 'OFFER: Stale post',
-                'textbody' => 'A stale post. Collection only.',
-                'message'  => 'A stale post. Collection only.',
-                'arrival'  => Carbon::now()->subHour(),
-                'date'     => Carbon::now()->subHour(),
-                'source'   => 'Platform',
-            ]);
-            DB::table('messages_groups')->insert([
-                'msgid'                   => $msgid,
-                'groupid'                 => $group->id,
-                'collection'              => MessageGroup::COLLECTION_PENDING,
-                'arrival'                 => Carbon::now()->subHour(),
-                'deleted'                 => 0,
-                'heldby'                  => $heldby,
+        $seedStalePending = function (?int $heldby) use ($user): void {
+            $this->createTestMessage($user, [
+                'collection' => Message::COLLECTION_PENDING,
+                'arrival' => Carbon::now()->subHour(),
+                'deleted' => null,
+                'heldby' => $heldby,
                 'contentcheck_checked_at' => null,
             ]);
         };
@@ -222,7 +210,7 @@ class ScheduledOutcomeRegistryTest extends TestCase
         config(['freegle.monitoring.hosts' => '']);
         $slugs = array_map(
             fn (OutcomeCheck $c) => $c->slug(),
-            (new ScheduledOutcomeRegistry())->checks()
+            (new ScheduledOutcomeRegistry)->checks()
         );
         $this->assertEmpty(
             array_filter($slugs, fn (string $s) => str_starts_with($s, 'host:')),
@@ -244,7 +232,7 @@ class ScheduledOutcomeRegistryTest extends TestCase
         config(['freegle.monitoring.hosts' => 'root@host-a, root@host-b']);
         $slugs = array_map(
             fn (OutcomeCheck $c) => $c->slug(),
-            (new ScheduledOutcomeRegistry())->checks()
+            (new ScheduledOutcomeRegistry)->checks()
         );
         $this->assertContains('host:host-a', $slugs);
         $this->assertContains('host:host-b', $slugs);

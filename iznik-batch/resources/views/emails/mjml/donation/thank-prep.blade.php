@@ -36,8 +36,8 @@
           Only donations that warrant a personal thank-you appear here: one-off gifts at or
           above the manual-thanks threshold, and newly set-up recurring donations. Each card
           states why a thank-you is due, plus the data you'd otherwise pull together by
-          hand: donor identity, donation history, Gift Aid status, group memberships, recent
-          mod notes, member↔mod chat snippets, and links into the relevant Modtools pages.
+          hand: donor identity, donation history, Gift Aid status, recent mod notes,
+          member↔mod chat snippets, and links into the relevant Modtools pages.
           Each donation appears in exactly one digest — it won't be repeated tomorrow, so
           please action every card before this email scrolls away.
         </mj-text>
@@ -52,7 +52,6 @@
         $hist = $card['donationHistory'];
         $mods = $card['modNotes'];
         $chats = $card['modChats'];
-        $members = $card['memberships'];
         $aliases = $card['aliases'];
         $flags = $card['flags'];
         $links = $card['links'];
@@ -100,9 +99,6 @@
                   @foreach ($flags as $f)
                     <span class="flag-pill">{{ $f }}</span>
                   @endforeach
-                  @if ($card['birthdayHint'])
-                    <span class="flag-pill flag-pill-good">Birthday?</span>
-                  @endif
                 </td>
               </tr>
             </table>
@@ -204,21 +200,6 @@
                     <td style="width:90px;">{{ $h['date'] }}</td>
                     <td style="width:80px;"><b>£{{ number_format($h['amount'], 2) }}</b></td>
                     <td style="color:#666;">{{ $h['source'] }}@if ($h['thanked']) &nbsp;&middot;&nbsp;<span style="color:#155724;">thanked {{ $h['thanked']->format('j M Y') }}</span>@endif</td>
-                  </tr>
-                @endforeach
-              </table>
-            </mj-raw>
-          @endif
-
-          {{-- MEMBERSHIPS --}}
-          @if (!empty($members))
-            <mj-raw>
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" class="card-body">
-                <tr><td colspan="2" class="card-section-head">Groups ({{ count($members) }})</td></tr>
-                @foreach ($members as $m)
-                  <tr class="mini-row">
-                    <td>{{ $m['name'] }} @if ($m['role'] !== 'Member') <span class="flag-pill">{{ $m['role'] }}</span>@endif</td>
-                    <td style="color:#888;text-align:right;width:120px;">since {{ $m['memberSince'] }}</td>
                   </tr>
                 @endforeach
               </table>

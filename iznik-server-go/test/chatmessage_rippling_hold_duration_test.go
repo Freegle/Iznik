@@ -40,17 +40,14 @@ func ripplingHoldFixture(t *testing.T, tag string, status string, heldAgoHours i
 		INDEX (status)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: "+tag, 51.5, -0.1)
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	msgID := CreateTestMessage(t, posterID, "OFFER: "+tag, 51.5, -0.1)
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 
 	res := db.Exec(
 		"INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) "+

@@ -10,10 +10,6 @@ export default class CommunityEventAPI extends BaseAPI {
     return this.$getv2('/communityevent', params)
   }
 
-  listGroup(id) {
-    return this.$getv2('/communityevent/group/' + id)
-  }
-
   save(data) {
     return this.$patchv2('/communityevent', data, notAHeldConflict)
   }
@@ -21,18 +17,6 @@ export default class CommunityEventAPI extends BaseAPI {
   async add(data) {
     const { id } = await this.$postv2('/communityevent', data)
     return id
-  }
-
-  addGroup(id, groupid) {
-    return this.$patchv2('/communityevent', { id, groupid, action: 'AddGroup' })
-  }
-
-  removeGroup(id, groupid) {
-    return this.$patchv2('/communityevent', {
-      id,
-      groupid,
-      action: 'RemoveGroup',
-    })
   }
 
   setPhoto(id, photoid) {

@@ -28,19 +28,16 @@ func TestChatRoomListJoinsYieldOneRowPerRoom(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("roomjoins")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
 
-	postMsgID := CreateTestMessage(t, posterID, groupID, "OFFER: join fan-out probe", 51.5, -0.1)
+	postMsgID := CreateTestMessage(t, posterID, "OFFER: join fan-out probe", 51.5, -0.1)
 
 	// Three rooms, so the count below is checked against more than one. The Mod2Mod room
 	// carries a groupid, which is the only way the groups_images (i3) join is reachable - a
 	// User2User room has none, so without it that join is never exercised.
-	chatA := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
-	chatB := CreateTestChatRoom(t, posterID, &replierID, nil, "User2User")
+	chatA := CreateTestChatRoom(t, replierID, &posterID, "User2User")
+	chatB := CreateTestChatRoom(t, posterID, &replierID, "User2User")
 	chatC := CreateTestChatRoom(t, posterID, nil, &groupID, "Mod2Mod")
 
 	// Several profile images each: the i1/i2 joins must still pick exactly the newest.

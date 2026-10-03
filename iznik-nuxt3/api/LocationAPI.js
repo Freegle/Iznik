@@ -38,15 +38,6 @@ export default class LocationAPI extends BaseAPI {
     return this.$patchv2('/locations', data)
   }
 
-  del(id, groupid) {
-    return this.$postv2('/locations', {
-      id,
-      action: 'Exclude',
-      byname: false,
-      groupid,
-    })
-  }
-
   convertKML(kml) {
     return this.$postv2('/locations/kml', {
       action: 'ConvertKML',

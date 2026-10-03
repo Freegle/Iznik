@@ -84,8 +84,6 @@ func TestMergeMembershipTransferred(t *testing.T) {
 
 	id1 := CreateTestUser(t, prefix+"_u1", "User")
 	id2 := CreateTestUser(t, prefix+"_u2", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, id1, groupID, "Member")
 
 	status := mergeUsers(t, adminToken, id1, id2)
 	assert.Equal(t, 200, status, "merge request should succeed")
@@ -106,9 +104,7 @@ func TestMergeMembershipRoleTakesMax(t *testing.T) {
 
 	id1 := CreateTestUser(t, prefix+"_u1", "User")
 	id2 := CreateTestUser(t, prefix+"_u2", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, id1, groupID, "Moderator")
-	CreateTestMembership(t, id2, groupID, "Member")
+	PromoteTestUserToModerator(t, id1)
 
 	status := mergeUsers(t, adminToken, id1, id2)
 	assert.Equal(t, 200, status, "merge request should succeed")
@@ -125,7 +121,6 @@ func TestMergeMembershipConflictTakesOlderDate(t *testing.T) {
 
 	id1 := CreateTestUser(t, prefix+"_u1", "User")
 	id2 := CreateTestUser(t, prefix+"_u2", "User")
-	groupID := CreateTestGroup(t, prefix)
 
 	db.Exec(fmt.Sprintf("INSERT INTO memberships (userid, groupid, role, added) VALUES (%d, %d, 'Member', '2013-01-01 00:00:00')", id1, groupID))
 	db.Exec(fmt.Sprintf("INSERT INTO memberships (userid, groupid, role, added) VALUES (%d, %d, 'Member', NOW())", id2, groupID))
@@ -147,8 +142,7 @@ func TestMergeMessagesTransferred(t *testing.T) {
 
 	id1 := CreateTestUser(t, prefix+"_u1", "User")
 	id2 := CreateTestUser(t, prefix+"_u2", "User")
-	groupID := CreateTestGroup(t, prefix)
-	msgID := CreateTestMessage(t, id1, groupID, "Test offer", 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, id1, "Test offer", 55.9533, -3.1883)
 
 	mergeUsers(t, adminToken, id1, id2)
 
@@ -207,7 +201,7 @@ func TestMergeChatRoomSimpleTransfer(t *testing.T) {
 	id2 := CreateTestUser(t, prefix+"_u2", "User")
 	user3 := CreateTestUser(t, prefix+"_u3", "User")
 
-	roomID := CreateTestChatRoom(t, id1, &user3, nil, "User2User")
+	roomID := CreateTestChatRoom(t, id1, &user3, "User2User")
 
 	mergeUsers(t, adminToken, id1, id2)
 
@@ -226,11 +220,11 @@ func TestMergeChatRoomDeduplicated(t *testing.T) {
 	id2 := CreateTestUser(t, prefix+"_u2", "User")
 	user3 := CreateTestUser(t, prefix+"_u3", "User")
 
-	room1 := CreateTestChatRoom(t, id1, &user3, nil, "User2User")
+	room1 := CreateTestChatRoom(t, id1, &user3, "User2User")
 	CreateTestChatMessage(t, room1, id1, "Hello from id1 a")
 	CreateTestChatMessage(t, room1, id1, "Hello from id1 b")
 
-	room2 := CreateTestChatRoom(t, id2, &user3, nil, "User2User")
+	room2 := CreateTestChatRoom(t, id2, &user3, "User2User")
 	CreateTestChatMessage(t, room2, id2, "Hello from id2")
 
 	mergeUsers(t, adminToken, id1, id2)
@@ -253,7 +247,7 @@ func TestMergeChatRosterTransferred(t *testing.T) {
 	id1 := CreateTestUser(t, prefix+"_u1", "User")
 	id2 := CreateTestUser(t, prefix+"_u2", "User")
 	user3 := CreateTestUser(t, prefix+"_u3", "User")
-	room := CreateTestChatRoom(t, id1, &user3, nil, "User2User")
+	room := CreateTestChatRoom(t, id1, &user3, "User2User")
 	db.Exec("INSERT INTO chat_roster (chatid, userid, lastmsgseen) VALUES (?, ?, 0)", room, id1)
 
 	mergeUsers(t, adminToken, id1, id2)
@@ -395,11 +389,9 @@ func TestMergeBansHandled(t *testing.T) {
 
 	id1 := CreateTestUser(t, prefix+"_u1", "User")
 	id2 := CreateTestUser(t, prefix+"_u2", "User")
-	groupID := CreateTestGroup(t, prefix)
 	bannerID := CreateTestUser(t, prefix+"_banner", "Admin")
 
 	db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?)", id1, groupID, bannerID)
-	CreateTestMembership(t, id2, groupID, "Member")
 
 	mergeUsers(t, adminToken, id1, id2)
 

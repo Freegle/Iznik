@@ -3,15 +3,12 @@
     <!-- Search and Filters -->
     <ModSystemLogSearch
       :userid="localUserid"
-      :groupid="localGroupid"
       :msgid="localMsgid"
       @search="fetchLogs"
       @refresh="fetchLogs"
       @clear-user="clearUserFilter"
-      @clear-group="clearGroupFilter"
       @clear-msg="clearMsgFilter"
       @update:userid="updateUserid"
-      @update:groupid="updateGroupid"
       @update:msgid="updateMsgid"
       @expand-all="expandAllNodes"
     />
@@ -86,15 +83,10 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useSystemLogsStore } from '../stores/systemlogs'
-import { useGroupStore } from '~/stores/group'
 import { useUserStore } from '~/stores/user'
 
 const props = defineProps({
   userid: {
-    type: [Number, String],
-    default: null,
-  },
-  groupid: {
     type: [Number, String],
     default: null,
   },
@@ -104,16 +96,14 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['update:userid', 'update:groupid', 'update:msgid'])
+const emit = defineEmits(['update:userid', 'update:msgid'])
 
 const systemLogsStore = useSystemLogsStore()
 const userStore = useUserStore()
-const groupStore = useGroupStore()
 
 const treeNodes = ref(null)
 const distance = ref(1000)
 const localUserid = ref(null)
-const localGroupid = ref(null)
 const localMsgid = ref(null)
 
 const logsAsTree = computed(() => systemLogsStore.logsAsTree)
@@ -130,9 +120,6 @@ const emptyStateHint = computed(() => {
   }
   if (systemLogsStore.email) {
     filters.push(`email "${systemLogsStore.email}"`)
-  }
-  if (localGroupid.value) {
-    filters.push(`group #${localGroupid.value}`)
   }
   if (localMsgid.value) {
     filters.push(`message #${localMsgid.value}`)
@@ -168,15 +155,6 @@ watch(
 )
 
 watch(
-  () => props.groupid,
-  (val) => {
-    localGroupid.value = val
-    systemLogsStore.setGroupFilter(val)
-  },
-  { immediate: true }
-)
-
-watch(
   () => props.msgid,
   (val) => {
     localMsgid.value = val
@@ -198,7 +176,7 @@ async function fetchLogs() {
 }
 
 async function batchFetchEntities() {
-  const { userIds, groupIds } = systemLogsStore.entityIds
+  const { userIds } = systemLogsStore.entityIds
 
   // Batch fetch users that aren't already in the store
   const missingUserIds = userIds.filter((id) => !userStore.list[id])
@@ -209,18 +187,6 @@ async function batchFetchEntities() {
       const batch = missingUserIds.slice(i, i + BATCH_SIZE)
       await Promise.all(
         batch.map((id) => userStore.fetch(id).catch(() => null))
-      )
-    }
-  }
-
-  // Batch fetch groups that aren't already in the store
-  const missingGroupIds = groupIds.filter((id) => !groupStore.get(id))
-  if (missingGroupIds.length > 0) {
-    const BATCH_SIZE = 20
-    for (let i = 0; i < missingGroupIds.length; i += BATCH_SIZE) {
-      const batch = missingGroupIds.slice(i, i + BATCH_SIZE)
-      await Promise.all(
-        batch.map((id) => groupStore.fetch(id).catch(() => null))
       )
     }
   }
@@ -269,12 +235,6 @@ function updateUserid(val) {
   emit('update:userid', val)
 }
 
-function updateGroupid(val) {
-  localGroupid.value = val
-  systemLogsStore.setGroupFilter(val)
-  emit('update:groupid', val)
-}
-
 function updateMsgid(val) {
   localMsgid.value = val
   systemLogsStore.setMsgFilter(val)
@@ -285,13 +245,6 @@ function clearUserFilter() {
   localUserid.value = null
   systemLogsStore.setUserFilter(null)
   emit('update:userid', null)
-  fetchLogs()
-}
-
-function clearGroupFilter() {
-  localGroupid.value = null
-  systemLogsStore.setGroupFilter(null)
-  emit('update:groupid', null)
   fetchLogs()
 }
 

@@ -83,7 +83,7 @@ class LegacyGeometryDrop
         // columns off and put them back, rebuilding two indexes on a ~50GB
         // table to achieve nothing, and an RSU pass is exactly the sort of
         // thing an operator repeats.
-        if (!$this->hasAnyLegacyColumn($table)) {
+        if (! $this->hasAnyLegacyColumn($table)) {
             return $issued;
         }
 
@@ -126,14 +126,14 @@ class LegacyGeometryDrop
         // index builds are additive.
         $parts = [];
         foreach (self::GENERATED as [$col, $source, $idxSuffix, $cols]) {
-            if (!Schema::hasColumn($table, $source)) {
+            if (! Schema::hasColumn($table, $source)) {
                 continue;
             }
-            if (!Schema::hasColumn($table, $col)) {
+            if (! Schema::hasColumn($table, $col)) {
                 $parts[] = "ADD COLUMN `{$col}` TINYINT(1) GENERATED ALWAYS AS (`{$source}` IS NOT NULL) VIRTUAL";
             }
             $idx = "{$table}_{$idxSuffix}";
-            if (!$this->hasIndex($table, $idx)) {
+            if (! $this->hasIndex($table, $idx)) {
                 $parts[] = "ADD INDEX `{$idx}` {$cols}";
             }
         }

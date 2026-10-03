@@ -30,12 +30,10 @@ func TestReplyEligibleGridGate(t *testing.T) {
 
 	prefix := uniquePrefix("spbre")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	group := CreateTestGroup(t, prefix)
 	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	CreateTestMembership(t, viewerID, group, "Member")
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, viewerID)
 
-	mid := CreateTestMessage(t, posterID, group, "OFFER: single point grid (spbre)", 51.5, -0.1)
+	mid := CreateTestMessage(t, posterID, "OFFER: single point grid (spbre)", 51.5, -0.1)
 	idStr := strconv.FormatUint(mid, 10)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
 
@@ -86,18 +84,15 @@ func TestChatReplyGateGridGate(t *testing.T) {
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("spbchat")
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, replierID)
 
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: chat gate grid (spbchat)", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: chat gate grid (spbchat)", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 	defer db.Exec("DELETE FROM rippling_held_replies WHERE msgid = ?", msgID)
 
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 	_, token := CreateTestSession(t, replierID)
 
 	post := func() int {

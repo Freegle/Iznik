@@ -35,8 +35,7 @@ func TestIsochrones(t *testing.T) {
 	assert.Equal(t, isochrones[0].Userid, userID)
 
 	// Create a message in the area for this test
-	groupID := CreateTestGroup(t, prefix+"_msg")
-	CreateTestMessage(t, userID, groupID, "Test Message "+prefix, 55.9533, -3.1883)
+	CreateTestMessage(t, userID, "Test Message "+prefix, 55.9533, -3.1883)
 
 	// Should find messages in isochrone area
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?jwt="+token, nil))
@@ -965,8 +964,6 @@ func TestIsochroneMyGroupsView(t *testing.T) {
 	posterID := CreateTestUser(t, prefix+"_p", "User")
 	db := database.DBConn
 
-	memberGroup := CreateTestGroup(t, prefix+"_member")
-	otherGroup := CreateTestGroup(t, prefix+"_other")
 	db.Exec("INSERT INTO memberships (userid, groupid) VALUES (?, ?)", userID, memberGroup)
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings, '{}'), '$.browseView', 'mygroups') WHERE id = ?", userID)
 
@@ -1011,8 +1008,6 @@ func TestMyGroupsCountsRippledInPost(t *testing.T) {
 	posterID := CreateTestUser(t, prefix+"_p", "User")
 	db := database.DBConn
 
-	memberGroup := CreateTestGroup(t, prefix+"_member")
-	originGroup := CreateTestGroup(t, prefix+"_origin")
 	db.Exec("INSERT INTO memberships (userid, groupid) VALUES (?, ?)", userID, memberGroup)
 	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userID, memberGroup)
 
@@ -1056,7 +1051,6 @@ func TestMyGroupsCountExcludesStaleSpatialRow(t *testing.T) {
 	posterID := CreateTestUser(t, prefix+"_p", "User")
 	db := database.DBConn
 
-	memberGroup := CreateTestGroup(t, prefix+"_member")
 	db.Exec("INSERT INTO memberships (userid, groupid) VALUES (?, ?)", userID, memberGroup)
 	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userID, memberGroup)
 

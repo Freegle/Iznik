@@ -19,9 +19,7 @@ func TestCommentGetSingle(t *testing.T) {
 	prefix := uniquePrefix("cmget_single")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a comment
@@ -64,8 +62,7 @@ func TestCommentGetSingleUnauthorized(t *testing.T) {
 func TestCommentGetSingleNotFound(t *testing.T) {
 	prefix := uniquePrefix("cmget_nf")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/comment?id=999999999&jwt=%s", modToken), nil)
@@ -77,9 +74,7 @@ func TestCommentGetList(t *testing.T) {
 	prefix := uniquePrefix("cmget_list")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create comments
@@ -136,9 +131,7 @@ func TestCommentGetListByAdmin(t *testing.T) {
 	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	// Create a comment
@@ -168,9 +161,7 @@ func TestCommentCreate(t *testing.T) {
 	prefix := uniquePrefix("cmwr_create")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"userid":%d,"groupid":%d,"user1":"Test comment","user2":"More info","flag":false}`, targetID, groupID)
@@ -200,9 +191,6 @@ func TestCommentCreateNotModerator(t *testing.T) {
 	prefix := uniquePrefix("cmwr_notmod")
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMembership(t, targetID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
 	body := fmt.Sprintf(`{"userid":%d,"groupid":%d,"user1":"Test"}`, targetID, groupID)
@@ -238,9 +226,7 @@ func TestCommentCreateWithFlag(t *testing.T) {
 	prefix := uniquePrefix("cmwr_flag")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"userid":%d,"groupid":%d,"user1":"Flagged comment","flag":true}`, targetID, groupID)
@@ -268,9 +254,7 @@ func TestCommentEdit(t *testing.T) {
 	prefix := uniquePrefix("cmwr_edit")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a comment first
@@ -307,10 +291,7 @@ func TestCommentEditNotModerator(t *testing.T) {
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, userToken := CreateTestSession(t, userID)
 
 	// Create a comment as mod
@@ -333,9 +314,7 @@ func TestCommentDelete(t *testing.T) {
 	prefix := uniquePrefix("cmwr_del")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a comment first
@@ -363,10 +342,7 @@ func TestCommentDeleteNotModerator(t *testing.T) {
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, userToken := CreateTestSession(t, userID)
 
 	// Create a comment as mod
@@ -386,11 +362,7 @@ func TestCommentCreateWithFlagOthers(t *testing.T) {
 	prefix := uniquePrefix("cmwr_flago")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	group1ID := CreateTestGroup(t, prefix+"_g1")
-	group2ID := CreateTestGroup(t, prefix+"_g2")
-	CreateTestMembership(t, modID, group1ID, "Moderator")
-	CreateTestMembership(t, targetID, group1ID, "Member")
-	CreateTestMembership(t, targetID, group2ID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Clear any existing review state
@@ -428,11 +400,7 @@ func TestCommentEditWithFlagOthers(t *testing.T) {
 	prefix := uniquePrefix("cmwr_eflg")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	group1ID := CreateTestGroup(t, prefix+"_g1")
-	group2ID := CreateTestGroup(t, prefix+"_g2")
-	CreateTestMembership(t, modID, group1ID, "Moderator")
-	CreateTestMembership(t, targetID, group1ID, "Member")
-	CreateTestMembership(t, targetID, group2ID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create an unflagged comment
@@ -469,9 +437,7 @@ func TestCommentGetListPagination(t *testing.T) {
 	prefix := uniquePrefix("cmget_page")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Insert 15 comments — some with reviewed=NULL (common for unreviewed notes)
@@ -539,9 +505,7 @@ func TestCommentDeleteByAdmin(t *testing.T) {
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	// Create a comment as mod
@@ -566,11 +530,7 @@ func TestCommentDeleteClearsFlagOthers(t *testing.T) {
 	prefix := uniquePrefix("cmwr_delclr")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	group1ID := CreateTestGroup(t, prefix+"_g1")
-	group2ID := CreateTestGroup(t, prefix+"_g2")
-	CreateTestMembership(t, modID, group1ID, "Moderator")
-	CreateTestMembership(t, targetID, group1ID, "Member")
-	CreateTestMembership(t, targetID, group2ID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	db := database.DBConn
@@ -611,11 +571,7 @@ func TestCommentDeleteKeepsFlagOthersWhenAnotherNoteIsFlagged(t *testing.T) {
 	prefix := uniquePrefix("cmwr_delkeep")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	group1ID := CreateTestGroup(t, prefix+"_g1")
-	group2ID := CreateTestGroup(t, prefix+"_g2")
-	CreateTestMembership(t, modID, group1ID, "Moderator")
-	CreateTestMembership(t, targetID, group1ID, "Member")
-	CreateTestMembership(t, targetID, group2ID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	db := database.DBConn
@@ -660,11 +616,7 @@ func TestCommentEditUnflagClearsFlagOthers(t *testing.T) {
 	prefix := uniquePrefix("cmwr_unflag")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	group1ID := CreateTestGroup(t, prefix+"_g1")
-	group2ID := CreateTestGroup(t, prefix+"_g2")
-	CreateTestMembership(t, modID, group1ID, "Moderator")
-	CreateTestMembership(t, targetID, group1ID, "Member")
-	CreateTestMembership(t, targetID, group2ID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	db := database.DBConn

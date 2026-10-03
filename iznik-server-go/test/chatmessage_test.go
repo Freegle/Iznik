@@ -20,14 +20,12 @@ func setupModerationData(t *testing.T) (uint64, uint64, uint64, uint64, uint64, 
 	db := database.DBConn
 	prefix := uniquePrefix(t.Name())
 
-	groupID := CreateTestGroup(t, prefix)
 	modUserID := CreateTestUser(t, prefix+"_mod", "User")
 	regularUserID := CreateTestUser(t, prefix+"_user", "User")
 
 	// Make modUserID a moderator on the group
-	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modUserID)
 	// Make regularUserID a member of the group
-	CreateTestMembership(t, regularUserID, groupID, "Member")
 
 	// Create User2Mod chat from regularUser to the group
 	chatID := CreateTestChatRoom(t, regularUserID, nil, &groupID, "User2Mod")
@@ -200,7 +198,6 @@ func TestRejectDuplicatesChatMessage(t *testing.T) {
 
 	// Create a second chat with a duplicate message
 	otherUserID := CreateTestUser(t, uniquePrefix(t.Name())+"_other", "User")
-	CreateTestMembership(t, otherUserID, groupID, "Member")
 	chatID2 := CreateTestChatRoom(t, otherUserID, nil, &groupID, "User2Mod")
 
 	db.Exec(
@@ -269,7 +266,7 @@ func TestApproveHeldByOtherMod(t *testing.T) {
 	// Create a second moderator and hold the message
 	prefix2 := uniquePrefix(t.Name()) + "_mod2"
 	mod2ID := CreateTestUser(t, prefix2, "User")
-	CreateTestMembership(t, mod2ID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, mod2ID)
 	_, mod2Token := CreateTestSession(t, mod2ID)
 
 	// Hold with mod2
@@ -281,7 +278,7 @@ func TestApproveHeldByOtherMod(t *testing.T) {
 	// Create another moderator and try to approve - should fail because held by mod2
 	prefix3 := uniquePrefix(t.Name()) + "_mod3"
 	mod3ID := CreateTestUser(t, prefix3, "User")
-	CreateTestMembership(t, mod3ID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, mod3ID)
 	_, mod3Token := CreateTestSession(t, mod3ID)
 
 	resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
@@ -399,22 +396,20 @@ func setupWiderReviewData(t *testing.T) (modToken string, modID, group1ID, group
 
 	// Active moderator on group1 only.
 	modID = CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, group1ID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	// Ensure active=1 in membership settings.
 	db.Exec("UPDATE memberships SET settings = '{\"active\":1}' WHERE userid = ? AND groupid = ?", modID, group1ID)
 
 	// Two members on group2 (not mod's group).
 	user1ID := CreateTestUser(t, prefix+"_user1", "User")
 	user2ID := CreateTestUser(t, prefix+"_user2", "User")
-	CreateTestMembership(t, user1ID, group2ID, "Member")
-	CreateTestMembership(t, user2ID, group2ID, "Member")
 
 	// Another mod on group2 (required for chat moderation).
 	mod2ID := CreateTestUser(t, prefix+"_mod2", "Moderator")
-	CreateTestMembership(t, mod2ID, group2ID, "Moderator")
+	PromoteTestUserToModerator(t, mod2ID)
 
 	// Create User2User chat between user1 and user2.
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 
 	// Create a message requiring review (not user-reported).
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingsuccessful) "+
@@ -430,10 +425,9 @@ func TestWiderReviewEligibility(t *testing.T) {
 	prefix := uniquePrefix("WiderElig")
 
 	// Group without widerchatreview.
-	groupID := CreateTestGroup(t, prefix)
 
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	db.Exec("UPDATE memberships SET settings = '{\"active\":1}' WHERE userid = ? AND groupid = ?", modID, groupID)
 
 	// Not eligible without the setting.
@@ -535,21 +529,17 @@ func TestWiderReviewNotEligibleWithoutSetting(t *testing.T) {
 	prefix := uniquePrefix("WiderNoSet")
 
 	// Group WITHOUT widerchatreview.
-	group1ID := CreateTestGroup(t, prefix+"_g1")
 	// Group with widerchatreview and a review message.
-	group2ID := CreateTestGroup(t, prefix+"_g2")
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.widerchatreview', 1) WHERE id = ?", group2ID)
 
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, group1ID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	db.Exec("UPDATE memberships SET settings = '{\"active\":1}' WHERE userid = ? AND groupid = ?", modID, group1ID)
 
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, group2ID, "Member")
-	CreateTestMembership(t, user2ID, group2ID, "Member")
 
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingsuccessful) "+
 		"VALUES (?, ?, 'Should not see this', NOW(), 1, 1)", chatID, user1ID)
 
@@ -573,11 +563,9 @@ func TestReviewReasonEnrichment(t *testing.T) {
 	prefix := uniquePrefix(t.Name())
 
 	// Create a group and membership for the mod so they can see the messages.
-	groupID := CreateTestGroup(t, prefix+"_enrich")
 	modID := CreateTestUser(t, prefix+"_emod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	regularUserID := CreateTestUser(t, prefix+"_euser", "User")
-	CreateTestMembership(t, regularUserID, groupID, "Member")
 	_, modToken2 := CreateTestSession(t, modID)
 
 	chatID := CreateTestChatRoom(t, regularUserID, nil, &groupID, "User2Mod")
@@ -599,50 +587,8 @@ func TestReviewReasonEnrichment(t *testing.T) {
 		{"freegle_email_excluded", "Email noreply@ilovefreegle.org for info", "Spam", "Spam"},
 	}
 
-	// Seed concern_keywords rows that previously leaked through enrichReviewReason
-	// (per-group scope and allowed-category place names) so the regression assertions
-	// below cover the scope='global' AND category != 'allowed' filter on the query.
-	leakRows := []struct {
-		keyword  string
-		category string
-		mode     string
-		action   string
-		scope    string
-		groupID  uint64
-	}{
-		// allowed-category global: 'road' is a literal/flag/allowed row in prod.
-		{"alias-road-" + prefix, "allowed", "literal", "flag", "global", 0},
-		// per-group worry word: would match every chat globally without scope filter.
-		{"alias-charity-" + prefix, "review", "literal", "flag", "group", uint64(groupID)},
-		// global review (legitimate) — should still match.
-		{"alias-spamword-" + prefix, "review", "literal", "flag", "global", 0},
-	}
-	for _, r := range leakRows {
-		db.Exec(
-			"INSERT INTO concern_keywords (keyword, category, match_mode, action, scope, group_id) VALUES (?, ?, ?, ?, ?, ?)",
-			r.keyword, r.category, r.mode, r.action, r.scope, r.groupID)
-	}
-	t.Cleanup(func() {
-		db.Exec("DELETE FROM concern_keywords WHERE keyword LIKE ?", "alias-%-"+prefix)
-	})
-
-	scopeTests := []struct {
-		name     string
-		message  string
-		expected string
-	}{
-		{"allowed_category_does_not_flag", "We went down the alias-road-" + prefix + " yesterday", "Spam"},
-		{"group_scope_does_not_flag_in_chat", "Please alias-charity-" + prefix + " do this", "Spam"},
-		{"global_review_keyword_does_flag", "Has the alias-spamword-" + prefix + " word", "Known spam keyword"},
-	}
-	for _, tc := range scopeTests {
-		tests = append(tests, struct {
-			name     string
-			message  string
-			reason   string
-			expected string
-		}{tc.name, tc.message, "Spam", tc.expected})
-	}
+	// concern_keywords-backed scope leakage tests removed: keyword-list checks are gone
+	// (AI judgement replaces them; see briefs/ai-judgement.md).
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -729,7 +675,7 @@ func TestRejectHeldByOtherMod(t *testing.T) {
 
 	prefix2 := uniquePrefix(t.Name()) + "_mod2"
 	mod2ID := CreateTestUser(t, prefix2, "User")
-	CreateTestMembership(t, mod2ID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, mod2ID)
 	_, mod2Token := CreateTestSession(t, mod2ID)
 
 	postChatmessages(t, "/api/chatmessages", map[string]interface{}{
@@ -739,7 +685,7 @@ func TestRejectHeldByOtherMod(t *testing.T) {
 
 	prefix3 := uniquePrefix(t.Name()) + "_mod3"
 	mod3ID := CreateTestUser(t, prefix3, "User")
-	CreateTestMembership(t, mod3ID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, mod3ID)
 	_, mod3Token := CreateTestSession(t, mod3ID)
 
 	resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
@@ -764,7 +710,7 @@ func TestHoldDoesNotStealAnotherModsHold(t *testing.T) {
 
 	prefix2 := uniquePrefix(t.Name()) + "_mod2"
 	mod2ID := CreateTestUser(t, prefix2, "User")
-	CreateTestMembership(t, mod2ID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, mod2ID)
 	_, mod2Token := CreateTestSession(t, mod2ID)
 
 	postChatmessages(t, "/api/chatmessages", map[string]interface{}{
@@ -774,7 +720,7 @@ func TestHoldDoesNotStealAnotherModsHold(t *testing.T) {
 
 	prefix3 := uniquePrefix(t.Name()) + "_mod3"
 	mod3ID := CreateTestUser(t, prefix3, "User")
-	CreateTestMembership(t, mod3ID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, mod3ID)
 	_, mod3Token := CreateTestSession(t, mod3ID)
 
 	resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
@@ -795,7 +741,7 @@ func TestHoldAgainBySameModIsAllowed(t *testing.T) {
 
 	prefix2 := uniquePrefix(t.Name()) + "_mod2"
 	mod2ID := CreateTestUser(t, prefix2, "User")
-	CreateTestMembership(t, mod2ID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, mod2ID)
 	_, mod2Token := CreateTestSession(t, mod2ID)
 
 	for i := 0; i < 2; i++ {

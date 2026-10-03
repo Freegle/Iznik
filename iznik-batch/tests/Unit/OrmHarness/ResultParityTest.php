@@ -14,7 +14,7 @@ use Tests\TestCase;
  * discipline as GoldenSqlTest.php and resultparity.go's own
  * resultparity_site_test.go. Needs real seeded rows (unlike GoldenSql,
  * which never executes anything), so these run against the actual test
- * database via the standard createTestUser()/createTestGroup() fixtures.
+ * database via the standard createTestUser() fixture.
  */
 class ResultParityTest extends TestCase
 {

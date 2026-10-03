@@ -21,14 +21,6 @@
 import { ref, computed } from 'vue'
 import { useLogsStore } from '~/stores/logs'
 
-const props = defineProps({
-  groupid: {
-    type: Number,
-    required: false,
-    default: null,
-  },
-})
-
 const emit = defineEmits(['busy', 'idle'])
 
 const logsStore = useLogsStore()
@@ -55,7 +47,6 @@ async function loadMore($state) {
     try {
       await logsStore.fetch({
         limit: limit.value,
-        groupid: props.groupid,
         logtype: params.type,
         search: params.search,
       })

@@ -47,7 +47,6 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRoute } from '#imports'
-import { useGroupStore } from '~/stores/group'
 import { buildHead } from '~/composables/useBuildHead'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
@@ -75,7 +74,6 @@ useHead(buildHead(route, runtimeConfig, 'My Posts', null))
 
 const authStore = useAuthStore()
 const messageStore = useMessageStore()
-const groupStore = useGroupStore()
 const myid = authStore.user?.id
 
 const { showDonationAskModal } = await useDonationAskModal()
@@ -88,20 +86,6 @@ const message = computed(() => messageStore?.byId(id))
 let fetchedMessage = null
 try {
   fetchedMessage = await messageStore.fetch(id, true)
-
-  // Get the groups into store too.
-  const promises = []
-  fetchedMessage.groups.forEach((g) => {
-    if (!groupStore.get(g.groupid)) {
-      try {
-        promises.push(groupStore.fetch(g.groupid))
-      } catch (e) {
-        console.log('Fetch fail', e)
-      }
-    }
-  })
-
-  await Promise.all(promises)
 
   if (myid === fetchedMessage?.fromuser && action) {
     // If they have an intended outcome, then we save that to the server now. This means that if they never

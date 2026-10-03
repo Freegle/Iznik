@@ -1,8 +1,6 @@
 import BaseAPI from '@/api/BaseAPI'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 
-import { notAHeldConflict } from '~/api/heldConflict'
-
 // A ChitChat moderator posting on a member's behalf names the member here. The
 // server checks the caller is a ChitChat moderator and derives that member's
 // location and community itself, so this only says WHO the post is for.
@@ -35,13 +33,12 @@ export default class MessageAPI extends BaseAPI {
     )
   }
 
-  inbounds(swlat, swlng, nelat, nelng, groupid, limit) {
+  inbounds(swlat, swlng, nelat, nelng, limit) {
     return this.$getv2('/message/inbounds', {
       swlat,
       swlng,
       nelat,
       nelng,
-      groupid,
       limit,
     })
   }
@@ -71,10 +68,6 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
-  mygroups(gid) {
-    return this.$getv2('/message/mygroups' + (gid ? '/' + gid : ''))
-  }
-
   fetchMessages(params) {
     return this.$getv2('/modtools/messages', params)
   }
@@ -85,6 +78,27 @@ export default class MessageAPI extends BaseAPI {
 
   save(event) {
     return this.$patchv2('/message', event)
+  }
+
+  // Self-moderating rework: the system already published or took down the
+  // post, so a volunteer's only actions on top are to undo a takedown or to
+  // take one down with a reason (the poster is told either way). Approve,
+  // Reject, Hold, Release and BackToPending are removed from the Go contract;
+  // left in place below only until another tier deletes the server-side
+  // actions they still post to.
+  restore(id) {
+    return this.$patchv2('/message', {
+      action: 'Restore',
+      id,
+    })
+  }
+
+  takeDown(id, reason) {
+    return this.$patchv2('/message', {
+      action: 'TakeDown',
+      id,
+      reason,
+    })
   }
 
   joinAndPost(id, email, options = {}, logError = true) {
@@ -204,91 +218,13 @@ export default class MessageAPI extends BaseAPI {
     return null
   }
 
-  approve(id, groupid, subject = null, stdmsgid = null, body = null) {
-    return this.$postv2(
-      '/message',
-      {
-        action: 'Approve',
-        id,
-        groupid,
-        subject,
-        stdmsgid,
-        body,
-      },
-      notAHeldConflict
-    )
-  }
-
-  reply(id, groupid, subject = null, stdmsgid = null, body = null) {
+  reply(id, subject = null, stdmsgid = null, body = null) {
     return this.$postv2('/message', {
       action: 'Reply',
       id,
-      groupid,
       subject,
       stdmsgid,
       body,
-    })
-  }
-
-  reject(id, groupid, subject = null, stdmsgid = null, body = null) {
-    return this.$postv2(
-      '/message',
-      {
-        action: 'Reject',
-        id,
-        groupid,
-        subject,
-        stdmsgid,
-        body,
-      },
-      notAHeldConflict
-    )
-  }
-
-  delete(id, groupid, subject = null, stdmsgid = null, body = null) {
-    return this.$postv2(
-      '/message',
-      {
-        action: 'Delete',
-        id,
-        groupid,
-        subject,
-        stdmsgid,
-        body,
-      },
-      notAHeldConflict
-    )
-  }
-
-  spam(id, groupid) {
-    return this.$postv2(
-      '/message',
-      {
-        action: 'Spam',
-        id,
-        groupid,
-      },
-      notAHeldConflict
-    )
-  }
-
-  hold(id, groupid) {
-    return this.$postv2(
-      '/message',
-      {
-        action: 'Hold',
-        id,
-        groupid,
-      },
-      notAHeldConflict
-    )
-  }
-
-  release(id, groupid) {
-    return this.$postv2('/message', {
-      action: 'Release',
-      id,
-      groupid,
     })
   }
 
@@ -331,10 +267,8 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
-  async count(browseView, maxDistance, log) {
-    const params = {
-      browseView,
-    }
+  async count(maxDistance, log) {
+    const params = {}
 
     // Only send a distance limit when it's a real limit - the sentinel (or absent)
     // means "no limit", and omitting it lets the server fall back to its own fast,

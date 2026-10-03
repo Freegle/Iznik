@@ -3,9 +3,9 @@
 namespace Tests\Unit\Services\Ripple;
 
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Services\Ripple\RippleTuneService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class RippleTuneServiceTest extends TestCase
@@ -15,7 +15,7 @@ class RippleTuneServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new RippleTuneService();
+        $this->service = new RippleTuneService;
         DB::statement('DELETE FROM rippling_hotspots');
         DB::statement('DELETE FROM rippling_live_metrics');
         DB::statement('DELETE FROM rippling_params');
@@ -24,14 +24,14 @@ class RippleTuneServiceTest extends TestCase
     /** The centrepiece: an area that is a robust outlier is flagged; normal areas are not. */
     public function test_detect_hotspots_flags_an_unusual_area_but_not_normal_ones(): void
     {
-        // A dozen groups with ordinary spread around 10, then one wildly-high area.
+        // A dozen areas with ordinary spread around 10, then one wildly-high area.
         $values = [
             1 => 8, 2 => 9, 3 => 10, 4 => 11, 5 => 12,
             6 => 9, 7 => 10, 8 => 11, 9 => 8, 10 => 12, 11 => 10, 12 => 9,
             99 => 100,
         ];
 
-        $written = $this->service->detectHotspots($values, 'volume_posts', '2026-06-11', 'group', [99 => 'Anomaly Town']);
+        $written = $this->service->detectHotspots($values, 'volume_posts', '2026-06-11', 'imd_quintile', [99 => 'Anomaly Town']);
 
         $this->assertSame(1, $written, 'only the outlier area is flagged');
         $hotspot = DB::table('rippling_hotspots')->where('metric', 'volume_posts')->first();
@@ -40,7 +40,7 @@ class RippleTuneServiceTest extends TestCase
         $this->assertSame('alert', $hotspot->severity);
         $this->assertSame('Anomaly Town', $hotspot->area_name);
         $this->assertEqualsWithDelta(10.0, (float) $hotspot->baseline, 1.0, 'baseline is the robust median, not skewed by the outlier');
-        // None of the ordinary groups are flagged.
+        // None of the ordinary areas are flagged.
         $this->assertSame(0, DB::table('rippling_hotspots')->whereIn('area_id', [1, 5, 12])->count());
     }
 
@@ -52,7 +52,7 @@ class RippleTuneServiceTest extends TestCase
             6 => 100, 7 => 97, 8 => 103, 9 => 1,
         ];
 
-        $this->service->detectHotspots($values, 'reach_drive_min', '2026-06-11', 'group');
+        $this->service->detectHotspots($values, 'reach_drive_min', '2026-06-11', 'imd_quintile');
 
         $hotspot = DB::table('rippling_hotspots')->where('metric', 'reach_drive_min')->first();
         $this->assertNotNull($hotspot);
@@ -76,21 +76,20 @@ class RippleTuneServiceTest extends TestCase
         $this->assertSame(0, $written);
     }
 
-    /** rollup() records per-group volume and the overall percentiles for the period. */
-    public function test_rollup_records_group_volume_and_overall_percentiles(): void
+    /** rollup() records per-deprivation-fifth volume and the overall percentiles for the period. */
+    public function test_rollup_records_quintile_volume_and_overall_percentiles(): void
     {
+        $this->fakeQuintileLookup();
         $start = now()->subDays(7);
         $end = now();
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $this->seedApprovedPosts($groupA->id, 3, now()->subDays(2));
-        $this->seedApprovedPosts($groupB->id, 1, now()->subDays(2));
+        $this->seedApprovedPosts(51.5, -0.1, 3, now()->subDays(2));
+        $this->seedApprovedPosts(53.0, -1.5, 1, now()->subDays(2));
 
         $written = $this->service->rollup($start, $end);
 
         $this->assertGreaterThanOrEqual(4, $written);
         $volA = DB::table('rippling_live_metrics')
-            ->where('stratum_type', 'group')->where('stratum_key', (string) $groupA->id)
+            ->where('stratum_type', 'imd_quintile')->where('stratum_key', '1')
             ->where('metric', 'volume_posts')->value('value');
         $this->assertEquals(3.0, (float) $volA);
         $this->assertTrue(
@@ -102,12 +101,11 @@ class RippleTuneServiceTest extends TestCase
     /** tune() runs the full weekly pipeline (rollup, hotspot detection, advisory proposals). */
     public function test_tune_runs_the_full_pipeline_and_returns_counts(): void
     {
+        $this->fakeQuintileLookup();
         $start = now()->subDays(7);
         $end = now();
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $this->seedApprovedPosts($groupA->id, 3, now()->subDays(2));
-        $this->seedApprovedPosts($groupB->id, 1, now()->subDays(2));
+        $this->seedApprovedPosts(51.5, -0.1, 3, now()->subDays(2));
+        $this->seedApprovedPosts(53.0, -1.5, 1, now()->subDays(2));
 
         $result = $this->service->tune($start->toDateString(), $end->toDateString());
 
@@ -115,9 +113,9 @@ class RippleTuneServiceTest extends TestCase
         $this->assertArrayHasKey('metrics', $result);
         $this->assertArrayHasKey('hotspots', $result);
         $this->assertArrayHasKey('proposals', $result);
-        $this->assertGreaterThan(0, $result['metrics'], 'rollup wrote metrics for the seeded groups');
+        $this->assertGreaterThan(0, $result['metrics'], 'rollup wrote metrics for the seeded posts');
         $this->assertTrue(
-            DB::table('rippling_live_metrics')->where('stratum_key', (string) $groupA->id)->exists(),
+            DB::table('rippling_live_metrics')->where('stratum_type', 'imd_quintile')->where('stratum_key', '1')->exists(),
             'tune persisted the rollup metrics'
         );
     }
@@ -169,7 +167,24 @@ class RippleTuneServiceTest extends TestCase
         );
     }
 
-    private function seedApprovedPosts(int $groupid, int $count, $arrival): void
+    /**
+     * Stubs the spatial server's /v1/quintile endpoint: London-area coordinates
+     * (lat < 52) answer deprivation fifth 1, everything further north answers fifth 4.
+     */
+    private function fakeQuintileLookup(): void
+    {
+        Http::fake(function ($request) {
+            if (! str_contains($request->url(), '/v1/quintile')) {
+                return Http::response([], 200);
+            }
+
+            $lat = (float) ($request['lat'] ?? 0);
+
+            return Http::response(['quintile' => $lat >= 52.0 ? 4 : 1, 'available' => true]);
+        });
+    }
+
+    private function seedApprovedPosts(float $lat, float $lng, int $count, $arrival): void
     {
         $user = $this->createTestUser();
         for ($i = 0; $i < $count; $i++) {
@@ -181,15 +196,15 @@ class RippleTuneServiceTest extends TestCase
                 'source' => 'Platform',
                 'date' => $arrival,
                 'arrival' => $arrival,
-                'lat' => 51.5,
-                'lng' => -0.1,
+                'lat' => $lat,
+                'lng' => $lng,
+                'collection' => Message::COLLECTION_APPROVED,
             ]);
-            MessageGroup::create([
-                'msgid' => $message->id,
-                'groupid' => $groupid,
-                'collection' => MessageGroup::COLLECTION_APPROVED,
-                'arrival' => $arrival,
-            ]);
+
+            DB::statement(
+                'INSERT INTO messages_spatial (msgid, point, msgtype, arrival) VALUES (?, ST_GeomFromText(?, 3857), ?, ?)',
+                [$message->id, "POINT($lng $lat)", Message::TYPE_OFFER, $arrival]
+            );
         }
     }
 }

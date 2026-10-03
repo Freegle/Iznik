@@ -1,8 +1,8 @@
 import BaseAPI from '@/api/BaseAPI'
 
 export default class DonationsAPI extends BaseAPI {
-  async fetch(groupid = null) {
-    const ret = await this.$getv2('/donations', { groupid })
+  async fetch() {
+    const ret = await this.$getv2('/donations')
     const { target, raised } = ret
     return {
       target: Math.round(parseInt(target)),

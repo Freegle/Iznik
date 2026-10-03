@@ -14,13 +14,11 @@ import (
 
 func TestCreateImageAttachment(t *testing.T) {
 	prefix := uniquePrefix("CreateImage")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
 	// Create a message to attach the image to (foreign key on messages_attachments.msgid).
-	msgID := CreateTestMessage(t, userID, groupID, "Image test "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, userID, "Image test "+prefix, 55.9533, -3.1883)
 
 	body := fmt.Sprintf(`{"externaluid":"freegletusd-test-%s","imgtype":"Message","msgid":%d,"externalmods":{"rotate":90}}`, prefix, msgID)
 	req := httptest.NewRequest("POST", "/api/image?jwt="+token, strings.NewReader(body))
@@ -39,9 +37,7 @@ func TestCreateImageAttachment(t *testing.T) {
 
 func TestCreateImageAttachmentWithParent(t *testing.T) {
 	prefix := uniquePrefix("CreateImageParent")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
 	// Create a community event to use as parent.
@@ -72,10 +68,8 @@ func TestCreateImageNoAuth(t *testing.T) {
 	// let anyone deface another user's post. (Unlinked pre-signup uploads with no parent id are
 	// still allowed - see TestCreateImageNoAuthUnlinked.)
 	prefix := uniquePrefix("CreateImageNoAuth")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-	msgID := CreateTestMessage(t, userID, groupID, "NoAuth test "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, userID, "NoAuth test "+prefix, 55.9533, -3.1883)
 
 	body := fmt.Sprintf(`{"externaluid":"freegletusd-test-noauth-%s","imgtype":"Message","msgid":%d}`, prefix, msgID)
 	req := httptest.NewRequest("POST", "/api/image", strings.NewReader(body))
@@ -117,10 +111,8 @@ func TestCreateImageNoAuthUnlinked(t *testing.T) {
 // user's existing message.
 func TestCreateImageCrossUserDenied(t *testing.T) {
 	prefix := uniquePrefix("CreateImageCross")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	msgID := CreateTestMessage(t, ownerID, groupID, "Cross test "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, ownerID, "Cross test "+prefix, 55.9533, -3.1883)
 
 	attackerID := CreateTestUser(t, prefix+"attacker", "User")
 	_, token := CreateTestSession(t, attackerID)
@@ -252,13 +244,11 @@ func TestCreateImageInvalidType(t *testing.T) {
 
 func TestCreateImageDefaultType(t *testing.T) {
 	prefix := uniquePrefix("CreateImageDefault")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
 	// Create a message (default type is Message, so needs valid msgid).
-	msgID := CreateTestMessage(t, userID, groupID, "Default type test "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, userID, "Default type test "+prefix, 55.9533, -3.1883)
 
 	// No imgtype - should default to Message.
 	body := fmt.Sprintf(`{"externaluid":"freegletusd-test-default-%s","msgid":%d}`, prefix, msgID)
@@ -276,13 +266,11 @@ func TestCreateImageDefaultType(t *testing.T) {
 
 func TestRotateImage(t *testing.T) {
 	prefix := uniquePrefix("RotateImage")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
 	// Create a message for the image attachment.
-	msgID := CreateTestMessage(t, userID, groupID, "Rotate test "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, userID, "Rotate test "+prefix, 55.9533, -3.1883)
 
 	// First create an image.
 	createBody := fmt.Sprintf(`{"externaluid":"freegletusd-test-rotate-%s","imgtype":"Message","msgid":%d}`, prefix, msgID)
@@ -353,10 +341,8 @@ func TestRotateImageNoAuth(t *testing.T) {
 	// SECURITY: rotating an image now requires authentication and ownership - an anonymous
 	// caller may not rotate (deface) an existing image.
 	prefix := uniquePrefix("RotateNoAuth")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-	msgID := CreateTestMessage(t, userID, groupID, "RotateNoAuth test "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, userID, "RotateNoAuth test "+prefix, 55.9533, -3.1883)
 
 	// Create an image first (with auth for setup).
 	_, token := CreateTestSession(t, userID)

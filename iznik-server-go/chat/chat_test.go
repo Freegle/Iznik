@@ -2,6 +2,7 @@ package chat
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,6 +11,33 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 )
+
+// createTestModeratorUser makes a minimal system-role Moderator user directly. The test
+// package's CreateTestUser cannot be used here: importing package test from package chat
+// would be a cycle, since test imports chat.
+func createTestModeratorUser(t *testing.T, prefix string) uint64 {
+	db := database.DBConn
+	fullname := fmt.Sprintf("Test User %s", prefix)
+
+	result := db.Table("users").Create(map[string]interface{}{
+		"firstname":  "Test",
+		"lastname":   prefix,
+		"fullname":   fullname,
+		"systemrole": "Moderator",
+		"settings":   `{"mylocation": {"lat": 55.9533, "lng": -3.1883}}`,
+	})
+	if result.Error != nil {
+		t.Fatalf("Failed to create moderator user: %v", result.Error)
+	}
+
+	var userID uint64
+	db.Table("users").Select("id").Where("fullname = ?", fullname).Order("id DESC").Limit(1).Scan(&userID)
+	if userID == 0 {
+		t.Fatalf("Moderator user created but ID not found for fullname=%s", fullname)
+	}
+
+	return userID
+}
 
 func init() {
 	database.InitDatabase()
@@ -35,26 +63,34 @@ func TestChatRosterEntryTableName(t *testing.T) {
 
 func TestCanSeeChatRoomSameUser(t *testing.T) {
 	// User should be able to see their own chat room
-	result := canSeeChatRoom(1, 1, 2, 1)
+	result := canSeeChatRoom(1, 1, 2)
 	assert.True(t, result)
 }
 
 func TestCanSeeChatRoomOtherUser(t *testing.T) {
-	// User should not be able to see chat room they're not part of
-	result := canSeeChatRoom(1, 2, 3, 1)
+	// User should not be able to see chat room they're not part of, and are not a moderator of
+	result := canSeeChatRoom(1, 2, 3)
 	assert.False(t, result)
 }
 
 func TestCanSeeChatRoomSecondUser(t *testing.T) {
 	// Second user should be able to see chat room they're part of
-	result := canSeeChatRoom(2, 1, 2, 1)
+	result := canSeeChatRoom(2, 1, 2)
 	assert.True(t, result)
 }
 
 func TestCanSeeChatRoomZeroUser(t *testing.T) {
 	// User ID 0 means unauthenticated; cannot see any chat room
-	result := canSeeChatRoom(0, 1, 2, 1)
+	result := canSeeChatRoom(0, 1, 2)
 	assert.False(t, result)
+}
+
+func TestCanSeeChatRoomModerator(t *testing.T) {
+	// A moderator is a national pool, never scoped to a community, so they can see
+	// any chat room even when they're not a participant.
+	modID := createTestModeratorUser(t, fmt.Sprintf("canseechatroommod_%d", time.Now().UnixNano()))
+	result := canSeeChatRoom(modID, 1, 2)
+	assert.True(t, result)
 }
 
 func TestCheckHoldConflictNilMessage(t *testing.T) {
@@ -112,13 +148,12 @@ func TestChatRoomJSONMarshal(t *testing.T) {
 }
 
 func TestChatRoomListEntryJSONMarshal(t *testing.T) {
-	// Test ChatRoomListEntry (which has Status and Groupid) marshals/unmarshals correctly
+	// Test ChatRoomListEntry (which has Status) marshals/unmarshals correctly
 	cr := ChatRoomListEntry{
-		ID:      1,
-		User1:   2,
-		User2:   3,
-		Groupid: 4,
-		Status:  "ACTIVE",
+		ID:     1,
+		User1:  2,
+		User2:  3,
+		Status: "ACTIVE",
 	}
 
 	data, err := json.Marshal(cr)
@@ -130,7 +165,6 @@ func TestChatRoomListEntryJSONMarshal(t *testing.T) {
 	assert.Equal(t, cr.ID, cr2.ID)
 	assert.Equal(t, cr.User1, cr2.User1)
 	assert.Equal(t, cr.User2, cr2.User2)
-	assert.Equal(t, cr.Groupid, cr2.Groupid)
 	assert.Equal(t, cr.Status, cr2.Status)
 }
 

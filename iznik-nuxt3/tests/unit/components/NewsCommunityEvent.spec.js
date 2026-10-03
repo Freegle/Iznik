@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import NewsCommunityEvent from '~/components/NewsCommunityEvent.vue'
 
-const { mockNewsfeed, mockEvent, mockGroup } = vi.hoisted(() => {
+const { mockNewsfeed, mockEvent } = vi.hoisted(() => {
   return {
     mockNewsfeed: {
       id: 1,
@@ -23,15 +23,9 @@ const { mockNewsfeed, mockEvent, mockGroup } = vi.hoisted(() => {
           endtime: '14:00',
         },
       ],
-      groups: [300],
       image: {
         paththumb: '/images/event.jpg',
       },
-    },
-    mockGroup: {
-      id: 300,
-      namedisplay: 'Freegle Community Group',
-      nameshort: 'Community',
     },
   }
 })
@@ -49,11 +43,6 @@ const mockUserStore = {
   fetch: vi.fn().mockResolvedValue({ id: 200, displayname: 'Organizer' }),
 }
 
-const mockGroupStore = {
-  fetch: vi.fn().mockResolvedValue(mockGroup),
-  get: vi.fn().mockReturnValue(mockGroup),
-}
-
 vi.mock('~/stores/newsfeed', () => ({
   useNewsfeedStore: () => mockNewsfeedStore,
 }))
@@ -66,10 +55,6 @@ vi.mock('~/stores/user', () => ({
   useUserStore: () => mockUserStore,
 }))
 
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
-}))
-
 vi.mock('~/composables/useTimeFormat', () => ({
   timeago: vi.fn().mockReturnValue('3 days ago'),
 }))
@@ -80,7 +65,6 @@ describe('NewsCommunityEvent', () => {
     mockNewsfeedStore.byId.mockReturnValue(mockNewsfeed)
     mockCommunityEventStore.fetch.mockResolvedValue(mockEvent)
     mockCommunityEventStore.byId.mockReturnValue(mockEvent)
-    mockGroupStore.get.mockReturnValue(mockGroup)
   })
 
   function createWrapper(props = {}) {
@@ -157,12 +141,6 @@ describe('NewsCommunityEvent', () => {
       const wrapper = createWrapper()
       await flushPromises()
       expect(wrapper.text()).toContain('3 days ago')
-    })
-
-    it('shows group name', async () => {
-      const wrapper = createWrapper()
-      await flushPromises()
-      expect(wrapper.text()).toContain('Freegle Community Group')
     })
   })
 
@@ -290,12 +268,6 @@ describe('NewsCommunityEvent', () => {
       expect(mockCommunityEventStore.fetch).toHaveBeenCalledWith(100)
     })
 
-    it('fetches group data', async () => {
-      createWrapper()
-      await flushPromises()
-      expect(mockGroupStore.fetch).toHaveBeenCalledWith(300)
-    })
-
     it('emits hide when event fetch fails', async () => {
       mockCommunityEventStore.fetch.mockRejectedValue(new Error('Not found'))
       const wrapper = createWrapper()
@@ -361,23 +333,4 @@ describe('NewsCommunityEvent', () => {
     })
   })
 
-  describe('multiple groups', () => {
-    it('shows multiple group names', async () => {
-      const multiGroupEvent = {
-        ...mockEvent,
-        groups: [300, 400],
-      }
-      mockCommunityEventStore.byId.mockReturnValue(multiGroupEvent)
-      mockCommunityEventStore.fetch.mockResolvedValue(multiGroupEvent)
-      mockGroupStore.get.mockImplementation((id) => {
-        if (id === 300) return mockGroup
-        if (id === 400) return { id: 400, namedisplay: 'Another Group' }
-        return null
-      })
-
-      const wrapper = createWrapper()
-      await flushPromises()
-      expect(wrapper.text()).toContain('Freegle Community Group')
-    })
-  })
 })

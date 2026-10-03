@@ -252,9 +252,8 @@ func TestRipplingMetricsHeldReplySummary(t *testing.T) {
 	// real referenced rows rather than sentinel ids.
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	groupID := CreateTestGroup(t, prefix)
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: held summary test", 51.5, -0.1)
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	msgID := CreateTestMessage(t, posterID, "OFFER: held summary test", 51.5, -0.1)
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 	makeChatMsg := func() uint64 {
 		db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) "+
 			"VALUES (?, ?, 'held reply', NOW(), 0, 0, 1)", chatID, replierID)
@@ -350,20 +349,16 @@ func TestRipplingMetricsLegacyHomeBitSplitsByMembershipProvenance(t *testing.T) 
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: legacy derive test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: legacy derive test item", 51.5, -0.1)
 	// The post arrived a month ago, so both memberships below predate it.
 	db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 30 DAY WHERE msgid = ?", msgID)
 
 	joinedID := CreateTestUser(t, prefix+"_ripplejoined", "User")
-	CreateTestMembership(t, joinedID, groupID, "Member")
 	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 60 DAY, collection = 'Approved', rippled = 1 "+
 		"WHERE userid = ? AND groupid = ?", joinedID, groupID)
 
 	ordinaryID := CreateTestUser(t, prefix+"_ordinary", "User")
-	CreateTestMembership(t, ordinaryID, groupID, "Member")
 	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 60 DAY, collection = 'Approved', rippled = 0 "+
 		"WHERE userid = ? AND groupid = ?", ordinaryID, groupID)
 
@@ -508,10 +503,8 @@ func TestReplySourceSplitLegacyVariant(t *testing.T) {
 	prefix := uniquePrefix("legacysplit")
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: legacy split test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: legacy split test item", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
 	defer db.Exec("DELETE FROM rippling_reach_notified WHERE msgid = ?", msgID)
 
@@ -522,11 +515,9 @@ func TestReplySourceSplitLegacyVariant(t *testing.T) {
 
 	// A rippled-in copy of the post, and a replier who was an established member of that
 	// group before it arrived.
-	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
 		"VALUES (?, ?, NOW() - INTERVAL 1 DAY, 'Approved', 0, 1)", msgID, rippledGroup)
 	groupMemberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, groupMemberID, rippledGroup, "Member")
 	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 2 DAY, collection = 'Approved' WHERE userid = ? AND groupid = ?",
 		groupMemberID, rippledGroup)
 

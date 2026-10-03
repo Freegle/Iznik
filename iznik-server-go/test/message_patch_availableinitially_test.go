@@ -37,11 +37,9 @@ import (
 func patchQuantitySetup(t *testing.T, prefix string, initial, now int) (msgID uint64, ownerToken string) {
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	_, ownerToken = CreateTestSession(t, ownerID)
-	msgID = CreateTestMessage(t, ownerID, groupID, "OFFER: Jars "+prefix, 55.0, -1.0)
+	msgID = CreateTestMessage(t, ownerID, "OFFER: Jars "+prefix, 55.0, -1.0)
 
 	db.Exec("UPDATE messages SET type = 'Offer', availableinitially = ?, availablenow = ? WHERE id = ?",
 		initial, now, msgID)

@@ -11,9 +11,7 @@ class MessageAttachmentModelTest extends TestCase
     public function test_attachment_can_be_created(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $attachment = MessageAttachment::create([
             'msgid' => $message->id,
@@ -28,9 +26,7 @@ class MessageAttachmentModelTest extends TestCase
     public function test_message_relationship(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $attachment = MessageAttachment::create([
             'msgid' => $message->id,
@@ -43,9 +39,7 @@ class MessageAttachmentModelTest extends TestCase
     public function test_is_primary_returns_true_for_primary_attachment(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $attachment = MessageAttachment::create([
             'msgid' => $message->id,
@@ -58,9 +52,7 @@ class MessageAttachmentModelTest extends TestCase
     public function test_is_primary_returns_false_for_non_primary_attachment(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $attachment = MessageAttachment::create([
             'msgid' => $message->id,
@@ -73,9 +65,7 @@ class MessageAttachmentModelTest extends TestCase
     public function test_is_primary_returns_false_when_primary_not_set(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         // Not setting primary - it should default to false.
         $attachment = MessageAttachment::create([
@@ -88,9 +78,7 @@ class MessageAttachmentModelTest extends TestCase
     public function test_archived_is_cast_to_boolean(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $attachment = MessageAttachment::create([
             'msgid' => $message->id,
@@ -105,9 +93,7 @@ class MessageAttachmentModelTest extends TestCase
     public function test_rotated_is_cast_to_boolean(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $attachment = MessageAttachment::create([
             'msgid' => $message->id,
@@ -122,9 +108,7 @@ class MessageAttachmentModelTest extends TestCase
     public function test_primary_is_cast_to_boolean(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $attachment = MessageAttachment::create([
             'msgid' => $message->id,

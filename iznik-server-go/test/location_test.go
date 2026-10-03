@@ -38,7 +38,7 @@ func TestClosest(t *testing.T) {
 }
 
 func TestTypeahead(t *testing.T) {
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/location/typeahead?q=EH3&groupsnear=true&limit=1000", nil))
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/location/typeahead?q=EH3&limit=1000", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var locations []location.Location
@@ -79,17 +79,6 @@ func TestTypeahead_MissingQuery(t *testing.T) {
 	// No query param at all
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/location/typeahead", nil))
 	assert.Equal(t, 404, resp.StatusCode)
-}
-
-func TestLatLngGroupsNearOntn(t *testing.T) {
-	// LatLng should return groupsnear with the ontn field
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/location/latlng?lat=55.957571&lng=-3.205333", nil))
-	assert.Equal(t, 200, resp.StatusCode)
-
-	// Parse raw JSON to check ontn field exists
-	var raw map[string]json2.RawMessage
-	json2.Unmarshal(rsp(resp), &raw)
-	assert.Contains(t, string(raw["groupsnear"]), "ontn", "groupsnear should include ontn field")
 }
 
 func TestTypeaheadAreaField(t *testing.T) {
@@ -265,7 +254,7 @@ func TestUpdateLocationMidpointVertexSurvivesAreasReload(t *testing.T) {
 	assert.Equal(t, 6, storedPoints, "stored ourgeometry should keep the dragged midpoint vertex")
 
 	// Reload exactly as the map editor does: GET /locations?areas=true over a covering bbox.
-	url := "/api/locations?areas=true&groupsnear=false&swlat=55.93&swlng=-3.22&nelat=55.98&nelng=-3.17&jwt=" + adminToken
+	url := "/api/locations?areas=true&swlat=55.93&swlng=-3.22&nelat=55.98&nelng=-3.17&jwt=" + adminToken
 	resp2, _ := getApp().Test(httptest.NewRequest("GET", url, nil))
 	assert.Equal(t, 200, resp2.StatusCode)
 
@@ -404,9 +393,7 @@ func TestUpdateLocationNotAdmin(t *testing.T) {
 
 func TestExcludeLocation(t *testing.T) {
 	prefix := uniquePrefix("locwr_excl")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a test location.
@@ -417,7 +404,7 @@ func TestExcludeLocation(t *testing.T) {
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", "ExclTest "+prefix).Scan(&locID)
 	assert.Greater(t, locID, uint64(0))
 
-	body := fmt.Sprintf(`{"id":%d,"groupid":%d,"action":"Exclude"}`, locID, groupID)
+	body := fmt.Sprintf(`{"id":%d,"action":"Exclude"}`, locID)
 	req := httptest.NewRequest("POST", "/api/locations?jwt="+modToken, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
@@ -425,19 +412,17 @@ func TestExcludeLocation(t *testing.T) {
 
 	// Verify exclusion was created.
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM locations_excluded WHERE locationid = ? AND groupid = ?", locID, groupID).Scan(&count)
+	db.Raw("SELECT COUNT(*) FROM locations_excluded WHERE locationid = ?", locID).Scan(&count)
 	assert.Equal(t, int64(1), count)
 
 	// Cleanup
-	db.Exec("DELETE FROM locations_excluded WHERE locationid = ? AND groupid = ?", locID, groupID)
+	db.Exec("DELETE FROM locations_excluded WHERE locationid = ?", locID)
 	db.Exec("DELETE FROM locations WHERE id = ?", locID)
 }
 
 func TestExcludeLocationQueuesRemapTask(t *testing.T) {
 	prefix := uniquePrefix("locwr_exclrmp")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a test location with a polygon. The remap task needs the
@@ -456,7 +441,7 @@ func TestExcludeLocationQueuesRemapTask(t *testing.T) {
 	// Make sure there is no stale task from a prior run.
 	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
 
-	body := fmt.Sprintf(`{"id":%d,"groupid":%d,"action":"Exclude"}`, locID, groupID)
+	body := fmt.Sprintf(`{"id":%d,"action":"Exclude"}`, locID)
 	req := httptest.NewRequest("POST", "/api/locations?jwt="+modToken, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
@@ -464,7 +449,7 @@ func TestExcludeLocationQueuesRemapTask(t *testing.T) {
 
 	// Verify exclusion was created.
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM locations_excluded WHERE locationid = ? AND groupid = ?", locID, groupID).Scan(&count)
+	db.Raw("SELECT COUNT(*) FROM locations_excluded WHERE locationid = ?", locID).Scan(&count)
 	assert.Equal(t, int64(1), count)
 
 	// Verify a remap_postcodes task was queued — exclusion changes which
@@ -477,18 +462,16 @@ func TestExcludeLocationQueuesRemapTask(t *testing.T) {
 
 	// Cleanup
 	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
-	db.Exec("DELETE FROM locations_excluded WHERE locationid = ? AND groupid = ?", locID, groupID)
+	db.Exec("DELETE FROM locations_excluded WHERE locationid = ?", locID)
 	db.Exec("DELETE FROM locations WHERE id = ?", locID)
 }
 
 func TestExcludeLocationNotMod(t *testing.T) {
 	prefix := uniquePrefix("locwr_exclnm")
 	userID := CreateTestUser(t, prefix, "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
-	body := fmt.Sprintf(`{"id":1,"groupid":%d,"action":"Exclude"}`, groupID)
+	body := `{"id":1,"action":"Exclude"}`
 	req := httptest.NewRequest("POST", "/api/locations?jwt="+token, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
@@ -1059,179 +1042,4 @@ func TestLocationTaskRemapIntegrationWithPostgresSync(t *testing.T) {
 	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
 	db.Exec("DELETE FROM locations_spatial WHERE locationid = ?", locID)
 	db.Exec("DELETE FROM locations WHERE id = ?", locID)
-}
-
-// TestClosestGroupsContainingPolygonIsAuthoritative reproduces bug #9518: when a
-// location point lies inside a group's polygon, that group is the correct answer
-// even if its centre (lat/lng) is far away — polygon containment must beat the
-// centre-distance heuristic. The V1 PHP groupsNear() does this with an ST_Contains
-// check; the Go ClosestGroups() previously omitted it and so returned only the
-// group with the closest centre, dropping the containing group whose centre lies
-// beyond the search radius (it gets filtered out by the HAVING hav < radius clause).
-//
-// We seed two groups in an empty region (Gulf of Guinea — no real Freegle groups
-// there) so only our test groups are candidates:
-//   - Group A: a large polygon that CONTAINS the point, but whose centre is ~230
-//     miles away (so it is excluded by the centre-distance HAVING clause).
-//   - Group B: a small polygon that does NOT contain the point, but whose centre
-//     is ~5 miles away (so it passes the centre-distance filter).
-// The containing group A must be returned.
-func TestClosestGroupsContainingPolygonIsAuthoritative(t *testing.T) {
-	db := database.DBConn
-	prefix := uniquePrefix("closest_contain")
-
-	pointLat := 0.5
-	pointLng := 0.5
-
-	// Group A: large containing polygon, distant centre, NULL alt centre.
-	nameA := "ContainA_" + prefix
-	db.Exec(fmt.Sprintf(
-		"INSERT INTO `groups` (nameshort, namefull, type, onhere, publish, listable, lat, lng, altlat, altlng, polyindex) "+
-			"VALUES (?, ?, 'Freegle', 1, 1, 1, 2.9, 2.9, NULL, NULL, ST_GeomFromText('POLYGON((-2 -2, -2 3, 3 3, 3 -2, -2 -2))', %d))",
-		utils.SRID), nameA, "Containing Group A")
-	var groupA uint64
-	db.Raw("SELECT id FROM `groups` WHERE nameshort = ? ORDER BY id DESC LIMIT 1", nameA).Scan(&groupA)
-	assert.Greater(t, groupA, uint64(0))
-
-	// Group B: small non-containing polygon near the point, close centre.
-	nameB := "ContainB_" + prefix
-	db.Exec(fmt.Sprintf(
-		"INSERT INTO `groups` (nameshort, namefull, type, onhere, publish, listable, lat, lng, altlat, altlng, polyindex) "+
-			"VALUES (?, ?, 'Freegle', 1, 1, 1, 0.55, 0.55, NULL, NULL, ST_GeomFromText('POLYGON((0.6 0.6, 0.6 0.7, 0.7 0.7, 0.7 0.6, 0.6 0.6))', %d))",
-		utils.SRID), nameB, "Near Group B")
-	var groupB uint64
-	db.Raw("SELECT id FROM `groups` WHERE nameshort = ? ORDER BY id DESC LIMIT 1", nameB).Scan(&groupB)
-	assert.Greater(t, groupB, uint64(0))
-
-	defer func() {
-		db.Exec("DELETE FROM `groups` WHERE id IN (?, ?)", groupA, groupB)
-	}()
-
-	groups := location.ClosestGroups(pointLat, pointLng, float64(location.NEARBY), 10)
-
-	assert.Greater(t, len(groups), 0, "should find the containing group")
-	if len(groups) > 0 {
-		assert.Equal(t, groupA, groups[0].ID,
-			"the group whose polygon contains the point must be returned, even though its centre is far away")
-		assert.Equal(t, "Containing Group A", groups[0].Namedisplay,
-			"namedisplay should be populated for the containing group")
-	}
-
-	// The containing-groups path is authoritative: a non-containing group with a
-	// closer centre must not be returned ahead of (or instead of) the containing one.
-	for _, g := range groups {
-		assert.NotEqual(t, groupB, g.ID,
-			"non-containing group B must not appear when a containing group exists")
-	}
-}
-
-// Reproduces Discourse #9905 post #1: an FD member posted to their second-nearest
-// group instead of their nearest.
-//
-// ClosestGroups' radius-stepping search fires one query per doubling radius band
-// (currradius = NEARBY/16, then x2, x4, x8...) CONCURRENTLY, and stops as soon as
-// ANY completed band has accumulated `limit` candidates - it does not wait for the
-// other, larger-radius bands still in flight (see the "done"/wg.Done() handling in
-// ClosestGroups). A band's HAVING clause admits a group only if that group's
-// registered *centre* ("hav"/haversine distance) is within that band's own radius -
-// independent of "dist", the distance to the group's actual polygon boundary, which
-// is what determines "nearest" for ranking. A group whose boundary is very close to
-// the point but whose registered centre is comparatively far away (a large or
-// awkwardly-shaped catchment - the exact case the alt-lat/lng workaround at the top
-// of ClosestGroups exists for) is therefore only discoverable via a wider, slower
-// band. If enough closer-centred (but farther-boundary) decoy groups are found by
-// the faster, narrower bands first, the early exit fires and the genuinely nearest
-// group is silently dropped from the result - so groups[0] ends up being a group
-// that is not actually nearest.
-func TestClosestGroupsFarCentreNearBoundaryGroupNotDroppedByEarlyExit(t *testing.T) {
-	db := database.DBConn
-	prefix := uniquePrefix("closest_earlyexit")
-
-	pointLat := 20.0
-	pointLng := 20.0
-
-	// The true nearest group: polygon boundary ~0.05 miles from the point (closer
-	// than any decoy below), but a registered centre ~20 miles away - inside
-	// NEARBY(50mi) overall, but only found by the currradius=32 band (16 <= 20 < 32),
-	// which is dispatched last and has the largest bounding box to scan.
-	nameNorth := "EarlyExitNorth_" + prefix
-	db.Exec(fmt.Sprintf(
-		"INSERT INTO `groups` (nameshort, namefull, type, onhere, publish, listable, lat, lng, altlat, altlng, polyindex) "+
-			"VALUES (?, ?, 'Freegle', 1, 1, 1, %f, %f, NULL, NULL, ST_GeomFromText('POLYGON((20.0005 20.0005, 20.0005 20.0015, 20.0015 20.0015, 20.0015 20.0005, 20.0005 20.0005))', %d))",
-		pointLat+0.29, pointLng, utils.SRID), nameNorth, "Nearest North Group")
-	var groupNorth uint64
-	db.Raw("SELECT id FROM `groups` WHERE nameshort = ? ORDER BY id DESC LIMIT 1", nameNorth).Scan(&groupNorth)
-	assert.Greater(t, groupNorth, uint64(0))
-
-	// Ten decoy groups: registered centre right next to the point (hav ~0.07mi, so
-	// every band's HAVING clause admits them from the very first, narrowest band),
-	// but a polygon boundary further away (~0.3mi) than the true nearest group's -
-	// a correct, complete search still ranks them all behind it.
-	groupIDs := []uint64{groupNorth}
-	for i := 0; i < 10; i++ {
-		name := fmt.Sprintf("EarlyExitDecoy%d_%s", i, prefix)
-		off := float64(i) * 0.0001
-		db.Exec(fmt.Sprintf(
-			"INSERT INTO `groups` (nameshort, namefull, type, onhere, publish, listable, lat, lng, altlat, altlng, polyindex) "+
-				"VALUES (?, ?, 'Freegle', 1, 1, 1, %f, %f, NULL, NULL, ST_GeomFromText('POLYGON((%f 20.003, %f 20.004, 20.004 20.004, 20.004 20.003, %f 20.003))', %d))",
-			pointLat+0.001, pointLng+off, 20.003+off, 20.003+off, 20.003+off, utils.SRID), name, "Decoy Group "+name)
-		var decoyID uint64
-		db.Raw("SELECT id FROM `groups` WHERE nameshort = ? ORDER BY id DESC LIMIT 1", name).Scan(&decoyID)
-		assert.Greater(t, decoyID, uint64(0))
-		groupIDs = append(groupIDs, decoyID)
-	}
-
-	// ClosestGroups fires one query per radius band CONCURRENTLY and races them -
-	// whichever band's goroutine grabs the results-slice mutex first and already
-	// has `limit` candidates wins, regardless of which bands have or haven't
-	// finished. Bands 1-3 (radius 4/8/16) reach the decoys' 10-of-10 quickly
-	// because their bounding box is tiny. Band 4 (radius 32, the one that can also
-	// see the true nearest group) has to spatially scan a much wider box - in real
-	// production that is exactly the "may be slow even with a spatial index"
-	// tradeoff ClosestGroups' own top-of-function comment describes for a wide
-	// search area with many candidate groups. Reproduce that cost differential here
-	// (rather than relying on incidental goroutine-scheduling luck) by seeding a
-	// wide ring of filler groups that only band 4's bounding box scans: they never
-	// satisfy any band's HAVING clause (their registered centre is far outside even
-	// band 4's radius), so they can never appear in the result, but they force
-	// band 4's query to do real extra spatial + haversine work band 1-3 don't.
-	fillerPrefix := "EarlyExitFiller_" + prefix
-	var fillerValues strings.Builder
-	for i := 0; i < 3000; i++ {
-		if i > 0 {
-			fillerValues.WriteString(",")
-		}
-		// Tiny jitter (<=0.005 degrees) just to keep polygons distinct - the whole
-		// cluster stays well inside band 4's ~0.2 degree bounding box and well
-		// outside band 3's ~0.1 degree one.
-		jitter := float64(i%50) * 0.0001
-		fillerValues.WriteString(fmt.Sprintf(
-			"('%s%d', '%s%d', 'Freegle', 1, 1, 1, 29.0, 29.0, NULL, NULL, "+
-				"ST_GeomFromText('POLYGON((%f %f, %f %f, %f %f, %f %f, %f %f))', %d))",
-			fillerPrefix, i, fillerPrefix, i,
-			20.15+jitter, 20.15, 20.15+jitter, 20.151, 20.151+jitter, 20.151, 20.151+jitter, 20.15, 20.15+jitter, 20.15,
-			utils.SRID))
-	}
-	db.Exec("INSERT INTO `groups` (nameshort, namefull, type, onhere, publish, listable, lat, lng, altlat, altlng, polyindex) VALUES " +
-		fillerValues.String())
-
-	defer func() {
-		db.Exec("DELETE FROM `groups` WHERE id IN (?)", groupIDs)
-		db.Exec("DELETE FROM `groups` WHERE nameshort LIKE ?", fillerPrefix+"%")
-	}()
-
-	groups := location.ClosestGroups(pointLat, pointLng, float64(location.NEARBY), 10)
-	assert.Greater(t, len(groups), 0, "should find some groups near the point")
-
-	found := false
-	for _, g := range groups {
-		if g.ID == groupNorth {
-			found = true
-		}
-	}
-	assert.True(t, found, "the group that is genuinely nearest by polygon boundary distance must not be dropped just because narrower/faster search bands already filled the result up to the limit")
-
-	if found && len(groups) > 0 {
-		assert.Equal(t, groupNorth, groups[0].ID, "the genuinely nearest group must rank first")
-	}
 }

@@ -75,23 +75,14 @@ defineProps({
 })
 
 const authStore = useAuthStore()
-const { me, myGroups } = useMe()
+const { me } = useMe()
 const emailSimple = ref(-1)
 const newPassword = ref(null)
 
 watch(emailSimple, async (value) => {
-  for (const group of myGroups.value) {
-    const params = {
-      userid: me.value?.id,
-      groupid: group.id,
-      emailfrequency: parseInt(value),
-    }
-
-    // Don't fetch for each group.
-    await authStore.setGroup(params, true)
-  }
-
-  await authStore.fetchUser()
+  await authStore.saveAndGet({
+    emailfrequency: parseInt(value),
+  })
 })
 
 async function setPassword(callback) {

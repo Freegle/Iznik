@@ -26,12 +26,14 @@ class DumpUserCommand extends Command
     /**
      * Tables to dump, with the columns that hold the user ID.
      * Mirrors the logic in scripts/cli/user_restore.php.
+     *
+     * memberships/memberships_history/users_banned/messages_groups were dropped
+     * by 2026_09_20_000001_remove_group_model.php (ai-judgement.md); the ban is
+     * now the banned/bannedby pair captured directly on `user` below instead of
+     * a separate table.
      */
     private array $tables = [
-        'memberships'              => ['userid'],
-        'memberships_history'      => ['userid'],
         'spam_users'               => ['userid', 'byuserid'],
-        'users_banned'             => ['userid'],
         'users_donations'          => ['userid'],
         'giftaid'                  => ['userid'],
         'microactions'             => ['userid'],
@@ -134,6 +136,8 @@ class DumpUserCommand extends Command
                 'yahooid'     => $user->yahooid,
                 'systemrole'  => $user->systemrole,
                 'permissions' => $user->permissions,
+                'banned'      => $user->banned,
+                'bannedby'    => $user->bannedby,
             ],
             'tables'        => [],
         ];
@@ -159,24 +163,6 @@ class DumpUserCommand extends Command
             }
 
             $dump['tables'][$table] = $rows;
-        }
-
-        // Also dump messages_groups for all messages owned by this user.
-        $messageIds = DB::table('messages')
-            ->where('fromuser', $userId)
-            ->pluck('id')
-            ->toArray();
-
-        $messagesGroups = [];
-        if (count($messageIds) > 0) {
-            foreach (DB::table('messages_groups')->whereIn('msgid', $messageIds)->get() as $row) {
-                $messagesGroups[] = (array) $row;
-            }
-        }
-        $dump['tables']['messages_groups'] = $messagesGroups;
-
-        if (count($messagesGroups) > 0) {
-            $this->line('  messages_groups: '.count($messagesGroups).' row(s)');
         }
 
         // Write to file.

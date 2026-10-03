@@ -5,7 +5,6 @@
       v-if="initialBounds"
       v-model:ready="mapready"
       v-model:bounds="bounds"
-      v-model:show-groups="showGroups"
       v-model:moved="mapMoved"
       v-model:zoom="zoom"
       v-model:centre="centre"
@@ -20,119 +19,57 @@
       :type="selectedType"
       :search="search"
       :show-many="showMany"
-      :groupid="selectedGroup"
-      :region="region"
       :can-hide="canHide"
       :isochrone-override="isochroneOverride"
       :authorityid="authorityid"
       :selected-max-distance="selectedMaxDistance"
       :browse-search="browseSearch"
-      @searched="searched"
       @messages="messagesChanged($event)"
-      @groups="groupsChanged($event)"
       @idle="$emit('idle', $event)"
     />
     <div v-observe-visibility="mapVisibilityChanged" />
     <div class="rest">
+      <NoticeMessage v-if="noneFound">
+        <p>
+          Sorry, we didn't find anything. Things come and go quickly, though,
+          so you could try later. Or you could:
+        </p>
+        <GiveAsk class="bg-info" />
+      </NoticeMessage>
       <div
-        v-if="showClosestGroups && closestGroups?.length && !mapHidden"
-        class="mb-1 border p-2 bg-white"
+        v-else-if="!postsVisible && messagesOnMap?.length"
+        class="d-flex justify-content-center mt-1 mb-1"
       >
-        <h2 class="visually-hidden">Nearby communities</h2>
-        <div class="d-flex flex-wrap justify-content-center gap-2">
-          <JoinWithConfirm
-            v-for="g in closestGroups"
-            :id="g.id"
-            :key="'group-' + g.id"
-            :name="g.namedisplay"
-            size="sm"
-            variant="primary"
-          />
-        </div>
-      </div>
-      <div v-if="showGroups" class="bg-white pt-3">
-        <div v-if="showRegions">
-          <div class="d-flex flex-wrap justify-content-center pb-4">
-            <div v-for="r in regions" :key="r" class="p-0 mt-2 ms-2 me-2">
-              <b-button variant="secondary" :to="'/explore/region/' + r">
-                {{ r }}
-              </b-button>
-            </div>
-          </div>
-        </div>
-        <div v-if="showGroupList">
-          <h2 class="visually-hidden">List of communities</h2>
-          <AdaptiveMapGroup
-            v-for="groupid in groupids"
-            :id="groupid"
-            :key="'adaptivegroup-' + groupid"
-          />
-        </div>
-        <p
-          class="text-center mt-2 header--size5 text--medium-large-highlight community__text"
-        >
-          <!-- eslint-disable-next-line -->
-          Need help? Go <nuxt-link no-prefetch to="/help">here</nuxt-link>.
-        </p>
-        <p
-          v-if="showStartMessage"
-          class="text-center mt-2 header--size5 text--medium-large-highlight community__text"
-        >
-          <!-- eslint-disable-next-line -->
-          If there's no community for your area, would you like to start one?
-          <ExternalLink href="mailto:newgroups@ilovefreegle.org"
-            >Get in touch!</ExternalLink
-          >
-        </p>
-      </div>
-      <div v-else>
-        <NoticeMessage v-if="noneFound">
-          <p>
-            Sorry, we didn't find anything. Things come and go quickly, though,
-            so you could try later. Or you could:
-          </p>
-          <GiveAsk class="bg-info" />
+        <NoticeMessage variant="info">
+          <v-icon icon="angle-double-down" class="pulsate" />
+          Scroll down to see
+          <span v-if="search"
+            >results for "<strong>{{ search }}</strong
+            >"</span
+          ><span v-else>the posts</span>.
+          <v-icon icon="angle-double-down" class="pulsate" />
         </NoticeMessage>
-        <div
-          v-else-if="!postsVisible && messagesOnMap?.length"
-          class="d-flex justify-content-center mt-1 mb-1"
-        >
-          <NoticeMessage variant="info">
-            <v-icon icon="angle-double-down" class="pulsate" />
-            Scroll down to see
-            <span v-if="search"
-              >results for "<strong>{{ search }}</strong
-              >"</span
-            ><span v-else>the posts</span>.
-            <v-icon icon="angle-double-down" class="pulsate" />
-          </NoticeMessage>
-        </div>
-        <h2 class="visually-hidden">List of wanteds and offers</h2>
-        <MessageList
-          v-if="updatedMessagesOnMap || messagesOnMap.length"
-          :key="'messagelist-' + infiniteId"
-          v-model:visible="postsVisible"
-          v-model:none="noneFound"
-          :search="search"
-          show-counts-unseen
-          :selected-group="selectedGroup"
-          :selected-type="selectedType"
-          :selected-sort="selectedSort"
-          :messages-for-list="filteredMessages"
-          :loading="loading"
-          :jobs="jobs"
-          :first-seen-message="firstSeenMessage"
-        />
       </div>
+      <h2 class="visually-hidden">List of wanteds and offers</h2>
+      <MessageList
+        v-if="updatedMessagesOnMap || messagesOnMap.length"
+        :key="'messagelist-' + infiniteId"
+        v-model:visible="postsVisible"
+        v-model:none="noneFound"
+        :search="search"
+        show-counts-unseen
+        :selected-type="selectedType"
+        :selected-sort="selectedSort"
+        :messages-for-list="filteredMessages"
+        :loading="loading"
+        :jobs="jobs"
+        :first-seen-message="firstSeenMessage"
+      />
     </div>
   </div>
 </template>
 <script setup>
 import { ref, computed, watch, defineAsyncComponent } from 'vue'
-import { useGroupStore } from '~/stores/group'
-import { useAuthStore } from '~/stores/auth'
-import { useMiscStore } from '~/stores/misc'
-import { getDistance } from '~/composables/useMap'
 import {
   filterMessagesByDistance,
   browseSliderMinuteCheck,
@@ -142,10 +79,7 @@ import { MAX_MAP_ZOOM, BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 import { useMessageStore } from '~/stores/message'
 import { useNearbyStore } from '~/stores/nearby'
 
-import JoinWithConfirm from '~/components/JoinWithConfirm'
 import MessageList from '~/components/MessageList'
-const AdaptiveMapGroup = defineAsyncComponent(() => import('./MapGroup'))
-const ExternalLink = defineAsyncComponent(() => import('./ExternalLink'))
 const NoticeMessage = defineAsyncComponent(() => import('./NoticeMessage'))
 const GiveAsk = defineAsyncComponent(() => import('./GiveAsk'))
 const PostMap = defineAsyncComponent(() => import('~/components/PostMap'))
@@ -155,29 +89,7 @@ const props = defineProps({
     type: Array,
     required: true,
   },
-  startOnGroups: {
-    type: Boolean,
-    required: false,
-    default: false,
-  },
   forceMessages: {
-    type: Boolean,
-    required: false,
-    default: false,
-  },
-  initialGroupIds: {
-    type: Array,
-    required: false,
-    default() {
-      return []
-    },
-  },
-  region: {
-    type: String,
-    required: false,
-    default: null,
-  },
-  showStartMessage: {
     type: Boolean,
     required: false,
     default: false,
@@ -217,20 +129,10 @@ const props = defineProps({
     required: false,
     default: 'All',
   },
-  selectedGroup: {
-    type: Number,
-    required: false,
-    default: 0,
-  },
   selectedSort: {
     type: String,
     required: false,
     default: 'Unseen',
-  },
-  showClosestGroups: {
-    type: Boolean,
-    required: false,
-    default: true,
   },
   isochroneOverride: {
     type: Object,
@@ -261,23 +163,11 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits([
-  'update:selectedGroup',
-  'update:messagesOnMapCount',
-  'idle',
-])
+const emit = defineEmits(['update:messagesOnMapCount', 'idle'])
 
 // Store instances
-const miscStore = useMiscStore()
-const groupStore = useGroupStore()
-const authStore = useAuthStore()
 const messageStore = useMessageStore()
 const nearbyStore = useNearbyStore()
-const me = computed(() => authStore.user)
-
-// Refs from setup
-const showGroups = ref(props.startOnGroups)
-const groupids = ref(props.initialGroupIds)
 
 // Data properties
 const heightFraction = ref(4)
@@ -299,25 +189,13 @@ const lastFilteredIds = ref(null)
 // set of message IDs changes (new messages arrive or messages are removed).
 const lockedSortOrder = ref(null)
 
-// Computed properties
-const browseView = computed(() => {
-  return me.value?.settings?.browseView
-    ? me.value.settings.browseView
-    : 'nearby'
-})
-
 // Whether PostMap should use its "nearby" data path (the server-computed reach feed). The
 // name is historical - there's no longer a per-user isochrone POLYGON for plain nearby
 // browsing (reach is worked out server-side) - but this flag still selects the nearby feed
-// in PostMap.getMessages, so it must be true for the nearby view, not just for an explicit
-// polygon override (e.g. the fixed Essex boundary on the Essex landing page).
-const showIsochrones = computed(() => {
-  return !!props.isochroneOverride || browseView.value === 'nearby'
-})
-
-const mapHidden = computed(() => {
-  return miscStore?.get('hidepostmap')
-})
+// in PostMap.getMessages. There's only one browse view now (nearby), so this is always
+// true; isochroneOverride (e.g. the fixed Essex boundary on the Essex landing page) is
+// still passed through separately below.
+const showIsochrones = true
 
 const messagesOnMap = computed({
   get() {
@@ -334,36 +212,10 @@ const messagesOnMap = computed({
   },
 })
 
-const regions = computed(() => {
-  const regions = []
-
-  try {
-    const allGroups = groupStore?.summaryList
-
-    for (const ix in allGroups) {
-      const group = allGroups[ix]
-
-      if (group.region && !regions.includes(group.region)) {
-        regions.push(group.region)
-      }
-    }
-
-    regions.sort()
-  } catch (e) {
-    console.error('Exception', e)
-  }
-
-  return regions
-})
-
 const messagesForList = computed(() => {
   let msgs = []
 
   msgs = sortedMessagesOnMap.value
-
-  if (props.selectedGroup) {
-    msgs = msgs.filter((m) => m.groupid === props.selectedGroup)
-  }
 
   // Distance slider: the feed already returns the full reach set, so this is a local,
   // instant filter rather than a refetch. Posts with no distance (e.g. an older feed
@@ -485,77 +337,6 @@ const sortedMessagesOnMap = computed(() => {
 
   // No locked order yet - return freshly sorted messages
   return sortMessages(messages)
-})
-
-const showRegions = computed(() => {
-  // We want to show the regions if we're zoomed out, or for SSR = SEO.
-  return import.meta.server || zoom.value < 7
-})
-
-const showGroupList = computed(() => {
-  // We want to show the list of groups for SSR = SEO, or if we are not showing the regions (because we're
-  // zoomed out)
-  return import.meta.server || !showRegions.value
-})
-
-const closestGroups = computed(() => {
-  const ret = []
-  const distances = {}
-
-  if (centre.value) {
-    const allGroups = groupStore.summaryList
-
-    for (const ix in allGroups) {
-      const group = allGroups[ix]
-
-      if (group) {
-        // See if the group is showing in the map area.
-        if (
-          bounds.value.contains([group.lat, group.lng]) ||
-          ((group.altlat || group.altlng) &&
-            bounds.value.contains([group.altlat, group.altlng]))
-        ) {
-          // Are we already a member?
-          const member = authStore.member(group.id)
-
-          if (!member) {
-            // Visible group?
-            if (group.onmap && group.publish) {
-              // How far away?
-              distances[group.id] = getDistance(
-                [centre.value.lat, centre.value.lng],
-                [group.lat, group.lng]
-              )
-
-              // Allowed to show?
-              if (
-                !group.showjoin ||
-                distances[group.id] <= group.showjoin * 1609.34
-              ) {
-                ret.push(group)
-              } else if (group.altlat || group.altlng) {
-                // A few groups have two centres because they are large.
-                distances[group.id] = getDistance(
-                  [centre.value.lat, centre.value.lng],
-                  [group.altlat, group.altlng]
-                )
-
-                if (distances[group.id] <= group.showjoin * 1609.34) {
-                  ret.push(group)
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    ret.sort((a, b) => {
-      return distances[a.id] - distances[b.id]
-    })
-  }
-
-  return ret.slice(0, 3)
 })
 
 // Watchers
@@ -703,17 +484,8 @@ function messagesChanged(messages) {
   }
 }
 
-function groupsChanged(groupidsParam) {
-  groupids.value = groupidsParam
-}
-
 function mapVisibilityChanged(visible) {
   mapVisible.value = visible
-}
-
-function searched() {
-  // When we've searched on a place, we want to reset the selected group otherwise we won't show anything.
-  emit('update:selectedGroup', 0)
 }
 </script>
 <style scoped lang="scss">
@@ -736,11 +508,6 @@ function searched() {
   top: 0px;
   right: 0px;
   z-index: 20000;
-}
-
-.community__text {
-  /* Need to override the h2 as it has higher specificity */
-  color: $color-gray--darker !important;
 }
 
 .shrink {

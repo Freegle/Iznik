@@ -10,8 +10,8 @@ export const useDonationStore = defineStore('donation', {
     init(config) {
       this.config = config
     },
-    async fetch(groupid) {
-      const vals = await api(this.config).donations.fetch(groupid)
+    async fetch() {
+      const vals = await api(this.config).donations.fetch()
       this.target = vals.target
       this.raised = vals.raised
     },

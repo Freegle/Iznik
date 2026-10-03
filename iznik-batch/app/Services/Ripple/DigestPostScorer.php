@@ -23,14 +23,14 @@ namespace App\Services\Ripple;
 class DigestPostScorer
 {
     /**
-     * @param float $distanceMetres Haversine distance recipient -> post origin (drive-time proxy).
-     * @param float $reachRadius    Post reach extent in metres (closeness denominator).
-     * @param float $ageH           Post age in hours.
-     * @param int   $views          messages_likes 'View' count (SUM of count).
-     * @param int   $replies        'Interested' chat replies.
-     * @param bool  $homeGroup      Post is from the recipient's home group.
-     * @param array{close:float,fresh:float,budget:float,anchor:float} $weights
-     * @param array{window_hours:float,budget_decay:float} $env
+     * @param  float  $distanceMetres  Haversine distance recipient -> post origin (drive-time proxy).
+     * @param  float  $reachRadius  Post reach extent in metres (closeness denominator).
+     * @param  float  $ageH  Post age in hours.
+     * @param  int  $views  messages_likes 'View' count (SUM of count).
+     * @param  int  $replies  'Interested' chat replies.
+     * @param  bool  $homeArea  Post is from the recipient's home area (geographic, not membership).
+     * @param  array{close:float,fresh:float,budget:float,anchor:float}  $weights
+     * @param  array{window_hours:float,budget_decay:float}  $env
      * @return array{close:float,fresh:float,budget:float,anchor:float,total:float}
      */
     public function score(
@@ -39,7 +39,7 @@ class DigestPostScorer
         float $ageH,
         int $views,
         int $replies,
-        bool $homeGroup,
+        bool $homeArea,
         array $weights,
         array $env,
         ?float $driveMinutes = null
@@ -78,7 +78,7 @@ class DigestPostScorer
         $engagement = ($views + 3 * $replies) / $rateAgeH;
         $budget = exp(-$engagement / ($env['budget_decay'] / 12.0));
 
-        $anchor = $homeGroup ? 1.0 : 0.0;
+        $anchor = $homeArea ? 1.0 : 0.0;
 
         $total = $weights['close'] * $close
             + $weights['fresh'] * $fresh

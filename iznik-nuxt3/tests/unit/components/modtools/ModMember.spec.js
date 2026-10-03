@@ -12,16 +12,9 @@ const mockUserStore = {
 }
 
 const mockMemberStore = {
-  update: vi.fn(),
   unban: vi.fn(),
   list: {},
   get: vi.fn(),
-}
-
-const mockModConfigStore = {
-  configs: [],
-  configsById: {},
-  fetchById: vi.fn(),
 }
 
 vi.mock('~/stores/user', () => ({
@@ -32,15 +25,10 @@ vi.mock('~/stores/member', () => ({
   useMemberStore: () => mockMemberStore,
 }))
 
-vi.mock('~/stores/modconfig', () => ({
-  useModConfigStore: () => mockModConfigStore,
-}))
-
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     // me is a ref - gets unwrapped in templates to just the object
     me: { id: 999, displayname: 'Mod User' },
-    myGroups: { value: [{ id: 789, configid: 1 }] },
   }),
 }))
 
@@ -175,41 +163,15 @@ describe('ModMember', () => {
           },
           ModMemberActions: {
             template: '<div class="mod-member-actions" />',
-            props: ['userid', 'groupid', 'banned'],
-          },
-          ModMemberships: {
-            template: '<div class="mod-memberships" />',
-            props: ['userid'],
+            props: ['userid', 'banned'],
           },
           ModMemberLogins: {
             template: '<div class="mod-member-logins" />',
             props: ['member'],
           },
-          ModMemberButtons: {
-            template: '<div class="mod-member-buttons" />',
-            props: ['member', 'modconfig', 'actions'],
-          },
-          ModMemberButton: {
-            template: '<button class="mod-member-button" />',
-            props: ['member', 'variant', 'icon', 'release', 'label'],
-          },
-          ModRole: {
-            template: '<div class="mod-role" />',
-            props: ['userid', 'groupid', 'role'],
-          },
           ModModeration: {
             template: '<div class="mod-moderation" />',
-            props: ['user', 'userid', 'membership'],
-          },
-          SettingsGroup: {
-            template: '<div class="settings-group" />',
-            props: [
-              'emailfrequency',
-              'membershipMT',
-              'moderation',
-              'userid',
-              'xclass',
-            ],
+            props: ['userid', 'size'],
           },
           OurToggle: {
             // Matches the real OurToggle contract: change emits the new value
@@ -229,7 +191,7 @@ describe('ModMember', () => {
           },
           ChatButton: {
             template: '<button class="chat-button" />',
-            props: ['userid', 'groupid', 'title', 'variant'],
+            props: ['userid', 'title', 'variant'],
           },
           ModPostingHistoryModal: {
             template: '<div class="posting-history-modal" />',
@@ -242,11 +204,6 @@ describe('ModMember', () => {
           ConfirmModal: {
             template: '<div class="confirm-modal" :title="title" />',
             props: ['title'],
-            methods: { show: vi.fn() },
-          },
-          ModChatModal: {
-            template: '<div class="mod-chat-modal" />',
-            props: ['id', 'pov'],
             methods: { show: vi.fn() },
           },
         },
@@ -269,13 +226,9 @@ describe('ModMember', () => {
     mockUserStore.fetchMT.mockResolvedValue()
     mockUserStore.edit.mockResolvedValue()
     mockUserStore.list = {}
-    mockMemberStore.update.mockResolvedValue()
     mockMemberStore.unban.mockResolvedValue()
     mockMemberStore.list = {}
     mockMemberStore.get.mockReturnValue(null)
-    mockModConfigStore.configs = [{ id: 1, name: 'Test Config' }]
-    mockModConfigStore.configsById = { 1: { id: 1, name: 'Test Config' } }
-    mockModConfigStore.fetchById.mockResolvedValue()
   })
 
   describe('rendering', () => {
@@ -326,20 +279,11 @@ describe('ModMember', () => {
       expect(wrapper.find('.mod-member-engagement').exists()).toBe(true)
     })
 
-    it('shows ModMemberships component', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.find('.mod-memberships').exists()).toBe(true)
-    })
-
     it('shows ModMemberLogins component', () => {
       const wrapper = mountComponent()
       expect(wrapper.find('.mod-member-logins').exists()).toBe(true)
     })
 
-    it('shows ModMemberButtons in footer by default', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.find('.mod-member-buttons').exists()).toBe(true)
-    })
   })
 
   describe('LoveJunk user', () => {
@@ -442,7 +386,7 @@ describe('ModMember', () => {
           heldby: { id: 999, displayname: 'Mod User' },
         }),
       })
-      expect(wrapper.find('.mod-member-button').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Release')
     })
   })
 
@@ -567,13 +511,6 @@ describe('ModMember', () => {
       expect(wrapper.vm.email).toBe('user@gmail.com')
     })
 
-    it('groupid returns member.groupid', () => {
-      const wrapper = mountComponent({
-        member: createMember({ groupid: 789 }),
-      })
-      expect(wrapper.vm.groupid).toBe(789)
-    })
-
     it('user returns member', () => {
       const member = createMember({ displayname: 'Custom User' })
       const wrapper = mountComponent({ member })
@@ -638,20 +575,6 @@ describe('ModMember', () => {
       expect(wrapper.vm.notifications.emailmine).toBe(false)
     })
 
-    it('configid returns matching config id from myGroups', () => {
-      const wrapper = mountComponent({
-        member: createMember({ groupid: 789 }),
-      })
-      expect(wrapper.vm.configid).toBe(1)
-    })
-
-    it('configid returns null when no matching config', () => {
-      const wrapper = mountComponent({
-        member: createMember({ groupid: 999 }),
-      })
-      expect(wrapper.vm.configid).toBeNull()
-    })
-
     it('relevantallowed returns boolean value', () => {
       const wrapper = mountComponent({
         member: createMember({ relevantallowed: 1 }),
@@ -712,16 +635,6 @@ describe('ModMember', () => {
       const wrapper = mountComponent()
       wrapper.vm.showLogs()
       expect(wrapper.vm.showLogsModal).toBe(true)
-    })
-
-    it('settingsChange calls memberStore.update', () => {
-      const wrapper = mountComponent()
-      wrapper.vm.settingsChange('emailfrequency', 789, 48)
-      expect(mockMemberStore.update).toHaveBeenCalledWith({
-        userid: 456,
-        groupid: 789,
-        emailfrequency: 48,
-      })
     })
 
     // OurToggle emits the new value directly (a boolean), so the handlers receive
@@ -801,7 +714,7 @@ describe('ModMember', () => {
       })
       const wrapper = mountComponent({ member })
       await wrapper.vm.unban()
-      expect(mockMemberStore.unban).toHaveBeenCalledWith(456, 789)
+      expect(mockMemberStore.unban).toHaveBeenCalledWith(456)
       expect(wrapper.vm.showUnbanModal).toBe(false)
     })
   })
@@ -912,35 +825,11 @@ describe('ModMember', () => {
   })
 
   describe('banned member simplified view', () => {
-    it('hides settings group for banned member', () => {
-      const wrapper = mountComponent({
-        member: createMember({ bandate: '2024-01-15T10:00:00Z' }),
-      })
-      expect(wrapper.find('.settings-group').exists()).toBe(false)
-    })
-
     it('hides moderation status for banned member', () => {
       const wrapper = mountComponent({
         member: createMember({ bandate: '2024-01-15T10:00:00Z' }),
       })
       expect(wrapper.find('.mod-moderation').exists()).toBe(false)
-    })
-
-    it('hides ModMemberButtons for banned member', () => {
-      const wrapper = mountComponent({
-        member: createMember({ bandate: '2024-01-15T10:00:00Z' }),
-      })
-      expect(wrapper.find('.mod-member-buttons').exists()).toBe(false)
-    })
-
-    it('hides ModRole for banned member', () => {
-      const wrapper = mountComponent({
-        member: createMember({
-          bandate: '2024-01-15T10:00:00Z',
-          role: 'Member',
-        }),
-      })
-      expect(wrapper.find('.mod-role').exists()).toBe(false)
     })
 
     it('still shows chat button for banned member', () => {
@@ -962,13 +851,6 @@ describe('ModMember', () => {
         member: createMember({ bandate: '2024-01-15T10:00:00Z' }),
       })
       expect(wrapper.find('.mod-member-summary').exists()).toBe(true)
-    })
-
-    it('shows settings group for non-banned member', () => {
-      const wrapper = mountComponent({
-        member: createMember({ bandate: null }),
-      })
-      expect(wrapper.find('.settings-group').exists()).toBe(true)
     })
   })
 

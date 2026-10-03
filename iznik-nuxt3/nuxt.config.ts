@@ -168,7 +168,6 @@ export default defineNuxtConfig({
       ? {
           '/': { prerender: true },
           '/ask': { prerender: true },
-          '/explore': { prerender: true },
           '/unsubscribe**': { prerender: true },
           '/about': { prerender: true },
           '/disclaimer': { prerender: true },
@@ -221,13 +220,8 @@ export default defineNuxtConfig({
     '/paypalcompetition': { ssr: false },
 
     // Render on demand - may never be shown in a given build - then cache for a while.
-    '/explore/region/**': { isr: 3600 },
     '/communityevent/**': { isr: 3600 },
     '/communityevents/**': { isr: 3600 },
-    // A community page is the crawl path into that community's new posts, so an
-    // hour of cache meant a new post could sit invisible to a crawler for an hour
-    // after it landed. Ten minutes matches how fast the board actually moves.
-    '/explore/**': { isr: 600 },
     '/message/**': { isr: 600 },
     '/story/**': { isr: 3600 },
     '/shortlink/**': { isr: 600 },

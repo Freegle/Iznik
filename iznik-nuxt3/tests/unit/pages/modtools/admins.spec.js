@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ref } from 'vue'
 import AdminsPage from '~/modtools/pages/admins.vue'
 
 // Create mock stores
@@ -11,13 +10,8 @@ const mockAdminsStore = {
   add: vi.fn().mockResolvedValue({}),
 }
 
-const mockModGroupStore = {
-  get: vi.fn().mockReturnValue({
-    id: 1,
-    type: 'Freegle',
-    role: 'Moderator',
-    work: { pendingadmins: 3 },
-  }),
+const mockAuthStore = {
+  work: { pendingadmins: 6 },
 }
 
 // Mock vue-router
@@ -58,18 +52,14 @@ vi.mock('~/stores/admins', () => ({
   useAdminsStore: () => mockAdminsStore,
 }))
 
-vi.mock('@/stores/modgroup', () => ({
-  useModGroupStore: () => mockModGroupStore,
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => mockAuthStore,
 }))
 
 // Mock composables
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
-    myGroups: ref([
-      { id: 1, role: 'Moderator' },
-      { id: 2, role: 'Moderator' },
-    ]),
-    supportOrAdmin: ref(false),
+    supportOrAdmin: { value: false },
   }),
 }))
 
@@ -85,10 +75,6 @@ describe('admins.vue page', () => {
       global: {
         stubs: {
           ModHelpAdmins: { template: '<div class="help-stub" />' },
-          ModGroupSelect: {
-            template: '<div class="group-select-stub" />',
-            props: ['modelValue', 'all', 'modonly', 'work', 'systemwide'],
-          },
           ModAdmin: {
             template: '<div class="admin-stub" />',
             props: ['id', 'open'],
@@ -168,6 +154,7 @@ describe('admins.vue page', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockAdminsStore.list = []
+    mockAuthStore.work = { pendingadmins: 6 }
   })
 
   describe('initial state', () => {
@@ -177,16 +164,20 @@ describe('admins.vue page', () => {
       // Wait for async operations
       await flushPromises()
       expect(mockAdminsStore.clear).toHaveBeenCalled()
-      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({ groupid: null })
+      expect(mockAdminsStore.fetch).toHaveBeenCalledWith()
     })
   })
 
   describe('computed properties', () => {
-    it('calculates pendingcount from groups with pending admins', () => {
-      vi.clearAllMocks()
+    it('reads pendingcount from the national work object', () => {
       const wrapper = mountComponent()
-      // 2 groups, each with 3 pending admins from mock = 6
       expect(wrapper.vm.pendingcount).toBe(6)
+    })
+
+    it('returns 0 when there is no pending admin work', () => {
+      mockAuthStore.work = {}
+      const wrapper = mountComponent()
+      expect(wrapper.vm.pendingcount).toBe(0)
     })
 
     it('filters pending admins from list', () => {
@@ -249,7 +240,6 @@ describe('admins.vue page', () => {
       const wrapper = mountComponent()
       const admin = {
         essential: 1,
-        groupid: 5,
         subject: 'Test Subject',
         text: 'Test Body',
         ctatext: 'Click me',
@@ -259,7 +249,6 @@ describe('admins.vue page', () => {
       wrapper.vm.copyAdmin(admin)
 
       expect(wrapper.vm.essential).toBe(true)
-      expect(wrapper.vm.groupidcreate).toBe(5)
       expect(wrapper.vm.subject).toBe('Test Subject')
       expect(wrapper.vm.body).toBe('Test Body')
       expect(wrapper.vm.ctatext).toBe('Click me')
@@ -271,7 +260,6 @@ describe('admins.vue page', () => {
       const wrapper = mountComponent()
       const admin = {
         essential: 0,
-        groupid: 5,
         subject: 'Test',
         text: 'Body',
       }
@@ -285,52 +273,30 @@ describe('admins.vue page', () => {
       const wrapper = mountComponent()
       vi.clearAllMocks()
 
-      await wrapper.vm.fetchAdmins(123)
+      await wrapper.vm.fetchAdmins()
 
       expect(mockAdminsStore.clear).toHaveBeenCalled()
-      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({ groupid: 123 })
+      expect(mockAdminsStore.fetch).toHaveBeenCalledWith()
     })
 
-    it('fetchPending calls fetch with groupidshow', async () => {
+    it('fetchPending clears and fetches admins', async () => {
       const wrapper = mountComponent()
-      wrapper.vm.groupidshow = 456
       vi.clearAllMocks()
 
       await wrapper.vm.fetchPending()
 
-      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({ groupid: 456 })
+      expect(mockAdminsStore.clear).toHaveBeenCalled()
+      expect(mockAdminsStore.fetch).toHaveBeenCalledWith()
     })
 
-    it('fetchPrevious calls fetch with groupidprevious', async () => {
+    it('fetchPrevious clears and fetches admins', async () => {
       const wrapper = mountComponent()
-      wrapper.vm.groupidprevious = 789
       vi.clearAllMocks()
 
       await wrapper.vm.fetchPrevious()
 
-      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({ groupid: 789 })
-    })
-  })
-
-  describe('watchers', () => {
-    it('fetches when groupidshow changes', async () => {
-      const wrapper = mountComponent()
-      vi.clearAllMocks()
-
-      wrapper.vm.groupidshow = 100
-      await wrapper.vm.$nextTick()
-
-      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({ groupid: 100 })
-    })
-
-    it('fetches when groupidprevious changes', async () => {
-      const wrapper = mountComponent()
-      vi.clearAllMocks()
-
-      wrapper.vm.groupidprevious = 200
-      await wrapper.vm.$nextTick()
-
-      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({ groupid: 200 })
+      expect(mockAdminsStore.clear).toHaveBeenCalled()
+      expect(mockAdminsStore.fetch).toHaveBeenCalledWith()
     })
   })
 
@@ -340,9 +306,9 @@ describe('admins.vue page', () => {
       expect(wrapper.find('.tabs').exists()).toBe(true)
     })
 
-    it('renders group select in Pending tab', () => {
+    it('does not render any group selection (single national community)', () => {
       const wrapper = mountComponent()
-      expect(wrapper.find('.group-select-stub').exists()).toBe(true)
+      expect(wrapper.find('.group-select-stub').exists()).toBe(false)
     })
   })
 })

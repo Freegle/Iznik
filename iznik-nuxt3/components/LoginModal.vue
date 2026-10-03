@@ -185,7 +185,7 @@
         >.
       </p>
       <p v-if="isModTools" class="small text-muted mt-1 mb-0 text-center">
-        By logging in, you confirm your groups remain affiliated with Freegle.
+        By logging in, you confirm you remain affiliated with Freegle as a volunteer.
       </p>
     </div>
   </b-modal>
@@ -483,8 +483,8 @@ function loginNative(e) {
           await authStore.fetchUser()
 
           if (route.path === '/' || !route.path) {
-            // We've signed up from the home page.  Send them to the explore page to find a group.
-            router.push('/explore')
+            // We've signed up from the home page.  Send them to browse what's on Freegle.
+            router.push('/browse')
           }
         })
         .catch((e) => {

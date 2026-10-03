@@ -9,8 +9,6 @@
     >
       <template #title>
         Edit Note for {{ user ? user.displayname : '#' + userid }}
-        <span v-if="groupname">on</span>
-        {{ groupname }}
       </template>
       <template #default>
         <p>
@@ -68,10 +66,10 @@
           :placeholder="placeholders[11]"
         />
         <p class="mt-2">
-          You can choose for this note to be be alerted to other groups, which
-          will put the member in <em>Member->Review</em>
-          if they are an existing member or join a group. Please use this only
-          for serious issues.
+          You can choose to flag this note. Flagged members show up in the
+          Flagged Members section on the ModTools home page, so other
+          volunteers can take a look. This doesn't block the member from
+          doing anything - please use it only for serious issues.
         </p>
         <OurToggle
           :value="editcomment.flag"
@@ -81,8 +79,8 @@
           :font-size="14"
           :sync="true"
           :labels="{
-            checked: 'Will alert other groups',
-            unchecked: 'Will not alert other groups',
+            checked: 'Flagged',
+            unchecked: 'Not flagged',
           }"
           variant="modgreen"
           @change="toggleFlag"
@@ -108,11 +106,6 @@ const props = defineProps({
   comment: {
     type: Object,
     required: true,
-  },
-  groupname: {
-    type: String,
-    required: false,
-    default: null,
   },
 })
 

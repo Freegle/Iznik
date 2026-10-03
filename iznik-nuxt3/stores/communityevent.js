@@ -10,7 +10,6 @@ export const useCommunityEventStore = defineStore('communityevent', {
   state: () => ({
     list: {},
     forUser: [],
-    forGroup: [],
   }),
   actions: {
     init(config) {
@@ -20,7 +19,6 @@ export const useCommunityEventStore = defineStore('communityevent', {
     clear() {
       this.list = {}
       this.forUser = []
-      this.forGroup = []
     },
     async fetchPending() {
       // V2 pattern: get IDs of pending events, then fetch each individually.
@@ -65,19 +63,8 @@ export const useCommunityEventStore = defineStore('communityevent', {
     async fetchList(id) {
       this.forUser = (await api(this.config).communityevent.list(id)) || []
     },
-    async fetchGroup(id) {
-      this.forGroup = await api(this.config).communityevent.listGroup(id)
-    },
     async setPhoto(id, photoid) {
       await api(this.config).communityevent.setPhoto(id, photoid)
-      await this.fetch(id, true)
-    },
-    async addGroup(id, groupid) {
-      await api(this.config).communityevent.addGroup(id, groupid)
-      await this.fetch(id, true)
-    },
-    async removeGroup(id, groupid) {
-      await api(this.config).communityevent.removeGroup(id, groupid)
       await this.fetch(id, true)
     },
     async delete(id) {

@@ -6,7 +6,6 @@ describe('DonationTraditionalExtras', () => {
   function createWrapper(props = {}) {
     return mount(DonationTraditionalExtras, {
       props: {
-        groupname: 'Test Community',
         ...props,
       },
       global: {
@@ -56,80 +55,32 @@ describe('DonationTraditionalExtras', () => {
     })
   })
 
-  describe('groupid prop behavior', () => {
-    describe('when groupid is null', () => {
-      it('does not show general fund message', () => {
-        const wrapper = createWrapper({ groupid: null })
-        expect(wrapper.text()).not.toContain('general fund')
-      })
-    })
-
-    describe('when groupid is set', () => {
-      it('shows general fund message when target not met and thermometer visible', () => {
-        const wrapper = createWrapper({
-          groupid: 1,
-          targetMet: false,
-          hideThermometer: false,
-        })
-        expect(wrapper.text()).toContain('general fund')
-        expect(wrapper.text()).toContain('other communities')
-      })
-
-      it('does not show general fund message when target is met', () => {
-        const wrapper = createWrapper({
-          groupid: 1,
-          targetMet: true,
-          hideThermometer: false,
-        })
-        const paragraphs = wrapper.findAll('p')
-        // Should only have one paragraph (the main text)
-        const generalFundText = paragraphs.filter((p) =>
-          p.text().includes('contribute to the general fund')
-        )
-        expect(generalFundText.length).toBeLessThan(2)
-      })
-    })
-  })
-
-  describe('hideThermometer prop behavior', () => {
-    it('shows alternate message when thermometer is hidden', () => {
+  describe('general fund message', () => {
+    it('shows general fund message when target not met', () => {
       const wrapper = createWrapper({
-        groupid: 1,
-        groupname: 'Test Group',
-        hideThermometer: true,
+        targetMet: false,
       })
-      expect(wrapper.text()).toContain('Test Group and other communities')
+      expect(wrapper.text()).toContain('general fund')
+      expect(wrapper.text()).toContain('other communities')
     })
 
-    it('uses groupname in message when thermometer is hidden', () => {
+    it('does not show that message when target is met', () => {
       const wrapper = createWrapper({
-        groupid: 1,
-        groupname: 'My Freegle Group',
-        hideThermometer: true,
+        targetMet: true,
       })
-      expect(wrapper.text()).toContain('My Freegle Group')
+      const paragraphs = wrapper.findAll('p')
+      // Should only have one paragraph (the main text)
+      const generalFundText = paragraphs.filter((p) =>
+        p.text().includes('contribute to the general fund')
+      )
+      expect(generalFundText.length).toBeLessThan(2)
     })
   })
 
   describe('props', () => {
-    it('accepts groupid prop', () => {
-      const wrapper = createWrapper({ groupid: 42 })
-      expect(wrapper.props('groupid')).toBe(42)
-    })
-
-    it('accepts groupname prop', () => {
-      const wrapper = createWrapper({ groupname: 'Test Name' })
-      expect(wrapper.props('groupname')).toBe('Test Name')
-    })
-
     it('defaults targetMet to false', () => {
       const wrapper = createWrapper()
       expect(wrapper.props('targetMet')).toBe(false)
-    })
-
-    it('defaults hideThermometer to false', () => {
-      const wrapper = createWrapper()
-      expect(wrapper.props('hideThermometer')).toBe(false)
     })
   })
 })

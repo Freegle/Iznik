@@ -51,18 +51,15 @@ func TestMessageReplies_HeldReplyHiddenFromPoster(t *testing.T) {
 		INDEX (msgid), INDEX (chatid), INDEX (status)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
 
 	// The poster's own post (FK target for rippling_held_replies.msgid and refmsgid).
-	postMsgID := CreateTestMessage(t, posterID, groupID, "OFFER: myposts held reply test", 51.5, -0.1)
+	postMsgID := CreateTestMessage(t, posterID, "OFFER: myposts held reply test", 51.5, -0.1)
 
 	// Replier expressed Interest via a chat room. type='Interested' + refmsgid = this post is
 	// exactly what the message `replies` query selects.
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 	const replyText = "Interested please, can I collect?"
 	db.Exec(
 		"INSERT INTO chat_messages (chatid, userid, message, type, date, refmsgid, "+

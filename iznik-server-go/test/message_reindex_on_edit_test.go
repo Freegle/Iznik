@@ -23,12 +23,10 @@ func TestPatchMessageSubjectEditInvalidatesSearchIndexes(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("reindexSubj")
 
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	_, ownerToken := CreateTestSession(t, ownerID)
 	// CreateTestMessage indexes the subject words into messages_index.
-	msgID := CreateTestMessage(t, ownerID, groupID, "WANTED: Spindle stem "+prefix, 55.0, -1.0)
+	msgID := CreateTestMessage(t, ownerID, "WANTED: Spindle stem "+prefix, 55.0, -1.0)
 
 	// Give it a vector embedding row too (subject_embedding is a NOT NULL blob).
 	db.Exec("INSERT INTO messages_embeddings (msgid, subject_embedding, model_version) VALUES (?, ?, ?)",
@@ -75,11 +73,9 @@ func TestPatchMessageBodyOnlyEditPreservesKeywordIndex(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("reindexBody")
 
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	_, ownerToken := CreateTestSession(t, ownerID)
-	msgID := CreateTestMessage(t, ownerID, groupID, "WANTED: Spindle stem "+prefix, 55.0, -1.0)
+	msgID := CreateTestMessage(t, ownerID, "WANTED: Spindle stem "+prefix, 55.0, -1.0)
 
 	db.Exec("INSERT INTO messages_embeddings (msgid, subject_embedding, model_version) VALUES (?, ?, ?)",
 		msgID, []byte{0x00}, "test")
@@ -121,11 +117,9 @@ func TestPatchMessageEditEvictsStaleInMemoryEmbedding(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("reindexEvict")
 
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	_, ownerToken := CreateTestSession(t, ownerID)
-	msgID := CreateTestMessage(t, ownerID, groupID, "WANTED: Spindle stem "+prefix, 55.0, -1.0)
+	msgID := CreateTestMessage(t, ownerID, "WANTED: Spindle stem "+prefix, 55.0, -1.0)
 
 	db.Exec("INSERT INTO messages_embeddings (msgid, subject_embedding, model_version) VALUES (?, ?, ?)",
 		msgID, []byte{0x00}, "test")

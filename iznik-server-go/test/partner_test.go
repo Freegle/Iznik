@@ -154,8 +154,7 @@ func TestPartnerPromiseHealsTwinAccounts(t *testing.T) {
 	email := prefix + "-g2@test.com"
 	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", emailTwin, email)
 
-	groupID := CreateTestGroup(t, prefix)
-	msgID := CreateTestMessage(t, emailTwin, groupID, prefix+" subject", 51.5, -0.1)
+	msgID := CreateTestMessage(t, emailTwin, prefix+" subject", 51.5, -0.1)
 	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", 424242, msgID)
 	defer db.Exec("UPDATE messages SET tnpostid = NULL WHERE id = ?", msgID)
 
@@ -213,4 +212,103 @@ func TestEnsurePartnerIdentifiersAttachesNewAlias(t *testing.T) {
 	var stamped uint64
 	db.Raw("SELECT COALESCE(tnuserid, 0) FROM users WHERE id = ?", other).Scan(&stamped)
 	assert.Equal(t, uint64(66669), stamped, "an unstamped account must gain the tnuserid")
+}
+
+// TrashNothing's join call: PUT /memberships?partner=&tnuserid=&email=&groupid=
+// creates or resolves the member and, when they have no location yet, seeds
+// one from the area TrashNothing sent - the last surviving use of the id it
+// still calls groupid. There is no membership row: a resolved member is
+// simply a Freegle member, found or made.
+func TestPartnerPutMemberCreatesAndLocates(t *testing.T) {
+	prefix := uniquePrefix("partner_put")
+	db := database.DBConn
+
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`, domain) VALUES (?, ?, ?)",
+		prefix+"_partner", partnerKey, "test.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// An area matching the Edinburgh test postcode fixture (see
+	// ensureSpatialMock / seedTestData) so ClosestPostcode resolves
+	// deterministically to location 1000001.
+	areaID := uint64(555001)
+	db.Exec("DELETE FROM partner_areas WHERE id = ?", areaID)
+	db.Exec("INSERT INTO partner_areas (id, nameshort, namefull, lat, lng, polyindex) "+
+		"VALUES (?, ?, ?, 55.957571, -3.205333, ST_GeomFromText('POINT(-3.205333 55.957571)', 3857))",
+		areaID, prefix+"_area", prefix+" Area")
+	defer db.Exec("DELETE FROM partner_areas WHERE id = ?", areaID)
+
+	email := prefix + "-newmember@test.com"
+	tnuserid := uint64(919191)
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", tnuserid)
+
+	req := httptest.NewRequest("PUT",
+		fmt.Sprintf("/api/memberships?partner=%s&tnuserid=%d&email=%s&groupid=%d",
+			partnerKey, tnuserid, url.QueryEscape(email), areaID), nil)
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "a new TrashNothing member must be created")
+
+	var body struct {
+		Ret      int    `json:"ret"`
+		Status   string `json:"status"`
+		Fduserid uint64 `json:"fduserid"`
+	}
+	json2.Unmarshal(rsp(resp), &body)
+	assert.Equal(t, 0, body.Ret)
+	assert.Equal(t, "Success", body.Status)
+	assert.Greater(t, body.Fduserid, uint64(0))
+
+	var lastlocation uint64
+	db.Table("users").Select("COALESCE(lastlocation, 0)").Where("id = ?", body.Fduserid).Scan(&lastlocation)
+	assert.Equal(t, uint64(1000001), lastlocation, "a member with no location gets one from the area TrashNothing sent")
+
+	// Calling again with the same identifiers resolves the same member and
+	// does not move a location they already have.
+	req2 := httptest.NewRequest("PUT",
+		fmt.Sprintf("/api/memberships?partner=%s&tnuserid=%d&email=%s&groupid=%d",
+			partnerKey, tnuserid, url.QueryEscape(email), areaID), nil)
+	resp2, err := getApp().Test(req2, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var body2 struct {
+		Fduserid uint64 `json:"fduserid"`
+	}
+	json2.Unmarshal(rsp(resp2), &body2)
+	assert.Equal(t, body.Fduserid, body2.Fduserid, "the same TrashNothing identifiers resolve to the same member")
+}
+
+// A site-wide ban must fail the join outright: TrashNothing must not be told
+// a banned member's join succeeded.
+func TestPartnerPutMemberRefusesBannedUser(t *testing.T) {
+	prefix := uniquePrefix("partner_banned")
+	db := database.DBConn
+
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`, domain) VALUES (?, ?, ?)",
+		prefix+"_partner", partnerKey, "test.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	db.Exec("UPDATE users SET banned = NOW() WHERE id = ?", userID)
+	defer db.Exec("UPDATE users SET banned = NULL WHERE id = ?", userID)
+
+	tnuserid := uint64(919192)
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", tnuserid)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", tnuserid, userID)
+
+	req := httptest.NewRequest("PUT",
+		fmt.Sprintf("/api/memberships?partner=%s&tnuserid=%d", partnerKey, tnuserid), nil)
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode, "a banned member's join must be refused, not silently accepted")
+}
+
+// An invalid partner key must be refused before anything is created.
+func TestPartnerPutMemberRefusesInvalidKey(t *testing.T) {
+	req := httptest.NewRequest("PUT", "/api/memberships?partner=nonexistent_key_xyz&tnuserid=1", nil)
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode)
 }

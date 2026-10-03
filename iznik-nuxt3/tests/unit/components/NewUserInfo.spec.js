@@ -2,23 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import NewUserInfo from '~/components/NewUserInfo.vue'
 
-const { mockMe, mockMyGroups } = vi.hoisted(() => {
-  const { ref, computed } = require('vue')
+const { mockMe } = vi.hoisted(() => {
+  const { computed } = require('vue')
   return {
     mockMe: computed(() => ({
       id: 1,
       displayname: 'Test User',
     })),
-    mockMyGroups: ref([
-      { id: 100, nameshort: 'Group1' },
-      { id: 200, nameshort: 'Group2' },
-    ]),
   }
 })
 
 const mockAuthStore = {
-  setGroup: vi.fn().mockResolvedValue(undefined),
-  fetchUser: vi.fn().mockResolvedValue(undefined),
   saveAndGet: vi.fn().mockResolvedValue(undefined),
 }
 
@@ -29,7 +23,6 @@ vi.mock('~/stores/auth', () => ({
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: mockMe,
-    myGroups: mockMyGroups,
   }),
 }))
 
@@ -188,32 +181,16 @@ describe('NewUserInfo', () => {
   })
 
   describe('email frequency updates', () => {
-    it('calls setGroup for each group when email frequency changes', async () => {
+    it('calls saveAndGet with the national emailfrequency when it changes', async () => {
       const wrapper = createWrapper()
       const settingsGroup = wrapper.findComponent('.settings-group')
 
       await settingsGroup.vm.$emit('update:emailfrequency', 24)
       await flushPromises()
 
-      expect(mockAuthStore.setGroup).toHaveBeenCalledTimes(2)
-      expect(mockAuthStore.setGroup).toHaveBeenCalledWith(
-        { userid: 1, groupid: 100, emailfrequency: 24 },
-        true
-      )
-      expect(mockAuthStore.setGroup).toHaveBeenCalledWith(
-        { userid: 1, groupid: 200, emailfrequency: 24 },
-        true
-      )
-    })
-
-    it('calls fetchUser after updating groups', async () => {
-      const wrapper = createWrapper()
-      const settingsGroup = wrapper.findComponent('.settings-group')
-
-      await settingsGroup.vm.$emit('update:emailfrequency', 24)
-      await flushPromises()
-
-      expect(mockAuthStore.fetchUser).toHaveBeenCalled()
+      expect(mockAuthStore.saveAndGet).toHaveBeenCalledWith({
+        emailfrequency: 24,
+      })
     })
   })
 

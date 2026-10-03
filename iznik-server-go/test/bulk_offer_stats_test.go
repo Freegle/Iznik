@@ -41,12 +41,10 @@ import (
 func TestBulkCollectedPathRecomputesNoDoubleDeduction(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkdedupe")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	itemAID := addBulkItem(t, msgID, "DeskA", 4, "Good")
 	addBulkItem(t, msgID, "ChairB", 6, "Good")
 
@@ -101,12 +99,10 @@ func TestBulkCollectedPathRecomputesNoDoubleDeduction(t *testing.T) {
 func TestBulkLastItemCollectedInsertsOutcomeRowOnce(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkoutcome")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 2, "Good")
 	db.Exec("UPDATE messages SET availablenow = 2 WHERE id = ?", msgID)
 	// Interest at qty=2 (all of them), state=Reserved.
@@ -226,12 +222,10 @@ func TestBulkOfferAuthorityStats(t *testing.T) {
 	})
 
 	// --- Build a bulk offer message and point it at location 1000001. ---
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.957571, -3.205333)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.957571, -3.205333)
 	// Override the locationid to the seeded test postcode so pc picks it up.
 	db.Exec("UPDATE messages SET locationid = ? WHERE id = ?", locID, msgID)
 

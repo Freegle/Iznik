@@ -1,9 +1,13 @@
 <template>
-  <div v-if="shortlink.type === 'Group'">
+  <div v-if="shortlink">
     <b-row class="m-0">
       <b-col cols="4">
-        <ExternalLink :href="shortlink.url" class="forcebreak">
-          {{ shortlink.nameshort }}
+        <ExternalLink
+          v-if="shortlink.url"
+          :href="shortlink.url"
+          class="forcebreak"
+        >
+          {{ shortlink.url }}
         </ExternalLink>
       </b-col>
       <b-col cols="6">

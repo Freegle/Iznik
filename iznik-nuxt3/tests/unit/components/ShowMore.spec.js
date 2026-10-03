@@ -30,7 +30,7 @@ describe('ShowMore', () => {
       expect(wrapper.find('div').exists()).toBe(true)
     })
 
-    // Callers bind data that is still loading (e.g. mydata.vue's status.data.memberships before
+    // Callers bind data that is still loading (e.g. mydata.vue's status.data.searches before
     // the GDPR export arrives), which is undefined/non-array. ShowMore must not crash - it used
     // to throw "reading 'length'" and "items.slice is not a function", flooding Sentry.
     it('renders without error when items is undefined', () => {

@@ -138,36 +138,12 @@
           <p v-if="user" class="posted-by">
             Posted
             <span v-if="user.displayname">by {{ user.displayname }}</span>
-            <template v-if="groups.length">
-              &nbsp;on
-              <ShowMore :items="groups" :limit="3" inline>
-                <template #item="{ item }">{{ item.namedisplay }}</template>
-              </ShowMore>
-            </template>
           </p>
         </div>
         <VeeForm v-else-if="volunteering" ref="form">
           <b-row>
             <b-col cols="12" md="6">
-              <b-form-group label="For which community?" :state="true">
-                <GroupSelect v-model="groupid" :systemwide="true" />
-                <p v-if="showGroupError" class="text-danger fw-bold">
-                  Please select a community.
-                </p>
-                <NoticeMessage
-                  v-if="groupid === -2"
-                  variant="danger"
-                  class="mt-1"
-                >
-                  This is a national volunteer opportunity which will go out to
-                  all communities. Please review carefully.
-                </NoticeMessage>
-                <b-form-invalid-feedback>
-                  Please select a community
-                </b-form-invalid-feedback>
-              </b-form-group>
               <b-form-group
-                v-if="enabled"
                 label="What's the opportunity?"
                 label-for="title"
                 :state="true"
@@ -184,7 +160,7 @@
                 <ErrorMessage name="title" class="text-danger fw-bold" />
               </b-form-group>
             </b-col>
-            <b-col v-if="enabled" cols="12" md="6">
+            <b-col cols="12" md="6">
               <div v-if="image" class="container">
                 <div
                   class="clickme rotateleft stacked"
@@ -225,7 +201,7 @@
               </div>
             </b-col>
           </b-row>
-          <div v-if="enabled" class="mt-2">
+          <div class="mt-2">
             <OurUploader
               v-if="!image"
               v-model="currentAtts"
@@ -350,10 +326,6 @@
               />
             </b-form-group>
           </div>
-          <NoticeMessage v-else variant="warning" class="mt-2">
-            <v-icon icon="info-circle" />&nbsp;This community has chosen not to
-            allow Volunteer Opportunities.
-          </NoticeMessage>
         </VeeForm>
       </div>
     </template>
@@ -372,7 +344,6 @@
             Cancel
           </b-button>
           <SpinButton
-            v-if="enabled"
             variant="primary"
             :disabled="uploadingPhoto"
             icon-name="save"
@@ -425,7 +396,6 @@ import EmailValidator from './EmailValidator'
 import { useVolunteeringStore } from '~/stores/volunteering'
 import { useComposeStore } from '~/stores/compose'
 import { useUserStore } from '~/stores/user'
-import { useGroupStore } from '~/stores/group'
 import { useAuthStore } from '~/stores/auth'
 import SpinButton from '~/components/SpinButton.vue'
 import { twem } from '~/composables/useTwem'
@@ -433,17 +403,11 @@ import { useOurModal } from '~/composables/useOurModal'
 import { useImageStore } from '~/stores/image'
 import { useMe } from '~/composables/useMe'
 
-const GroupSelect = defineAsyncComponent(
-  () => import('~/components/GroupSelect')
-)
 const OurUploader = defineAsyncComponent(
   () => import('~/components/OurUploader')
 )
 const StartEndCollection = defineAsyncComponent(
   () => import('~/components/StartEndCollection')
-)
-const NoticeMessage = defineAsyncComponent(
-  () => import('~/components/NoticeMessage')
 )
 const DonationButton = defineAsyncComponent(
   () => import('~/components/DonationButton')
@@ -468,7 +432,6 @@ function initialVolunteering() {
     timecommitment: null,
     location: null,
     dates: [],
-    groups: [],
     contactname: null,
     contactemail: null,
     contactphone: null,
@@ -492,17 +455,14 @@ const props = defineProps({
 const volunteeringStore = useVolunteeringStore()
 const composeStore = useComposeStore()
 const userStore = useUserStore()
-const groupStore = useGroupStore()
 const imageStore = useImageStore()
 const authStore = useAuthStore()
 const myid = computed(() => authStore.user?.id)
 const form = ref(null)
 
 // Data properties
-const groupid = ref(null)
 const cacheBust = ref(Date.now())
 const showDeleteConfirm = ref(false)
-const showGroupError = ref(false)
 const description = ref(null)
 const currentAtts = ref([])
 const mods = ref({})
@@ -519,11 +479,6 @@ const { supportOrAdmin } = useMe()
 if (props.id) {
   const v = await volunteeringStore.fetch(props.id)
   await userStore.fetch(v.userid)
-
-  v.groups?.forEach(async (id) => {
-    groupid.value = id
-    await groupStore.fetch(id)
-  })
 }
 
 const oldPhoto = ref(volunteeringStore.byId(props.id)?.image)
@@ -547,19 +502,6 @@ const canmodify = computed(() => {
   return volunteering.value?.userid === myid.value || supportOrAdmin.value
 })
 
-const groups = computed(() => {
-  const ret = []
-  volunteering.value?.groups?.forEach((id) => {
-    const group = groupStore?.get(id)
-
-    if (group) {
-      ret.push(group)
-    }
-  })
-
-  return ret
-})
-
 const user = computed(() => {
   return userStore?.byId(volunteering.value?.userid)
 })
@@ -570,20 +512,6 @@ const uploadingPhoto = computed(() => {
 
 const isExisting = computed(() => {
   return Boolean(volunteering.value?.id)
-})
-
-const enabled = computed(() => {
-  const group = groupStore.get(groupid.value)
-
-  let ret = true
-
-  if (group?.settings) {
-    if ('volunteering' in group.settings) {
-      ret = group.settings.volunteering
-    }
-  }
-
-  return ret
 })
 
 // Watchers
@@ -697,14 +625,6 @@ async function doDelete() {
 async function saveIt(callback) {
   const validate = await form.value.validate()
 
-  if (!groupid.value) {
-    showGroupError.value = true
-    callback()
-    return
-  } else {
-    showGroupError.value = false
-  }
-
   if (!validate.valid) {
     callback()
     return
@@ -724,21 +644,6 @@ async function saveIt(callback) {
 
     if (shouldUpdatePhoto) {
       await volunteeringStore.setPhoto(id, shouldUpdatePhoto)
-    }
-
-    const oldgroupid = wip.groups && wip.groups.length ? wip.groups[0] : null
-
-    if (groupid.value !== oldgroupid) {
-      // Save the new group, then remove the old group, so it won't get stranded.
-      //
-      // Checking for groupid > 0 allows systemwide opportunities.
-      if (groupid.value > 0) {
-        await volunteeringStore.addGroup(id, groupid.value)
-      }
-
-      if (oldgroupid) {
-        await volunteeringStore.removeGroup(id, oldgroupid)
-      }
     }
 
     await volunteeringStore.setDates({
@@ -762,11 +667,6 @@ async function saveIt(callback) {
     if (id) {
       if (photoid) {
         await volunteeringStore.setPhoto(id, photoid)
-      }
-
-      // Save the group.
-      if (groupid.value > 0) {
-        await volunteeringStore.addGroup(id, groupid.value)
       }
 
       if (dates && dates.length) {

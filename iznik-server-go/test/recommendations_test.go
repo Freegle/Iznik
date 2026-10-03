@@ -46,7 +46,6 @@ func TestRecommendationsStatsFunnel(t *testing.T) {
 	support := CreateTestUser(t, prefix+"_support", "Support")
 	token := getToken(t, support)
 
-	groupID := CreateTestGroup(t, prefix)
 	poster := CreateTestUser(t, prefix+"_poster", "Member")
 	viewer := CreateTestUser(t, prefix+"_viewer", "Member")
 
@@ -72,7 +71,7 @@ func TestRecommendationsStatsFunnel(t *testing.T) {
 
 	// A reply within 7 days of the click on msgs[3] → attributed. A reply 10 days
 	// after the click on msgs[4] → outside the window → not attributed.
-	chatID := CreateTestChatRoom(t, viewer, &poster, nil, "User2User")
+	chatID := CreateTestChatRoom(t, viewer, &poster, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, type, refmsgid, date, processingsuccessful, reviewrequired) "+
 		"VALUES (?, ?, 'Interested', 'Interested', ?, DATE_SUB(NOW(), INTERVAL 7 DAY), 1, 0)",
 		chatID, viewer, msgs[3]) // click at -10d, reply at -7d → +3d, within window
@@ -149,7 +148,6 @@ func TestRecommendationsStatsHoldoutSplitsByRecordedArm(t *testing.T) {
 	support := CreateTestUser(t, prefix+"_support", "Support")
 	token := getToken(t, support)
 
-	groupID := CreateTestGroup(t, prefix)
 	poster := CreateTestUser(t, prefix+"_poster", "Member")
 
 	baseHU, baseHR, baseSU, baseSR := holdoutStats(t, token)
@@ -165,7 +163,7 @@ func TestRecommendationsStatsHoldoutSplitsByRecordedArm(t *testing.T) {
 	}
 	// seedReplies records n Interested replies by a member, and cleans up.
 	seedReplies := func(member uint64, n int) {
-		chatID := CreateTestChatRoom(t, member, &poster, nil, "User2User")
+		chatID := CreateTestChatRoom(t, member, &poster, "User2User")
 		for i := 0; i < n; i++ {
 			msg := CreateTestMessage(t, poster, groupID, fmt.Sprintf("%s reply %d %d", prefix, member, i), 55.9533, -3.1883)
 			db.Exec("INSERT INTO chat_messages (chatid, userid, message, type, refmsgid, date, processingsuccessful, reviewrequired) "+

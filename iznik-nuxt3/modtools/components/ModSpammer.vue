@@ -50,8 +50,8 @@
 <script setup>
 import { computed, watch } from 'vue'
 import { useUserStore } from '~/stores/user'
-import { useMemberStore } from '~/stores/member'
-import { useModMe } from '~/composables/useModMe'
+import { useMemberStore } from '~/modtools/stores/member'
+import { useModMe } from '~/modtools/composables/useModMe'
 
 const props = defineProps({
   userid: {

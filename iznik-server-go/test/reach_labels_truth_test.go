@@ -21,7 +21,7 @@ func TestLabelVerdictsDecideMembership(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("labelstruth")
 	userID, _ := CreateFullTestUser(t, prefix)
-	msgID := CreateTestMessage(t, userID, CreateTestGroup(t, prefix+"_g"), "OFFER: labels truth item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, userID, "OFFER: labels truth item", 51.5, -0.1)
 
 	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, outer_bound) VALUES (?, 51.5, -0.1, ST_Envelope(ST_GeomFromText("+
 		"'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)))",

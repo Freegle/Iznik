@@ -6,7 +6,6 @@ import { useChatStore } from '~/stores/chat'
 import { useUserStore } from '~/stores/user'
 import { useAuthStore } from '~/stores/auth'
 import { useMessageStore } from '~/stores/message'
-import { useGroupStore } from '~/stores/group'
 import { twem } from '~/composables/useTwem'
 
 export function chatCollate(msgs) {
@@ -340,19 +339,9 @@ export function useChatMessageBase(chatId, messageId, pov = null) {
     const id = chatmessage.value?.refmsgid
 
     if (id) {
-      const groupStore = useGroupStore()
-
       // Fetch the message info.
       try {
         await messageStore.fetch(id)
-
-        const message = messageStore.byId(id)
-
-        if (message) {
-          message.groups.forEach(async (g) => {
-            await groupStore.fetch(g.groupid)
-          })
-        }
       } catch (e) {
         console.log('Message fetch failed', id, e)
       }

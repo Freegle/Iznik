@@ -27,8 +27,7 @@ func TestSyncSystemRole_DemotesStaleModerator(t *testing.T) {
 func TestSyncSystemRole_KeepsModeratorWithModMembership(t *testing.T) {
 	prefix := uniquePrefix("syncrole_keepmod")
 	uid := CreateTestUser(t, prefix, "Moderator")
-	gid := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, uid, gid, "Moderator")
+	PromoteTestUserToModerator(t, uid)
 	user.SyncSystemRole(database.DBConn, uid)
 	assert.Equal(t, "Moderator", readSystemrole(uid))
 }
@@ -37,8 +36,7 @@ func TestSyncSystemRole_KeepsModeratorWithModMembership(t *testing.T) {
 func TestSyncSystemRole_KeepsModeratorWithOwnerMembership(t *testing.T) {
 	prefix := uniquePrefix("syncrole_keepowner")
 	uid := CreateTestUser(t, prefix, "Moderator")
-	gid := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, uid, gid, "Owner")
+	PromoteTestUserToModerator(t, uid)
 	user.SyncSystemRole(database.DBConn, uid)
 	assert.Equal(t, "Moderator", readSystemrole(uid))
 }
@@ -47,8 +45,7 @@ func TestSyncSystemRole_KeepsModeratorWithOwnerMembership(t *testing.T) {
 func TestSyncSystemRole_PromotesUserWithModMembership(t *testing.T) {
 	prefix := uniquePrefix("syncrole_promote")
 	uid := CreateTestUser(t, prefix, "User")
-	gid := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, uid, gid, "Moderator")
+	PromoteTestUserToModerator(t, uid)
 	user.SyncSystemRole(database.DBConn, uid)
 	assert.Equal(t, "Moderator", readSystemrole(uid))
 }

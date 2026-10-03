@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\Mail;
 
-use App\Services\Mail\Incoming\RoutingResult;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\EmailFixtures;
 use Tests\TestCase;
@@ -562,7 +561,6 @@ class IncomingMailCommandTest extends TestCase
             ->first();
 
         $this->assertNotNull($log, 'Message/Received log entry should be written');
-        $this->assertEquals($group->id, $log->groupid);
         $this->assertEquals($user->id, $log->user);
         $this->assertEquals($storedMsgId, $log->text);
     }
@@ -582,5 +580,60 @@ class IncomingMailCommandTest extends TestCase
             'lat' => $lat,
             'lng' => $lng,
         ]);
+    }
+
+    /**
+     * Create a partner area: the geographic area a TrashNothing post is
+     * addressed to. `partner_areas.id` has no AUTO_INCREMENT, so the test
+     * picks its own id, spread by pid and a per-process counter to keep it
+     * clear of anything another test process is using right now.
+     */
+    protected function createTestGroup(array $attributes = []): object
+    {
+        static $counter = 0;
+        $counter++;
+        $id = 900000000000 + (getmypid() * 100000) + $counter;
+
+        $nameshort = $attributes['nameshort'] ?? 'testarea'.$counter.uniqid();
+        $lat = $attributes['lat'] ?? 51.5;
+        $lng = $attributes['lng'] ?? -0.1;
+
+        DB::table('partner_areas')->insert([
+            'id' => $id,
+            'nameshort' => $nameshort,
+            'namefull' => $attributes['namefull'] ?? ('Test Area '.$nameshort),
+            'lat' => $lat,
+            'lng' => $lng,
+            'polyindex' => DB::raw("ST_GeomFromText('POINT({$lng} {$lat})', 3857)"),
+        ]);
+
+        return DB::table('partner_areas')->where('id', $id)->first();
+    }
+
+    /**
+     * Posting eligibility and moderator role live on `users` now, not on a
+     * per-group membership row - there is no memberships table. This applies
+     * the old membership attributes straight to the user; $group is accepted
+     * for call-site compatibility but otherwise unused.
+     */
+    protected function createMembership($user, $group, array $attributes = []): void
+    {
+        $update = [];
+
+        if (array_key_exists('ourPostingStatus', $attributes)) {
+            $update['postingstatus'] = $attributes['ourPostingStatus'];
+        }
+        if (($attributes['role'] ?? null) === 'Moderator') {
+            $update['systemrole'] = \App\Models\User::SYSTEMROLE_MODERATOR;
+        }
+        foreach (['emailfrequency', 'eventsallowed', 'volunteeringallowed'] as $column) {
+            if (array_key_exists($column, $attributes)) {
+                $update[$column] = $attributes[$column];
+            }
+        }
+
+        if ($update !== []) {
+            DB::table('users')->where('id', $user->id)->update($update);
+        }
     }
 }

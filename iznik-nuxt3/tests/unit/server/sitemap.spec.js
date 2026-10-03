@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import {
   SITEMAP_CHUNK_SIZE,
   chunk,
-  groupLinks,
   messageLinks,
   renderSitemapIndex,
   renderUrlset,
@@ -18,7 +17,6 @@ describe('sitemap', () => {
       expect(urls).toContain('/')
       expect(urls).toContain('/give')
       expect(urls).toContain('/ask')
-      expect(urls).toContain('/explore')
     })
 
     it('includes a page per comparison competitor', () => {
@@ -32,30 +30,6 @@ describe('sitemap', () => {
         expect(link.priority).toBeDefined()
         expect(link.changefreq).toBeDefined()
       }
-    })
-  })
-
-  describe('groupLinks', () => {
-    it('maps groups to explore URLs', () => {
-      const links = groupLinks([
-        { nameshort: 'Northampton-Freegle' },
-        { nameshort: 'EdinburghFreegle' },
-      ])
-      expect(links.map((l) => l.url)).toEqual([
-        '/explore/Northampton-Freegle',
-        '/explore/EdinburghFreegle',
-      ])
-    })
-
-    it('skips groups with no short name rather than emitting /explore/undefined', () => {
-      const links = groupLinks([{ nameshort: 'Good' }, { id: 1 }, null])
-      expect(links).toHaveLength(1)
-      expect(links[0].url).toBe('/explore/Good')
-    })
-
-    it('copes with no groups at all', () => {
-      expect(groupLinks(null)).toEqual([])
-      expect(groupLinks([])).toEqual([])
     })
   })
 
@@ -149,9 +123,9 @@ describe('sitemap', () => {
     })
 
     it('escapes ampersands so the XML stays well formed', () => {
-      const xml = renderUrlset([{ url: '/explore/Bath&NE' }], SITE)
-      expect(xml).toContain('Bath&amp;NE')
-      expect(xml).not.toMatch(/Bath&NE/)
+      const xml = renderUrlset([{ url: '/give&ask' }], SITE)
+      expect(xml).toContain('give&amp;ask')
+      expect(xml).not.toMatch(/give&ask/)
     })
   })
 

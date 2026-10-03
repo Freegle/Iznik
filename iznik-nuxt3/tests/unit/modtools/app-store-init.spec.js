@@ -25,9 +25,4 @@ describe('modtools/app.vue store wiring', () => {
     expect(created.length).toBeGreaterThan(0)
     expect(created.filter((s) => !initialised.has(s))).toEqual([])
   })
-
-  it('sets up the partnerships store', () => {
-    expect(app).toContain('const partnershipsStore = usePartnershipsStore()')
-    expect(app).toContain('partnershipsStore.init(runtimeConfig)')
-  })
 })

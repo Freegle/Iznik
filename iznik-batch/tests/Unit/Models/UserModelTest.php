@@ -2,7 +2,6 @@
 
 namespace Tests\Unit\Models;
 
-use App\Models\Membership;
 use App\Models\User;
 use App\Models\UserEmail;
 use App\Models\UserImage;
@@ -45,15 +44,6 @@ class UserModelTest extends TestCase
         $this->assertEquals(2, $user->emails()->count());
     }
 
-    public function test_user_has_memberships_relationship(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
-        $this->assertEquals(1, $user->memberships()->count());
-    }
-
     public function test_user_display_name_returns_fullname(): void
     {
         $user = User::create([
@@ -92,40 +82,30 @@ class UserModelTest extends TestCase
 
     public function test_user_is_moderator_returns_false_for_regular_user(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['role' => Membership::ROLE_MEMBER]);
+        $user = $this->createTestUser(['systemrole' => User::SYSTEMROLE_USER]);
 
         $this->assertFalse($user->isModerator());
     }
 
     public function test_user_is_moderator_returns_true_for_moderator(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $user = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $this->assertTrue($user->isModerator());
     }
 
-    public function test_user_is_moderator_returns_true_for_owner(): void
+    public function test_user_is_moderator_returns_true_for_support(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['role' => Membership::ROLE_OWNER]);
+        $user = $this->createTestUser(['systemrole' => User::SYSTEMROLE_SUPPORT]);
 
         $this->assertTrue($user->isModerator());
     }
 
-    public function test_user_is_moderator_of_returns_false_for_other_group(): void
+    public function test_user_is_moderator_returns_true_for_admin(): void
     {
-        $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-        $this->createMembership($user, $group1, ['role' => Membership::ROLE_MODERATOR]);
+        $user = $this->createTestUser(['systemrole' => User::SYSTEMROLE_ADMIN]);
 
-        $this->assertTrue($user->isModeratorOf($group1->id));
-        $this->assertFalse($user->isModeratorOf($group2->id));
+        $this->assertTrue($user->isModerator());
     }
 
     public function test_user_donations_relationship(): void
@@ -138,9 +118,7 @@ class UserModelTest extends TestCase
     public function test_user_messages_relationship(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $this->createTestMessage($user, $group);
+        $this->createTestMessage($user);
 
         $this->assertEquals(1, $user->messages()->count());
     }
@@ -376,26 +354,6 @@ class UserModelTest extends TestCase
         $this->assertFalse($user->notifsOn(User::NOTIFS_EMAIL));
         $this->assertTrue($user->notifsOn(User::NOTIFS_EMAIL_MINE));
         $this->assertFalse($user->notifsOn(User::NOTIFS_PUSH));
-    }
-
-    public function test_notifs_on_with_group_checks_moderator_status(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['role' => Membership::ROLE_MODERATOR]);
-
-        // Should return true because user is a moderator of the group.
-        $this->assertTrue($user->notifsOn(User::NOTIFS_EMAIL, $group->id));
-    }
-
-    public function test_notifs_on_with_group_returns_false_for_non_moderator(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['role' => Membership::ROLE_MEMBER]);
-
-        // Should return false because user is not a moderator.
-        $this->assertFalse($user->notifsOn(User::NOTIFS_EMAIL, $group->id));
     }
 
     public function test_get_lat_lng_returns_null_without_last_location(): void

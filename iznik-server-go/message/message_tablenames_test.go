@@ -25,10 +25,6 @@ func TestMessageAttachmentTableName(t *testing.T) {
 	assert.Equal(t, "messages_attachments", MessageAttachment{}.TableName())
 }
 
-func TestMessageGroupTableName(t *testing.T) {
-	assert.Equal(t, "messages_groups", MessageGroup{}.TableName())
-}
-
 func TestMessageOutcomeTableName(t *testing.T) {
 	assert.Equal(t, "messages_outcomes", MessageOutcome{}.TableName())
 }

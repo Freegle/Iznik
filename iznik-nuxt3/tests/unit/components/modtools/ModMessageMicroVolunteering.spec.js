@@ -99,7 +99,7 @@ describe('ModMessageMicroVolunteering', () => {
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain('456')
       const link = wrapper.find('a')
-      expect(link.attributes('href')).toBe('/members/approved/0/456')
+      expect(link.attributes('href')).toBe('/members/approved/456')
     })
 
     it('displays user displayname when available', () => {

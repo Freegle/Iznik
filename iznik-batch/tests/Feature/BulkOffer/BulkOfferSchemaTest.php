@@ -117,8 +117,7 @@ class BulkOfferSchemaTest extends TestCase
     private function makeBulkOffer(): array
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'type' => Message::TYPE_OFFER,
             'subject' => 'OFFER: Office Clearance (Brighton BN1)',
         ]);

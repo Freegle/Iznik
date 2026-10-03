@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\Message;
 
-use App\Models\Group;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
@@ -26,26 +25,24 @@ class NotifyMatchedPostsCommandTest extends TestCase
 
     private function seedFixture(): array
     {
-        $group = $this->createTestGroup();
-
         $recipient = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 1, 'lastrelevantcheck' => null]);
         $this->createTestUserEmail($recipient, ['preferred' => 1]);
         $offerer = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 1, 'lastrelevantcheck' => null]);
         $this->createTestUserEmail($offerer, ['preferred' => 1]);
 
-        $wanted = $this->createTestMessage($recipient, $group, ['type' => 'Wanted', 'subject' => 'WANTED: Drill (Leeds)', 'arrival' => now()]);
+        $wanted = $this->createTestMessage($recipient, ['type' => 'Wanted', 'subject' => 'WANTED: Drill (Leeds)', 'arrival' => now()]);
         DB::statement(
-            'INSERT INTO messages_spatial (msgid, groupid, msgtype, successful, promised, arrival, point)
-             VALUES (?, ?, ?, 0, 0, ?, ST_GeomFromText(?, 3857))',
-            [$wanted->id, $group->id, 'Wanted', now(), sprintf('POINT(%F %F)', $group->lng, $group->lat)]
+            'INSERT INTO messages_spatial (msgid, msgtype, successful, promised, arrival, point)
+             VALUES (?, ?, 0, 0, ?, ST_GeomFromText(?, 3857))',
+            [$wanted->id, 'Wanted', now(), sprintf('POINT(%F %F)', $wanted->lng, $wanted->lat)]
         );
         DB::statement('INSERT INTO messages_embeddings (msgid, subject_embedding, model_version) VALUES (?, ?, ?)',
             [$wanted->id, str_repeat("\0", 1024), 'test']);
 
-        $offer = $this->createTestMessage($offerer, $group, ['type' => 'Offer', 'subject' => 'OFFER: Drill (Leeds)', 'arrival' => now()->subDay()]);
+        $offer = $this->createTestMessage($offerer, ['type' => 'Offer', 'subject' => 'OFFER: Drill (Leeds)', 'arrival' => now()->subDay()]);
 
         FreegleApiClient::fake([
-            ['body' => [['id' => $offer->id, 'score' => 0.8, 'groupid' => $group->id, 'lat' => 51.5, 'lng' => -0.1]]],
+            ['body' => [['id' => $offer->id, 'score' => 0.8, 'lat' => 51.5, 'lng' => -0.1]]],
         ]);
 
         return [$recipient, $wanted, $offerer, $offer];

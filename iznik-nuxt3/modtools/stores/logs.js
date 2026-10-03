@@ -2,7 +2,6 @@ import { defineStore } from 'pinia'
 import api from '~/api'
 import { useUserStore } from '~/stores/user'
 import { useMessageStore } from '~/stores/message'
-import { useModGroupStore } from '~/stores/modgroup'
 import { useStdmsgStore } from '~/stores/stdmsg'
 import { useModConfigStore } from '~/stores/modconfig'
 
@@ -69,14 +68,12 @@ export const useLogsStore = defineStore('logs', {
     async _enrichLogs(logs) {
       const userStore = useUserStore()
       const messageStore = useMessageStore()
-      const modGroupStore = useModGroupStore()
       const stdmsgStore = useStdmsgStore()
       const modConfigStore = useModConfigStore()
 
       // Collect unique IDs to fetch.
       const userIds = new Set()
       const msgIds = new Set()
-      const groupIds = new Set()
       const stdmsgIds = new Set()
       const configIds = new Set()
 
@@ -84,7 +81,6 @@ export const useLogsStore = defineStore('logs', {
         if (log.userid) userIds.add(log.userid)
         if (log.byuserid) userIds.add(log.byuserid)
         if (log.msgid) msgIds.add(log.msgid)
-        if (log.groupid) groupIds.add(log.groupid)
         if (log.stdmsgid) stdmsgIds.add(log.stdmsgid)
         if (log.configid) configIds.add(log.configid)
       }
@@ -100,14 +96,6 @@ export const useLogsStore = defineStore('logs', {
         fetches.push(
           messageStore.fetchMultiple([...msgIds]).catch(() => {
             /* some messages may be deleted */
-          })
-        )
-      }
-
-      for (const id of groupIds) {
-        fetches.push(
-          modGroupStore.fetchIfNeedBeMT(id).catch(() => {
-            /* group may not be accessible */
           })
         )
       }
@@ -140,9 +128,6 @@ export const useLogsStore = defineStore('logs', {
         }
         if (log.msgid && messageStore.list[log.msgid]) {
           log.message = messageStore.list[log.msgid]
-        }
-        if (log.groupid && modGroupStore.list[log.groupid]) {
-          log.group = modGroupStore.list[log.groupid]
         }
         if (log.stdmsgid) {
           const stdmsg = stdmsgStore.byid(log.stdmsgid)

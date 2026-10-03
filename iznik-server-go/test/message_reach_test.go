@@ -52,11 +52,10 @@ func TestMessageReachAsMod(t *testing.T) {
 
 	prefix := uniquePrefix("reachmod")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	group := CreateTestGroup(t, prefix)
-	mid := CreateTestMessage(t, posterID, group, "OFFER: reach test", 51.5, -0.1)
+	mid := CreateTestMessage(t, posterID, "OFFER: reach test", 51.5, -0.1)
 
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, group, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	insertReach(mid, 3, 9)
@@ -97,13 +96,11 @@ func TestMessageReachAsModOfDifferentGroup(t *testing.T) {
 
 	prefix := uniquePrefix("reachothermod")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	group := CreateTestGroup(t, prefix)
-	mid := CreateTestMessage(t, posterID, group, "OFFER: reach other-group mod", 51.5, -0.1)
+	mid := CreateTestMessage(t, posterID, "OFFER: reach other-group mod", 51.5, -0.1)
 
 	// A mod of an unrelated group, with no membership at all of the post's group.
-	otherGroup := CreateTestGroup(t, prefix+"_other")
 	modID := CreateTestUser(t, prefix+"_othermod", "User")
-	CreateTestMembership(t, modID, otherGroup, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	insertReach(mid, 3, 9)
@@ -125,11 +122,9 @@ func TestMessageReachForbiddenForNonMod(t *testing.T) {
 
 	prefix := uniquePrefix("reachnomod")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	group := CreateTestGroup(t, prefix)
-	mid := CreateTestMessage(t, posterID, group, "OFFER: reach forbidden", 51.5, -0.1)
+	mid := CreateTestMessage(t, posterID, "OFFER: reach forbidden", 51.5, -0.1)
 
 	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, group, "Member")
 	_, token := CreateTestSession(t, userID)
 
 	insertReach(mid, 3, 9)
@@ -146,12 +141,11 @@ func TestMessageReachNoReachRow(t *testing.T) {
 
 	prefix := uniquePrefix("reachnone")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	group := CreateTestGroup(t, prefix)
-	mid := CreateTestMessage(t, posterID, group, "OFFER: reach none", 51.5, -0.1)
+	mid := CreateTestMessage(t, posterID, "OFFER: reach none", 51.5, -0.1)
 	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
 
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, group, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d/reach?jwt=%s", mid, token), nil))
@@ -176,11 +170,10 @@ func TestMessageReachIncludesTheRings(t *testing.T) {
 
 	prefix := uniquePrefix("reachrings")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	group := CreateTestGroup(t, prefix)
-	mid := CreateTestMessage(t, posterID, group, "OFFER: reach rings test", 51.5, -0.1)
+	mid := CreateTestMessage(t, posterID, "OFFER: reach rings test", 51.5, -0.1)
 
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, group, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	insertReach(mid, 3, 9)
@@ -260,11 +253,10 @@ func TestMessageReachOmitsRingsWhenThereAreNone(t *testing.T) {
 
 	prefix := uniquePrefix("reachnorings")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	group := CreateTestGroup(t, prefix)
-	mid := CreateTestMessage(t, posterID, group, "OFFER: no rings", 51.5, -0.1)
+	mid := CreateTestMessage(t, posterID, "OFFER: no rings", 51.5, -0.1)
 
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, group, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	insertReach(mid, 1, 9)

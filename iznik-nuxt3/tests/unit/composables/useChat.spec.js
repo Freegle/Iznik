@@ -54,10 +54,6 @@ vi.mock('~/stores/message', () => ({
   }),
 }))
 
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({ get: () => null }),
-}))
-
 vi.mock('~/composables/useTwem', () => ({
   twem: (s) => s,
 }))

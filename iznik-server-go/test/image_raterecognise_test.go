@@ -12,12 +12,10 @@ import (
 
 func TestImageRateRecognise(t *testing.T) {
 	prefix := uniquePrefix("img_rr")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 
 	// Create a message and attachment
-	msgID := CreateTestMessage(t, userID, groupID, "Rate recognise test "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, userID, "Rate recognise test "+prefix, 55.9533, -3.1883)
 	attID := CreateTestAttachment(t, msgID)
 
 	// Insert a recognise row for the attachment

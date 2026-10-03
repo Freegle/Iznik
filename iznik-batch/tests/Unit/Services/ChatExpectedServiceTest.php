@@ -253,7 +253,7 @@ class ChatExpectedServiceTest extends TestCase
 
         // user2's reply exists but is held by rippling, so it does not count yet.
         $reply = $this->createTestChatMessage($room, $user2, ['date' => now()->subDays(1)]);
-        $post = $this->createTestMessage($user1, $this->createTestGroup());
+        $post = $this->createTestMessage($user1);
         DB::table('rippling_held_replies')->insert([
             'chatid'         => $room->id,
             'chatmsgid'      => $reply->id,

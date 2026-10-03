@@ -1,7 +1,7 @@
 {{--
   First-week onboarding — one tip a day (day {{ $day ?? 1 }} of {{ $totalDays ?? 5 }}).
-  Warm, short, one clear call to action, signed off by a real local volunteer
-  where we have one. Shared template driven by ReengageContentService::tip().
+  Warm, short, one clear call to action, signed off by the Freegle team.
+  Shared template driven by ReengageContentService::tip().
 --}}
 <mjml>
   @include('emails.mjml.partials.head', ['preview' => $preheader ?? ''])
@@ -75,21 +75,13 @@
       </mj-column>
     </mj-section>
 
-    {{-- Volunteer sign-off (real local volunteer, or the Freegle team) --}}
+    {{-- Sign-off: the Freegle team, not a named volunteer. --}}
     <mj-section background-color="#ffffff" padding="10px 0 26px">
       <mj-column>
-        @if(!empty($volunteerName))
-        <mj-text font-size="15px" color="#555555" align="center" line-height="1.5" padding="0 25px">
-          Happy freegling,<br/>
-          <strong>{{ $volunteerName }}</strong><br/>
-          <span style="color:#888888;">Your local Freegle volunteer{{ !empty($volunteerGroup) ? ', ' . $volunteerGroup : '' }}</span>
-        </mj-text>
-        @else
         <mj-text font-size="15px" color="#555555" align="center" line-height="1.5" padding="0 25px">
           Happy freegling,<br/>
           <strong>The Freegle team</strong>
         </mj-text>
-        @endif
       </mj-column>
     </mj-section>
 

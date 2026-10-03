@@ -14,7 +14,7 @@ class ReengageMailRenderTest extends TestCase
 {
     private function data(int $day): array
     {
-        return (new ReengageContentService())->previewContent($day, 'alex@example.com');
+        return (new ReengageContentService)->previewContent($day, 'alex@example.com');
     }
 
     // ── Blade/MJML source rendering (cheap; no MJML compile) ─────────────────
@@ -80,25 +80,15 @@ class ReengageMailRenderTest extends TestCase
         $this->assertStringContainsString('common sense', $html);
     }
 
-    public function test_every_tip_carries_a_volunteer_signoff(): void
+    public function test_every_tip_is_signed_off_by_the_freegle_team(): void
     {
+        // Onboarding mail carries no local identity: every tip is signed off
+        // by the Freegle team, never a named volunteer or a community.
         for ($day = 1; $day <= ReengageContentService::TIPS; $day++) {
             $html = view('emails.mjml.reengage.tip', $this->data($day))->render();
 
-            $this->assertStringContainsString('Priya', $html, "day {$day} volunteer name");
-            $this->assertStringContainsString('Your local Freegle volunteer', $html, "day {$day} sign-off");
-            $this->assertStringContainsString('Edinburgh Freegle', $html, "day {$day} group");
+            $this->assertStringContainsString('The Freegle team', $html, "day {$day} sign-off");
         }
-    }
-
-    public function test_signoff_falls_back_to_freegle_team_without_a_volunteer(): void
-    {
-        $data = array_merge($this->data(1), ['volunteerName' => null, 'volunteerGroup' => null]);
-
-        $html = view('emails.mjml.reengage.tip', $data)->render();
-
-        $this->assertStringContainsString('The Freegle team', $html);
-        $this->assertStringNotContainsString('Your local Freegle volunteer', $html);
     }
 
     public function test_template_escapes_user_supplied_content(): void

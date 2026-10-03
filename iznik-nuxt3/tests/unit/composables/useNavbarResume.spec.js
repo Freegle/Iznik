@@ -102,7 +102,7 @@ describe('navbar counts refresh when the page comes back to life', () => {
     mockNewsfeedFetchCount.mockReset().mockResolvedValue(0)
     mockUser = {
       id: 35909200,
-      settings: { browseView: 'nearby', browseMaxDistance: 20.6 },
+      settings: { browseMaxDistance: 20.6 },
     }
     hidden = false
     Object.defineProperty(document, 'hidden', {
@@ -118,7 +118,7 @@ describe('navbar counts refresh when the page comes back to life', () => {
   it('fetches the counts on mount, with the member\'s browse settings', async () => {
     await mountNavbar()
     expect(mockMessageFetchCount).toHaveBeenCalledTimes(1)
-    expect(mockMessageFetchCount).toHaveBeenCalledWith('nearby', 20.6, false)
+    expect(mockMessageFetchCount).toHaveBeenCalledWith(20.6, false)
   })
 
   it('fetches again the moment the document becomes visible', async () => {

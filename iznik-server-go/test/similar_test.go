@@ -177,7 +177,6 @@ func TestSimilarFlipsTypeOnOwnPost(t *testing.T) {
 // matches store candidates.
 func TestSimilarMessageNotInStore(t *testing.T) {
 	prefix := uniquePrefix("similarnotinstore")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "Member")
 	otherUser := CreateTestUser(t, prefix+"o", "Member")
 
@@ -239,7 +238,6 @@ func TestSimilarOverfetchSurvivesReachRejection(t *testing.T) {
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 	token := getToken(t, viewerID)
-	groupID := CreateTestGroup(t, prefix)
 	poster := CreateTestUser(t, prefix+"p", "Member")
 
 	base := makeTestVec(0.5)
@@ -339,9 +337,8 @@ func TestSimilarReachFiltered(t *testing.T) {
 	// The out-of-reach candidate needs a real message row because rippling_reach
 	// has a FK to messages(id); the source and in-reach candidate are synthetic
 	// store-only entries (they need no reach row).
-	groupID := CreateTestGroup(t, prefix)
 	posterOut := CreateTestUser(t, prefix+"po", "Member")
-	outReachID := CreateTestMessage(t, posterOut, groupID, "out of reach sofa", 51.5, -0.1)
+	outReachID := CreateTestMessage(t, posterOut, "out of reach sofa", 51.5, -0.1)
 
 	base := makeTestVec(0.5)
 	near := makeTestVec(0.5001)

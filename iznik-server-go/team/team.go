@@ -144,11 +144,9 @@ func getVolunteers(c *fiber.Ctx) error {
 	}
 
 	var vols []VolRow
-	db.Table("memberships").
-		Select("DISTINCT memberships.userid, users.firstname, users.lastname, users.fullname, users.added, users.settings").
-		Joins("INNER JOIN `groups` ON `groups`.id = memberships.groupid AND memberships.role IN (?, ?)", utils.ROLE_MODERATOR, utils.ROLE_OWNER).
-		Joins("INNER JOIN users ON users.id = memberships.userid").
-		Where("`groups`.type = ?", utils.GROUP_TYPE_FREEGLE).
+	db.Table("users").
+		Select("users.id AS userid, users.firstname, users.lastname, users.fullname, users.added, users.settings").
+		Where("systemrole IN (?, ?, ?)", utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN).
 		Scan(&vols)
 
 	members := []map[string]interface{}{}

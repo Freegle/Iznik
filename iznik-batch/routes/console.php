@@ -128,6 +128,17 @@ Schedule::command('messages:contentcheck')
     ->sendOutputTo(cronLog('messages:contentcheck'))
     ->runInBackground();
 
+// Report resolution — take down a post once member reports on it reach quorum
+// (two member reports, or one moderator report — same threshold Go used to
+// enforce inline in RecordReportVerdict/ResolveReports). Tells the poster why
+// and thanks each reporter. Reports themselves are still recorded by the Go
+// ModTools/message-report path (microactions); this only resolves them.
+Schedule::command('reports:resolve')
+    ->everyMinute()
+    ->withoutOverlapping(15)
+    ->sendOutputTo(cronLog('reports:resolve'))
+    ->runInBackground();
+
 // Maintain rippling-out reach (rippling_reach) for active posts.
 // Computes per-post reach via the routing server and advances it over time per
 // the hazard schedule. Dark until browse/digest/reply-eligibility read it.

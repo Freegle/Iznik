@@ -315,7 +315,7 @@ func PostModConfig(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
-	if !auth.IsSystemMod(myid) {
+	if !auth.IsModerator(myid) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to create configs"})
 	}
 

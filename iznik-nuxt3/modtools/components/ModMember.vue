@@ -29,7 +29,7 @@
       <b-card-body>
         <ModDeletedOrForgotten v-if="user" :userid="member.userid" />
         <NoticeMessage v-if="banned" variant="danger" class="mb-2">
-          This freegler is banned from this group.
+          This freegler is banned.
         </NoticeMessage>
         <div v-if="heldByUser">
           <NoticeMessage variant="warning" class="mb-2">
@@ -41,16 +41,9 @@
               Held by <strong>{{ heldByUser.displayname }}</strong
               >. Please check before releasing them.
             </p>
-            <ModMemberButton
-              v-if="heldByUser"
-              :userid="member.userid"
-              :groupid="member.groupid"
-              :spammerid="user.spammer?.id"
-              variant="warning"
-              icon="play"
-              release
-              label="Release"
-            />
+            <b-button variant="warning" size="sm" @click="releaseHold">
+              <v-icon icon="play" /> Release
+            </b-button>
           </NoticeMessage>
         </div>
         <ModComments
@@ -74,7 +67,7 @@
           variant="warning"
           class="mb-2"
         >
-          This freegler recently active on groups
+          This freegler recently active in areas
           {{ user.activedistance }} miles apart.
         </NoticeMessage>
         <NoticeMessage
@@ -105,25 +98,9 @@
         </NoticeMessage>
         <div class="d-flex justify-content-between flex-wrap">
           <div v-if="!isBanned" class="border border-info p-1 flex-grow-1 me-1">
-            <SettingsGroup
-              v-if="groupid"
-              :emailfrequency="member.emailfrequency"
-              :membership-m-t="member"
-              xclass="border border-info p-1 flex-grow-1 me-1"
-              @update:emailfrequency="
-                settingsChange('emailfrequency', groupid, $event)
-              "
-              @update:eventsallowed="
-                settingsChange('eventsallowed', groupid, $event)
-              "
-              @update:volunteeringallowed="
-                settingsChange('volunteeringallowed', groupid, $event)
-              "
-            />
             <div class="fw-bold mt-1">Moderation status:</div>
             <ModModeration
               :userid="member.userid"
-              :membership="member"
               class="order-2 order-md-3 order-lg-4"
             />
           </div>
@@ -136,10 +113,8 @@
             <ModMemberActions
               v-if="!footeractions"
               :userid="member.userid"
-              :groupid="groupid"
               :banned="Boolean(member.bandate)"
             />
-            <ModMemberships :userid="member.userid" />
             <ModMemberLogins :userid="member.userid" />
             <b-button
               v-if="user.emails && user.emails.length"
@@ -267,21 +242,9 @@
         </div>
       </b-card-body>
       <b-card-footer class="d-flex justify-content-between flex-wrap">
-        <ModMemberButtons
-          v-if="!isBanned"
-          :membershipid="member.id"
-          :modconfigid="configid"
-          :actions="footeractions"
-        />
         <div
           class="d-flex justify-content-between justify-content-md-end flex-grow-1"
         >
-          <ModRole
-            v-if="groupid && member.role && !isBanned"
-            :userid="member.userid"
-            :groupid="groupid"
-            :role="member.role"
-          />
           <!-- A membership rippling created for a poster records where their post
                travelled, not a relationship with this community, so there is no chat for
                its volunteers to start (Discourse 10102). If the member writes to us
@@ -289,7 +252,6 @@
           <ChatButton
             v-if="!member.rippled"
             :userid="member.userid"
-            :groupid="member.groupid"
             title="Chat"
             variant="white"
             class="ms-1"
@@ -320,10 +282,10 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useUserStore } from '~/stores/user'
-import { useMemberStore } from '~/stores/member'
-import { useModConfigStore } from '~/stores/modconfig'
+import { useMemberStore } from '~/modtools/stores/member'
+import { useSpammerStore } from '~/modtools/stores/spammer'
 import { useMe } from '~/composables/useMe'
 import { usePreferredEmail } from '~/modtools/composables/usePreferredEmail'
 
@@ -355,11 +317,11 @@ const props = defineProps({
 })
 
 const memberStore = useMemberStore()
+const spammerStore = useSpammerStore()
 
 const member = computed(() => memberStore.get(props.membershipid))
 const userStore = useUserStore()
-const modConfigStore = useModConfigStore()
-const { me, myGroups } = useMe()
+const { me } = useMe()
 
 const history = ref(null)
 const logs = ref(null)
@@ -373,30 +335,6 @@ const showUnbanModal = ref(false)
 const showUnbanModalTitle = ref('')
 const banned = ref(false)
 const isBanned = computed(() => Boolean(member.value?.bandate))
-
-const groupid = computed(() => {
-  return member.value?.groupid
-})
-
-const configid = computed(() => {
-  let id = null
-  myGroups.value.forEach((group) => {
-    if (group.id === groupid.value) {
-      id = group.configid
-    }
-  })
-  return id
-})
-
-watch(
-  configid,
-  async (id) => {
-    if (id) {
-      await modConfigStore.fetchById(id)
-    }
-  },
-  { immediate: true }
-)
 
 const user = computed(() => {
   // Full user data from store, populated by fetchMT on mount.
@@ -525,13 +463,12 @@ function showLogs() {
   logs.value?.show()
 }
 
-function settingsChange(param, groupidArg, val) {
-  const params = {
+async function releaseHold() {
+  if (!user.value?.spammer?.id) return
+  await spammerStore.release({
+    id: user.value.spammer.id,
     userid: member.value?.userid,
-    groupid: groupidArg,
-  }
-  params[param] = val
-  memberStore.update(params)
+  })
 }
 
 // OurToggle emits its `change` event with the new value directly (emit('change',
@@ -585,7 +522,7 @@ function confirmUnban(memberArg) {
 
 async function unban() {
   showUnbanModal.value = false
-  await memberStore.unban(member.value?.userid, groupid.value)
+  await memberStore.unban(member.value?.userid)
   // Update the member in the store
   const m = memberStore.get(props.membershipid)
   if (m) {

@@ -1,7 +1,6 @@
 package alert
 
 import (
-	"encoding/json"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,25 +13,15 @@ import (
 
 var htmlTagRE = regexp.MustCompile(`(?s)<[^>]*>`)
 
-// htmlIsBlank reports whether an HTML fragment carries no visible text. The ModTools alert
-// composer has a plain-text textarea AND a separate Quill editor, and only the textarea is
-// required. An untouched Quill editor does not serialise to "" — it emits an empty-document
-// sentinel like "<p><br></p>". A bare `html == ""` check therefore lets that through, and the
-// alert mails out with the boilerplate wrapper and no message in it (hit live 2026-07-13 on a
-// Freegle-wide alert to every mod). Strip tags and blank entities and see if anything is left,
-// so any editor's flavour of "empty" falls back to the text body.
+// htmlIsBlank reports whether an HTML fragment carries no visible text.
 func htmlIsBlank(s string) bool {
-	t := htmlTagRE.ReplaceAllString(s, "")
-	t = strings.ReplaceAll(t, "&nbsp;", " ")
-	t = strings.ReplaceAll(t, "&#160;", " ")
-	t = strings.ReplaceAll(t, "\u00a0", " ")
-	return strings.TrimSpace(t) == ""
+	stripped := htmlTagRE.ReplaceAllString(s, "")
+	return strings.TrimSpace(stripped) == ""
 }
 
 type Alert struct {
 	ID        uint64  `json:"id" gorm:"primary_key"`
 	Createdby *uint64 `json:"createdby"`
-	Groupid   *uint64 `json:"groupid"`
 	From      string  `json:"from"`
 	To        string  `json:"to"`
 	Subject   string  `json:"subject"`
@@ -58,16 +47,6 @@ type AlertResponseStat struct {
 	Count    int64  `json:"count"`
 }
 
-// GetAlert handles GET /alert/:id - public access.
-//
-// @Summary Get alert by ID
-// @Description Returns a single alert by ID. Admin/Support users also get tracking stats.
-// @Tags alert
-// @Produce json
-// @Param id path integer true "Alert ID"
-// @Success 200 {object} map[string]interface{}
-// @Failure 404 {object} fiber.Error "Alert not found"
-// @Router /api/alert/{id} [get]
 func GetAlert(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	db := database.DBConn
@@ -79,7 +58,7 @@ func GetAlert(c *fiber.Ctx) error {
 
 	var a Alert
 	db.Table("alerts").
-		Select("id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created").
+		Select("id, createdby, `from`, `to`, subject, text, html, askclick, tryhard, complete, created").
 		Where("id = ?", id).
 		Scan(&a)
 
@@ -93,31 +72,30 @@ func GetAlert(c *fiber.Ctx) error {
 		"alert":  a,
 	}
 
-	// If the caller is admin/support, include tracking stats.
 	if myid > 0 && user.IsAdminOrSupport(myid) {
 		var stats AlertStats
-
-		// Get response counts.
 		var responseCounts []AlertResponseStat
+
 		db.Table("alerts_tracking").
 			Select("response, COUNT(*) AS count").
 			Where("alertid = ? AND response IS NOT NULL", id).
 			Group("response").
 			Scan(&responseCounts)
+
 		if responseCounts == nil {
 			responseCounts = make([]AlertResponseStat, 0)
 		}
+
 		stats.Responses = responseCounts
 
-		// Get reached (total tracking entries).
-		db.Table("alerts_tracking").Where("alertid = ?", id).Count(&stats.Reached)
+		db.Table("alerts_tracking").
+			Where("alertid = ?", id).
+			Count(&stats.Reached)
 
-		// Merge stats into the alert map in the response.
 		alertMap := response["alert"].(Alert)
 		response["alert"] = fiber.Map{
 			"id":        alertMap.ID,
 			"createdby": alertMap.Createdby,
-			"groupid":   alertMap.Groupid,
 			"from":      alertMap.From,
 			"to":        alertMap.To,
 			"subject":   alertMap.Subject,
@@ -134,16 +112,6 @@ func GetAlert(c *fiber.Ctx) error {
 	return c.JSON(response)
 }
 
-// ListAlerts handles GET /alert - admin only.
-//
-// @Summary List all alerts
-// @Description Returns all alerts ordered by creation date descending. Requires Admin or Support role.
-// @Tags alert
-// @Produce json
-// @Security BearerAuth
-// @Success 200 {object} map[string]interface{}
-// @Failure 403 {object} fiber.Error "Not authorized"
-// @Router /api/alert [get]
 func ListAlerts(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
@@ -158,7 +126,7 @@ func ListAlerts(c *fiber.Ctx) error {
 
 	var alerts []Alert
 	db.Table("alerts").
-		Select("id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created").
+		Select("id, createdby, `from`, `to`, subject, text, html, askclick, tryhard, complete, created").
 		Order("created DESC").
 		Scan(&alerts)
 
@@ -173,18 +141,6 @@ func ListAlerts(c *fiber.Ctx) error {
 	})
 }
 
-// CreateAlert handles PUT /alert - admin only.
-//
-// @Summary Create a new alert
-// @Description Creates a new alert. Requires Admin or Support role.
-// @Tags alert
-// @Accept json
-// @Produce json
-// @Security BearerAuth
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} fiber.Error "Not logged in"
-// @Failure 403 {object} fiber.Error "Not authorized"
-// @Router /api/alert [put]
 func CreateAlert(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
@@ -196,14 +152,13 @@ func CreateAlert(c *fiber.Ctx) error {
 	}
 
 	type CreateRequest struct {
-		From     string          `json:"from"`
-		To       string          `json:"to"`
-		Subject  string          `json:"subject"`
-		Text     string          `json:"text"`
-		Html     string          `json:"html"`
-		Groupid  json.RawMessage `json:"groupid"`
-		Askclick *int            `json:"askclick"`
-		Tryhard  *int            `json:"tryhard"`
+		From     string `json:"from"`
+		To       string `json:"to"`
+		Subject  string `json:"subject"`
+		Text     string `json:"text"`
+		Html     string `json:"html"`
+		Askclick *int   `json:"askclick"`
+		Tryhard  *int   `json:"tryhard"`
 	}
 
 	var req CreateRequest
@@ -211,24 +166,10 @@ func CreateAlert(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
 	}
 
-	// groupid is optional and loosely typed by the caller: a numeric id targets
-	// one group, while null, absent, an empty string, or the sentinel
-	// "AllFreegle" all mean "all Freegle groups" and are stored as NULL. The
-	// ModTools "Contact group" composer sends the string "AllFreegle" for its
-	// all-groups option, so accept it rather than 400ing on the type mismatch.
-	var groupid *uint64
-	if raw := strings.TrimSpace(string(req.Groupid)); raw != "" && raw != "null" && raw != `""` && raw != `"AllFreegle"` {
-		var n uint64
-		if err := json.Unmarshal(req.Groupid, &n); err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "Invalid groupid")
-		}
-		groupid = &n
-	}
-
-	// Defaults.
 	if req.To == "" {
 		req.To = "Mods"
 	}
+
 	if htmlIsBlank(req.Html) {
 		req.Html = strings.ReplaceAll(req.Text, "\n", "<br>")
 	}
@@ -237,20 +178,15 @@ func CreateAlert(c *fiber.Ctx) error {
 	if req.Askclick != nil {
 		askclick = *req.Askclick
 	}
+
 	tryhard := 1
 	if req.Tryhard != nil {
 		tryhard = *req.Tryhard
 	}
 
 	db := database.DBConn
-
-	// Plain, isolated, literal single-row
-	// INSERT; id read back via GORM's map-Create "@id" writeback. "from"/"to" are
-	// MySQL reserved words, but the MySQL dialect's QuoteTo backtick-quotes every
-	// identifier unconditionally, so no special-casing is needed here.
 	row := map[string]interface{}{
 		"createdby": myid,
-		"groupid":   groupid,
 		"from":      req.From,
 		"to":        req.To,
 		"subject":   req.Subject,
@@ -260,9 +196,11 @@ func CreateAlert(c *fiber.Ctx) error {
 		"tryhard":   tryhard,
 		"created":   gorm.Expr("NOW()"),
 	}
+
 	if err := db.Table("alerts").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create alert")
 	}
+
 	alertIDInt, _ := row["@id"].(int64)
 	alertID := uint64(alertIDInt)
 
@@ -273,15 +211,6 @@ func CreateAlert(c *fiber.Ctx) error {
 	})
 }
 
-// RecordAlert handles POST /alert - public access for tracking.
-//
-// @Summary Record alert click
-// @Description Records a click on an alert tracking entry.
-// @Tags alert
-// @Accept json
-// @Produce json
-// @Success 200 {object} map[string]interface{}
-// @Router /api/alert [post]
 func RecordAlert(c *fiber.Ctx) error {
 	type RecordRequest struct {
 		Action  string `json:"action"`
@@ -289,12 +218,16 @@ func RecordAlert(c *fiber.Ctx) error {
 	}
 
 	var req RecordRequest
-	_ = c.BodyParser(&req) // Ignore error: fields checked individually below.
+	_ = c.BodyParser(&req)
 
 	if req.Action == "clicked" && req.Trackid > 0 {
 		db := database.DBConn
-		db.Table("alerts_tracking").Where("id = ?", req.Trackid).
-			Updates(map[string]interface{}{"responded": gorm.Expr("NOW()"), "response": gorm.Expr("'Clicked'")})
+		db.Table("alerts_tracking").
+			Where("id = ?", req.Trackid).
+			Updates(map[string]interface{}{
+				"responded": gorm.Expr("NOW()"),
+				"response":  gorm.Expr("'Clicked'"),
+			})
 	}
 
 	return c.JSON(fiber.Map{

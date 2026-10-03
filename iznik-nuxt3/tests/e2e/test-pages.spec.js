@@ -14,7 +14,6 @@ const publicPages = [
   { path: '/volunteerings', title: 'Volunteer Opportunities' },
   { path: '/stories', title: 'Stories' },
   { path: '/stats', title: 'Statistics' },
-  { path: '/stats/authorities', title: 'Statistics by Authority' },
   { path: '/stats/heatmap', title: 'Heatmap' },
   { path: '/promote', title: 'Promote Freegle' },
   { path: '/mobile', title: 'Our mobile app' },

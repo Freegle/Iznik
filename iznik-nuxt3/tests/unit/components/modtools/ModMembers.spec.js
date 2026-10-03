@@ -1,19 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 
-// Mock the composable with configurable return values
-const mockFilter = ref('0')
+// Mock the composable with a configurable return value. The component no
+// longer reads `filter` at all (the old numeric "With notes" filter value it
+// used to expand comments for doesn't exist under the new contract's
+// new/flagged/banned/search values), so visibleMembers is the only thing
+// this component depends on.
 const mockVisibleMembers = ref([])
 
 vi.mock('~/composables/useModMembers', () => ({
   setupModMembers: () => ({
-    filter: mockFilter,
     visibleMembers: mockVisibleMembers,
   }),
 }))
 
-// Create test component that mirrors ModMembers logic
+// Test component that mirrors ModMembers.vue's actual (post-rework) template.
 const ModMembersTest = {
   template: `
     <div>
@@ -22,50 +24,24 @@ const ModMembersTest = {
         :key="'memberlist-' + member.id"
         class="p-0 mt-2 member-item"
       >
-        <div
-          class="mod-member"
-          :data-member-id="member.id"
-          :data-expand-comments="expandComments"
-        >
+        <div class="mod-member" :data-member-id="member.id">
           {{ member.displayname }}
         </div>
       </div>
     </div>
   `,
   setup() {
-    const expandComments = computed(() => parseInt(mockFilter.value) === 1)
-
     return {
-      filter: mockFilter,
       visibleMembers: mockVisibleMembers,
-      expandComments,
     }
   },
 }
 
 describe('ModMembers', () => {
   const sampleMembers = [
-    {
-      id: 1,
-      displayname: 'Alice Test',
-      email: 'alice@example.com',
-      joined: '2024-01-01',
-      groups: [{ id: 100, arrival: '2024-01-01' }],
-    },
-    {
-      id: 2,
-      displayname: 'Bob Test',
-      email: 'bob@example.com',
-      joined: '2024-01-02',
-      groups: [{ id: 100, arrival: '2024-01-02' }],
-    },
-    {
-      id: 3,
-      displayname: 'Charlie Test',
-      email: 'charlie@example.com',
-      joined: '2024-01-03',
-      groups: [{ id: 100, arrival: '2024-01-03' }],
-    },
+    { id: 1, displayname: 'Alice Test', email: 'alice@example.com' },
+    { id: 2, displayname: 'Bob Test', email: 'bob@example.com' },
+    { id: 3, displayname: 'Charlie Test', email: 'charlie@example.com' },
   ]
 
   function mountComponent() {
@@ -74,7 +50,6 @@ describe('ModMembers', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    mockFilter.value = '0'
     mockVisibleMembers.value = []
   })
 
@@ -118,48 +93,6 @@ describe('ModMembers', () => {
     })
   })
 
-  describe('filter and expandComments', () => {
-    it('sets expandComments to false when filter is "0"', () => {
-      mockFilter.value = '0'
-      const wrapper = mountComponent()
-      expect(wrapper.vm.expandComments).toBe(false)
-    })
-
-    it('sets expandComments to true when filter is "1"', async () => {
-      mockFilter.value = '1'
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.expandComments).toBe(true)
-    })
-
-    it('sets expandComments to false when filter is "2"', async () => {
-      mockFilter.value = '2'
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.expandComments).toBe(false)
-    })
-
-    it('passes expandComments to ModMember component', async () => {
-      mockFilter.value = '1'
-      mockVisibleMembers.value = [sampleMembers[0]]
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-
-      const modMember = wrapper.find('.mod-member')
-      expect(modMember.attributes('data-expand-comments')).toBe('true')
-    })
-
-    it('updates expandComments when filter changes', async () => {
-      mockFilter.value = '0'
-      const wrapper = mountComponent()
-      expect(wrapper.vm.expandComments).toBe(false)
-
-      mockFilter.value = '1'
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.expandComments).toBe(true)
-    })
-  })
-
   describe('member list updates', () => {
     it('adds new members when visibleMembers changes', async () => {
       mockVisibleMembers.value = [sampleMembers[0]]
@@ -200,27 +133,11 @@ describe('ModMembers', () => {
   })
 
   describe('edge cases', () => {
-    it('handles members with missing groups', async () => {
-      const memberWithoutGroups = {
-        id: 4,
-        displayname: 'No Groups User',
-        email: 'nogroups@example.com',
-        joined: '2024-01-04',
-      }
-      mockVisibleMembers.value = [memberWithoutGroups]
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-
-      expect(wrapper.findAll('.member-item')).toHaveLength(1)
-      expect(wrapper.text()).toContain('No Groups User')
-    })
-
     it('handles members with null displayname', async () => {
       const memberWithNullName = {
         id: 5,
         displayname: null,
         email: 'nullname@example.com',
-        joined: '2024-01-05',
       }
       mockVisibleMembers.value = [memberWithNullName]
       const wrapper = mountComponent()
@@ -229,24 +146,10 @@ describe('ModMembers', () => {
       expect(wrapper.findAll('.member-item')).toHaveLength(1)
     })
 
-    it('handles filter as string "1" correctly (parseInt)', () => {
-      mockFilter.value = '1'
-      const wrapper = mountComponent()
-      expect(wrapper.vm.expandComments).toBe(true)
-    })
-
-    it('handles filter as numeric-looking string', () => {
-      mockFilter.value = '01'
-      const wrapper = mountComponent()
-      // parseInt('01') === 1
-      expect(wrapper.vm.expandComments).toBe(true)
-    })
-
     it('handles undefined visibleMembers', () => {
       mockVisibleMembers.value = undefined
       const wrapper = mountComponent()
-      // Should handle gracefully - v-for on undefined
-      // In Vue 3, v-for on undefined/null renders nothing
+      // v-for on undefined/null renders nothing in Vue 3.
       expect(wrapper.find('.member-item').exists()).toBe(false)
     })
   })

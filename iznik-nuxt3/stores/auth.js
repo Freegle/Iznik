@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import { SocialLogin } from '@capgo/capacitor-social-login'
 import { LoginError, SignUpError } from '~/api/APIErrors'
-import { isBannedFailure } from '~/api/bannedFailure'
 import {
   abortAllPendingRequests,
   enterLogoutMode,
@@ -9,7 +8,6 @@ import {
 } from '~/api/BaseAPI'
 import { action as clientAction } from '~/composables/useClientLog'
 import { useComposeStore } from '~/stores/compose'
-import { useGroupStore } from '~/stores/group'
 import api from '~/api'
 import { useMobileStore } from '@/stores/mobile'
 import { useMiscStore } from '~/stores/misc'
@@ -54,7 +52,6 @@ export const useAuthStore = defineStore('auth', {
     // persisted). Lets boot code skip redundant refetches on layout swaps.
     userFetchedAt: 0,
     user: null,
-    groups: [],
     loggedInEver: false,
     userlist: [],
     loginType: null,
@@ -325,8 +322,7 @@ export const useAuthStore = defineStore('auth', {
     },
     async login(params) {
       try {
-        // Tell the server if this is a ModTools login so it can auto-confirm
-        // group affiliation for Owners.
+        // Tell the server if this is a ModTools login.
         const miscStore = useMiscStore()
         if (miscStore.modtools) {
           params.modtools = true
@@ -435,7 +431,6 @@ export const useAuthStore = defineStore('auth', {
     async fetchUser() {
       // We're so vain, we probably think this call is about us.
       let me = null
-      let groups = null
       let serverError = false
 
       // Use V2 API (Go backend) - GET /session returns {me, groups, work, discourse, ...}
@@ -466,24 +461,6 @@ export const useAuthStore = defineStore('auth', {
             // Attach emails to the user object for client code that accesses user.emails.
             me.emails = sessionData.emails || []
 
-            groups = sessionData.groups || []
-
-            // Fetch full group details for each membership. The session response
-            // only returns membership-specific data (groupid, role, etc.) - group
-            // details (name, type, region, bbox) come from the cached group store.
-            if (groups.length > 0) {
-              const groupStore = useGroupStore()
-
-              // Deliberately not awaited: session resolution (and therefore
-              // first paint, which the layouts gate on fetchUser) must not
-              // wait for full group details - they fill in reactively.
-              Promise.resolve(
-                groupStore.fetchBatch(groups.map((g) => g.groupid))
-              ).catch((e) => {
-                console.log('Group batch fetch failed', e?.message)
-              })
-            }
-
             // Update JWT/persistent if returned (session refresh).
             if (sessionData.jwt) {
               this.setAuth(
@@ -513,13 +490,6 @@ export const useAuthStore = defineStore('auth', {
       }
 
       if (me) {
-        if (groups && groups.length) {
-          this.groups = groups
-        } else {
-          // We asked for groups but got none, so we're not a member of any.
-          this.groups = []
-        }
-
         // Set the user, which will trigger various re-rendering if we were required to be logged in.
         this.setUser(me)
         this.userFetchedAt = Date.now()
@@ -595,6 +565,20 @@ export const useAuthStore = defineStore('auth', {
       await this.fetchUser()
       return data
     },
+    async saveEmailSettings({
+      emailfrequency,
+      eventsallowed,
+      volunteeringallowed,
+    }) {
+      const data = await this.$api.user.save({
+        id: this.user?.id,
+        emailfrequency,
+        eventsallowed,
+        volunteeringallowed,
+      })
+      await this.fetchUser()
+      return data
+    },
     async unbounce(id) {
       await this.$api.user.unbounce(id)
       this.user.bouncing = 0
@@ -610,40 +594,6 @@ export const useAuthStore = defineStore('auth', {
       const user = await this.fetchUser()
       console.log('Fetched user', JSON.stringify(user))
       return user
-    },
-    async setGroup(params, nofetch) {
-      await this.$api.memberships.update(params)
-
-      if (!nofetch) {
-        await this.fetchUser()
-      }
-    },
-    async leaveGroup(userid, groupid) {
-      await this.$api.memberships.leaveGroup({
-        userid,
-        groupid,
-      })
-      await this.fetchUser()
-      return this.user
-    },
-    async joinGroup(userid, groupid, manual) {
-      try {
-        await this.$api.memberships.joinGroup({
-          userid,
-          groupid,
-          manual,
-        })
-      } catch (e) {
-        // A banned member's own join is refused server-side (403 "Failed - banned").
-        // Swallow it silently: we don't reveal the ban to them, we just don't join.
-        // Anything else is a real error and must propagate.
-        if (isBannedFailure(e)) {
-          return this.user
-        }
-        throw e
-      }
-      await this.fetchUser()
-      return this.user
     },
     async savePushId() {
       const mobileStore = useMobileStore()
@@ -745,19 +695,6 @@ export const useAuthStore = defineStore('auth', {
         params.id2,
         params.reason
       )
-    },
-  },
-  getters: {
-    member: (state) => (id) => {
-      if (state.user) {
-        for (const group of state.groups) {
-          if (parseInt(group.groupid) === parseInt(id)) {
-            return group.role
-          }
-        }
-      }
-
-      return false
     },
   },
 })

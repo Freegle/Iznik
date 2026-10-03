@@ -17,14 +17,12 @@ func TestMessagePatch_BadAIImageForceReject(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("badaiimg")
 
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	msgID := CreateTestMessage(t, ownerID, groupID, "Test item "+prefix, 55.0, -1.0)
+	msgID := CreateTestMessage(t, ownerID, "Test item "+prefix, 55.0, -1.0)
 
 	aiName := "badai-" + prefix
 	aiUID := "freegletusd-test-" + aiName
@@ -61,14 +59,12 @@ func TestMessagePatch_NormalAIDeletionVote(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("normalaidel")
 
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	msgID := CreateTestMessage(t, ownerID, groupID, "Test item "+prefix, 55.0, -1.0)
+	msgID := CreateTestMessage(t, ownerID, "Test item "+prefix, 55.0, -1.0)
 
 	aiName := "normalai-" + prefix
 	aiUID := "freegletusd-test-" + aiName

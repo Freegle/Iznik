@@ -3,7 +3,6 @@
     <client-only>
       <ScrollToTop />
       <ModHelpComments />
-      <ModGroupSelect v-model="groupid" modonly all />
       <ModCommentUser
         v-for="comment in visibleComments"
         :key="'commentlist-' + comment.id"
@@ -32,13 +31,11 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useCommentStore } from '~/stores/comment'
-import { useMe } from '~/composables/useMe'
 
 // Stores and composables
 const commentStore = useCommentStore()
-const { myid } = useMe()
 
 // Local state (formerly data())
 const context = ref(null)
@@ -46,34 +43,17 @@ const distance = ref(1000)
 const show = ref(0)
 const busy = ref(false)
 const complete = ref(false)
-const groupid = ref(null)
 const bump = ref(1)
 
-// Computed properties
+// Computed properties.  Moderators are national now, so there is no
+// community to choose and no per-community filtering - every mod note is
+// visible to every moderator.
 const comments = computed(() => {
   return commentStore.sortedList
 })
 
-const filteredComments = computed(() => {
-  return comments.value.filter((c) => {
-    return (
-      groupid.value === null ||
-      groupid.value === c.groupid ||
-      c.flag ||
-      c.byuserid === myid.value
-    )
-  })
-})
-
 const visibleComments = computed(() => {
-  return filteredComments.value.slice(0, show.value)
-})
-
-// Watchers
-watch(groupid, () => {
-  bump.value++
-  commentStore.clear()
-  context.value = null
+  return comments.value.slice(0, show.value)
 })
 
 // Lifecycle
@@ -96,7 +76,6 @@ async function loadMore($state) {
     try {
       await commentStore.fetch({
         context: context.value,
-        groupid: groupid.value,
       })
 
       context.value = commentStore.context

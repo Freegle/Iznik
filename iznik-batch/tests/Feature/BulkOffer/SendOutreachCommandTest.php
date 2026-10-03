@@ -24,8 +24,7 @@ class SendOutreachCommandTest extends TestCase
         Config::set('services.gmail_outreach.dry_run', true);
 
         $donor = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->msgid = $this->createTestMessage($donor, $group, [
+        $this->msgid = $this->createTestMessage($donor, [
             'subject' => 'OFFER: Office clearance (Hampstead)',
         ])->id;
 
@@ -99,7 +98,6 @@ class SendOutreachCommandTest extends TestCase
     {
         $other = $this->createTestMessage(
             $this->createTestUser(),
-            $this->createTestGroup(),
             ['subject' => 'OFFER: Other clearance']
         )->id;
         DB::table('messages_bulk_items')->insert([

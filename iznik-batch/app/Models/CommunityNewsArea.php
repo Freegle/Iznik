@@ -6,16 +6,14 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * A Community News "area" — a cluster of neighbouring communitynews-enabled
- * Freegle groups, researched and delivered as one unit.
+ * A Community News "area" - one per row in `authorities` (Counties and
+ * Unitary Authorities), researched and delivered as one unit.
  *
  * @property int $id
- * @property int $anchorgroupid
+ * @property int $authorityid
  * @property string $name
  * @property float $lat
  * @property float $lng
- * @property array $groupids
- * @property int $groupcount
  */
 class CommunityNewsArea extends Model
 {
@@ -23,11 +21,9 @@ class CommunityNewsArea extends Model
     protected $guarded = ['id'];
 
     protected $casts = [
-        'anchorgroupid' => 'integer',
-        'groupids' => 'array',
+        'authorityid' => 'integer',
         'lat' => 'float',
         'lng' => 'float',
-        'groupcount' => 'integer',
         'lastresearched' => 'datetime',
         'lastposted' => 'datetime',
         'lastemailed' => 'datetime',

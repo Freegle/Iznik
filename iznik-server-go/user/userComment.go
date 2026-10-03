@@ -45,7 +45,7 @@ func GetComments(userids []uint64, myid uint64) map[uint64][]Comment {
 
 	// Only users with a system-level moderator role can view comments.
 	// Group-level mods have systemrole='Moderator' synced, so this covers them too.
-	if !auth.IsSystemMod(myid) {
+	if !auth.IsModerator(myid) {
 		return result
 	}
 

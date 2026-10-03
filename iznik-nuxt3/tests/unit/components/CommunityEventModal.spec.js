@@ -23,7 +23,6 @@ const mockEvent = {
       },
     },
   ],
-  groups: [1],
   image: {
     id: 1,
     path: '/test/image.jpg',
@@ -36,11 +35,6 @@ const mockEvent = {
 }
 
 const mockUser = { id: 456, displayname: 'Test User' }
-const mockGroup = {
-  id: 1,
-  namedisplay: 'Test Group',
-  settings: { communityevents: true },
-}
 
 const { mockModal } = vi.hoisted(() => {
   const { ref } = require('vue')
@@ -58,8 +52,6 @@ const mockCommunityEventStore = {
   save: vi.fn().mockResolvedValue(undefined),
   delete: vi.fn().mockResolvedValue(undefined),
   setPhoto: vi.fn().mockResolvedValue(undefined),
-  addGroup: vi.fn().mockResolvedValue(undefined),
-  removeGroup: vi.fn().mockResolvedValue(undefined),
   setDates: vi.fn().mockResolvedValue(undefined),
 }
 
@@ -70,11 +62,6 @@ const mockComposeStore = {
 const mockUserStore = {
   fetch: vi.fn().mockResolvedValue(mockUser),
   byId: vi.fn().mockReturnValue(mockUser),
-}
-
-const mockGroupStore = {
-  fetch: vi.fn().mockResolvedValue(mockGroup),
-  get: vi.fn().mockReturnValue(mockGroup),
 }
 
 const mockImageStore = {
@@ -95,10 +82,6 @@ vi.mock('~/stores/compose', () => ({
 
 vi.mock('~/stores/user', () => ({
   useUserStore: () => mockUserStore,
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
 }))
 
 vi.mock('~/stores/image', () => ({
@@ -135,7 +118,6 @@ describe('CommunityEventModal', () => {
     vi.clearAllMocks()
     mockCommunityEventStore.byId.mockReturnValue({ ...mockEvent })
     mockCommunityEventStore.fetch.mockResolvedValue({ ...mockEvent })
-    mockGroupStore.get.mockReturnValue({ ...mockGroup })
   })
 
   async function createWrapper(props = {}) {
@@ -329,11 +311,6 @@ describe('CommunityEventModal', () => {
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('Posted by Test User')
     })
-
-    it('shows group name', async () => {
-      const wrapper = await createWrapper()
-      expect(wrapper.text()).toContain('Test Group')
-    })
   })
 
   describe('image display', () => {
@@ -387,11 +364,6 @@ describe('CommunityEventModal', () => {
       // Check for form element with title field to confirm edit mode
       expect(wrapper.find('form').exists()).toBe(true)
       expect(wrapper.find('#title').exists()).toBe(true)
-    })
-
-    it('shows group select in edit mode', async () => {
-      const wrapper = await createWrapper({ startEdit: true })
-      expect(wrapper.find('.group-select').exists()).toBe(true)
     })
 
     it('shows title field in edit mode', async () => {
@@ -489,11 +461,6 @@ describe('CommunityEventModal', () => {
       await createWrapper()
       expect(mockUserStore.fetch).toHaveBeenCalled()
     })
-
-    it('fetches group after event fetch', async () => {
-      await createWrapper()
-      expect(mockGroupStore.fetch).toHaveBeenCalled()
-    })
   })
 
   describe('added state', () => {
@@ -511,19 +478,6 @@ describe('CommunityEventModal', () => {
       component.vm.added = true
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.donation-button').exists()).toBe(true)
-    })
-  })
-
-  describe('community events disabled', () => {
-    it('shows warning when group has events disabled', async () => {
-      mockGroupStore.get.mockReturnValue({
-        ...mockGroup,
-        settings: { communityevents: false },
-      })
-      const wrapper = await createWrapper({ startEdit: true })
-      expect(wrapper.text()).toContain(
-        'This community has chosen not to allow Community Events'
-      )
     })
   })
 

@@ -61,28 +61,26 @@ final class SourceFreshness
 
     private const VISION_MIMES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
-    public function __construct(private NewsfeedLinkPreviewService $previews)
-    {
-    }
+    public function __construct(private NewsfeedLinkPreviewService $previews) {}
 
     /**
      * Why this item's source contradicts an event happening now, or null when it
      * doesn't (which includes every case we cannot judge).
      *
-     * @param ?string $eventDate The item's claimed event date (Y-m-d). When the
-     *                           item is undated we judge against the current
-     *                           year, since an undated item is implicitly "now".
+     * @param  ?string  $eventDate  The item's claimed event date (Y-m-d). When the
+     *                              item is undated we judge against the current
+     *                              year, since an undated item is implicitly "now".
      */
     public function staleReason(?string $url, ?string $eventDate = null): ?string
     {
         $url = trim((string) $url);
-        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+        if ($url === '' || ! preg_match('#^https?://#i', $url)) {
             return null;
         }
 
         // Same SSRF guard as the link-preview fetcher: these URLs come from the
         // research model, so they are no more trustworthy than member input.
-        if (!$this->previews->isFetchableUrl($url)) {
+        if (! $this->previews->isFetchableUrl($url)) {
             return null;
         }
 
@@ -118,7 +116,7 @@ final class SourceFreshness
         // is ISO 8601 by specification, and Carbon::parse() would otherwise read
         // "2014" as today and "last Tuesday" as this week - a loose parse both
         // misses real staleness and risks inventing it.
-        if (!preg_match('/^(\d{4}-\d{2}-\d{2})/', $raw, $m)) {
+        if (! preg_match('/^(\d{4}-\d{2}-\d{2})/', $raw, $m)) {
             return null;
         }
 
@@ -153,7 +151,7 @@ final class SourceFreshness
      */
     private function stalePoster(DOMXPath $xpath, ?string $eventDate): ?string
     {
-        if (!config('freegle.communitynews.check_image_year', true)) {
+        if (! config('freegle.communitynews.check_image_year', true)) {
             return null;
         }
         if (trim((string) config('freegle.communitynews.anthropic_api_key', '')) === '') {
@@ -161,7 +159,7 @@ final class SourceFreshness
         }
 
         $imageUrl = $this->meta($xpath, 'og:image') ?? $this->meta($xpath, 'twitter:image');
-        if (!$imageUrl || !preg_match('#^https?://#i', $imageUrl) || !$this->previews->isFetchableUrl($imageUrl)) {
+        if (! $imageUrl || ! preg_match('#^https?://#i', $imageUrl) || ! $this->previews->isFetchableUrl($imageUrl)) {
             return null;
         }
 
@@ -195,11 +193,11 @@ final class SourceFreshness
     private function posterYears(string $data, string $mime): array
     {
         $prompt = 'This picture illustrates a listing for a local event. Read any text in it. '
-            . 'List ONLY years that form part of the date the event TAKES PLACE - a poster reading '
-            . '"23-25 August 2014" gives [2014]. Ignore every other year: "established 1892", copyright '
-            . 'notices, historical or anniversary references, prices, addresses, phone numbers, registration '
-            . 'numbers. If no year of the event date is legible, return an empty list. '
-            . 'Reply with ONLY JSON in this shape, no prose: {"years":[2014]}';
+            .'List ONLY years that form part of the date the event TAKES PLACE - a poster reading '
+            .'"23-25 August 2014" gives [2014]. Ignore every other year: "established 1892", copyright '
+            .'notices, historical or anniversary references, prices, addresses, phone numbers, registration '
+            .'numbers. If no year of the event date is legible, return an empty list. '
+            .'Reply with ONLY JSON in this shape, no prose: {"years":[2014]}';
 
         try {
             $response = Http::timeout(30)
@@ -232,7 +230,7 @@ final class SourceFreshness
             return [];
         }
 
-        if (!$response->successful()) {
+        if (! $response->successful()) {
             Log::info('CommunityNews poster-year check failed', ['status' => $response->status()]);
 
             return [];
@@ -325,9 +323,9 @@ final class SourceFreshness
         }
 
         // A relative Location stays on this host by definition.
-        if (!preg_match('#^https?://#i', $location)) {
+        if (! preg_match('#^https?://#i', $location)) {
             $scheme = parse_url($from, PHP_URL_SCHEME) ?: 'https';
-            $location = $scheme . '://' . $fromHost . '/' . ltrim($location, '/');
+            $location = $scheme.'://'.$fromHost.'/'.ltrim($location, '/');
         }
 
         if (strtolower((string) parse_url($location, PHP_URL_HOST)) !== $fromHost) {
@@ -351,13 +349,13 @@ final class SourceFreshness
             return null;
         }
 
-        if (!$response->successful()) {
+        if (! $response->successful()) {
             return null;
         }
 
         $mime = strtolower(trim(explode(';', $response->header('Content-Type') ?? '')[0]));
         $data = $response->body();
-        if (!in_array($mime, self::VISION_MIMES, true) || $data === '' || strlen($data) > self::MAX_IMAGE_BYTES) {
+        if (! in_array($mime, self::VISION_MIMES, true) || $data === '' || strlen($data) > self::MAX_IMAGE_BYTES) {
             return null;
         }
 
@@ -367,7 +365,7 @@ final class SourceFreshness
     private function xpath(string $html): ?DOMXPath
     {
         libxml_use_internal_errors(true);
-        $dom = new DOMDocument();
+        $dom = new DOMDocument;
         try {
             // loadHTML throws ValueError on an empty string (PHP 8) - fetch()
             // already rules that out, but a parse failure must not escape here.

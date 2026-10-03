@@ -342,13 +342,11 @@ func TestSearchHandlerVectorModeHybridIncludesKeyword(t *testing.T) {
 	t.Cleanup(embedding.ResetQueryCache)
 
 	prefix := uniquePrefix("vectorhybrid")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 
 	// Create a message whose indexed words match a keyword search for
 	// "television" (via exact word match on the search index).
-	CreateTestMessage(t, userID, groupID, "television stand oak", 55.9533, -3.1883)
+	CreateTestMessage(t, userID, "television stand oak", 55.9533, -3.1883)
 
 	// Confirm the keyword path actually finds this message — otherwise the
 	// assertions below would pass trivially.
@@ -440,7 +438,6 @@ func TestSearchHandlerVectorModeIsDeterministic(t *testing.T) {
 	t.Cleanup(embedding.ResetQueryCache)
 
 	prefix := uniquePrefix("vectordeterministic")
-	groupID := CreateTestGroup(t, prefix)
 
 	// Two entries: one strong match, one antiparallel (noise).
 	queryVec := makeTestVec(1.0)

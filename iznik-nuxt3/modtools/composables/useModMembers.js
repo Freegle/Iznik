@@ -1,17 +1,25 @@
 // Simplified from MT2 mixin/modMembersPage
+//
+// Self-moderating rework: /modtools/members (ModMembersAPI.js's fetch()) has
+// no cursor/paging concept - it takes filter ('new'|'flagged'|'banned'|
+// 'search'), q (search term) and since (hours, new/flagged only) and returns
+// a flat set. There is no "next page" to ask for. context/collection below
+// are legacy MT2 leftovers (member.js's store has no context state to feed
+// them - context.value was already always undefined before this rework) and
+// are kept only because related.vue/feedback.vue still read them; those two
+// pages piggy-backed on a per-group "collection" query model that no longer
+// exists server-side and need their own dedicated rework (flagged separately,
+// not attempted here).
 
-import { useMemberStore } from '~/stores/member'
-import { useModGroupStore } from '@/stores/modgroup'
+import { useMemberStore } from '~/modtools/stores/member'
 
 const bump = ref(0)
 const busy = ref(false)
 const context = ref(null)
-const groupid = ref(0)
-const group = ref(null)
 const limit = ref(10)
 const search = ref('')
-const filter = ref('0')
-// const workType = ref(null)
+const filter = ref('new')
+const since = ref(null)
 const show = ref(0)
 const sort = ref(true)
 
@@ -23,33 +31,19 @@ const nextAfterRemoved = ref(null)
 const distance = ref(10)
 
 const members = computed(() => {
-  // console.log('UMM members',groupid.value, bump.value)
+  // console.log('UMM members', bump.value)
   const memberStore = useMemberStore()
-  let members
-
-  if (groupid.value) {
-    members = memberStore.getByGroup(groupid.value)
-  } else {
-    members = Object.values(memberStore.list)
-    // console.log('UMM members all list', members.length)
-  }
+  const members = Object.values(memberStore.list)
   if (!members) {
     return []
   }
   // We need to sort as otherwise new members may appear at the end.
   if (sort.value) {
     members.sort((a, b) => {
-      if (a.groups && b.groups) {
-        return (
-          new Date(b.groups[0].arrival).getTime() -
-          new Date(a.groups[0].arrival).getTime()
-        )
-      } else {
-        return (
-          new Date(b.added || b.joined).getTime() -
-          new Date(a.added || a.joined).getTime()
-        )
-      }
+      return (
+        new Date(b.added || b.joined).getTime() -
+        new Date(a.added || a.joined).getTime()
+      )
     })
   } else {
     members.sort((a, b) => {
@@ -72,31 +66,28 @@ const visibleMembers = computed(() => {
 })
 
 const loadMore = async function ($state) {
-  // console.log('UMM loadMore', show.value, groupid.value, search.value, members.value.length, visibleMembers.value.length)
-  // console.log('UMM loadMore', context.value)
   if (show.value < members.value.length) {
-    // console.log('UMM loadMore inc show')
+    // We already have more fetched than shown - just reveal more of it.
     show.value = Math.min(show.value + 20, members.value.length)
     $state.loaded()
   } else {
+    // Ask the server for this filter's set. There's no cursor to advance -
+    // /modtools/members always returns the same set for the same
+    // filter/q/since, so a repeat call that adds nothing new means we're
+    // done (handled below), not that there's a further page to request.
     const membersstart = members.value.length
-    limit.value += distance.value
-    // console.log('UMM actually loadMore show', show.value, 'groupid', groupid.value, 'members', members.value.length, 'limit', limit.value, 'search', search.value, 'filter', filter.value)
     const memberStore = useMemberStore()
     const params = {
-      groupid: groupid.value,
-      collection: collection.value,
-      modtools: true,
-      context: context.value,
-      limit: limit.value,
-      search: search.value,
       filter: filter.value,
+      q: search.value || undefined,
     }
-    // console.log('UMM fetchMembers', params)
+    if (
+      (filter.value === 'new' || filter.value === 'flagged') &&
+      since.value
+    ) {
+      params.since = since.value
+    }
     await memberStore.fetchMembers(params)
-    // console.log('UMM received', received)
-    // console.log('UMM got', members.value.length)
-    context.value = memberStore.context
 
     if (show.value < members.value.length) {
       show.value = Math.min(show.value + 20, members.value.length)
@@ -104,38 +95,14 @@ const loadMore = async function ($state) {
     if (show.value > members.value.length) {
       show.value = members.value.length
     }
-    // if (received === 0 || (show.value === members.value.length)) {
-    /* if (received === 0) { // Search comes in one at a time
-      // console.log('UMM loadMore COMPLETE', received)
-      $state.complete()
-    }
-    else {
-      $state.loaded()
-    } */
+
     if (membersstart === members.value.length) {
-      // bump.value++
       $state.complete()
     } else {
       $state.loaded()
     }
-    // console.log('UMM end', show.value, members.value.length)
   }
 }
-
-watch(groupid, async (newVal) => {
-  // console.log("UMM watch groupid", newVal)
-  // context.value = null
-  // show.value = 0
-  // const memberStore = useMemberStore()
-  // memberStore.clear()
-
-  const modGroupStore = useModGroupStore()
-  if (newVal > 0) {
-    await modGroupStore.fetchIfNeedBeMT(newVal)
-    group.value = await modGroupStore.get(newVal)
-  }
-  // bump.value++
-})
 
 export function setupModMembers(reset) {
   // CAREFUL: All refs are remembered from the previous page so one caller has to reset all unused ref
@@ -143,11 +110,10 @@ export function setupModMembers(reset) {
     bump.value = 0
     busy.value = false
     context.value = null
-    groupid.value = 0
-    group.value = null
     limit.value = 10
     search.value = ''
-    filter.value = '0'
+    filter.value = 'new'
+    since.value = null
     show.value = 0
     sort.value = true
 
@@ -158,41 +124,24 @@ export function setupModMembers(reset) {
 
     distance.value = 10
   }
-  /* MT3 NOT USED const work = computed(() => {
-  // Count for the type of work we're interested in.
-  try {
-    const authStore = useAuthStore()
-    const work = authStore.work
-    console.log(">>>>UMM get work", workType.value, work)
-    if (!work) return 0
-    const count = workType.value ? work[workType.value] : 0
-    return count
-  } catch (e) {
-    console.log('>>>>UMM exception', e.message)
-    return 0
-  }
-}) */
 
   return {
-    bump, // Y
-    busy, // Y
-    context, // ?
-    group, // ?
-    groupid, // Y
-    limit, // Y
-    search, // Y
-    filter, // Y
-    // workType, // N
+    bump,
+    busy,
+    context,
+    limit,
+    search,
+    filter,
+    since,
     show,
     sort,
-    collection, // Y
+    collection,
     messageTerm,
     memberTerm,
     nextAfterRemoved,
-    distance, // Y
+    distance,
     members,
-    visibleMembers, // Y
-    // work, // N
-    loadMore, // Y
+    visibleMembers,
+    loadMore,
   }
 }

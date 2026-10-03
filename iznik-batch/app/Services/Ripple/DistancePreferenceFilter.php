@@ -12,11 +12,10 @@ use App\Models\User;
  * (and its companion, the Nearby browse relevance/slider design).
  *
  * This is a pure, dependency-free, narrowing step layered strictly AFTER the
- * existing group-membership / rippling-reach selection in all three
- * member-notification pipelines in UnifiedDigestService:
+ * existing rippling-reach selection in both member-notification pipelines in
+ * UnifiedDigestService:
  *   - the daily digest (sendDigestToUser, after scoreAndSortAvailable),
- *   - the immediate cursor path (processGroupImmediate),
- *   - the immediate reach-mail path (mailNewlyReachedForPost).
+ *   - the sharded reach-mail pass (sendReachDigests, via mailNewlyReachedForPost).
  * It never adds candidates the existing selection wouldn't already allow.
  *
  * Distance basis: REAL (unblurred) haversine distance, not the blurred
@@ -63,7 +62,7 @@ class DistancePreferenceFilter
         if (is_string($settings)) {
             $settings = json_decode($settings, true) ?: [];
         }
-        if (!is_array($settings)) {
+        if (! is_array($settings)) {
             return (float) self::DISTANCE_UNLIMITED;
         }
 
@@ -71,7 +70,7 @@ class DistancePreferenceFilter
         // the slider has said what they want.
         foreach (['browseMaxDistance', 'browseReachMaxDistance'] as $key) {
             $value = $settings[$key] ?? null;
-            if (!is_numeric($value)) {
+            if (! is_numeric($value)) {
                 continue;
             }
 
@@ -103,7 +102,7 @@ class DistancePreferenceFilter
         if (is_string($settings)) {
             $settings = json_decode($settings, true) ?: [];
         }
-        if (!is_array($settings)) {
+        if (! is_array($settings)) {
             return 0.0;
         }
 
@@ -187,13 +186,13 @@ class DistancePreferenceFilter
         if (is_string($settings)) {
             $settings = json_decode($settings, true) ?: [];
         }
-        if (!is_array($settings)) {
+        if (! is_array($settings)) {
             return (float) self::DISTANCE_UNLIMITED;
         }
 
         foreach (['myPostsMaxDistance', 'browseMaxDistance'] as $key) {
             $value = $settings[$key] ?? null;
-            if (!is_numeric($value)) {
+            if (! is_numeric($value)) {
                 continue;
             }
 

@@ -150,14 +150,11 @@ func TestChangesMessageOutcome(t *testing.T) {
 	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	// Create a test user, group, and message.
-	groupID := CreateTestGroup(t, prefix)
-	defer db.Exec("DELETE FROM `groups` WHERE id = ?", groupID)
-
+	// Create a test user and message.
 	userID := CreateTestUser(t, prefix, "User")
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
-	msgID := CreateTestMessage(t, userID, groupID, "OFFER: "+prefix+" test item", 55.95, -3.19)
+	msgID := CreateTestMessage(t, userID, "OFFER: "+prefix+" test item", 55.95, -3.19)
 	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
 
 	// Add a message outcome.

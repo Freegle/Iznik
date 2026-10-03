@@ -22,30 +22,21 @@ export function dedupKey(message) {
 }
 
 // De-duplicate the browse list: collapse a poster's crosspost/repost of the same item to
-// a single entry, preferring the copy on a group the viewer belongs to (so replying does
-// not silently sign them up to a non-member group - Discourse 9733 / 9729).
-// firstSeenMessage always wins and is never displaced. The kept items are returned in
-// their original input order.
+// a single entry. firstSeenMessage always wins and is never displaced; otherwise the first
+// copy seen is the one kept. The kept items are returned in their original input order.
 //
-// This is the O(n) form of MessageList.vue's deDuplicatedMessages: the member-group swap
-// now looks the kept item up in an id->index Map instead of ret.findIndex() (which was an
-// O(n) scan per swap, i.e. O(n^2) when many items are duplicates).
+// This is the O(n) form of MessageList.vue's deDuplicatedMessages: lookups go through an
+// id->index Map instead of the previous ret.findIndex() scan (O(n) per lookup, i.e. O(n^2)
+// when many items are duplicates).
 //
 //   items            - list to dedup (feed summary objects with .id)
 //   getMessage(id)   - full message detail for id (or undefined if not loaded yet)
 //   exclude          - an id to drop entirely, or null
 //   firstSeenMessage - id that must always be kept and never displaced, or null
-//   isOnMyGroup(msg) - true if msg is on a group the viewer belongs to
 //   failedIds        - Set of ids to skip (failed to load), or null
 export function deduplicateMessages(
   items,
-  {
-    getMessage,
-    exclude = null,
-    firstSeenMessage = null,
-    isOnMyGroup = () => false,
-    failedIds = null,
-  } = {}
+  { getMessage, exclude = null, firstSeenMessage = null, failedIds = null } = {}
 ) {
   const ret = []
   const retIndexById = new Map()
@@ -100,24 +91,8 @@ export function deduplicateMessages(
       } else if (!already) {
         pushKept(m)
         dups[key] = m.id
-      } else {
-        // Duplicate of one we're already showing. Prefer the copy on a group the viewer
-        // belongs to; firstSeenMessage is never replaced.
-        const keptId = dups[key]
-        if (
-          keptId !== firstSeenMessage &&
-          isOnMyGroup(message) &&
-          !isOnMyGroup(getMessage ? getMessage(keptId) : undefined)
-        ) {
-          const idx = retIndexById.get(keptId)
-          if (idx !== undefined) {
-            ret[idx] = m
-            retIndexById.delete(keptId)
-            retIndexById.set(m.id, idx)
-          }
-          dups[key] = m.id
-        }
       }
+      // Else: a duplicate of one already shown, and not firstSeenMessage - dropped.
     }
   }
 
@@ -130,12 +105,4 @@ export function deduplicateMessages(
 export function findDuplicates(items, keptList) {
   const keptIds = new Set((keptList || []).map((d) => d.id))
   return (items || []).filter((m) => !keptIds.has(m.id))
-}
-
-// Distinct groupids in first-appearance order. Replaces an O(n*u) includes()-in-loop.
-export function distinctGroupIds(messages) {
-  if (!messages) {
-    return []
-  }
-  return [...new Set(messages.map((m) => m.groupid))]
 }

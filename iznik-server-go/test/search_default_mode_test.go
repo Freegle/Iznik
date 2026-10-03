@@ -24,7 +24,6 @@ func TestSearchHandlerDefaultsToVector(t *testing.T) {
 	t.Cleanup(embedding.ResetQueryCache)
 
 	prefix := uniquePrefix("vectordefault")
-	groupID := CreateTestGroup(t, prefix)
 
 	queryVec := makeTestVec(2.0)
 	strongMatch := makeTestVec(2.001)
@@ -86,7 +85,6 @@ func TestSearchDefaultModeEnvOverrideToKeyword(t *testing.T) {
 	t.Cleanup(embedding.ResetQueryCache)
 
 	prefix := uniquePrefix("vectordefaultoff")
-	groupID := CreateTestGroup(t, prefix)
 
 	queryVec := makeTestVec(2.0)
 	strongMatch := makeTestVec(2.001)

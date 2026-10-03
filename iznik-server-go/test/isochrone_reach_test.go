@@ -35,13 +35,12 @@ func TestNearbyReachFeed(t *testing.T) {
 
 	prefix := uniquePrefix("nearbyreach")
 	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
-	group := CreateTestGroup(t, prefix)
-	near := CreateTestMessage(t, posterID, group, "OFFER: reach covers viewer (nearbyreach)", 51.5, -0.1)
-	far := CreateTestMessage(t, posterID, group, "OFFER: reach excludes viewer (nearbyreach)", 51.5, -0.1)
+	near := CreateTestMessage(t, posterID, "OFFER: reach covers viewer (nearbyreach)", 51.5, -0.1)
+	far := CreateTestMessage(t, posterID, "OFFER: reach excludes viewer (nearbyreach)", 51.5, -0.1)
 	// 'midfar': also within the viewer's reach (so it's INCLUDED, unlike 'far'), but its own
 	// post origin is much further from the viewer than 'near' — used below to assert the feed
 	// is now ORDERED by rippling relevance score (closeness-weighted), not left in DB order.
-	midfar := CreateTestMessage(t, posterID, group, "OFFER: reach covers viewer but origin is far (nearbyreach)", 51.9, -0.1)
+	midfar := CreateTestMessage(t, posterID, "OFFER: reach covers viewer but origin is far (nearbyreach)", 51.9, -0.1)
 	// The browse feed shows open posts only (messages_spatial.successful = 0); the helper
 	// inserts them as successful = 1, so mark them open like the other browse-feed tests do.
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?, ?)", near, far, midfar)
@@ -150,9 +149,8 @@ func TestNearbyCountDistanceLimit(t *testing.T) {
 
 	prefix := uniquePrefix("nearbycountdist")
 	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
-	group := CreateTestGroup(t, prefix)
-	near := CreateTestMessage(t, posterID, group, "OFFER: near for count distance limit (nearbycountdist)", 51.5, -0.1)
-	far := CreateTestMessage(t, posterID, group, "OFFER: far but in reach for count distance limit (nearbycountdist)", 51.9, -0.1)
+	near := CreateTestMessage(t, posterID, "OFFER: near for count distance limit (nearbycountdist)", 51.5, -0.1)
+	far := CreateTestMessage(t, posterID, "OFFER: far but in reach for count distance limit (nearbycountdist)", 51.9, -0.1)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", near, far)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", near, far)
 
@@ -231,9 +229,8 @@ func TestNearbyFeedHonoursDistanceLimit(t *testing.T) {
 
 	prefix := uniquePrefix("nearbyfeeddist")
 	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
-	group := CreateTestGroup(t, prefix)
-	near := CreateTestMessage(t, posterID, group, "OFFER: near for feed distance limit (nearbyfeeddist)", 51.5, -0.1)
-	far := CreateTestMessage(t, posterID, group, "OFFER: far but in reach for feed distance limit (nearbyfeeddist)", 51.9, -0.1)
+	near := CreateTestMessage(t, posterID, "OFFER: near for feed distance limit (nearbyfeeddist)", 51.5, -0.1)
+	far := CreateTestMessage(t, posterID, "OFFER: far but in reach for feed distance limit (nearbyfeeddist)", 51.9, -0.1)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", near, far)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", near, far)
 
@@ -299,8 +296,7 @@ func TestNearbyFeedPostedIsOriginalArrival(t *testing.T) {
 
 	prefix := uniquePrefix("nearbyposted")
 	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
-	group := CreateTestGroup(t, prefix)
-	msg := CreateTestMessage(t, posterID, group, "OFFER: originally posted long ago, rippled recently (nearbyposted)", 51.5, -0.1)
+	msg := CreateTestMessage(t, posterID, "OFFER: originally posted long ago, rippled recently (nearbyposted)", 51.5, -0.1)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", msg)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msg)
 
@@ -355,9 +351,8 @@ func TestNearbyReachFeedExcludesHeld(t *testing.T) {
 
 	prefix := uniquePrefix("nearbyheld")
 	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
-	group := CreateTestGroup(t, prefix)
-	live := CreateTestMessage(t, posterID, group, "OFFER: live reach (nearbyheld)", 51.5, -0.1)
-	held := CreateTestMessage(t, posterID, group, "OFFER: held reach (nearbyheld)", 51.5, -0.1)
+	live := CreateTestMessage(t, posterID, "OFFER: live reach (nearbyheld)", 51.5, -0.1)
+	held := CreateTestMessage(t, posterID, "OFFER: held reach (nearbyheld)", 51.5, -0.1)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", live, held)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", live, held)
 
@@ -411,9 +406,8 @@ func TestNearbyFeedHonoursAuthorDistanceLimit(t *testing.T) {
 	// The poster caps how far away their posts are shown at 10 miles.
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.browseMaxDistance', 10) WHERE id = ?", posterID)
 
-	group := CreateTestGroup(t, prefix)
-	near := CreateTestMessage(t, posterID, group, "OFFER: near author-cap (nearbyauthordist)", 51.5, -0.1)
-	far := CreateTestMessage(t, posterID, group, "OFFER: far author-cap (nearbyauthordist)", 51.9, -0.1)
+	near := CreateTestMessage(t, posterID, "OFFER: near author-cap (nearbyauthordist)", 51.5, -0.1)
+	far := CreateTestMessage(t, posterID, "OFFER: far author-cap (nearbyauthordist)", 51.9, -0.1)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", near, far)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", near, far)
 
@@ -492,9 +486,8 @@ func TestNearbyCountExcludesHeld(t *testing.T) {
 
 	prefix := uniquePrefix("nearbycountheld")
 	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
-	group := CreateTestGroup(t, prefix)
-	live := CreateTestMessage(t, posterID, group, "OFFER: live reach for count (nearbycountheld)", 51.5, -0.1)
-	held := CreateTestMessage(t, posterID, group, "OFFER: held reach for count (nearbycountheld)", 51.5, -0.1)
+	live := CreateTestMessage(t, posterID, "OFFER: live reach for count (nearbycountheld)", 51.5, -0.1)
+	held := CreateTestMessage(t, posterID, "OFFER: held reach for count (nearbycountheld)", 51.5, -0.1)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", live, held)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", live, held)
 
@@ -556,15 +549,14 @@ func TestNearbyCountSpatialReach(t *testing.T) {
 
 	prefix := uniquePrefix("nearbyspatial")
 	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
-	group := CreateTestGroup(t, prefix)
 	// covered: reach covers the viewer; the stub reports it as definite `in`.
-	covered := CreateTestMessage(t, posterID, group, "OFFER: spatial in (nearbyspatial)", 51.5, -0.1)
+	covered := CreateTestMessage(t, posterID, "OFFER: spatial in (nearbyspatial)", 51.5, -0.1)
 	// boundary: reach covers the viewer; the stub reports it as `partial`, so only the
 	// exact SQL test brings it in.
-	boundary := CreateTestMessage(t, posterID, group, "OFFER: spatial partial covered (nearbyspatial)", 51.5, -0.1)
+	boundary := CreateTestMessage(t, posterID, "OFFER: spatial partial covered (nearbyspatial)", 51.5, -0.1)
 	// outside: reach does NOT cover the viewer; the stub still reports it `partial`
 	// (a fat raster band), and the exact test must exclude it.
-	outside := CreateTestMessage(t, posterID, group, "OFFER: spatial partial outside (nearbyspatial)", 51.5, -0.1)
+	outside := CreateTestMessage(t, posterID, "OFFER: spatial partial outside (nearbyspatial)", 51.5, -0.1)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?, ?)", covered, boundary, outside)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?, ?)", covered, boundary, outside)
 
@@ -668,8 +660,7 @@ func TestNearbyCountRefusesWhenReachEvalUnanswered(t *testing.T) {
 
 	prefix := uniquePrefix("nearbyevalunavail")
 	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
-	group := CreateTestGroup(t, prefix)
-	covered := CreateTestMessage(t, posterID, group, "OFFER: eval unavailable (nearbyevalunavail)", 51.5, -0.1)
+	covered := CreateTestMessage(t, posterID, "OFFER: eval unavailable (nearbyevalunavail)", 51.5, -0.1)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", covered)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", covered)
 

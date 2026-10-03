@@ -15,16 +15,12 @@ const mockEvent = {
       end: 'Mon 15 Jan 12:00',
     },
   },
-  groups: [1, 2],
   image: {
     id: 1,
     path: '/test/image.jpg',
     paththumb: '/test/thumb.jpg',
   },
 }
-
-const mockGroup1 = { id: 1, namedisplay: 'Test Group 1' }
-const mockGroup2 = { id: 2, namedisplay: 'Test Group 2' }
 
 const mockCommunityEventStore = {
   fetch: vi.fn().mockResolvedValue(mockEvent),
@@ -35,21 +31,12 @@ const mockUserStore = {
   fetch: vi.fn().mockResolvedValue({ id: 456, displayname: 'Test User' }),
 }
 
-const mockGroupStore = {
-  fetch: vi.fn().mockResolvedValue(mockGroup1),
-  get: vi.fn((id) => (id === 1 ? mockGroup1 : id === 2 ? mockGroup2 : null)),
-}
-
 vi.mock('~/stores/communityevent', () => ({
   useCommunityEventStore: () => mockCommunityEventStore,
 }))
 
 vi.mock('~/stores/user', () => ({
   useUserStore: () => mockUserStore,
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
 }))
 
 vi.mock('~/composables/useTwem', () => ({
@@ -199,19 +186,6 @@ describe('CommunityEvent', () => {
     })
   })
 
-  describe('groups display', () => {
-    it('shows groups in detail mode', async () => {
-      const wrapper = await createWrapper({ summary: false })
-      expect(wrapper.text()).toContain('Test Group 1')
-      expect(wrapper.text()).toContain('Test Group 2')
-    })
-
-    it('shows users icon for groups', async () => {
-      const wrapper = await createWrapper({ summary: false })
-      expect(wrapper.find('[data-icon="users"]').exists()).toBe(true)
-    })
-  })
-
   describe('image display', () => {
     it('renders b-img when event has standard image', async () => {
       const wrapper = await createWrapper()
@@ -280,23 +254,6 @@ describe('CommunityEvent', () => {
     it('fetches user after event fetch', async () => {
       await createWrapper()
       expect(mockUserStore.fetch).toHaveBeenCalledWith(456)
-    })
-
-    it('fetches groups from event', async () => {
-      await createWrapper()
-      expect(mockGroupStore.fetch).toHaveBeenCalled()
-    })
-  })
-
-  describe('filter by group', () => {
-    it('shows event when filterGroup matches', async () => {
-      const wrapper = await createWrapper({ filterGroup: 1 })
-      expect(wrapper.find('.event-card').exists()).toBe(true)
-    })
-
-    it('hides event when filterGroup does not match', async () => {
-      const wrapper = await createWrapper({ filterGroup: 999 })
-      expect(wrapper.find('.event-card').exists()).toBe(false)
     })
   })
 

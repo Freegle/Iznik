@@ -383,10 +383,12 @@ func Reach(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid message id")
 	}
 
-	// Confirm the post exists (and is on a group at all).
-	var groupids []uint64
-	db.Table("messages_groups").Select("groupid").Where("msgid = ? AND deleted = 0", id).Scan(&groupids)
-	if len(groupids) == 0 {
+	// Confirm the post exists and is live. keep-raw: messages_spatial only holds
+	// approved, unpruned posts, so this is the same existence check the old
+	// messages_groups probe made.
+	var exists uint64
+	db.Table("messages_spatial").Select("msgid").Where("msgid = ?", id).Scan(&exists)
+	if exists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
 

@@ -32,9 +32,7 @@ class CommunityNewsChitChatService
      */
     public const POST_TYPE = 'Alert';
 
-    public function __construct(private CommunityNewsImageService $images)
-    {
-    }
+    public function __construct(private CommunityNewsImageService $images) {}
 
     /**
      * Resolve the "Freegle" system user id to post as (idle noreply account).
@@ -59,8 +57,9 @@ class CommunityNewsChitChatService
         $freshDays = (int) config('freegle.communitynews.item_freshness_days', 10);
 
         $systemUserId = $this->systemUserId();
-        if (!$systemUserId) {
-            Log::warning('CommunityNews ChitChat: no system user for ' . config('freegle.communitynews.system_user_email'));
+        if (! $systemUserId) {
+            Log::warning('CommunityNews ChitChat: no system user for '.config('freegle.communitynews.system_user_email'));
+
             return ['posts' => 0, 'areas' => 0];
         }
 
@@ -73,7 +72,7 @@ class CommunityNewsChitChatService
         $areasPosted = 0;
 
         foreach ($query->get() as $area) {
-            if (!$force && $area->lastposted && $area->lastposted->gt(now()->subDays($minDays))) {
+            if (! $force && $area->lastposted && $area->lastposted->gt(now()->subDays($minDays))) {
                 continue; // posted too recently
             }
 
@@ -108,7 +107,7 @@ class CommunityNewsChitChatService
                 if ($newsfeedId === null) {
                     continue;
                 }
-                if (!$dryRun) {
+                if (! $dryRun) {
                     $item->update(['newsfeedid' => $newsfeedId, 'posted_at' => now()]);
                 }
                 $posts++;
@@ -116,7 +115,7 @@ class CommunityNewsChitChatService
             }
 
             if ($anyPosted) {
-                if (!$dryRun) {
+                if (! $dryRun) {
                     $area->update(['lastposted' => now()]);
                 }
                 $areasPosted++;
@@ -143,6 +142,7 @@ class CommunityNewsChitChatService
             ->first(['type', 'message', 'replyto']);
         if ($last && $last->type === self::POST_TYPE && $last->replyto === null && $last->message === $message) {
             Log::info('CommunityNews ChitChat: duplicate skipped', ['area' => $area->id, 'item' => $item->id]);
+
             return null;
         }
 
@@ -154,13 +154,13 @@ class CommunityNewsChitChatService
         $lng = (float) $area->lng;
         $lat = (float) $area->lat;
 
-        $newsfeed = new Newsfeed();
+        $newsfeed = new Newsfeed;
         $newsfeed->type = self::POST_TYPE;
         $newsfeed->userid = $systemUserId;
         $newsfeed->message = $message;
         $newsfeed->html = $this->composeHtml($item);
         $newsfeed->location = mb_substr($area->name, 0, 80);
-        // Geometry via a raw expression, exactly like Group::boot() sets polyindex.
+        // Geometry set via a raw expression, since Eloquent has no spatial type.
         $newsfeed->position = DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)");
         $newsfeed->save();
 
@@ -186,12 +186,12 @@ class CommunityNewsChitChatService
         // Title as an opening line; add a full stop only if it doesn't already
         // end in sentence punctuation (so "What's on?" doesn't become "What's on?.").
         $title = trim($item->title);
-        if ($title !== '' && !preg_match('/[.!?…]$/u', $title)) {
+        if ($title !== '' && ! preg_match('/[.!?…]$/u', $title)) {
             $title .= '.';
         }
 
         $parts = [$title, trim($item->snippet)];
-        if (!empty($item->url)) {
+        if (! empty($item->url)) {
             $parts[] = $item->url;
         }
 
@@ -210,21 +210,21 @@ class CommunityNewsChitChatService
     public function composeHtml(CommunityNewsItem $item): string
     {
         $title = trim($item->title);
-        if ($title !== '' && !preg_match('/[.!?…]$/u', $title)) {
+        if ($title !== '' && ! preg_match('/[.!?…]$/u', $title)) {
             $title .= '.';
         }
         $title = e($title);
 
         $url = trim((string) $item->url);
         if ($url !== '' && preg_match('#^https?://#i', $url)) {
-            $title = '<a href="' . e($url) . '" target="_blank" rel="noopener">' . $title . '</a>';
+            $title = '<a href="'.e($url).'" target="_blank" rel="noopener">'.$title.'</a>';
         }
 
-        $parts = ['<p><strong>' . $title . '</strong></p>'];
+        $parts = ['<p><strong>'.$title.'</strong></p>'];
 
         $snippet = trim($item->snippet);
         if ($snippet !== '') {
-            $parts[] = '<p>' . e($snippet) . '</p>';
+            $parts[] = '<p>'.e($snippet).'</p>';
         }
 
         return implode('', $parts);

@@ -118,25 +118,23 @@ func TestRipplingAnalytics_HeldRepliesSplitFirstVsAdditional(t *testing.T) {
 	adminID := CreateTestUser(t, prefix+"_admin", "Support")
 	_, token := CreateTestSession(t, adminID)
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierA := CreateTestUser(t, prefix+"_replierA", "User")
 	replierB := CreateTestUser(t, prefix+"_replierB", "User")
 	otherID := CreateTestUser(t, prefix+"_other", "User")
 	for _, u := range []uint64{posterID, replierA, replierB, otherID} {
-		CreateTestMembership(t, u, groupID, "Member")
 	}
 
 	// Post 1: its held reply is the only reply on the post — a FIRST reply held.
 	lonely := seedHeldSplitPost(t, posterID, groupID, "OFFER: lonely held reply")
-	roomA := CreateTestChatRoom(t, replierA, &posterID, nil, "User2User")
+	roomA := CreateTestChatRoom(t, replierA, &posterID, "User2User")
 	lonelyMsg := holdReply(t, roomA, lonely, replierA)
 
 	// Post 2: someone else already replied an hour earlier — an ADDITIONAL reply held.
 	crowded := seedHeldSplitPost(t, posterID, groupID, "OFFER: crowded held reply")
-	roomOther := CreateTestChatRoom(t, otherID, &posterID, nil, "User2User")
+	roomOther := CreateTestChatRoom(t, otherID, &posterID, "User2User")
 	replyInRoom(t, roomOther, crowded, otherID, heldMinutesAgo+60)
-	roomB := CreateTestChatRoom(t, replierB, &posterID, nil, "User2User")
+	roomB := CreateTestChatRoom(t, replierB, &posterID, "User2User")
 	crowdedMsg := holdReply(t, roomB, crowded, replierB)
 
 	defer func() {
@@ -184,15 +182,12 @@ func TestRipplingAnalytics_OwnEarlierReplyIsNotCompany(t *testing.T) {
 	adminID := CreateTestUser(t, prefix+"_admin", "Support")
 	_, token := CreateTestSession(t, adminID)
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
 
 	msgID := seedHeldSplitPost(t, posterID, groupID, "OFFER: same replier twice")
 	// Both replies are from the SAME member, so they share one chat room.
-	room := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	room := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 	replyInRoom(t, room, msgID, replierID, heldMinutesAgo+60)
 	heldMsg := holdReply(t, room, msgID, replierID)
 

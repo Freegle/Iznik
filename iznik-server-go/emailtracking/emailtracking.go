@@ -27,7 +27,6 @@ type EmailTracking struct {
 	TrackingID         string     `json:"tracking_id" gorm:"column:tracking_id"`
 	EmailType          string     `json:"email_type" gorm:"column:email_type"`
 	UserID             *uint64    `json:"userid" gorm:"column:userid"`
-	GroupID            *uint64    `json:"groupid" gorm:"column:groupid"`
 	RecipientEmail     string     `json:"recipient_email" gorm:"column:recipient_email"`
 	Subject            *string    `json:"subject" gorm:"column:subject"`
 	Metadata           *string    `json:"metadata" gorm:"column:metadata"`
@@ -1219,7 +1218,7 @@ func normalizeURL(url string) string {
 	}
 
 	// Normalize numeric IDs in the path (e.g., /message/12345 -> /message/{id})
-	// Common patterns: /message/123, /user/123, /chat/123, /group/123
+	// Common patterns: /message/123, /user/123, /chat/123.
 	pathParts := strings.Split(path, "/")
 	for i, part := range pathParts {
 		// Check if this part is purely numeric
@@ -1997,7 +1996,7 @@ func ReengageEffectiveness(c *fiber.Ctx) error {
 	// Sends broken down by how the sign-off community was resolved. Rows
 	// predating this instrumentation have volunteer_source = NULL and are
 	// excluded here (still counted in the overall funnel). Opens/clicks are
-	// joined so a genuine home-group sign-off can be compared against nearest
+	// joined so a genuine home-community sign-off can be compared against nearest
 	// or no sign-off.
 	bySource := make([]ReengageSourceStat, 0)
 	db.Table("reengage r").

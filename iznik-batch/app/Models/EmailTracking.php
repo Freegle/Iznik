@@ -27,7 +27,6 @@ class EmailTracking extends Model
         'tracking_id',
         'email_type',
         'userid',
-        'groupid',
         'recipient_email',
         'subject',
         'metadata',
@@ -59,7 +58,12 @@ class EmailTracking extends Model
     }
 
     /**
-     * Create a new tracking record for an email
+     * Create a new tracking record for an email.
+     *
+     * @param  int|null  $groupId  Unused: the site is national now, so a tracked
+     *                             email has no group to record. Kept in this position because
+     *                             TrackableEmail::initTracking() still calls this positionally with a
+     *                             group id argument (always null) ahead of $subject.
      */
     public static function createForEmail(
         string $emailType,
@@ -72,20 +76,14 @@ class EmailTracking extends Model
     ): self {
         // Validate that user exists to avoid foreign key constraint failures.
         // If user doesn't exist, set userId to null.
-        if ($userId !== null && !User::where('id', $userId)->exists()) {
+        if ($userId !== null && ! User::where('id', $userId)->exists()) {
             $userId = null;
-        }
-
-        // Similarly validate group exists.
-        if ($groupId !== null && !Group::where('id', $groupId)->exists()) {
-            $groupId = null;
         }
 
         return self::create([
             'tracking_id' => self::generateTrackingId(),
             'email_type' => $emailType,
             'userid' => $userId,
-            'groupid' => $groupId,
             'recipient_email' => $recipientEmail,
             'subject' => $subject,
             'metadata' => $metadata,
@@ -100,14 +98,6 @@ class EmailTracking extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class, 'userid');
-    }
-
-    /**
-     * Get the group associated with this email
-     */
-    public function group(): BelongsTo
-    {
-        return $this->belongsTo(Group::class, 'groupid');
     }
 
     /**
@@ -157,6 +147,7 @@ class EmailTracking extends Model
     {
         // Email tracking routes are at /e/d/... (not /apiv2/e/d/...)
         $baseUrl = config('freegle.api.base_url', 'https://api.ilovefreegle.org');
+
         return "{$baseUrl}/e/d/p/{$this->tracking_id}";
     }
 
@@ -182,14 +173,14 @@ class EmailTracking extends Model
         // purpose prefix so signatures aren't interchangeable between uses.
         $secret = (string) config('freegle.amp.secret', '');
         if ($secret !== '') {
-            $url .= '&sig=' . hash_hmac('sha256', 'redirect:' . $destinationUrl, $secret);
+            $url .= '&sig='.hash_hmac('sha256', 'redirect:'.$destinationUrl, $secret);
         }
 
         if ($position) {
-            $url .= "&p=" . urlencode($position);
+            $url .= '&p='.urlencode($position);
         }
         if ($action) {
-            $url .= "&a=" . urlencode($action);
+            $url .= '&a='.urlencode($action);
         }
 
         return $url;
@@ -203,7 +194,7 @@ class EmailTracking extends Model
         // Email tracking routes are at /e/d/... (not /apiv2/e/d/...)
         $baseUrl = config('freegle.api.base_url', 'https://api.ilovefreegle.org');
         $encodedUrl = base64_encode($originalImageUrl);
-        $url = "{$baseUrl}/e/d/i/{$this->tracking_id}?url={$encodedUrl}&p=" . urlencode($position);
+        $url = "{$baseUrl}/e/d/i/{$this->tracking_id}?url={$encodedUrl}&p=".urlencode($position);
 
         if ($scrollPercent !== null) {
             $url .= "&s={$scrollPercent}";
@@ -226,7 +217,7 @@ class EmailTracking extends Model
         }
         $bytes = '';
         while ($id > 0) {
-            $bytes = chr($id & 0xFF) . $bytes;
+            $bytes = chr($id & 0xFF).$bytes;
             $id >>= 8;
         }
 

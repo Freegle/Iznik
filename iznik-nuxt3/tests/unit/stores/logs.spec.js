@@ -14,7 +14,6 @@ vi.mock('~/api', () => ({
 // Mock dependent stores used by _enrichLogs.
 const mockUserFetchMultiple = vi.fn().mockResolvedValue()
 const mockMessageFetchMultiple = vi.fn().mockResolvedValue()
-const mockModGroupFetchIfNeedBeMT = vi.fn().mockResolvedValue()
 const mockStdmsgFetch = vi.fn().mockResolvedValue()
 const mockModConfigFetchById = vi.fn().mockResolvedValue()
 
@@ -29,13 +28,6 @@ vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({
     list: {},
     fetchMultiple: mockMessageFetchMultiple,
-  }),
-}))
-
-vi.mock('~/stores/modgroup', () => ({
-  useModGroupStore: () => ({
-    list: {},
-    fetchIfNeedBeMT: mockModGroupFetchIfNeedBeMT,
   }),
 }))
 
@@ -113,10 +105,10 @@ describe('logs store', () => {
     store.context = { id: 'prev-ctx' }
     mockLogsFetch.mockResolvedValue({ logs: [], context: null })
 
-    await store.fetch({ groupid: 1 })
+    await store.fetch({ filter: 'approved' })
 
     expect(mockLogsFetch).toHaveBeenCalledWith(
-      expect.objectContaining({ context: 'prev-ctx', groupid: 1 })
+      expect.objectContaining({ context: 'prev-ctx', filter: 'approved' })
     )
   })
 
@@ -200,8 +192,8 @@ describe('logs store', () => {
 
   it('setParams stores params', () => {
     const store = useLogsStore()
-    store.setParams({ groupid: 5 })
-    expect(store.params).toEqual({ groupid: 5 })
+    store.setParams({ filter: 'approved' })
+    expect(store.params).toEqual({ filter: 'approved' })
   })
 
   it('byId getter finds log by id', () => {
@@ -236,16 +228,6 @@ describe('logs store', () => {
     await store._enrichLogs(logs)
 
     expect(mockMessageFetchMultiple).toHaveBeenCalledWith([100])
-  })
-
-  it('_enrichLogs fetches groups for groupid', async () => {
-    const store = useLogsStore()
-    store.init({})
-    const logs = [{ groupid: 50 }]
-
-    await store._enrichLogs(logs)
-
-    expect(mockModGroupFetchIfNeedBeMT).toHaveBeenCalledWith(50)
   })
 
   it('_enrichLogs skips empty id sets', async () => {
@@ -308,9 +290,9 @@ describe('logs store', () => {
     expect(logsForUser20.map((l) => l.id)).toEqual([200, 201])
   })
 
-  it('community filter change must not allow stale in-flight fetch to persist — AssertFlip Step 2: stale result is discarded after clear()', async () => {
-    // Reproduces Discourse #9672: when the user changes the community filter,
-    // clear() is called but an in-flight fetch (started for the OLD groupid)
+  it('filter change must not allow stale in-flight fetch to persist — AssertFlip Step 2: stale result is discarded after clear()', async () => {
+    // Reproduces Discourse #9672: when the user changes the log filter,
+    // clear() is called but an in-flight fetch (started before the change)
     // still resolves and pushes its results into the freshly-cleared store.
     // This produces duplicates, missing entries, and wrong ordering.
     //
@@ -320,7 +302,7 @@ describe('logs store', () => {
     const store = useLogsStore()
     store.init({})
 
-    // Arrange: a fetch for groupid=5 is in-flight (hasn't resolved yet).
+    // Arrange: a fetch is in-flight (hasn't resolved yet).
     let resolveOldFetch
     mockLogsFetch.mockImplementationOnce(
       () =>
@@ -328,18 +310,14 @@ describe('logs store', () => {
           resolveOldFetch = resolve
         })
     )
-    const staleFetch = store.fetch({ groupid: 5, logtype: 'messages' })
+    const staleFetch = store.fetch({ filter: 'approved', logtype: 'messages' })
 
-    // User switches to a different community → clear() is called.
+    // User switches filter → clear() is called.
     store.clear()
 
-    // Old fetch resolves with group-5 logs AFTER the clear.
+    // Old fetch resolves with stale logs AFTER the clear.
     resolveOldFetch({
-      logs: [
-        { id: 10, groupid: 5 },
-        { id: 11, groupid: 5 },
-        { id: 12, groupid: 5 },
-      ],
+      logs: [{ id: 10 }, { id: 11 }, { id: 12 }],
       context: { id: 10 },
     })
     await staleFetch

@@ -31,14 +31,6 @@
                 tag="post"
                 @click="clusterClick"
               />
-              <ClusterMarker
-                v-if="!moved"
-                :markers="secondaryMessagesForMap"
-                :map="mapObject"
-                tag="post"
-                css-class="fadedMarker"
-                @click="clusterClick"
-              />
               <l-marker
                 v-if="me?.settings?.mylocation && (me.lat || me.lng)"
                 :lat-lng="[me.lat, me.lng]"
@@ -53,17 +45,8 @@
                 </l-tooltip>
               </l-marker>
             </div>
-            <div v-else-if="showGroups">
-              <GroupMarker
-                v-for="g in groupsInBounds"
-                :key="'marker-' + g.id + '-' + zoom"
-                :group="g"
-                :size="largeGroupMarkers ? 'rich' : 'poor'"
-              />
-            </div>
-            <!-- Coverage hull of the posts currently shown. View-agnostic: it adapts to the
-                 distance slider on BOTH the nearby and "all my communities" views, so it is no
-                 longer gated on showIsochrones (which is nearby-only). -->
+            <!-- Coverage hull of the posts currently shown. It adapts to the distance
+                 slider and is not gated on showIsochrones (which is nearby-only). -->
             <l-geo-json
               v-if="coverageGeoJSON"
               :geojson="coverageGeoJSON"
@@ -102,10 +85,8 @@ import cloneDeep from 'lodash.clonedeep'
 import { storeToRefs } from 'pinia'
 import Wkt from 'wicket'
 import { LGeoJson, LTooltip } from '@vue-leaflet/vue-leaflet'
-import GroupMarker from './GroupMarker'
 import BrowseHomeIcon from './BrowseHomeIcon'
 import ClusterMarker from './ClusterMarker'
-import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 import {
   calculateMapHeight,
@@ -119,18 +100,15 @@ import { useAuthorityStore } from '~/stores/authority'
 import { useAuthStore } from '~/stores/auth'
 import 'leaflet-control-geocoder/dist/Control.Geocoder.css'
 import '~/assets/css/gesture-handling.css'
-import { useMe } from '~/composables/useMe'
 import {
   smoothGeoJSON,
   buildCoverageGeoJSON,
 } from '~/composables/useReachPolygon'
 import { useReachOverlay } from '~/composables/useReachOverlay'
 import {
-  isWithinDistance,
   filterMessagesByDistance,
   browseSliderMinuteCheck,
 } from '~/composables/useDistance'
-import { distinctGroupIds } from '~/composables/useMessageDedup'
 import { BROWSE_DISTANCE_UNLIMITED, ISOCHRONE_COLOR } from '~/constants'
 
 const props = defineProps({
@@ -168,11 +146,6 @@ const props = defineProps({
     required: false,
     default: false,
   },
-  groupid: {
-    type: Number,
-    required: false,
-    default: null,
-  },
   type: {
     type: String,
     required: false,
@@ -187,11 +160,6 @@ const props = defineProps({
     type: Boolean,
     required: false,
     default: true,
-  },
-  region: {
-    type: String,
-    required: false,
-    default: null,
   },
   canHide: {
     type: Boolean,
@@ -218,10 +186,9 @@ const props = defineProps({
     default: BROWSE_DISTANCE_UNLIMITED,
   },
   // True when this map serves the Browse page. Searches then pass browse=1 so the
-  // server scopes the search universe to exactly the member's browse feed for their
-  // current filters (reach for Nearby, their groups otherwise) plus their distance
-  // slider and sort (Discourse 9933). Explore/place/region pages leave this false
-  // and keep viewport/group-scoped search without the member's personal filters.
+  // server scopes the search universe to exactly the member's reach feed plus their
+  // distance slider and sort (Discourse 9933). Other pages leave this false and keep
+  // plain viewport search without the member's personal filters.
   browseSearch: {
     type: Boolean,
     required: false,
@@ -229,25 +196,19 @@ const props = defineProps({
   },
 })
 
-const { myGroups, myGroupsBoundingBox, myGroupIds } = useMe()
-
 const emit = defineEmits([
   'update:ready',
-  'update:showGroups',
   'update:bounds',
   'update:zoom',
   'update:centre',
   'update:loading',
   'update:moved',
-  'groups',
   'messages',
   'idle',
   'minzoom',
-  'searched',
 ])
 
 const miscStore = useMiscStore()
-const groupStore = useGroupStore()
 const messageStore = useMessageStore()
 const nearbyStore = useNearbyStore()
 const authorityStore = useAuthorityStore()
@@ -256,13 +217,11 @@ const me = authStore.user
 
 // Data properties as refs
 const messageList = ref([])
-const secondaryMessageList = ref([])
 const moved = ref(false)
 const mapObject = ref(null)
 const manyToShow = ref(20)
 const shownMany = ref(false)
 const lastBounds = ref(null)
-const lastBoundsFetch = ref(null)
 
 // The last search we actually asked the server for, and what it gave back.
 //
@@ -322,83 +281,6 @@ const showMessages = computed(() => {
   )
 })
 
-const showGroups = computed(() => {
-  // Don't show until the map has been idle - there is an issue with markers not destroying properly which this
-  // provokes.
-  return mapIdle.value > 0 && !showMessages.value
-})
-
-const groups = computed(() => {
-  // Distinct groupids in first-appearance order (O(n) via a Set rather than the previous
-  // includes()-in-loop).
-  return distinctGroupIds(messageList.value)
-})
-
-const largeGroupMarkers = computed(() => {
-  // Can't get this to look sane.
-  return false
-})
-
-const allGroups = computed(() => {
-  return groupStore?.summaryList
-})
-
-const groupsInBounds = computed(() => {
-  const ret = []
-
-  try {
-    // Reference map idle so that we recalc.
-    const groups = mapIdle.value ? allGroups.value : []
-    const boundsObj = mapObject.value ? mapObject.value.getBounds() : null
-
-    if (!import.meta.client && boundsObj) {
-      // SSR - return all for SEO.
-      for (const ix in groups) {
-        const group = groups[ix]
-
-        if (
-          group.onmap &&
-          (!props.region ||
-            group.region.trim().toLowerCase() ===
-              props.region.trim().toLowerCase())
-        ) {
-          ret.push(group)
-        }
-      }
-    } else if (boundsObj) {
-      for (const ix in groups) {
-        const group = groups[ix]
-
-        if (group.lat || group.lng) {
-          try {
-            if (
-              group.onmap &&
-              group.publish &&
-              boundsObj.contains([group.lat, group.lng]) &&
-              (!props.region ||
-                props.region.toLowerCase() === group.region.toLowerCase())
-            ) {
-              ret.push(group)
-            }
-          } catch (e) {
-            console.log('Problem group', e)
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.log('Groups in bounds exception', e)
-  }
-
-  const sorted = ret.sort((a, b) => {
-    return a.namedisplay
-      .toLowerCase()
-      .localeCompare(b.namedisplay.toLowerCase())
-  })
-
-  return sorted
-})
-
 // Posts narrowed by the member's distance slider (selectedMaxDistance).
 // BROWSE_DISTANCE_UNLIMITED = show everything the reach feed returned. This is
 // what the map markers and the coverage hull are drawn from, so the map tracks
@@ -433,10 +315,9 @@ const { reachGeoJSON: myPostsReachRaw } = useReachOverlay('myPosts')
 // pulled in, giving a visual sense of coverage. See buildCoverageGeoJSON for why
 // this is an outward-rounded hull rather than Chaikin smoothing.
 const hullGeoJSON = computed(() => {
-  // Drawn for BOTH the nearby and "all my communities" views (not gated on showIsochrones,
-  // which is nearby-only). It is just a hull of the posts currently shown, so it adapts to the
-  // distance slider the same way on either view. Falls back to null (no polygon) when there
-  // aren't enough points, which buildCoverageGeoJSON handles.
+  // Not gated on showIsochrones (which is nearby-only): it is just a hull of the posts
+  // currently shown, so it adapts to the distance slider the same way. Falls back to null
+  // (no polygon) when there aren't enough points, which buildCoverageGeoJSON handles.
   const points = messagesForMap.value
     .filter((m) => m.lat != null || m.lng != null)
     .map((m) => [m.lng, m.lat])
@@ -527,56 +408,16 @@ const isochroneOptions = computed(() => {
   }
 })
 
-const messageIds = computed(() => {
-  return new Set(distanceFilteredMessages.value.map((m) => m.id))
-})
-
-const secondaryMessagesForMap = computed(() => {
-  const minuteCheck = browseSliderMinuteCheck()
-  const withinDistance = (m) => {
-    // Unlimited first: with no distance limit chosen, nothing may be
-    // filtered, whatever the road-minutes budget would say (the primary
-    // list's filterMessagesByDistance short-circuits the same way).
-    if (props.selectedMaxDistance === BROWSE_DISTANCE_UNLIMITED) return true
-    const road = minuteCheck ? minuteCheck(m) : null
-    if (road !== null) return road
-    return isWithinDistance(m.distance, props.selectedMaxDistance)
-  }
-
-  if (secondaryMessageList.value?.length > 200) {
-    // So many posts that the precise numbers no longer matter that much.  So return all the ones we have fetched
-    // rather than spend CPU on filtering (which is a significant issue on slow browsers).
-    return secondaryMessageList.value.filter(withinDistance)
-  } else {
-    // Return anything relevant we have fetched which is not already in the primary one.
-    return secondaryMessageList.value.filter((m) => {
-      return (
-        withinDistance(m) &&
-        !messageIds.value.has(m.id) &&
-        (!props.groupid || m.groupid === props.groupid) &&
-        (props.type === 'All' || m.type === props.type)
-      )
-    })
-  }
-})
 // Watchers
 watch(bounds, (newVal, oldVal) => {
-  if (!showGroups.value) {
+  if (showMessages.value) {
     getMessages()
   }
 })
 
-watch(showGroups, (newVal) => {
-  if (!newVal && !props.authorityid) {
+watch(showMessages, (newVal) => {
+  if (newVal && !props.authorityid) {
     getMessages()
-  }
-})
-
-watch(zoom, (newVal) => {
-  if (newVal < props.postZoom && !props.forceMessages) {
-    emit('update:showGroups', true)
-  } else {
-    emit('update:showGroups', false)
   }
 })
 
@@ -641,14 +482,6 @@ watch(
 )
 
 watch(
-  groups,
-  (newval) => {
-    emit('groups', newval)
-  },
-  { immediate: true }
-)
-
-watch(
   () => props.type,
   () => {
     lastBounds.value = null
@@ -668,61 +501,6 @@ watch(
     getMessages()
   }
 )
-
-watch(
-  () => props.groupid,
-  (groupid) => {
-    lastBounds.value = null
-    lastSearchKey.value = null
-
-    if (groupid) {
-      // Use the bounding box for the group.
-      const group = myGroup(groupid)
-      console.log('Got group', group)
-
-      if (group.bbox) {
-        const wkt = new Wkt.Wkt()
-        try {
-          wkt.read(group.bbox)
-          const obj = wkt.toObject()
-          const thisbounds = obj.getBounds()
-          const sw = thisbounds.getSouthWest()
-          const ne = thisbounds.getNorthEast()
-
-          const latLngBounds = new window.L.LatLngBounds([
-            [sw.lat, sw.lng],
-            [ne.lat, ne.lng],
-          ]).pad(0.1)
-
-          // For reasons I don't understand, leaflet throws errors if we don't make these local here.
-          const swlat = latLngBounds.getSouthWest().lat
-          const swlng = latLngBounds.getSouthWest().lng
-          const nelat = latLngBounds.getNorthEast().lat
-          const nelng = latLngBounds.getNorthEast().lng
-
-          mapObject.value.flyToBounds([
-            [swlat, swlng],
-            [nelat, nelng],
-          ])
-
-          moved.value = true
-        } catch (e) {
-          console.log('WKT error', location, e)
-        }
-      }
-    }
-  }
-)
-
-watch(groupsInBounds, (newval) => {
-  emit(
-    'groups',
-    groupsInBounds.value.map((g) => g.id)
-  )
-})
-function myGroup(groupId) {
-  return groupStore.list?.[groupId] || {}
-}
 
 // Lifecycle hooks
 onMounted(async () => {
@@ -847,10 +625,8 @@ async function ready() {
               )
               // Move the map to the location we've found.
               map.value.leafletObject.flyToBounds(newBounds)
-              emit('searched')
             } else if (e.geocode?.center) {
               map.value.leafletObject.flyTo(e.geocode.center)
-              emit('searched')
             }
           }
         })
@@ -927,15 +703,15 @@ async function searchOnce(params) {
 // DS0 - the breadcrumbs show the paired "GetMessages - moved" logs right before it).
 // Only an in-flight ask is shared: a later ask for the same box, such as the feed
 // reloading when the unseen count rises, still goes to the server.
-function fetchInBoundsOnce(swlat, swlng, nelat, nelng, groupid) {
-  const key = JSON.stringify([swlat, swlng, nelat, nelng, groupid ?? null])
+function fetchInBoundsOnce(swlat, swlng, nelat, nelng) {
+  const key = JSON.stringify([swlat, swlng, nelat, nelng])
 
   if (inflightBoundsFetch.key === key && inflightBoundsFetch.promise) {
     return inflightBoundsFetch.promise
   }
 
   const promise = messageStore
-    .fetchInBounds(swlat, swlng, nelat, nelng, groupid)
+    .fetchInBounds(swlat, swlng, nelat, nelng)
     .finally(() => {
       if (inflightBoundsFetch.promise === promise) {
         inflightBoundsFetch.key = null
@@ -951,7 +727,6 @@ function fetchInBoundsOnce(swlat, swlng, nelat, nelng, groupid) {
 
 async function getMessages() {
   let messages = []
-  secondaryMessageList.value = []
 
   emit('update:loading', true)
 
@@ -1010,34 +785,6 @@ async function getMessages() {
       console.log('GetMessages - moved, fetch within map bounds')
       ret = await fetchInBoundsOnce(swlat, swlng, nelat, nelng)
     }
-  } else if (props.groupid) {
-    // We have been asked to show a specific group.
-    if (props.search) {
-      // So search within that group. On the Browse page, browse=1 additionally applies
-      // the member's distance slider and sort so results match their filtered feed.
-      console.log('GetMessages - search on specific group')
-      ret = await searchOnce({
-        messagetype: props.type,
-        search: props.search,
-        groupids: [props.groupid],
-        ...(props.browseSearch ? { browse: 1 } : {}),
-      })
-    } else {
-      // Just fetch that the messages on that group.
-      console.log('GetMessages - fetch on specific group')
-      ret = await messageStore.fetchMyGroups(props.groupid)
-
-      if (!mapHidden.value) {
-        // Fetch all the messages in the map bounds too, so that we can show others as secondary.
-        // No need to bother if the map isn't showing - they don't appear in the post list.
-        secondaryMessageList.value = await fetchInBoundsOnce(
-          swlat,
-          swlng,
-          nelat,
-          nelng
-        )
-      }
-    }
   } else if (props.authorityid) {
     // We are trying to show posts within a specific authority
     console.log('Get messages within authority')
@@ -1066,48 +813,10 @@ async function getMessages() {
       }
       // The non-search nearby case is handled by the early reach-feed return above, so
       // there's nothing to do here for it - we never fetch by map bounds for nearby.
-    } else if (myGroups.value?.length) {
-      // We don't know where the member is, so use the bounding boxes of the groups we are in.
-      const groupbounds = myGroupsBoundingBox.value
-
-      if (props.search) {
-        console.log('GetMessages - search within group bounds')
-        ret = await searchOnce({
-          messagetype: props.type,
-          search: props.search,
-          swlat: groupbounds[0][0],
-          swlng: groupbounds[0][1],
-          nelat: groupbounds[1][0],
-          nelng: groupbounds[1][1],
-        })
-      } else {
-        // Just fetch the messages within those bounds.    This will show a bit more than the strict
-        // "all my groups" option, but not as much as we might show using the map bounds.
-        console.log(
-          'GetMessages - fetch in group bounds',
-          JSON.stringify(groupbounds)
-        )
-
-        if (lastBoundsFetch.value !== JSON.stringify(groupbounds)) {
-          lastBoundsFetch.value = JSON.stringify(groupbounds)
-
-          ret = await messageStore.fetchInBounds(
-            groupbounds[0][0],
-            groupbounds[0][1],
-            groupbounds[1][0],
-            groupbounds[1][1],
-            props.groupid
-          )
-        } else {
-          console.log('Already fetched that.')
-        }
-      }
     } else if (props.search) {
-      // We have no location and no groups.  Do nothing - we expect code elsewhere to prompt for a location.
+      // We have no known location. Do nothing - we expect code elsewhere to prompt for one.
       // Search within the bounds of the map.
-      console.log(
-        'GetMessages - no location, no groups, search within map bounds'
-      )
+      console.log('GetMessages - no location, search within map bounds')
       ret = await searchOnce({
         messagetype: props.type,
         search: props.search,
@@ -1118,61 +827,12 @@ async function getMessages() {
       })
     } else {
       // Just fetch the bounds of the map.
-      console.log(
-        'GetMessages - no location, no groups, fetch within map bounds'
-      )
+      console.log('GetMessages - no location, fetch within map bounds')
       ret = await fetchInBoundsOnce(swlat, swlng, nelat, nelng)
     }
-  } else if (myGroups.value?.length) {
-    if (props.search) {
-      if (props.browseSearch) {
-        // Browse "All my communities": the member's groups ARE the universe, and browse=1
-        // applies their distance slider and sort server-side. No bounds - a bounding box
-        // over scattered groups both leaks other groups' posts and clips nothing useful.
-        console.log(
-          'GetMessages - browse search across my communities',
-          myGroupIds
-        )
-        ret = await searchOnce({
-          messagetype: props.type,
-          search: props.search,
-          groupids: myGroupIds.value,
-          browse: 1,
-        })
-      } else {
-        const groupbounds = myGroupsBoundingBox.value
-
-        console.log(
-          'GetMessages - some groups, search within group bounds',
-          groupbounds,
-          myGroupIds
-        )
-        ret = await searchOnce({
-          messagetype: props.type,
-          search: props.search,
-          swlat: groupbounds[0][0],
-          swlng: groupbounds[0][1],
-          nelat: groupbounds[1][0],
-          nelng: groupbounds[1][1],
-          groupids: myGroupIds.value,
-        })
-      }
-    } else {
-      // We have groups, so fetch the messages in those groups.
-      console.log('GetMessages - some groups, fetch groups')
-      ret = await messageStore.fetchMyGroups()
-
-      // Get the messages in the map bounds too, so that we can show others as secondary.
-      secondaryMessageList.value = await fetchInBoundsOnce(
-        swlat,
-        swlng,
-        nelat,
-        nelng
-      )
-    }
   } else {
-    // We have no groups, so fetch the messages in the map bounds.
-    console.log('GetMessages - no groups, fetch in map bounds')
+    // Fetch the messages in the map bounds.
+    console.log('GetMessages - fetch in map bounds')
     ret = await fetchInBoundsOnce(swlat, swlng, nelat, nelng)
   }
 
@@ -1181,12 +841,6 @@ async function getMessages() {
   }
 
   if (messages?.length) {
-    if (props.groupid) {
-      messages = messages.filter((m) => {
-        return m.groupid === props.groupid
-      })
-    }
-
     if (props.type !== 'All') {
       messages = messages.filter((m) => {
         return m.type === props.type

@@ -3,14 +3,13 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense } from 'vue'
 import VolunteerOpportunity from '~/components/VolunteerOpportunity.vue'
 
-const { mockVolunteering, mockGroup, mockUser } = vi.hoisted(() => {
+const { mockVolunteering, mockUser } = vi.hoisted(() => {
   return {
     mockVolunteering: {
       id: 1,
       title: 'Community Garden Helper',
       description: 'Help maintain our community garden',
       location: 'Central Park',
-      groups: [100],
       userid: 200,
       added: '2024-01-01T10:00:00Z',
       renewed: '2024-01-15T10:00:00Z',
@@ -19,10 +18,6 @@ const { mockVolunteering, mockGroup, mockUser } = vi.hoisted(() => {
       earliestDate: {
         string: { start: '9am', end: '12pm' },
       },
-    },
-    mockGroup: {
-      id: 100,
-      namedisplay: 'Freegle London',
     },
     mockUser: {
       id: 200,
@@ -38,11 +33,6 @@ const mockVolunteeringStore = {
   expire: vi.fn().mockResolvedValue(undefined),
 }
 
-const mockGroupStore = {
-  fetch: vi.fn().mockResolvedValue(mockGroup),
-  get: vi.fn().mockReturnValue(mockGroup),
-}
-
 const mockUserStore = {
   fetch: vi.fn().mockResolvedValue(mockUser),
   byId: vi.fn().mockReturnValue(mockUser),
@@ -54,10 +44,6 @@ const mockAuthStore = {
 
 vi.mock('~/stores/volunteering', () => ({
   useVolunteeringStore: () => mockVolunteeringStore,
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
 }))
 
 vi.mock('~/stores/user', () => ({
@@ -77,7 +63,6 @@ describe('VolunteerOpportunity', () => {
     vi.clearAllMocks()
     mockVolunteeringStore.byId.mockReturnValue(mockVolunteering)
     mockUserStore.byId.mockReturnValue(mockUser)
-    mockGroupStore.get.mockReturnValue(mockGroup)
     mockAuthStore.user = { id: 1 }
   })
 
@@ -400,25 +385,6 @@ describe('VolunteerOpportunity', () => {
     it('shows more info button', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('More info')
-    })
-  })
-
-  describe('groups display', () => {
-    it('does not show group name in card body (shown in ModTools header instead)', async () => {
-      const wrapper = await createWrapper({ summary: false })
-      expect(wrapper.text()).not.toContain('Posted on')
-    })
-  })
-
-  describe('filter group', () => {
-    it('renders when filterGroup matches', async () => {
-      const wrapper = await createWrapper({ filterGroup: 100 })
-      expect(wrapper.find('.volop-card').exists()).toBe(true)
-    })
-
-    it('does not render when filterGroup does not match', async () => {
-      const wrapper = await createWrapper({ filterGroup: 999 })
-      expect(wrapper.find('.volop-card').exists()).toBe(false)
     })
   })
 

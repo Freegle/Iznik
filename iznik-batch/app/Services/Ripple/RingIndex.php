@@ -58,7 +58,7 @@ class RingIndex
                 ->post("$url/v1/reachoverflow/admits", ['msgid' => $msgid, 'points' => $body]);
 
             if (! $response->successful()) {
-                self::note($msgid, 'HTTP ' . $response->status());
+                self::note($msgid, 'HTTP '.$response->status());
 
                 return [];
             }
@@ -115,7 +115,7 @@ class RingIndex
                 ]);
 
             if (! $response->successful()) {
-                self::note(0, 'HTTP ' . $response->status());
+                self::note(0, 'HTTP '.$response->status());
 
                 return [];
             }

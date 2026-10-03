@@ -17,16 +17,8 @@ const mockMessageStore = {
   }),
 }
 
-const mockGroupStore = {
-  fetch: vi.fn().mockResolvedValue({}),
-}
-
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
 }))
 
 describe('VisualiseList', () => {

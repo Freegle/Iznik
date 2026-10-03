@@ -46,7 +46,6 @@ type LogEntry struct {
 	ID      uint64
 	Type    string
 	Subtype string
-	Groupid *uint64
 	User    *uint64
 	Byuser  *uint64
 	Msgid   *uint64
@@ -59,7 +58,7 @@ type LogEntry struct {
 func findLog(db *gorm.DB, logType string, subtype string, userID uint64) *LogEntry {
 	var entry LogEntry
 	result := db.Raw(
-		"SELECT id, type, subtype, groupid, user, byuser, msgid, text FROM logs WHERE type = ? AND subtype = ? AND user = ? ORDER BY id DESC LIMIT 1",
+		"SELECT id, type, subtype, user, byuser, msgid, text FROM logs WHERE type = ? AND subtype = ? AND user = ? ORDER BY id DESC LIMIT 1",
 		logType, subtype, userID,
 	).Scan(&entry)
 	if result.Error != nil || entry.ID == 0 {
@@ -73,7 +72,7 @@ func findLog(db *gorm.DB, logType string, subtype string, userID uint64) *LogEnt
 func findLogByMsg(db *gorm.DB, logType string, subtype string, msgID uint64) *LogEntry {
 	var entry LogEntry
 	result := db.Raw(
-		"SELECT id, type, subtype, groupid, user, byuser, msgid, text FROM logs WHERE type = ? AND subtype = ? AND msgid = ? ORDER BY id DESC LIMIT 1",
+		"SELECT id, type, subtype, user, byuser, msgid, text FROM logs WHERE type = ? AND subtype = ? AND msgid = ? ORDER BY id DESC LIMIT 1",
 		logType, subtype, msgID,
 	).Scan(&entry)
 	if result.Error != nil || entry.ID == 0 {
@@ -89,29 +88,6 @@ func findLogByMsg(db *gorm.DB, logType string, subtype string, msgID uint64) *Lo
 // uniquePrefix generates a unique prefix for test data to avoid collisions
 func uniquePrefix(testName string) string {
 	return fmt.Sprintf("%s_%d", testName, time.Now().UnixNano())
-}
-
-// CreateTestGroup creates a new group for testing and returns its ID
-func CreateTestGroup(t *testing.T, prefix string) uint64 {
-	db := database.DBConn
-	name := fmt.Sprintf("TestGroup_%s", prefix)
-
-	result := db.Exec(fmt.Sprintf("INSERT INTO `groups` (nameshort, namefull, type, onhere, polyindex, lat, lng) "+
-		"VALUES (?, ?, 'Freegle', 1, ST_GeomFromText('POINT(-3.1883 55.9533)', %d), 55.9533, -3.1883)", utils.SRID),
-		name, "Test Group "+prefix)
-
-	if result.Error != nil {
-		t.Fatalf("ERROR: Failed to create group: %v", result.Error)
-	}
-
-	var groupID uint64
-	db.Raw("SELECT id FROM `groups` WHERE nameshort = ? ORDER BY id DESC LIMIT 1", name).Scan(&groupID)
-
-	if groupID == 0 {
-		t.Fatalf("ERROR: Group was created but ID not found for name=%s", name)
-	}
-
-	return groupID
 }
 
 // CreateTestUser creates a new user for testing and returns its ID
@@ -141,6 +117,19 @@ func CreateTestUser(t *testing.T, prefix string, role string) uint64 {
 	db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", userID, email)
 
 	return userID
+}
+
+// PromoteTestUserToModerator gives an existing test user national
+// moderator status. The old model resolved "is this user a moderator"
+// per group via memberships.role; nationally moderation has one scope,
+// so it's just users.systemrole.
+func PromoteTestUserToModerator(t *testing.T, userID uint64) {
+	db := database.DBConn
+	result := db.Exec("UPDATE users SET systemrole = 'Moderator' WHERE id = ?", userID)
+
+	if result.Error != nil {
+		t.Fatalf("ERROR: Failed to promote test user to moderator: %v", result.Error)
+	}
 }
 
 // CreateDeletedTestUser creates a user that has been deleted (for TestDeleted)
@@ -190,24 +179,6 @@ func CreateTestUserWithEmail(t *testing.T, prefix string, email string) uint64 {
 	db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", userID, email)
 
 	return userID
-}
-
-// CreateTestMembership creates a membership linking a user to a group
-func CreateTestMembership(t *testing.T, userID uint64, groupID uint64, role string) uint64 {
-	db := database.DBConn
-
-	result := db.Exec("INSERT INTO memberships (userid, groupid, role) VALUES (?, ?, ?)",
-		userID, groupID, role)
-
-	if result.Error != nil {
-		t.Fatalf("ERROR: Failed to create membership: %v", result.Error)
-	}
-
-	var membershipID uint64
-	db.Raw("SELECT id FROM memberships WHERE userid = ? AND groupid = ? ORDER BY id DESC LIMIT 1",
-		userID, groupID).Scan(&membershipID)
-
-	return membershipID
 }
 
 // CreateTestSession creates a session for a user and returns (sessionID, token)
@@ -349,24 +320,17 @@ func CreateTestIsochrone(t *testing.T, userID uint64, lat float64, lng float64) 
 }
 
 // CreateTestChatRoom creates a chat room and returns its ID.
-// chatType is "User2User", "User2Mod" or "Mod2Mod".
+// chatType is "User2User" or "User2Mod".
 //
 // user1ID/user2ID are the DM columns and apply to User2User (both) and
-// User2Mod (user1 only). A Mod2Mod room is scoped by GROUP alone and ignores
-// both: the production read path joins chat_rooms.groupid to groups to
-// memberships and grants access on the viewer moderating that group, never
-// referencing user1 or user2, and nothing in the Go API creates a Mod2Mod room
-// at all. Writing a user onto one would seed a row that cannot occur in
-// production. The previous version defaulted a missing Mod2Mod user2 to 0,
-// which chat_rooms_user2_foreign rejected outright because no users row has
-// id 0.
+// User2Mod (user1 only, the member: its recipients are the national
+// moderators, not a second named user).
 //
 // The new id comes from the write result rather than a follow-up SELECT. The
 // old lookup was "SELECT id FROM chat_rooms WHERE user1 = ? ORDER BY id DESC",
-// which is both the read-back pattern this migration exists to remove (a
-// replica can serve a stale row under the read/write split) and unable to find
-// a Mod2Mod room at all once user1 is correctly NULL.
-func CreateTestChatRoom(t *testing.T, user1ID uint64, user2ID *uint64, groupID *uint64, chatType string) uint64 {
+// which is the read-back pattern this migration exists to remove (a replica
+// can serve a stale row under the read/write split).
+func CreateTestChatRoom(t *testing.T, user1ID uint64, user2ID *uint64, chatType string) uint64 {
 	db := database.DBConn
 
 	row := map[string]interface{}{"latestmessage": gorm.Expr("NOW()")}
@@ -376,15 +340,11 @@ func CreateTestChatRoom(t *testing.T, user1ID uint64, user2ID *uint64, groupID *
 		row["chattype"] = utils.CHAT_TYPE_USER2USER
 		row["user1"] = user1ID
 		row["user2"] = *user2ID
-	case chatType == "User2Mod" && groupID != nil:
+	case chatType == "User2Mod":
 		row["chattype"] = utils.CHAT_TYPE_USER2MOD
 		row["user1"] = user1ID
-		row["groupid"] = *groupID
-	case chatType == "Mod2Mod" && groupID != nil:
-		row["chattype"] = utils.CHAT_TYPE_MOD2MOD
-		row["groupid"] = *groupID
 	default:
-		t.Fatalf("ERROR: Invalid chat room configuration - User2User needs user2ID, User2Mod/Mod2Mod needs groupID")
+		t.Fatalf("ERROR: Invalid chat room configuration - User2User needs user2ID")
 	}
 
 	res := gorm.WithResult()
@@ -397,6 +357,34 @@ func CreateTestChatRoom(t *testing.T, user1ID uint64, user2ID *uint64, groupID *
 	chatID, err := res.Result.LastInsertId()
 	if err != nil || chatID == 0 {
 		t.Fatalf("ERROR: %s chat room was created but its id could not be read back: %v", chatType, err)
+	}
+
+	return uint64(chatID)
+}
+
+// CreateTestMod2ModRoom creates a national Mod2Mod chat room for tests. Mod2Mod is now a
+// singleton per deployment (visible to every moderator, not scoped to any group), seeded in
+// production by fixture/migration rather than created dynamically - so tests that need one
+// create their own throwaway row here rather than going through CreateTestChatRoom, which
+// deliberately has no Mod2Mod case.
+func CreateTestMod2ModRoom(t *testing.T) uint64 {
+	db := database.DBConn
+
+	row := map[string]interface{}{
+		"chattype":      "Mod2Mod",
+		"latestmessage": gorm.Expr("NOW()"),
+	}
+
+	res := gorm.WithResult()
+	if err := db.Table("chat_rooms").Clauses(res).Create(row).Error; err != nil {
+		t.Fatalf("ERROR: Failed to create Mod2Mod chat room: %v", err)
+	}
+	if res.Result == nil {
+		t.Fatalf("ERROR: Mod2Mod chat room insert returned no result to read the id from")
+	}
+	chatID, err := res.Result.LastInsertId()
+	if err != nil || chatID == 0 {
+		t.Fatalf("ERROR: Mod2Mod chat room was created but its id could not be read back: %v", err)
 	}
 
 	return uint64(chatID)
@@ -423,11 +411,11 @@ func CreateTestChatMessage(t *testing.T, chatID uint64, userID uint64, message s
 	return messageID
 }
 
-// CreateTestVolunteering creates a volunteering opportunity linked to a group.
+// CreateTestVolunteering creates a volunteering opportunity for a user.
 // Registers a t.Cleanup to delete the record after the test, preventing test data
 // from persisting in the database if tests are accidentally run against a non-test DB
 // (see Discourse #9528 where "Test Volunteering" items appeared in production ModTools).
-func CreateTestVolunteering(t *testing.T, userID uint64, groupID uint64) uint64 {
+func CreateTestVolunteering(t *testing.T, userID uint64) uint64 {
 	db := database.DBConn
 
 	result := db.Exec("INSERT INTO volunteering (userid, title, location, description, pending, deleted) "+
@@ -445,9 +433,6 @@ func CreateTestVolunteering(t *testing.T, userID uint64, groupID uint64) uint64 
 		t.Fatalf("ERROR: Volunteering was created but ID not found")
 	}
 
-	// Link to group
-	db.Exec("INSERT INTO volunteering_groups (volunteeringid, groupid) VALUES (?, ?)", volunteeringID, groupID)
-
 	// Add dates
 	db.Exec("INSERT INTO volunteering_dates (volunteeringid, start, end) "+
 		"VALUES (?, DATE_ADD(NOW(), INTERVAL 7 DAY), DATE_ADD(NOW(), INTERVAL 14 DAY))", volunteeringID)
@@ -455,17 +440,16 @@ func CreateTestVolunteering(t *testing.T, userID uint64, groupID uint64) uint64 
 	// Clean up test data after the test completes to prevent orphaned records
 	t.Cleanup(func() {
 		db.Exec("DELETE FROM volunteering_dates WHERE volunteeringid = ?", volunteeringID)
-		db.Exec("DELETE FROM volunteering_groups WHERE volunteeringid = ?", volunteeringID)
 		db.Exec("DELETE FROM volunteering WHERE id = ?", volunteeringID)
 	})
 
 	return volunteeringID
 }
 
-// CreateTestCommunityEvent creates a community event linked to a group.
+// CreateTestCommunityEvent creates a community event for a user.
 // Registers a t.Cleanup to delete the record after the test, preventing test data
 // from persisting in the database if tests are accidentally run against a non-test DB.
-func CreateTestCommunityEvent(t *testing.T, userID uint64, groupID uint64) uint64 {
+func CreateTestCommunityEvent(t *testing.T, userID uint64) uint64 {
 	db := database.DBConn
 
 	result := db.Exec("INSERT INTO communityevents (userid, title, location, description, pending, deleted) "+
@@ -483,9 +467,6 @@ func CreateTestCommunityEvent(t *testing.T, userID uint64, groupID uint64) uint6
 		t.Fatalf("ERROR: Community event was created but ID not found")
 	}
 
-	// Link to group
-	db.Exec("INSERT INTO communityevents_groups (eventid, groupid) VALUES (?, ?)", eventID, groupID)
-
 	// Add dates
 	db.Exec("INSERT INTO communityevents_dates (eventid, start, end) "+
 		"VALUES (?, DATE_ADD(NOW(), INTERVAL 7 DAY), DATE_ADD(NOW(), INTERVAL 8 DAY))", eventID)
@@ -493,15 +474,15 @@ func CreateTestCommunityEvent(t *testing.T, userID uint64, groupID uint64) uint6
 	// Clean up test data after the test completes to prevent orphaned records
 	t.Cleanup(func() {
 		db.Exec("DELETE FROM communityevents_dates WHERE eventid = ?", eventID)
-		db.Exec("DELETE FROM communityevents_groups WHERE eventid = ?", eventID)
 		db.Exec("DELETE FROM communityevents WHERE id = ?", eventID)
 	})
 
 	return eventID
 }
 
-// CreateTestMessage creates a message with spatial data and search index
-func CreateTestMessage(t *testing.T, userID uint64, groupID uint64, subject string, lat float64, lng float64) uint64 {
+// CreateTestMessage creates a message with spatial data and search index.
+// It is created directly as an approved, live message (collection = Approved).
+func CreateTestMessage(t *testing.T, userID uint64, subject string, lat float64, lng float64) uint64 {
 	db := database.DBConn
 
 	// Get a location ID
@@ -513,8 +494,8 @@ func CreateTestMessage(t *testing.T, userID uint64, groupID uint64, subject stri
 	// these fixtures have no reach row, so a fixture stamped NOW() would be
 	// invisible to every feed test. Tests that want the grace window itself set
 	// arrival back to NOW() explicitly.
-	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
-		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL 15 MINUTE))",
+	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, collection, autoreposts, approvedat) "+
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL 15 MINUTE), 'Approved', 0, DATE_SUB(NOW(), INTERVAL 15 MINUTE))",
 		userID, subject, locationID)
 
 	if result.Error != nil {
@@ -529,23 +510,19 @@ func CreateTestMessage(t *testing.T, userID uint64, groupID uint64, subject stri
 		t.Fatalf("ERROR: Message was created but ID not found")
 	}
 
-	// Add to messages_groups
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
-		"VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 15 MINUTE), 'Approved', 0)", messageID, groupID)
-
 	// Add to messages_spatial
-	db.Exec(fmt.Sprintf("INSERT INTO messages_spatial (msgid, point, successful, groupid, arrival, msgtype) "+
-		"VALUES (?, ST_GeomFromText(?, %d), 1, ?, DATE_SUB(NOW(), INTERVAL 15 MINUTE), 'Offer')", utils.SRID),
-		messageID, fmt.Sprintf("POINT(%f %f)", lng, lat), groupID)
+	db.Exec(fmt.Sprintf("INSERT INTO messages_spatial (msgid, point, successful, arrival, msgtype) "+
+		"VALUES (?, ST_GeomFromText(?, %d), 1, DATE_SUB(NOW(), INTERVAL 15 MINUTE), 'Offer')", utils.SRID),
+		messageID, fmt.Sprintf("POINT(%f %f)", lng, lat))
 
 	// Index words for search - extract words from subject and add to search index
-	indexMessageWords(t, db, messageID, groupID, subject)
+	indexMessageWords(t, db, messageID, subject)
 
 	return messageID
 }
 
 // indexMessageWords adds words from the subject to the search index
-func indexMessageWords(t *testing.T, db *gorm.DB, messageID uint64, groupID uint64, subject string) {
+func indexMessageWords(t *testing.T, db *gorm.DB, messageID uint64, subject string) {
 	// Split subject into words and filter short/common words
 	words := strings.Fields(strings.ToLower(subject))
 
@@ -575,8 +552,8 @@ func indexMessageWords(t *testing.T, db *gorm.DB, messageID uint64, groupID uint
 
 		if wordID > 0 {
 			// Add to messages_index
-			db.Exec("INSERT IGNORE INTO messages_index (msgid, wordid, arrival, groupid) VALUES (?, ?, UNIX_TIMESTAMP(), ?)",
-				messageID, wordID, groupID)
+			db.Exec("INSERT IGNORE INTO messages_index (msgid, wordid, arrival) VALUES (?, ?, UNIX_TIMESTAMP())",
+				messageID, wordID)
 		}
 	}
 }
@@ -689,17 +666,18 @@ func CreateTestAttachment(t *testing.T, messageID uint64) uint64 {
 	return attachmentID
 }
 
-// CreateTestMessageWithArrival creates a message with a specific arrival date
-func CreateTestMessageWithArrival(t *testing.T, userID uint64, groupID uint64, subject string, lat float64, lng float64, daysAgo int) uint64 {
+// CreateTestMessageWithArrival creates a message with a specific arrival date.
+// It is created directly as an approved, live message (collection = Approved).
+func CreateTestMessageWithArrival(t *testing.T, userID uint64, subject string, lat float64, lng float64, daysAgo int) uint64 {
 	db := database.DBConn
 
 	// Get a location ID
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
 
-	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
-		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL ? DAY))",
-		userID, subject, locationID, daysAgo)
+	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, collection, autoreposts, approvedat) "+
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL ? DAY), 'Approved', 0, DATE_SUB(NOW(), INTERVAL ? DAY))",
+		userID, subject, locationID, daysAgo, daysAgo)
 
 	if result.Error != nil {
 		t.Fatalf("ERROR: Failed to create message: %v", result.Error)
@@ -713,14 +691,10 @@ func CreateTestMessageWithArrival(t *testing.T, userID uint64, groupID uint64, s
 		t.Fatalf("ERROR: Message was created but ID not found")
 	}
 
-	// Add to messages_groups with past arrival date
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
-		"VALUES (?, ?, DATE_SUB(NOW(), INTERVAL ? DAY), 'Approved', 0)", messageID, groupID, daysAgo)
-
 	// Add to messages_spatial
-	db.Exec(fmt.Sprintf("INSERT INTO messages_spatial (msgid, point, successful, groupid, arrival, msgtype) "+
-		"VALUES (?, ST_GeomFromText(?, %d), 1, ?, DATE_SUB(NOW(), INTERVAL ? DAY), 'Offer')", utils.SRID),
-		messageID, fmt.Sprintf("POINT(%f %f)", lng, lat), groupID, daysAgo)
+	db.Exec(fmt.Sprintf("INSERT INTO messages_spatial (msgid, point, successful, arrival, msgtype) "+
+		"VALUES (?, ST_GeomFromText(?, %d), 1, DATE_SUB(NOW(), INTERVAL ? DAY), 'Offer')", utils.SRID),
+		messageID, fmt.Sprintf("POINT(%f %f)", lng, lat), daysAgo)
 
 	return messageID
 }
@@ -740,33 +714,27 @@ func MarkMessageAsViewed(t *testing.T, userID uint64, messageID uint64) {
 // CreateFullTestUser creates a user with all required relationships for complex tests
 // Returns userID and JWT token
 func CreateFullTestUser(t *testing.T, prefix string) (uint64, string) {
-	// Create group first
-	groupID := CreateTestGroup(t, prefix)
-
 	// Create main user
 	userID := CreateTestUser(t, prefix, "User")
 
 	// Create another user for user-to-user chat
 	otherUserID := CreateTestUser(t, prefix+"_other", "User")
 
-	// Create membership
-	CreateTestMembership(t, userID, groupID, "Member")
-
 	// Create address and isochrone
 	CreateTestAddress(t, userID)
 	CreateTestIsochrone(t, userID, 55.9533, -3.1883)
 
 	// Create User2User chat with message
-	chatID := CreateTestChatRoom(t, userID, &otherUserID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, userID, &otherUserID, "User2User")
 	CreateTestChatMessage(t, chatID, userID, "Test user message")
 
 	// Create User2Mod chat with message
-	modChatID := CreateTestChatRoom(t, userID, nil, &groupID, "User2Mod")
+	modChatID := CreateTestChatRoom(t, userID, nil, "User2Mod")
 	CreateTestChatMessage(t, modChatID, userID, "Test mod message")
 
 	// Create volunteering and community event
-	CreateTestVolunteering(t, userID, groupID)
-	CreateTestCommunityEvent(t, userID, groupID)
+	CreateTestVolunteering(t, userID)
+	CreateTestCommunityEvent(t, userID)
 
 	// Create session and get token
 	_, token := CreateTestSession(t, userID)
@@ -831,17 +799,19 @@ func CreateTestStory(t *testing.T, userID uint64, headline string, storyText str
 	return storyID
 }
 
-// CreateTestMessageWithoutGroup creates a message WITHOUT an entry in messages_groups
-// This simulates a chat message or other non-public message that should NOT be fetchable via the public API
-func CreateTestMessageWithoutGroup(t *testing.T, userID uint64, subject string) uint64 {
+// CreateTestMessageIncoming creates a message left in the Incoming collection.
+// Incoming is the pre-publication state: the message exists but has not been
+// through the content check or moderation, so it must not be fetchable via the
+// public API. This simulates a chat message or other non-public message.
+func CreateTestMessageIncoming(t *testing.T, userID uint64, subject string) uint64 {
 	db := database.DBConn
 
 	// Get a location ID
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
 
-	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
-		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, NOW())",
+	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, collection) "+
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, NOW(), 'Incoming')",
 		userID, subject, locationID)
 
 	if result.Error != nil {
@@ -855,8 +825,6 @@ func CreateTestMessageWithoutGroup(t *testing.T, userID uint64, subject string) 
 	if messageID == 0 {
 		t.Fatalf("ERROR: Message was created but ID not found")
 	}
-
-	// Deliberately NOT adding to messages_groups - this message should not be publicly accessible
 
 	return messageID
 }

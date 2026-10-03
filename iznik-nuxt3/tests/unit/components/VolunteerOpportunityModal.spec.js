@@ -36,16 +36,6 @@ vi.mock('~/stores/user', () => ({
   }),
 }))
 
-const mockGroupGet = vi.fn()
-const mockGroupFetch = vi.fn()
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({
-    get: mockGroupGet,
-    fetch: mockGroupFetch,
-  }),
-}))
-
 vi.mock('~/stores/image', () => ({
   useImageStore: () => ({
     all: [],
@@ -91,8 +81,6 @@ vi.mock('~/components/DonationButton', () => ({
     template: '<button class="donation-button">Donate</button>',
   },
 }))
-
-// GroupSelect stubbed in global.stubs
 
 vi.mock('~/components/UserName', () => ({
   default: {
@@ -160,7 +148,6 @@ describe('VolunteerOpportunityModal', () => {
     contactemail: 'john@example.com',
     userid: 1,
     image: null,
-    groups: [],
   }
 
   function createWrapper(props = {}, volunteeringData = mockVolunteering) {
@@ -242,10 +229,6 @@ describe('VolunteerOpportunityModal', () => {
           OurUploader: {
             template: '<div class="our-uploader"></div>',
             props: ['modelValue', 'type'],
-          },
-          GroupSelect: {
-            template: '<select class="group-select"></select>',
-            props: ['modelValue', 'all', 'showCount'],
           },
           VeeForm: {
             template: '<form @submit.prevent><slot /></form>',

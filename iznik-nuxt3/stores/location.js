@@ -43,11 +43,6 @@ export const useLocationStore = defineStore('location', {
 
       return loc
     },
-    async delete(loc) {
-      await api(this.config).location.del(loc.id, loc.groupid)
-      // Server doesn't support fetching of an individual location so we don't fetch - but will need reload
-      delete this.list[loc.id]
-    },
     async add(params) {
       const { id } = await api(this.config).location.add(params)
       // Server doesn't support fetching of an individual location so we don't fetch.

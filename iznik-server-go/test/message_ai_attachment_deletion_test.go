@@ -18,12 +18,10 @@ func TestPatchMessage_RemoveAIAttachment_OwnerRecordsMicroaction(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("ai_att_owner")
 
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	_, ownerToken := CreateTestSession(t, ownerID)
 
-	msgID := CreateTestMessage(t, ownerID, groupID, "Test AI Attachment Owner", 51.5, -1.0)
+	msgID := CreateTestMessage(t, ownerID, "Test AI Attachment Owner", 51.5, -1.0)
 
 	externalUID := "freegletusd-test-ai-owner-" + prefix
 	db.Exec("INSERT INTO ai_images (name, externaluid, usage_count) VALUES (?, ?, 1)",
@@ -72,14 +70,12 @@ func TestPatchMessage_RemoveAIAttachment_ModRecordsMicroaction(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("ai_att_mod")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
-	msgID := CreateTestMessage(t, posterID, groupID, "Test AI Attachment Mod", 51.5, -1.0)
+	msgID := CreateTestMessage(t, posterID, "Test AI Attachment Mod", 51.5, -1.0)
 
 	externalUID := "freegletusd-test-ai-mod-" + prefix
 	db.Exec("INSERT INTO ai_images (name, externaluid, usage_count) VALUES (?, ?, 1)",
@@ -126,12 +122,10 @@ func TestPatchMessage_RemoveNonAIAttachment_NoMicroaction(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("non_ai_att")
 
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	_, ownerToken := CreateTestSession(t, ownerID)
 
-	msgID := CreateTestMessage(t, ownerID, groupID, "Test Non-AI Attachment", 51.5, -1.0)
+	msgID := CreateTestMessage(t, ownerID, "Test Non-AI Attachment", 51.5, -1.0)
 	attachID := CreateTestAttachment(t, msgID)
 
 	t.Cleanup(func() {
@@ -163,12 +157,10 @@ func TestPatchMessage_RemoveAIAttachmentSubset_OnlyDeletedRecorded(t *testing.T)
 	db := database.DBConn
 	prefix := uniquePrefix("ai_att_subset")
 
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	_, ownerToken := CreateTestSession(t, ownerID)
 
-	msgID := CreateTestMessage(t, ownerID, groupID, "Test AI Subset", 51.5, -1.0)
+	msgID := CreateTestMessage(t, ownerID, "Test AI Subset", 51.5, -1.0)
 
 	// Create a non-AI attachment that will be kept.
 	keptAttachID := CreateTestAttachment(t, msgID)

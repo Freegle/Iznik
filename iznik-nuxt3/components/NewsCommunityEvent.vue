@@ -13,16 +13,6 @@
       <span class="meta-item">
         {{ addedago }}
       </span>
-      <span v-if="event.groups?.length" class="meta-item">
-        on
-        <ShowMore
-          :items="event.groups.map((id) => group(id)).filter(Boolean)"
-          :limit="3"
-          inline
-        >
-          <template #item="{ item }">{{ item.namedisplay }}</template>
-        </ShowMore>
-      </span>
     </div>
 
     <div class="event-content">
@@ -90,7 +80,6 @@ import dayjs from 'dayjs'
 import { useCommunityEventStore } from '~/stores/communityevent'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useUserStore } from '~/stores/user'
-import { useGroupStore } from '~/stores/group'
 import { timeago } from '~/composables/useTimeFormat'
 import NewsLoveComment from '~/components/NewsLoveComment'
 import OurUploadedImage from '~/components/OurUploadedImage'
@@ -111,7 +100,6 @@ const emit = defineEmits(['focus-comment', 'hide'])
 const communityEventStore = useCommunityEventStore()
 const newsfeedStore = useNewsfeedStore()
 const userStore = useUserStore()
-const groupStore = useGroupStore()
 
 const showAddEvent = ref(false)
 const showMoreInfo = ref(false)
@@ -168,20 +156,11 @@ function addEvent() {
   showAddEvent.value = true
 }
 
-function group(groupid) {
-  return groupStore?.get(groupid)
-}
-
 // Initialize data
 const initialize = async () => {
   try {
     await userStore.fetch(newsfeed.value.userid)
     const currentEvent = await communityEventStore.fetch(newsfeed.value.eventid)
-
-    // Fetch group information for each group
-    for (const groupid of currentEvent.groups) {
-      await groupStore.fetch(groupid)
-    }
 
     if (!currentEvent) {
       throw new Error('Event not found')

@@ -437,7 +437,6 @@ func TestPartnershipAddGroupCreatesSponsorship(t *testing.T) {
 	id := createPartnership(t, token, authorityID, defaultBody(authorityID))
 
 	// A group nowhere near the council - added by hand because the deal covers it anyway.
-	outsideGroup := CreateTestGroup(t, prefix+"_outside")
 
 	body := fmt.Sprintf(`{"action":"Add","groupid":%d}`, outsideGroup)
 	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/partnership/%d/group?jwt=%s", id, token),

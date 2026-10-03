@@ -45,39 +45,16 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useMiscStore } from '~/stores/misc'
-import { useAuthStore } from '~/stores/auth'
 import PrivacyUpdate from '~/components/PrivacyUpdate.vue'
 
 const miscStore = useMiscStore()
-const authStore = useAuthStore()
 
 const warningid = ref('hideglobalwarning20250530')
 
-const relevantGroup = computed(() => {
-  const now = new Date()
-  const active = new Date('2025-06-22')
-
-  if (now >= active) {
-    return false
-  }
-
-  let ret = false
-
-  const groupids = [126719]
-
-  const myGroups = authStore.groups
-
-  myGroups.forEach((g) => {
-    if (groupids.includes(g.groupid)) {
-      // If joined since 2024-09-01
-      if (new Date(g.added).getTime() >= new Date('2024-09-01').getTime()) {
-        ret = true
-      }
-    }
-  })
-
-  return ret
-})
+// This banner was a time-boxed survey for members of one community (Wandsworth), gated on
+// group membership. The campaign's end date has long passed (2025-06-22), so it always
+// evaluated to false anyway; the per-group check is removed rather than kept as dead code.
+const relevantGroup = computed(() => false)
 
 const show = computed(() => {
   return !miscStore?.get(warningid.value)

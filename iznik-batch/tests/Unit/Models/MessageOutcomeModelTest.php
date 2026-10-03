@@ -11,9 +11,7 @@ class MessageOutcomeModelTest extends TestCase
     public function test_outcome_can_be_created(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $outcome = MessageOutcome::create([
             'msgid' => $message->id,
@@ -27,9 +25,7 @@ class MessageOutcomeModelTest extends TestCase
     public function test_message_relationship(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $outcome = MessageOutcome::create([
             'msgid' => $message->id,
@@ -43,11 +39,9 @@ class MessageOutcomeModelTest extends TestCase
     public function test_successful_scope(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message1 = $this->createTestMessage($user, $group);
-        $message2 = $this->createTestMessage($user, $group);
-        $message3 = $this->createTestMessage($user, $group);
+        $message1 = $this->createTestMessage($user);
+        $message2 = $this->createTestMessage($user);
+        $message3 = $this->createTestMessage($user);
 
         $taken = MessageOutcome::create([
             'msgid' => $message1->id,
@@ -77,10 +71,8 @@ class MessageOutcomeModelTest extends TestCase
     public function test_expired_scope(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message1 = $this->createTestMessage($user, $group);
-        $message2 = $this->createTestMessage($user, $group);
+        $message1 = $this->createTestMessage($user);
+        $message2 = $this->createTestMessage($user);
 
         $expired = MessageOutcome::create([
             'msgid' => $message1->id,
@@ -103,10 +95,8 @@ class MessageOutcomeModelTest extends TestCase
     public function test_repost_scope(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message1 = $this->createTestMessage($user, $group);
-        $message2 = $this->createTestMessage($user, $group);
+        $message1 = $this->createTestMessage($user);
+        $message2 = $this->createTestMessage($user);
 
         $repost = MessageOutcome::create([
             'msgid' => $message1->id,
@@ -129,10 +119,8 @@ class MessageOutcomeModelTest extends TestCase
     public function test_withdrawn_scope(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message1 = $this->createTestMessage($user, $group);
-        $message2 = $this->createTestMessage($user, $group);
+        $message1 = $this->createTestMessage($user);
+        $message2 = $this->createTestMessage($user);
 
         $withdrawn = MessageOutcome::create([
             'msgid' => $message1->id,
@@ -155,11 +143,9 @@ class MessageOutcomeModelTest extends TestCase
     public function test_is_successful(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $message1 = $this->createTestMessage($user, $group);
-        $message2 = $this->createTestMessage($user, $group);
-        $message3 = $this->createTestMessage($user, $group);
+        $message1 = $this->createTestMessage($user);
+        $message2 = $this->createTestMessage($user);
+        $message3 = $this->createTestMessage($user);
 
         $taken = MessageOutcome::create([
             'msgid' => $message1->id,

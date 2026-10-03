@@ -20,9 +20,6 @@
             </span>
             <span v-else> System added </span>
           </b-col>
-          <b-col cols="12" md="4">
-            <span v-if="groups.length"> on {{ groups[0].nameshort }} </span>
-          </b-col>
         </b-row>
       </b-card-header>
       <b-card-body>
@@ -30,7 +27,7 @@
           {{ heldError }}
         </NoticeMessage>
         <NoticeMessage
-          v-if="groups.length && groups[0].ourPostingStatus === 'PROHIBITED'"
+          v-if="volUser?.postingstatus === 'PROHIBITED'"
           variant="danger"
           class="mb-2"
         >
@@ -53,13 +50,8 @@
           <v-icon icon="trash-alt" /> Delete
         </b-button>
         <ChatButton
-          v-if="
-            volunteering.groups &&
-            volunteering.groups.length &&
-            volunteering.userid
-          "
+          v-if="volunteering.userid"
           :userid="volunteering.userid"
-          :groupid="volunteering.groups[0]"
           title="Chat"
           variant="white"
           class="me-1"
@@ -87,7 +79,6 @@
 import { ref, computed, watch } from 'vue'
 import { useVolunteeringStore } from '@/stores/volunteering'
 import { useHeldNotice } from '~/composables/useHeldNotice'
-import { useGroupStore } from '~/stores/group'
 import { useUserStore } from '~/stores/user'
 
 const props = defineProps({
@@ -99,7 +90,6 @@ const props = defineProps({
 
 const volunteeringStore = useVolunteeringStore()
 const { heldError, guardHold } = useHeldNotice()
-const groupStore = useGroupStore()
 const userStore = useUserStore()
 
 const volunteering = computed(() =>
@@ -124,17 +114,6 @@ const volUser = computed(() => {
   return volunteering.value?.userid
     ? userStore.byId(volunteering.value.userid)
     : null
-})
-
-const groups = computed(() => {
-  const ret = []
-  volunteering.value?.groups?.forEach((id) => {
-    const group = groupStore?.get(id)
-    if (group) {
-      ret.push(group)
-    }
-  })
-  return ret
 })
 
 function edit() {

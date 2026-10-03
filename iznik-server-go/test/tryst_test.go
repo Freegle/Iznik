@@ -21,7 +21,7 @@ func TestCreateTryst(t *testing.T) {
 	_, token := CreateTestSession(t, user1ID)
 
 	// CreateTryst requires a chat room between the users.
-	CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 
 	body := fmt.Sprintf(`{"user1":%d,"user2":%d,"arrangedfor":"2038-01-19T03:14:06+00:00"}`, user1ID, user2ID)
 	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/tryst?jwt=%s", token), strings.NewReader(body))
@@ -52,7 +52,7 @@ func TestCreateTrystDuplicateReturnsExistingID(t *testing.T) {
 	_, token := CreateTestSession(t, user1ID)
 
 	// CreateTryst requires a chat room between the users.
-	CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 
 	body := fmt.Sprintf(`{"user1":%d,"user2":%d,"arrangedfor":"2038-01-19T03:14:06+00:00"}`, user1ID, user2ID)
 

@@ -171,7 +171,7 @@ func TestBuildSSOResponse_Branches(t *testing.T) {
 		{
 			name:    "admin user all fields",
 			nonce:   "n1",
-			session: &ssoSession{UserID: 1, Name: "Admin", Email: "a@test.com", GroupList: "G1,G2", Admin: true, IsMod: true},
+			session: &ssoSession{UserID: 1, Name: "Admin", Email: "a@test.com", Admin: true, IsMod: true},
 			checks: map[string]string{
 				"nonce": "n1", "email": "a@test.com", "external_id": "1",
 				"username": "Admin", "name": "Admin", "admin": "true",
@@ -181,13 +181,13 @@ func TestBuildSSOResponse_Branches(t *testing.T) {
 		{
 			name:    "non-admin user",
 			nonce:   "n2",
-			session: &ssoSession{UserID: 2, Name: "Mod", Email: "m@test.com", GroupList: "G2", Admin: false, IsMod: true},
+			session: &ssoSession{UserID: 2, Name: "Mod", Email: "m@test.com", Admin: false, IsMod: true},
 			checks:  map[string]string{"admin": "false", "external_id": "2"},
 		},
 		{
 			name:    "zero user id",
 			nonce:   "n3",
-			session: &ssoSession{UserID: 0, Name: "", Email: "", GroupList: ""},
+			session: &ssoSession{UserID: 0, Name: "", Email: ""},
 			checks:  map[string]string{"external_id": "0", "admin": "false"},
 		},
 		{
@@ -201,12 +201,6 @@ func TestBuildSSOResponse_Branches(t *testing.T) {
 			nonce:   "n5",
 			session: &ssoSession{UserID: 6, Name: "O'Brien & Associates"},
 			checks:  map[string]string{"name": "O'Brien & Associates"},
-		},
-		{
-			name:    "empty group list bio suffix",
-			nonce:   "n6",
-			session: &ssoSession{UserID: 7, Email: "e@test.com", GroupList: ""},
-			checks:  map[string]string{"nonce": "n6"},
 		},
 	}
 
@@ -222,13 +216,13 @@ func TestBuildSSOResponse_Branches(t *testing.T) {
 	}
 }
 
-func TestBuildSSOResponse_BioContainsEmailAndGroups(t *testing.T) {
-	s := &ssoSession{UserID: 1, Email: "mod@test.com", GroupList: "Freegle London,Freegle Brighton"}
+func TestBuildSSOResponse_BioContainsEmailAndModeratorStatement(t *testing.T) {
+	s := &ssoSession{UserID: 1, Email: "mod@test.com"}
 	out := buildSSOResponse("n", s)
 	vals, _ := url.ParseQuery(out)
 	bio := vals.Get("bio")
 	assert.Contains(t, bio, "mod@test.com")
-	assert.Contains(t, bio, "is a mod on Freegle London,Freegle Brighton")
+	assert.Contains(t, bio, "is a Freegle moderator")
 }
 
 func TestBuildSSOResponse_AdminFlagIsLiteralString(t *testing.T) {

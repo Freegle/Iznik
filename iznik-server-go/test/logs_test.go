@@ -13,17 +13,15 @@ import (
 
 func TestGetLogsMessages(t *testing.T) {
 	prefix := uniquePrefix("LogsMsg")
-	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Owner")
+	userID := CreateTestUser(t, prefix, "Moderator")
 	_, token := CreateTestSession(t, userID)
 
 	// Create a log entry.
 	db := database.DBConn
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'test log')",
-		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, groupID, userID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'test log')",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, userID)
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?logtype=messages&groupid=%d&jwt=%s", groupID, token), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?logtype=messages&jwt=%s", token), nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -36,16 +34,14 @@ func TestGetLogsMessages(t *testing.T) {
 
 func TestGetLogsMemberships(t *testing.T) {
 	prefix := uniquePrefix("LogsMem")
-	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Owner")
+	userID := CreateTestUser(t, prefix, "Moderator")
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'test join')",
-		flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_JOINED, groupID, userID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'test join')",
+		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_JOINED, userID)
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?logtype=memberships&groupid=%d&jwt=%s", groupID, token), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?logtype=memberships&jwt=%s", token), nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -56,12 +52,10 @@ func TestGetLogsMemberships(t *testing.T) {
 
 func TestGetLogsNotModerator(t *testing.T) {
 	prefix := uniquePrefix("LogsNoMod")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?logtype=messages&groupid=%d&jwt=%s", groupID, token), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?logtype=messages&jwt=%s", token), nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 403, resp.StatusCode)
 
@@ -71,7 +65,7 @@ func TestGetLogsNotModerator(t *testing.T) {
 }
 
 func TestGetLogsNotLoggedIn(t *testing.T) {
-	req := httptest.NewRequest("GET", "/api/modtools/logs?logtype=messages&groupid=1", nil)
+	req := httptest.NewRequest("GET", "/api/modtools/logs?logtype=messages", nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 403, resp.StatusCode)
 
@@ -82,18 +76,16 @@ func TestGetLogsNotLoggedIn(t *testing.T) {
 
 func TestGetLogsPagination(t *testing.T) {
 	prefix := uniquePrefix("LogsPag")
-	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Owner")
+	userID := CreateTestUser(t, prefix, "Moderator")
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
 	for i := 0; i < 5; i++ {
-		db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), ?)",
-			flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, groupID, userID, fmt.Sprintf("page test %d", i))
+		db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), ?)",
+			flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, userID, fmt.Sprintf("page test %d", i))
 	}
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?logtype=messages&groupid=%d&limit=2&jwt=%s", groupID, token), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?logtype=messages&limit=2&jwt=%s", token), nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -118,54 +110,50 @@ func TestGetLogsModmailsonly(t *testing.T) {
 	// Verify that modmailsonly=true filters to only modmail-related logs.
 	// V1 includes: Message (Rejected, Deleted, Replied) and User (Mailed, Rejected, Deleted).
 	prefix := uniquePrefix("LogsModmail")
-	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, modID)
 
 	db := database.DBConn
 
 	// 1. Message/Rejected (SHOULD be included)
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'rejected')",
-		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REJECTED, groupID, userID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'rejected')",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REJECTED, userID)
 
 	// 2. Message/Deleted (SHOULD be included)
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'deleted')",
-		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, groupID, userID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'deleted')",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, userID)
 
 	// 3. Message/Replied (SHOULD be included)
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'replied')",
-		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, groupID, userID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'replied')",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, userID)
 
 	// 4. User/Mailed (SHOULD be included)
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'mailed')",
-		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_MAILED, groupID, userID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'mailed')",
+		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_MAILED, userID)
 
 	// 5. User/Rejected (SHOULD be included)
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'user rejected')",
-		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_REJECTED, groupID, userID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'user rejected')",
+		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_REJECTED, userID)
 
 	// 6. User/Deleted (SHOULD be included)
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'user deleted')",
-		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_DELETED, groupID, userID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'user deleted')",
+		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_DELETED, userID)
 
 	// 7. Message/Received (SHOULD NOT be included)
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'received')",
-		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, groupID, userID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'received')",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, userID)
 
 	// 8. Message/Approved (SHOULD NOT be included)
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'approved')",
-		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_APPROVED, groupID, userID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'approved')",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_APPROVED, userID)
 
 	// 9. Group/Joined (SHOULD NOT be included)
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'joined')",
-		flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_JOINED, groupID, userID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'joined')",
+		flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_JOINED, userID)
 
 	// Query with modmailsonly=true
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?groupid=%d&modmailsonly=true&limit=100&jwt=%s",
-		groupID, token), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?modmailsonly=true&limit=100&jwt=%s", token), nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -222,48 +210,45 @@ func TestGetLogsUserReturnsAllTypes(t *testing.T) {
 	// Verify that logtype=user returns logs of ALL types (not just Message/User),
 	// but excludes User/Created and User/Merged subtypes.
 	prefix := uniquePrefix("LogsUserAll")
-	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	targetUserID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
-	CreateTestMembership(t, targetUserID, groupID, "Member")
 	_, token := CreateTestSession(t, modID)
 
 	db := database.DBConn
 
 	// 1. Group/Joined log — previously excluded by the type filter bug.
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'joined group')",
-		flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_JOINED, groupID, targetUserID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'joined group')",
+		flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_JOINED, targetUserID)
 
 	// 2. Message/Received log — always included.
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'received msg')",
-		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, groupID, targetUserID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'received msg')",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, targetUserID)
 
 	// 3. User/Created log — should be EXCLUDED by the fix.
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'user created')",
-		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_CREATED, groupID, targetUserID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'user created')",
+		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_CREATED, targetUserID)
 
 	// 4. User/Merged log — should be EXCLUDED by the fix.
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'user merged')",
-		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_MERGED, groupID, targetUserID)
+	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'user merged')",
+		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_MERGED, targetUserID)
 
 	// 5. Config/Edit log (byuser) — should be included via the byuser match.
-	db.Exec("INSERT INTO logs (type, subtype, groupid, byuser, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'config edited')",
-		flog.LOG_TYPE_CONFIG, flog.LOG_SUBTYPE_EDIT, groupID, targetUserID)
+	db.Exec("INSERT INTO logs (type, subtype, byuser, timestamp, text) VALUES (?, ?, ?, NOW(), 'config edited')",
+		flog.LOG_TYPE_CONFIG, flog.LOG_SUBTYPE_EDIT, targetUserID)
 
 	// 6. User/Suspect log — flagged as spam (Discourse #293: must be visible).
 	db.Exec("INSERT INTO logs (type, subtype, user, timestamp, text) VALUES (?, ?, ?, NOW(), 'possible spammer')",
 		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_SUSPECT, targetUserID)
 
 	// 7. Group/Left log with byuser (removal by mod — Discourse #293: must show as "Removed").
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, byuser, timestamp, text) VALUES (?, ?, ?, ?, ?, NOW(), 'removed by mod')",
-		flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_LEFT, groupID, targetUserID, modID)
+	db.Exec("INSERT INTO logs (type, subtype, user, byuser, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'removed by mod')",
+		flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_LEFT, targetUserID, modID)
 
 	// 8. User/Deleted log — user removed from platform.
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, byuser, timestamp, text) VALUES (?, ?, ?, ?, ?, NOW(), 'removed member')",
-		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_DELETED, groupID, targetUserID, modID)
+	db.Exec("INSERT INTO logs (type, subtype, user, byuser, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'removed member')",
+		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_DELETED, targetUserID, modID)
 
-	// Query with logtype=user for the target user (no groupid — matches frontend behavior).
+	// Query with logtype=user for the target user.
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?logtype=user&userid=%d&limit=100&jwt=%s",
 		targetUserID, token), nil)
 	resp, _ := getApp().Test(req)
@@ -331,11 +316,8 @@ func TestGetLogsModmailTextIsEmailSubject(t *testing.T) {
 	// The V2 path stores this in logs.text via the background task; log.text is what ModTools
 	// displays to show what was actually sent in the modmail.
 	prefix := uniquePrefix("LogsModmailText")
-	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, modID)
 
 	db := database.DBConn
@@ -350,11 +332,11 @@ func TestGetLogsModmailTextIsEmailSubject(t *testing.T) {
 	emailSubject := "Pending: add a photo"
 
 	// Create a modmail log with the email subject in log.text (as the V2 batch processor does)
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, msgid, byuser, timestamp, text) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)",
-		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, groupID, userID, msgID, modID, emailSubject)
+	db.Exec("INSERT INTO logs (type, subtype, user, msgid, byuser, timestamp, text) VALUES (?, ?, ?, ?, ?, NOW(), ?)",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, userID, msgID, modID, emailSubject)
 
 	// Fetch logs and verify the email subject is returned in log.text
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?groupid=%d&jwt=%s", groupID, token), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?jwt=%s", token), nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -382,11 +364,8 @@ func TestGetLogsMsgsubjectHistoricalIsPreserved(t *testing.T) {
 	// the log returns the subject as it was AT THE TIME of the event,
 	// not the current (post-edit) subject. Uses messages_edits to reconstruct history.
 	prefix := uniquePrefix("LogsHistSubj")
-	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, modID)
 
 	db := database.DBConn
@@ -397,8 +376,8 @@ func TestGetLogsMsgsubjectHistoricalIsPreserved(t *testing.T) {
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
 
 	// Insert a Received log at a fixed past time
-	db.Exec("INSERT INTO logs (type, subtype, groupid, user, msgid, timestamp, text) VALUES (?, ?, ?, ?, ?, '2020-01-01 12:00:00', 'test')",
-		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, groupID, userID, msgID)
+	db.Exec("INSERT INTO logs (type, subtype, user, msgid, timestamp, text) VALUES (?, ?, ?, ?, '2020-01-01 12:00:00', 'test')",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, userID, msgID)
 
 	// Subject was then changed: Escooter → Cycle. messages_edits records the old value.
 	db.Exec("INSERT INTO messages_edits (msgid, timestamp, oldsubject, newsubject) VALUES (?, '2020-01-01 12:00:01', 'Wanted: Escooter', 'Wanted: Cycle')", msgID)
@@ -406,7 +385,7 @@ func TestGetLogsMsgsubjectHistoricalIsPreserved(t *testing.T) {
 	// Now the current subject in messages table is "Wanted: Cycle"
 	db.Exec("UPDATE messages SET subject = 'Wanted: Cycle' WHERE id = ?", msgID)
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?groupid=%d&jwt=%s", groupID, token), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?jwt=%s", token), nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
 

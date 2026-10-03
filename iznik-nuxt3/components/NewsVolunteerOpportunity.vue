@@ -13,16 +13,6 @@
       <span class="meta-item">
         {{ addedago }}
       </span>
-      <span v-if="volunteering.groups?.length" class="meta-item">
-        on
-        <ShowMore
-          :items="volunteering.groups.map((id) => group(id)).filter(Boolean)"
-          :limit="3"
-          inline
-        >
-          <template #item="{ item }">{{ item.namedisplay }}</template>
-        </ShowMore>
-      </span>
     </div>
 
     <div class="opportunity-content">
@@ -89,7 +79,6 @@ import { ref, computed, defineAsyncComponent } from 'vue'
 import { useVolunteeringStore } from '~/stores/volunteering'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useUserStore } from '~/stores/user'
-import { useGroupStore } from '~/stores/group'
 import { timeago } from '~/composables/useTimeFormat'
 import NewsLoveComment from '~/components/NewsLoveComment'
 
@@ -110,7 +99,6 @@ const VolunteerOpportunityModal = defineAsyncComponent(
 const volunteeringStore = useVolunteeringStore()
 const newsfeedStore = useNewsfeedStore()
 const userStore = useUserStore()
-const groupStore = useGroupStore()
 
 // Reactive state
 const showAddOpportunity = ref(false)
@@ -138,10 +126,6 @@ function addOpportunity() {
   showAddOpportunity.value = true
 }
 
-function group(groupid) {
-  return groupStore?.get(groupid)
-}
-
 // Fetch data
 try {
   const currentNewsfeed = newsfeedStore.byId(props.id)
@@ -150,12 +134,6 @@ try {
   const volunteeringData = await volunteeringStore.fetch(
     currentNewsfeed.volunteeringid
   )
-
-  if (volunteeringData?.groups) {
-    for (const groupid of volunteeringData.groups) {
-      await groupStore.fetch(groupid)
-    }
-  }
 
   if (!volunteeringData) {
     throw new Error('Volunteering opportunity not found')

@@ -19,9 +19,6 @@
               </span>
             </span>
           </b-col>
-          <b-col v-if="groups.length > 0" cols="12" md="4">
-            on {{ groups[0].nameshort }}
-          </b-col>
         </b-row>
       </b-card-header>
       <b-card-body>
@@ -29,9 +26,7 @@
           {{ heldError }}
         </NoticeMessage>
         <NoticeMessage
-          v-if="
-            groups.length > 0 && groups[0].ourPostingStatus === 'PROHIBITED'
-          "
+          v-if="eventUser?.postingstatus === 'PROHIBITED'"
           variant="danger"
           class="mb-2"
         >
@@ -50,9 +45,8 @@
           <v-icon icon="trash-alt" /> Delete
         </b-button>
         <ChatButton
-          v-if="groups.length > 0 && event.userid"
+          v-if="event.userid"
           :userid="event.userid"
-          :groupid="groups[0].id"
           title="Chat"
           variant="white"
           class="me-1"
@@ -81,7 +75,6 @@
 import { ref, computed, watch } from 'vue'
 import { useCommunityEventStore } from '~/stores/communityevent'
 import { useHeldNotice } from '~/composables/useHeldNotice'
-import { useGroupStore } from '~/stores/group'
 import { useUserStore } from '~/stores/user'
 
 const props = defineProps({
@@ -93,7 +86,6 @@ const props = defineProps({
 
 const communityEventStore = useCommunityEventStore()
 const { heldError, guardHold } = useHeldNotice()
-const groupStore = useGroupStore()
 const userStore = useUserStore()
 
 const event = computed(() => communityEventStore.byId(props.eventid))
@@ -115,18 +107,6 @@ watch(
 
 const eventUser = computed(() => {
   return event.value?.userid ? userStore.byId(event.value.userid) : null
-})
-
-const groups = computed(() => {
-  const ret = []
-  event.value?.groups?.forEach((id) => {
-    const group = groupStore?.get(id)
-
-    if (group) {
-      ret.push(group)
-    }
-  })
-  return ret
 })
 
 function edit() {

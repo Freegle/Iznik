@@ -7,38 +7,29 @@ type MessageSummary struct {
 	Hasoutcome bool      `json:"hasoutcome"`
 	Successful bool      `json:"successful"`
 	Promised   bool      `json:"promised"`
-	Groupid    uint64    `json:"groupid"`
 	Collection string    `json:"collection"`
 	SpatialID  *uint64   `json:"spatialid,omitempty" gorm:"column:spatialid"`
 	Type       string    `json:"type"`
-	Arrival    time.Time `json:"arrival"`
-	// Posted is the ORIGINAL post arrival (messages.arrival), stable across
-	// rippling. On the nearby/reach feed the client's "Newest posted" sort orders
-	// by this so a post that merely rippled again does not jump to the top with a
-	// days-old badge (Discourse 9844). Arrival, by contrast, is the reach-bumped
-	// spatial arrival used for the relevance score. Only populated on the browse
-	// feed; zero elsewhere (falls back to arrival client-side).
+	// Arrival is the reach-bumped spatial arrival (messages_spatial.arrival) used
+	// for the relevance score on the nearby/reach feed. On the own-posts arm there
+	// is no separate reach row to bump, so it is populated from messages.arrival
+	// instead, same as Posted and VisibleSince below.
+	Arrival time.Time `json:"arrival"`
+	// Posted is messages.arrival: bumped by initial approval and by every repost
+	// (see changes.go), but NOT by a ripple re-expansion (that only bumps the
+	// separate messages_spatial.arrival Arrival reads above). On the nearby/reach
+	// feed the client's "Newest posted" sort orders by this so a post that merely
+	// rippled further does not jump to the top with a days-old badge (Discourse
+	// 9844). Only populated on the browse feed; zero elsewhere (falls back to
+	// arrival client-side).
 	Posted time.Time `json:"posted,omitempty"`
-	// VisibleSince is the earliest this post could have been seen: the oldest
-	// arrival across the groups it is live on. It is the ONE clock the browse feed
-	// uses - both the "Newest posted" order and the card's time badge - so the list
-	// can never contradict the dates printed on it.
-	//
-	// Neither of the two fields above could do that job. Arrival is the reach-bumped
-	// spatial arrival, so it moves when a post merely ripples further. Posted is when
-	// the message was written, which is NOT when it became available: a post written
-	// on the 24th, approved onto its group on the 8th and rippled onward on the 12th
-	// showed "5 days" on the card while sorting as 20 days old, so the feed printed
-	// dates in an order its own sort key contradicted.
-	//
-	// It moves for the two reasons a post legitimately becomes available later than it
-	// was written: a repost (the giver re-offering it, which updates the group row) and
-	// a ripple into a further group. Ordering by it means a repost lifts the post back
-	// up, which is the point of reposting.
-	//
-	// LIMITATION: the oldest arrival across ALL the post's groups, not just the ones
-	// this viewer can see, which would need their membership set threading into the
-	// query. Zero outside the browse feed; the client falls back to posted there.
+	// VisibleSince is when this post became available: messages.arrival, the same
+	// value as Posted now that there is one row per message (no more per-group
+	// messages_groups rows to take a MIN across). It is the ONE clock the browse
+	// feed uses - both the "Newest posted" order and the card's time badge - so
+	// the list can never contradict the dates printed on it. A repost lifts it
+	// back up, which is the point of reposting. Zero outside the browse feed; the
+	// client falls back to posted there.
 	VisibleSince time.Time `json:"visibleSince,omitempty"`
 	Date         time.Time `json:"date"`
 	Lat          float64   `json:"lat"`

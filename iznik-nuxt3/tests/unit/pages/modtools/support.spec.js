@@ -129,9 +129,6 @@ describe('support/[[id]].vue page', () => {
           ModSupportAIAssistant: {
             template: '<div class="mod-support-ai-assistant" />',
           },
-          ModSupportConcernKeywords: {
-            template: '<div class="mod-support-concern-keywords" />',
-          },
           NoticeMessage: {
             template: '<div class="notice-message"><slot /></div>',
             props: ['variant'],

@@ -33,9 +33,6 @@ const mockUserSave = vi.fn()
 const mockAddEmail = vi.fn()
 const mockRemoveEmail = vi.fn()
 const mockMerge = vi.fn()
-const mockUpdateMembership = vi.fn()
-const mockLeaveGroup = vi.fn()
-const mockJoinGroup = vi.fn()
 
 vi.mock('~/composables/useClientLog', () => ({
   action: vi.fn(),
@@ -61,11 +58,6 @@ vi.mock('~/api', () => ({
       addEmail: mockAddEmail,
       removeEmail: mockRemoveEmail,
       merge: mockMerge,
-    },
-    memberships: {
-      update: mockUpdateMembership,
-      leaveGroup: mockLeaveGroup,
-      joinGroup: mockJoinGroup,
     },
   }),
 }))
@@ -105,11 +97,6 @@ vi.mock('@capgo/capacitor-social-login', () => ({
 
 vi.mock('~/stores/compose', () => ({
   useComposeStore: () => ({}),
-}))
-
-const mockFetchBatch = vi.fn()
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({ list: {}, fetchBatch: mockFetchBatch }),
 }))
 
 const mockMobileStore = {
@@ -705,46 +692,10 @@ describe('auth store', () => {
     })
   })
 
-  describe('fetchUser group batch off the critical path', () => {
-    it('resolves without waiting for the group detail batch', async () => {
-      store.setAuth('valid-jwt', 'valid-persistent')
-      mockFetchv2.mockResolvedValue({
-        me: { id: 5 },
-        groups: [{ groupid: 11 }, { groupid: 22 }],
-      })
-      // The batch hangs forever - fetchUser (and therefore first paint, which
-      // awaits it in the layouts) must not wait for group details.
-      mockFetchBatch.mockReturnValue(new Promise(() => {}))
-
-      const result = await Promise.race([
-        store.fetchUser().then(() => 'fetchUser'),
-        new Promise((resolve) => setTimeout(() => resolve('timeout'), 1000)),
-      ])
-
-      expect(result).toBe('fetchUser')
-      expect(store.user.id).toBe(5)
-      expect(mockFetchBatch).toHaveBeenCalledWith([11, 22])
-    })
-
-    it('survives a rejected group batch', async () => {
-      store.setAuth('valid-jwt', 'valid-persistent')
-      mockFetchv2.mockResolvedValue({
-        me: { id: 5 },
-        groups: [{ groupid: 11 }],
-      })
-      mockFetchBatch.mockRejectedValue(new Error('batch down'))
-
-      await store.fetchUser()
-      // Let the rejected batch settle - it must not become an unhandled
-      // rejection or clear the user.
-      await new Promise((resolve) => setTimeout(resolve, 0))
-
-      expect(store.user.id).toBe(5)
-    })
-
+  describe('fetchUser session timestamp', () => {
     it('records when the session was fetched', async () => {
       store.setAuth('valid-jwt', 'valid-persistent')
-      mockFetchv2.mockResolvedValue({ me: { id: 5 }, groups: [] })
+      mockFetchv2.mockResolvedValue({ me: { id: 5 } })
 
       const before = Date.now()
       await store.fetchUser()
@@ -920,75 +871,6 @@ describe('auth store', () => {
       expect(mockUnbounce).toHaveBeenCalledWith(999)
       // Only the target user is unbounced server-side; our own state is untouched.
       expect(store.user.bouncing).toBe(1)
-    })
-  })
-
-  describe('setGroup / leaveGroup / joinGroup', () => {
-    it('setGroup updates membership and refetches by default', async () => {
-      store.setAuth('valid-jwt', 'valid-persistent')
-      mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
-
-      await store.setGroup({ groupid: 5, role: 'Member' })
-
-      expect(mockUpdateMembership).toHaveBeenCalledWith({
-        groupid: 5,
-        role: 'Member',
-      })
-      expect(mockFetchv2).toHaveBeenCalled()
-    })
-
-    it('setGroup skips the refetch when nofetch is set', async () => {
-      await store.setGroup({ groupid: 5, role: 'Member' }, true)
-
-      expect(mockUpdateMembership).toHaveBeenCalled()
-      expect(mockFetchv2).not.toHaveBeenCalled()
-    })
-
-    it('leaveGroup leaves and returns the refetched user', async () => {
-      store.setAuth('valid-jwt', 'valid-persistent')
-      mockFetchv2.mockResolvedValue({ me: { id: 9 }, groups: [] })
-
-      const user = await store.leaveGroup(9, 20)
-
-      expect(mockLeaveGroup).toHaveBeenCalledWith({ userid: 9, groupid: 20 })
-      expect(user.id).toBe(9)
-    })
-
-    it('joinGroup joins and returns the refetched user', async () => {
-      store.setAuth('valid-jwt', 'valid-persistent')
-      mockJoinGroup.mockResolvedValue({})
-      mockFetchv2.mockResolvedValue({ me: { id: 9 }, groups: [] })
-
-      const user = await store.joinGroup(9, 20, true)
-
-      expect(mockJoinGroup).toHaveBeenCalledWith({
-        userid: 9,
-        groupid: 20,
-        manual: true,
-      })
-      expect(user.id).toBe(9)
-    })
-
-    it('joinGroup swallows a banned-member 403 and returns the current user silently', async () => {
-      store.user = { id: 9 }
-      const err = new Error('Failed - banned')
-      err.response = { status: 403, data: 'Failed - banned' }
-      mockJoinGroup.mockRejectedValue(err)
-
-      const user = await store.joinGroup(9, 20, false)
-
-      expect(user.id).toBe(9)
-      expect(mockFetchv2).not.toHaveBeenCalled()
-    })
-
-    it('joinGroup rethrows a non-banned failure', async () => {
-      const err = new Error('Server error')
-      err.response = { status: 500, data: 'boom' }
-      mockJoinGroup.mockRejectedValue(err)
-
-      await expect(store.joinGroup(9, 20, false)).rejects.toThrow(
-        'Server error'
-      )
     })
   })
 
@@ -1227,26 +1109,4 @@ describe('auth store', () => {
     })
   })
 
-  describe('member getter', () => {
-    it('returns the role for a group the user belongs to', () => {
-      store.user = { id: 1 }
-      store.groups = [{ groupid: 10, role: 'Owner' }]
-
-      expect(store.member(10)).toBe('Owner')
-      expect(store.member('10')).toBe('Owner')
-    })
-
-    it('returns false when the user does not belong to the group', () => {
-      store.user = { id: 1 }
-      store.groups = [{ groupid: 10, role: 'Owner' }]
-
-      expect(store.member(20)).toBe(false)
-    })
-
-    it('returns false when nobody is logged in', () => {
-      store.user = null
-
-      expect(store.member(10)).toBe(false)
-    })
-  })
 })

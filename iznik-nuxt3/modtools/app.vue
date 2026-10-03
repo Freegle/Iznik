@@ -32,7 +32,6 @@
 <script setup>
 import { useNoticeboardStore } from '~/stores/noticeboard'
 import { useAuthStore } from '~/stores/auth'
-import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
 import { useNearbyStore } from '~/stores/nearby'
@@ -69,15 +68,12 @@ import { useAdminsStore } from '~/stores/admins'
 import { useAlertStore } from '~/stores/alert'
 import { useCommentStore } from '~/stores/comment'
 import { useLogsStore } from '~/stores/logs'
-import { useMemberStore } from '~/stores/member'
+import { useMemberStore } from '~/modtools/stores/member'
 import { useModConfigStore } from '~/stores/modconfig'
 import { useSpammerStore } from '~/stores/spammer'
 import { useStdmsgStore } from '~/stores/stdmsg'
 import { computed } from '#imports'
-import { useModGroupStore } from '~/stores/modgroup'
-import { useSystemConfigStore } from '~/stores/systemconfig'
 import { useEmailTrackingStore } from '~/modtools/stores/emailtracking'
-import { usePartnershipsStore } from '~/modtools/stores/partnerships'
 
 // We're having trouble accessing the Nuxt config from within a Pinia store.  So instead we access it here, then
 // pass it in to each store via an init() action.
@@ -94,7 +90,6 @@ const runtimeConfig = JSON.parse(
 
 const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
-const groupStore = useGroupStore()
 const messageStore = useMessageStore()
 const authStore = useAuthStore()
 const userStore = useUserStore()
@@ -129,15 +124,11 @@ const commentStore = useCommentStore()
 const logsStore = useLogsStore()
 const memberStore = useMemberStore()
 const modconfigStore = useModConfigStore()
-const modGroupStore = useModGroupStore()
 const spammerStore = useSpammerStore()
 const stdmsgStore = useStdmsgStore()
-const systemConfigStore = useSystemConfigStore()
 const emailTrackingStore = useEmailTrackingStore()
-const partnershipsStore = usePartnershipsStore()
 
 miscStore.init(runtimeConfig)
-groupStore.init(runtimeConfig)
 messageStore.init(runtimeConfig)
 authStore.init(runtimeConfig)
 userStore.init(runtimeConfig)
@@ -172,12 +163,9 @@ commentStore.init(runtimeConfig)
 logsStore.init(runtimeConfig)
 memberStore.init(runtimeConfig)
 modconfigStore.init(runtimeConfig)
-modGroupStore.init(runtimeConfig)
 spammerStore.init(runtimeConfig)
 stdmsgStore.init(runtimeConfig)
-systemConfigStore.init(runtimeConfig)
 emailTrackingStore.init(runtimeConfig)
-partnershipsStore.init(runtimeConfig)
 
 miscStore.modtools = true
 mobileStore.init(runtimeConfig)

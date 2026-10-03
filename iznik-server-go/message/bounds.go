@@ -16,9 +16,9 @@ import (
 
 // boundsLikesChunk bounds how many msgids go into a single messages_likes IN (...) lookup used
 // to compute "unseen" for the spatial arm of Bounds(). A viewport-scale polygon only matches a
-// handful of messages_spatial rows, but the no-location myGroupsBoundingBox fallback (unioning
-// every group a member belongs to) can match most of the table, so this keeps that IN list - and
-// the statement - short regardless of how large the match set gets.
+// handful of messages_spatial rows, but the no-location, country-wide fallback can match most
+// of the table, so this keeps that IN list - and the statement - short regardless of how large
+// the match set gets.
 const boundsLikesChunk = 1000
 
 // chunkWindows splits ids into consecutive windows of at most size, preserving order. Pure and
@@ -173,8 +173,8 @@ func whenVisibleStore(rows []whenVisibleRow, now time.Time) {
 // has to be on the summary, not repaired later from the full record.
 //
 // Batched in boundsLikesChunk-sized IN (...) lookups, for the same reason viewedMessageIDs is:
-// the no-location country-wide fallback can match most of messages_spatial, and a correlated
-// subquery inside that SELECT would turn into one messages_groups probe per matched row.
+// the no-location country-wide fallback can match most of messages_spatial, and an unbatched
+// query would pass one enormous IN list in a single round trip.
 func stampWhenVisible(db *gorm.DB, msgs []MessageSummary) {
 	ids := make([]uint64, len(msgs))
 	for ix, m := range msgs {
@@ -198,14 +198,12 @@ func whenVisible(db *gorm.DB, ids []uint64) map[uint64]whenVisibleRow {
 	when, misses := whenVisibleCached(ids, now)
 	for _, chunk := range chunkWindows(misses, whenVisibleChunk) {
 		var rows []whenVisibleRow
-		// Same expression as message.go's full-record select and message/groups.go, so every
-		// surface the card is built from agrees. A post with no live group row dates from
-		// its write time.
-		db.Raw("SELECT m.id, m.arrival AS posted, "+
-			"COALESCE(MIN(mg.arrival), m.arrival) AS visible_since "+
+		// Same expression as message.go's full-record select, so every surface the
+		// card is built from agrees. keep-raw: no more messages_groups - m.arrival is
+		// now the one clock (bumped on approval and on every repost, see changes.go).
+		db.Raw("SELECT m.id, m.arrival AS posted, m.arrival AS visible_since "+
 			"FROM messages m "+
-			"LEFT JOIN messages_groups mg ON mg.msgid = m.id AND mg.deleted = 0 "+
-			"WHERE m.id IN (?) GROUP BY m.id, m.arrival", chunk).Scan(&rows)
+			"WHERE m.id IN (?)", chunk).Scan(&rows)
 		for _, r := range rows {
 			when[r.ID] = r
 		}
@@ -245,19 +243,15 @@ func Bounds(c *fiber.Ctx) error {
 	// this exact site was already flagged for spatial review once before
 	// (see the site history this replaces). Left for a properly tested
 	// re-conversion attempt rather than guessed at under a merge.
-	db.Raw(""+
+	db.Raw(""+ // keep-raw: see the block comment above - merge-conflict resolution, not converted
 		"SELECT ST_Y(point) AS lat, "+
 		"ST_X(point) AS lng, "+
 		"messages_spatial.msgid AS id, "+
 		"messages_spatial.successful, "+
 		"messages_spatial.promised, "+
-		"messages_spatial.groupid, "+
 		"messages_spatial.msgtype AS type, "+
 		"messages_spatial.arrival "+
 		"FROM messages_spatial "+
-		// The groups join no longer filters on visibility, but is kept so that a post whose
-		// group has been deleted doesn't show up.
-		"INNER JOIN `groups` ON groups.id = messages_spatial.groupid "+
 		"WHERE ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), point) "+
 		// A post is not live until its reach exists - see rippling.ReachPendingFilter.
 		// It exempts the viewer's own posts, as does the own-posts arm below.
@@ -272,7 +266,7 @@ func Bounds(c *fiber.Ctx) error {
 
 	// unseen used to come from a LEFT JOIN against messages_likes on every matched
 	// messages_spatial row. For a viewport-scale polygon that's a handful of rows and is cheap,
-	// but the no-location myGroupsBoundingBox fallback can send a polygon spanning most of the
+	// but the no-location, country-wide fallback can send a polygon spanning most of the
 	// member's country, which matched most of messages_spatial and turned into tens of thousands
 	// of per-row point lookups into the 86M-row messages_likes table on every call. Computing it
 	// here instead, via one batched lookup scoped to just the ids this call matched, keeps the
@@ -302,17 +296,15 @@ func Bounds(c *fiber.Ctx) error {
 		Select("messages.lat, messages.lng, messages.id, "+
 			"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
 			"ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
-			"MIN(messages_groups.groupid) AS groupid, "+
 			"messages.type,"+
-			"MAX(messages_groups.arrival) AS arrival, "+
+			// keep-raw: no more messages_groups - messages.arrival is the one clock now.
+			"messages.arrival AS arrival, "+
 			"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen",
 			utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED).
-		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
-		Joins("INNER JOIN `groups` ON groups.id = messages_groups.groupid").
 		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id").
 		Joins("LEFT JOIN messages_promises ON messages_promises.msgid = messages.id").
 		Joins("LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
-		Where("fromuser = ? AND messages_groups.arrival >= ? AND "+
+		Where("fromuser = ? AND messages.arrival >= ? AND "+
 			"ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), ST_SRID(POINT(messages.lng, messages.lat), ?)) "+
 			"AND messages_outcomes.id IS NULL",
 			myid, start, swlng, swlat, swlng, nelat, nelng, nelat, nelng, swlat, swlng, swlat, utils.SRID, utils.SRID).

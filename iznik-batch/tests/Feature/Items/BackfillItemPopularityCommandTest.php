@@ -26,10 +26,8 @@ class BackfillItemPopularityCommandTest extends TestCase
     /** Link $count fresh messages to $itemid without going through ItemService. */
     private function linkRaw(int $itemid, int $count): void
     {
-        $group = $this->createTestGroup();
-
         for ($i = 0; $i < $count; $i++) {
-            $message = $this->createTestMessage($this->createTestUser(), $group);
+            $message = $this->createTestMessage($this->createTestUser());
             DB::statement(
                 'INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)',
                 [$message->id, $itemid]

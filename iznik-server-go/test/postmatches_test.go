@@ -158,10 +158,9 @@ func TestPostMatchesReachFilteredForOwner(t *testing.T) {
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("postmatchesreach")
-	groupID := CreateTestGroup(t, prefix)
 	posterOut := CreateTestUser(t, prefix+"po", "Member")
 	// Out-of-reach candidate needs a real message row (rippling_reach FK).
-	outReachID := CreateTestMessage(t, posterOut, groupID, "out of reach wanted", 51.5, -0.1)
+	outReachID := CreateTestMessage(t, posterOut, "out of reach wanted", 51.5, -0.1)
 
 	base := makeTestVec(0.5)
 	near := makeTestVec(0.5001)

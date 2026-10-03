@@ -84,7 +84,6 @@ func similarPostsEnabled() bool {
 // card (it fetches full message details separately) and place it on the map.
 type SimilarResult struct {
 	Msgid   uint64  `json:"id"`
-	Groupid uint64  `json:"groupid"`
 	Score   float32 `json:"score"`
 	Lat     float64 `json:"lat"`
 	Lng     float64 `json:"lng"`
@@ -208,7 +207,7 @@ func Similar(c *fiber.Ctx) error {
 		swlng = float32(centreLng - similarBoxLngDeg)
 		nelng = float32(centreLng + similarBoxLngDeg)
 	}
-	candidates := embedding.Global.Search(srcVec, similarCandidatePool, searchType, nil, nil, swlat, swlng, nelat, nelng)
+	candidates := embedding.Global.Search(srcVec, similarCandidatePool, searchType, nil, swlat, swlng, nelat, nelng)
 
 	// Reach filter: drop candidates that could not be replied to from the centre
 	// (rippled out but not yet to it). Applies to logged-out readers too, using the
@@ -255,7 +254,6 @@ func Similar(c *fiber.Ctx) error {
 		lat, lng := roadblur.RoadBlur(cnd.Lat, cnd.Lng, utils.BLUR_USER)
 		out = append(out, SimilarResult{
 			Msgid:   cnd.Msgid,
-			Groupid: cnd.Groupid,
 			Score:   cnd.SubjectCos,
 			Lat:     lat,
 			Lng:     lng,

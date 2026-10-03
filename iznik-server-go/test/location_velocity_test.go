@@ -14,11 +14,9 @@ import (
 func TestLocationChangeVelocityFlagsRapidHopper(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("locvel")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 
-	db.Exec("UPDATE memberships SET reviewrequestedat = NULL, reviewreason = NULL WHERE userid = ?", userID)
+	db.Exec("UPDATE users SET reviewrequestedat = NULL, reviewreason = NULL, reviewedat = NULL WHERE id = ?", userID)
 	db.Exec("DELETE FROM logs WHERE user = ? AND subtype IN ('PostcodeChange', 'Suspect')", userID)
 	defer db.Exec("DELETE FROM logs WHERE user = ? AND subtype IN ('PostcodeChange', 'Suspect')", userID)
 
@@ -28,7 +26,7 @@ func TestLocationChangeVelocityFlagsRapidHopper(t *testing.T) {
 	}
 	flaggedCount := func() int {
 		var n int
-		db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND reviewrequestedat IS NOT NULL", userID).Scan(&n)
+		db.Raw("SELECT COUNT(*) FROM users WHERE id = ? AND reviewrequestedat IS NOT NULL", userID).Scan(&n)
 		return n
 	}
 
@@ -63,11 +61,9 @@ func TestLocationChangeVelocityFlagsRapidHopper(t *testing.T) {
 func TestLocationChangeVelocitySkipsMods(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("locvelmod")
-	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix, "Moderator")
 
-	db.Exec("UPDATE memberships SET reviewrequestedat = NULL WHERE userid = ?", modID)
+	db.Exec("UPDATE users SET reviewrequestedat = NULL, reviewreason = NULL, reviewedat = NULL WHERE id = ?", modID)
 	db.Exec("DELETE FROM logs WHERE user = ? AND subtype IN ('PostcodeChange', 'Suspect')", modID)
 	defer db.Exec("DELETE FROM logs WHERE user = ? AND subtype IN ('PostcodeChange', 'Suspect')", modID)
 
@@ -79,6 +75,6 @@ func TestLocationChangeVelocitySkipsMods(t *testing.T) {
 	user.CheckLocationChangeVelocity(db, modID)
 
 	var flagged int
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND reviewrequestedat IS NOT NULL", modID).Scan(&flagged)
+	db.Raw("SELECT COUNT(*) FROM users WHERE id = ? AND reviewrequestedat IS NOT NULL", modID).Scan(&flagged)
 	assert.Equal(t, 0, flagged, "moderators are never flagged for location velocity")
 }

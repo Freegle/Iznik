@@ -3,7 +3,6 @@
 namespace Tests\Unit\Services;
 
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Services\MessageSearchService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -15,9 +14,8 @@ class MessageSearchServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new MessageSearchService();
+        $this->service = new MessageSearchService;
         DB::table('messages_index')->delete();
-        DB::table('messages_groups')->delete();
         DB::table('words_cache')->delete();
         DB::table('words')->insertOrIgnore(['word' => 'testword', 'firstthree' => 'tes', 'soundex' => 'T363']);
         $this->wordId = DB::table('words')->where('word', 'testword')->value('id');
@@ -28,7 +26,6 @@ class MessageSearchServiceTest extends TestCase
     public function test_deindexes_messages_older_than_30_days(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -38,21 +35,15 @@ class MessageSearchServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now()->subDays(31),
             'arrival' => now()->subDays(31),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(31),
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         DB::table('messages_index')->insert([
             'msgid' => $message->id,
             'wordid' => $this->wordId,
             'arrival' => -now()->subDays(31)->timestamp,
-            'groupid' => $group->id,
         ]);
 
         $result = $this->service->deindexOldMessages();
@@ -64,7 +55,6 @@ class MessageSearchServiceTest extends TestCase
     public function test_recent_messages_not_deindexed(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -74,21 +64,15 @@ class MessageSearchServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now()->subDays(5),
             'arrival' => now()->subDays(5),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(5),
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         DB::table('messages_index')->insert([
             'msgid' => $message->id,
             'wordid' => $this->wordId,
             'arrival' => -now()->subDays(5)->timestamp,
-            'groupid' => $group->id,
         ]);
 
         $this->service->deindexOldMessages();
@@ -117,7 +101,6 @@ class MessageSearchServiceTest extends TestCase
     public function test_indexes_recent_unindexed_message(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -127,14 +110,9 @@ class MessageSearchServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now()->subDays(3),
             'arrival' => now()->subDays(3),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(3),
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         $result = $this->service->indexUnindexedMessages();
@@ -146,7 +124,6 @@ class MessageSearchServiceTest extends TestCase
     public function test_does_not_reindex_already_indexed_message(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -156,14 +133,9 @@ class MessageSearchServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now()->subDays(3),
             'arrival' => now()->subDays(3),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(3),
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         DB::table('words')->insertOrIgnore(['word' => 'table', 'firstthree' => 'tab', 'soundex' => 'T140']);
@@ -172,7 +144,6 @@ class MessageSearchServiceTest extends TestCase
             'msgid' => $message->id,
             'wordid' => $wordId,
             'arrival' => -now()->subDays(3)->timestamp,
-            'groupid' => $group->id,
         ]);
 
         $result = $this->service->indexUnindexedMessages();
@@ -183,7 +154,6 @@ class MessageSearchServiceTest extends TestCase
     public function test_parses_subject_to_index_item_not_type(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -193,14 +163,9 @@ class MessageSearchServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now()->subDays(3),
             'arrival' => now()->subDays(3),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(3),
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         $this->service->indexUnindexedMessages();
@@ -224,7 +189,6 @@ class MessageSearchServiceTest extends TestCase
     public function test_old_messages_not_indexed(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -234,14 +198,9 @@ class MessageSearchServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now()->subDays(40),
             'arrival' => now()->subDays(40),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(40),
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         $result = $this->service->indexUnindexedMessages();
@@ -252,7 +211,6 @@ class MessageSearchServiceTest extends TestCase
     public function test_deleted_messages_not_indexed(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -262,15 +220,10 @@ class MessageSearchServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now()->subDays(3),
             'arrival' => now()->subDays(3),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(3),
-            'deleted' => 1,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_APPROVED,
+            'deleted' => now(),
         ]);
 
         $result = $this->service->indexUnindexedMessages();

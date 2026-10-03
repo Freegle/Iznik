@@ -3,7 +3,6 @@
 namespace Tests\Unit\Models;
 
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Models\MessageOutcome;
 use Tests\TestCase;
 
@@ -12,7 +11,6 @@ class MessageModelTest extends TestCase
     public function test_message_can_be_created(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -30,10 +28,8 @@ class MessageModelTest extends TestCase
     public function test_approved_scope(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $approved = $this->createTestMessage($user, $group);
+        $approved = $this->createTestMessage($user);
 
         $pending = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -43,13 +39,7 @@ class MessageModelTest extends TestCase
             'source' => 'Platform',
             'date' => now(),
             'arrival' => now(),
-        ]);
-
-        MessageGroup::create([
-            'msgid' => $pending->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now(),
+            'collection' => Message::COLLECTION_PENDING,
         ]);
 
         $messages = Message::approved()->get();
@@ -61,10 +51,8 @@ class MessageModelTest extends TestCase
     public function test_not_deleted_scope(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $active = $this->createTestMessage($user, $group);
+        $active = $this->createTestMessage($user);
 
         $deleted = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -86,10 +74,8 @@ class MessageModelTest extends TestCase
     public function test_with_location_scope(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $withLocation = $this->createTestMessage($user, $group, [
+        $withLocation = $this->createTestMessage($user, [
             'lat' => 51.5074,
             'lng' => -0.1278,
         ]);
@@ -115,14 +101,12 @@ class MessageModelTest extends TestCase
     public function test_offers_scope(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $offer = $this->createTestMessage($user, $group, [
+        $offer = $this->createTestMessage($user, [
             'type' => Message::TYPE_OFFER,
         ]);
 
-        $wanted = $this->createTestMessage($user, $group, [
+        $wanted = $this->createTestMessage($user, [
             'type' => Message::TYPE_WANTED,
             'subject' => 'WANTED: Something (Location)',
         ]);
@@ -136,15 +120,13 @@ class MessageModelTest extends TestCase
     public function test_wanted_scope(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $wanted = $this->createTestMessage($user, $group, [
+        $wanted = $this->createTestMessage($user, [
             'type' => Message::TYPE_WANTED,
             'subject' => 'WANTED: Something (Location)',
         ]);
 
-        $offer = $this->createTestMessage($user, $group, [
+        $offer = $this->createTestMessage($user, [
             'type' => Message::TYPE_OFFER,
         ]);
 
@@ -157,18 +139,16 @@ class MessageModelTest extends TestCase
     public function test_deadline_reached_scope(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $pastDeadline = $this->createTestMessage($user, $group, [
+        $pastDeadline = $this->createTestMessage($user, [
             'deadline' => now()->subDays(2),
         ]);
 
-        $futureDeadline = $this->createTestMessage($user, $group, [
+        $futureDeadline = $this->createTestMessage($user, [
             'deadline' => now()->addDays(2),
         ]);
 
-        $noDeadline = $this->createTestMessage($user, $group, [
+        $noDeadline = $this->createTestMessage($user, [
             'deadline' => null,
         ]);
 
@@ -182,10 +162,8 @@ class MessageModelTest extends TestCase
     public function test_recent_scope(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $recent = $this->createTestMessage($user, $group, [
+        $recent = $this->createTestMessage($user, [
             'arrival' => now()->subDays(5),
         ]);
 
@@ -208,14 +186,12 @@ class MessageModelTest extends TestCase
     public function test_is_offer(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $offer = $this->createTestMessage($user, $group, [
+        $offer = $this->createTestMessage($user, [
             'type' => Message::TYPE_OFFER,
         ]);
 
-        $wanted = $this->createTestMessage($user, $group, [
+        $wanted = $this->createTestMessage($user, [
             'type' => Message::TYPE_WANTED,
         ]);
 
@@ -226,14 +202,12 @@ class MessageModelTest extends TestCase
     public function test_is_wanted(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $wanted = $this->createTestMessage($user, $group, [
+        $wanted = $this->createTestMessage($user, [
             'type' => Message::TYPE_WANTED,
         ]);
 
-        $offer = $this->createTestMessage($user, $group, [
+        $offer = $this->createTestMessage($user, [
             'type' => Message::TYPE_OFFER,
         ]);
 
@@ -244,10 +218,8 @@ class MessageModelTest extends TestCase
     public function test_has_successful_outcome_with_taken(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $this->assertFalse($message->hasSuccessfulOutcome());
 
@@ -265,10 +237,8 @@ class MessageModelTest extends TestCase
     public function test_has_successful_outcome_with_received(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'type' => Message::TYPE_WANTED,
         ]);
 
@@ -288,10 +258,8 @@ class MessageModelTest extends TestCase
     public function test_has_successful_outcome_with_withdrawn(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         MessageOutcome::create([
             'msgid' => $message->id,
@@ -307,33 +275,17 @@ class MessageModelTest extends TestCase
     public function test_from_user_relationship(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $this->assertEquals($user->id, $message->fromUser->id);
-    }
-
-    public function test_groups_relationship(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
-        $message = $this->createTestMessage($user, $group);
-
-        $this->assertEquals(1, $message->groups()->count());
-        $this->assertTrue($message->groups->contains('id', $group->id));
     }
 
     public function test_outcomes_relationship(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $this->assertEquals(0, $message->outcomes()->count());
 
@@ -352,10 +304,8 @@ class MessageModelTest extends TestCase
     {
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user1, $group);
 
-        $message = $this->createTestMessage($user1, $group);
+        $message = $this->createTestMessage($user1);
 
         $room = \App\Models\ChatRoom::create([
             'chattype' => \App\Models\ChatRoom::TYPE_USER2USER,
@@ -397,10 +347,8 @@ class MessageModelTest extends TestCase
     public function test_attachments_relationship(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $this->assertEquals(0, $message->attachments()->count());
     }

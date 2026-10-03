@@ -4,10 +4,7 @@ namespace Tests;
 
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
-use App\Models\Group;
-use App\Models\Membership;
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\EmailSpoolerService;
@@ -55,6 +52,13 @@ abstract class TestCase extends BaseTestCase
         // process-wide) must not leak from one test into the next.
         \App\Services\Ripple\ReachService::resetDriveMetricsBreaker();
         \App\Services\Ripple\ReachService::resetLabelEvalBreaker();
+
+        // No test may ever reach the real Anthropic API. Bind FakeJudge globally so this
+        // holds even for a test file that never mentions the judge itself; phpunit.xml
+        // also blanks ANTHROPIC_API_KEY as a second line of defence.
+        $this->app->singleton(\App\Services\Judgement\Judge::class, function () {
+            return new \App\Services\Judgement\FakeJudge();
+        });
 
         // MailSuppressionService is a singleton that caches the active
         // suppression set in-process for a minute, which is right in a batch
@@ -248,62 +252,12 @@ abstract class TestCase extends BaseTestCase
     }
 
     /**
-     * Create a test Freegle group with auto-generated unique name.
-     *
-     * IMPORTANT: Do NOT pass 'nameshort' or 'namefull' - these are auto-generated
-     * to ensure uniqueness in parallel test runs. Use $group->nameshort in assertions.
-     *
-     * @throws \InvalidArgumentException if nameshort or namefull is provided
-     */
-    protected function createTestGroup(array $attributes = []): Group
-    {
-        // Fail fast if caller tries to use hardcoded names - these cause collisions in parallel tests.
-        if (isset($attributes['nameshort'])) {
-            throw new \InvalidArgumentException(
-                "Do not pass 'nameshort' to createTestGroup() - it causes collisions in parallel tests. ".
-                'Use the auto-generated name and reference $group->nameshort in assertions.'
-            );
-        }
-        if (isset($attributes['namefull'])) {
-            throw new \InvalidArgumentException(
-                "Do not pass 'namefull' to createTestGroup() - it causes collisions in parallel tests. ".
-                'Use the auto-generated name and reference $group->namefull in assertions.'
-            );
-        }
-
-        $uniqueId = uniqid('', true);
-
-        return Group::create(array_merge([
-            'nameshort' => 'TestGroup_'.$uniqueId,
-            'namefull' => 'Test Freegle Group '.$uniqueId,
-            'type' => Group::TYPE_FREEGLE,
-            'region' => 'TestRegion',
-            'lat' => 51.5074,
-            'lng' => -0.1278,
-            'onhere' => 1,
-            'publish' => 1,
-        ], $attributes));
-    }
-
-    /**
-     * Create a membership for a user in a group.
-     */
-    protected function createMembership(User $user, Group $group, array $attributes = []): Membership
-    {
-        return Membership::create(array_merge([
-            'userid' => $user->id,
-            'groupid' => $group->id,
-            'role' => Membership::ROLE_MEMBER,
-            'collection' => Membership::COLLECTION_APPROVED,
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_IMMEDIATE,
-            'added' => now(),
-        ], $attributes));
-    }
-
-    /**
      * Create a test message (offer/wanted).
+     *
+     * Uses a default London location (the reach mail and rippling tests that
+     * need a specific location pass 'lat'/'lng' in $attributes).
      */
-    protected function createTestMessage(User $user, Group $group, array $attributes = []): Message
+    protected function createTestMessage(User $user, array $attributes = []): Message
     {
         $message = Message::create(array_merge([
             'type' => Message::TYPE_OFFER,
@@ -313,17 +267,10 @@ abstract class TestCase extends BaseTestCase
             'source' => 'Platform',
             'date' => now(),
             'arrival' => now(),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_APPROVED,
         ], $attributes));
-
-        // Create messages_groups entry.
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => $attributes['arrival'] ?? now(),
-        ]);
 
         return $message->fresh();
     }
@@ -331,11 +278,11 @@ abstract class TestCase extends BaseTestCase
     /**
      * Create multiple test messages.
      */
-    protected function createTestMessages(User $user, Group $group, int $count = 3): array
+    protected function createTestMessages(User $user, int $count = 3): array
     {
         $messages = [];
         for ($i = 0; $i < $count; $i++) {
-            $messages[] = $this->createTestMessage($user, $group, [
+            $messages[] = $this->createTestMessage($user, [
                 'subject' => 'OFFER: Test Item '.($i + 1).' (TestLocation)',
                 'type' => $i % 2 === 0 ? Message::TYPE_OFFER : Message::TYPE_WANTED,
             ]);

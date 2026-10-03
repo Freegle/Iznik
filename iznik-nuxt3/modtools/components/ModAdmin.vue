@@ -25,7 +25,6 @@
               <v-icon v-if="!expanded" icon="caret-down" />
               <v-icon v-else icon="caret-up" />
             </span>
-            {{ groupname }}
           </b-col>
         </b-row>
       </b-card-header>
@@ -208,9 +207,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { useAdminsStore } from '~/stores/admins'
 import { useUserStore } from '~/stores/user'
-import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
-import { useModMe } from '~/composables/useModMe'
+import { useModMe } from '~/modtools/composables/useModMe'
 import { useHeldNotice } from '~/composables/useHeldNotice'
 
 const props = defineProps({
@@ -227,7 +225,6 @@ const props = defineProps({
 const emit = defineEmits(['copy'])
 
 const adminsStore = useAdminsStore()
-const groupStore = useGroupStore()
 const userStore = useUserStore()
 const { myid } = useMe()
 const { checkWork } = useModMe()
@@ -239,17 +236,6 @@ const saved = ref(false)
 const showConfirmModal = ref(false)
 
 const admin = computed(() => adminsStore.get(props.id))
-
-const groupname = computed(() => {
-  if (!admin.value) return null
-  const group = groupStore.get(admin.value.groupid)
-
-  if (group) {
-    return group.namedisplay
-  }
-
-  return null
-})
 
 const holder = computed(() => {
   return admin.value?.heldby ? userStore.byId(admin.value.heldby) : null

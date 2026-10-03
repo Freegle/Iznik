@@ -31,7 +31,6 @@ class DeduplicateCommandsTest extends TestCase
     public function test_deduplicate_searches_removes_duplicates(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         for ($i = 0; $i < 3; $i++) {
             DB::table('search_history')->insert([
@@ -39,7 +38,6 @@ class DeduplicateCommandsTest extends TestCase
                 'date' => now()->subHour(),
                 'term' => 'sofa',
                 'locationid' => null,
-                'groups' => (string) $group->id,
             ]);
         }
 
@@ -93,7 +91,6 @@ class DeduplicateCommandsTest extends TestCase
     {
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // Both users search for the same term — these are NOT duplicates.
         DB::table('search_history')->insert([
@@ -101,14 +98,12 @@ class DeduplicateCommandsTest extends TestCase
             'date' => now()->subHour(),
             'term' => 'chair',
             'locationid' => null,
-            'groups' => (string) $group->id,
         ]);
         DB::table('search_history')->insert([
             'userid' => $user2->id,
             'date' => now()->subMinutes(59),
             'term' => 'chair',
             'locationid' => null,
-            'groups' => (string) $group->id,
         ]);
 
         $this->artisan('cleanup:search-duplicates')
@@ -141,7 +136,6 @@ class DeduplicateCommandsTest extends TestCase
     public function test_deduplicate_searches_dry_run_does_not_delete(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         for ($i = 0; $i < 3; $i++) {
             DB::table('search_history')->insert([
@@ -149,7 +143,6 @@ class DeduplicateCommandsTest extends TestCase
                 'date' => now()->subHour(),
                 'term' => 'table',
                 'locationid' => null,
-                'groups' => (string) $group->id,
             ]);
         }
 

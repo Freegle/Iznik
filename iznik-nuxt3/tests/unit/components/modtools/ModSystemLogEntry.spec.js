@@ -62,17 +62,6 @@ vi.mock('~/stores/user', () => ({
   useUserStore: () => mockUserStore,
 }))
 
-// Mock group store
-const mockGroupStore = {
-  list: {},
-  get: vi.fn((id) => mockGroupStore.list[id] || null),
-  fetch: vi.fn(),
-}
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
-}))
-
 // Mock api
 vi.mock('~/api', () => ({
   default: () => ({
@@ -100,7 +89,6 @@ describe('ModSystemLogEntry', () => {
     text: 'Logged in via email',
     user_id: null,
     byuser_id: null,
-    group_id: null,
     message_id: null,
     trace_id: null,
     session_id: null,
@@ -156,7 +144,6 @@ describe('ModSystemLogEntry', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockUserStore.list = {}
-    mockGroupStore.list = {}
     mockSystemLogsStore.logItems = {}
   })
 
@@ -476,35 +463,27 @@ describe('ModSystemLogEntry', () => {
     })
   })
 
-  describe('displayUser/byUser/displayGroup computed', () => {
+  describe('displayUser/byUser computed', () => {
     it('returns entity from store, undefined when not in store, null when no ID', () => {
       mockUserStore.list = { 123: { id: 123, displayname: 'Test User' } }
-      mockGroupStore.list = { 789: { id: 789, nameshort: 'TestGroup' } }
 
       const wrapper = storeAndMount({
         user_id: 123,
         byuser_id: 456,
-        group_id: 789,
       })
       expect(wrapper.vm.displayUser).toEqual({
         id: 123,
         displayname: 'Test User',
       })
       expect(wrapper.vm.byUser).toBeUndefined() // 456 not in store
-      expect(wrapper.vm.displayGroup).toEqual({
-        id: 789,
-        nameshort: 'TestGroup',
-      })
 
       const noIds = storeAndMount({
         id: 2,
         user_id: null,
         byuser_id: null,
-        group_id: null,
       })
       expect(noIds.vm.displayUser).toBeNull()
       expect(noIds.vm.byUser).toBeNull()
-      expect(noIds.vm.displayGroup).toBeNull()
     })
   })
 
@@ -648,21 +627,17 @@ describe('ModSystemLogEntry', () => {
     })
   })
 
-  describe('user/group fetching on mount', () => {
-    it('fetches user/group when not in store, skips when already present', () => {
+  describe('user fetching on mount', () => {
+    it('fetches user when not in store, skips when already present', () => {
       mockUserStore.list = {}
-      mockGroupStore.list = {}
-      storeAndMount({ user_id: 123, byuser_id: 456, group_id: 789 })
+      storeAndMount({ user_id: 123, byuser_id: 456 })
       expect(mockUserStore.fetch).toHaveBeenCalledWith(123)
       expect(mockUserStore.fetch).toHaveBeenCalledWith(456)
-      expect(mockGroupStore.fetch).toHaveBeenCalledWith(789)
 
       vi.clearAllMocks()
       mockUserStore.list = { 123: { id: 123 } }
-      mockGroupStore.list = { 789: { id: 789 } }
-      storeAndMount({ id: 2, user_id: 123, group_id: 789 })
+      storeAndMount({ id: 2, user_id: 123 })
       expect(mockUserStore.fetch).not.toHaveBeenCalled()
-      expect(mockGroupStore.fetch).not.toHaveBeenCalled()
     })
   })
 
@@ -675,17 +650,8 @@ describe('ModSystemLogEntry', () => {
     })
   })
 
-  describe('group and message display', () => {
-    it('shows group tag/id and message tag based on availability', () => {
-      mockGroupStore.list = { 789: { id: 789, nameshort: 'TestGroup' } }
-      const withGroup = storeAndMount({ group_id: 789 })
-      expect(withGroup.find('.group-tag').exists()).toBe(true)
-      expect(withGroup.text()).toContain('TestGroup')
-
-      mockGroupStore.list = {}
-      const noGroupData = storeAndMount({ id: 2, group_id: 789 })
-      expect(noGroupData.text()).toContain('group #789')
-
+  describe('message display', () => {
+    it('shows message tag when message_id is available', () => {
       const withMessage = storeAndMount({ id: 3, message_id: 555 })
       expect(withMessage.find('.message-tag').exists()).toBe(true)
     })
@@ -728,9 +694,8 @@ describe('ModSystemLogEntry', () => {
   })
 
   describe('actionTextClean computed', () => {
-    it('removes duration and replaces user/group IDs with names', () => {
+    it('removes duration and replaces user IDs with names', () => {
       mockUserStore.list = { 123: { id: 123, displayname: 'John Doe' } }
-      mockGroupStore.list = { 789: { id: 789, nameshort: 'FreegleTest' } }
 
       const withDuration = storeAndMount({ text: 'API call (250ms)' })
       expect(withDuration.vm.actionTextClean).not.toContain('(250ms)')
@@ -742,14 +707,6 @@ describe('ModSystemLogEntry', () => {
       })
       expect(withUser.vm.actionTextClean).toContain('John Doe')
       expect(withUser.vm.actionTextClean).not.toContain('user #123')
-
-      const withGroup = storeAndMount({
-        id: 3,
-        group_id: 789,
-        text: 'Joined group #789',
-      })
-      expect(withGroup.vm.actionTextClean).toContain('FreegleTest')
-      expect(withGroup.vm.actionTextClean).not.toContain('group #789')
     })
   })
 })

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/aiimage"
+	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -349,7 +350,7 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 	if msgid == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Item not found")
 	}
-	if fromuser != myid && !isModForMessage(db, myid, msgid) {
+	if fromuser != myid && !auth.IsModerator(myid) {
 		return fiber.NewError(fiber.StatusForbidden, "Not your post")
 	}
 
@@ -421,7 +422,7 @@ func handleBulkEditLink(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 	if fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
-	if fromuser != myid && !isModForMessage(db, myid, req.ID) {
+	if fromuser != myid && !auth.IsModerator(myid) {
 		return fiber.NewError(fiber.StatusForbidden, "Not your post")
 	}
 

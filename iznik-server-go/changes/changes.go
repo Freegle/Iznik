@@ -128,19 +128,28 @@ func GetChanges(c *fiber.Ctx) error {
 			"id, deleted AS timestamp, 'Deleted' AS `type` FROM messages WHERE deleted > ? "+
 				"UNION SELECT msgid AS id, timestamp, outcome AS `type` FROM messages_outcomes WHERE timestamp > ? "+
 				"UNION SELECT messages_edits.msgid AS id, timestamp, 'Edited' AS `type` FROM messages_edits "+
-				"INNER JOIN messages_groups ON messages_groups.msgid = messages_edits.msgid AND collection = ? WHERE timestamp > ? "+
+				"INNER JOIN messages ON messages.id = messages_edits.msgid AND messages.collection = ? WHERE timestamp > ? "+
 				"UNION SELECT msgid AS id, promisedat AS timestamp, 'Promised' AS `type` FROM messages_promises WHERE promisedat > ? "+
 				"UNION SELECT msgid AS id, timestamp, 'Reneged' AS `type` FROM messages_reneged WHERE timestamp > ? "+
 				// FORCE INDEX: left alone the optimiser takes the `collection`
 				// index and filters 4.5M Approved rows by arrival, which is the
 				// whole cost of this endpoint - 70.9s against 8.6s forced, on a
-				// 90-day window, measured on prod 2026-08-18. `arrival` is
-				// (arrival, groupid, msgtype), so the range scan uses its
-				// leading column. If that index is ever renamed or dropped this
-				// becomes MySQL 1176 rather than a silent slowdown; the
-				// integration tests run the same statement and would catch it.
-				"UNION SELECT msgid AS id, arrival AS timestamp, 'ApprovedOrReposted' AS `type` FROM messages_groups FORCE INDEX (arrival) "+
-				"WHERE messages_groups.arrival > ? AND messages_groups.collection = ?",
+				// 90-day window, measured on prod 2026-08-18. The group model is
+				// gone: this used to read messages_groups, whose `arrival` index
+				// was (arrival, groupid, msgtype). messages carries its own
+				// `arrival` index, (arrival, sourceheader), so FORCE INDEX still
+				// names a real index and the range scan still uses its leading
+				// column. approvedat is not indexed and, on a live post, is
+				// always set in lockstep with arrival at the moment of approval
+				// (a repost afterwards bumps only arrival) - so arrival alone
+				// already catches every approve-or-repost event; adding an OR
+				// on approvedat would only reintroduce the unindexed scan this
+				// FORCE INDEX exists to prevent. If that index is ever renamed
+				// or dropped this becomes MySQL 1176 rather than a silent
+				// slowdown; the integration tests run the same statement and
+				// would catch it.
+				"UNION SELECT id, arrival AS timestamp, 'ApprovedOrReposted' AS `type` FROM messages FORCE INDEX (arrival) "+
+				"WHERE messages.arrival > ? AND messages.collection = ?",
 			mysqlTime, mysqlTime, utils.COLLECTION_APPROVED, mysqlTime, mysqlTime, mysqlTime, mysqlTime, utils.COLLECTION_APPROVED)
 		tx.Statement.BuildClauses = []string{"SELECT"}
 		tx.Scan(&messages)

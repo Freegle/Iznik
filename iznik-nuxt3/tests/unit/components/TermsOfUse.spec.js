@@ -2,11 +2,6 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import TermsOfUse from '~/components/TermsOfUse.vue'
 
-const mockGroupless = { value: false }
-vi.mock('~/composables/useGroupless', () => ({
-  useGroupless: () => mockGroupless.value,
-}))
-
 describe('TermsOfUse', () => {
   function createWrapper() {
     return mount(TermsOfUse, {
@@ -82,14 +77,15 @@ describe('TermsOfUse', () => {
   })
 
 
-  describe('groupless site (experiment)', () => {
-    it('points at one set of rules for the whole site', () => {
-      mockGroupless.value = true
+  describe('single site-wide rule set', () => {
+    it('points at one set of rules for the whole site, and names no community', () => {
       const wrapper = createWrapper()
-      expect(wrapper.text()).not.toContain('communities may have additional rules')
+      expect(wrapper.text()).not.toContain(
+        'communities may have additional rules'
+      )
       expect(wrapper.text()).not.toContain('Contact community volunteers')
+      expect(wrapper.text()).not.toContain('community')
       expect(wrapper.find('a[href="/rules"]').exists()).toBe(true)
-      mockGroupless.value = false
     })
   })
 })

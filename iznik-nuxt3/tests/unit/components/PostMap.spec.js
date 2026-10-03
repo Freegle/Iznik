@@ -12,24 +12,18 @@ enableAutoUnmount(afterEach)
 const {
   mockNearbyBounds,
   mockNearbyFetchMessages,
-  mockGroupList,
   mockMessageStore,
   mockAuthStore,
   mockMiscStore,
   mockAuthorityStore,
-  mockMyGroups,
-  mockMyGroupsBoundingBox,
-  mockMyGroupIds,
 } = vi.hoisted(() => {
   const { ref } = require('vue')
 
   return {
     mockNearbyBounds: ref(null),
     mockNearbyFetchMessages: vi.fn().mockResolvedValue([]),
-    mockGroupList: ref([]),
     mockMessageStore: {
       fetchInBounds: vi.fn().mockResolvedValue([]),
-      fetchMyGroups: vi.fn().mockResolvedValue([]),
       search: vi.fn().mockResolvedValue([]),
     },
     mockAuthStore: {
@@ -48,22 +42,10 @@ const {
     mockAuthorityStore: {
       fetchMessages: vi.fn().mockResolvedValue([]),
     },
-    mockMyGroups: ref([]),
-    mockMyGroupsBoundingBox: ref([
-      [51, -2],
-      [54, 0],
-    ]),
-    mockMyGroupIds: ref([]),
   }
 })
 
 // Mock stores
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({
-    list: mockGroupList.value,
-  }),
-}))
-
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
 }))
@@ -96,15 +78,6 @@ vi.mock('pinia', async (importOriginal) => {
     }),
   }
 })
-
-// Mock useMe composable
-vi.mock('~/composables/useMe', () => ({
-  useMe: () => ({
-    myGroups: mockMyGroups,
-    myGroupsBoundingBox: mockMyGroupsBoundingBox,
-    myGroupIds: mockMyGroupIds,
-  }),
-}))
 
 // Mock useMap composable
 vi.mock('~/composables/useMap', () => ({
@@ -220,8 +193,6 @@ describe('PostMap', () => {
     vi.clearAllMocks()
     mockNearbyBounds.value = null
     mockNearbyFetchMessages.mockResolvedValue([])
-    mockGroupList.value = []
-    mockMyGroups.value = []
     mockMiscStore.get.mockReturnValue(false)
   })
 
@@ -316,11 +287,6 @@ describe('PostMap', () => {
             props: ['markers', 'map', 'tag', 'cssClass'],
             emits: ['click'],
           },
-          GroupMarker: {
-            name: 'GroupMarker',
-            template: '<div class="group-marker" :data-group-id="group.id" />',
-            props: ['group', 'size'],
-          },
           BrowseHomeIcon: {
             name: 'BrowseHomeIcon',
             template: '<div class="browse-home-icon" />',
@@ -407,12 +373,6 @@ describe('PostMap', () => {
       expect(component.props('forceMessages')).toBe(true)
     })
 
-    it('accepts groupid prop', async () => {
-      const wrapper = await createWrapper({ groupid: 123 })
-      const component = wrapper.findComponent(PostMap)
-      expect(component.props('groupid')).toBe(123)
-    })
-
     it('accepts type prop', async () => {
       const wrapper = await createWrapper({ type: 'Offer' })
       const component = wrapper.findComponent(PostMap)
@@ -429,12 +389,6 @@ describe('PostMap', () => {
       const wrapper = await createWrapper()
       const component = wrapper.findComponent(PostMap)
       expect(component.props('showMany')).toBe(true)
-    })
-
-    it('accepts region prop', async () => {
-      const wrapper = await createWrapper({ region: 'London' })
-      const component = wrapper.findComponent(PostMap)
-      expect(component.props('region')).toBe('London')
     })
 
     it('accepts canHide prop', async () => {
@@ -509,7 +463,6 @@ describe('PostMap', () => {
           id: i,
           lat: 52 + i * 0.01,
           lng: -1,
-          groupid: 1,
           type: 'Offer',
         }))
       mockMessageStore.fetchInBounds.mockResolvedValue(manyMessages)
@@ -533,7 +486,6 @@ describe('PostMap', () => {
           id: i,
           lat: 52 + i * 0.01,
           lng: -1,
-          groupid: 1,
           type: 'Offer',
         }))
       mockMessageStore.fetchInBounds.mockResolvedValue(manyMessages)
@@ -571,26 +523,6 @@ describe('PostMap', () => {
       await flushPromises()
       // Since lat/lng are null, home icon should not show
       expect(wrapper.find('.l-marker').exists() || true).toBe(true)
-    })
-  })
-
-  describe('group display', () => {
-    it('renders GroupMarker when showGroups is true', async () => {
-      mockGroupList.value = [
-        {
-          id: 1,
-          lat: 52.5,
-          lng: -1,
-          namedisplay: 'Test Group',
-          nameshort: 'Test',
-          onmap: true,
-          publish: true,
-        },
-      ]
-      const wrapper = await createWrapper()
-      await flushPromises()
-      // Groups show at lower zoom levels when not showing messages
-      expect(wrapper.exists()).toBe(true)
     })
   })
 
@@ -740,13 +672,6 @@ describe('PostMap', () => {
       expect(component.emitted('update:moved')).toBeTruthy()
     })
 
-    it('emits groups event', async () => {
-      const wrapper = await createWrapper()
-      await flushPromises()
-      const component = wrapper.findComponent(PostMap)
-      expect(component.emitted('groups')).toBeTruthy()
-    })
-
     it('defines messages event in emit declarations', async () => {
       const wrapper = await createWrapper()
       await flushPromises()
@@ -770,24 +695,7 @@ describe('PostMap', () => {
     it('fetches messages in bounds when showing messages', async () => {
       await createWrapper()
       await flushPromises()
-      expect(
-        mockMessageStore.fetchInBounds || mockMessageStore.fetchMyGroups
-      ).toBeDefined()
-    })
-
-    it('fetches messages for specific groupid', async () => {
-      mockGroupList.value = [
-        {
-          id: 123,
-          lat: 52.5,
-          lng: -1,
-          namedisplay: 'Test Group',
-          bbox: 'POLYGON((-2 51, 0 51, 0 54, -2 54, -2 51))',
-        },
-      ]
-      await createWrapper({ groupid: 123 })
-      await flushPromises()
-      expect(mockMessageStore.fetchMyGroups).toBeDefined()
+      expect(mockMessageStore.fetchInBounds).toBeDefined()
     })
 
     it('uses search API when search prop provided', async () => {
@@ -834,8 +742,8 @@ describe('PostMap', () => {
 
     it('filters messages by type', async () => {
       mockMessageStore.fetchInBounds.mockResolvedValue([
-        { id: 1, lat: 52.5, lng: -1, groupid: 1, type: 'Offer' },
-        { id: 2, lat: 52.6, lng: -1.1, groupid: 1, type: 'Wanted' },
+        { id: 1, lat: 52.5, lng: -1, type: 'Offer' },
+        { id: 2, lat: 52.6, lng: -1.1, type: 'Wanted' },
       ])
       await createWrapper({ type: 'Offer' })
       await flushPromises()
@@ -897,14 +805,13 @@ describe('PostMap', () => {
       expect(mockMessageStore.search).toHaveBeenCalledTimes(1)
     })
 
-    it('falls back to group bounds when showing nearby posts but the member has no location', async () => {
+    it("falls back to the map's initial bounds when showing nearby posts but the member has no location", async () => {
       mockAuthStore.user = {
         id: 1,
         lat: null,
         lng: null,
         settings: {},
       }
-      mockMyGroups.value = [{ id: 1 }]
       await createWrapper({ showIsochrones: true })
       mockNearbyBounds.value = [
         [51, -2],
@@ -1024,100 +931,6 @@ describe('PostMap', () => {
     })
   })
 
-  describe('groups in bounds', () => {
-    it('filters groups by region when region prop provided', async () => {
-      mockGroupList.value = [
-        {
-          id: 1,
-          lat: 52.5,
-          lng: -1,
-          namedisplay: 'London Group',
-          region: 'London',
-          onmap: true,
-          publish: true,
-        },
-        {
-          id: 2,
-          lat: 53.5,
-          lng: -1.5,
-          namedisplay: 'Manchester Group',
-          region: 'Manchester',
-          onmap: true,
-          publish: true,
-        },
-      ]
-      const wrapper = await createWrapper({ region: 'London' })
-      await flushPromises()
-      expect(wrapper.exists()).toBe(true)
-    })
-
-    it('only includes groups that are onmap and publish', async () => {
-      mockGroupList.value = [
-        {
-          id: 1,
-          lat: 52.5,
-          lng: -1,
-          namedisplay: 'Published Group',
-          onmap: true,
-          publish: true,
-        },
-        {
-          id: 2,
-          lat: 53.5,
-          lng: -1.5,
-          namedisplay: 'Hidden Group',
-          onmap: false,
-          publish: true,
-        },
-      ]
-      const wrapper = await createWrapper()
-      await flushPromises()
-      expect(wrapper.exists()).toBe(true)
-    })
-  })
-
-  describe('secondary messages', () => {
-    it('fetches secondary messages when showing specific group', async () => {
-      mockMessageStore.fetchInBounds.mockResolvedValue([
-        { id: 2, lat: 52.6, lng: -1.1, groupid: 2, type: 'Offer' },
-      ])
-      mockMessageStore.fetchMyGroups.mockResolvedValue([
-        { id: 1, lat: 52.5, lng: -1, groupid: 1, type: 'Offer' },
-      ])
-      await createWrapper({ groupid: 1 })
-      await flushPromises()
-      // Secondary messages should be fetched in bounds
-      expect(
-        mockMessageStore.fetchInBounds || mockMessageStore.fetchMyGroups
-      ).toBeDefined()
-    })
-
-    it('excludes messages already in primary list from secondary (no duplicate IDs)', async () => {
-      // Message ID 1 is in both primary and secondary.
-      // The Set-based messageIds computed must filter it out so no duplicate key warning fires.
-      mockMessageStore.fetchMyGroups.mockResolvedValue([
-        { id: 1, lat: 52.5, lng: -1, groupid: 1, type: 'Offer' },
-      ])
-      mockMessageStore.fetchInBounds.mockResolvedValue([
-        { id: 1, lat: 52.5, lng: -1, groupid: 1, type: 'Offer' }, // duplicate
-        { id: 2, lat: 52.6, lng: -1.1, groupid: 2, type: 'Offer' },
-      ])
-
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      const wrapper = await createWrapper()
-      await flushPromises()
-
-      // No Vue "Duplicate keys" warning should have fired
-      const dupKeyWarning = warnSpy.mock.calls.some((args) =>
-        args.some((a) => typeof a === 'string' && a.includes('Duplicate keys'))
-      )
-      expect(dupKeyWarning).toBe(false)
-
-      warnSpy.mockRestore()
-      wrapper.unmount()
-    })
-  })
-
   // Robust "point inside or on the boundary of a closed ring" test (ray-casting with
   // a boundary tolerance), used below to assert the coverage hull actually encloses
   // every post shown on the map - the key invariant behind bug class 2.
@@ -1180,17 +993,12 @@ describe('PostMap', () => {
       return markers.find((m) => !m.props('cssClass'))
     }
 
-    function secondaryClusterMarker(wrapper) {
-      const markers = wrapper.findAllComponents({ name: 'ClusterMarker' })
-      return markers.find((m) => m.props('cssClass') === 'fadedMarker')
-    }
-
     it('passes only within-distance posts as markers to the primary ClusterMarker', async () => {
       const wrapper = await mountNearbyWithMessages(
         [
-          { id: 1, lat: 52.0, lng: -1.0, distance: 1, groupid: 1 },
-          { id: 2, lat: 52.1, lng: -1.1, distance: 10, groupid: 1 },
-          { id: 3, lat: 52.2, lng: -1.2, distance: null, groupid: 1 },
+          { id: 1, lat: 52.0, lng: -1.0, distance: 1 },
+          { id: 2, lat: 52.1, lng: -1.1, distance: 10 },
+          { id: 3, lat: 52.2, lng: -1.2, distance: null },
         ],
         { selectedMaxDistance: 5 }
       )
@@ -1204,8 +1012,8 @@ describe('PostMap', () => {
 
     it('includes every post when selectedMaxDistance is the unlimited sentinel (default)', async () => {
       const wrapper = await mountNearbyWithMessages([
-        { id: 1, lat: 52.0, lng: -1.0, distance: 1, groupid: 1 },
-        { id: 2, lat: 52.1, lng: -1.1, distance: 500, groupid: 1 },
+        { id: 1, lat: 52.0, lng: -1.0, distance: 1 },
+        { id: 2, lat: 52.1, lng: -1.1, distance: 500 },
       ])
 
       const primary = primaryClusterMarker(wrapper)
@@ -1213,44 +1021,12 @@ describe('PostMap', () => {
       expect(ids.sort()).toEqual([1, 2])
     })
 
-    it('also filters the secondary (faded) marker set by the same distance limit', async () => {
-      // Not the nearby/reach view here - exercise the "some groups" branch instead
-      // (primary = fetchMyGroups, secondary = fetchInBounds), which is the other
-      // place secondaryMessagesForMap is populated from.
-      mockMyGroups.value = [{ id: 1 }]
-      mockMessageStore.fetchMyGroups.mockResolvedValue([
-        { id: 1, lat: 52.0, lng: -1.0, distance: 1, groupid: 1 },
-      ])
-      mockMessageStore.fetchInBounds.mockResolvedValue([
-        { id: 10, lat: 52.5, lng: -1.5, distance: 1, groupid: 9 },
-        { id: 11, lat: 52.6, lng: -1.6, distance: 20, groupid: 9 },
-      ])
-      // showMany:false disables the unrelated "not enough in bounds, zoom out" logic,
-      // which would otherwise set moved=true and hide the secondary marker set (it's
-      // gated on !moved) - not what this test is about.
-      const wrapper = await createWrapper({
-        selectedMaxDistance: 5,
-        postZoom: 0,
-        showMany: false,
-      })
-      const map = wrapper.findComponent({ name: 'LMap' })
-      await map.vm.$emit('ready')
-      await flushPromises()
-      await map.vm.$emit('zoomend')
-      await flushPromises()
-
-      const secondary = secondaryClusterMarker(wrapper)
-      expect(secondary).toBeTruthy()
-      const ids = secondary.props('markers').map((m) => m.id)
-      expect(ids).toEqual([10])
-    })
-
     it('renders no primary ClusterMarker once every post is filtered out by the distance limit', async () => {
       // The primary ClusterMarker is itself gated on messagesForMap.length
       // (v-if="messagesForMap.length"), so a fully-filtered-out set means it isn't
       // rendered at all - it doesn't linger with an empty markers array.
       const wrapper = await mountNearbyWithMessages(
-        [{ id: 1, lat: 52.0, lng: -1.0, distance: 100, groupid: 1 }],
+        [{ id: 1, lat: 52.0, lng: -1.0, distance: 100 }],
         { selectedMaxDistance: 1 }
       )
 
@@ -1260,10 +1036,10 @@ describe('PostMap', () => {
 
     it('draws a coverage hull that encloses every currently-shown post', async () => {
       const messages = [
-        { id: 1, lat: 51.5, lng: -0.1, distance: 1, groupid: 1 },
-        { id: 2, lat: 51.6, lng: -0.2, distance: 2, groupid: 1 },
-        { id: 3, lat: 51.45, lng: -0.05, distance: 3, groupid: 1 },
-        { id: 4, lat: 51.55, lng: -0.15, distance: 2.5, groupid: 1 }, // interior-ish
+        { id: 1, lat: 51.5, lng: -0.1, distance: 1 },
+        { id: 2, lat: 51.6, lng: -0.2, distance: 2 },
+        { id: 3, lat: 51.45, lng: -0.05, distance: 3 },
+        { id: 4, lat: 51.55, lng: -0.15, distance: 2.5 }, // interior-ish
       ]
       const wrapper = await mountNearbyWithMessages(messages, {
         selectedMaxDistance: 10,
@@ -1282,10 +1058,10 @@ describe('PostMap', () => {
 
     it('shrinks the coverage hull (excludes a far post) once the distance slider narrows', async () => {
       const messages = [
-        { id: 1, lat: 51.5, lng: -0.1, distance: 1, groupid: 1 },
-        { id: 2, lat: 51.51, lng: -0.11, distance: 1.5, groupid: 1 },
-        { id: 3, lat: 51.52, lng: -0.09, distance: 2, groupid: 1 },
-        { id: 4, lat: 53.0, lng: -2.0, distance: 100, groupid: 1 }, // far outlier
+        { id: 1, lat: 51.5, lng: -0.1, distance: 1 },
+        { id: 2, lat: 51.51, lng: -0.11, distance: 1.5 },
+        { id: 3, lat: 51.52, lng: -0.09, distance: 2 },
+        { id: 4, lat: 53.0, lng: -2.0, distance: 100 }, // far outlier
       ]
       const wrapper = await mountNearbyWithMessages(messages, {
         selectedMaxDistance: 5,
@@ -1324,9 +1100,9 @@ describe('PostMap', () => {
       }
 
       const HULL_MESSAGES = [
-        { id: 1, lat: 51.5, lng: -0.1, distance: 1, groupid: 1 },
-        { id: 2, lat: 51.6, lng: -0.2, distance: 2, groupid: 1 },
-        { id: 3, lat: 51.45, lng: -0.05, distance: 3, groupid: 1 },
+        { id: 1, lat: 51.5, lng: -0.1, distance: 1 },
+        { id: 2, lat: 51.6, lng: -0.2, distance: 2 },
+        { id: 3, lat: 51.45, lng: -0.05, distance: 3 },
       ]
       let useReachOverlay
 
@@ -1461,67 +1237,6 @@ describe('PostMap', () => {
       wrapper.unmount()
       // Should not throw errors on unmount
       expect(true).toBe(true)
-    })
-  })
-
-  describe('myGroup with object-shaped list (Sentry bug)', () => {
-    // Reproduces: TypeError: d.find is not a function
-    // groupStore.list is an object keyed by group ID, not an array.
-    // The myGroup function calls .find() which doesn't exist on objects.
-
-    it('returns correct group when groupStore.list is an object (fixed)', async () => {
-      // Set list to the real store shape: object keyed by group ID
-      mockGroupList.value = {
-        1: {
-          id: 1,
-          nameshort: 'TestGroup',
-          bbox: 'POLYGON((-2 51,-2 54,0 54,0 51,-2 51))',
-          lat: 52.5,
-          lng: -1,
-        },
-      }
-
-      // With the fix, mounting with groupid should work without TypeError
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-      await createWrapper({ groupid: 1 })
-      await flushPromises()
-
-      // No TypeError should occur
-      const allCalls = [...consoleSpy.mock.calls, ...warnSpy.mock.calls]
-      const hasTypeError = allCalls.some((args) =>
-        args.some(
-          (arg) =>
-            (typeof arg === 'string' &&
-              arg.includes('find is not a function')) ||
-            (arg instanceof Error &&
-              arg.message.includes('find is not a function'))
-        )
-      )
-
-      expect(hasTypeError).toBe(false)
-
-      consoleSpy.mockRestore()
-      warnSpy.mockRestore()
-    })
-
-    it('confirms .find() does not exist on plain objects', () => {
-      const objectList = {
-        42: { id: 42, nameshort: 'Freegle Group' },
-        99: { id: 99, nameshort: 'Another Group' },
-      }
-
-      // This is what the buggy code does — .find() on an object
-      expect(() => {
-        objectList.find((g) => g.id === 42)
-      }).toThrow('objectList.find is not a function')
-
-      // The correct approach: direct key lookup
-      expect(objectList[42]).toEqual({
-        id: 42,
-        nameshort: 'Freegle Group',
-      })
     })
   })
 })

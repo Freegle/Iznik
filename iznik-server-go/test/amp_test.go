@@ -147,14 +147,11 @@ func TestAMPGetChatMessagesValidToken(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampget")
-	groupID := CreateTestGroup(t, prefix)
 	user1ID := CreateTestUser(t, prefix+"_1", "User")
 	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
 
 	// Create user-to-user chat
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 
 	// Add users to chat roster
 	CreateTestChatRoster(t, chatID, user1ID)
@@ -195,16 +192,12 @@ func TestAMPGetChatMessagesNotInChat(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampnotinchat")
-	groupID := CreateTestGroup(t, prefix)
 	user1ID := CreateTestUser(t, prefix+"_1", "User")
 	user2ID := CreateTestUser(t, prefix+"_2", "User")
 	user3ID := CreateTestUser(t, prefix+"_3", "User") // Not in chat
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
-	CreateTestMembership(t, user3ID, groupID, "Member")
 
 	// Create chat between user1 and user2
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
 	CreateTestChatRoster(t, chatID, user2ID)
 	CreateTestChatMessage(t, chatID, user1ID, "Test message")
@@ -260,13 +253,10 @@ func TestAMPPostChatReplyExpiredToken(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampexpired")
-	groupID := CreateTestGroup(t, prefix)
 	user1ID := CreateTestUser(t, prefix+"_1", "User")
 	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
 
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
 	CreateTestChatRoster(t, chatID, user2ID)
 
@@ -301,13 +291,10 @@ func TestAMPPostChatReplyValidToken(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampreplyvalid")
-	groupID := CreateTestGroup(t, prefix)
 	user1ID := CreateTestUser(t, prefix+"_1", "User")
 	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
 
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
 	CreateTestChatRoster(t, chatID, user2ID)
 
@@ -349,13 +336,10 @@ func TestAMPPostChatReplyTokenCanBeReused(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampreplyreuse")
-	groupID := CreateTestGroup(t, prefix)
 	user1ID := CreateTestUser(t, prefix+"_1", "User")
 	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
 
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
 	CreateTestChatRoster(t, chatID, user2ID)
 
@@ -399,13 +383,10 @@ func TestAMPPostChatReplyEmptyMessage(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampreplyempty")
-	groupID := CreateTestGroup(t, prefix)
 	user1ID := CreateTestUser(t, prefix+"_1", "User")
 	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
 
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
 	CreateTestChatRoster(t, chatID, user2ID)
 
@@ -440,17 +421,13 @@ func TestAMPPostChatReplyTokenMismatchChatID(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampmismatch")
-	groupID := CreateTestGroup(t, prefix)
 	user1ID := CreateTestUser(t, prefix+"_1", "User")
 	user2ID := CreateTestUser(t, prefix+"_2", "User")
 	user3ID := CreateTestUser(t, prefix+"_3", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
-	CreateTestMembership(t, user3ID, groupID, "Member")
 
 	// Create two different chats
-	chatID1 := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
-	chatID2 := CreateTestChatRoom(t, user1ID, &user3ID, nil, "User2User")
+	chatID1 := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
+	chatID2 := CreateTestChatRoom(t, user1ID, &user3ID, "User2User")
 	CreateTestChatRoster(t, chatID1, user1ID)
 	CreateTestChatRoster(t, chatID1, user2ID)
 	CreateTestChatRoster(t, chatID2, user1ID)
@@ -487,13 +464,10 @@ func TestAMPPostChatReplyWithTracking(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampreplytrack")
-	groupID := CreateTestGroup(t, prefix)
 	user1ID := CreateTestUser(t, prefix+"_1", "User")
 	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
 
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
 	CreateTestChatRoster(t, chatID, user2ID)
 
@@ -528,13 +502,10 @@ func TestAMPPostChatReplyWithTracking(t *testing.T) {
 func TestAMPChatRosterMembershipScan(t *testing.T) {
 	// Create test data
 	prefix := uniquePrefix("amproster")
-	groupID := CreateTestGroup(t, prefix)
 	user1ID := CreateTestUser(t, prefix+"_1", "User")
 	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
 
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
 	CreateTestChatRoster(t, chatID, user2ID)
 
@@ -568,11 +539,11 @@ func TestAMPAllowedSenderDomains(t *testing.T) {
 		sender   string
 		expected int
 	}{
-		{"noreply@ilovefreegle.org", fiber.StatusOK},             // Main domain - allowed
-		{"user@users.ilovefreegle.org", fiber.StatusOK},          // Users subdomain - allowed
-		{"notify@mail.ilovefreegle.org", fiber.StatusOK},         // Mail subdomain - allowed
-		{"amp@gmail.dev", fiber.StatusOK},                        // Google AMP Playground - allowed
-		{"hacker@evil.com", fiber.StatusForbidden},               // External domain - blocked
+		{"noreply@ilovefreegle.org", fiber.StatusOK},              // Main domain - allowed
+		{"user@users.ilovefreegle.org", fiber.StatusOK},           // Users subdomain - allowed
+		{"notify@mail.ilovefreegle.org", fiber.StatusOK},          // Mail subdomain - allowed
+		{"amp@gmail.dev", fiber.StatusOK},                         // Google AMP Playground - allowed
+		{"hacker@evil.com", fiber.StatusForbidden},                // External domain - blocked
 		{"fake@ilovefreegle.org.evil.com", fiber.StatusForbidden}, // Spoofed domain - blocked
 	}
 

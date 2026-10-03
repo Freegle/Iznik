@@ -18,10 +18,8 @@ func TestSearchByMsgID_FindsThePostAndLabelsItAnIDMatch(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("searchByID")
 
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-	msgID := CreateTestMessage(t, userID, groupID, "OFFER: Deckchair "+prefix, 53.0, -2.0)
+	msgID := CreateTestMessage(t, userID, "OFFER: Deckchair "+prefix, 53.0, -2.0)
 
 	results := message.SearchByMsgID(db, msgID, nil)
 
@@ -37,11 +35,8 @@ func TestSearchByMsgID_HonoursAGroupFilter(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("searchByIDGroup")
 
-	groupID := CreateTestGroup(t, prefix)
-	otherGroupID := CreateTestGroup(t, prefix+"_other")
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-	msgID := CreateTestMessage(t, userID, groupID, "OFFER: Watering can "+prefix, 53.0, -2.0)
+	msgID := CreateTestMessage(t, userID, "OFFER: Watering can "+prefix, 53.0, -2.0)
 
 	onItsOwnGroup := message.SearchByMsgID(db, msgID, []uint64{groupID})
 	assert.Len(t, onItsOwnGroup, 1, "the post is on this group, so the filter keeps it")
@@ -54,10 +49,8 @@ func TestSearchByMsgID_IgnoresAMembershipThatIsNotApproved(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("searchByIDPending")
 
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-	msgID := CreateTestMessage(t, userID, groupID, "OFFER: Stepladder "+prefix, 53.0, -2.0)
+	msgID := CreateTestMessage(t, userID, "OFFER: Stepladder "+prefix, 53.0, -2.0)
 
 	// The post is waiting for a moderator rather than approved on that group.
 	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ?", msgID)

@@ -78,17 +78,14 @@ func TestListChats_HeldReplyOnlyRoomHiddenFromRecipient(t *testing.T) {
 		INDEX (msgid), INDEX (chatid), INDEX (status)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
 
 	// The original post being replied to (FK target for rippling_held_replies.msgid).
-	postMsgID := CreateTestMessage(t, posterID, groupID, "OFFER: held reply list test", 51.5, -0.1)
+	postMsgID := CreateTestMessage(t, posterID, "OFFER: held reply list test", 51.5, -0.1)
 
 	// Replier initiated the chat with the poster; user1=replier, user2=poster (the recipient).
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 
 	// A fully-processed reply FROM the replier (reviewrequired=0, processingsuccessful=1) - it
 	// passes the normal "deliverable" predicate, so only the rippling gate can hide it.
@@ -147,16 +144,13 @@ func TestListChats_ReviewRequiredOnlyRoomHiddenFromRecipient(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("listreview")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
 
-	postMsgID := CreateTestMessage(t, posterID, groupID, "OFFER: review-held reply list test", 51.5, -0.1)
+	postMsgID := CreateTestMessage(t, posterID, "OFFER: review-held reply list test", 51.5, -0.1)
 
 	// user1=replier, user2=poster (recipient).
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 
 	// Reply held for review: reviewrequired=1 means the recipient cannot see it yet.
 	const replyText = "Is this still available? I can collect today."

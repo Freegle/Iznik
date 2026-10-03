@@ -27,7 +27,6 @@ func TestJoinAndPostSetsMembershipMsgtype(t *testing.T) {
 	prefix := uniquePrefix("msgtype_jap")
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	_, token := CreateTestSession(t, userID)
 
@@ -58,9 +57,7 @@ func TestPutMessageSetsMembershipMsgtype(t *testing.T) {
 	prefix := uniquePrefix("msgtype_put")
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
 	body, _ := json.Marshal(map[string]interface{}{

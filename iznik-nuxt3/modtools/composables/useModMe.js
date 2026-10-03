@@ -1,7 +1,6 @@
 import { useAuthStore } from '~/stores/auth'
 import { useChatStore } from '@/stores/chat'
 import { useMiscStore } from '@/stores/misc'
-import { useModGroupStore } from '@/stores/modgroup'
 import { useMe } from '~/composables/useMe'
 import { useMobileStore } from '~/stores/mobile'
 
@@ -55,21 +54,11 @@ export function useModMe() {
   const onPartnershipsTeam = computed(() => {
     return onTeam('Partnerships')
   })
-  // Needed for some modtoolstasks but /mixins/me.js/myGroups() OK for most mod tasks as it is a copy of modgroup.list
-  const myModGroups = computed(() => {
-    // But do we need to do other stuff in myGroups() eg sorting?
-    const modGroupStore = useModGroupStore()
-    return Object.values(modGroupStore.list)
-  })
-  function myModGroup(groupid) {
-    // console.log("modme.js myModGroup",groupid)
-    const modGroupStore = useModGroupStore()
-    return modGroupStore.get(groupid)
-  }
-  function amAModOn(groupid) {
-    const authStore = useAuthStore()
-    const member = authStore.member(groupid)
-    return member === 'Moderator' || member === 'Owner'
+  // Moderators are national (users.systemrole), not per-community, so any
+  // signed-in moderator/support/admin can act on any message or member.
+  function amAModerator() {
+    const { isModerator } = useMe()
+    return isModerator.value
   }
   // SEE WORK EXPLANATION IN useModMessages.js
   /* function deferCheckWork() {
@@ -106,12 +95,6 @@ export function useModMe() {
         force ?? '',
         now.toISOString().substring(11)
       )
-      // const groupStore = useGroupStore()
-      const modGroupStore = useModGroupStore()
-      // console.log('CHECKWORK auth.groups',authStore.groups?.length,
-      //  'groupStore.list',Object.keys(groupStore.list).length,
-      //  'modGroupStore.list', Object.keys(modGroupStore.list).length)
-
       let currentTotal = 0
       if (authStore.work) currentTotal += authStore.work.total
       if (chatStore) currentTotal += Math.min(99, chatStore.unreadCount)
@@ -122,7 +105,6 @@ export function useModMe() {
       // a manual page refresh (Discourse #9951). fetchMe coalesces these forceServer calls
       // onto a single trailing refetch, so rapid actions don't flood /session.
       await fetchMe(true, true)
-      await modGroupStore.getModGroups()
 
       const chatcount = chatStore ? Math.min(99, chatStore.unreadCount) : 0
       const work = authStore.work
@@ -165,9 +147,7 @@ export function useModMe() {
     hasPermissionClearance,
     onTeam,
     onPartnershipsTeam,
-    myModGroups,
-    myModGroup,
-    amAModOn,
+    amAModerator,
     checkWorkDeferGetMessages,
     checkWork,
     resetCheckWork,

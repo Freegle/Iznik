@@ -3,7 +3,6 @@
 namespace Tests\Feature\Stories;
 
 use App\Mail\Stories\StoriesNewsletterMail;
-use App\Models\Group;
 use App\Models\User;
 use App\Services\Mail\MailSuppressionService;
 use App\Services\StoriesNewsletterService;
@@ -18,11 +17,11 @@ class StoriesNewsletterCommandTest extends TestCase
         parent::setUp();
         Mail::fake();
 
-        // Other tests' users/groups can slip through DatabaseTransactions isolation.
+        // Other tests' users can slip through DatabaseTransactions isolation.
         // Delete inside the current transaction so leaked rows are hidden without
         // affecting other test classes (the DELETE is rolled back with this test's transaction).
         DB::statement('SET FOREIGN_KEY_CHECKS=0');
-        foreach (['newsletters', 'users_stories_likes', 'users_stories_images', 'users_stories', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
+        foreach (['newsletters', 'users_stories_likes', 'users_stories_images', 'users_stories', 'users_emails', 'users'] as $table) {
             DB::table($table)->delete();
         }
         DB::statement('SET FOREIGN_KEY_CHECKS=1');
@@ -33,22 +32,21 @@ class StoriesNewsletterCommandTest extends TestCase
     private function createStory(array $attributes = []): int
     {
         return DB::table('users_stories')->insertGetId(array_merge([
-            'headline'             => 'A great story',
-            'story'                => 'Something wonderful happened.',
-            'public'               => 1,
-            'reviewed'             => 1,
-            'newsletterreviewed'   => 1,
-            'newsletter'           => 1,
-            'mailedtomembers'      => 0,
-            'mailedtocentral'      => 0,
+            'headline' => 'A great story',
+            'story' => 'Something wonderful happened.',
+            'public' => 1,
+            'reviewed' => 1,
+            'newsletterreviewed' => 1,
+            'newsletter' => 1,
+            'mailedtomembers' => 0,
+            'mailedtocentral' => 0,
         ], $attributes));
     }
 
     private function createEligibleUser(): User
     {
-        $group = $this->createTestGroup(['publish' => 1]);
-        $user  = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
-        $this->createMembership($user, $group);
+        $user = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
+
         return $user->fresh();
     }
 
@@ -72,7 +70,7 @@ class StoriesNewsletterCommandTest extends TestCase
         $this->minStories();
         $this->createEligibleUser();
 
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
 
         $this->assertSame(0, $result['sent']);
         $this->assertSame(0, $result['stories']);
@@ -87,7 +85,7 @@ class StoriesNewsletterCommandTest extends TestCase
     public function test_returns_zero_when_no_stories(): void
     {
         $this->createEligibleUser();
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
         $this->assertSame(0, $result['sent']);
         Mail::assertNothingSent();
     }
@@ -98,7 +96,7 @@ class StoriesNewsletterCommandTest extends TestCase
         $this->createStory(['headline' => 'Second']);
         $this->createEligibleUser();
 
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
         $this->assertSame(0, $result['sent']);
         Mail::assertNothingSent();
     }
@@ -110,7 +108,7 @@ class StoriesNewsletterCommandTest extends TestCase
         $this->minStories();
         $this->createEligibleUser();
 
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
         $this->assertSame(1, $result['sent']);
         Mail::assertSent(StoriesNewsletterMail::class, 1);
     }
@@ -122,7 +120,7 @@ class StoriesNewsletterCommandTest extends TestCase
         $this->createEligibleUser();
         $this->createEligibleUser();
 
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
         $this->assertSame(3, $result['sent']);
         Mail::assertSent(StoriesNewsletterMail::class, 3);
     }
@@ -130,18 +128,15 @@ class StoriesNewsletterCommandTest extends TestCase
     public function test_email_sent_to_correct_address(): void
     {
         $this->minStories();
-        $group = $this->createTestGroup(['publish' => 1]);
-        $user  = $this->createTestUser([
+        $this->createTestUser([
             'newslettersallowed' => 1,
-            'bouncing'           => 0,
-            'email_preferred'    => 'recipient@example.com',
+            'bouncing' => 0,
+            'email_preferred' => 'recipient@example.com',
         ]);
-        $this->createMembership($user, $group);
 
-        (new StoriesNewsletterService())->generateAndSend();
+        (new StoriesNewsletterService)->generateAndSend();
 
-        Mail::assertSent(StoriesNewsletterMail::class, fn ($m) =>
-            $m->recipientEmail === 'recipient@example.com'
+        Mail::assertSent(StoriesNewsletterMail::class, fn ($m) => $m->recipientEmail === 'recipient@example.com'
         );
     }
 
@@ -152,10 +147,11 @@ class StoriesNewsletterCommandTest extends TestCase
         $this->createStory(['headline' => 'Third tale', 'story' => 'The best yet.']);
         $this->createEligibleUser();
 
-        (new StoriesNewsletterService())->generateAndSend();
+        (new StoriesNewsletterService)->generateAndSend();
 
         Mail::assertSent(StoriesNewsletterMail::class, function (StoriesNewsletterMail $mail) {
             $headlines = array_column($mail->stories, 'headline');
+
             return in_array('First tale', $headlines)
                 && in_array('Second tale', $headlines)
                 && in_array('Third tale', $headlines);
@@ -171,7 +167,7 @@ class StoriesNewsletterCommandTest extends TestCase
         $this->createStory(['headline' => 'C']);
         $this->createEligibleUser();
 
-        (new StoriesNewsletterService())->generateAndSend();
+        (new StoriesNewsletterService)->generateAndSend();
 
         $this->assertSame(1, (int) DB::table('users_stories')->where('id', $storyId)->value('mailedtomembers'));
     }
@@ -181,7 +177,7 @@ class StoriesNewsletterCommandTest extends TestCase
         $this->minStories();
         $this->createEligibleUser();
 
-        (new StoriesNewsletterService())->generateAndSend();
+        (new StoriesNewsletterService)->generateAndSend();
 
         $newsletter = DB::table('newsletters')->where('type', 'Stories')->first();
         $this->assertNotNull($newsletter);
@@ -195,7 +191,7 @@ class StoriesNewsletterCommandTest extends TestCase
         $this->createStory(['headline' => 'C', 'mailedtomembers' => 1]);
         $this->createEligibleUser();
 
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
         $this->assertSame(0, $result['sent']);
         Mail::assertNothingSent();
     }
@@ -204,49 +200,49 @@ class StoriesNewsletterCommandTest extends TestCase
     {
         // Create old newsletter record dated now
         DB::table('newsletters')->insert([
-            'subject'  => 'Old newsletter',
+            'subject' => 'Old newsletter',
             'textbody' => 'old',
-            'type'     => 'Stories',
-            'created'  => now(),
+            'type' => 'Stories',
+            'created' => now(),
         ]);
 
         // Create stories with updated = 1 hour ago (before last newsletter)
         DB::table('users_stories')->insertGetId([
-            'headline'           => 'Old story A',
-            'story'              => 'text',
-            'public'             => 1,
-            'reviewed'           => 1,
+            'headline' => 'Old story A',
+            'story' => 'text',
+            'public' => 1,
+            'reviewed' => 1,
             'newsletterreviewed' => 1,
-            'newsletter'         => 1,
-            'mailedtomembers'    => 0,
-            'mailedtocentral'    => 0,
-            'updated'            => now()->subHour(),
+            'newsletter' => 1,
+            'mailedtomembers' => 0,
+            'mailedtocentral' => 0,
+            'updated' => now()->subHour(),
         ]);
         DB::table('users_stories')->insertGetId([
-            'headline'           => 'Old story B',
-            'story'              => 'text',
-            'public'             => 1,
-            'reviewed'           => 1,
+            'headline' => 'Old story B',
+            'story' => 'text',
+            'public' => 1,
+            'reviewed' => 1,
             'newsletterreviewed' => 1,
-            'newsletter'         => 1,
-            'mailedtomembers'    => 0,
-            'mailedtocentral'    => 0,
-            'updated'            => now()->subHour(),
+            'newsletter' => 1,
+            'mailedtomembers' => 0,
+            'mailedtocentral' => 0,
+            'updated' => now()->subHour(),
         ]);
         DB::table('users_stories')->insertGetId([
-            'headline'           => 'Old story C',
-            'story'              => 'text',
-            'public'             => 1,
-            'reviewed'           => 1,
+            'headline' => 'Old story C',
+            'story' => 'text',
+            'public' => 1,
+            'reviewed' => 1,
             'newsletterreviewed' => 1,
-            'newsletter'         => 1,
-            'mailedtomembers'    => 0,
-            'mailedtocentral'    => 0,
-            'updated'            => now()->subHour(),
+            'newsletter' => 1,
+            'mailedtomembers' => 0,
+            'mailedtocentral' => 0,
+            'updated' => now()->subHour(),
         ]);
         $this->createEligibleUser();
 
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
         $this->assertSame(0, $result['sent']);
         Mail::assertNothingSent();
     }
@@ -256,35 +252,9 @@ class StoriesNewsletterCommandTest extends TestCase
     public function test_skips_users_with_newsletters_disabled(): void
     {
         $this->minStories();
-        $group = $this->createTestGroup(['publish' => 1]);
-        $user  = $this->createTestUser(['newslettersallowed' => 0]);
-        $this->createMembership($user, $group);
+        $this->createTestUser(['newslettersallowed' => 0]);
 
-        $result = (new StoriesNewsletterService())->generateAndSend();
-        $this->assertSame(0, $result['sent']);
-        Mail::assertNothingSent();
-    }
-
-    public function test_skips_users_in_non_freegle_groups(): void
-    {
-        $this->minStories();
-        $group = $this->createTestGroup(['type' => 'Other', 'publish' => 1]);
-        $user  = $this->createTestUser(['newslettersallowed' => 1]);
-        $this->createMembership($user, $group);
-
-        $result = (new StoriesNewsletterService())->generateAndSend();
-        $this->assertSame(0, $result['sent']);
-        Mail::assertNothingSent();
-    }
-
-    public function test_skips_users_in_unpublished_groups(): void
-    {
-        $this->minStories();
-        $group = $this->createTestGroup(['publish' => 0]);
-        $user  = $this->createTestUser(['newslettersallowed' => 1]);
-        $this->createMembership($user, $group);
-
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
         $this->assertSame(0, $result['sent']);
         Mail::assertNothingSent();
     }
@@ -292,11 +262,9 @@ class StoriesNewsletterCommandTest extends TestCase
     public function test_skips_bouncing_users(): void
     {
         $this->minStories();
-        $group = $this->createTestGroup(['publish' => 1]);
-        $user  = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 1]);
-        $this->createMembership($user, $group);
+        $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 1]);
 
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
         $this->assertSame(0, $result['sent']);
         Mail::assertNothingSent();
     }
@@ -311,13 +279,11 @@ class StoriesNewsletterCommandTest extends TestCase
     public function test_skips_members_not_seen_for_six_months(): void
     {
         $this->minStories();
-        $group = $this->createTestGroup(['publish' => 1]);
-        $user  = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
+        $user = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
         $user->lastaccess = now()->subDays(200);
         $user->save();
-        $this->createMembership($user, $group);
 
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
         $this->assertSame(0, $result['sent']);
         Mail::assertNothingSent();
     }
@@ -325,13 +291,11 @@ class StoriesNewsletterCommandTest extends TestCase
     public function test_sends_to_members_just_inside_the_activity_window(): void
     {
         $this->minStories();
-        $group = $this->createTestGroup(['publish' => 1]);
-        $user  = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
+        $user = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
         $user->lastaccess = now()->subDays(100);
         $user->save();
-        $this->createMembership($user, $group);
 
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
         $this->assertSame(1, $result['sent']);
         Mail::assertSent(StoriesNewsletterMail::class, 1);
     }
@@ -339,15 +303,13 @@ class StoriesNewsletterCommandTest extends TestCase
     public function test_skips_members_who_asked_for_no_email_at_all(): void
     {
         $this->minStories();
-        $group = $this->createTestGroup(['publish' => 1]);
-        $user  = $this->createTestUser([
+        $this->createTestUser([
             'newslettersallowed' => 1,
-            'bouncing'           => 0,
-            'settings'           => ['simplemail' => User::SIMPLE_MAIL_NONE],
+            'bouncing' => 0,
+            'settings' => ['simplemail' => User::SIMPLE_MAIL_NONE],
         ]);
-        $this->createMembership($user, $group);
 
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
         $this->assertSame(0, $result['sent']);
         Mail::assertNothingSent();
     }
@@ -355,13 +317,11 @@ class StoriesNewsletterCommandTest extends TestCase
     public function test_skips_members_on_holiday(): void
     {
         $this->minStories();
-        $group = $this->createTestGroup(['publish' => 1]);
-        $user  = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
+        $user = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
         $user->onholidaytill = now()->addDays(7);
         $user->save();
-        $this->createMembership($user, $group);
 
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
         $this->assertSame(0, $result['sent']);
         Mail::assertNothingSent();
     }
@@ -369,34 +329,32 @@ class StoriesNewsletterCommandTest extends TestCase
     public function test_skips_members_whose_provider_is_refusing_our_mail(): void
     {
         $this->minStories();
-        $group = $this->createTestGroup(['publish' => 1]);
-        $user  = $this->createTestUser([
+        $user = $this->createTestUser([
             'newslettersallowed' => 1,
-            'bouncing'           => 0,
-            'email_preferred'    => 'held@suppressed-example.com',
+            'bouncing' => 0,
+            'email_preferred' => 'held@suppressed-example.com',
         ]);
-        $this->createMembership($user, $group);
 
         DB::table('mail_suppressions')->insert([
-            'scope'          => 'domain',
-            'value'          => 'suppressed-example.com',
-            'reason'         => '421 4.7.0 temporarily deferred',
-            'provider'       => 'Example',
+            'scope' => 'domain',
+            'value' => 'suppressed-example.com',
+            'reason' => '421 4.7.0 temporarily deferred',
+            'provider' => 'Example',
             'deferred_since' => now()->subHour(),
-            'first_seen'     => now(),
-            'last_seen'      => now(),
-            'message_count'  => 100,
+            'first_seen' => now(),
+            'last_seen' => now(),
+            'message_count' => 100,
         ]);
         app(MailSuppressionService::class)->flushCache();
 
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
 
         $this->assertSame(0, $result['sent']);
         Mail::assertNothingSent();
 
         // Counted, so ModTools can show what the member missed.
         $this->assertDatabaseHas('mail_suppressed_counts', [
-            'userid'    => $user->id,
+            'userid' => $user->id,
             'emailtype' => 'storiesnewsletter',
         ]);
     }
@@ -404,12 +362,10 @@ class StoriesNewsletterCommandTest extends TestCase
     public function test_skips_members_with_no_address_to_send_to(): void
     {
         $this->minStories();
-        $group = $this->createTestGroup(['publish' => 1]);
-        $user  = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
-        $this->createMembership($user, $group);
+        $user = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
         DB::table('users_emails')->where('userid', $user->id)->delete();
 
-        $result = (new StoriesNewsletterService())->generateAndSend();
+        $result = (new StoriesNewsletterService)->generateAndSend();
         $this->assertSame(0, $result['sent']);
         Mail::assertNothingSent();
     }
@@ -417,47 +373,33 @@ class StoriesNewsletterCommandTest extends TestCase
     public function test_addresses_a_member_with_no_name_as_a_freegle_member(): void
     {
         $this->minStories();
-        $group = $this->createTestGroup(['publish' => 1]);
-        $user  = $this->createTestUser([
+        $this->createTestUser([
             'newslettersallowed' => 1,
-            'bouncing'           => 0,
-            'fullname'           => null,
-            'firstname'          => null,
-            'lastname'           => null,
+            'bouncing' => 0,
+            'fullname' => null,
+            'firstname' => null,
+            'lastname' => null,
         ]);
-        $this->createMembership($user, $group);
 
-        (new StoriesNewsletterService())->generateAndSend();
+        (new StoriesNewsletterService)->generateAndSend();
 
         Mail::assertSent(StoriesNewsletterMail::class, fn ($m) => $m->recipientName === 'Freegle Member');
-    }
-
-    public function test_skips_groups_with_newsletter_disabled_in_settings(): void
-    {
-        $this->minStories();
-        $group = $this->createTestGroup(['publish' => 1, 'settings' => ['newsletter' => 0]]);
-        $user  = $this->createTestUser(['newslettersallowed' => 1]);
-        $this->createMembership($user, $group);
-
-        $result = (new StoriesNewsletterService())->generateAndSend();
-        $this->assertSame(0, $result['sent']);
-        Mail::assertNothingSent();
     }
 
     // ── Photo support ─────────────────────────────────────────────────────────
 
     public function test_includes_photo_url_for_story_with_image(): void
     {
-        $storyId  = $this->createStory();
-        $imageId  = DB::table('users_stories_images')->insertGetId([
-            'storyid'     => $storyId,
+        $storyId = $this->createStory();
+        $imageId = DB::table('users_stories_images')->insertGetId([
+            'storyid' => $storyId,
             'contenttype' => 'image/jpeg',
         ]);
         $this->createStory(['headline' => 'B']);
         $this->createStory(['headline' => 'C']);
         $this->createEligibleUser();
 
-        (new StoriesNewsletterService())->generateAndSend();
+        (new StoriesNewsletterService)->generateAndSend();
 
         Mail::assertSent(StoriesNewsletterMail::class, function (StoriesNewsletterMail $mail) use ($imageId) {
             foreach ($mail->stories as $story) {
@@ -465,6 +407,7 @@ class StoriesNewsletterCommandTest extends TestCase
                     return true;
                 }
             }
+
             return false;
         });
     }
@@ -474,7 +417,7 @@ class StoriesNewsletterCommandTest extends TestCase
         $this->minStories();
         $this->createEligibleUser();
 
-        (new StoriesNewsletterService())->generateAndSend();
+        (new StoriesNewsletterService)->generateAndSend();
 
         Mail::assertSent(StoriesNewsletterMail::class, function (StoriesNewsletterMail $mail) {
             return $mail->stories[0]['photo'] === null;
@@ -488,7 +431,7 @@ class StoriesNewsletterCommandTest extends TestCase
         $this->minStories();
         $this->createEligibleUser();
 
-        $result = (new StoriesNewsletterService())->generateAndSend(dryRun: true);
+        $result = (new StoriesNewsletterService)->generateAndSend(dryRun: true);
         $this->assertSame(0, $result['sent']);
         Mail::assertNothingSent();
     }
@@ -500,7 +443,7 @@ class StoriesNewsletterCommandTest extends TestCase
         $this->createStory(['headline' => 'C']);
         $this->createEligibleUser();
 
-        (new StoriesNewsletterService())->generateAndSend(dryRun: true);
+        (new StoriesNewsletterService)->generateAndSend(dryRun: true);
 
         $this->assertSame(0, (int) DB::table('users_stories')->where('id', $storyId)->value('mailedtomembers'));
     }
@@ -510,7 +453,7 @@ class StoriesNewsletterCommandTest extends TestCase
         $this->minStories();
         $this->createEligibleUser();
 
-        (new StoriesNewsletterService())->generateAndSend(dryRun: true);
+        (new StoriesNewsletterService)->generateAndSend(dryRun: true);
 
         $this->assertSame(0, (int) DB::table('newsletters')->where('type', 'Stories')->count());
     }

@@ -41,7 +41,6 @@ type reachCandidateRow struct {
 	ID         uint64  `gorm:"column:id"`
 	Successful bool    `gorm:"column:successful"`
 	Promised   bool    `gorm:"column:promised"`
-	Groupid    uint64  `gorm:"column:groupid"`
 	Type       string  `gorm:"column:type"`
 	// Fromuser is the post's author (messages.fromuser). When it equals the viewer, the
 	// post is flagged as theirs (MessageSummary.Mine) so the client can pin the viewer's
@@ -139,7 +138,6 @@ func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeight
 		ID:           r.ID,
 		Successful:   r.Successful,
 		Promised:     r.Promised,
-		Groupid:      r.Groupid,
 		Type:         r.Type,
 		Arrival:      r.Arrival,
 		Posted:       r.Posted,
@@ -202,9 +200,11 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 	query, probe := reachCandidateQuery(db, myid, latlng, unseenOnly)
 	query.
 		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
-			"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
+			"ms.msgid AS id, ms.successful, ms.promised, "+
 			"ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, "+
-			"COALESCE((SELECT MIN(mgv.arrival) FROM messages_groups mgv WHERE mgv.msgid = ms.msgid AND mgv.deleted = 0), m.arrival) AS visiblesince, "+
+			// keep-raw: no more messages_groups - m.arrival is now the one clock
+			// (see the own-posts arm's comment above for why).
+			"m.arrival AS visiblesince, "+
 			"CASE WHEN ml.msgid IS NULL AND ms.id > "+
 			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+
 			" THEN 1 ELSE 0 END AS unseen, "+
@@ -464,26 +464,17 @@ func Messages(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// The 'mygroups' browse view shows posts from the user's member groups only — the same
-	// universe Count uses for that view — so the nav badge/divider count matches what the feed
-	// renders and "Mark seen" can actually clear it. (The default 'nearby' view below is the
-	// location/reach feed.) Without this the list always returned the location feed while
-	// Count branched to member groups, leaving a non-clearable count for mygroups users.
-	if effectiveBrowseView(c, db, myid) == "mygroups" {
-		return myGroupsMessages(c, db, myid)
-	}
-
 	res := []message.MessageSummary{}
 
 	latlng := user.GetLatLng(myid)
 
-	// 'nearby' browse (the default view): show posts whose rippling-out reach polygon
-	// currently covers the viewer's location — the reach model's read-side test
+	// The location/reach feed is the only browse view: show posts whose rippling-out reach
+	// polygon currently covers the viewer's location — the reach model's read-side test
 	// ST_Contains(reach, viewer). This replaces the older per-user isochrone-containment
 	// selection: "nearby" now means each post's grown reach has reached you, not that a
 	// stored travel-time polygon around you contains the post. A post with no reach row is
-	// simply not in the location view yet (it stays visible via the 'mygroups' view);
-	// ensuring every browsable post has a reach row is the reach engine's job, not this handler's.
+	// simply not in the feed yet; ensuring every browsable post has a reach row is the
+	// reach engine's job, not this handler's.
 	// Reach is drive-time-derived, so this respects geography (estuaries, coastlines) that a
 	// straight-line radius would get wrong.
 	if latlng.Lat != 0 || latlng.Lng != 0 {
@@ -547,11 +538,11 @@ func Messages(c *fiber.Ctx) error {
 			Select("m.lat, m.lng, m.id, "+
 				"ANY_VALUE(CASE WHEN mo.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
 				"ANY_VALUE(CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
-				"ANY_VALUE(mg.groupid) AS groupid, m.type, m.fromuser AS fromuser, "+
-				"MAX(mg.arrival) AS arrival, m.arrival AS posted, "+
-				// MIN where arrival takes MAX: the earliest group landing is when this first
-				// became available, which is what the feed orders and dates by.
-				"MIN(mg.arrival) AS visiblesince, "+
+				"m.type, m.fromuser AS fromuser, "+
+				// keep-raw: no more messages_groups - one row per message now, so
+				// messages.arrival (bumped on approval and on every repost, see
+				// changes.go) is both the freshness term and visiblesince.
+				"m.arrival AS arrival, m.arrival AS posted, m.arrival AS visiblesince, "+
 				"ANY_VALUE(CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END) AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = m.id AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = m.id AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
@@ -559,7 +550,6 @@ func Messages(c *fiber.Ctx) error {
 				"ANY_VALUE(COALESCE("+reachEnvelopeExpr(db)+", '')) AS reach_wkt",
 				utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED,
 				utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
-			Joins("INNER JOIN messages_groups mg ON mg.msgid = m.id").
 			Joins("LEFT JOIN messages_outcomes mo ON mo.msgid = m.id").
 			Joins("LEFT JOIN messages_promises mp ON mp.msgid = m.id").
 			Joins("LEFT JOIN messages_likes ml ON ml.msgid = m.id AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
@@ -577,9 +567,10 @@ func Messages(c *fiber.Ctx) error {
 			// moderation, so it's less obvious a post is delayed. A REJECTED post is
 			// deliberately NOT shown here - a poster seeing their own rejected post linger in
 			// the browse feed is wrong (Discourse 9808); it belongs only in My Posts.
-			Where("m.fromuser = ? AND mg.arrival >= ? AND mo.id IS NULL "+
+			Where("m.fromuser = ? AND m.arrival >= ? AND mo.id IS NULL "+ // keep-raw: messages-only, no dropped tables
 				"AND (EXISTS (SELECT 1 FROM messages_spatial ms WHERE ms.msgid = m.id) "+
-				"OR mg.collection = ?)", myid, start, utils.COLLECTION_PENDING).
+				"OR m.collection = ?)", myid, start, utils.COLLECTION_PENDING).
+			Group("m.id").
 			Group("m.id").
 			Scan(&ownCandidates)
 
@@ -674,165 +665,15 @@ func Messages(c *fiber.Ctx) error {
 	return c.JSON(res)
 }
 
-// effectiveBrowseView resolves the browse view for this request: an explicit ?browseView= wins,
-// otherwise the user's saved setting, otherwise "nearby". Defaulting to the user's setting (rather
-// than always "nearby") keeps the count and feed correct even when a client path omits or mis-sends
-// the param — the cause of mygroups users seeing a stuck "nearby" count they couldn't clear.
-func effectiveBrowseView(c *fiber.Ctx, db *gorm.DB, myid uint64) string {
-	if bv := c.Query("browseView", ""); bv != "" {
-		return bv
-	}
-	var setting string
-	// COALESCE to '' so users who have never set browseView (JSON_EXTRACT -> SQL NULL) scan cleanly
-	// into the non-nullable string instead of erroring "converting NULL to string is unsupported"
-	// on every such request. NULL still falls through to the "nearby" default below.
-	db.Table("users").
-		Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseView')), '')").
-		Where("id = ?", myid).
-		Scan(&setting)
-	if setting == "mygroups" {
-		return "mygroups"
-	}
-	return "nearby"
-}
-
-// myGroupsMsgIDs returns the open (successful=0) message ids in the user's member groups — the
-// shared universe for the 'mygroups' browse view, so Messages (the feed) and Count (the badge)
-// agree and "Mark seen" can drain the count.
-//
-// Membership is tested via messages_groups (a post's FULL group set), NOT
-// messages_spatial.groupid, which stores only ONE group per post and so mis-attributes
-// rippled/cross-posted messages — the same reason the feed (message.Groups), popular-posts and
-// edit-queue queries all filter on messages_groups. Using spatial.groupid here left two bugs:
-// a post rippled INTO a member group (its spatial row points at the non-member origin) was
-// missed, and a spatial row still pointing at a member group after the post was
-// removed/retracted there was counted but absent from the feed — a residual Mark seen could
-// never clear.
-func myGroupsMsgIDs(db *gorm.DB, myid uint64) []uint64 {
-	var ids []uint64
-	memberFilter, memberArgs := message.ApprovedInMyGroups(db, "ms.msgid", myid)
-	// No DISTINCT: messages_spatial.msgid carries a UNIQUE index, and membership is tested by a
-	// subquery rather than a join, so nothing here can repeat a msgid. The keyword only bought a
-	// temporary table and a sort.
-	db.Table("messages_spatial ms").
-		Select("ms.msgid").
-		Where("ms.successful = 0 AND "+memberFilter+
-			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), memberArgs...).
-		Scan(&ids)
-	return ids
-}
-
-// myGroupsMessages renders the 'mygroups' browse feed: posts from the viewer's member groups.
-// Membership (not location/reach) decides what shows — the viewer is a member, and Count's
-// mygroups branch counts the same universe, so feed and badge stay in lock-step. Each post is
-// still scored and distance-stamped exactly like the nearby feed (reachCandidateRow.toSummary)
-// whenever the viewer has a location, so the "New to you" relevance sort and the distance slider
-// work in this view too — member-group posts have no reach row of their own, so the reach radius
-// falls back to the configured default extent (ReachRadiusMetres), the same fallback the nearby
-// view's own-posts arm uses.
-func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
-	res := []message.MessageSummary{}
-	msgIDs := myGroupsMsgIDs(db, myid)
-
-	if len(msgIDs) > 0 {
-		// Select the same scoring/distance ingredients as the nearby arm (fetchReachCandidates):
-		// per-post views and reply counts, plus the post's reach row (LEFT JOINed — a member-group
-		// post need not have one) so toSummary can derive its distance and relevance score.
-		//
-		// msgIDs is bound directly
-		// as a slice via "IN ?" - it always travelled as real bind values
-		// (fmt.Sprintf only built the "?,?,?,..." placeholder-count text
-		// itself), so this needed only the native GORM IN-list form, not a
-		// behaviour change.
-		var candidates []reachCandidateRow
-		mgQuery := db.Table("messages_spatial ms").
-			Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
-				"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
-				"ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, "+
-				"COALESCE((SELECT MIN(mgv.arrival) FROM messages_groups mgv WHERE mgv.msgid = ms.msgid AND mgv.deleted = 0), m.arrival) AS visiblesince, "+
-				"CASE WHEN ml.msgid IS NULL AND ms.id > "+
-				strconv.FormatUint(browseClearedWatermark(db, myid), 10)+
-				" THEN 1 ELSE 0 END AS unseen, "+
-				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
-				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
-				"COALESCE(rr.lat, 0) AS reach_lat, COALESCE(rr.lng, 0) AS reach_lng, COALESCE("+reachEnvelopeExpr(db)+", '') AS reach_wkt",
-				utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
-			// JOIN messages for the ORIGINAL post arrival (m.arrival), stable across
-			// rippling — see the reach arm above.
-			Joins("INNER JOIN messages m ON m.id = ms.msgid").
-			Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
-			Joins("LEFT JOIN rippling_reach rr ON rr.msgid = ms.msgid")
-		mgQuery.
-			Where("ms.msgid IN ?", msgIDs).
-			Scan(&candidates)
-
-		latlng := user.GetLatLng(myid)
-		if latlng.Lat != 0 || latlng.Lng != 0 {
-			viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
-			weights := LoadScoreWeights()
-			env := LoadScoreEnv()
-			blurCoords := make([][2]float64, 0, len(candidates))
-			for _, cand := range candidates {
-				blurCoords = append(blurCoords, [2]float64{float64(cand.Lat), float64(cand.Lng)})
-			}
-			roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
-			// Metrics BEFORE summarising, exactly as the nearby arm: the close
-			// term scores by drive time when known, and the summaries carry the
-			// same numbers the client filters and sorts by.
-			candMins, candMiles := candDriveMetrics(viewerLat, viewerLng, candidates)
-			for ix, cand := range candidates {
-				res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env, myid, candMins[ix], candMiles[ix]))
-			}
-			// Rippling relevance order (score desc, arrival tie-break), mirroring the nearby
-			// arm, so the client's "New to you" sort has a meaningful score to rank on.
-			sort.SliceStable(res, func(i, j int) bool {
-				if res[i].Score != res[j].Score {
-					return res[i].Score > res[j].Score
-				}
-				return res[i].Arrival.After(res[j].Arrival)
-			})
-		} else {
-			// No known location: distance/score can't be measured, so keep the prior behaviour
-			// (blurred coords, Distance/Score left at zero). The distance slider is hidden
-			// client-side without a location, so nothing here depends on Distance.
-			prewarmCandidateBlur(candidates)
-			for _, cand := range candidates {
-				blurLat, blurLng := roadblur.RoadBlur(cand.Lat, cand.Lng, utils.BLUR_USER)
-				res = append(res, message.MessageSummary{
-					ID:           cand.ID,
-					Successful:   cand.Successful,
-					Promised:     cand.Promised,
-					Groupid:      cand.Groupid,
-					Type:         cand.Type,
-					Arrival:      cand.Arrival,
-					Posted:       cand.Posted,
-					VisibleSince: cand.VisibleSince,
-					Lat:          blurLat,
-					Lng:          blurLng,
-					Unseen:       cand.Unseen,
-					Mine:         cand.Fromuser != 0 && cand.Fromuser == myid,
-				})
-			}
-		}
-	}
-
-	// Float any pinned post (a paid bulk-offer clearance) to the top of the member-group
-	// feed, above the relevance order.
-	markPinned(db, res)
-	sort.SliceStable(res, func(i, j int) bool {
-		return res[i].Pinned && !res[j].Pinned
-	})
-
-	return c.JSON(res)
-}
-
 func Count(c *fiber.Ctx) error {
 	db := database.DBConn
 	myid := user.WhoAmI(c)
 
 	var count uint64 = 0
 
-	browseView := effectiveBrowseView(c, db, myid)
+	// There is one browse view now (the location/reach feed); the label stays only as the
+	// browsecount cache key.
+	const browseView = "nearby"
 	maxDistance := resolveMaxDistance(c, db, myid)
 
 	// The drive-minutes budget only ever applies WITHIN an active distance limit, because
@@ -852,15 +693,11 @@ func Count(c *fiber.Ctx) error {
 		})
 	}
 
-	if browseView == "mygroups" {
-		count = myGroupsCount(db, myid, maxDistance, maxMinutes)
-	} else {
-		var err error
-		if count, err = nearbyCount(myid, maxDistance, maxMinutes); err != nil {
-			// Unanswered, not zero: nothing is cached, so the next poll asks
-			// again, and the client keeps the number it already shows.
-			return err
-		}
+	var err error
+	if count, err = nearbyCount(myid, maxDistance, maxMinutes); err != nil {
+		// Unanswered, not zero: nothing is cached, so the next poll asks
+		// again, and the client keeps the number it already shows.
+		return err
 	}
 
 	browsecount.Put(myid, browseView, maxDistance, maxMinutes, count)
@@ -868,66 +705,6 @@ func Count(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"count": count,
 	})
-}
-
-// myGroupsCountUnfiltered is the plain unseen-post count for the 'mygroups' browse view: open,
-// unviewed posts in the viewer's member groups. Membership is tested via messages_groups (the
-// post's full group set), not messages_spatial.groupid — which stores only ONE group per post and
-// mis-attributes rippled/cross-posted messages (see myGroupsMsgIDs). This EXISTS matches the
-// mygroups feed (message.Groups / myGroupsMsgIDs), so feed == badge and "Mark seen" drains to zero
-// instead of sticking on rows the feed never renders.
-func myGroupsCountUnfiltered(db *gorm.DB, myid uint64) uint64 {
-	var count uint64 = 0
-	memberFilter, memberArgs := message.ApprovedInMyGroups(db, "ms.msgid", myid)
-	db.Table("messages_spatial ms").
-		// COUNT(*), not COUNT(DISTINCT ms.msgid): messages_spatial.msgid is UNIQUE and the
-		// messages_likes join matches at most one row (UNIQUE on msgid, userid, type), so no
-		// msgid can appear twice. COUNT(DISTINCT) over ~27,000 candidate rows is dedup work for
-		// an answer that cannot differ - and this runs 14,283 times a day for the nav badge.
-		// NB this is NOT the messages_groups case in .claude/rules/go-api-traps.md, where a join
-		// genuinely fans out and COUNT(DISTINCT messages.id) is required; nor the reach-arm
-		// COUNTs below, which go through reachCandidateQuery and were left alone.
-		Select("COUNT(*)").
-		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
-		Where("ms.successful = 0 AND ml.msgid IS NULL AND ms.id > "+
-			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" AND "+memberFilter+
-			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), memberArgs...).
-		Scan(&count)
-	return count
-}
-
-// myGroupsCount is the unseen-post count for the 'mygroups' browse view. maxDistanceMiles narrows
-// it to posts within that many miles of the viewer using the SAME blurred-coordinate Haversine the
-// feed exposes as `distance` (reachCandidateRow.blurredDistanceMiles), so the nav badge tracks the
-// distance-filtered list exactly. BrowseDistanceUnlimited (the common case — most members leave the
-// slider at "no limit") skips the per-post distance work and uses the fast unfiltered COUNT.
-func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64, maxMinutes float64) uint64 {
-	if maxDistanceMiles >= BrowseDistanceUnlimited {
-		return myGroupsCountUnfiltered(db, myid)
-	}
-
-	latlng := user.GetLatLng(myid)
-	if latlng.Lat == 0 && latlng.Lng == 0 {
-		// No location to measure from — the slider can't be set without one, so this is a
-		// defensive fallback: count everything (as if unlimited) rather than zero the badge.
-		return myGroupsCountUnfiltered(db, myid)
-	}
-
-	// Distance-limited path: enumerate the same unseen member-group posts (with coordinates) the
-	// unfiltered count covers, and keep those within maxDistance of the viewer's blurred-point
-	// Haversine — the same measure the feed uses — so badge and list agree at the boundary.
-	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
-	var candidates []reachCandidateRow
-	memberFilter, memberArgs := message.ApprovedInMyGroups(db, "ms.msgid", myid)
-	db.Table("messages_spatial ms").
-		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
-		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
-		Where("ms.successful = 0 AND ml.msgid IS NULL AND ms.id > "+
-			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" AND "+memberFilter+
-			" AND "+rippling.ReachPendingFilter("ms.msgid", myid), memberArgs...).
-		Scan(&candidates)
-
-	return countWithinBudget(candidates, viewerLat, viewerLng, maxDistanceMiles, maxMinutes)
 }
 
 // resolveMaxDistance returns the viewer's effective nearby-feed distance limit in miles: an

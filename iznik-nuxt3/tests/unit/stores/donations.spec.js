@@ -41,10 +41,10 @@ describe('donation store', () => {
       store.init({ public: {} })
       mockFetch.mockResolvedValue({ target: 3000, raised: 1500 })
 
-      await store.fetch(10)
+      await store.fetch()
       expect(store.target).toBe(3000)
       expect(store.raised).toBe(1500)
-      expect(mockFetch).toHaveBeenCalledWith(10)
+      expect(mockFetch).toHaveBeenCalled()
     })
   })
 

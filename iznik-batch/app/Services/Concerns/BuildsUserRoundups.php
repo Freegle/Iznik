@@ -2,8 +2,6 @@
 
 namespace App\Services\Concerns;
 
-use App\Models\Group;
-use App\Models\Membership;
 use App\Models\User;
 use App\Models\UserDigest;
 use Illuminate\Support\Facades\DB;
@@ -13,11 +11,12 @@ use Illuminate\Support\LazyCollection;
  * Shared plumbing for the user-centric "roundup" digests (community events and
  * volunteering opportunities).
  *
- * Both roundups now send ONE combined email per user covering every group they
- * belong to — instead of a separate per-group email — with the same item
- * (cross-posted to several of the user's groups) shown once. The user/group
- * eligibility, the per-user cadence guard and the "which of my groups is this
- * shared with" attribution are identical between the two, so they live here.
+ * The site is national now: there is no group to be eligible for and no group
+ * to attribute an item to, so eligibility is just the user's own opt-in flag
+ * (users.eventsallowed / users.volunteeringallowed) and email frequency
+ * (users.emailfrequency), plus the per-user cadence guard against sending the
+ * same roundup twice inside MIN_INTERVAL_DAYS. Both roundups send ONE email
+ * per user covering every eligible item, deduplicated by item id.
  */
 trait BuildsUserRoundups
 {
@@ -25,75 +24,20 @@ trait BuildsUserRoundups
     public const MIN_INTERVAL_DAYS = 3;
 
     /**
-     * Freegle groups eligible for a roundup of the given kind, keyed by id.
-     *
-     * Mirrors the per-group eligibility the old per-group services applied:
-     * published, on-here Freegle groups that aren't playgrounds, aren't closed,
-     * and have the relevant feature setting enabled (default on).
-     *
-     * Each value carries the friendly display name plus the /explore link for
-     * the group, so the roundup can show a "Posted on <group>" byline matching
-     * the message digest (UnifiedDigest "Posted by … on <group>").
-     *
-     * @param string $settingKey 'communityevents' | 'volunteering'
-     * @return array<int,array{name:string,url:string}>
-     */
-    protected function eligibleGroups(string $settingKey): array
-    {
-        $userSite = config('freegle.sites.user');
-
-        $candidates = Group::query()
-            ->where('type', Group::TYPE_FREEGLE)
-            ->where('publish', 1)
-            ->where('onhere', 1)
-            ->whereRaw("nameshort NOT LIKE '%playground%'")
-            ->get(['id', 'nameshort', 'namefull', 'settings']);
-
-        $eligible = [];
-        foreach ($candidates as $group) {
-            if (!$group->getSetting($settingKey, true)) {
-                continue;
-            }
-            if ($group->isClosed()) {
-                continue;
-            }
-            $eligible[(int) $group->id] = [
-                'name' => $group->namefull ?: $group->nameshort,
-                'url'  => $userSite . '/explore/' . rawurlencode($group->nameshort),
-            ];
-        }
-
-        return $eligible;
-    }
-
-    /**
      * Stream users eligible for a roundup: deliverable (active / not on holiday /
-     * not bouncing / simplemail != None), with at least one approved membership
-     * in an eligible group that has the relevant per-group flag set and a
+     * not bouncing / simplemail != None), opted in via the given flag, a
      * non-zero email frequency, and not already sent this roundup type within
      * MIN_INTERVAL_DAYS.
      *
-     * @param array<int> $groupIds      Eligible group ids.
-     * @param string     $allowedColumn 'eventsallowed' | 'volunteeringallowed'.
-     * @param string     $mode          users_digests.mode ('events' | 'volunteering').
+     * @param  string  $allowedColumn  'eventsallowed' | 'volunteeringallowed'.
+     * @param  string  $mode  users_digests.mode ('events' | 'volunteering').
      */
-    protected function eligibleUsers(array $groupIds, string $allowedColumn, string $mode): LazyCollection
+    protected function eligibleUsers(string $allowedColumn, string $mode): LazyCollection
     {
-        if (empty($groupIds)) {
-            return User::query()->whereRaw('1 = 0')->lazyById(500);
-        }
-
         return User::query()
             ->select(['users.id'])
-            ->whereExists(function ($q) use ($groupIds, $allowedColumn) {
-                $q->select(DB::raw(1))
-                    ->from('memberships')
-                    ->whereColumn('memberships.userid', 'users.id')
-                    ->whereIn('memberships.groupid', $groupIds)
-                    ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-                    ->where("memberships.$allowedColumn", 1)
-                    ->where('memberships.emailfrequency', '!=', 0);
-            })
+            ->where("users.$allowedColumn", 1)
+            ->where('users.emailfrequency', '!=', 0)
             ->whereNotExists(function ($q) use ($mode) {
                 $q->select(DB::raw(1))
                     ->from('users_digests')
@@ -103,30 +47,6 @@ trait BuildsUserRoundups
             })
             ->receivingOurMails()
             ->lazyById(500);
-    }
-
-    /**
-     * The subset of a user's approved memberships (with the relevant flag set and
-     * non-zero frequency) that fall within the eligible group set.
-     *
-     * @param array<int> $eligibleGroupIds
-     * @return array<int>
-     */
-    protected function userGroupIds(int $userId, array $eligibleGroupIds, string $allowedColumn): array
-    {
-        if (empty($eligibleGroupIds)) {
-            return [];
-        }
-
-        return DB::table('memberships')
-            ->where('userid', $userId)
-            ->whereIn('groupid', $eligibleGroupIds)
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->where($allowedColumn, 1)
-            ->where('emailfrequency', '!=', 0)
-            ->pluck('groupid')
-            ->map(fn ($id) => (int) $id)
-            ->all();
     }
 
     /**

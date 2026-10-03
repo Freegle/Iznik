@@ -22,7 +22,7 @@ class VolunteeringMaintenanceServiceTest extends TestCase
         // leak from parallel test classes by deleting inside this test's
         // transaction (rolled back on tearDown). Mirrors VolunteeringDigestCommandTest.
         DB::statement('SET FOREIGN_KEY_CHECKS=0');
-        foreach (['volunteering_dates', 'volunteering_images', 'volunteering_groups', 'volunteering', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
+        foreach (['volunteering_dates', 'volunteering_images', 'volunteering', 'users_emails', 'users'] as $table) {
             DB::table($table)->delete();
         }
         DB::statement('SET FOREIGN_KEY_CHECKS=1');
@@ -174,20 +174,6 @@ class VolunteeringMaintenanceServiceTest extends TestCase
         $this->assertSame(1, $count, 'Dry run reports who WOULD be asked');
         Mail::assertNothingSent();
         $this->assertNull(DB::table('volunteering')->where('id', $id)->value('askedtorenew'));
-    }
-
-    public function test_renewal_email_uses_associated_group_name(): void
-    {
-        Mail::fake();
-        $owner = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $id = $this->makeOpportunity(['userid' => $owner->id, 'added' => now()->subDays(25)]);
-        DB::table('volunteering_groups')->insert(['volunteeringid' => $id, 'groupid' => $group->id]);
-
-        $this->service()->askRenew();
-
-        Mail::assertSent(VolunteeringRenewMail::class, fn (VolunteeringRenewMail $m) =>
-            $m->groupName === $group->namefull);
     }
 
     // ---- expire() ---------------------------------------------------------

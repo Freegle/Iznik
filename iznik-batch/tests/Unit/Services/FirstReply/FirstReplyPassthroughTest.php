@@ -98,8 +98,7 @@ class FirstReplyPassthroughTest extends TestCase
     private function seedRipplingPost(): array
     {
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
 
         $schedule = json_encode([
             ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 200, 'wkt' => self::TICK1],

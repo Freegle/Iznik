@@ -42,9 +42,7 @@ func grantClearance(t *testing.T, userID uint64) {
 func TestBulkOfferPutCreatesCatalogue(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkput")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	grantClearance(t, userID)
 	token := getToken(t, userID)
 
@@ -55,7 +53,6 @@ func TestBulkOfferPutCreatesCatalogue(t *testing.T) {
 		"messagetype": "Offer",
 		"item":        "Office Clearance",
 		"collection":  "Draft",
-		"groupid":     groupID,
 		"locationid":  locationID,
 		"bulkitems": []map[string]interface{}{
 			{"name": "Office desk", "quantity": 4, "condition": "Good", "photourl": "https://example.com/desk.jpg"},
@@ -101,13 +98,11 @@ func TestBulkOfferPutCreatesCatalogue(t *testing.T) {
 func TestBulkOfferGetReturnsCatalogue(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkget")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
 	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Office Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Office desk", 4, "Good")
 	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
 
@@ -166,12 +161,10 @@ func TestBulkOfferGetReturnsCatalogue(t *testing.T) {
 func TestBulkInterest(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkint")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Office Clearance", 55.95, -3.18)
 	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
 
 	wanterToken := getToken(t, wanterID)
@@ -249,12 +242,10 @@ func TestBulkInterest(t *testing.T) {
 func TestBulkInterestCreatesRoster(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkroster")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Office Clearance", 55.95, -3.18)
 	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
 
 	wanterToken := getToken(t, wanterID)
@@ -296,12 +287,10 @@ func TestBulkInterestCreatesRoster(t *testing.T) {
 func TestBulkInterestMessageIsStructured(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkstruct")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Office Clearance", 55.95, -3.18)
 	// Three items: ref #1, #2, #3 in insertion (id) order.
 	_ = addBulkItem(t, msgID, "Office desk", 4, "Good")
 	chairID := addBulkItem(t, msgID, "Swivel chair", 14, "Used")
@@ -345,13 +334,11 @@ func TestBulkInterestMessageIsStructured(t *testing.T) {
 func TestBulkInterestOnBehalf(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkonbehalf")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
 	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 4, "Good")
 
 	postAs := func(token string, interestUserid uint64, qty int) int {
@@ -398,13 +385,11 @@ func TestBulkInterestOnBehalf(t *testing.T) {
 func TestBulkInterestState(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkstate")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
 	strangerID := CreateTestUser(t, prefix+"_stranger", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 2, "Good")
 	db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, state) VALUES (?, ?, ?, 1, 'Interested')", deskID, msgID, wanterID)
 
@@ -437,12 +422,10 @@ func TestBulkInterestState(t *testing.T) {
 func TestBulkInterestPreservesReservedState(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkreserve")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
 	wanterToken := getToken(t, wanterID)
 
@@ -487,13 +470,11 @@ func TestBulkInterestPreservesReservedState(t *testing.T) {
 func TestBulkOfferPatchRebuildsCatalogue(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkpatch")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	grantClearance(t, ownerID)
 	token := getToken(t, ownerID)
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 2, "Good")
 	addBulkItem(t, msgID, "OldItem", 1, "Used")
 
@@ -531,9 +512,7 @@ func TestBulkOfferPatchRebuildsCatalogue(t *testing.T) {
 func TestBulkOfferSlots(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkslots")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	grantClearance(t, ownerID)
 	token := getToken(t, ownerID)
 
@@ -544,7 +523,6 @@ func TestBulkOfferSlots(t *testing.T) {
 		"messagetype": "Offer",
 		"item":        "Office Clearance",
 		"collection":  "Draft",
-		"groupid":     groupID,
 		"locationid":  locationID,
 		"bulkitems": []map[string]interface{}{
 			{"name": "Desk", "quantity": 2, "condition": "Good"},
@@ -572,7 +550,7 @@ func TestBulkOfferSlots(t *testing.T) {
 	assert.Contains(t, tb, "Tue 7 Apr")
 
 	// GET returns the slots (seed a group row so the draft is visible to the owner).
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, 'Approved', NOW())", msgID, groupID)
+	db.Exec("UPDATE messages SET collection = 'Approved' WHERE id = ?", msgID)
 	gresp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token), nil), 10000)
 	require.NoError(t, err)
 	var msg message.Message
@@ -587,11 +565,9 @@ func TestBulkOfferSlots(t *testing.T) {
 func TestBulkItemPhotoIngestion(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkphoto")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 2, "Good")
 	db.Exec("UPDATE messages_bulk_items SET photourl = ? WHERE id = ?", "https://example.com/desk.jpg", deskID)
 
@@ -643,12 +619,10 @@ func TestBulkItemPhotoIngestion(t *testing.T) {
 func TestBulkItemUploadedPhotoDeliveryURL(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkphotourl")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Office desk", 4, "Good")
 
 	// Mirror the real upload flow: an attachment carrying the uploaded uid (in the
@@ -694,11 +668,9 @@ func TestBulkItemUploadedPhotoDeliveryURL(t *testing.T) {
 func TestBulkOfferAccessInstructions(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkaccess")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
 	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	grantClearance(t, ownerID)
 	ownerToken := getToken(t, ownerID)
 
@@ -710,7 +682,6 @@ func TestBulkOfferAccessInstructions(t *testing.T) {
 		"messagetype":        "Offer",
 		"item":               "Office Clearance",
 		"collection":         "Draft",
-		"groupid":            groupID,
 		"locationid":         locationID,
 		"accessinstructions": instructions,
 		"bulkitems": []map[string]interface{}{
@@ -734,7 +705,7 @@ func TestBulkOfferAccessInstructions(t *testing.T) {
 	assert.Equal(t, instructions, stored)
 
 	// Make the draft visible so GET returns it.
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, 'Approved', NOW())", msgID, groupID)
+	db.Exec("UPDATE messages SET collection = 'Approved' WHERE id = ?", msgID)
 	deskID := addBulkItemRef(t, msgID)
 
 	// --- Owner sees the instructions. ---
@@ -792,12 +763,10 @@ func TestBulkOfferAccessInstructions(t *testing.T) {
 func TestBulkInterestStateCollectedWritesMessagesByAndDecrementsAvailableNow(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkcollected1")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 4, "Good")
 
 	// Seed available count and an interest row at quantity=2 state=Reserved.
@@ -838,12 +807,10 @@ func TestBulkInterestStateCollectedWritesMessagesByAndDecrementsAvailableNow(t *
 func TestBulkInterestStateCollectedAccumulatesMultipleItems(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkcollected2")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 4, "Good")
 	chairID := addBulkItem(t, msgID, "Chair", 6, "Used")
 
@@ -886,10 +853,8 @@ func TestBulkInterestStateCollectedAccumulatesMultipleItems(t *testing.T) {
 func TestBulkOfferPatchAccessInstructions(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkpatchaccess")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	grantClearance(t, ownerID)
 	ownerToken := getToken(t, ownerID)
 
@@ -901,7 +866,6 @@ func TestBulkOfferPatchAccessInstructions(t *testing.T) {
 		"messagetype":        "Offer",
 		"item":               "Office Clearance",
 		"collection":         "Draft",
-		"groupid":            groupID,
 		"locationid":         locationID,
 		"accessinstructions": "original",
 		"bulkitems": []map[string]interface{}{
@@ -920,7 +884,7 @@ func TestBulkOfferPatchAccessInstructions(t *testing.T) {
 	require.NotZero(t, msgID)
 
 	// Make the draft visible so GET returns it.
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, 'Approved', NOW())", msgID, groupID)
+	db.Exec("UPDATE messages SET collection = 'Approved' WHERE id = ?", msgID)
 
 	// PATCH with updated instructions.
 	patchBody := map[string]interface{}{

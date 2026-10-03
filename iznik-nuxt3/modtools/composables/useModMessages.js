@@ -11,18 +11,12 @@
 import { onScopeDispose, getCurrentScope } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '@/stores/auth'
-// import { useModGroupStore } from '@/stores/modgroup'
 import { useMiscStore } from '@/stores/misc'
 
 // All values need to be reset by one caller of setupModMessages()
 const summarykey = ref(false)
 const busy = ref(false)
 const context = ref(null)
-const groupid = ref(0)
-// Exported so read-only consumers (useKeywords) can follow the selected
-// community without calling setupModMessages(), which is a setup function and
-// does setup-shaped things.
-export const group = ref(null)
 const limit = ref(10)
 const workType = ref(null)
 const show = ref(0)
@@ -68,27 +62,9 @@ const summary = computed(() => {
   return ret === undefined ? false : ret
 })
 
-// Get arrival time for the contextual group (multi-group support).
-function getContextArrival(msg, contextGid) {
-  if (msg.groups?.length) {
-    if (contextGid) {
-      const g = msg.groups.find((g) => parseInt(g.groupid) === contextGid)
-      if (g) return g.arrival
-    }
-    return msg.groups[0].arrival
-  }
-  return msg.arrival
-}
-
 const messages = computed(() => {
   const messageStore = useMessageStore()
-  let messages
-
-  if (groupid.value) {
-    messages = messageStore.getByGroup(groupid.value)
-  } else {
-    messages = messageStore.all
-  }
+  let messages = messageStore.all
 
   // Filter to only messages from the current listing request.
   // The store accumulates messages from various sources (user history,
@@ -103,28 +79,26 @@ const messages = computed(() => {
   // listingIds is only reset by a full getMessages(), so the resurrected message
   // stays in listingIds and would render with the wrong buttons.  Filter it out.
   //
-  // Only applies to views whose name matches a real messages_groups.collection
-  // value (Pending, PendingOther, Approved, Spam, Rejected). The Edits view
-  // is virtual — its messages are Approved on the group with a pending row
-  // in messages_edits — so a string-equality filter would strip everything.
+  // The Pending view has to accept more than an exact 'Pending' match: it also
+  // shows PendingOther (held by another moderator) and Spam (server query
+  // includes Spam in the Pending queue - Discourse #9723). This mirrors
+  // stores/message.js's refreshOrRemoveFromMTList() stillInReviewQueue check -
+  // keep the two in sync if the review-queue definition ever changes.
+  //
+  // Only applies to views whose name matches a real messages.collection value
+  // (Pending, Approved, Spam, Rejected). The Edits view is virtual — its
+  // messages are Approved with a pending row in messages_edits — so a
+  // string-equality filter would strip everything.
   const REAL_COLLECTIONS = ['Pending', 'Approved', 'Spam', 'Rejected']
+  const PENDING_VIEW_COLLECTIONS = ['Pending', 'PendingOther', 'Spam']
   if (collection.value && REAL_COLLECTIONS.includes(collection.value)) {
-    const allowed =
+    messages = messages.filter((m) =>
       collection.value === 'Pending'
-        ? ['Pending', 'PendingOther', 'Spam']
-        : [collection.value]
-    const contextGid = groupid.value ? parseInt(groupid.value) : null
-    messages = messages.filter((m) => {
-      if (!m.groups?.length) return true
-      if (contextGid) {
-        const g = m.groups.find((g) => parseInt(g.groupid) === contextGid)
-        return g ? allowed.includes(g.collection) : true
-      }
-      return m.groups.some((g) => allowed.includes(g.collection))
-    })
+        ? PENDING_VIEW_COLLECTIONS.includes(m.collection)
+        : m.collection === collection.value
+    )
   }
 
-  // console.log('---messages groupid:', groupid.value, 'messages:', messages.length)
   if (listingIdOrder.value.length > 0) {
     // Vector search: sort by score order (position in listingIdOrder)
     const orderMap = new Map(listingIdOrder.value.map((id, i) => [id, i]))
@@ -135,21 +109,15 @@ const messages = computed(() => {
     })
   } else {
     // Normal: sort by arrival date, newest first.
-    // Use the contextual group's arrival if filtering by group (multi-group support).
-    const contextGid = groupid.value ? parseInt(groupid.value) : null
     messages.sort((a, b) => {
-      const arrivalA = getContextArrival(a, contextGid)
-      const arrivalB = getContextArrival(b, contextGid)
-      return new Date(arrivalB).getTime() - new Date(arrivalA).getTime()
+      return new Date(b.arrival).getTime() - new Date(a.arrival).getTime()
     })
   }
-  // console.log('###messages sort:', messages[0]?.groups[0]?.arrival)
   return messages
 })
 
 const visibleMessages = computed(() => {
   const msgs = messages.value
-  // console.log('---visibleMessages', show.value, msgs?.length)
   if (show.value === 0 || !msgs || msgs.length === 0) return []
   return msgs.slice(0, show.value)
 })
@@ -158,31 +126,17 @@ export function setupModMessages(reset) {
   // The refresh machinery below is registered ONLY for reset=true, i.e. for the
   // page that owns this queue. Everything here is shared module-level state, so
   // a watcher registered by a second caller is a duplicate that does the same
-  // clear-then-refetch again. setupModMessages() is called by the page, by
-  // ModMessages.vue, and by useKeywords.js from a MODULE-LEVEL computed that
-  // re-evaluates on every group change - so the duplicates accumulated as a
-  // moderator worked. Measured in production over one day: a single work-count
-  // tick fired 2 identical listing requests for a moderator who used one group
-  // filter, and up to 13 for one who used seven. Registering per call also
-  // leaks when there is no active effect scope to dispose them.
-
-  /* watch(group, async (newValue, oldValue) => {
-    console.log("===useModMessages watch group", newValue?.id, oldValue?.id, groupid.value)
-    // We have this watch because we may need to fetch a group that we have remembered.  The mounted()
-    // call may happen before we have restored the persisted state, so we can't initiate the fetch there.
-    if (!oldValue || oldValue.id !== groupid.value) {
-      const modGroupStore = useModGroupStore()
-      await modGroupStore.get(groupid.value)
-    }
-  }) */
+  // clear-then-refetch again. setupModMessages() is called by both the page and
+  // ModMessages.vue - so the duplicates accumulated as a moderator worked.
+  // Measured in production over one day: a single work-count tick fired 2
+  // identical listing requests. Registering per call also leaks when there is
+  // no active effect scope to dispose them.
 
   // CAREFUL: All refs are remembered from the previous page so one caller has to reset all unused ref
   if (reset) {
     summarykey.value = false
     busy.value = false
     context.value = null
-    groupid.value = 0
-    group.value = null
     limit.value = 10
     workType.value = null
     show.value = 0
@@ -198,24 +152,18 @@ export function setupModMessages(reset) {
   }
 
   const getMessages = async (workdetail) => {
-    // console.log('<><><> getMessages', collection.value, groupid.value, workdetail)
-
     const messageStore = useMessageStore()
     messageStore.clearContext()
     context.value = null
 
     const params = {
-      groupid: groupid.value,
-      collection: collection.value, // Pending also gets PendingOther
+      collection: collection.value,
       modtools: true,
       summary: false,
-      // limit: Math.max(limit.value, newVal)
     }
     if (workdetail && workdetail.total) {
       params.limit = Math.max(limit.value, workdetail.total)
     }
-    // console.log('uMM getMessages',params.limit)
-    // params.debug = 'uMM getMessages',
     messageStore.clear()
     listingIds.value = new Set()
     let fetchedIds
@@ -238,13 +186,7 @@ export function setupModMessages(reset) {
     context.value = messageStore.context
 
     // Force them to show.
-    let msgs
-
-    if (groupid.value) {
-      msgs = messageStore.getByGroup(groupid.value)
-    } else {
-      msgs = messageStore.all
-    }
+    let msgs = messageStore.all
 
     // Filter to listing IDs only.
     if (listingIds.value.size > 0) {
@@ -276,7 +218,6 @@ export function setupModMessages(reset) {
   })
 
   const workdetail = computed(() => {
-    // console.log('uMM workdetail',workType.value)
     const ret = {}
     try {
       const authStore = useAuthStore()
@@ -293,7 +234,6 @@ export function setupModMessages(reset) {
         ret[workType.value] = work[workType.value]
         ret.total += work[workType.value]
       }
-      // console.log('uMM workdetail',ret)
       return ret
     } catch (e) {
       console.log('>>>>useModMessages workdetail exception', e.message)
@@ -391,8 +331,6 @@ export function setupModMessages(reset) {
   return {
     busy,
     context,
-    group,
-    groupid,
     limit,
     workType,
     show,

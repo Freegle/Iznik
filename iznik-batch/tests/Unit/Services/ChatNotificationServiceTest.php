@@ -3,10 +3,8 @@
 namespace Tests\Unit\Services;
 
 use App\Mail\Chat\ChatNotification;
-use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\ChatRoster;
-use App\Models\Membership;
 use App\Models\User;
 use App\Services\ChatNotificationService;
 use Illuminate\Support\Facades\DB;
@@ -20,7 +18,7 @@ class ChatNotificationServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ChatNotificationService();
+        $this->service = new ChatNotificationService;
         Mail::fake();
     }
 
@@ -317,8 +315,7 @@ class ChatNotificationServiceTest extends TestCase
     {
         $sender = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $post = $this->createTestMessage($sender, $group); // the post P (msgid FK)
+        $post = $this->createTestMessage($sender); // the post P (msgid FK)
 
         $room = $this->createTestChatRoom($sender, $recipient, [
             'latestmessage' => now(),
@@ -367,8 +364,7 @@ class ChatNotificationServiceTest extends TestCase
         // keyed on releasedat.
         $sender = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $post = $this->createTestMessage($sender, $group);
+        $post = $this->createTestMessage($sender);
 
         $room = $this->createTestChatRoom($sender, $recipient, [
             'latestmessage' => now(),
@@ -779,33 +775,17 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertEquals(0, $count);
     }
 
-    public function test_notify_by_email_user2mod_notifies_group_moderators(): void
+    public function test_notify_by_email_user2mod_notifies_moderators(): void
     {
         $member = $this->createTestUser();
-        $group = $this->createTestGroup();
 
-        // Create moderators for the group.
-        $moderator1 = $this->createTestUser();
-        $moderator2 = $this->createTestUser();
-
-        Membership::create([
-            'userid' => $moderator1->id,
-            'groupid' => $group->id,
-            'role' => 'Moderator',
-            'added' => now(),
-        ]);
-
-        Membership::create([
-            'userid' => $moderator2->id,
-            'groupid' => $group->id,
-            'role' => 'Owner',
-            'added' => now(),
-        ]);
+        // Create national moderators.
+        $moderator1 = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $moderator2 = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $member->id,
-            'groupid' => $group->id,
             'created' => now(),
             'latestmessage' => now(),
         ]);
@@ -836,28 +816,19 @@ class ChatNotificationServiceTest extends TestCase
             ->first();
 
         $this->assertNotNull($mod1Roster, 'Moderator 1 should have a roster entry');
-        $this->assertNotNull($mod2Roster, 'Moderator 2 (Owner) should have a roster entry');
+        $this->assertNotNull($mod2Roster, 'Moderator 2 should have a roster entry');
     }
 
     public function test_notify_by_email_user2mod_notifies_member(): void
     {
         $member = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // Create a moderator.
-        $moderator = $this->createTestUser();
-
-        Membership::create([
-            'userid' => $moderator->id,
-            'groupid' => $group->id,
-            'role' => 'Moderator',
-            'added' => now(),
-        ]);
+        $moderator = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $member->id,
-            'groupid' => $group->id,
             'created' => now(),
             'latestmessage' => now(),
         ]);
@@ -885,24 +856,16 @@ class ChatNotificationServiceTest extends TestCase
         $member = $this->createTestUser([
             'fullname' => 'Alice Member',
         ]);
-        $group = $this->createTestGroup();
 
         // Create a moderator.
         $moderator = $this->createTestUser([
             'fullname' => 'Bob Moderator',
-        ]);
-
-        Membership::create([
-            'userid' => $moderator->id,
-            'groupid' => $group->id,
-            'role' => 'Moderator',
-            'added' => now(),
+            'systemrole' => User::SYSTEMROLE_MODERATOR,
         ]);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $member->id,
-            'groupid' => $group->id,
             'created' => now(),
             'latestmessage' => now(),
         ]);
@@ -933,150 +896,18 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertNotNull($modRoster->lastmsgemailed, 'Moderator roster should be updated after notification');
     }
 
-    public function test_notify_by_email_user2mod_skips_backup_moderators(): void
-    {
-        $member = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        // Create an active moderator.
-        $activeMod = $this->createTestUser([
-            'fullname' => 'Active Mod',
-        ]);
-
-        // Create a backup moderator (settings['active'] = false).
-        $backupMod = $this->createTestUser([
-            'fullname' => 'Backup Mod',
-        ]);
-
-        // Active mod - no settings means active by default.
-        Membership::create([
-            'userid' => $activeMod->id,
-            'groupid' => $group->id,
-            'role' => 'Moderator',
-            'added' => now(),
-            'settings' => null,
-        ]);
-
-        // Backup mod - explicitly marked as inactive.
-        Membership::create([
-            'userid' => $backupMod->id,
-            'groupid' => $group->id,
-            'role' => 'Moderator',
-            'added' => now(),
-            'settings' => ['active' => false],
-        ]);
-
-        $room = ChatRoom::create([
-            'chattype' => ChatRoom::TYPE_USER2MOD,
-            'user1' => $member->id,
-            'groupid' => $group->id,
-            'created' => now(),
-            'latestmessage' => now(),
-        ]);
-
-        // Create roster for member.
-        ChatRoster::create([
-            'chatid' => $room->id,
-            'userid' => $member->id,
-            'lastmsgemailed' => null,
-        ]);
-
-        // Member sends message.
-        $this->createTestChatMessage($room, $member, [
-            'date' => now()->subMinutes(5),
-        ]);
-
-        $count = $this->service->notifyByEmail(ChatRoom::TYPE_USER2MOD, $room->id);
-
-        // Should have sent notification to active mod but not backup mod.
-        $this->assertGreaterThan(0, $count, 'Should have sent notifications');
-
-        // Verify active mod roster entry was created and updated.
-        $activeModRoster = ChatRoster::where('chatid', $room->id)
-            ->where('userid', $activeMod->id)
-            ->first();
-        $this->assertNotNull($activeModRoster, 'Active moderator should have roster entry');
-        $this->assertNotNull($activeModRoster->lastmsgemailed, 'Active moderator should have been notified');
-
-        // Verify backup mod was NOT added to roster (not notified).
-        $backupModRoster = ChatRoster::where('chatid', $room->id)
-            ->where('userid', $backupMod->id)
-            ->first();
-        $this->assertNull($backupModRoster, 'Backup moderator should NOT have roster entry');
-    }
-
-    public function test_notify_by_email_user2mod_includes_explicitly_active_moderators(): void
-    {
-        $member = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        // Create a moderator explicitly marked as active.
-        $activeMod = $this->createTestUser([
-            'fullname' => 'Explicit Active Mod',
-        ]);
-
-        Membership::create([
-            'userid' => $activeMod->id,
-            'groupid' => $group->id,
-            'role' => 'Moderator',
-            'added' => now(),
-            'settings' => ['active' => true],
-        ]);
-
-        $room = ChatRoom::create([
-            'chattype' => ChatRoom::TYPE_USER2MOD,
-            'user1' => $member->id,
-            'groupid' => $group->id,
-            'created' => now(),
-            'latestmessage' => now(),
-        ]);
-
-        ChatRoster::create([
-            'chatid' => $room->id,
-            'userid' => $member->id,
-            'lastmsgemailed' => null,
-        ]);
-
-        $this->createTestChatMessage($room, $member, [
-            'date' => now()->subMinutes(5),
-        ]);
-
-        $count = $this->service->notifyByEmail(ChatRoom::TYPE_USER2MOD, $room->id);
-
-        $this->assertGreaterThan(0, $count);
-
-        // Verify explicitly active mod was notified.
-        $modRoster = ChatRoster::where('chatid', $room->id)
-            ->where('userid', $activeMod->id)
-            ->first();
-        $this->assertNotNull($modRoster, 'Explicitly active moderator should have roster entry');
-        $this->assertNotNull($modRoster->lastmsgemailed, 'Explicitly active moderator should have been notified');
-    }
-
     public function test_notify_by_email_user2mod_mod_message_notifies_other_mods_not_sender(): void
     {
         $member = $this->createTestUser(['fullname' => 'Alice Member']);
-        $group = $this->createTestGroup();
 
         // Create three moderators.
-        $modA = $this->createTestUser(['fullname' => 'Mod A (sender)']);
-        $modB = $this->createTestUser(['fullname' => 'Mod B']);
-        $modC = $this->createTestUser(['fullname' => 'Mod C']);
-
-        foreach ([$modA, $modB, $modC] as $mod) {
-            Membership::create([
-                'userid' => $mod->id,
-                'groupid' => $group->id,
-                'role' => 'Moderator',
-                'added' => now(),
-                'settings' => null, // Active by default.
-            ]);
-        }
+        $modA = $this->createTestUser(['fullname' => 'Mod A (sender)', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $modB = $this->createTestUser(['fullname' => 'Mod B', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $modC = $this->createTestUser(['fullname' => 'Mod C', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $member->id,
-            'groupid' => $group->id,
             'created' => now(),
             'latestmessage' => now(),
         ]);
@@ -1131,124 +962,15 @@ class ChatNotificationServiceTest extends TestCase
         }
     }
 
-    public function test_notify_by_email_user2mod_active_mod_reply_notifies_other_active_not_backup(): void
-    {
-        $member = $this->createTestUser(['fullname' => 'Alice Member']);
-        $group = $this->createTestGroup();
-
-        // Create two active mods and one backup mod.
-        $activeMod1 = $this->createTestUser(['fullname' => 'Active Mod 1']);
-        $activeMod2 = $this->createTestUser(['fullname' => 'Active Mod 2']);
-        $backupMod = $this->createTestUser(['fullname' => 'Backup Mod']);
-
-        // Active mod 1 - null settings means active.
-        Membership::create([
-            'userid' => $activeMod1->id,
-            'groupid' => $group->id,
-            'role' => 'Moderator',
-            'added' => now(),
-            'settings' => null,
-        ]);
-
-        // Active mod 2 - explicitly active.
-        Membership::create([
-            'userid' => $activeMod2->id,
-            'groupid' => $group->id,
-            'role' => 'Moderator',
-            'added' => now(),
-            'settings' => ['active' => true],
-        ]);
-
-        // Backup mod - explicitly inactive.
-        Membership::create([
-            'userid' => $backupMod->id,
-            'groupid' => $group->id,
-            'role' => 'Moderator',
-            'added' => now(),
-            'settings' => ['active' => false],
-        ]);
-
-        $room = ChatRoom::create([
-            'chattype' => ChatRoom::TYPE_USER2MOD,
-            'user1' => $member->id,
-            'groupid' => $group->id,
-            'created' => now(),
-            'latestmessage' => now(),
-        ]);
-
-        // Create roster for member.
-        ChatRoster::create([
-            'chatid' => $room->id,
-            'userid' => $member->id,
-            'lastmsgemailed' => null,
-        ]);
-
-        // Active Mod 1 sends a reply to member.
-        $this->createTestChatMessage($room, $activeMod1, [
-            'date' => now()->subMinutes(5),
-            'message' => 'Reply from Active Mod 1',
-        ]);
-
-        $count = $this->service->notifyByEmail(ChatRoom::TYPE_USER2MOD, $room->id);
-
-        // Should notify: member + Active Mod 2 = 2 notifications.
-        // Should NOT notify: Active Mod 1 (sender), Backup Mod (inactive).
-        $this->assertGreaterThanOrEqual(2, $count, 'Should notify member and other active mod');
-
-        // Verify member was notified.
-        $memberRoster = ChatRoster::where('chatid', $room->id)
-            ->where('userid', $member->id)
-            ->first();
-        $this->assertNotNull($memberRoster->lastmsgemailed, 'Member should have been notified');
-
-        // Verify Active Mod 2 was notified.
-        $activeMod2Roster = ChatRoster::where('chatid', $room->id)
-            ->where('userid', $activeMod2->id)
-            ->first();
-        $this->assertNotNull($activeMod2Roster, 'Active Mod 2 should have roster entry');
-        $this->assertNotNull($activeMod2Roster->lastmsgemailed, 'Active Mod 2 should have been notified');
-
-        // Verify Active Mod 1 (sender) was NOT notified.
-        $activeMod1Roster = ChatRoster::where('chatid', $room->id)
-            ->where('userid', $activeMod1->id)
-            ->first();
-        if ($activeMod1Roster) {
-            $this->assertNull($activeMod1Roster->lastmsgemailed, 'Active Mod 1 (sender) should NOT be notified');
-        }
-
-        // Verify Backup Mod was NOT notified (not even roster entry created).
-        $backupModRoster = ChatRoster::where('chatid', $room->id)
-            ->where('userid', $backupMod->id)
-            ->first();
-        $this->assertNull($backupModRoster, 'Backup Mod should NOT have roster entry');
-    }
-
     public function test_notify_by_email_for_mod2mod(): void
     {
-        $group = $this->createTestGroup();
-
         // Create two moderators.
-        $mod1 = $this->createTestUser(['fullname' => 'Mod One']);
-        $mod2 = $this->createTestUser(['fullname' => 'Mod Two']);
-
-        Membership::create([
-            'userid' => $mod1->id,
-            'groupid' => $group->id,
-            'role' => 'Moderator',
-            'added' => now(),
-        ]);
-
-        Membership::create([
-            'userid' => $mod2->id,
-            'groupid' => $group->id,
-            'role' => 'Moderator',
-            'added' => now(),
-        ]);
+        $mod1 = $this->createTestUser(['fullname' => 'Mod One', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $mod2 = $this->createTestUser(['fullname' => 'Mod Two', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         // Create Mod2Mod chat room (user1/user2 are NULL for Mod2Mod).
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_MOD2MOD,
-            'groupid' => $group->id,
             'user1' => null,
             'user2' => null,
             'created' => now(),
@@ -1282,25 +1004,13 @@ class ChatNotificationServiceTest extends TestCase
 
     public function test_notify_by_email_mod2mod_notifies_all_roster_members(): void
     {
-        $group = $this->createTestGroup();
-
         // Create three moderators.
-        $mod1 = $this->createTestUser(['fullname' => 'Mod One']);
-        $mod2 = $this->createTestUser(['fullname' => 'Mod Two']);
-        $mod3 = $this->createTestUser(['fullname' => 'Mod Three']);
-
-        foreach ([$mod1, $mod2, $mod3] as $mod) {
-            Membership::create([
-                'userid' => $mod->id,
-                'groupid' => $group->id,
-                'role' => 'Moderator',
-                'added' => now(),
-            ]);
-        }
+        $mod1 = $this->createTestUser(['fullname' => 'Mod One', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $mod2 = $this->createTestUser(['fullname' => 'Mod Two', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $mod3 = $this->createTestUser(['fullname' => 'Mod Three', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_MOD2MOD,
-            'groupid' => $group->id,
             'user1' => null,
             'user2' => null,
             'created' => now(),
@@ -1348,23 +1058,11 @@ class ChatNotificationServiceTest extends TestCase
 
     public function test_notify_by_email_mod2mod_uses_message_author_as_sender(): void
     {
-        $group = $this->createTestGroup();
-
-        $mod1 = $this->createTestUser(['fullname' => 'Mod Sender']);
-        $mod2 = $this->createTestUser(['fullname' => 'Mod Recipient']);
-
-        foreach ([$mod1, $mod2] as $mod) {
-            Membership::create([
-                'userid' => $mod->id,
-                'groupid' => $group->id,
-                'role' => 'Moderator',
-                'added' => now(),
-            ]);
-        }
+        $mod1 = $this->createTestUser(['fullname' => 'Mod Sender', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $mod2 = $this->createTestUser(['fullname' => 'Mod Recipient', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_MOD2MOD,
-            'groupid' => $group->id,
             'user1' => null,
             'user2' => null,
             'created' => now(),
@@ -1400,23 +1098,11 @@ class ChatNotificationServiceTest extends TestCase
 
     public function test_notify_by_email_mod2mod_respects_delay(): void
     {
-        $group = $this->createTestGroup();
-
-        $mod1 = $this->createTestUser(['fullname' => 'Mod One']);
-        $mod2 = $this->createTestUser(['fullname' => 'Mod Two']);
-
-        foreach ([$mod1, $mod2] as $mod) {
-            Membership::create([
-                'userid' => $mod->id,
-                'groupid' => $group->id,
-                'role' => 'Moderator',
-                'added' => now(),
-            ]);
-        }
+        $mod1 = $this->createTestUser(['fullname' => 'Mod One', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $mod2 = $this->createTestUser(['fullname' => 'Mod Two', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_MOD2MOD,
-            'groupid' => $group->id,
             'user1' => null,
             'user2' => null,
             'created' => now(),
@@ -1446,23 +1132,11 @@ class ChatNotificationServiceTest extends TestCase
 
     public function test_notify_by_email_mod2mod_skips_already_mailed(): void
     {
-        $group = $this->createTestGroup();
-
-        $mod1 = $this->createTestUser(['fullname' => 'Mod One']);
-        $mod2 = $this->createTestUser(['fullname' => 'Mod Two']);
-
-        foreach ([$mod1, $mod2] as $mod) {
-            Membership::create([
-                'userid' => $mod->id,
-                'groupid' => $group->id,
-                'role' => 'Moderator',
-                'added' => now(),
-            ]);
-        }
+        $mod1 = $this->createTestUser(['fullname' => 'Mod One', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $mod2 = $this->createTestUser(['fullname' => 'Mod Two', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_MOD2MOD,
-            'groupid' => $group->id,
             'user1' => null,
             'user2' => null,
             'created' => now(),
@@ -1490,23 +1164,11 @@ class ChatNotificationServiceTest extends TestCase
 
     public function test_notify_by_email_mod2mod_with_force_all(): void
     {
-        $group = $this->createTestGroup();
-
-        $mod1 = $this->createTestUser(['fullname' => 'Mod One']);
-        $mod2 = $this->createTestUser(['fullname' => 'Mod Two']);
-
-        foreach ([$mod1, $mod2] as $mod) {
-            Membership::create([
-                'userid' => $mod->id,
-                'groupid' => $group->id,
-                'role' => 'Moderator',
-                'added' => now(),
-            ]);
-        }
+        $mod1 = $this->createTestUser(['fullname' => 'Mod One', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $mod2 = $this->createTestUser(['fullname' => 'Mod Two', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_MOD2MOD,
-            'groupid' => $group->id,
             'user1' => null,
             'user2' => null,
             'created' => now(),
@@ -1812,24 +1474,16 @@ class ChatNotificationServiceTest extends TestCase
     public function test_notify_by_email_excludes_closed_user2mod_mod(): void
     {
         // Bug: When a moderator closes a User2Mod chat, their chat_roster.status is set
-        // to 'Closed'. But getMembersToNotify() fetches mods from group memberships and
-        // then creates/fetches their roster without checking status — so Closed mods
-        // were still receiving notifications.
+        // to 'Closed'. But getMembersToNotify() fetches mods from the national moderator
+        // pool and then creates/fetches their roster without checking status — so Closed
+        // mods were still receiving notifications.
         $member = $this->createTestUser();
-        $group = $this->createTestGroup();
 
-        $moderator = $this->createTestUser();
-        Membership::create([
-            'userid' => $moderator->id,
-            'groupid' => $group->id,
-            'role' => 'Moderator',
-            'added' => now(),
-        ]);
+        $moderator = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $member->id,
-            'groupid' => $group->id,
             'created' => now(),
             'latestmessage' => now(),
         ]);
@@ -1901,7 +1555,6 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertContains($earlier->id, $ids, 'Genuinely earlier message should remain as context');
         $this->assertNotContains($duplicate->id, $ids, 'Duplicate copy of the current message should be excluded');
     }
-
 
     public function test_warn_not_hold_emails_a_held_message_with_a_warning_not_the_text(): void
     {

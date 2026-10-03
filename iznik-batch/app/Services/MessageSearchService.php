@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\MessageGroup;
+use App\Models\Message;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -32,15 +32,15 @@ class MessageSearchService
     {
         $date = now()->subDays(30)->format('Y-m-d');
 
-        $msgids = DB::table('messages_groups')
-            ->join('messages_index', 'messages_index.msgid', '=', 'messages_groups.msgid')
-            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
-            ->where('messages_groups.arrival', '<', $date)
+        $msgids = DB::table('messages')
+            ->join('messages_index', 'messages_index.msgid', '=', 'messages.id')
+            ->where('messages.collection', Message::COLLECTION_APPROVED)
+            ->where('messages.arrival', '<', $date)
             ->distinct()
-            ->pluck('messages_groups.msgid');
+            ->pluck('messages.id');
 
         $total = $msgids->count();
-        Log::info("MessageSearch: " . ($dryRun ? "would deindex " : "deindexing ") . "{$total} messages");
+        Log::info('MessageSearch: '.($dryRun ? 'would deindex ' : 'deindexing ')."{$total} messages");
 
         if ($dryRun) {
             return $total;
@@ -69,20 +69,19 @@ class MessageSearchService
     {
         $cutoff = now()->subDays(31)->startOfDay()->format('Y-m-d');
 
-        $msgs = DB::table('messages_groups')
-            ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
-            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
-            ->where('messages_groups.deleted', 0)
-            ->where('messages_groups.arrival', '>=', $cutoff)
-            ->whereNotIn('messages_groups.msgid', function ($q) {
+        $msgs = DB::table('messages')
+            ->where('messages.collection', Message::COLLECTION_APPROVED)
+            ->whereNull('messages.deleted')
+            ->where('messages.arrival', '>=', $cutoff)
+            ->whereNotIn('messages.id', function ($q) {
                 $q->select('msgid')->from('messages_index');
             })
-            ->orderByDesc('messages_groups.arrival')
-            ->select('messages_groups.msgid', 'messages.subject', 'messages_groups.arrival', 'messages_groups.groupid')
+            ->orderByDesc('messages.arrival')
+            ->select('messages.id as msgid', 'messages.subject', 'messages.arrival')
             ->get();
 
         $total = $msgs->count();
-        Log::info("MessageSearch: " . ($dryRun ? "would index " : "indexing ") . "{$total} messages");
+        Log::info('MessageSearch: '.($dryRun ? 'would index ' : 'indexing ')."{$total} messages");
 
         if ($dryRun) {
             return $total;
@@ -100,7 +99,7 @@ class MessageSearchService
 
             $arrivalTimestamp = Carbon::parse($msg->arrival)->timestamp;
 
-            $this->indexString($msg->msgid, $toadd, $arrivalTimestamp, $msg->groupid);
+            $this->indexString($msg->msgid, $toadd, $arrivalTimestamp);
 
             $count++;
             Log::info("{$count} / {$total}");
@@ -175,31 +174,31 @@ class MessageSearchService
         }
 
         DB::statement(
-            "INSERT IGNORE INTO words (word, firstthree, soundex) VALUES (?, ?, SUBSTRING(SOUNDEX(?), 1, 10))",
+            'INSERT IGNORE INTO words (word, firstthree, soundex) VALUES (?, ?, SUBSTRING(SOUNDEX(?), 1, 10))',
             [$word, substr($word, 0, 3), $word]
         );
 
         return (int) DB::table('words')->where('word', $word)->value('id');
     }
 
-    private function indexString(int $msgid, string $string, int $arrivalTimestamp, ?int $groupid): void
+    private function indexString(int $msgid, string $string, int $arrivalTimestamp): void
     {
         foreach ($this->getWords($string) as $word) {
             $wordId = $this->getOrCreateWordId($word);
 
-            if (!$wordId) {
+            if (! $wordId) {
                 continue;
             }
 
             DB::table('messages_index')->upsert(
-                ['msgid' => $msgid, 'wordid' => $wordId, 'arrival' => -$arrivalTimestamp, 'groupid' => $groupid],
+                ['msgid' => $msgid, 'wordid' => $wordId, 'arrival' => -$arrivalTimestamp],
                 ['msgid', 'wordid'],
                 ['arrival']
             );
 
             DB::table('words')
                 ->where('id', $wordId)
-                ->update(['popularity' => DB::raw('-(SELECT COUNT(*) FROM messages_index WHERE wordid = ' . $wordId . ')')]);
+                ->update(['popularity' => DB::raw('-(SELECT COUNT(*) FROM messages_index WHERE wordid = '.$wordId.')')]);
         }
     }
 }

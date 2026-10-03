@@ -23,18 +23,17 @@ import type DonationsAPI from './DonationsAPI.js'
 import type EmailTrackingAPI from './EmailTrackingAPI.js'
 import type ExportAPI from './ExportAPI.js'
 import type GiftAidAPI from './GiftAidAPI.js'
-import type GroupAPI from './GroupAPI.js'
 import type HousekeeperAPI from './HousekeeperAPI.js'
 import type ImageAPI from './ImageAPI.js'
 import type IsochroneAPI from './IsochroneAPI.js'
 import type JobAPI from './JobAPI.js'
 import type LocationAPI from './LocationAPI.js'
 import type LogsAPI from './LogsAPI.js'
-import type MembershipsAPI from './MembershipsAPI.js'
 import type MergeAPI from './MergeAPI.js'
 import type MessageAPI from './MessageAPI.js'
 import type MicroVolunteeringAPI from './MicroVolunteeringAPI.js'
 import type ModConfigsAPI from './ModConfigsAPI.js'
+import type ModMembersAPI from './ModMembersAPI.js'
 import type NewsAPI from './NewsAPI.js'
 import type NoticeboardAPI from './NoticeboardAPI.js'
 import type NotificationAPI from './NotificationAPI.js'
@@ -67,18 +66,17 @@ interface API {
   emailtracking: EmailTrackingAPI
   export: ExportAPI
   giftaid: GiftAidAPI
-  group: GroupAPI
   housekeeper: HousekeeperAPI
   image: ImageAPI
   isochrone: IsochroneAPI
   job: JobAPI
   location: LocationAPI
   logs: LogsAPI
-  memberships: MembershipsAPI
   merge: MergeAPI
   message: MessageAPI
   microvolunteering: MicroVolunteeringAPI
   modconfigs: ModConfigsAPI
+  modmembers: ModMembersAPI
   news: NewsAPI
   noticeboard: NoticeboardAPI
   notification: NotificationAPI

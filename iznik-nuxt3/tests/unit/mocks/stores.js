@@ -21,8 +21,6 @@ export function createMockMemberStore(overrides = {}) {
     fetch: vi.fn().mockResolvedValue({}),
     fetchMembers: vi.fn().mockResolvedValue([]),
     approve: vi.fn().mockResolvedValue({}),
-    reviewHold: vi.fn().mockResolvedValue({}),
-    reviewRelease: vi.fn().mockResolvedValue({}),
     ban: vi.fn().mockResolvedValue({}),
 
     // Getters

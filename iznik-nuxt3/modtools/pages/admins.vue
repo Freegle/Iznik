@@ -13,13 +13,6 @@
                 </b-badge>
               </h2>
             </template>
-            <ModGroupSelect
-              v-model="groupidshow"
-              all
-              modonly
-              :work="['pendingadmins']"
-              class="mb-2"
-            />
             <div v-if="pending.length">
               <ModAdmin
                 v-for="admin in pending"
@@ -34,23 +27,6 @@
             <template #title>
               <h2 class="ms-2 me-2">Create</h2>
             </template>
-            <label for="groupidcreate" class="fw-bold">Group:</label>
-            <ModGroupSelect
-              id="groupidcreate"
-              v-model="groupidcreate"
-              modonly
-              :systemwide="supportOrAdmin"
-              class="mb-2"
-            />
-            <NoticeMessage
-              v-if="groupidcreate < 0"
-              class="mt-1 mb-1"
-              variant="danger"
-            >
-              This is a suggested ADMIN. All local communities will get "copies"
-              of this (unless they've opted out), and mods can then
-              edit/approve/reject them. Members won't receive multiple copies.
-            </NoticeMessage>
             <VeeForm ref="form">
               <b-form-group
                 label="Subject of ADMIN:"
@@ -175,15 +151,13 @@
             <b-button
               class="mt-2 mb-2"
               size="lg"
-              :variant="groupidcreate < 0 ? 'danger' : 'primary'"
-              :disabled="groupidcreate <= 0 && groupidcreate !== -2"
+              variant="primary"
               @click="create"
             >
               <v-icon v-if="created" icon="check" />
               <v-icon v-else-if="creating" icon="sync" class="fa-spin" />
               <v-icon v-else icon="save" />
-              <span v-if="groupidcreate < 0"> Send to all communities </span>
-              <span v-else> Send to Pending ADMINs </span>
+              <span> Send to Pending ADMINs </span>
             </b-button>
             <p>
               It's a good idea to have a fellow mod take a look at an ADMIN
@@ -194,7 +168,6 @@
             <template #title>
               <h2 class="ms-2 me-2" @click="fetchPrevious">Previous</h2>
             </template>
-            <ModGroupSelect v-model="groupidprevious" modonly class="mb-2" />
             <p>
               If an ADMIN shows as queued for send, it usually takes a few
               minutes. If we are sending a lot of ADMINs it can take a few
@@ -213,7 +186,7 @@
                 @copy="copyAdmin($event)"
               />
             </div>
-            <div v-else-if="groupidprevious > 0">No previous ADMINs.</div>
+            <div v-else>No previous ADMINs.</div>
           </b-tab>
         </b-tabs>
       </div>
@@ -221,13 +194,13 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, watch, onMounted, useTemplateRef } from 'vue'
+import { ref, computed, onMounted, useTemplateRef } from 'vue'
 import { defineRule, Form as VeeForm, Field, ErrorMessage } from 'vee-validate'
 import { required, email, min, max } from '@vee-validate/rules'
 import { useAdminsStore } from '~/stores/admins'
-import { useModGroupStore } from '@/stores/modgroup'
+import { useAuthStore } from '@/stores/auth'
 import { useMe } from '~/composables/useMe'
-import { useModMe } from '~/composables/useModMe'
+import { useModMe } from '~/modtools/composables/useModMe'
 
 defineRule('required', required)
 defineRule('email', email)
@@ -235,8 +208,8 @@ defineRule('min', min)
 defineRule('max', max)
 
 const adminsStore = useAdminsStore()
-const modGroupStore = useModGroupStore()
-const { myGroups, supportOrAdmin } = useMe()
+const authStore = useAuthStore()
+const { supportOrAdmin } = useMe()
 const { checkWork } = useModMe()
 
 // Template ref for form
@@ -244,9 +217,6 @@ const form = useTemplateRef('form')
 
 // Reactive state (was data())
 const tabIndex = ref(0)
-const groupidshow = ref(null)
-const groupidcreate = ref(null)
-const groupidprevious = ref(null)
 const subject = ref(null)
 const body = ref(null)
 const ctatext = ref(null)
@@ -263,23 +233,7 @@ const templateDefaults = {}
 
 // Computed properties
 const pendingcount = computed(() => {
-  let count = 0
-
-  for (const g of myGroups.value) {
-    const group = modGroupStore.get(g.id)
-    if (group) {
-      if (
-        group.type === 'Freegle' &&
-        (group.role === 'Owner' || group.role === 'Moderator')
-      ) {
-        if (group.work && group.work.pendingadmins) {
-          count += group.work.pendingadmins
-        }
-      }
-    }
-  }
-
-  return count
+  return authStore.work?.pendingadmins || 0
 })
 
 const pending = computed(() => {
@@ -298,22 +252,13 @@ const previous = computed(() => {
     })
 })
 
-// Watchers
-watch(groupidshow, (newval) => {
-  fetchAdmins(newval)
-})
-
-watch(groupidprevious, (newval) => {
-  fetchAdmins(newval)
-})
-
 // Methods
 function fetchPending() {
-  fetchAdmins(groupidshow.value)
+  fetchAdmins()
 }
 
 function fetchPrevious() {
-  fetchAdmins(groupidprevious.value)
+  fetchAdmins()
 }
 
 async function create() {
@@ -322,7 +267,6 @@ async function create() {
   if (selectedTemplate.value) {
     const defaults = templateDefaults[selectedTemplate.value]
     params = {
-      groupid: groupidcreate.value > 0 ? groupidcreate.value : null,
       subject: defaults.subject,
       text: '(template)',
       essential: false,
@@ -343,7 +287,6 @@ async function create() {
     }
 
     params = {
-      groupid: groupidcreate.value > 0 ? groupidcreate.value : null,
       subject: subject.value,
       text: body.value,
       ctatext: ctatext.value,
@@ -364,11 +307,9 @@ async function create() {
   checkWork(true)
 }
 
-async function fetchAdmins(groupid) {
+async function fetchAdmins() {
   await adminsStore.clear()
-  await adminsStore.fetch({
-    groupid,
-  })
+  await adminsStore.fetch()
 }
 
 function validateSubject(value) {
@@ -392,7 +333,6 @@ function validateBody(value) {
 
 function copyAdmin(admin) {
   essential.value = admin.essential === 1
-  groupidcreate.value = admin.groupid
   subject.value = admin.subject
   body.value = admin.text
   ctatext.value = admin.ctatext
@@ -402,6 +342,6 @@ function copyAdmin(admin) {
 
 // Lifecycle - mounted
 onMounted(() => {
-  fetchAdmins(groupidshow.value)
+  fetchAdmins()
 })
 </script>

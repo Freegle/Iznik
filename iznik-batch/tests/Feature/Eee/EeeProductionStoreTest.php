@@ -26,10 +26,9 @@ class EeeProductionStoreTest extends TestCase
 
     private function makeMessage(): int
     {
-        $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
+        $user = $this->createTestUser();
 
-        return (int) $this->createTestMessage($user, $group)->id;
+        return (int) $this->createTestMessage($user)->id;
     }
 
     private function row(int $msgid): ?object
@@ -142,9 +141,13 @@ class EeeProductionStoreTest extends TestCase
     }
 
     /**
-     * The mark is the approval clock — approvedat where a moderator approved, group
-     * arrival where auto-approval left approvedat null — because that is the clock the
+     * The mark is the approval clock — approvedat where a moderator approved, arrival
+     * where auto-approval left approvedat null — because that is the clock the
      * incremental run selects on. A different clock here skips or rescans whole runs.
+     *
+     * (There is one Freegle now, so a post has exactly one approval event on `messages`
+     * itself; the old per-community ripple-copy scenario this file used to also cover
+     * no longer applies — see 2026_09_20_000001_remove_group_model.php.)
      */
     public function test_high_water_mark_reads_the_approval_clock(): void
     {
@@ -153,9 +156,9 @@ class EeeProductionStoreTest extends TestCase
         $approvedAt = now()->subDay()->toDateTimeString();
 
         // $early auto-approved long ago; $late held, then approved yesterday.
-        DB::table('messages_groups')->where('msgid', $early)
+        DB::table('messages')->where('id', $early)
             ->update(['arrival' => now()->subDays(30)->toDateTimeString(), 'approvedat' => null]);
-        DB::table('messages_groups')->where('msgid', $late)
+        DB::table('messages')->where('id', $late)
             ->update(['arrival' => now()->subDays(20)->toDateTimeString(), 'approvedat' => $approvedAt]);
 
         foreach ([$early, $late] as $msgid) {
@@ -172,55 +175,5 @@ class EeeProductionStoreTest extends TestCase
         // MySQL returns the aggregate with microseconds; only the seconds matter.
         $this->assertSame($approvedAt, substr((string) $mark, 0, 19), 'the late approval must set the mark');
         $this->assertNull($this->store->highWaterMark('test-model', '2'), 'other prompts have no mark');
-    }
-
-    /**
-     * A post rippled to a dozen communities is approved in each at its own time, hours or
-     * weeks apart. The mark is where the next run starts looking, so if a late approval of
-     * an ALREADY classified post moves it, the run asks for everything approved since a
-     * moment ago and the posts approved in between are never offered to the classifier
-     * again.
-     *
-     * That is what was happening on live: a run at 20:00 reported "since 19:59:15, 1 new
-     * message to classify", every day settled at 13-20% classified, and no day ever filled
-     * in. The mark has to follow how far through the approval stream the classifier has
-     * got, which is each post's FIRST approval, not the newest timestamp attached to
-     * anything it has already done.
-     */
-    public function test_a_later_ripple_approval_does_not_move_the_mark_past_unseen_posts(): void
-    {
-        $msgid = $this->makeMessage();
-        $group = $this->createTestGroup();
-
-        $firstApproval = now()->subHours(6)->toDateTimeString();
-        $lateRipple    = now()->subMinute()->toDateTimeString();
-
-        DB::table('messages_groups')->where('msgid', $msgid)
-            ->update(['approvedat' => $firstApproval]);
-
-        // The same post reaching a second community six hours later.
-        DB::table('messages_groups')->insert([
-            'msgid'      => $msgid,
-            'groupid'    => $group->id,
-            'collection' => 'Approved',
-            'arrival'    => $lateRipple,
-            'approvedat' => $lateRipple,
-        ]);
-
-        $this->store->upsert([
-            'messageid'              => $msgid,
-            'is_eee_from_components' => 1,
-            'model'                  => 'test-model',
-            'prompt_version'         => '1',
-        ]);
-
-        $mark = $this->store->highWaterMark('test-model', '1');
-
-        $this->assertSame(
-            $firstApproval,
-            substr((string) $mark, 0, 19),
-            'the mark must stay at the first approval; a later rippled copy of a post '
-            . 'already classified would skip everything approved in between'
-        );
     }
 }

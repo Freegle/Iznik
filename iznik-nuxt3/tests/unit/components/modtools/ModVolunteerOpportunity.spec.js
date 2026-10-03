@@ -18,14 +18,6 @@ vi.mock('@/stores/volunteering', () => ({
   }),
 }))
 
-const mockGroupStore = {
-  get: vi.fn(),
-}
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
-}))
-
 const mockUserStore = {
   fetch: vi.fn(),
   byId: vi.fn(),
@@ -39,7 +31,6 @@ describe('ModVolunteerOpportunity', () => {
   const defaultVolunteering = {
     id: 123,
     pending: true,
-    groups: [456],
     userid: 789,
   }
 
@@ -47,15 +38,10 @@ describe('ModVolunteerOpportunity', () => {
     volunteeringid: 123,
   }
 
-  const mockGroup = {
-    id: 456,
-    nameshort: 'TestGroup',
-    ourPostingStatus: 'ALLOWED',
-  }
-
   const mockUser = {
     id: 789,
     displayname: 'Test User',
+    postingstatus: 'DEFAULT',
   }
 
   function mountComponent(props = {}, volunteeringOverrides = {}) {
@@ -104,7 +90,7 @@ describe('ModVolunteerOpportunity', () => {
           },
           ChatButton: {
             template: '<button class="chat-button" />',
-            props: ['userid', 'groupid', 'title', 'variant'],
+            props: ['userid', 'title', 'variant'],
           },
           VolunteerOpportunityModal: {
             template: '<div class="volunteer-modal" />',
@@ -125,7 +111,6 @@ describe('ModVolunteerOpportunity', () => {
     mockSave.mockResolvedValue()
     mockRemove.mockResolvedValue()
     mockByIdVolunteering.mockReturnValue(defaultVolunteering)
-    mockGroupStore.get.mockReturnValue(mockGroup)
     mockUserStore.byId.mockReturnValue(mockUser)
     mockUserStore.fetch.mockResolvedValue(mockUser)
   })
@@ -161,11 +146,6 @@ describe('ModVolunteerOpportunity', () => {
       expect(mockUserStore.fetch).toHaveBeenCalledWith(789)
     })
 
-    it('renders group name from group store', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.text()).toContain('TestGroup')
-    })
-
     it('renders Approve button', () => {
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain('Approve')
@@ -181,7 +161,7 @@ describe('ModVolunteerOpportunity', () => {
       expect(wrapper.text()).toContain('Delete')
     })
 
-    it('renders ChatButton when groups and userid exist', () => {
+    it('renders ChatButton when userid exists', () => {
       const wrapper = mountComponent()
       expect(wrapper.find('.chat-button').exists()).toBe(true)
     })
@@ -192,9 +172,9 @@ describe('ModVolunteerOpportunity', () => {
     })
 
     it('renders prohibited posting notice when appropriate', () => {
-      mockGroupStore.get.mockReturnValue({
-        ...mockGroup,
-        ourPostingStatus: 'PROHIBITED',
+      mockUserStore.byId.mockReturnValue({
+        ...mockUser,
+        postingstatus: 'PROHIBITED',
       })
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain('not to be able to post')

@@ -10,7 +10,6 @@ export const useVolunteeringStore = defineStore('volunteering', {
   state: () => ({
     list: {},
     forUser: [],
-    forGroup: [],
   }),
   actions: {
     init(config) {
@@ -20,7 +19,6 @@ export const useVolunteeringStore = defineStore('volunteering', {
     clear() {
       this.list = {}
       this.forUser = []
-      this.forGroup = []
     },
     async fetchPending() {
       // V2 pattern: get IDs of pending volunteering, then fetch each individually.
@@ -65,19 +63,8 @@ export const useVolunteeringStore = defineStore('volunteering', {
     async fetchList(id) {
       this.forUser = (await api(this.config).volunteering.list(id)) || []
     },
-    async fetchGroup(id) {
-      this.forGroup = await api(this.config).volunteering.listGroup(id)
-    },
     async setPhoto(id, photoid) {
       await api(this.config).volunteering.setPhoto(id, photoid)
-      await this.fetch(id, true)
-    },
-    async addGroup(id, groupid) {
-      await api(this.config).volunteering.addGroup(id, groupid)
-      await this.fetch(id, true)
-    },
-    async removeGroup(id, groupid) {
-      await api(this.config).volunteering.removeGroup(id, groupid)
       await this.fetch(id, true)
     },
     async delete(id) {

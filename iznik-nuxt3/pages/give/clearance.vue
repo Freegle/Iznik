@@ -25,8 +25,7 @@
           </template>
 
           <template v-if="hasClearance">
-            <!-- Where (postcode) first: it picks the community. Not shown when
-               editing — the group is already set on the existing post. -->
+            <!-- Postcode not shown when editing — it's already set on the existing post. -->
             <template v-if="!isEditing">
               <h2 class="bulk-section">Where are you?</h2>
               <PostCode
@@ -34,14 +33,6 @@
                 @selected="postcodeSelect"
                 @cleared="postcodeClear"
               />
-              <ComposeGroup v-if="postcodeValid" class="mt-2" />
-              <NoticeMessage
-                v-if="postcode && noGroups"
-                variant="warning"
-                class="mt-2"
-              >
-                There's no Freegle community covering that area yet.
-              </NoticeMessage>
             </template>
 
             <h2 class="bulk-section">What are you offering?</h2>
@@ -202,7 +193,6 @@ import { useComposeStore } from '~/stores/compose'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
 import PostCode from '~/components/PostCode.vue'
-import ComposeGroup from '~/components/ComposeGroup.vue'
 import BulkItemEditor from '~/components/BulkItemEditor.vue'
 import SpinButton from '~/components/SpinButton.vue'
 import NoticeMessage from '~/components/NoticeMessage.vue'
@@ -222,7 +212,7 @@ const editId = computed(() => {
 })
 const isEditing = computed(() => editId.value != null)
 
-const { email, loggedIn, initialPostcode, postcode, postcodeValid, noGroups } =
+const { email, loggedIn, initialPostcode, postcodeValid } =
   await setup('Offer')
 
 // The clearance feature is gated on the Clearance permission. (The email-outreach
@@ -502,9 +492,7 @@ const canSubmit = makeCanSubmit({
   emailValid: computed(() => false),
   emailBelongsToSomeoneElse: computed(() => false),
   postcodeValid,
-  closed: computed(() => false),
-  noGroups,
-  // When editing an existing clearance the group/location is already set, so we
+  // When editing an existing clearance the location is already set, so we
   // don't ask for a postcode again.
   requirePostcode: !isEditing.value,
 })

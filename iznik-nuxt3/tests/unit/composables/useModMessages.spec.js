@@ -14,7 +14,6 @@ const mockClearContext = vi.fn()
 const mockClear = vi.fn()
 const mockFetchMessagesMT = vi.fn()
 const mockAll = ref([])
-const mockGetByGroup = vi.fn(() => [])
 const mockStoreContext = ref(null)
 
 vi.mock('~/stores/message', () => ({
@@ -25,7 +24,6 @@ vi.mock('~/stores/message', () => ({
     get all() {
       return mockAll.value
     },
-    getByGroup: mockGetByGroup,
     get context() {
       return mockStoreContext.value
     },
@@ -126,7 +124,7 @@ describe('useModMessages getMessages', () => {
   })
 })
 
-describe('useModMessages sorting with getContextArrival', () => {
+describe('useModMessages sorting', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.resetModules()
@@ -137,75 +135,16 @@ describe('useModMessages sorting with getContextArrival', () => {
     vi.resetModules()
   })
 
-  it('sorts by contextual group arrival when groupid is set', async () => {
-    // Message A arrived earlier on group 10 but later on group 20.
-    // Message B arrived later on group 10 but earlier on group 20.
-    // When filtering by group 10, A should come after B (older arrival on that group).
-    const msgA = {
-      id: 1,
-      arrival: '2026-01-01',
-      groups: [
-        { groupid: 10, arrival: '2026-01-01', collection: 'Pending' },
-        { groupid: 20, arrival: '2026-01-05', collection: 'Pending' },
-      ],
-    }
-    const msgB = {
-      id: 2,
-      arrival: '2026-01-03',
-      groups: [{ groupid: 10, arrival: '2026-01-03', collection: 'Pending' }],
-    }
+  it('sorts by arrival date, newest first, when no vector search order is set', async () => {
+    // The single national community has one collection per message - no more
+    // per-group arrival/collection to pick a context from (that whole concept
+    // went with the groupid-scoped queue).
+    const msgA = { id: 1, arrival: '2026-01-01', collection: 'Pending' }
+    const msgB = { id: 2, arrival: '2026-01-05', collection: 'Pending' }
+    const msgC = { id: 3, arrival: '2026-01-03', collection: 'Pending' }
 
-    mockGetByGroup.mockReturnValue([msgA, msgB])
-    mockAll.value = [msgA, msgB]
-    mockFetchMessagesMT.mockResolvedValue([1, 2])
-
-    const { setupModMessages } =
-      await import('~/modtools/composables/useModMessages')
-    const { getMessages, collection, groupid, messages } =
-      setupModMessages(true)
-    collection.value = 'Pending'
-    groupid.value = 10
-    await getMessages()
-
-    // B arrived later on group 10 (Jan 3) so should sort first (newest first).
-    const sorted = messages.value
-    expect(sorted[0].id).toBe(2)
-    expect(sorted[1].id).toBe(1)
-  })
-
-  it('falls back to first group arrival when contextGid has no match', async () => {
-    const msgA = {
-      id: 1,
-      arrival: '2026-01-01',
-      groups: [{ groupid: 10, arrival: '2026-01-05', collection: 'Pending' }],
-    }
-    const msgB = {
-      id: 2,
-      arrival: '2026-01-03',
-      groups: [{ groupid: 10, arrival: '2026-01-02', collection: 'Pending' }],
-    }
-
-    mockAll.value = [msgA, msgB]
-    mockFetchMessagesMT.mockResolvedValue([1, 2])
-
-    const { setupModMessages } =
-      await import('~/modtools/composables/useModMessages')
-    const { getMessages, collection, messages } = setupModMessages(true)
-    collection.value = 'Pending'
-    // No groupid set — should use groups[0].arrival
-    await getMessages()
-
-    const sorted = messages.value
-    expect(sorted[0].id).toBe(1) // Jan 5 arrival is newest
-    expect(sorted[1].id).toBe(2) // Jan 2
-  })
-
-  it('falls back to message arrival when groups array is empty', async () => {
-    const msgA = { id: 1, arrival: '2026-01-01', groups: [] }
-    const msgB = { id: 2, arrival: '2026-01-03', groups: [] }
-
-    mockAll.value = [msgA, msgB]
-    mockFetchMessagesMT.mockResolvedValue([1, 2])
+    mockAll.value = [msgA, msgB, msgC]
+    mockFetchMessagesMT.mockResolvedValue([1, 2, 3])
 
     const { setupModMessages } =
       await import('~/modtools/composables/useModMessages')
@@ -213,9 +152,7 @@ describe('useModMessages sorting with getContextArrival', () => {
     collection.value = 'Pending'
     await getMessages()
 
-    const sorted = messages.value
-    expect(sorted[0].id).toBe(2) // Jan 3 is newest
-    expect(sorted[1].id).toBe(1) // Jan 1
+    expect(messages.value.map((m) => m.id)).toEqual([2, 3, 1])
   })
 })
 
@@ -231,9 +168,9 @@ describe('useModMessages vector search (listingIdOrder) sorting', () => {
   })
 
   it('sorts messages by score order when listingIdOrder is set', async () => {
-    const msgA = { id: 1, arrival: '2026-01-05', groups: [] }
-    const msgB = { id: 2, arrival: '2026-01-04', groups: [] }
-    const msgC = { id: 3, arrival: '2026-01-03', groups: [] }
+    const msgA = { id: 1, arrival: '2026-01-05', collection: 'Approved' }
+    const msgB = { id: 2, arrival: '2026-01-04', collection: 'Approved' }
+    const msgC = { id: 3, arrival: '2026-01-03', collection: 'Approved' }
 
     mockAll.value = [msgA, msgB, msgC]
     mockFetchMessagesMT.mockResolvedValue([1, 2, 3])
@@ -253,9 +190,9 @@ describe('useModMessages vector search (listingIdOrder) sorting', () => {
   })
 
   it('assigns Infinity rank to messages absent from listingIdOrder so they sort last', async () => {
-    const msgA = { id: 1, arrival: '2026-01-05', groups: [] }
-    const msgB = { id: 2, arrival: '2026-01-04', groups: [] }
-    const msgC = { id: 99, arrival: '2026-01-03', groups: [] } // not in order
+    const msgA = { id: 1, arrival: '2026-01-05', collection: 'Approved' }
+    const msgB = { id: 2, arrival: '2026-01-04', collection: 'Approved' }
+    const msgC = { id: 99, arrival: '2026-01-03', collection: 'Approved' } // not in order
 
     mockAll.value = [msgA, msgB, msgC]
     mockFetchMessagesMT.mockResolvedValue([1, 2, 99])
@@ -290,8 +227,8 @@ describe('useModMessages visibleMessages computed', () => {
 
   it('returns empty array when show is 0', async () => {
     mockAll.value = [
-      { id: 1, arrival: '2026-01-01', groups: [] },
-      { id: 2, arrival: '2026-01-02', groups: [] },
+      { id: 1, arrival: '2026-01-01', collection: 'Pending' },
+      { id: 2, arrival: '2026-01-02', collection: 'Pending' },
     ]
     mockFetchMessagesMT.mockResolvedValue([1, 2])
 
@@ -305,11 +242,11 @@ describe('useModMessages visibleMessages computed', () => {
 
   it('slices messages to show count', async () => {
     mockAll.value = [
-      { id: 1, arrival: '2026-01-05', groups: [] },
-      { id: 2, arrival: '2026-01-04', groups: [] },
-      { id: 3, arrival: '2026-01-03', groups: [] },
-      { id: 4, arrival: '2026-01-02', groups: [] },
-      { id: 5, arrival: '2026-01-01', groups: [] },
+      { id: 1, arrival: '2026-01-05', collection: 'Pending' },
+      { id: 2, arrival: '2026-01-04', collection: 'Pending' },
+      { id: 3, arrival: '2026-01-03', collection: 'Pending' },
+      { id: 4, arrival: '2026-01-02', collection: 'Pending' },
+      { id: 5, arrival: '2026-01-01', collection: 'Pending' },
     ]
     mockFetchMessagesMT.mockResolvedValue([1, 2, 3, 4, 5])
 
@@ -397,15 +334,11 @@ describe('useModMessages collection filter (approve-race defence)', () => {
   it('excludes a message that was resurrected with Approved collection while listing Pending', async () => {
     // Simulate the race: both IDs came back from getMessages() as Pending, but
     // id=2 was concurrently re-fetched after approve() and now has collection='Approved'.
-    const msgPending = {
-      id: 1,
-      arrival: '2026-01-05',
-      groups: [{ groupid: 10, arrival: '2026-01-05', collection: 'Pending' }],
-    }
+    const msgPending = { id: 1, arrival: '2026-01-05', collection: 'Pending' }
     const msgApprovedRace = {
       id: 2,
       arrival: '2026-01-04',
-      groups: [{ groupid: 10, arrival: '2026-01-04', collection: 'Approved' }],
+      collection: 'Approved',
     }
 
     mockAll.value = [msgPending, msgApprovedRace]
@@ -423,17 +356,11 @@ describe('useModMessages collection filter (approve-race defence)', () => {
   })
 
   it('includes PendingOther messages when listing Pending', async () => {
-    const msgPending = {
-      id: 1,
-      arrival: '2026-01-05',
-      groups: [{ groupid: 10, arrival: '2026-01-05', collection: 'Pending' }],
-    }
+    const msgPending = { id: 1, arrival: '2026-01-05', collection: 'Pending' }
     const msgPendingOther = {
       id: 2,
       arrival: '2026-01-04',
-      groups: [
-        { groupid: 10, arrival: '2026-01-04', collection: 'PendingOther' },
-      ],
+      collection: 'PendingOther',
     }
 
     mockAll.value = [msgPending, msgPendingOther]
@@ -449,77 +376,38 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     expect(messages.value.map((m) => m.id)).toContain(2)
   })
 
-  it('uses the contextual group collection when groupid is set', async () => {
-    // Message is Pending on group 10 but Approved on group 20.
-    // When viewing group 10 Pending list, it should appear.
-    const msg = {
-      id: 1,
-      arrival: '2026-01-05',
-      groups: [
-        { groupid: 10, arrival: '2026-01-05', collection: 'Pending' },
-        { groupid: 20, arrival: '2026-01-04', collection: 'Approved' },
-      ],
-    }
+  it('excludes a message with a genuinely different collection when listing Pending', async () => {
+    // The single national community replaced the old per-group context: a
+    // message either is or isn't in the review queue, no group to pick a
+    // context from.
+    const msg = { id: 1, arrival: '2026-01-05', collection: 'Approved' }
 
-    mockGetByGroup.mockReturnValue([msg])
     mockAll.value = [msg]
     mockFetchMessagesMT.mockResolvedValue([1])
 
     const { setupModMessages } =
       await import('~/modtools/composables/useModMessages')
-    const { getMessages, collection, groupid, messages } =
-      setupModMessages(true)
+    const { getMessages, collection, messages } = setupModMessages(true)
     collection.value = 'Pending'
-    groupid.value = 10
-    await getMessages()
-
-    expect(messages.value.map((m) => m.id)).toEqual([1])
-  })
-
-  it('excludes a message when its contextual group has a non-matching collection', async () => {
-    // Message is Approved on group 10, but we are viewing group 10 Pending.
-    const msg = {
-      id: 1,
-      arrival: '2026-01-05',
-      groups: [{ groupid: 10, arrival: '2026-01-05', collection: 'Approved' }],
-    }
-
-    mockGetByGroup.mockReturnValue([msg])
-    mockAll.value = [msg]
-    mockFetchMessagesMT.mockResolvedValue([1])
-
-    const { setupModMessages } =
-      await import('~/modtools/composables/useModMessages')
-    const { getMessages, collection, groupid, messages } =
-      setupModMessages(true)
-    collection.value = 'Pending'
-    groupid.value = 10
     await getMessages()
 
     expect(messages.value.map((m) => m.id)).toEqual([])
   })
 
-  it('does not strip Approved-on-group messages when listing the Edit view', async () => {
-    // The Edit view is virtual: an edited message stays Approved on its
-    // group, with a pending row in messages_edits. The defensive filter
-    // would compare 'Edit' against the group's 'Approved' collection and
-    // strip every result — breaking the moderator edits page.
-    const msg = {
-      id: 1,
-      arrival: '2026-01-05',
-      groups: [{ groupid: 10, arrival: '2026-01-05', collection: 'Approved' }],
-    }
+  it('does not strip Approved messages when listing the Edit view', async () => {
+    // The Edit view is virtual: an edited message stays Approved, with a
+    // pending row in messages_edits. The defensive filter would compare
+    // 'Edit' against the message's 'Approved' collection and strip every
+    // result — breaking the moderator edits page.
+    const msg = { id: 1, arrival: '2026-01-05', collection: 'Approved' }
 
-    mockGetByGroup.mockReturnValue([msg])
     mockAll.value = [msg]
     mockFetchMessagesMT.mockResolvedValue([1])
 
     const { setupModMessages } =
       await import('~/modtools/composables/useModMessages')
-    const { getMessages, collection, groupid, messages } =
-      setupModMessages(true)
+    const { getMessages, collection, messages } = setupModMessages(true)
     collection.value = 'Edit'
-    groupid.value = 10
     await getMessages()
 
     expect(messages.value.map((m) => m.id)).toEqual([1])
@@ -530,11 +418,7 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     // query includes Spam collection). But the client-side collection filter
     // only allowed ['Pending', 'PendingOther'], so spam messages were silently
     // stripped before rendering — causing badge=1 but list=0.
-    const msgSpam = {
-      id: 1,
-      arrival: '2026-01-05',
-      groups: [{ groupid: 10, arrival: '2026-01-05', collection: 'Spam' }],
-    }
+    const msgSpam = { id: 1, arrival: '2026-01-05', collection: 'Spam' }
 
     mockAll.value = [msgSpam]
     mockFetchMessagesMT.mockResolvedValue([1])

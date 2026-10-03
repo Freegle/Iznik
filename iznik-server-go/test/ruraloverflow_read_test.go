@@ -108,9 +108,7 @@ func TestBrowseScopedSearch_RingAdmittedPostSearchable(t *testing.T) {
 
 	prefix := uniquePrefix("ringsearch")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, posterID, group, "Member")
-	ringed := CreateTestMessage(t, posterID, group, "Quibblewick Chair ring admits viewer (ringsearch)", 51.5, -0.1)
+	ringed := CreateTestMessage(t, posterID, "Quibblewick Chair ring admits viewer (ringsearch)", 51.5, -0.1)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", ringed)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", ringed)
 
@@ -160,9 +158,7 @@ func TestReachBlocked_RingAdmittedViewerNotBlocked(t *testing.T) {
 
 	prefix := uniquePrefix("ringblocked")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, posterID, group, "Member")
-	msgID := CreateTestMessage(t, posterID, group, "OFFER: ring blocked test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: ring blocked test item", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	farReachWithSparseRing(t, msgID)
@@ -203,9 +199,7 @@ func TestReachBlocked_ClusterRingNeverRescuesTheMailer(t *testing.T) {
 
 	prefix := uniquePrefix("clustermailer")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, posterID, group, "Member")
-	msgID := CreateTestMessage(t, posterID, group, "OFFER: cluster mailer test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: cluster mailer test item", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	// Far reach, plus a cluster wedge that DOES cover (51.5, -0.1).
@@ -257,16 +251,13 @@ func TestCreateChatMessage_RingAdmittedReplyNotHeld(t *testing.T) {
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("ringreply")
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), "+
 		"'$.mylocation', JSON_OBJECT('lat', 51.5, 'lng', -0.1), "+
 		"'$.browseDensityBand', 'sparse') WHERE id = ?", replierID)
 
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: ring reply test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: ring reply test item", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 	defer db.Exec("DELETE FROM rippling_held_replies WHERE msgid = ?", msgID)
 
@@ -276,7 +267,7 @@ func TestCreateChatMessage_RingAdmittedReplyNotHeld(t *testing.T) {
 	// table. An undecided verdict passes the reply through on its own now.
 	stubReachEvalMax(t, "out")
 
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 	_, token := CreateTestSession(t, replierID)
 
 	var payload chat.ChatMessage
@@ -308,9 +299,7 @@ func TestReachBlocked_FrozenReachStillBlocksThoseOutsideIt(t *testing.T) {
 
 	prefix := uniquePrefix("heldreach")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, posterID, group, "Member")
-	msgID := CreateTestMessage(t, posterID, group, "OFFER: frozen reach test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: frozen reach test item", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	viewerID := CreateTestUser(t, prefix+"_viewer", "User")

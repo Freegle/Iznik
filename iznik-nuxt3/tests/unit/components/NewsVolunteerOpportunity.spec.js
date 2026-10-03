@@ -15,16 +15,10 @@ const mockVolunteering = {
   title: 'Help at Food Bank',
   description: 'Assist with sorting donations',
   location: 'Community Centre',
-  groups: [200],
   image: {
     ouruid: 'abc123',
     externalmods: {},
   },
-}
-
-const mockGroup = {
-  id: 200,
-  namedisplay: 'Test Community',
 }
 
 const mockNewsfeedStore = {
@@ -40,11 +34,6 @@ const mockUserStore = {
   fetch: vi.fn().mockResolvedValue({}),
 }
 
-const mockGroupStore = {
-  get: vi.fn().mockReturnValue(mockGroup),
-  fetch: vi.fn().mockResolvedValue(mockGroup),
-}
-
 vi.mock('~/stores/newsfeed', () => ({
   useNewsfeedStore: () => mockNewsfeedStore,
 }))
@@ -57,10 +46,6 @@ vi.mock('~/stores/user', () => ({
   useUserStore: () => mockUserStore,
 }))
 
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
-}))
-
 vi.mock('~/composables/useTimeFormat', () => ({
   timeago: vi.fn().mockReturnValue('2 days ago'),
 }))
@@ -71,7 +56,6 @@ describe('NewsVolunteerOpportunity', () => {
     mockNewsfeedStore.byId.mockReturnValue(mockNewsfeed)
     mockVolunteeringStore.byId.mockReturnValue(mockVolunteering)
     mockVolunteeringStore.fetch.mockResolvedValue(mockVolunteering)
-    mockGroupStore.get.mockReturnValue(mockGroup)
   })
 
   async function createWrapper(props = {}) {

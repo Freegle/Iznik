@@ -445,7 +445,7 @@ func filterHeaders(headers map[string]string, useAllowlist bool) map[string]stri
 }
 
 // LogFromLogsTable logs entries that mirror the logs table to Loki.
-func (l *LokiClient) LogFromLogsTable(logType, subtype string, groupId, userId, byUser, msgId *uint64, text string) {
+func (l *LokiClient) LogFromLogsTable(logType, subtype string, userId, byUser, msgId *uint64, text string) {
 	if !l.enabled {
 		return
 	}
@@ -457,9 +457,6 @@ func (l *LokiClient) LogFromLogsTable(logType, subtype string, groupId, userId, 
 		"subtype": subtype,
 	}
 
-	if groupId != nil {
-		labels["groupid"] = strconv.FormatUint(*groupId, 10)
-	}
 	if userId != nil && *userId != 0 {
 		labels["user_id"] = strconv.FormatUint(*userId, 10)
 		labels["user_bucket"] = UserBucket(*userId)
@@ -469,7 +466,6 @@ func (l *LokiClient) LogFromLogsTable(logType, subtype string, groupId, userId, 
 		"user_id":   userId,
 		"by_user":   byUser,
 		"msg_id":    msgId,
-		"group_id":  groupId,
 		"text":      text,
 		"timestamp": time.Now().Format(time.RFC3339),
 	}

@@ -202,12 +202,11 @@ func getMessage(c *fiber.Ctx) error {
 		Subject  string  `json:"subject"`
 		Lat      float64 `json:"lat"`
 		Lng      float64 `json:"lng"`
-		Groupid  *uint64 `json:"groupid"`
 	}
 
 	var msg MessageRow
 	db.Table("simulation_message_isochrones_messages").
-		Select("id, runid, sequence, msgid, subject, lat, lng, groupid").
+		Select("id, runid, sequence, msgid, subject, lat, lng").
 		Where("runid = ? AND sequence = ?", runID, index).Scan(&msg)
 
 	if msg.ID == 0 {
@@ -263,7 +262,6 @@ func getMessage(c *fiber.Ctx) error {
 			"subject":  msg.Subject,
 			"lat":      msg.Lat,
 			"lng":      msg.Lng,
-			"groupid":  msg.Groupid,
 		},
 		"expansions": expansions,
 		"users":      users,

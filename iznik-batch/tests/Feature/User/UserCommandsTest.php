@@ -76,25 +76,7 @@ class UserCommandsTest extends TestCase
         ]);
     }
 
-    /**
-     * Members are deliberately out of scope: forgetInactiveUsers() anti-joins on
-     * memberships, so someone who joined a community keeps their data however long
-     * they stay away. V1 (User::userRetention) worked the same way. Without this
-     * guard the job would strip millions of dormant members, and because forgetUser()
-     * deletes users_emails they could never log back in.
-     */
-    public function test_forget_inactive_leaves_members_alone(): void
-    {
-        $user = $this->createInactiveUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
-        app(UserManagementService::class)->forgetInactiveUsers();
-
-        $this->assertNull($user->fresh()->forgotten, 'A member must not be forgotten for inactivity');
-    }
-
-    public function test_forget_inactive_forgets_users_with_no_memberships(): void
+    public function test_forget_inactive_forgets_users(): void
     {
         $user = $this->createInactiveUser();
 

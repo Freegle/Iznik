@@ -48,13 +48,6 @@ vi.mock('~/stores/message', () => ({
   }),
 }))
 
-const mockGroupFetch = vi.fn()
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({
-    fetch: mockGroupFetch,
-  }),
-}))
-
 vi.mock('~/composables/useTwem', () => ({
   twem: (s) => `twem:${s}`,
 }))
@@ -275,7 +268,6 @@ describe('useChatMessageBase — remaining branches', () => {
       profile: { paththumb: '/me.jpg' },
       displayname: 'Me',
     }
-    mockGroupFetch.mockResolvedValue(undefined)
     mockMessageFetch.mockResolvedValue(undefined)
   })
 
@@ -522,28 +514,12 @@ describe('useChatMessageBase — remaining branches', () => {
       expect(mockMessageFetch).not.toHaveBeenCalled()
     })
 
-    it('fetches the referenced message and each of its groups', async () => {
+    it('fetches the referenced message', async () => {
       mockChatById.mockReturnValue({ id: 1, chattype: 'User2User' })
       mockMessageById.mockReturnValue({ id: 1, userid: 5, refmsgid: 42 })
-      mockMessageStoreById.mockReturnValue({
-        id: 42,
-        groups: [{ groupid: 100 }, { groupid: 200 }],
-      })
       const { fetchMessage } = useChatMessageBase(1, 1)
       await fetchMessage()
       expect(mockMessageFetch).toHaveBeenCalledWith(42)
-      await vi.waitFor(() => expect(mockGroupFetch).toHaveBeenCalledTimes(2))
-      expect(mockGroupFetch).toHaveBeenCalledWith(100)
-      expect(mockGroupFetch).toHaveBeenCalledWith(200)
-    })
-
-    it('fetches the referenced message but skips groups when not found', async () => {
-      mockChatById.mockReturnValue({ id: 1, chattype: 'User2User' })
-      mockMessageById.mockReturnValue({ id: 1, userid: 5, refmsgid: 42 })
-      mockMessageStoreById.mockReturnValue(null)
-      const { fetchMessage } = useChatMessageBase(1, 1)
-      await fetchMessage()
-      expect(mockGroupFetch).not.toHaveBeenCalled()
     })
 
     it('swallows a fetch failure', async () => {

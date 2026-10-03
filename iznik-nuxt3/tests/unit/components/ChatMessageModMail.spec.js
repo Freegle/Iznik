@@ -17,7 +17,6 @@ const {
     mockChat: ref({
       lastmsgseen: 10,
       chattype: 'User2Mod',
-      group: { namedisplay: 'Freegle Cambridge', profile: '/group.jpg' },
       user: { id: 2 },
     }),
     mockChatmessage: ref({
@@ -47,6 +46,10 @@ const mockComposeStore = {
   setAttachmentsForMessage: vi.fn(),
 }
 
+const mockChatStore = {
+  openChatToMods: vi.fn().mockResolvedValue(999),
+}
+
 const mockRouterPush = vi.fn()
 
 vi.mock('~/composables/useChat', () => ({
@@ -68,6 +71,10 @@ vi.mock('~/stores/compose', () => ({
   useComposeStore: () => mockComposeStore,
 }))
 
+vi.mock('~/stores/chat', () => ({
+  useChatStore: () => mockChatStore,
+}))
+
 vi.mock('~/stores/misc', () => ({
   useMiscStore: () => ({ modtools: false }),
 }))
@@ -84,18 +91,12 @@ vi.mock('#imports', () => ({
   computed: (fn) => ({ value: fn() }),
 }))
 
-const mockGroupless = { value: false }
-vi.mock('~/composables/useGroupless', () => ({
-  useGroupless: () => mockGroupless.value,
-}))
-
 describe('ChatMessageModMail', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockChat.value = {
       lastmsgseen: 10,
       chattype: 'User2Mod',
-      group: { namedisplay: 'Freegle Cambridge', profile: '/group.jpg' },
       user: { id: 2 },
     }
     mockChatmessage.value = {
@@ -116,6 +117,7 @@ describe('ChatMessageModMail', () => {
     mockMe.value = { id: 1, displayname: 'Current User' }
     mockMyid.value = 1
     mockRealMe.value = { id: 1, systemrole: 'User' }
+    mockChatStore.openChatToMods.mockResolvedValue(999)
   })
 
   async function createWrapper(props = {}) {
@@ -164,20 +166,13 @@ describe('ChatMessageModMail', () => {
           },
           'b-button': {
             template:
-              '<button class="b-button" :class="variant" @click="$emit(\'click\', $event)"><slot /></button>',
-            props: ['variant'],
+              '<button class="b-button" :class="variant" :disabled="disabled" @click="$emit(\'click\', $event)"><slot /></button>',
+            props: ['variant', 'disabled'],
+            emits: ['click'],
           },
           ProfileImage: {
             template: '<div class="profile-image" />',
             props: ['image', 'size', 'isThumbnail'],
-          },
-          GroupSelect: {
-            template: '<select class="group-select" v-model="modelValue" />',
-            props: ['modelValue', 'remember'],
-          },
-          ChatButton: {
-            template: '<button class="chat-button">{{ title }}</button>',
-            props: ['groupid', 'size', 'title', 'variant'],
           },
           NoticeMessage: {
             template:
@@ -206,6 +201,11 @@ describe('ChatMessageModMail', () => {
     it('renders media container', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.find('.media').exists()).toBe(true)
+    })
+
+    it('always shows a single national "Message from Freegle" header', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Message from Freegle')
     })
   })
 
@@ -247,25 +247,6 @@ describe('ChatMessageModMail', () => {
       expect(
         wrapper.findComponent(ChatMessageModMail).props('highlightEmails')
       ).toBe(false)
-    })
-  })
-
-  describe('group display', () => {
-    it('shows group name in header when group exists', async () => {
-      const wrapper = await createWrapper()
-      expect(wrapper.text()).toContain('Freegle Cambridge')
-      expect(wrapper.text()).toContain('Volunteers')
-    })
-
-    it('shows generic Freegle Volunteers when no group', async () => {
-      mockChat.value.group = null
-      const wrapper = await createWrapper()
-      expect(wrapper.text()).toContain('Freegle Volunteers')
-    })
-
-    it('renders ProfileImage when group exists', async () => {
-      const wrapper = await createWrapper()
-      expect(wrapper.find('.profile-image').exists()).toBe(true)
     })
   })
 
@@ -359,19 +340,25 @@ describe('ChatMessageModMail', () => {
       expect(wrapper.text()).toContain("Volunteers won't see any replies")
     })
 
-    it('shows GroupSelect for User2User chats', async () => {
+    it('shows a single Contact Freegle volunteers button for User2User chats', async () => {
       mockChat.value.chattype = 'User2User'
       mockChatmessage.value.refmsgid = null
       const wrapper = await createWrapper()
-      expect(wrapper.find('.group-select').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Contact Freegle volunteers')
     })
 
-    it('shows ChatButton for User2User chats', async () => {
+    it('opens a national mod chat and navigates when the contact button is clicked', async () => {
       mockChat.value.chattype = 'User2User'
       mockChatmessage.value.refmsgid = null
       const wrapper = await createWrapper()
-      expect(wrapper.find('.chat-button').exists()).toBe(true)
-      expect(wrapper.text()).toContain('Contact community volunteers')
+      const contactBtn = wrapper
+        .findAll('.b-button')
+        .find((b) => b.text().includes('Contact Freegle volunteers'))
+      await contactBtn.trigger('click')
+      await flushPromises()
+      expect(mockChatStore.openChatToMods).toHaveBeenCalledTimes(1)
+      expect(mockChatStore.openChatToMods).toHaveBeenCalledWith()
+      expect(mockRouterPush).toHaveBeenCalledWith('/chats/999')
     })
 
     it('hides notice for User2Mod chats', async () => {
@@ -383,29 +370,6 @@ describe('ChatMessageModMail', () => {
   })
 
   describe('computed properties', () => {
-    it('computes group from chat.group', async () => {
-      const wrapper = await createWrapper()
-      const comp = wrapper.findComponent(ChatMessageModMail)
-      expect(comp.vm.group).toEqual({
-        namedisplay: 'Freegle Cambridge',
-        profile: '/group.jpg',
-      })
-    })
-
-    it('returns null for group when no chat.group', async () => {
-      mockChat.value.group = null
-      const wrapper = await createWrapper()
-      const comp = wrapper.findComponent(ChatMessageModMail)
-      expect(comp.vm.group).toBe(null)
-    })
-
-    it('returns null for group when no chat', async () => {
-      mockChat.value = null
-      const wrapper = await createWrapper()
-      const comp = wrapper.findComponent(ChatMessageModMail)
-      expect(comp.vm.group).toBe(null)
-    })
-
     it('computes amUser as true when chat.user.id matches myid', async () => {
       mockChat.value.user = { id: 1 }
       mockMyid.value = 1
@@ -518,13 +482,13 @@ describe('ChatMessageModMail', () => {
         [{ id: 1 }]
       )
     })
-  })
 
-  describe('reactive state', () => {
-    it('initializes contactGroupId as null', async () => {
+    it('contactMods opens a national mod chat and navigates to it', async () => {
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(ChatMessageModMail)
-      expect(comp.vm.contactGroupId).toBe(null)
+      await comp.vm.contactMods()
+      expect(mockChatStore.openChatToMods).toHaveBeenCalledWith()
+      expect(mockRouterPush).toHaveBeenCalledWith('/chats/999')
     })
   })
 
@@ -541,18 +505,6 @@ describe('ChatMessageModMail', () => {
       mockMyid.value = 1
       const wrapper = await createWrapper()
       expect(wrapper.find('.b-card').classes()).not.toContain('ms-auto')
-    })
-  })
-
-
-  describe('groupless site (experiment)', () => {
-    it('is a message from Freegle, not from a community', async () => {
-      mockGroupless.value = true
-      const wrapper = await createWrapper()
-      expect(wrapper.text()).toContain('Message from Freegle')
-      expect(wrapper.text()).not.toContain('Freegle Cambridge')
-      expect(wrapper.text()).not.toContain('Volunteers')
-      mockGroupless.value = false
     })
   })
 })

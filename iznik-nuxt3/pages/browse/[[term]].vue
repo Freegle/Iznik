@@ -54,7 +54,7 @@
               </b-button>
             </NoticeMessage>
             <NoticeMessage
-              v-if="browseView === 'nearby' && !hasLocation"
+              v-if="!hasLocation"
               variant="warning"
             >
               <p class="fw-bold">
@@ -64,7 +64,6 @@
             </NoticeMessage>
             <PostFilters
               v-model:force-show-filters="forceShowFilters"
-              v-model:selected-group="selectedGroup"
               v-model:selected-type="selectedType"
               v-model:selected-sort="selectedSort"
               v-model:selected-max-distance="selectedMaxDistance"
@@ -75,13 +74,11 @@
               :key="'map-' + bump"
               v-model:messages-on-map-count="messagesOnMapCount"
               v-model:search="searchTerm"
-              v-model:selected-group="selectedGroup"
               v-model:selected-type="selectedType"
               v-model:selected-sort="selectedSort"
               :selected-max-distance="selectedMaxDistance"
               :initial-bounds="initialBounds"
               force-messages
-              group-info
               :show-many="false"
               can-hide
               browse-search
@@ -91,16 +88,6 @@
             v-if="showAboutMeModal"
             :review="reviewAboutMe"
             @hidden="showAboutMeModal = false"
-          />
-          <BirthdayModal
-            v-if="showBirthdayModal && birthdayGroup"
-            v-model="showBirthdayModal"
-            :group-age="birthdayGroup.age"
-            :group-name="birthdayGroup.namefull"
-            :group-id="birthdayGroup.id"
-            @close="onBirthdayModalClose"
-            @donation-success="onBirthdayDonationSuccess"
-            @donation-click="onBirthdayDonationClick"
           />
         </b-col>
         <b-col cols="0" md="2" lg="3" class="p-0 ps-1">
@@ -128,7 +115,6 @@
 <script setup>
 import dayjs from 'dayjs'
 import { defineAsyncComponent } from 'vue'
-import Wkt from 'wicket'
 import { useMessageStore } from '~/stores/message'
 import { useLocationStore } from '~/stores/location'
 import NoticeMessage from '~/components/NoticeMessage'
@@ -138,16 +124,13 @@ import VisibleWhen from '~/components/VisibleWhen'
 import { useMiscStore } from '~/stores/misc'
 import { useMobileStore } from '~/stores/mobile'
 import { useAuthStore } from '~/stores/auth'
-import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
-import { resolveBrowseGroup } from '~/composables/browseGroupChoice'
 import { useNearbyStore } from '~/stores/nearby'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 import PostFilters from '~/components/PostFilters'
 import SidebarLeft from '~/components/SidebarLeft'
 import PostCode from '~/components/PostCode'
 import ExternalDa from '~/components/ExternalDa'
-import Api from '~/api'
 import {
   ref,
   computed,
@@ -155,7 +138,6 @@ import {
   onMounted,
   onUnmounted,
   useRoute,
-  useRouter,
 } from '#imports'
 
 // Async components
@@ -174,9 +156,6 @@ const AboutMeModal = defineAsyncComponent(
 const ExpectedRepliesWarning = defineAsyncComponent(
   () => import('~/components/ExpectedRepliesWarning')
 )
-const BirthdayModal = defineAsyncComponent(
-  () => import('~/components/BirthdayModal')
-)
 
 // Page meta
 definePageMeta({
@@ -186,16 +165,13 @@ definePageMeta({
 
 // Setup
 const route = useRoute()
-const router = useRouter()
 const runtimeConfig = useRuntimeConfig()
 const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
 const authStore = useAuthStore()
-const groupStore = useGroupStore()
 const nearbyStore = useNearbyStore()
 const messageStore = useMessageStore()
 const locationStore = useLocationStore()
-const api = Api(runtimeConfig)
 
 // State
 const initialBounds = ref(null)
@@ -209,7 +185,6 @@ const messagesOnMapCount = ref(null)
 // instead of a dead-end. Resolved via /location/resolve; only ever set when the
 // search returned zero, so item-words-that-are-also-places never false-trigger.
 const placeSuggestion = ref(null)
-const selectedGroup = ref(0)
 const selectedType = ref('All')
 const selectedSort = ref('Unseen')
 const selectedMaxDistance = ref(BROWSE_DISTANCE_UNLIMITED)
@@ -217,16 +192,9 @@ const forceShowFilters = ref(false)
 const lastCountUpdate = ref(0)
 const updatingCount = ref(false)
 const searchTerm = ref(route.params.term)
-const showBirthdayModal = ref(false)
-const birthdayGroup = ref(null)
 
-// Debug flag for testing birthday modal
-const debugBirthdayModal = computed(() => {
-  return route.query.debugbirthday === '1'
-})
-
-// Use me and myGroups computed properties from useMe composable for consistency
-const { me, myGroups } = useMe()
+// Use me computed property from useMe composable for consistency
+const { me } = useMe()
 
 // Rippling-out relevance ordering + distance slider (#D/#E): unlike selectedSort/
 // selectedType (which only get updated via PostFilters' emit, so a persisted
@@ -263,24 +231,6 @@ watch(
   { immediate: true }
 )
 
-// And for "Show posts from" when it names a single community. It has to be restored here
-// rather than in PostFilters for the same reason as sort and type: PostFilters is lazily
-// mounted inside the collapsed Map & Filters panel, so a member who never opens the panel
-// would get the default feed back on every visit.
-watch(
-  [() => me.value?.settings?.browseGroup, myGroups],
-  ([saved, groups]) => {
-    selectedGroup.value = resolveBrowseGroup(saved, groups)
-  },
-  { immediate: true }
-)
-
-const browseView = computed(() => {
-  return me.value?.settings?.browseView
-    ? me.value.settings.browseView
-    : 'nearby'
-})
-
 const noMessagesNoLocation = computed(() => {
   return messagesOnMapCount.value === 0 && !me.value?.settings?.mylocation
 })
@@ -291,127 +241,29 @@ const hasLocation = computed(() => {
   return !!(me.value && (me.value.lat || me.value.lng))
 })
 
-// Methods
-function myGroup(id) {
-  return groupStore.get(id)
-}
-
 async function calculateInitialMapBounds() {
   if (import.meta.client) {
-    if (browseView.value === 'nearby') {
-      if (me.value) {
-        // The initial bounds for the map are determined from the nearby messages once
-        // we've fetched them, so start that fetch now to display the list rapidly.
-        try {
-          await nearbyStore.fetchMessages(true)
-          initialBounds.value = nearbyStore.bounds
-        } catch (e) {
-          // If this fails revert to a default view.
-        }
+    if (me.value) {
+      // The initial bounds for the map are determined from the nearby messages once
+      // we've fetched them, so start that fetch now to display the list rapidly.
+      try {
+        await nearbyStore.fetchMessages(true)
+        initialBounds.value = nearbyStore.bounds
+      } catch (e) {
+        // If this fails revert to a default view.
       }
-    } else {
-      initialBounds.value = nearbyStore.bounds
     }
 
-    if (!initialBounds.value) {
-      // Either we have no nearby messages yet, or we're showing our groups. Use the bounding
-      // box of the group that our own location is within.
-      let mylat = null
-      let mylng = null
+    if (!initialBounds.value && me.value && (me.value.lat || me.value.lng)) {
+      // We don't have nearby messages yet, but we know where the member is.
+      // Centre there, and then let the map zoom to somewhere sensible.
+      const mylat = me.value.lat
+      const mylng = me.value.lng
 
-      let swlat = null
-      let swlng = null
-      let nelat = null
-      let nelng = null
-
-      if (me.value && (me.value.lat || me.value.lng)) {
-        mylat = me.value.lat
-        mylng = me.value.lng
-
-        for (const g of myGroups.value) {
-          if (g.bbox) {
-            try {
-              await loadLeaflet()
-              const wkt = new Wkt.Wkt()
-              wkt.read(g.bbox)
-              const obj = wkt.toObject()
-
-              if (obj?.getBounds) {
-                const thisbounds = obj.getBounds()
-                const thissw = thisbounds.getSouthWest()
-                const thisne = thisbounds.getNorthEast()
-
-                if (
-                  mylat >= thissw.lat &&
-                  mylat <= thisne.lat &&
-                  mylng >= thissw.lng &&
-                  mylng <= thisne.lng
-                ) {
-                  swlat = (thissw.lat + thisne.lat) / 2
-                  swlng = thissw.lng
-                  nelat = (thissw.lat + thisne.lat) / 2
-                  nelng = thisne.lng
-                }
-              }
-            } catch (e) {
-              console.error(
-                'Failed to parse group bounding box',
-                e?.message,
-                g.bbox
-              )
-            }
-          }
-        }
-      }
-
-      let bounds = null
-
-      if (
-        swlat !== null &&
-        swlng !== null &&
-        nelat !== null &&
-        nelng !== null
-      ) {
-        bounds = [
-          [swlat, swlng],
-          [nelat, nelng],
-        ]
-      } else if (me.value && mylat !== null && mylng !== null) {
-        // We're not a member of any groups, but at least we know where we are. Centre there, and then let
-        // the map zoom to somewhere sensible.
-        bounds = [
-          [mylat - 0.01, mylng - 0.01],
-          [mylat + 0.01, mylng + 0.01],
-        ]
-      } else if (myGroups.value?.length > 0 && myGroups.value[0].bbox) {
-        // We have groups but no location. Use the first group's bounds as a fallback.
-        try {
-          await loadLeaflet()
-          const wkt = new Wkt.Wkt()
-          wkt.read(myGroups.value[0].bbox)
-          const obj = wkt.toObject()
-
-          if (obj?.getBounds) {
-            const thisbounds = obj.getBounds()
-            const thissw = thisbounds.getSouthWest()
-            const thisne = thisbounds.getNorthEast()
-            bounds = [
-              [thissw.lat, thissw.lng],
-              [thisne.lat, thisne.lng],
-            ]
-          }
-        } catch (e) {
-          console.error('Failed to parse fallback group bounds', e?.message)
-        }
-      } else {
-        // We aren't a member of any groups and we don't know where we are. This can happen, but it's rare.
-        // Send them to the explore page to pick somewhere.
-        router.push('/explore')
-      }
-
-      if (bounds) {
-        initialBounds.value = bounds
-      }
+      initialBounds.value = [
+        [mylat - 0.01, mylng - 0.01],
+        [mylat + 0.01, mylng + 0.01],
+      ]
     }
   }
 }
@@ -487,129 +339,13 @@ async function handleScroll() {
   ) {
     lastCountUpdate.value = new Date().getTime()
     updatingCount.value = true
-    await messageStore.fetchCount(
-      me.value.settings?.browseView,
-      me.value.settings?.browseMaxDistance,
-      false
-    )
+    await messageStore.fetchCount(me.value.settings?.browseMaxDistance, false)
     updatingCount.value = false
   }
 }
 
 async function fetchMe(force = false) {
   return await authStore.fetchUser(force)
-}
-
-async function checkForBirthdays() {
-  if (!me.value) return
-
-  // Debug mode - show modal with mock data
-  if (debugBirthdayModal.value) {
-    await showDebugBirthdayModal()
-    return
-  }
-
-  if (!myGroups.value?.length) return
-
-  const today = dayjs()
-  const lastAppeal = me.value.settings?.lastbirthdayappeal
-
-  // Only check if we haven't shown an appeal in the last 31 days
-  if (lastAppeal && dayjs().diff(dayjs(lastAppeal), 'days') < 31) {
-    return
-  }
-
-  // Check if user has been a member for at least 31 days for any group
-  for (const group of myGroups.value) {
-    if (!group.founded) continue
-
-    const memberSince = dayjs(group.mysettings?.added || group.added)
-    const daysSinceMember = today.diff(memberSince, 'days')
-
-    // Skip if not a member for at least 31 days
-    if (daysSinceMember < 31) continue
-
-    // Check if today is the group's anniversary
-    const founded = dayjs(group.founded)
-    if (founded.format('MM-DD') === today.format('MM-DD')) {
-      const groupAge = Math.floor(today.diff(founded, 'years', true))
-      if (groupAge > 0) {
-        await showBirthdayModalForGroup(group, groupAge)
-        return // Show only one birthday modal at a time
-      }
-    }
-  }
-}
-
-async function showDebugBirthdayModal() {
-  console.log('Debug: Showing birthday modal with random user group')
-
-  if (!myGroups.value?.length) {
-    console.log('Debug: No groups available for user')
-    return
-  }
-
-  // Pick a random group from user's groups
-  const randomIndex = Math.floor(Math.random() * myGroups.value.length)
-  const randomGroup = myGroups.value[randomIndex]
-
-  // Use the actual group data but with a mock age for demonstration
-  const mockAge = Math.floor(Math.random() * 15) + 1 // Random age between 1-15 years
-
-  console.log(
-    `Debug: Using group "${randomGroup.namefull}" with mock age ${mockAge}`
-  )
-
-  await showBirthdayModalForGroup(randomGroup, mockAge)
-}
-
-async function showBirthdayModalForGroup(group, groupAge) {
-  birthdayGroup.value = {
-    ...group,
-    age: groupAge,
-  }
-
-  // Record when we show the appeal (on modal open) - skip in debug mode
-  if (!debugBirthdayModal.value && me.value?.settings) {
-    const settings = { ...me.value.settings }
-    settings.lastbirthdayappeal = dayjs().toISOString()
-
-    await authStore.saveAndGet({
-      settings,
-    })
-  }
-
-  // Record A/B test shown event - skip in debug mode
-  if (!debugBirthdayModal.value) {
-    await api.bandit.shown({
-      uid: 'birthdayappeal',
-      variant: 'modal',
-    })
-  }
-
-  showBirthdayModal.value = true
-}
-
-function onBirthdayModalClose() {
-  showBirthdayModal.value = false
-}
-
-async function onBirthdayDonationSuccess() {
-  console.log('Birthday donation successful!')
-  // Record A/B test chosen event for successful donation
-  await api.bandit.chosen({
-    uid: 'birthdayappeal',
-    variant: 'modal',
-  })
-}
-
-async function onBirthdayDonationClick(amount) {
-  console.log('Birthday donation clicked:', amount)
-  // Record A/B test chosen event for donation attempt
-  await api.bandit.chosen({
-    uid: 'birthdayappeal',
-    variant: 'modal',
-  })
 }
 
 // Watchers
@@ -637,41 +373,7 @@ watch(searchTerm, () => {
   incBump()
 })
 
-watch(selectedGroup, async (newVal) => {
-  if (newVal > 0) {
-    // We want to show the group's map.
-    const g = myGroup(newVal)
-
-    if (g?.bbox) {
-      await loadLeaflet()
-      const wkt = new Wkt.Wkt()
-      wkt.read(g.bbox)
-      const obj = wkt.toObject()
-
-      if (obj?.getBounds) {
-        const bounds = obj.getBounds()
-        const swlat = bounds.getSouthWest().lat
-        const swlng = bounds.getSouthWest().lng
-        const nelat = bounds.getNorthEast().lat
-        const nelng = bounds.getNorthEast().lng
-
-        initialBounds.value = [
-          [swlat, swlng],
-          [nelat, nelng],
-        ]
-      }
-    }
-  }
-
-  incBump()
-})
-
 watch(selectedType, () => {
-  incBump()
-})
-
-watch(browseView, () => {
-  calculateInitialMapBounds()
   incBump()
 })
 
@@ -716,16 +418,7 @@ onMounted(async () => {
         value: now,
       })
     }
-
-    // Check for group birthdays after about me modal logic
-    setTimeout(() => {
-      checkForBirthdays()
-    }, 1000) // Small delay to ensure groups are loaded
   }
-
-  // Also get all the groups. This allows us to suggest other groups to join from within the map.
-  // Doing this now slows down the load, but reduces flicker.
-  await groupStore.fetch()
 })
 
 onUnmounted(() => {
@@ -742,10 +435,10 @@ useHead(
 // We want this to be our next home page.
 const existingHomepage = miscStore.get('lasthomepage')
 
-if (existingHomepage !== 'mygroups') {
+if (existingHomepage !== 'browse') {
   miscStore.set({
     key: 'lasthomepage',
-    value: 'mygroups',
+    value: 'browse',
   })
 }
 </script>

@@ -106,8 +106,6 @@ class UserDataExportService
         $data['emails'] = $this->getEmails($userId);
         $data['logins'] = $this->getLogins($userId);
         $data['invitations'] = $this->getInvitations($userId);
-        $data['memberships'] = $this->getMemberships($userId);
-        $data['memberships_history'] = $this->getMembershipHistory($userId);
         $data['searches'] = $this->getSearches($userId);
         $data['alerts'] = $this->getAlerts($userId);
         $data['donations'] = $this->getDonations($userId);
@@ -198,40 +196,6 @@ class UserDataExportService
             ->toArray();
     }
 
-    private function getMemberships(int $userId): array
-    {
-        return DB::table('memberships')
-            ->join('groups', 'memberships.groupid', '=', 'groups.id')
-            ->where('memberships.userid', $userId)
-            ->select(
-                'memberships.groupid',
-                'memberships.collection',
-                'memberships.added',
-                DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
-            )
-            ->orderBy('memberships.added', 'asc')
-            ->get()
-            ->map(fn($e) => (array) $e)
-            ->toArray();
-    }
-
-    private function getMembershipHistory(int $userId): array
-    {
-        return DB::table('memberships_history')
-            ->join('groups', 'memberships_history.groupid', '=', 'groups.id')
-            ->where('memberships_history.userid', $userId)
-            ->select(
-                'memberships_history.groupid',
-                'memberships_history.collection',
-                'memberships_history.added',
-                DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
-            )
-            ->orderBy('memberships_history.added', 'asc')
-            ->get()
-            ->map(fn($e) => (array) $e)
-            ->toArray();
-    }
-
     private function getSearches(int $userId): array
     {
         return DB::table('search_history')
@@ -279,25 +243,26 @@ class UserDataExportService
 
     private function getBans(int $userId): array
     {
-        $bans = DB::table('users_banned')
-            ->leftJoin('groups', 'users_banned.groupid', '=', 'groups.id')
+        // users_banned (one row per group) was dropped by
+        // 2026_09_20_000001_remove_group_model.php in favour of a single
+        // users.banned/bannedby pair on `users` itself (ai-judgement.md) - a ban
+        // is now global, not per group, so this reports who this user (as a
+        // moderator) has banned, once each.
+        return DB::table('users')
             ->leftJoin('users_emails', function ($join) {
-                $join->on('users_banned.userid', '=', 'users_emails.userid')
+                $join->on('users.id', '=', 'users_emails.userid')
                     ->where('users_emails.preferred', '=', 1);
             })
-            ->where('users_banned.byuser', $userId)
+            ->where('users.bannedby', $userId)
             ->select(
-                'users_banned.date',
-                'users_banned.userid',
-                'users_emails.email',
-                DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
+                'users.banned as date',
+                'users.id as userid',
+                'users_emails.email'
             )
-            ->orderBy('users_banned.date', 'asc')
+            ->orderBy('users.banned', 'asc')
             ->get()
             ->map(fn($e) => (array) $e)
             ->toArray();
-
-        return $bans;
     }
 
     private function getSpamReports(int $userId): array
@@ -422,12 +387,13 @@ class UserDataExportService
 
     private function getExcludedLocations(int $userId): array
     {
+        // locations_excluded.groupid was dropped by
+        // 2026_09_20_000001_remove_group_model.php (ai-judgement.md) - there is
+        // one Freegle now, so a location exclusion is no longer per group.
         return DB::table('locations_excluded')
             ->where('locations_excluded.userid', $userId)
-            ->leftJoin('groups', 'locations_excluded.groupid', '=', 'groups.id')
             ->leftJoin('locations', 'locations_excluded.locationid', '=', 'locations.id')
             ->select(
-                DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname'),
                 'locations.name as location',
                 'locations_excluded.date'
             )
@@ -439,22 +405,18 @@ class UserDataExportService
 
     private function getMessages(int $userId): array
     {
+        // messages_groups was dropped by 2026_09_20_000001_remove_group_model.php
+        // (ai-judgement.md) - a message has one collection state directly on
+        // `messages` now rather than one row per group it reached, so there is
+        // no more per-group fan-out (or Rippling Out copies) to exclude here.
         return DB::table('messages')
-            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
-            ->join('groups', 'messages_groups.groupid', '=', 'groups.id')
             ->where('messages.fromuser', $userId)
-            // Exclude Rippling Out copies (messages_groups.rippled_in = 1): the post is reported
-            // once via its origin group rather than once per group it rippled into, so the export
-            // does not look like deliberate cross-posting.
-            ->where('messages_groups.rippled_in', 0)
             ->select(
                 'messages.id',
                 'messages.subject',
                 'messages.type',
                 'messages.arrival',
-                'messages_groups.collection',
-                'messages_groups.groupid',
-                DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
+                'messages.collection'
             )
             ->orderBy('messages.arrival', 'asc')
             ->get()
@@ -520,7 +482,7 @@ class UserDataExportService
     {
         $items = DB::table('newsfeed')
             ->where('userid', $userId)
-            ->select('id', 'timestamp', 'type', 'message', 'msgid', 'groupid')
+            ->select('id', 'timestamp', 'type', 'message', 'msgid')
             ->orderBy('timestamp', 'asc')
             ->get()
             ->map(fn($e) => (array) $e)
@@ -609,7 +571,7 @@ class UserDataExportService
         return DB::table('logs')
             ->where('byuser', $userId)
             ->orWhere('user', $userId)
-            ->select('id', 'timestamp', 'type', 'subtype', 'user', 'byuser', 'groupid', 'text')
+            ->select('id', 'timestamp', 'type', 'subtype', 'user', 'byuser', 'text')
             ->orderBy('timestamp', 'asc')
             ->limit(1000)
             ->get()

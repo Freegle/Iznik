@@ -15,9 +15,10 @@
       >
         <v-icon icon="times" />
       </b-button>
-      <!-- Generic "how the nearby feed works" help - kept above the filters (and the
-           "How far away" control) so the explanation reads before the controls. -->
-      <div v-if="browseView === 'nearby'" class="nearby-help">
+      <!-- How the nearby feed works - kept above the filters (and the "How far away"
+           control) so the explanation reads before the controls. There's only one feed
+           now (nearby), so this always shows. -->
+      <div class="nearby-help">
         <p class="help-text mt-0">
           We show posts near you first, then gradually further away.
           <a href="#" @click.prevent="whichPostsModal?.show()">
@@ -28,17 +29,6 @@
         </p>
       </div>
       <div variant="info" class="filters mb-2">
-        <div class="group">
-          <GroupSelect
-            v-if="me"
-            v-model="group"
-            label="Show posts from:"
-            all
-            all-my
-            custom-name="-- Nearby --"
-            :custom-val="-1"
-          />
-        </div>
         <div class="type">
           <label for="typeOptions">Show these posts:</label>
           <b-form-select
@@ -140,10 +130,6 @@ import DistanceSliders from '~/components/DistanceSliders.vue'
 import WhichPostsModal from '~/components/WhichPostsModal.vue'
 
 const props = defineProps({
-  selectedGroup: {
-    type: Number,
-    default: 0,
-  },
   selectedType: {
     type: String,
     default: 'All',
@@ -164,7 +150,6 @@ const props = defineProps({
 
 const emit = defineEmits([
   'update:search',
-  'update:selectedGroup',
   'update:selectedType',
   'update:selectedSort',
   'update:selectedMaxDistance',
@@ -214,11 +199,7 @@ const whichPostsModal = ref(null)
 // Refetch the unseen-count badge so it tracks whatever the feed is currently showing.
 function refetchCount() {
   if (me.value) {
-    messageStore.fetchCount(
-      me.value.settings?.browseView,
-      me.value.settings?.browseMaxDistance,
-      false
-    )
+    messageStore.fetchCount(me.value.settings?.browseMaxDistance, false)
   }
 }
 
@@ -235,64 +216,6 @@ watch(search, (newVal, oldVal) => {
   if (!newVal && oldVal) {
     // Search box cleared - trigger search.
     emit('update:search', '')
-  }
-})
-
-// Selected group.  We have a special case for the 'nearby' group, which is -1.
-const browseView = computed(() => me.value?.settings?.browseView || 'nearby')
-
-// The panel is lazily mounted inside the collapsed Map & Filters section, so by the time it
-// appears the page may already have restored a saved community into selectedGroup. Start from
-// that, or the dropdown would say "-- Nearby --" over a feed filtered to one community.
-const group = ref(
-  props.selectedGroup > 0
-    ? props.selectedGroup
-    : browseView.value === 'nearby'
-      ? -1
-      : 0
-)
-
-watch(
-  () => props.selectedGroup,
-  (newVal) => {
-    group.value = newVal
-  }
-)
-
-watch(group, async (newVal) => {
-  const settings = me.value?.settings
-
-  if (!settings) {
-    return
-  }
-
-  // "Show posts from" is sticky, like sort and post type. browseView records only the two
-  // whole-feed views ('nearby' / 'mygroups'), so a single community needs a key of its own;
-  // choosing either whole-feed view clears it. Restoring a saved choice on load arrives here
-  // through the selectedGroup prop as well, so only write when something actually changed -
-  // otherwise every visit to Browse spends a save putting back what is already stored.
-  const savedId = parseInt(settings.browseGroup) > 0 ? parseInt(settings.browseGroup) : null
-  const wantId = newVal > 0 ? newVal : null
-  const wantView =
-    newVal === -1 ? 'nearby' : newVal === 0 ? 'mygroups' : settings.browseView
-  const changed = wantId !== savedId || wantView !== settings.browseView
-
-  settings.browseGroup = wantId
-  settings.browseView = wantView
-
-  if (changed) {
-    await authStore.saveAndGet({
-      settings,
-    })
-  }
-
-  if (newVal > 0) {
-    emit('update:selectedGroup', newVal)
-  } else {
-    emit('update:selectedGroup', 0)
-
-    // We do this so that UpToDate doesn't show an old count.
-    refetchCount()
   }
 })
 
@@ -314,7 +237,7 @@ const typeOptions = [
 ]
 
 // Rippling-out relevance ordering + distance slider (#I): post type is now sticky,
-// mirroring sort/browseView below - stored in settings.browseType (default 'All').
+// mirroring sort below - stored in settings.browseType (default 'All').
 const type = ref(me.value?.settings?.browseType || 'All')
 
 watch(
@@ -380,9 +303,8 @@ const hasLocation = computed(() => {
   return !!(me.value && (me.value.lat || me.value.lng))
 })
 
-// Shown in every "Show posts from" view (nearby, all-my-groups, a single group), not just
-// Nearby: the mygroups feed now carries a per-post distance server-side too, so the slider
-// narrows whichever view is active. It only needs a known location to measure from.
+// There's only one feed now (nearby), and it carries a per-post distance server-side,
+// so the slider narrows it. It only needs a known location to measure from.
 const showDistanceSlider = computed(() => {
   return hasLocation.value
 })
@@ -410,7 +332,6 @@ function onDistancePersisted(miles) {
 // isn't showing the plain default view.
 const hasNonDefaultFilters = computed(() => {
   return (
-    group.value !== -1 ||
     sort.value !== 'Unseen' ||
     type.value !== 'All' ||
     maxDistance.value !== BROWSE_DISTANCE_UNLIMITED
@@ -453,16 +374,6 @@ const hasNonDefaultFilters = computed(() => {
   color: $color-gray--darker;
 }
 
-/* "Show posts from:" is rendered as GroupSelect's own <label> in a child
-   component, which the scoped `.filters label` rule above can't reach - so it
-   showed in the default (larger) font. Match it to the other filter labels. */
-.group :deep(label) {
-  font-size: 0.85rem;
-  font-weight: 600;
-  margin-bottom: 0.25rem;
-  color: $color-gray--darker;
-}
-
 /* Top-right of the panel, as the first thing in its content flow. FLOATED rather than absolutely
    positioned: BCollapse's root element does not inherit this component's scope attribute (checked
    in a browser - its attributes are id/class/is-nav/style, no data-v-*), so a scoped
@@ -479,34 +390,19 @@ const hasNonDefaultFilters = computed(() => {
   display: grid;
 
   /* No 3rem gutter column any more: the close button left the grid, and keeping its column
-     reserved would indent every filter away from the panel edge for nothing. */
+     reserved would indent every filter away from the panel edge for nothing. There's only one
+     browse view now, so there's no "Show posts from" picker to share a row with either - just
+     one column, stacked in DOM order (type, distance, sort) at every width. */
   grid-template-columns: 1fr;
-  grid-template-rows: min-content min-content min-content min-content;
+  grid-template-rows: min-content min-content min-content;
   grid-column-gap: 10px;
   grid-row-gap: 10px;
 
-  @include media-breakpoint-up(md) {
-    grid-template-columns: 2fr 1fr;
-    grid-template-rows: min-content min-content min-content;
-  }
-
-  .group {
+  .type {
     grid-column: 1 / 2;
     grid-row: 1 / 2;
   }
 
-  .type {
-    grid-column: 1 / 2;
-    grid-row: 3 / 4;
-
-    @include media-breakpoint-up(md) {
-      grid-column: 2 / 3;
-      grid-row: 1 / 2;
-    }
-  }
-
-  /* Distance slider sits to the left of Sort on desktop; on mobile it sits ABOVE
-     the Offer/Wanted (type) filter, so the "how far away" control reads first. */
   .distance {
     grid-column: 1 / 2;
     grid-row: 2 / 3;
@@ -515,28 +411,11 @@ const hasNonDefaultFilters = computed(() => {
        out of the filter panel. min-width:0 lets the cell hold its track width so the hint
        ellipsis-truncates inside the panel instead of overflowing. */
     min-width: 0;
-
-    @include media-breakpoint-up(md) {
-      /* Span the FULL panel width on its own row rather than sharing the 2fr column
-         with Sort. The reach hint / nearby-towns list then has the whole panel to use,
-         so its (deliberate) ellipsis-truncation only bites when genuinely tight instead
-         of at every larger width (Discourse 9808, Neville #600). Ends at line 3, not 4:
-         the grid is two columns wide now that the close button no longer occupies one, and
-         asking for a fourth line would have grid invent an empty third column to reach it. */
-      grid-column: 1 / 3;
-      grid-row: 2 / 3;
-    }
   }
 
   .sort {
     grid-column: 1 / 2;
-    grid-row: 4 / 5;
-
-    @include media-breakpoint-up(md) {
-      /* Sort drops below the now full-width distance slider. */
-      grid-column: 1 / 2;
-      grid-row: 3 / 4;
-    }
+    grid-row: 3 / 4;
   }
 
   /* No .close rule: the close button is positioned against the panel now, not laid out here.

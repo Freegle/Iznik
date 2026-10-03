@@ -117,44 +117,21 @@ func MatchUserByEmailOrPriorDonation(email string) uint64 {
 
 // GetDonations returns donation target and amount raised for the current month
 // @Summary Get donations summary
-// @Description Returns the donation target and amount raised for the current month, optionally filtered by group
+// @Description Returns the donation target and amount raised for the current month
 // @Tags donations
 // @Accept json
 // @Produce json
-// @Param groupid query int false "Group ID to filter donations"
 // @Success 200 {object} map[string]interface{} "Donation summary with target and raised amounts"
 // @Router /donations [get]
 func GetDonations(c *fiber.Ctx) error {
 	db := database.DBConn
 
-	// Get optional groupid parameter
-	groupID := c.Query("groupid")
-
-	var target int
+	target := getDonationTarget()
 	var raised float64
 
-	// Get target - from group if specified, otherwise use default from env
-	target = getDonationTarget()
-	if groupID != "" {
-		var fundingtarget *int
-		db.Table("groups").Select("fundingtarget").Where("id = ?", groupID).Scan(&fundingtarget)
-		if fundingtarget != nil && *fundingtarget > 0 {
-			target = *fundingtarget
-		}
-	}
-
-	// Get raised amount for current month
-	// If groupid specified, only count donations from members of that group
-	// Exclude certain payers (eBay partnerships, PayPal Giving Fund) from totals
+	// Exclude certain payers (eBay partnerships, PayPal Giving Fund) from totals.
 	excludedPayers := getExcludedPayers()
 
-	// groupID != ""
-	// is the only toggle that changes the statement's SHAPE (it drives
-	// whether the memberships join is present); the number of excluded
-	// payers is env-configured (DONATIONS_EXCLUDE), not per-request user
-	// input, so it is effectively fixed at the default count in practice -
-	// 2 possible rendered forms, both proven by the retired ormharness
-	// (shapes.json / TestTier3Shapes_31fea9e6f321, removed in d22ba1d6c).
 	// WHERE built as a single string for ONE Where() call: GORM's
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine
@@ -166,11 +143,8 @@ func GetDonations(c *fiber.Ctx) error {
 		whereArgs = append(whereArgs, email)
 	}
 
-	tx := db.Table("users_donations").Select("COALESCE(SUM(GrossAmount), 0) AS raised")
-	if groupID != "" {
-		tx = tx.Joins("INNER JOIN memberships ON users_donations.userid = memberships.userid AND memberships.groupid = ?", groupID)
-	}
-	tx.Where(whereSQL, whereArgs...).Scan(&raised)
+	db.Table("users_donations").Select("COALESCE(SUM(GrossAmount), 0) AS raised").
+		Where(whereSQL, whereArgs...).Scan(&raised)
 
 	return c.JSON(fiber.Map{
 		"target": target,

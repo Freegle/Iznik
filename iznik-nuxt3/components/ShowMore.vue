@@ -69,7 +69,7 @@ const props = defineProps({
 const expanded = ref(false)
 
 // Tolerate a missing/non-array `items` (e.g. a caller binding data that is still loading, like
-// mydata.vue's status.data.memberships before the export arrives). Without this, props.items.length
+// mydata.vue's status.data.searches before the export arrives). Without this, props.items.length
 // threw "reading 'length'" and props.items.slice threw "items.slice is not a function", flooding
 // Sentry and blanking the page.
 const safeItems = computed(() =>

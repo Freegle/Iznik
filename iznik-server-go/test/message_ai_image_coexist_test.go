@@ -24,11 +24,9 @@ func TestMessagePatch_AIImageRemovedWhenUserAddsPhoto(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("aicoexist")
 
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	_, ownerToken := CreateTestSession(t, ownerID)
-	msgID := CreateTestMessage(t, ownerID, groupID, "OFFER: Lamp "+prefix+" (TestTown)", 55.0, -1.0)
+	msgID := CreateTestMessage(t, ownerID, "OFFER: Lamp "+prefix+" (TestTown)", 55.0, -1.0)
 
 	// Simulate the batch service having attached an AI illustration.
 	aiUID := "freegletusd-ai-" + prefix

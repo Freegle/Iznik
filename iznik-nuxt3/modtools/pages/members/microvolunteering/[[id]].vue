@@ -3,26 +3,13 @@
     <client-only>
       <ScrollToTop />
       <ModHelpMicrovolunteering />
-      <ModGroupSelect
-        v-model="groupid"
-        modonly
-        all
-        remember="membersmicrovol"
-        :disabled="busy"
-      />
 
       <div v-if="busy" class="d-flex justify-content-around">
         <Spinner :size="50" />
       </div>
-      <div v-else-if="!groupid" class="mt-2">
-        <NoticeMessage variant="warning">
-          Please choose a community.
-        </NoticeMessage>
-      </div>
       <div v-else-if="!topUsers.length" class="mt-2">
         <NoticeMessage variant="info">
-          No micro-volunteering activity found for this community in the last 90
-          days.
+          No micro-volunteering activity found in the last 90 days.
         </NoticeMessage>
       </div>
       <div v-else class="mt-2">
@@ -41,9 +28,7 @@
           <b-tbody>
             <b-tr v-for="entry in topUsers" :key="entry.userid">
               <b-td>
-                <nuxt-link
-                  :to="'/members/approved/' + groupid + '/' + entry.userid"
-                >
+                <nuxt-link :to="'/members/approved/' + entry.userid">
                   <v-icon icon="hashtag" scale="0.8" />{{ entry.userid }}
                 </nuxt-link>
               </b-td>
@@ -87,7 +72,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { GChart } from 'vue-google-charts'
 import { useMicroVolunteeringStore } from '~/stores/microvolunteering'
@@ -98,7 +83,6 @@ const microVolunteeringStore = useMicroVolunteeringStore()
 const userStore = useUserStore()
 
 // Local state
-const groupid = ref(0)
 const busy = ref(true)
 
 // Computed properties
@@ -175,12 +159,6 @@ const userActivity = computed(() => {
   return ret
 })
 
-// Watchers
-watch(groupid, () => {
-  microVolunteeringStore.clear()
-  fetchData()
-})
-
 // Lifecycle
 onMounted(() => {
   microVolunteeringStore.clear()
@@ -191,22 +169,19 @@ onMounted(() => {
 async function fetchData() {
   busy.value = true
 
-  if (groupid.value) {
-    const start = dayjs().subtract(90, 'day').format('YYYY-MM-DD')
+  const start = dayjs().subtract(90, 'day').format('YYYY-MM-DD')
 
-    await microVolunteeringStore.fetch({
-      list: true,
-      groupid: groupid.value,
-      limit: 10000,
-      start,
-    })
+  await microVolunteeringStore.fetch({
+    list: true,
+    limit: 10000,
+    start,
+  })
 
-    // Fetch user details for each unique userid in the results.
-    const uniqueUserIds = [
-      ...new Set(items.value.map((i) => i.userid).filter(Boolean)),
-    ]
-    await Promise.all(uniqueUserIds.map((uid) => userStore.fetch(uid, false)))
-  }
+  // Fetch user details for each unique userid in the results.
+  const uniqueUserIds = [
+    ...new Set(items.value.map((i) => i.userid).filter(Boolean)),
+  ]
+  await Promise.all(uniqueUserIds.map((uid) => userStore.fetch(uid, false)))
 
   busy.value = false
 }

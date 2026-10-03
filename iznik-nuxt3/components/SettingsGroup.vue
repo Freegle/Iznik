@@ -30,28 +30,15 @@
         :labels="{ checked: 'On', unchecked: 'Off' }"
       />
     </div>
-
-    <div v-if="leave" class="leave-row">
-      <SpinButton
-        variant="link"
-        icon-name="trash-alt"
-        label="Leave this community"
-        class="leave-btn"
-        @handle="leaveGroup"
-      />
-    </div>
   </div>
 </template>
 <script setup>
 import { computed } from 'vue'
-import { useAuthStore } from '~/stores/auth'
 import OurToggle from '~/components/OurToggle'
-import SpinButton from '~/components/SpinButton'
-import { useMe } from '~/composables/useMe'
 
 const props = defineProps({
   membershipMT: {
-    // MT and do not set groupid
+    // ModTools passes the member row here so it can control persistence itself.
     type: Object,
     required: false,
     default: null,
@@ -61,12 +48,12 @@ const props = defineProps({
     required: false,
     default: null,
   },
-  groupid: {
-    type: Number,
+  eventsallowed: {
+    type: Boolean,
     required: false,
-    default: null,
+    default: false,
   },
-  leave: {
+  volunteeringallowed: {
     type: Boolean,
     required: false,
     default: false,
@@ -92,27 +79,12 @@ const emit = defineEmits([
   'update:emailfrequency',
   'update:eventsallowed',
   'update:volunteeringallowed',
-  'leave',
 ])
 
-const authStore = useAuthStore()
-const { myGroups } = useMe()
-const myid = computed(() => authStore.user?.id)
-
-const membership = computed(() => {
-  let ret = null
-  if (props.membershipMT) return props.membershipMT // MT
-
-  if (myGroups.value) {
-    myGroups.value.forEach((g) => {
-      if (!props.groupid || g.id === props.groupid) {
-        ret = g
-      }
-    })
-  }
-
-  return ret
-})
+// ModTools passes the member row as membershipMT; the national site passes
+// the equivalent values directly as props. This component never persists
+// anything itself - it just emits, and the caller decides how to save it.
+const membership = computed(() => props.membershipMT)
 
 const highlightEmailFrequencyIfOn = computed(() => {
   return props.emailfrequency === 0 ? 'frequency-off' : 'frequency-on'
@@ -125,45 +97,37 @@ const emailfreq = computed({
     }
     return (props.emailfrequency ?? 24).toString()
   },
-  async set(newval) {
-    await changeValue('emailfrequency', newval)
+  set(newval) {
+    changeValue('emailfrequency', newval)
   },
 })
 
 const eventsallowed = computed({
   get() {
-    return Boolean(membership.value?.eventsallowed)
+    if (membership.value && membership.value.eventsallowed != null) {
+      return Boolean(membership.value.eventsallowed)
+    }
+    return Boolean(props.eventsallowed)
   },
-  async set(newval) {
-    await changeValue('eventsallowed', newval ? 1 : 0)
+  set(newval) {
+    changeValue('eventsallowed', newval ? 1 : 0)
   },
 })
 
 const volunteeringallowed = computed({
   get() {
-    return Boolean(membership.value?.volunteeringallowed)
+    if (membership.value && membership.value.volunteeringallowed != null) {
+      return Boolean(membership.value.volunteeringallowed)
+    }
+    return Boolean(props.volunteeringallowed)
   },
-  async set(newval) {
-    await changeValue('volunteeringallowed', newval ? 1 : 0)
+  set(newval) {
+    changeValue('volunteeringallowed', newval ? 1 : 0)
   },
 })
 
-async function changeValue(param, val) {
+function changeValue(param, val) {
   emit('update:' + param, val)
-
-  if (props.groupid) {
-    const params = {
-      userid: myid.value,
-      groupid: props.groupid,
-    }
-    params[param] = parseInt(val)
-    await authStore.setGroup(params)
-  }
-}
-
-function leaveGroup(callback) {
-  emit('leave')
-  callback()
 }
 </script>
 <style scoped lang="scss">
@@ -198,23 +162,6 @@ function leaveGroup(callback) {
 
   &.frequency-off {
     border: 1px solid var(--color-gray-600);
-  }
-}
-
-.leave-row {
-  margin-top: 0.5rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
-}
-
-.leave-btn {
-  color: var(--color-gray-600);
-  padding: 0;
-  font-size: 0.85rem;
-  transition: all var(--transition-fast);
-
-  &:hover {
-    color: $color-red;
   }
 }
 </style>

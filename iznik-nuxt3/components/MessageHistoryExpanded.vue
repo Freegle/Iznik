@@ -51,24 +51,9 @@
       >
         About {{ milesPlural }} away<span v-if="milesIsRoad"> by road</span>
       </div>
-      <div
-        v-for="group in message.groups"
-        :key="'message-' + message.id + '-' + group.id"
-        class="d-flex flex-wrap align-items-center"
-      >
-        <nuxt-link
-          v-if="group.groupid in groups"
-          no-prefetch
-          :to="
-            '/explore/' + groups[group.groupid].exploreLink + '?noguard=true'
-          "
-          :title="'Click to view ' + groups[group.groupid].namedisplay"
-          class="small fw-bold text-success nodecor me-1"
-        >
-          {{ groups[group.groupid].namedisplay }}
-        </nuxt-link>
-        <span class="small text-muted" :title="group.arrival">{{
-          grouparrivalago(group.arrival)
+      <div class="d-flex flex-wrap align-items-center">
+        <span class="small text-muted" :title="message.arrival">{{
+          arrivalago
         }}</span>
       </div>
     </div>
@@ -88,7 +73,6 @@ import { roadDistance, roadMilesRounded } from '~/composables/useDriveDistance'
 import { useUserStore } from '~/stores/user'
 import ProfileImage from '~/components/ProfileImage'
 import { useMessageStore } from '~/stores/message'
-import { useGroupStore } from '~/stores/group'
 import { timeago } from '~/composables/useTimeFormat'
 import { useMe } from '~/composables/useMe'
 
@@ -100,7 +84,6 @@ const props = defineProps({
 })
 
 const messageStore = useMessageStore()
-const groupStore = useGroupStore()
 const userStore = useUserStore()
 const { me } = useMe()
 
@@ -160,24 +143,8 @@ const openWantedPlural = computed(() => {
     : null
 })
 
-const groups = computed(() => {
-  const ret = {}
-
-  if (message.value?.groups) {
-    message.value.groups.forEach((g) => {
-      const thegroup = groupStore.get(g.groupid)
-
-      if (thegroup) {
-        ret[g.groupid] = thegroup
-
-        // Better to link to the group by name if possible to avoid nuxt generate creating explore pages for the
-        // id variants.
-        ret[g.groupid].exploreLink = thegroup ? thegroup.nameshort : g.groupid
-      }
-    })
-  }
-
-  return ret
+const arrivalago = computed(() => {
+  return timeago(message.value?.arrival, true)
 })
 
 // Methods
@@ -199,10 +166,6 @@ function showProfileModal(e) {
   }
 
   showProfile.value = true
-}
-
-function grouparrivalago(val) {
-  return timeago(val)
 }
 </script>
 <style scoped lang="scss">

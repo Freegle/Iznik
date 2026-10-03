@@ -28,7 +28,7 @@ class SourceFreshnessTest extends TestCase
 
     private function svc(): SourceFreshness
     {
-        return new SourceFreshness(new FetchableLinkPreviewService());
+        return new SourceFreshness(new FetchableLinkPreviewService);
     }
 
     private function page(string $ogType, ?string $published, string $extra = ''): string
@@ -107,8 +107,8 @@ class SourceFreshnessTest extends TestCase
         // The shape Great British Life actually publishes, and the one that let
         // a 2014 RiverFest article be posted as this weekend's event.
         $html = '<html><head><meta property="og:type" content="article" />'
-            . '<meta property="og:article:published_time" content="2014-08-14T14:57:00Z" />'
-            . '</head><body>x</body></html>';
+            .'<meta property="og:article:published_time" content="2014-08-14T14:57:00Z" />'
+            .'</head><body>x</body></html>';
         Http::fake(['example.org/*' => Http::response($html, 200)]);
 
         $this->assertNotNull($this->svc()->staleReason('https://example.org/riverfest', '2026-08-31'));

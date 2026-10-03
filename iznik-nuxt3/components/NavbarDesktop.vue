@@ -34,7 +34,7 @@
       <ul class="navbar-nav mainnav mainnav--left">
         <li>
           <nuxt-link
-            id="menu-option-mygroups"
+            id="menu-option-browse"
             no-prefetch
             class="nav-link text-center small p-0 ms-2"
             to="/browse"

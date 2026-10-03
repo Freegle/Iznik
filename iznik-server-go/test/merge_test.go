@@ -79,9 +79,8 @@ func TestGetMergeInvalidUid(t *testing.T) {
 
 func TestCreateMerge(t *testing.T) {
 	prefix := uniquePrefix("MergeCrt")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
@@ -169,9 +168,8 @@ func TestPostMergeReject(t *testing.T) {
 
 func TestDeleteMerge(t *testing.T) {
 	prefix := uniquePrefix("MergeDel")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")

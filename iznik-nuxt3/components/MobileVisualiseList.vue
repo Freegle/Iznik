@@ -32,12 +32,10 @@
 import { ref, computed } from 'vue'
 import { useRouter } from '#imports'
 import { useMessageStore } from '~/stores/message'
-import { useGroupStore } from '~/stores/group'
 import MessageSummary from '~/components/MessageSummary'
 
 const router = useRouter()
 const messageStore = useMessageStore()
-const groupStore = useGroupStore()
 
 const items = ref([])
 const loading = ref(true)
@@ -68,8 +66,6 @@ if (uniqueCached.length >= 8) {
   items.value = uniqueCached.slice(0, 8)
   loading.value = false
 } else {
-  await groupStore.fetch()
-
   try {
     const list = await messageStore.fetchInBounds(
       49.45,

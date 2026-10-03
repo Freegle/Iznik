@@ -2,7 +2,6 @@ import { defineStore } from 'pinia'
 import dayjs from 'dayjs'
 import api from '~/api'
 import { useAuthStore } from '~/stores/auth'
-import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 import { useMiscStore } from '~/stores/misc'
 import { useUserStore } from '~/stores/user'
@@ -210,24 +209,17 @@ export const useChatStore = defineStore('chat', {
         this.listByChatMessageId[m.id] = m
       })
 
-      // V2 pattern: fetch user and group details by ID, then attach to messages.
+      // V2 pattern: fetch user details by ID, then attach to messages.
       const userStore = useUserStore()
-      const groupStore = useGroupStore()
 
       const userIds = new Set()
-      const groupIds = new Set()
 
       for (const m of deduped) {
         if (m.fromuserid) userIds.add(m.fromuserid)
         if (m.touserid) userIds.add(m.touserid)
-        if (m.groupid) groupIds.add(m.groupid)
-        if (m.groupidfrom) groupIds.add(m.groupidfrom)
       }
 
-      await Promise.all([
-        ...[...userIds].map((uid) => userStore.fetch(uid)),
-        ...[...groupIds].map((gid) => groupStore.fetch(gid)),
-      ])
+      await Promise.all([...userIds].map((uid) => userStore.fetch(uid)))
 
       for (const m of deduped) {
         if (m.fromuserid) {
@@ -235,12 +227,6 @@ export const useChatStore = defineStore('chat', {
         }
         if (m.touserid) {
           m.touser = userStore.list[m.touserid] || null
-        }
-        if (m.groupid) {
-          m.group = groupStore.get(m.groupid) || null
-        }
-        if (m.groupidfrom) {
-          m.groupfrom = groupStore.get(m.groupidfrom) || null
         }
       }
 
@@ -475,12 +461,6 @@ export const useChatStore = defineStore('chat', {
       })
       this.fetchMessages(chatid)
     },
-    async commonGroups(chatid) {
-      return await api(this.config).chat.commonGroups(chatid)
-    },
-    async reportNoGroup(chatid, reason, comment) {
-      await api(this.config).chat.reportNoGroup(chatid, reason, comment)
-    },
     // Chat review moderation actions (approve/reject/hold/release/redact).
     async _sendChatMT(data) {
       // 404 means the message was already acted on (race condition with another mod).
@@ -565,11 +545,9 @@ export const useChatStore = defineStore('chat', {
 
       return id
     },
-    async openChatToMods(groupid, userid) {
+    async openChatToMods() {
       const id = await this.openChat({
         chattype: 'User2Mod',
-        groupid,
-        userid,
       })
 
       return id
@@ -578,7 +556,6 @@ export const useChatStore = defineStore('chat', {
       // We might have a type override.
       const data = {
         chattype: params.chattype ? params.chattype : 'User2User',
-        groupid: params.groupid,
         userid: params.userid,
       }
 

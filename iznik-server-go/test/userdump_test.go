@@ -80,17 +80,15 @@ func parseFrames(t *testing.T, body []byte) (progress []map[string]interface{}, 
 	return
 }
 
-// seedDumpTarget builds a user with a post, a two-sided chat, a membership and a
-// log row. Returns the target user id.
+// seedDumpTarget builds a user with a post, a two-sided chat and a log row.
+// Returns the target user id.
 func seedDumpTarget(t *testing.T, prefix string) uint64 {
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	target := CreateTestUser(t, prefix+"_target", "User")
 	other := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, target, groupID, "Member")
-	CreateTestMessage(t, target, groupID, "DumpTest Offer Sofa", 55.9533, -3.1883)
+	CreateTestMessage(t, target, "DumpTest Offer Sofa", 55.9533, -3.1883)
 
-	chatID := CreateTestChatRoom(t, target, &other, nil, "User2User")
+	chatID := CreateTestChatRoom(t, target, &other, "User2User")
 	CreateTestChatMessage(t, chatID, target, "Hello from target")
 	CreateTestChatMessage(t, chatID, other, "Reply from other side")
 
@@ -165,7 +163,6 @@ func TestUserDumpRawBuildsSqlite(t *testing.T) {
 	// Core domains present with expected rows.
 	assert.Equal(t, 1, tableRowCount(t, db, "users"))
 	assert.GreaterOrEqual(t, tableRowCount(t, db, "messages"), 1)
-	assert.GreaterOrEqual(t, tableRowCount(t, db, "memberships"), 1)
 	assert.GreaterOrEqual(t, tableRowCount(t, db, "chat_rooms"), 1)
 	// Both sides of the chat must be captured.
 	assert.Equal(t, 2, tableRowCount(t, db, "chat_messages"))

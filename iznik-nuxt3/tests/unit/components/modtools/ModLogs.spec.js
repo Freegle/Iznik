@@ -37,10 +37,7 @@ describe('ModLogs', () => {
 
   function createWrapper(props = {}) {
     return mount(ModLogs, {
-      props: {
-        groupid: null,
-        ...props,
-      },
+      props,
       global: {
         stubs: {
           'b-row': {
@@ -139,7 +136,7 @@ describe('ModLogs', () => {
 
     it('calls store.fetch with correct params', async () => {
       mockLogsStore.params = { type: 'User', search: 'test' }
-      const wrapper = createWrapper({ groupid: 42 })
+      const wrapper = createWrapper()
       const mockState = { loaded: vi.fn(), complete: vi.fn() }
 
       mockLogsStore.list = []
@@ -147,7 +144,6 @@ describe('ModLogs', () => {
 
       expect(mockLogsStore.fetch).toHaveBeenCalledWith({
         limit: 50,
-        groupid: 42,
         logtype: 'User',
         search: 'test',
       })
@@ -232,7 +228,6 @@ describe('ModLogs', () => {
 
       expect(mockLogsStore.fetch).toHaveBeenCalledWith({
         limit: 50,
-        groupid: null,
         logtype: null,
         search: null,
       })

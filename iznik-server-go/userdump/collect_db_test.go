@@ -80,11 +80,11 @@ func findSpec(specs []dbSpec, table string) *dbSpec {
 
 // chat_messages is the one extraction that could not be pulled for every chat a
 // member is in. A moderator sits in the roster of every Mod2Mod and User2Mod
-// chat on their groups - one real admin is in 18,664 rooms - and pulling all of
-// their messages with no date bound could not finish inside the caller's
-// timeout, so that member could never be investigated at all. Room membership
-// stays complete; only the message bodies are anchored on the rooms that were
-// active inside the dump's own ?since= window.
+// chat - one real admin is in 18,664 rooms - and pulling all of their messages
+// with no date bound could not finish inside the caller's timeout, so that
+// member could never be investigated at all. Room membership stays complete;
+// only the message bodies are anchored on the rooms that were active inside
+// the dump's own ?since= window.
 func TestBuildDBSpecs_ChatMessagesAreWindowed(t *testing.T) {
 	since := time.Date(2026, 5, 7, 0, 0, 0, 0, time.UTC)
 	allChats := []interface{}{int64(1), int64(2), int64(3)}

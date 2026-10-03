@@ -90,20 +90,20 @@ class WelcomeMailTest extends TestCase
         $dummyImage = ['src' => 'https://example.com/img.jpg', 'srcset' => ''];
 
         return [
-            'firstName'         => $firstName,
-            'email'             => 'stub@example.com',
-            'password'          => null,
-            'giveUrl'           => 'https://www.ilovefreegle.org/give',
-            'browseUrl'         => 'https://www.ilovefreegle.org/browse',
-            'askUrl'           => 'https://www.ilovefreegle.org/ask',
-            'termsUrl'          => 'https://www.ilovefreegle.org/terms',
-            'helpUrl'           => 'https://www.ilovefreegle.org/help',
-            'safetyUrl'         => 'https://www.ilovefreegle.org/safety',
-            'settingsUrl'       => 'https://www.ilovefreegle.org/settings',
-            'heroImage'         => $dummyImage,
-            'ruleFreeImage'     => $dummyImage,
-            'ruleNiceImage'     => $dummyImage,
-            'ruleSafeImage'     => $dummyImage,
+            'firstName' => $firstName,
+            'email' => 'stub@example.com',
+            'password' => null,
+            'giveUrl' => 'https://www.ilovefreegle.org/give',
+            'browseUrl' => 'https://www.ilovefreegle.org/browse',
+            'askUrl' => 'https://www.ilovefreegle.org/ask',
+            'termsUrl' => 'https://www.ilovefreegle.org/terms',
+            'helpUrl' => 'https://www.ilovefreegle.org/help',
+            'safetyUrl' => 'https://www.ilovefreegle.org/safety',
+            'settingsUrl' => 'https://www.ilovefreegle.org/settings',
+            'heroImage' => $dummyImage,
+            'ruleFreeImage' => $dummyImage,
+            'ruleNiceImage' => $dummyImage,
+            'ruleSafeImage' => $dummyImage,
             'trackingPixelMjml' => null,
         ];
     }
@@ -126,35 +126,5 @@ class WelcomeMailTest extends TestCase
             '<mj-preview>Welcome to Freegle! Give stuff away, browse, or ask for what you need for free.</mj-preview>',
             $html
         );
-    }
-
-    /**
-     * Regression: the `groups` table has no `autoemail`/`modsemail` columns
-     * and the previous fallback `config('freegle.mail.support')` did not exist
-     * (the actual key is `support_addr`). The envelope() therefore handed null
-     * to Address::__construct() and threw, silently breaking every group
-     * welcome with "Argument #1 ($address) must be of type string, null given".
-     *
-     * Verify GroupWelcomeMail::envelope() now constructs valid addresses from
-     * the group's nameshort + configured group_domain.
-     */
-    public function test_group_welcome_mail_envelope_handles_missing_email_columns(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        $mail = new \App\Mail\Welcome\GroupWelcomeMail($user, $group);
-        // Must not throw.
-        $envelope = $mail->envelope();
-
-        $from = $envelope->from;
-        $replyTo = $envelope->replyTo[0] ?? null;
-
-        $this->assertNotNull($from, 'from address must be set');
-        $this->assertNotNull($replyTo, 'replyTo address must be set');
-
-        $domain = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
-        $this->assertSame("{$group->nameshort}-auto@{$domain}", $from->address);
-        $this->assertSame("{$group->nameshort}-volunteers@{$domain}", $replyTo->address);
     }
 }

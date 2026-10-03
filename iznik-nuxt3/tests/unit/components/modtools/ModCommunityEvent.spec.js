@@ -6,7 +6,6 @@ import ModCommunityEvent from '~/modtools/components/ModCommunityEvent.vue'
 const defaultEvent = {
   id: 123,
   pending: true,
-  groups: [456],
   userid: 789,
 }
 
@@ -21,14 +20,6 @@ vi.mock('~/stores/communityevent', () => ({
   useCommunityEventStore: () => mockCommunityEventStore,
 }))
 
-const mockGroupStore = {
-  get: vi.fn(),
-}
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
-}))
-
 const mockUserStore = {
   fetch: vi.fn(),
   byId: vi.fn(),
@@ -39,15 +30,10 @@ vi.mock('~/stores/user', () => ({
 }))
 
 describe('ModCommunityEvent', () => {
-  const mockGroup = {
-    id: 456,
-    nameshort: 'TestGroup',
-    ourPostingStatus: 'ALLOWED',
-  }
-
   const mockUser = {
     id: 789,
     displayname: 'Test User',
+    postingstatus: 'DEFAULT',
   }
 
   function mountComponent(props = {}, eventOverrides = {}) {
@@ -99,7 +85,7 @@ describe('ModCommunityEvent', () => {
           },
           ChatButton: {
             template: '<button class="chat-button" />',
-            props: ['userid', 'groupid', 'title', 'variant'],
+            props: ['userid', 'title', 'variant'],
           },
           CommunityEventModal: {
             template: '<div class="event-modal" />',
@@ -119,7 +105,6 @@ describe('ModCommunityEvent', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
-    mockGroupStore.get.mockReturnValue(mockGroup)
     mockUserStore.byId.mockReturnValue(mockUser)
     mockUserStore.fetch.mockResolvedValue(mockUser)
     mockCommunityEventStore.byId.mockReturnValue(defaultEvent)
@@ -156,11 +141,6 @@ describe('ModCommunityEvent', () => {
       expect(wrapper.text()).toContain('Added by the system')
     })
 
-    it('renders group name when groups exist', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.text()).toContain('TestGroup')
-    })
-
     it('renders Approve button', () => {
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain('Approve')
@@ -176,7 +156,7 @@ describe('ModCommunityEvent', () => {
       expect(wrapper.text()).toContain('Delete')
     })
 
-    it('renders ChatButton when groups and userid exist', () => {
+    it('renders ChatButton when userid exists', () => {
       const wrapper = mountComponent()
       expect(wrapper.find('.chat-button').exists()).toBe(true)
     })
@@ -187,31 +167,12 @@ describe('ModCommunityEvent', () => {
     })
 
     it('renders prohibited posting notice when appropriate', () => {
-      mockGroupStore.get.mockReturnValue({
-        ...mockGroup,
-        ourPostingStatus: 'PROHIBITED',
+      mockUserStore.byId.mockReturnValue({
+        ...mockUser,
+        postingstatus: 'PROHIBITED',
       })
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain('not to be able to post')
-    })
-  })
-
-  describe('computed', () => {
-    it('groups returns empty array when no groups', () => {
-      const wrapper = mountComponent({}, { groups: [] })
-      expect(wrapper.vm.groups).toEqual([])
-    })
-
-    it('groups returns group objects from store', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.vm.groups).toHaveLength(1)
-      expect(wrapper.vm.groups[0].nameshort).toBe('TestGroup')
-    })
-
-    it('groups filters out undefined groups', () => {
-      mockGroupStore.get.mockReturnValue(undefined)
-      const wrapper = mountComponent()
-      expect(wrapper.vm.groups).toHaveLength(0)
     })
   })
 

@@ -59,14 +59,14 @@ describe('ModCommentAddModal', () => {
 
   const defaultProps = {
     userid: 123,
-    groupid: 456,
-    groupname: 'Test Group',
   }
 
   function mountComponent(props = {}, userOverrides = {}) {
-    const uid = props.userid || defaultProps.userid
-    const user = createTestUser({ id: uid, ...userOverrides })
-    mockUserStore.byId.mockReturnValue(user)
+    if (userOverrides !== null) {
+      const uid = props.userid || defaultProps.userid
+      const user = createTestUser({ id: uid, ...userOverrides })
+      mockUserStore.byId.mockReturnValue(user)
+    }
 
     return mount(ModCommentAddModal, {
       props: { ...defaultProps, ...props },
@@ -123,16 +123,10 @@ describe('ModCommentAddModal', () => {
       expect(wrapper.text()).toContain('John Doe')
     })
 
-    it('displays group name in title when provided', () => {
-      const wrapper = mountComponent({ groupname: 'Freegle Test Group' })
-      expect(wrapper.text()).toContain('on')
-      expect(wrapper.text()).toContain('Freegle Test Group')
-    })
-
-    it('does not display "on" before groupname when groupname is null', () => {
-      const wrapper = mountComponent({ groupname: null })
-      expect(wrapper.text()).toContain('Add Note for Test User')
-      expect(wrapper.text()).not.toMatch(/Test User on\s+\s*You can add/)
+    it('displays userid in title when user is not loaded', () => {
+      mockUserStore.byId.mockReturnValue(null)
+      const wrapper = mountComponent({ userid: 456 }, null)
+      expect(wrapper.text()).toContain('Add Note for #456')
     })
 
     it('renders 11 form inputs for user comments', () => {
@@ -235,26 +229,6 @@ describe('ModCommentAddModal', () => {
       const wrapper = mountComponent({ userid: 789 })
       expect(wrapper.props('userid')).toBe(789)
     })
-
-    it('accepts groupid prop (optional)', () => {
-      const wrapper = mountComponent({ groupid: 999 })
-      expect(wrapper.props('groupid')).toBe(999)
-    })
-
-    it('accepts null groupid', () => {
-      const wrapper = mountComponent({ groupid: null })
-      expect(wrapper.props('groupid')).toBe(null)
-    })
-
-    it('accepts groupname prop (optional)', () => {
-      const wrapper = mountComponent({ groupname: 'My Group' })
-      expect(wrapper.props('groupname')).toBe('My Group')
-    })
-
-    it('accepts null groupname', () => {
-      const wrapper = mountComponent({ groupname: null })
-      expect(wrapper.props('groupname')).toBe(null)
-    })
   })
 
   describe('methods', () => {
@@ -298,7 +272,6 @@ describe('ModCommentAddModal', () => {
       it('calls $api.comment.add with correct parameters', async () => {
         const wrapper = mountComponent({
           userid: 100,
-          groupid: 200,
         })
 
         // Set some user comment values
@@ -311,7 +284,6 @@ describe('ModCommentAddModal', () => {
 
         expect(mockCommentAdd).toHaveBeenCalledWith({
           userid: 100,
-          groupid: 200,
           user1: 'First comment',
           user2: 'Second comment',
           user3: null,
@@ -422,19 +394,6 @@ describe('ModCommentAddModal', () => {
         expect(mockCommentAdd).toHaveBeenCalledWith(
           expect.objectContaining({
             flag: false,
-          })
-        )
-      })
-
-      it('passes null groupid when not provided', async () => {
-        const wrapper = mountComponent({ groupid: null })
-
-        await wrapper.vm.save()
-        await flushPromises()
-
-        expect(mockCommentAdd).toHaveBeenCalledWith(
-          expect.objectContaining({
-            groupid: null,
           })
         )
       })

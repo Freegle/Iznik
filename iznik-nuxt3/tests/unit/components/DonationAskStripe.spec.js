@@ -38,7 +38,6 @@ describe('DonationAskStripe', () => {
   function createWrapper(props = {}) {
     return mount(DonationAskStripe, {
       props: {
-        groupname: 'Test Group',
         ...props,
       },
       global: {
@@ -46,31 +45,17 @@ describe('DonationAskStripe', () => {
           DonationIntroText: {
             name: 'DonationIntroText',
             template: '<div class="donation-intro-text" />',
-            props: [
-              'groupid',
-              'groupname',
-              'target',
-              'targetMet',
-              'donated',
-              'hideIntro',
-            ],
-          },
-          DonationBirthdayDisplay: {
-            name: 'DonationBirthdayDisplay',
-            template:
-              '<div class="donation-birthday-display"><input class="other-amount" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" /></div>',
-            props: ['modelValue', 'price', 'monthly'],
-            emits: ['update:modelValue'],
+            props: ['target', 'donated', 'hideIntro'],
           },
           DonationTraditionalExtras: {
             name: 'DonationTraditionalExtras',
             template: '<div class="donation-traditional-extras" />',
-            props: ['groupid', 'groupname', 'targetMet', 'hideThermometer'],
+            props: ['targetMet'],
           },
           DonationThermometer: {
             name: 'DonationThermometer',
             template: '<div class="donation-thermometer" />',
-            props: ['groupid'],
+            props: [],
           },
           DonationButton: {
             name: 'DonationButton',
@@ -177,43 +162,6 @@ describe('DonationAskStripe', () => {
       expect(wrapper.find('.donation-traditional-extras').exists()).toBe(true)
     })
 
-    it('shows thermometer when not hidden', async () => {
-      const wrapper = createWrapper({ hideThermometer: false })
-      await flushPromises()
-      expect(wrapper.find('.donation-thermometer').exists()).toBe(true)
-    })
-
-    it('hides thermometer when hideThermometer is true', async () => {
-      const wrapper = createWrapper({ hideThermometer: true })
-      await flushPromises()
-      expect(wrapper.find('.donation-thermometer').exists()).toBe(false)
-    })
-  })
-
-  describe('birthday mode', () => {
-    it('shows birthday display in birthday mode', async () => {
-      const wrapper = createWrapper({ birthdayMode: true })
-      await flushPromises()
-      expect(wrapper.find('.donation-birthday-display').exists()).toBe(true)
-    })
-
-    it('hides regular donation controls in birthday mode', async () => {
-      const wrapper = createWrapper({ birthdayMode: true })
-      await flushPromises()
-      expect(wrapper.find('.donation-controls').exists()).toBe(false)
-    })
-
-    it('does not show minimal message in birthday mode', async () => {
-      const wrapper = createWrapper({ birthdayMode: true })
-      await flushPromises()
-      expect(wrapper.text()).not.toContain('Freegle is volunteer-run')
-    })
-
-    it('does not call bandit choose in birthday mode', async () => {
-      createWrapper({ birthdayMode: true })
-      await flushPromises()
-      expect(mockApi.bandit.choose).not.toHaveBeenCalled()
-    })
   })
 
   describe('amount selection', () => {
@@ -376,21 +324,6 @@ describe('DonationAskStripe', () => {
   })
 
   describe('props passed to children', () => {
-    it('passes groupid correctly', async () => {
-      mockApi.bandit.choose.mockResolvedValue({ variant: 'traditional-5' })
-      const wrapper = createWrapper({ groupid: 123 })
-      await flushPromises()
-      const introText = wrapper.find('.donation-intro-text')
-      expect(introText.exists()).toBe(true)
-    })
-
-    it('passes groupname correctly', async () => {
-      mockApi.bandit.choose.mockResolvedValue({ variant: 'traditional-5' })
-      const wrapper = createWrapper({ groupname: 'My Group' })
-      await flushPromises()
-      expect(wrapper.find('.donation-intro-text').exists()).toBe(true)
-    })
-
     it('passes targetMet correctly', async () => {
       mockApi.bandit.choose.mockResolvedValue({ variant: 'traditional-5' })
       const wrapper = createWrapper({ targetMet: true })

@@ -2,14 +2,9 @@
 
 namespace Tests\Unit\Services;
 
-use App\Models\Group;
 use App\Models\Message;
-use App\Models\MessageGroup;
-use App\Models\MessageOutcome;
 use App\Services\AutoApproveService;
-use App\Services\ContentCheckService;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 class AutoApproveServiceTest extends TestCase
@@ -35,47 +30,31 @@ class AutoApproveServiceTest extends TestCase
 
     public function test_approves_message_pending_over_48_hours(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        // Membership added 72 hours ago (exceeds 48h threshold).
-        $this->createMembership($user, $group, [
-            'added' => now()->subHours(72),
+        $user = $this->createTestUser(['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, [
+            'collection' => Message::COLLECTION_PENDING,
+            'arrival' => now()->subHours(49),
+            'contentcheck_checked_at' => now(),
         ]);
-
-        $message = $this->createTestMessage($user, $group);
-
-        // Set message to pending and arrival 49 hours ago.
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
 
         $stats = $this->service->process();
 
         $this->assertGreaterThanOrEqual(1, $stats['approved']);
 
-        // Verify messages_groups updated to Approved.
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->first();
-        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection);
-        $this->assertNull($mg->approvedby);
+        $updated = DB::table('messages')->where('id', $message->id)->first();
+        $this->assertEquals(Message::COLLECTION_APPROVED, $updated->collection);
+        $this->assertNull($updated->approvedby);
 
-        // Auto-approve logs only Autoapproved — not the generic Approved entry.
+        // Auto-approve logs only Autoapproved — not the generic Approved entry approve()
+        // would also write in a moderator-driven approval.
         $this->assertDatabaseMissing('logs', [
             'msgid' => $message->id,
-            'groupid' => $group->id,
             'type' => 'Message',
             'subtype' => 'Approved',
         ]);
         $this->assertDatabaseHas('logs', [
             'msgid' => $message->id,
-            'groupid' => $group->id,
             'type' => 'Message',
             'subtype' => 'Autoapproved',
         ]);
@@ -83,61 +62,101 @@ class AutoApproveServiceTest extends TestCase
 
     public function test_does_not_auto_approve_a_vague_item_leaving_it_pending(): void
     {
-        // A vague item ("anything") must be routed to Pending for a moderator to review, even for
-        // a long-standing member whose posts would otherwise auto-approve after 48h.
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['added' => now()->subHours(72)]);
+        $user = $this->createTestUser(['added' => now()->subHours(72)]);
 
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'type' => 'Wanted',
             'subject' => 'WANTED: Anything (TestLocation)',
+            'collection' => Message::COLLECTION_PENDING,
+            'arrival' => now()->subHours(49),
+            'contentcheck_checked_at' => now(),
         ]);
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
 
         $this->service->process();
 
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->first();
+        $updated = DB::table('messages')->where('id', $message->id)->first();
         $this->assertEquals(
-            MessageGroup::COLLECTION_PENDING,
-            $mg->collection,
+            Message::COLLECTION_PENDING,
+            $updated->collection,
             'a vague-item post must stay Pending for moderator review, not auto-approve'
+        );
+    }
+
+    public function test_does_not_auto_approve_message_with_spam_collection(): void
+    {
+        // A message classified Spam is never a Pending candidate: there is one collection
+        // per message now, so process()'s own WHERE collection = Pending already excludes
+        // it outright — it must never be touched, whatever its age.
+        $user = $this->createTestUser(['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, [
+            'collection' => Message::COLLECTION_SPAM,
+            'arrival' => now()->subHours(49),
+            'contentcheck_checked_at' => now(),
+        ]);
+
+        $this->service->process();
+
+        $updated = DB::table('messages')->where('id', $message->id)->first();
+        $this->assertEquals(
+            Message::COLLECTION_SPAM,
+            $updated->collection,
+            'a Spam message must never be auto-approved'
+        );
+        $this->assertDatabaseMissing('logs', [
+            'msgid' => $message->id,
+            'type' => 'Message',
+            'subtype' => 'Autoapproved',
+        ]);
+    }
+
+    public function test_does_not_auto_approve_an_already_taken_message(): void
+    {
+        // process()'s own candidate query excludes anything with a Taken/Received outcome
+        // directly — approving it would re-list a gone item and fire a "newly reached" mail.
+        $user = $this->createTestUser(['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, [
+            'collection' => Message::COLLECTION_PENDING,
+            'arrival' => now()->subHours(49),
+            'contentcheck_checked_at' => now(),
+        ]);
+
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $message->id, 'outcome' => 'Taken', 'timestamp' => now(),
+        ]);
+
+        $this->service->process();
+
+        $updated = DB::table('messages')->where('id', $message->id)->first();
+        $this->assertEquals(
+            Message::COLLECTION_PENDING,
+            $updated->collection,
+            'a message already Taken must not be auto-approved'
         );
     }
 
     public function test_auto_approve_mails_newly_reached_members_of_a_done_rippling_post(): void
     {
-        // A rippling post auto-approved on a group AFTER its reach has finished expanding
-        // ('done') must still mail the now-reachable immediate members (the ExpandService tick
-        // loop won't revisit a 'done' post) — closing the post-'done' approval gap.
+        // A rippling post auto-approved AFTER its reach has finished expanding ('done') must
+        // still mail the now-reachable immediate members (the ExpandService tick loop won't
+        // revisit a 'done' post) — closing the post-'done' approval gap.
         config(['freegle.digest.immediate_allowlist' => '*']);
 
-        $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group, ['added' => now()->subHours(72)]);
-        $member = $this->createTestUser();
-        $this->createMembership($member, $group, ['added' => now()->subHours(72)]); // immediate by default
-        $member->settings = ['mylocation' => ['lat' => 51.5, 'lng' => -0.1]];
-        $member->save();
+        $poster = $this->createTestUser(['added' => now()->subHours(72)]);
+        $member = $this->createTestUser([
+            'added' => now()->subHours(72),
+            'emailfrequency' => -1, // immediate — required to be a mailNewlyReachedForPost candidate
+            'settings' => ['mylocation' => ['lat' => 51.5, 'lng' => -0.1]],
+        ]);
 
-        $message = $this->createTestMessage($poster, $group);
-        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $group->id)->update([
-            'collection' => MessageGroup::COLLECTION_PENDING,
+        $message = $this->createTestMessage($poster, [
+            'collection' => Message::COLLECTION_PENDING,
             'arrival' => now()->subHours(49),
             'contentcheck_checked_at' => now(),
         ]);
-        // Reach (status 'done') covering the member's location; the stored
-        // label is the record and the faked routing server admits the point.
+        // Reach (status 'done') covering the member's location; the stored label is the
+        // record and the faked routing server admits the point.
         DB::statement(
             "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
             . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
@@ -170,17 +189,15 @@ class AutoApproveServiceTest extends TestCase
     {
         config(['freegle.digest.immediate_allowlist' => '*']);
 
-        $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group, ['added' => now()->subHours(72)]);
-        $member = $this->createTestUser();
-        $this->createMembership($member, $group, ['added' => now()->subHours(72)]);
-        $member->settings = ['mylocation' => ['lat' => 51.5, 'lng' => -0.1]];
-        $member->save();
+        $poster = $this->createTestUser(['added' => now()->subHours(72)]);
+        $member = $this->createTestUser([
+            'added' => now()->subHours(72),
+            'emailfrequency' => -1,
+            'settings' => ['mylocation' => ['lat' => 51.5, 'lng' => -0.1]],
+        ]);
 
-        $message = $this->createTestMessage($poster, $group);
-        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $group->id)->update([
-            'collection' => MessageGroup::COLLECTION_APPROVED,
+        $message = $this->createTestMessage($poster, [
+            'collection' => Message::COLLECTION_APPROVED,
             'arrival' => now()->subHours(1),
         ]);
         DB::statement(
@@ -203,83 +220,24 @@ class AutoApproveServiceTest extends TestCase
         );
     }
 
-    public function test_does_not_auto_approve_message_marked_spam_on_another_group(): void
-    {
-        // A message that is Pending (and otherwise eligible) on one group but
-        // marked Spam on another must NOT be auto-approved on its Pending group
-        // (Discourse #9654: spam surfaces in the Pending queue but is never
-        // auto-sent by the 48h fallback).
-        $user = $this->createTestUser();
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $this->createMembership($user, $groupA, ['added' => now()->subHours(72)]);
-        $this->createMembership($user, $groupB, ['added' => now()->subHours(72)]);
-
-        $message = $this->createTestMessage($user, $groupA);
-
-        // Pending on group A — would be eligible on its own.
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $groupA->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
-
-        // Same message marked Spam on group B.
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $groupB->id,
-            'collection' => MessageGroup::COLLECTION_SPAM,
-            'arrival' => now()->subHours(49),
-        ]);
-
-        $this->service->process();
-
-        // The Pending row on group A must remain Pending — not auto-approved.
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $groupA->id)
-            ->first();
-        $this->assertEquals(
-            MessageGroup::COLLECTION_PENDING,
-            $mg->collection,
-            'A message marked Spam on any group must not be auto-approved on its Pending groups'
-        );
-    }
-
     public function test_dry_run_does_not_modify_database(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, [
-            'added' => now()->subHours(72),
+        $user = $this->createTestUser(['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, [
+            'collection' => Message::COLLECTION_PENDING,
+            'arrival' => now()->subHours(49),
+            'contentcheck_checked_at' => now(),
         ]);
-
-        $message = $this->createTestMessage($user, $group);
-
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
 
         $stats = $this->service->process(dryRun: true);
 
         $this->assertGreaterThanOrEqual(1, $stats['approved']);
 
-        // Message should still be pending.
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
+        $this->assertDatabaseHas('messages', [
+            'id' => $message->id,
+            'collection' => Message::COLLECTION_PENDING,
         ]);
-
-        // No log entries should exist.
         $this->assertDatabaseMissing('logs', [
             'msgid' => $message->id,
             'type' => 'Message',
@@ -289,54 +247,33 @@ class AutoApproveServiceTest extends TestCase
 
     public function test_skips_message_not_pending_long_enough(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, [
-            'added' => now()->subHours(72),
+        $user = $this->createTestUser(['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, [
+            'collection' => Message::COLLECTION_PENDING,
+            'arrival' => now()->subHours(24),
+            'contentcheck_checked_at' => now(),
         ]);
-
-        $message = $this->createTestMessage($user, $group);
-
-        // Set message to pending but only 24 hours ago (under 48h threshold).
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(24),
-                'contentcheck_checked_at' => now(),
-            ]);
 
         $this->service->process();
 
-        // Message should still be pending.
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
+        $this->assertDatabaseHas('messages', [
+            'id' => $message->id,
+            'collection' => Message::COLLECTION_PENDING,
         ]);
     }
 
     public function test_skips_message_with_recent_logs(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, [
-            'added' => now()->subHours(72),
+        $user = $this->createTestUser(['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, [
+            'collection' => Message::COLLECTION_PENDING,
+            'arrival' => now()->subHours(49),
+            'contentcheck_checked_at' => now(),
         ]);
 
-        $message = $this->createTestMessage($user, $group);
-
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
-
-        // Add a recent log entry (within 48 hours).
+        // A recent hold/unhold log (within 48 hours) defers the fallback — V1 parity.
         DB::table('logs')->insert([
             'timestamp' => now()->subHours(1),
             'type' => 'Message',
@@ -346,499 +283,48 @@ class AutoApproveServiceTest extends TestCase
 
         $this->service->process();
 
-        // Message should still be pending (skipped due to recent logs).
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
+        $this->assertDatabaseHas('messages', [
+            'id' => $message->id,
+            'collection' => Message::COLLECTION_PENDING,
         ]);
     }
 
-    public function test_skips_closed_group(): void
+    public function test_skips_new_account_under_48_hours(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup([
-            'settings' => ['closed' => true],
-        ]);
-        $this->createMembership($user, $group, [
-            'added' => now()->subHours(72),
-        ]);
+        // Account created only 24 hours ago — under ACCOUNT_HOURS. Replaces V1's per-group
+        // membership-age gate: there is no receiving group to be a member of long enough on,
+        // so the account's own creation time (users.added) is the gate.
+        $user = $this->createTestUser(['added' => now()->subHours(24)]);
 
-        $message = $this->createTestMessage($user, $group);
-
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
-
-        $this->service->process();
-
-        // Message should still be pending (group is closed).
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-        ]);
-    }
-
-    public function test_skips_group_with_publish_false(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup([
-            'settings' => ['publish' => false],
-        ]);
-        $this->createMembership($user, $group, [
-            'added' => now()->subHours(72),
-        ]);
-
-        $message = $this->createTestMessage($user, $group);
-
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
-
-        $this->service->process();
-
-        // Message should still be pending (group has publish=false).
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-        ]);
-    }
-
-    public function test_skips_group_with_autofunctionoverride(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup([
-            'autofunctionoverride' => 1,
-        ]);
-        $this->createMembership($user, $group, [
-            'added' => now()->subHours(72),
-        ]);
-
-        $message = $this->createTestMessage($user, $group);
-
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
-
-        $this->service->process();
-
-        // Message should still be pending (autofunctionoverride).
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-        ]);
-    }
-
-    /**
-     * A rippled-in post (messages_groups.rippled_in = 1) already Approved on its origin
-     * group is fast-tracked on nearby groups after the short veto window — even though the
-     * poster is NOT a member of the nearby group (the membership gate would block it, and
-     * the 48h fallback would leave it Pending forever otherwise).
-     */
-    public function test_fast_tracks_rippled_in_post_already_approved_on_origin(): void
-    {
-        $user = $this->createTestUser();
-        $originGroup = $this->createTestGroup();
-        $nearbyGroup = $this->createTestGroup();
-        // Member of their origin group only — NOT the nearby group its reach rippled into.
-        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
-
-        $message = $this->createTestMessage($user, $originGroup);
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
-
-        // Rippled into the nearby group 2h ago (past the 1h veto window), still Pending.
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
-            'msgtype' => 'Offer', 'rippled_in' => 1,
+        $message = $this->createTestMessage($user, [
+            'collection' => Message::COLLECTION_PENDING,
+            'arrival' => now()->subHours(49),
+            'contentcheck_checked_at' => now(),
         ]);
 
         $this->service->process();
 
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
-        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
-            'rippled-in post vetted on origin is fast-tracked past the membership gate');
-    }
-
-    /**
-     * A rippled-in post is auto-approved after the veto window even when a recent logs row
-     * exists for the message (e.g. the Approved/Autoapproved row created by ProcessBackgroundTasksCommand
-     * or AutoApproveService when the post was approved on its origin group).
-     *
-     * Bug: the $recentLogs check in process() was applied to ALL candidates including rippled-in rows.
-     * It found the origin-approval log (<48h old) and skipped auto-approval, keeping rippled-in posts
-     * Pending for up to 48h instead of the 1h veto window — then approving them all at once, which is
-     * what mods observed as "~30 posts disappeared suddenly" (Discourse 9812 post 3).
-     */
-    public function test_fast_tracks_rippled_in_despite_recent_origin_approval_log(): void
-    {
-        config(['freegle.ripple.rippled_in_pending_hours' => 1]);
-
-        $user = $this->createTestUser();
-        $originGroup = $this->createTestGroup();
-        $nearbyGroup = $this->createTestGroup();
-        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
-
-        $message = $this->createTestMessage($user, $originGroup);
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
-
-        // Simulate the logs row that ProcessBackgroundTasksCommand inserts when a mod approves
-        // (or AutoApproveService inserts as 'Autoapproved') on the origin group. This is always
-        // present in production and is what the $recentLogs check finds.
-        DB::table('logs')->insert([
-            'timestamp' => now()->subHours(2),
-            'type' => 'Message',
-            'subtype' => 'Autoapproved',
-            'msgid' => $message->id,
-            'groupid' => $originGroup->id,
-            'user' => $user->id,
-        ]);
-
-        // Rippled into the nearby group 90 minutes ago — past the 1h veto window.
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subMinutes(90),
-            'msgtype' => 'Offer', 'rippled_in' => 1,
-        ]);
-
-        $this->service->process();
-
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
-        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
-            'rippled-in post must be auto-approved after veto window regardless of origin-approval logs');
-    }
-
-    /** Within the short veto window a rippled-in post stays Pending (mods can still reject). */
-    public function test_holds_rippled_in_post_within_veto_window(): void
-    {
-        // A mod-veto window only exists when configured > 0 (default is now 0 = approve at
-        // ripple-in). Set a 1h window so a just-rippled-in post is held within it.
-        config(['freegle.ripple.rippled_in_pending_hours' => 1]);
-        $user = $this->createTestUser();
-        $originGroup = $this->createTestGroup();
-        $nearbyGroup = $this->createTestGroup();
-        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
-
-        $message = $this->createTestMessage($user, $originGroup);
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
-
-        // Rippled in only 30 minutes ago — inside the veto window.
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subMinutes(30),
-            'msgtype' => 'Offer', 'rippled_in' => 1,
-        ]);
-
-        $this->service->process();
-
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-        ]);
-    }
-
-    /**
-     * With ripple.rippled_in_pending_hours = 0 (experiment mode) a rippled-in post already
-     * Approved on its origin auto-approves immediately, keeping moderation load off the
-     * receiving groups during a reach experiment.
-     */
-    public function test_rippled_in_pending_hours_zero_auto_approves_immediately(): void
-    {
-        config(['freegle.ripple.rippled_in_pending_hours' => 0]);
-
-        $user = $this->createTestUser();
-        $originGroup = $this->createTestGroup();
-        $nearbyGroup = $this->createTestGroup();
-        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
-
-        $message = $this->createTestMessage($user, $originGroup);
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
-
-        // Rippled in 2 minutes ago — inside the default 1h window, but 0h approves immediately.
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subMinutes(2),
-            'msgtype' => 'Offer', 'rippled_in' => 1,
-        ]);
-
-        $this->service->process();
-
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
-        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
-            'rippled_in_pending_hours=0 auto-approves a just-rippled-in post immediately');
-    }
-
-    /** A rippled-in post NOT yet Approved on its origin group is never fast-tracked. */
-    public function test_does_not_fast_track_rippled_in_when_origin_not_approved(): void
-    {
-        $user = $this->createTestUser();
-        $originGroup = $this->createTestGroup();
-        $nearbyGroup = $this->createTestGroup();
-        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
-
-        $message = $this->createTestMessage($user, $originGroup);
-        // Origin still Pending (recent) — not yet vetted.
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
-            ->update(['collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()]);
-
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
-            'msgtype' => 'Offer', 'rippled_in' => 1,
-        ]);
-
-        $this->service->process();
-
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-        ]);
-    }
-
-    /**
-     * The fast-track needs the ORIGIN copy to be Approved: that is the vetting the receiving
-     * group relies on. Another rippled-in copy that a neighbouring group's moderator approved
-     * is not that vetting, so it must not unlock the veto window elsewhere (Discourse 10102).
-     */
-    public function test_does_not_fast_track_rippled_in_when_only_another_rippled_in_copy_is_approved(): void
-    {
-        $user = $this->createTestUser();
-        $originGroup = $this->createTestGroup();
-        $approvedNearbyGroup = $this->createTestGroup();
-        $pendingNearbyGroup = $this->createTestGroup();
-        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
-
-        $message = $this->createTestMessage($user, $originGroup);
-        // Origin still Pending (recent) — not yet vetted.
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
-            ->update(['collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()]);
-
-        // One rippled-in copy a moderator on that group approved by hand.
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id, 'groupid' => $approvedNearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(2),
-            'msgtype' => 'Offer', 'rippled_in' => 1,
-        ]);
-        // Another rippled-in copy still waiting.
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id, 'groupid' => $pendingNearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
-            'msgtype' => 'Offer', 'rippled_in' => 1,
-        ]);
-
-        $this->service->process();
-
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id, 'groupid' => $pendingNearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-        ]);
-    }
-
-    /**
-     * A rippled-in post that has already been collected (a Taken/Received outcome exists) is
-     * never auto-approved into the receiving group - approving it would re-list a gone item and
-     * fire a "newly reached" mail. The take normally retires the pending rows, but a take via a
-     * non-Go path leaves them, so this guard is the catch-all.
-     */
-    public function test_does_not_auto_approve_rippled_in_post_already_taken(): void
-    {
-        $user = $this->createTestUser();
-        $originGroup = $this->createTestGroup();
-        $nearbyGroup = $this->createTestGroup();
-        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
-
-        $message = $this->createTestMessage($user, $originGroup);
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
-
-        // Rippled into the nearby group 2h ago (past the 1h veto window), still Pending.
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
-            'msgtype' => 'Offer', 'rippled_in' => 1,
-        ]);
-
-        // The item has been collected.
-        DB::table('messages_outcomes')->insert([
-            'msgid' => $message->id, 'outcome' => 'Taken', 'timestamp' => now(),
-        ]);
-
-        $this->service->process();
-
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-        ]);
-    }
-
-    /**
-     * Set up a post approved on its origin group and rippled into a nearby group, with the
-     * poster holding $status on the nearby group. Returns [message, nearby group].
-     */
-    private function seedRippledInPostWithPostingStatus(?string $status): array
-    {
-        $user = $this->createTestUser();
-        $originGroup = $this->createTestGroup();
-        $nearbyGroup = $this->createTestGroup();
-        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
-        $this->createMembership($user, $nearbyGroup, [
-            'added' => now()->subHours(72),
-            'ourPostingStatus' => $status,
-        ]);
-
-        $message = $this->createTestMessage($user, $originGroup);
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
-
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
-            'msgtype' => 'Offer', 'rippled_in' => 1,
-        ]);
-
-        return [$message, $nearbyGroup];
-    }
-
-    /**
-     * A stored MODERATED on the receiving group does not stop the fast-track. It reads as the
-     * group's own view of this member, but the v1 join path wrote MODERATED as its default,
-     * so 1.95M of the 1.96M live rows carrying it record no moderator's decision. Treating it
-     * as one (briefly live, 2026-09-04) would have parked every long-standing member of a
-     * neighbouring group in that group's pending queue.
-     */
-    public function test_fast_tracks_rippled_in_when_poster_has_a_stored_moderated_status(): void
-    {
-        [$message, $nearbyGroup] = $this->seedRippledInPostWithPostingStatus('MODERATED');
-
-        $this->service->process();
-
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
-        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
-            'a stored MODERATED is the v1 default, not a decision, so it does not block the fast-track');
-    }
-
-    /** PROHIBITED stops this person posting to the group, so their rippled-in copy is not approved either. */
-    public function test_does_not_fast_track_rippled_in_when_poster_is_prohibited_on_that_group(): void
-    {
-        [$message, $nearbyGroup] = $this->seedRippledInPostWithPostingStatus('PROHIBITED');
-
-        $this->service->process();
-
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-        ]);
-    }
-
-    /**
-     * Rippling creates memberships itself with no posting status set. A blank status is not a
-     * moderation decision, so the fast-track still applies. Were it read as "moderated", every
-     * rippled-in post from everyone rippling has ever joined to a group would sit Pending.
-     */
-    public function test_fast_tracks_rippled_in_when_membership_has_no_posting_status(): void
-    {
-        [$message, $nearbyGroup] = $this->seedRippledInPostWithPostingStatus(null);
-
-        $this->service->process();
-
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
-        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
-            'a membership with no posting status does not block the fast-track');
-    }
-
-    public function test_skips_new_member_under_48_hours(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        // Membership added only 24 hours ago.
-        $this->createMembership($user, $group, [
-            'added' => now()->subHours(24),
-        ]);
-
-        $message = $this->createTestMessage($user, $group);
-
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
-
-        $this->service->process();
-
-        // Message should still be pending (member too new).
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
+        $this->assertDatabaseHas('messages', [
+            'id' => $message->id,
+            'collection' => Message::COLLECTION_PENDING,
         ]);
     }
 
     public function test_records_ham_for_spam_message(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, [
-            'added' => now()->subHours(72),
+        $user = $this->createTestUser(['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, [
+            'spamtype' => 'SpamAssassin',
+            'collection' => Message::COLLECTION_PENDING,
+            'arrival' => now()->subHours(49),
+            'contentcheck_checked_at' => now(),
         ]);
-
-        $message = $this->createTestMessage($user, $group);
-
-        // Mark as spam type. 'Spam' is not a value in production's spamtype ENUM -
-        // it only worked while the migrations declared this column as a varchar.
-        DB::table('messages')->where('id', $message->id)->update(['spamtype' => 'SpamAssassin']);
-
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
 
         $stats = $this->service->process();
 
         $this->assertGreaterThanOrEqual(1, $stats['approved']);
 
-        // Verify Ham was recorded in messages_spamham.
         $this->assertDatabaseHas('messages_spamham', [
             'msgid' => $message->id,
             'spamham' => 'Ham',
@@ -847,95 +333,45 @@ class AutoApproveServiceTest extends TestCase
 
     public function test_skips_held_message(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, [
-            'added' => now()->subHours(72),
+        // messages.heldby is the only hold column now — V1's per-group messages_groups.heldby
+        // is gone with the group dimension.
+        $user = $this->createTestUser(['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, [
+            'collection' => Message::COLLECTION_PENDING,
+            'arrival' => now()->subHours(49),
+            'heldby' => $user->id,
+            'contentcheck_checked_at' => now(),
         ]);
-
-        $message = $this->createTestMessage($user, $group);
-
-        // V1 checks messages_groups.heldby (per-group hold), not messages.heldby.
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'heldby' => $user->id,
-                'contentcheck_checked_at' => now(),
-            ]);
 
         $this->service->process();
 
-        // Message should still be pending (held by a mod).
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
+        $this->assertDatabaseHas('messages', [
+            'id' => $message->id,
+            'collection' => Message::COLLECTION_PENDING,
         ]);
     }
 
     public function test_skips_soft_deleted_message(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, [
-            'added' => now()->subHours(72),
+        $user = $this->createTestUser(['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, [
+            'collection' => Message::COLLECTION_PENDING,
+            'arrival' => now()->subHours(49),
+            // The poster soft-deleted their own message shortly after posting.
+            'deleted' => now()->subHours(47),
+            'contentcheck_checked_at' => now(),
         ]);
-
-        $message = $this->createTestMessage($user, $group);
-
-        // User soft-deleted their message shortly after posting.
-        DB::table('messages')->where('id', $message->id)->update(['deleted' => now()->subHours(47)]);
-
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
 
         $this->service->process();
 
-        // Soft-deleted messages must not be auto-approved — mods don't see them
-        // in the queue, so an Autoapproved log would appear with no visible review.
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
+        // A soft-deleted message must never be auto-approved — moderators don't see it in
+        // their queue, so an Autoapproved log would appear with no visible review.
+        $this->assertDatabaseHas('messages', [
+            'id' => $message->id,
+            'collection' => Message::COLLECTION_PENDING,
         ]);
-        $this->assertDatabaseMissing('logs', [
-            'msgid' => $message->id,
-            'type' => 'Message',
-            'subtype' => 'Autoapproved',
-        ]);
-    }
-
-    public function test_skips_messages_groups_deleted(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, [
-            'added' => now()->subHours(72),
-        ]);
-
-        $message = $this->createTestMessage($user, $group);
-
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'deleted' => 1,
-                'contentcheck_checked_at' => now(),
-            ]);
-
-        $this->service->process();
-
         $this->assertDatabaseMissing('logs', [
             'msgid' => $message->id,
             'type' => 'Message',
@@ -945,41 +381,27 @@ class AutoApproveServiceTest extends TestCase
 
     public function test_whitelists_subject_for_subject_used_for_different_groups(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, [
-            'added' => now()->subHours(72),
-        ]);
+        $user = $this->createTestUser(['added' => now()->subHours(72)]);
 
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
+            // Historical bracket-prefixed subject shape; SubjectUsedForDifferentGroups is a
+            // stored spamtype ENUM value the service still checks verbatim, not a live
+            // per-group concept.
             'subject' => '[TestGroup] OFFER: Sofa (Southend)',
-        ]);
-
-        // Mark with SubjectUsedForDifferentGroups spamtype.
-        DB::table('messages')->where('id', $message->id)->update([
             'spamtype' => 'SubjectUsedForDifferentGroups',
+            'collection' => Message::COLLECTION_PENDING,
+            'arrival' => now()->subHours(49),
+            'contentcheck_checked_at' => now(),
         ]);
-
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
 
         $stats = $this->service->process();
 
         $this->assertGreaterThanOrEqual(1, $stats['approved']);
 
-        // Verify subject was whitelisted (pruned: strips [group] and (location)).
         $this->assertDatabaseHas('spam_whitelist_subjects', [
             'subject' => AutoApproveService::getPrunedSubject('[TestGroup] OFFER: Sofa (Southend)'),
             'comment' => 'Marked as not spam',
         ]);
-
-        // Also verify Ham was recorded.
         $this->assertDatabaseHas('messages_spamham', [
             'msgid' => $message->id,
             'spamham' => 'Ham',
@@ -988,248 +410,50 @@ class AutoApproveServiceTest extends TestCase
 
     public function test_does_not_whitelist_subject_for_other_spamtypes(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, [
-            'added' => now()->subHours(72),
-        ]);
+        $user = $this->createTestUser(['added' => now()->subHours(72)]);
 
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'subject' => 'OFFER: Sofa',
-        ]);
-
-        // Any production spamtype ENUM value other than SubjectUsedForDifferentGroups.
-        // 'Spam' is not one of them and only worked while this was a varchar column.
-        DB::table('messages')->where('id', $message->id)->update([
             'spamtype' => 'SpamAssassin',
+            'collection' => Message::COLLECTION_PENDING,
+            'arrival' => now()->subHours(49),
+            'contentcheck_checked_at' => now(),
         ]);
-
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
 
         $this->service->process();
 
-        // Should NOT whitelist subject for non-SubjectUsedForDifferentGroups spamtype.
         $this->assertDatabaseMissing('spam_whitelist_subjects', [
             'subject' => AutoApproveService::getPrunedSubject('OFFER: Sofa'),
         ]);
-
-        // But Ham should still be recorded.
         $this->assertDatabaseHas('messages_spamham', [
             'msgid' => $message->id,
             'spamham' => 'Ham',
         ]);
     }
 
-    public function test_multi_group_message_approved_independently(): void
-    {
-        $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-        $this->createMembership($user, $group1, [
-            'added' => now()->subHours(72),
-        ]);
-        $this->createMembership($user, $group2, [
-            'added' => now()->subHours(72),
-        ]);
-
-        $message = $this->createTestMessage($user, $group1);
-
-        // Add message to second group too.
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id,
-            'groupid' => $group2->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now()->subHours(49),
-            'contentcheck_checked_at' => now(),
-        ]);
-
-        // Group1: pending 49h (should approve). Group2: pending 49h (should approve).
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group1->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
-
-        $stats = $this->service->process();
-
-        $this->assertGreaterThanOrEqual(2, $stats['approved']);
-
-        // Both groups should be approved.
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id,
-            'groupid' => $group1->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-        ]);
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id,
-            'groupid' => $group2->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-        ]);
-    }
-
-    public function test_multi_group_one_skipped_one_approved(): void
-    {
-        $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup([
-            'settings' => ['closed' => true],
-        ]);
-        $this->createMembership($user, $group1, [
-            'added' => now()->subHours(72),
-        ]);
-        $this->createMembership($user, $group2, [
-            'added' => now()->subHours(72),
-        ]);
-
-        $message = $this->createTestMessage($user, $group1);
-
-        // Add message to closed group too.
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id,
-            'groupid' => $group2->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now()->subHours(49),
-            'contentcheck_checked_at' => now(),
-        ]);
-
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)
-            ->where('groupid', $group1->id)
-            ->update([
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(49),
-                'contentcheck_checked_at' => now(),
-            ]);
-
-        $this->service->process();
-
-        // Group1 should be approved (open group).
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id,
-            'groupid' => $group1->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-        ]);
-
-        // Group2 should still be pending (closed group).
-        $this->assertDatabaseHas('messages_groups', [
-            'msgid' => $message->id,
-            'groupid' => $group2->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-        ]);
-    }
-
     public function test_get_pruned_subject(): void
     {
-        // Strip location in parentheses.
-        $this->assertEquals('OFFER: Sofa', AutoApproveService::getPrunedSubject('OFFER: Sofa (Southend)'));
-
-        // Strip group name in brackets.
-        $this->assertEquals('OFFER: Table', AutoApproveService::getPrunedSubject('[Essex] OFFER: Table'));
-
-        // Strip both.
-        $pruned = AutoApproveService::getPrunedSubject('[Essex] OFFER: Sofa (Southend)');
-        $this->assertEquals('OFFER: Sofa', $pruned);
-
-        // No stripping needed.
-        $this->assertEquals('OFFER: Chair', AutoApproveService::getPrunedSubject('OFFER: Chair'));
+        $this->assertEquals(
+            'OFFER: Sofa',
+            trim(AutoApproveService::getPrunedSubject('OFFER: Sofa (Southend)'))
+        );
+        $this->assertEquals(
+            'OFFER: Sofa',
+            trim(AutoApproveService::getPrunedSubject('[TestGroup] OFFER: Sofa'))
+        );
+        $this->assertEquals(
+            'OFFER: Sofa',
+            trim(AutoApproveService::getPrunedSubject('[TestGroup] OFFER: Sofa (Southend)'))
+        );
+        $this->assertEquals(
+            'OFFER: Sofa',
+            trim(AutoApproveService::getPrunedSubject('OFFER: Sofa'))
+        );
     }
 
     public function test_constants(): void
     {
         $this->assertEquals(48, AutoApproveService::PENDING_HOURS);
-        $this->assertEquals(48, AutoApproveService::MEMBERSHIP_HOURS);
+        $this->assertEquals(48, AutoApproveService::ACCOUNT_HOURS);
     }
-
-    /**
-     * A rippled-in copy held because it breaks THAT group's own rules must stay held. The
-     * veto window is a "no moderator objected" timer, and a rule the group wrote down is an
-     * objection - auto-approving past it would put the post in front of members anyway,
-     * which is the whole thing the check exists to stop (Discourse 10102).
-     */
-    public function test_does_not_fast_track_a_rippled_in_post_held_by_the_groups_own_rules(): void
-    {
-        $user = $this->createTestUser();
-        $originGroup = $this->createTestGroup();
-        $nearbyGroup = $this->createTestGroup();
-        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
-
-        $message = $this->createTestMessage($user, $originGroup);
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
-
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
-            'msgtype' => 'Offer', 'rippled_in' => 1,
-            'contentcheck_checked_at' => now()->subHours(2),
-            // The check name the group-rules path really writes; a made-up name would pass
-            // for the wrong reason, because nothing would recognise it.
-            'contentcheck_reasons' => json_encode([[
-                'check' => ContentCheckService::CHECK_PER_GROUP_WORRY,
-                'action' => 'flag',
-                'keyword' => 'rabbit',
-                'detail' => "Matched per-group worry word 'rabbit'",
-            ]]),
-        ]);
-
-        $this->service->process();
-
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
-        $this->assertEquals(MessageGroup::COLLECTION_PENDING, $mg->collection,
-            'a copy held by the group\'s own rules waits for a moderator, not for the clock');
-    }
-
-    /**
-     * The periodic content check annotates every Pending row it visits - GroupModerated on a
-     * fully moderated group, MemberModerated on a moderated member - and those are flags
-     * describing the row, not a hold by the group's rules. A rippled-in copy Pending for some
-     * other reason that picked up such a flag must still be released by the veto window. On
-     * 2026-09-04 five copies sat Pending for hours with only that flag on them, because the
-     * fast-track read "has reasons" as "held by this group's rules".
-     */
-    public function test_fast_tracks_a_rippled_in_post_that_only_carries_a_content_check_flag(): void
-    {
-        $user = $this->createTestUser();
-        $originGroup = $this->createTestGroup();
-        $nearbyGroup = $this->createTestGroup();
-        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
-
-        $message = $this->createTestMessage($user, $originGroup);
-        DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
-
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
-            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
-            'msgtype' => 'Offer', 'rippled_in' => 1,
-            'contentcheck_checked_at' => now()->subHours(2),
-            'contentcheck_reasons' => json_encode([[
-                'check' => ContentCheckService::CHECK_GROUP_MODERATED,
-                'category' => null,
-                'action' => 'flag',
-                'detail' => "This group moderates all posts, whatever the member's setting",
-            ]]),
-        ]);
-
-        $this->service->process();
-
-        $mg = DB::table('messages_groups')
-            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->first();
-        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
-            'a content-check flag is a description of the row, not a hold by the group\'s rules');
-    }
-
 }

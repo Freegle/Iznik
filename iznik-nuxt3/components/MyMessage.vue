@@ -54,28 +54,7 @@
                 <v-icon icon="map-marker-alt" class="me-1" />{{ postLocation }}
               </span>
               <span
-                v-if="postLocation && messageGroups.length"
-                class="title-sep"
-                >·</span
-              >
-              <!-- No home-community marker here: this is the member's own
-                   post, so which community it started on is not news to them.
-                   One name at a time: the row shares its width with the
-                   location, the age and the id, which leaves room for about
-                   one community name at this size. The rest are behind the
-                   toggle. -->
-              <ShowMore :items="messageGroups" :limit="1" inline>
-                <template #item="{ item }"
-                  ><nuxt-link
-                    :to="'/explore/' + item.nameshort"
-                    class="group-link"
-                    @click.stop
-                    >{{ item.namedisplay }}</nuxt-link
-                  ></template
-                >
-              </ShowMore>
-              <span
-                v-if="messageGroups.length && timeAgoExpandedDisplay"
+                v-if="postLocation && timeAgoExpandedDisplay"
                 class="title-sep"
                 >·</span
               >
@@ -192,24 +171,6 @@
                     <template v-if="message.area">
                       <v-icon icon="map-marker-alt" class="me-1" />
                       <span>{{ message.area }}</span>
-                    </template>
-                    <template v-if="messageGroups.length">
-                      <span v-if="message.area" class="desktop-sep">·</span>
-                      <ShowMore :items="messageGroups" :limit="3" inline>
-                        <template #item="{ item }"
-                          ><v-icon
-                            v-if="item.isHome"
-                            icon="home"
-                            class="me-1 text-muted"
-                            title="Home community (where this was originally posted)"
-                          /><nuxt-link
-                            :to="'/explore/' + item.nameshort"
-                            class="desktop-group-link"
-                            @click.stop
-                            >{{ item.namedisplay }}</nuxt-link
-                          ></template
-                        >
-                      </ShowMore>
                     </template>
                     <template v-if="timeAgoExpandedDisplay">
                       <span class="desktop-sep">·</span>
@@ -536,14 +497,12 @@ import { useChatStore } from '~/stores/chat'
 import { useUserStore } from '~/stores/user'
 import { useTrystStore } from '~/stores/tryst'
 import { useLocationStore } from '~/stores/location'
-import { useGroupStore } from '~/stores/group'
 import { timeago } from '~/composables/useTimeFormat'
 import { milesAway } from '~/composables/useDistance'
 import { roadDistance } from '~/composables/useDriveDistance'
 import { onMounted, ref, computed, watch, useRouter, toRef } from '#imports'
 import { useMe } from '~/composables/useMe'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
-import { homeGroupFirst, isHomeGroup } from '~/composables/rippleStatus'
 import ProfileImage from '~/components/ProfileImage'
 import MessageTag from '~/components/MessageTag'
 import OurUploadedImage from '~/components/OurUploadedImage'
@@ -593,7 +552,6 @@ const userStore = useUserStore()
 const trystStore = useTrystStore()
 const composeStore = useComposeStore()
 const locationStore = useLocationStore()
-const groupStore = useGroupStore()
 const router = useRouter()
 const { me } = useMe()
 
@@ -640,12 +598,8 @@ const taken = computed(() => hasOutcome('Taken'))
 const received = computed(() => hasOutcome('Received'))
 const withdrawn = computed(() => hasOutcome('Withdrawn'))
 
-const rejected = computed(() => {
-  if (message.value?.groups) {
-    return message.value.groups.some((g) => g.collection === 'Rejected')
-  }
-  return false
-})
+// A message has one moderation state, not one per group (messages.collection).
+const rejected = computed(() => message.value?.collection === 'Rejected')
 
 const replies = computed(() => {
   if (message.value?.replies) {
@@ -850,21 +804,6 @@ const canrepostatago = computed(() => {
   return message.value?.repostat ? timeago(message.value.repostat) : null
 })
 
-const messageGroups = computed(() => {
-  const raw = message.value?.groups
-  if (raw?.length) {
-    // List the home/origin group first: the list is truncated (ShowMore), so otherwise
-    // the home group could be hidden behind "more". Flag it for the home icon.
-    return homeGroupFirst(raw)
-      .map((g) => {
-        const grp = groupStore?.get(g.groupid)
-        return grp ? { ...grp, isHome: isHomeGroup(g, raw) } : null
-      })
-      .filter(Boolean)
-  }
-  return []
-})
-
 // Methods
 function getUserProfile(userid) {
   return userStore?.byId(userid)?.profile
@@ -888,10 +827,6 @@ const visibilityChanged = async (isVisible) => {
     const msg = await messageStore.fetch(props.id)
     visible.value = true
 
-    // Fetch group info for display
-    if (msg?.groups?.length) {
-      msg.groups.forEach((g) => groupStore.fetch(g.groupid))
-    }
   }
 }
 
@@ -979,17 +914,6 @@ const repost = async (e) => {
   if (msg.location?.name) {
     const locs = await locationStore.typeahead(msg.location.name)
     composeStore.postcode = locs[0]
-  }
-
-  // Set the group from the original message so the dropdown shows the correct
-  // group rather than falling back to groupsnear[0] or a stale localStorage value.
-  // For multi-group originals, default to the most-recent arrival — the user
-  // can still change it in the compose dropdown.
-  if (msg.groups?.length > 0) {
-    const mostRecent = [...msg.groups].sort(
-      (a, b) => new Date(b.arrival || 0) - new Date(a.arrival || 0)
-    )[0]
-    composeStore.group = mostRecent.groupid
   }
 
   await composeStore.setAttachmentsForMessage(0, msg.attachments)
@@ -1276,15 +1200,6 @@ onMounted(async () => {
   opacity: 0.5;
 }
 
-.desktop-group-link {
-  color: $color-gray--normal;
-  text-decoration: none;
-
-  &:hover {
-    text-decoration: underline;
-  }
-}
-
 .desktop-id-link {
   color: $color-gray--base;
   text-decoration: none;
@@ -1541,51 +1456,11 @@ onMounted(async () => {
   }
 
   /* The row stays on one line whatever it holds, so the bar is a fixed
-     height. The community list is the only part that can grow, so it is the
-     only part that gives way; everything else holds its width. */
+     height and every child holds its own width. */
   > * {
     flex-shrink: 0;
   }
 
-  /* Lay the list out as a row of its own so a long community name can
-     ellipsis without taking the "+N more" toggle with it. */
-  :deep(.show-more) {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    flex-shrink: 1;
-  }
-
-  :deep(.show-more__item) {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* ShowMore's "+N more" toggle is a Bootstrap link button. On the bar it
-     takes the white of the text around it, with an underline to keep it
-     reading as something you can tap. Size is inherited so it lines up with
-     the rest of the row. */
-  :deep(.show-more__toggle) {
-    --bs-btn-color: #fff;
-    --bs-btn-hover-color: #fff;
-    --bs-btn-active-color: #fff;
-    color: white;
-    font-size: inherit;
-    text-decoration: underline;
-    flex-shrink: 0;
-    white-space: nowrap;
-  }
-}
-
-.group-link {
-  color: white;
-  text-decoration: none;
-
-  &:hover {
-    text-decoration: underline;
-  }
 }
 
 .title-sep {

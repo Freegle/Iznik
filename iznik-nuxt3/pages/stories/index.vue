@@ -1,0 +1,132 @@
+<template>
+  <client-only>
+    <div class="stories-page">
+      <b-row class="m-0">
+        <b-col cols="12" lg="6" class="p-0" offset-lg="3">
+          <ScrollGrid
+            :items="stories"
+            key-field="id"
+            empty-icon="book-open"
+            empty-text="No stories yet."
+          >
+            <template #header>
+              <div class="page-header">
+                <p class="page-description">
+                  We love to hear why you freegle and what your experiences have
+                  been - and it helps show new freeglers what it's all about. So
+                  please tell us your story!
+                </p>
+                <div class="filter-actions">
+                  <b-button
+                    variant="primary"
+                    size="sm"
+                    class="add-btn"
+                    @click="showAddModal"
+                  >
+                    <v-icon icon="book-open" /> Tell us your story!
+                  </b-button>
+                </div>
+              </div>
+              <h2 class="visually-hidden">List of stories</h2>
+            </template>
+
+            <template #item="{ item: id }">
+              <StoryOne :id="id" />
+            </template>
+
+            <template #empty>
+              <v-icon icon="book-open" class="scroll-grid__empty-icon" />
+              <p>No stories yet.</p>
+              <b-button variant="primary" size="sm" @click="showAddModal">
+                <v-icon icon="book-open" /> Be the first to share your story!
+              </b-button>
+            </template>
+
+            <template #footer>
+              <StoryAddModal
+                v-if="showStoryAddModal"
+                @login-required="loginRequired"
+                @hidden="showStoryAddModal = false"
+              />
+            </template>
+          </ScrollGrid>
+        </b-col>
+      </b-row>
+    </div>
+  </client-only>
+</template>
+<script setup>
+import { defineAsyncComponent } from 'vue'
+import { useStoryStore } from '~/stores/stories'
+import { buildHead } from '~/composables/useBuildHead'
+import StoryOne from '~/components/StoryOne'
+import ScrollGrid from '~/components/ScrollGrid'
+import { useStoryAdd } from '~/composables/useStoryAdd'
+import { useRoute, computed } from '#imports'
+
+const StoryAddModal = defineAsyncComponent(
+  () => import('~/components/StoryAddModal')
+)
+
+const LIMIT = 100
+
+const runtimeConfig = useRuntimeConfig()
+const route = useRoute()
+const storyStore = useStoryStore()
+
+const limit = parseInt(route.query.limit) || LIMIT
+
+await storyStore.fetchRecent(limit)
+
+useHead(
+  buildHead(
+    route,
+    runtimeConfig,
+    'Stories from freeglers',
+    'Real stories from real freeglers.'
+  )
+)
+
+const { showStoryAddModal, showAddModal, loginRequired } = useStoryAdd()
+
+const stories = computed(() => {
+  return storyStore.recent
+})
+</script>
+<style scoped lang="scss">
+@import 'bootstrap/scss/functions';
+@import 'bootstrap/scss/variables';
+@import 'bootstrap/scss/mixins/_breakpoints';
+@import 'assets/css/_color-vars.scss';
+@import 'assets/css/navbar.scss';
+
+.stories-page {
+  background: $color-gray--lighter;
+  min-height: 100vh;
+  padding-bottom: $page-bottom-padding;
+}
+
+.page-header {
+  background: white;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.page-description {
+  font-size: 0.9rem;
+  color: var(--color-gray-600);
+  margin: 0 0 0.75rem 0;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+
+  .add-btn {
+    flex-shrink: 0;
+  }
+}
+</style>

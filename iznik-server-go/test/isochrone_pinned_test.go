@@ -32,16 +32,15 @@ func TestNearbyFeed_PinnedPostFirst(t *testing.T) {
 
 	prefix := uniquePrefix("pinnednearby")
 	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
-	group := CreateTestGroup(t, prefix)
 
 	// 'rival': origin == viewer, small polygon -> closeness ≈ 1 -> highest natural score.
-	rival := CreateTestMessage(t, posterID, group, "OFFER: near rival, high score (pinnednearby)", 51.5, -0.1)
+	rival := CreateTestMessage(t, posterID, "OFFER: near rival, high score (pinnednearby)", 51.5, -0.1)
 	// 'pinned': origin far (~44km), big polygon still covering the viewer -> lower natural score,
 	// but pinned, so it must lead the feed regardless.
-	pinned := CreateTestMessage(t, posterID, group, "OFFER: distant origin but PINNED (pinnednearby)", 51.9, -0.1)
+	pinned := CreateTestMessage(t, posterID, "OFFER: distant origin but PINNED (pinnednearby)", 51.9, -0.1)
 	// 'farPinned': pinned but its reach does NOT cover the viewer -> must stay absent (pinning
 	// only floats posts that already qualify to appear).
-	farPinned := CreateTestMessage(t, posterID, group, "OFFER: pinned but out of reach (pinnednearby)", 53.0, 2.0)
+	farPinned := CreateTestMessage(t, posterID, "OFFER: pinned but out of reach (pinnednearby)", 53.0, 2.0)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?, ?)", rival, pinned, farPinned)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?, ?)", rival, pinned, farPinned)
 	defer db.Exec("DELETE FROM messages_pinned WHERE msgid IN (?, ?)", pinned, farPinned)

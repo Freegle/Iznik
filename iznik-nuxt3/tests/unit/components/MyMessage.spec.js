@@ -12,7 +12,6 @@ const {
   mockTrystStore,
   mockComposeStore,
   mockLocationStore,
-  mockGroupStore,
   mockRouterPush,
 } = vi.hoisted(() => ({
   mockData: {
@@ -43,10 +42,6 @@ const {
   },
   mockLocationStore: {
     typeahead: vi.fn().mockResolvedValue([{ id: 1, name: 'AB1 2CD' }]),
-  },
-  mockGroupStore: {
-    fetch: vi.fn(),
-    get: vi.fn(),
   },
   mockRouterPush: vi.fn(),
 }))
@@ -89,10 +84,6 @@ vi.mock('~/stores/compose', () => ({
 
 vi.mock('~/stores/location', () => ({
   useLocationStore: () => mockLocationStore,
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
 }))
 
 // Mock useMe composable
@@ -172,7 +163,7 @@ describe('MyMessage', () => {
       fromuser: 1,
       attachments: [],
       outcomes: [],
-      groups: [{ groupid: 1, collection: 'Approved' }],
+      collection: 'Approved',
       replies: [],
       promises: [],
       promised: false,
@@ -192,11 +183,6 @@ describe('MyMessage', () => {
     mockMessageStore.fetch.mockResolvedValue(mockData.message)
     mockChatStore.list = []
     mockUserStore.byId.mockReturnValue(null)
-    mockGroupStore.get.mockReturnValue({
-      id: 1,
-      nameshort: 'test-group',
-      namedisplay: 'Test Group',
-    })
   })
 
   async function createWrapper(props = {}) {
@@ -512,20 +498,20 @@ describe('MyMessage', () => {
 
   describe('Rejected Messages', () => {
     it('shows rejected notice for rejected messages', async () => {
-      mockData.message.groups = [{ groupid: 1, collection: 'Rejected' }]
+      mockData.message.collection = 'Rejected'
       const wrapper = await createWrapper()
       expect(wrapper.find('.notice-message').exists()).toBe(true)
       expect(wrapper.text()).toContain('This post has been returned to you')
     })
 
     it('shows Edit & Resend button for rejected messages', async () => {
-      mockData.message.groups = [{ groupid: 1, collection: 'Rejected' }]
+      mockData.message.collection = 'Rejected'
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('Edit & Resend')
     })
 
     it('does not show TAKEN button for rejected messages', async () => {
-      mockData.message.groups = [{ groupid: 1, collection: 'Rejected' }]
+      mockData.message.collection = 'Rejected'
       const wrapper = await createWrapper()
       const actionBtns = wrapper.findAll('.action-btn')
       const takenBtn = actionBtns.filter((btn) => btn.text().includes('TAKEN'))
@@ -533,7 +519,7 @@ describe('MyMessage', () => {
     })
 
     it('repost skips typeahead when location has no name (locationid=0 fallback)', async () => {
-      mockData.message.groups = [{ groupid: 1, collection: 'Rejected' }]
+      mockData.message.collection = 'Rejected'
       mockData.message.item = { name: 'Test item' }
       mockData.message.location = { name: '' }
       const wrapper = await createWrapper()
@@ -870,24 +856,11 @@ describe('MyMessage', () => {
     })
   })
 
-  describe('Location and Group Display', () => {
+  describe('Location Display', () => {
     it('shows message area', async () => {
       mockData.message.area = 'Test Area'
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('Test Area')
-    })
-
-    it('shows group link when group exists', async () => {
-      const wrapper = await createWrapper()
-      expect(wrapper.find('.group-link').exists()).toBe(true)
-      expect(wrapper.find('.group-link').text()).toBe('Test Group')
-    })
-
-    it('group link has correct href', async () => {
-      const wrapper = await createWrapper()
-      expect(wrapper.find('.group-link').attributes('href')).toBe(
-        '/explore/test-group'
-      )
     })
   })
 
@@ -904,11 +877,6 @@ describe('MyMessage', () => {
     it('fetches message when becomes visible', async () => {
       await createWrapper()
       expect(mockMessageStore.fetch).toHaveBeenCalledWith(123)
-    })
-
-    it('fetches group info after message is loaded', async () => {
-      await createWrapper()
-      expect(mockGroupStore.fetch).toHaveBeenCalledWith(1)
     })
   })
 
@@ -973,7 +941,7 @@ describe('MyMessage', () => {
     })
 
     it('applies action-btn--warning to Edit & Resend button', async () => {
-      mockData.message.groups = [{ groupid: 1, collection: 'Rejected' }]
+      mockData.message.collection = 'Rejected'
       const wrapper = await createWrapper()
       const repostBtn = wrapper
         .findAll('.action-btn')
@@ -1000,12 +968,6 @@ describe('MyMessage', () => {
       mockData.message.replies = undefined
       const wrapper = await createWrapper()
       expect(wrapper.find('.replies-section').exists()).toBe(false)
-    })
-
-    it('handles empty groups array', async () => {
-      mockData.message.groups = []
-      const wrapper = await createWrapper()
-      expect(wrapper.find('.group-link').exists()).toBe(false)
     })
   })
 
@@ -1133,7 +1095,6 @@ describe('MyMessage', () => {
         id: 999,
         type: 'Offer',
         fromuser: 1,
-        groups: [{ groupid: 1 }],
         canrepost: true,
         location: { name: 'AB1 2CD' },
         item: { name: 'Test item' },
@@ -1175,38 +1136,4 @@ describe('MyMessage', () => {
     })
   })
 
-  describe('multi-group messages', () => {
-    it('fetches all groups and computes messageGroups', async () => {
-      mockData.message.groups = [
-        { groupid: 1, collection: 'Approved' },
-        { groupid: 2, collection: 'Approved' },
-      ]
-      mockGroupStore.get.mockImplementation((id) => ({
-        id,
-        nameshort: `group-${id}`,
-        namedisplay: `Group ${id}`,
-      }))
-      const wrapper = await createWrapper()
-      expect(mockGroupStore.fetch).toHaveBeenCalledWith(1)
-      expect(mockGroupStore.fetch).toHaveBeenCalledWith(2)
-      expect(wrapper.vm.messageGroups).toHaveLength(2)
-      expect(wrapper.vm.messageGroups[0].namedisplay).toBe('Group 1')
-      expect(wrapper.vm.messageGroups[1].namedisplay).toBe('Group 2')
-    })
-
-    it('shows all group names in the template', async () => {
-      mockData.message.groups = [
-        { groupid: 1, collection: 'Approved' },
-        { groupid: 2, collection: 'Approved' },
-      ]
-      mockGroupStore.get.mockImplementation((id) => ({
-        id,
-        nameshort: `group-${id}`,
-        namedisplay: `Group ${id}`,
-      }))
-      const wrapper = await createWrapper()
-      expect(wrapper.text()).toContain('Group 1')
-      expect(wrapper.text()).toContain('Group 2')
-    })
-  })
 })

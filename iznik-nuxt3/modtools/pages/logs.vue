@@ -7,7 +7,6 @@
           <h2 class="ms-2 me-2">Messages</h2>
         </template>
         <div class="d-flex flex-wrap">
-          <ModGroupSelect v-model="groupid" modonly />
           <b-input-group class="flex max">
             <b-form-input
               v-model="term"
@@ -27,7 +26,6 @@
           <h2 class="ms-2 me-2">Members</h2>
         </template>
         <div class="d-flex flex-wrap">
-          <ModGroupSelect v-model="groupid" modonly />
           <b-input-group class="flex max">
             <b-form-input
               v-model="term"
@@ -46,25 +44,21 @@
 
     <!-- Standard Mod Logs for Messages/Members tabs -->
     <ModLogs
-      v-if="groupid"
       ref="logs"
       :key="'modlogs-' + bump"
       class="bg-white"
-      :groupid="groupid"
       @busy="busy = true"
       @idle="busy = false"
     />
   </div>
 </template>
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useLogsStore } from '~/stores/logs'
-import { useModGroupStore } from '~/stores/modgroup'
 
 const logsStore = useLogsStore()
 
 const bump = ref(0)
-const groupid = ref(null)
 const type = ref('messages')
 const term = ref(null)
 const busy = ref(false)
@@ -90,13 +84,7 @@ function search() {
   clear(type.value)
 }
 
-watch(groupid, () => {
-  clear(type.value)
-})
-
 onMounted(() => {
-  const modGroupStore = useModGroupStore()
-  modGroupStore.getModGroups()
   clear(type.value)
 })
 </script>

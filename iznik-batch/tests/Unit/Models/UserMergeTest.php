@@ -2,7 +2,6 @@
 
 namespace Tests\Unit\Models;
 
-use App\Models\Membership;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -51,117 +50,12 @@ class UserMergeTest extends TestCase
         $this->assertEquals($user1PrimaryEmail, $preferred);
     }
 
-    public function test_merge_preserves_highest_role(): void
-    {
-        $user1 = $this->createTestUser();
-        $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        // user1 is Member, user2 is Moderator on same group.
-        $this->createMembership($user1, $group, ['role' => Membership::ROLE_MEMBER]);
-        $this->createMembership($user2, $group, ['role' => Membership::ROLE_MODERATOR]);
-
-        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
-
-        $role = DB::table('memberships')
-            ->where('userid', $user1->id)
-            ->where('groupid', $group->id)
-            ->value('role');
-
-        $this->assertEquals(Membership::ROLE_MODERATOR, $role);
-    }
-
-    public function test_merge_preserves_oldest_membership_date(): void
-    {
-        $user1 = $this->createTestUser();
-        $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        $this->createMembership($user1, $group, ['added' => self::OLDER_DATE]);
-        $this->createMembership($user2, $group, ['added' => '2024-01-01 00:00:00']);
-
-        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
-
-        $added = DB::table('memberships')
-            ->where('userid', $user1->id)
-            ->where('groupid', $group->id)
-            ->value('added');
-
-        $this->assertEquals(self::OLDER_DATE, $added);
-    }
-
-    public function test_merge_transfers_unique_memberships(): void
-    {
-        $user1 = $this->createTestUser();
-        $user2 = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-
-        $this->createMembership($user1, $group1);
-        $this->createMembership($user2, $group2);
-
-        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
-
-        // user1 should now be a member of both groups.
-        $this->assertEquals(2, DB::table('memberships')->where('userid', $user1->id)->count());
-        $this->assertEquals(0, DB::table('memberships')->where('userid', $user2->id)->count());
-    }
-
-    /**
-     * Mixed case: user2 has both a UNIQUE membership (reparented to user1) and a
-     * CONFLICT membership (shared group, merged into user1's row then removed).
-     * This exercises the post-commit cleanup path: the reparented membership must
-     * survive on user1 while only the conflict row is deleted. Under the read/write
-     * split, re-querying user2's memberships after commit could read a lagging
-     * replica and wrongly delete the just-reparented row — this guards against that
-     * by asserting the reparented membership still belongs to user1.
-     */
-    public function test_merge_keeps_reparented_membership_when_also_merging_conflict(): void
-    {
-        $user1 = $this->createTestUser();
-        $user2 = $this->createTestUser();
-        $sharedGroup = $this->createTestGroup();
-        $uniqueGroup = $this->createTestGroup();
-
-        // Conflict: both are members of sharedGroup (user2 is Moderator).
-        $this->createMembership($user1, $sharedGroup, ['role' => Membership::ROLE_MEMBER]);
-        $this->createMembership($user2, $sharedGroup, ['role' => Membership::ROLE_MODERATOR]);
-
-        // Reparent: only user2 is a member of uniqueGroup.
-        $this->createMembership($user2, $uniqueGroup);
-
-        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
-
-        // user1 keeps both groups; user2 has none left.
-        $this->assertEquals(2, DB::table('memberships')->where('userid', $user1->id)->count());
-        $this->assertEquals(0, DB::table('memberships')->where('userid', $user2->id)->count());
-
-        // The reparented (unique) membership must have survived on user1.
-        $this->assertTrue(
-            DB::table('memberships')
-                ->where('userid', $user1->id)
-                ->where('groupid', $uniqueGroup->id)
-                ->exists(),
-            'Reparented membership for the unique group must survive on user1'
-        );
-
-        // The conflict membership merged into user1 keeping the highest role.
-        $sharedRole = DB::table('memberships')
-            ->where('userid', $user1->id)
-            ->where('groupid', $sharedGroup->id)
-            ->value('role');
-        $this->assertEquals(Membership::ROLE_MODERATOR, $sharedRole);
-    }
-
     public function test_merge_transfers_messages(): void
     {
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
 
-        $this->createMembership($user1, $group);
-        $this->createMembership($user2, $group);
-        $message = $this->createTestMessage($user2, $group);
+        $message = $this->createTestMessage($user2);
 
         $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
 

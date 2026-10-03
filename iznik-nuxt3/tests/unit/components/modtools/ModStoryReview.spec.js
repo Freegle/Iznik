@@ -23,11 +23,6 @@ const mockUserStore = {
   fetchMT: vi.fn().mockResolvedValue(null),
 }
 
-const mockGroupStore = {
-  get: vi.fn(),
-  fetch: vi.fn().mockResolvedValue(null),
-}
-
 let mockStoryData = {}
 
 const mockStoryStore = {
@@ -36,10 +31,6 @@ const mockStoryStore = {
 
 vi.mock('@/stores/user', () => ({
   useUserStore: () => mockUserStore,
-}))
-
-vi.mock('@/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
 }))
 
 vi.mock('@/stores/stories', () => ({
@@ -61,13 +52,6 @@ describe('ModStoryReview', () => {
       turl: 'https://example.com/profile.jpg',
     },
     emails: [{ email: 'testuser@example.com' }],
-    memberships: [{ groupid: 456 }],
-  }
-
-  const defaultGroup = {
-    id: 456,
-    namedisplay: 'Test Freegle Group',
-    nameshort: 'TestFreegle',
   }
 
   const createStory = (overrides = {}) => ({
@@ -136,7 +120,7 @@ describe('ModStoryReview', () => {
           },
           ChatButton: {
             template: '<button class="chat-button" />',
-            props: ['userid', 'groupid', 'title', 'variant'],
+            props: ['userid', 'title', 'variant'],
           },
         },
         mocks: {
@@ -153,8 +137,6 @@ describe('ModStoryReview', () => {
     mockUserStore.byId.mockReturnValue(defaultUser)
     mockUserStore.fetch.mockResolvedValue(defaultUser)
     mockUserStore.fetchMT.mockResolvedValue(defaultUser)
-    mockGroupStore.get.mockReturnValue(defaultGroup)
-    mockGroupStore.fetch.mockResolvedValue(defaultGroup)
   })
 
   describe('rendering', () => {
@@ -175,11 +157,6 @@ describe('ModStoryReview', () => {
         story: createStory({ story: 'This is my wonderful Freegle story.' }),
       })
       expect(wrapper.text()).toContain('This is my wonderful Freegle story.')
-    })
-
-    it('shows the group name from store', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.text()).toContain('Test Freegle Group')
     })
 
     it('shows the story id', () => {
@@ -556,13 +533,6 @@ describe('ModStoryReview', () => {
       expect(mockUserStore.fetch).toHaveBeenCalledWith(789)
     })
 
-    it('fetches group after user fetch when user has memberships', async () => {
-      mockUserStore.fetch.mockResolvedValue(defaultUser)
-      mountComponent({ story: createStory({ userid: 789 }) })
-      await flushPromises()
-      expect(mockGroupStore.fetch).toHaveBeenCalledWith(456)
-    })
-
     it('does not fetch when story has no userid', async () => {
       mountComponent({ story: createStory({ userid: null }) })
       await flushPromises()
@@ -596,16 +566,6 @@ describe('ModStoryReview', () => {
       })
       const wrapper = mountComponent()
       expect(wrapper.vm.primaryEmail).toBe('fallback@example.com')
-    })
-
-    it('firstGroupId returns first membership groupid', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.vm.firstGroupId).toBe(456)
-    })
-
-    it('groupName returns group namedisplay from store', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.vm.groupName).toBe('Test Freegle Group')
     })
   })
 })

@@ -226,9 +226,9 @@ func CreateTryst(c *fiber.Ctx) error {
 	// row's id both times - see test/tryst_test.go's
 	// TestCreateTrystDuplicateReturnsExistingID. Forcing the id is the same
 	// idiom already used by every other ODKU/INSERT-IGNORE id-read-back site
-	// in this codebase (chatroom.go's GetOrCreateUser2ModChat/User2UserChat,
-	// group.go's CreateGroup) - .Clauses(res) is required, not
-	// .Set("gorm:result", res), which silently does nothing.
+	// in this codebase (chatroom.go's GetOrCreateUser2ModChat/User2UserChat)
+	// - .Clauses(res) is required, not .Set("gorm:result", res), which
+	// silently does nothing.
 	res := gorm.WithResult()
 	tx := db.Table("trysts").Clauses(res, clause.OnConflict{
 		DoUpdates: clause.Set{

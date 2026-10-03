@@ -79,8 +79,7 @@ func TestUserComments(t *testing.T) {
 		targetID := CreateTestUser(t, prefix+"_target", "User")
 
 		// Create a group and membership so the mod can see comments.
-		groupID := CreateTestGroup(t, prefix)
-		CreateTestMembership(t, modID, groupID, "Moderator")
+		PromoteTestUserToModerator(t, modID)
 
 		// Insert a comment on the target user.
 		db.Exec("INSERT INTO users_comments (userid, groupid, byuserid, user1, date) VALUES (?, ?, ?, 'Test note', NOW())",
@@ -110,7 +109,6 @@ func TestUserComments(t *testing.T) {
 		modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 		_, modToken := CreateTestSession(t, modID)
 		targetID := CreateTestUser(t, prefix+"_target", "User")
-		groupID := CreateTestGroup(t, prefix)
 
 		db.Exec("INSERT INTO users_comments (userid, groupid, byuserid, user1, date) VALUES (?, ?, ?, 'Hidden note', NOW())",
 			targetID, groupID, modID)
@@ -156,7 +154,6 @@ func TestUserComments(t *testing.T) {
 		_, modToken := CreateTestSession(t, modID)
 		target1 := CreateTestUser(t, prefix+"_t1", "User")
 		target2 := CreateTestUser(t, prefix+"_t2", "User")
-		groupID := CreateTestGroup(t, prefix)
 
 		db.Exec("INSERT INTO users_comments (userid, groupid, byuserid, user1, date) VALUES (?, ?, ?, 'Note on t1', NOW())",
 			target1, groupID, modID)
@@ -188,9 +185,7 @@ func TestLastpushNullReturnsNil(t *testing.T) {
 		modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 		_, modToken := CreateTestSession(t, modID)
 		targetID := CreateTestUser(t, prefix+"_target", "User")
-		groupID := CreateTestGroup(t, prefix)
-		CreateTestMembership(t, modID, groupID, "Moderator")
-		CreateTestMembership(t, targetID, groupID, "Member")
+		PromoteTestUserToModerator(t, modID)
 
 		url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, modToken)
 		resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
@@ -1118,7 +1113,6 @@ func TestPutUserDuplicateEmailCorrectPassword(t *testing.T) {
 
 func TestPutUserWithGroup(t *testing.T) {
 	prefix := uniquePrefix("putwgroup")
-	groupID := CreateTestGroup(t, prefix)
 
 	email := fmt.Sprintf("%s@test.com", prefix)
 	payload := map[string]interface{}{
@@ -1212,7 +1206,6 @@ func TestPutUserPersistentSeriesMatchesSession(t *testing.T) {
 func TestPutMessageUnauthenticatedPersistentSeriesMatchesSession(t *testing.T) {
 	prefix := uniquePrefix("putmsg_series")
 	email := fmt.Sprintf("%s@test.com", prefix)
-	groupID := CreateTestGroup(t, prefix)
 
 	payload := map[string]interface{}{
 		"email":       email,
@@ -1483,9 +1476,7 @@ func TestPatchUserMuteChitchat(t *testing.T) {
 	// Create a mod and a target user on the same group.
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Mod mutes the target user's chitchat.
@@ -1520,9 +1511,7 @@ func TestPatchUserChatmodstatusFully(t *testing.T) {
 
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	payload := map[string]interface{}{
@@ -1553,9 +1542,7 @@ func TestPatchUserChatmodstatusBackToModerated(t *testing.T) {
 
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	db.Exec("UPDATE users SET chatmodstatus = 'Fully' WHERE id = ?", targetID)
@@ -1585,9 +1572,7 @@ func TestPatchUserChatmodstatusInvalidRejected(t *testing.T) {
 
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	payload := map[string]interface{}{
@@ -1614,9 +1599,6 @@ func TestPatchUserChatmodstatusNonModForbidden(t *testing.T) {
 
 	otherID := CreateTestUser(t, prefix+"_other", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, otherID, groupID, "Member")
-	CreateTestMembership(t, targetID, groupID, "Member")
 	_, otherToken := CreateTestSession(t, otherID)
 
 	payload := map[string]interface{}{
@@ -1705,9 +1687,7 @@ func TestPatchUserSettingsModOnMember(t *testing.T) {
 
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Set initial settings for both users so we can detect cross-contamination.
@@ -1753,9 +1733,7 @@ func TestPatchUserSettingsModOnMemberRelevantAllowed(t *testing.T) {
 
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Set initial values.
@@ -1947,7 +1925,6 @@ func TestLimboUserAdminCannotDeleteModerator(t *testing.T) {
 	_, adminToken := CreateTestSession(t, adminID)
 
 	// Make the target user a moderator of some group.
-	groupID := CreateTestGroup(t, prefix+"_group")
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, collection) VALUES (?, ?, 'Moderator', NOW(), 'Approved') ON DUPLICATE KEY UPDATE role = 'Moderator'", modID, groupID)
 
 	payload := map[string]interface{}{"id": modID}
@@ -2067,8 +2044,6 @@ func TestPostUserUnsubscribeBySupportRemovesMembership(t *testing.T) {
 
 	supportID := CreateTestUser(t, prefix+"_support", "Support")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, targetID, groupID, "Member")
 	_, supportToken := CreateTestSession(t, supportID)
 
 	// Verify member exists before unsubscribe.
@@ -2119,8 +2094,6 @@ func TestLimboUserLogsGroupLeft(t *testing.T) {
 
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	_, token := CreateTestSession(t, userID)
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
 
 	req := httptest.NewRequest("DELETE", "/api/user?jwt="+token, nil)
 	resp, err := getApp().Test(req)
@@ -2142,8 +2115,6 @@ func TestUnsubscribeLogsGroupLeft(t *testing.T) {
 
 	supportID := CreateTestUser(t, prefix+"_support", "Support")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, targetID, groupID, "Member")
 	_, supportToken := CreateTestSession(t, supportID)
 
 	payload := map[string]interface{}{"action": "Unsubscribe", "id": targetID}
@@ -2190,9 +2161,7 @@ func TestPostUserMerge(t *testing.T) {
 	_, adminToken := CreateTestSession(t, adminID)
 
 	// Create a message for user1 (DISCARD) to verify it gets moved to user2 (KEEP).
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	msgID := CreateTestMessage(t, user1ID, groupID, "Merge test "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, user1ID, "Merge test "+prefix, 55.9533, -3.1883)
 
 	// id1=user1ID (DISCARD), id2=user2ID (KEEP): merge FROM user1 INTO user2.
 	payload := map[string]interface{}{
@@ -2292,8 +2261,6 @@ func TestPostUserMergeByEmail(t *testing.T) {
 	user1ID := CreateTestUserWithEmail(t, prefix+"_u1", email1)
 	user2ID := CreateTestUserWithEmail(t, prefix+"_u2", email2)
 
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, user2ID, groupID, "Member")
 
 	payload := map[string]interface{}{
 		"action": "Merge",
@@ -2329,13 +2296,10 @@ func TestPostUserMergeByModerator(t *testing.T) {
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	_, modToken := CreateTestSession(t, modID)
 
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
 
 	payload := map[string]interface{}{
 		"action": "Merge",
@@ -2370,13 +2334,11 @@ func TestPostUserMergeByModeratorForbiddenForOutsideUser(t *testing.T) {
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	_, modToken := CreateTestSession(t, modID)
 
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 
 	// user1 is in the mod's group, user2 is not.
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
 	// user2 intentionally not added to the group.
 
 	payload := map[string]interface{}{
@@ -2398,11 +2360,9 @@ func TestPostUserMergeByModeratorForbiddenForOutsideUser(t *testing.T) {
 func TestUserChatrooms_ModCanSee(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("supChat")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a chat room where target is user1.
@@ -2424,11 +2384,8 @@ func TestUserChatrooms_ModCanSee(t *testing.T) {
 
 func TestUserChatrooms_NonModForbidden(t *testing.T) {
 	prefix := uniquePrefix("supChatForbid")
-	groupID := CreateTestGroup(t, prefix)
 	callerID := CreateTestUser(t, prefix+"_caller", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, callerID, groupID, "Member")
-	CreateTestMembership(t, targetID, groupID, "Member")
 	_, token := CreateTestSession(t, callerID)
 
 	url := fmt.Sprintf("/api/user/%d/chatrooms?jwt=%s", targetID, token)
@@ -2439,11 +2396,9 @@ func TestUserChatrooms_NonModForbidden(t *testing.T) {
 func TestUserEmailHistory(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("supEmail")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	db.Exec("INSERT INTO logs_emails (userid, `from`, `to`, subject, status) VALUES (?, 'noreply@test.com', 'user@test.com', 'Test Subject', 'Sent')",
@@ -2462,11 +2417,9 @@ func TestUserEmailHistory(t *testing.T) {
 func TestUserBans(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("supBans")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?)",
@@ -2485,11 +2438,9 @@ func TestUserBans(t *testing.T) {
 func TestUserNewsfeed(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("supNews")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	db.Exec("INSERT INTO newsfeed (userid, type, message, position) VALUES (?, 'Message', 'Test chitchat post', ST_GeomFromText('POINT(0 0)', 3857))",
@@ -2508,11 +2459,9 @@ func TestUserNewsfeed(t *testing.T) {
 func TestUserApplied(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("supApplied")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, added) VALUES (?, ?, 'Approved', NOW())",
@@ -2531,11 +2480,9 @@ func TestUserApplied(t *testing.T) {
 func TestUserMembershipHistory(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("supMemHist")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	db.Exec("INSERT INTO logs (user, groupid, type, subtype, timestamp) VALUES (?, ?, 'Group', 'Joined', '2025-01-01 00:00:00')",
@@ -2553,11 +2500,9 @@ func TestUserMembershipHistory(t *testing.T) {
 func TestUserLogins(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("supLogins")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)",
@@ -2576,11 +2521,9 @@ func TestUserLogins(t *testing.T) {
 func TestUserFetchMT_ReturnsModFields(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("supFetchMT")
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	db.Exec("UPDATE users SET chatmodstatus = 'Fully', newsfeedmodstatus = 'Suppressed' WHERE id = ?", targetID)
@@ -2623,11 +2566,8 @@ func TestSpammers_FilterByUserid(t *testing.T) {
 func TestUserFetchMT_HidesModFieldsFromNonMod(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("supHideMod")
-	groupID := CreateTestGroup(t, prefix)
 	callerID := CreateTestUser(t, prefix+"_caller", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, callerID, groupID, "Member")
-	CreateTestMembership(t, targetID, groupID, "Member")
 	_, token := CreateTestSession(t, callerID)
 
 	db.Exec("UPDATE users SET chatmodstatus = 'Fully', newsfeedmodstatus = 'Suppressed', ljuserid = 555555 WHERE id = ?", targetID)
@@ -2647,11 +2587,8 @@ func TestUserFetchMT_HidesModFieldsFromNonMod(t *testing.T) {
 
 func TestSupportEndpoints_AllReturn403ForNonMod(t *testing.T) {
 	prefix := uniquePrefix("supAll403")
-	groupID := CreateTestGroup(t, prefix)
 	callerID := CreateTestUser(t, prefix+"_caller", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, callerID, groupID, "Member")
-	CreateTestMembership(t, targetID, groupID, "Member")
 	_, token := CreateTestSession(t, callerID)
 
 	endpoints := []string{
@@ -2989,13 +2926,11 @@ func TestGetUserFetchMT_NonAdminNoDonations(t *testing.T) {
 	db := database.DBConn
 
 	// Create a regular mod (not admin/support).
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, targetID, groupID, "Member")
 
 	// Insert a donation.
 	db.Exec("INSERT INTO users_donations (userid, Payer, PayerDisplayName, GrossAmount, source, timestamp, type) VALUES (?, ?, ?, 10.00, 'Stripe', NOW(), 'Stripe')",
@@ -3048,8 +2983,7 @@ func TestGetUserFetchMT_WithModtoolsComments(t *testing.T) {
 	targetID := CreateTestUser(t, prefix+"_target", "User")
 
 	// Create a group and membership.
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 
 	// Add a comment.
 	db.Exec("INSERT INTO users_comments (userid, groupid, byuserid, user1, date) VALUES (?, ?, ?, 'Fetchmt note', NOW())",
@@ -3105,12 +3039,10 @@ func TestGetUserFetchMT_V2Path(t *testing.T) {
 func TestGetUserFetchMT_MessageHistoryForMod(t *testing.T) {
 	prefix := uniquePrefix("fetchmt_mh")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	// A real group moderator has systemrole=Moderator (synced by SyncSystemRole in production).
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	CreateTestMessage(t, posterID, groupID, prefix+" History Test Item", 55.9533, -3.1883)
@@ -3146,11 +3078,9 @@ func TestGetUserFetchMT_MessageHistoryOutcome(t *testing.T) {
 	prefix := uniquePrefix("fetchmt_mho")
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" Outcome Test", 55.9533, -3.1883)
@@ -3209,9 +3139,7 @@ func TestGetUserFetchMT_NoMessageHistoryWithoutModtools(t *testing.T) {
 func TestGetUserFetchMT_MembershipsReturned(t *testing.T) {
 	prefix := uniquePrefix("fetchmt_memb")
 
-	groupID := CreateTestGroup(t, prefix)
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, targetID, groupID, "Member")
 	_, targetToken := CreateTestSession(t, targetID)
 
 	url := fmt.Sprintf("/api/user/%d?jwt=%s", targetID, targetToken)
@@ -3243,32 +3171,26 @@ func TestGetUserMembershipsPostingStatus(t *testing.T) {
 	prefix := uniquePrefix("fetchmt_ps")
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create users with different posting statuses.
 	nullUser := CreateTestUser(t, prefix+"_null", "User")
-	CreateTestMembership(t, nullUser, groupID, "Member")
 	// NULL is the default — don't set it.
 
 	defaultUser := CreateTestUser(t, prefix+"_def", "User")
-	CreateTestMembership(t, defaultUser, groupID, "Member")
 	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ? AND groupid = ?", defaultUser, groupID)
 
 	moderatedUser := CreateTestUser(t, prefix+"_mod2", "User")
-	CreateTestMembership(t, moderatedUser, groupID, "Member")
 	db.Exec("UPDATE memberships SET ourPostingStatus = 'MODERATED' WHERE userid = ? AND groupid = ?", moderatedUser, groupID)
 
 	prohibitedUser := CreateTestUser(t, prefix+"_proh", "User")
-	CreateTestMembership(t, prohibitedUser, groupID, "Member")
 	db.Exec("UPDATE memberships SET ourPostingStatus = 'PROHIBITED' WHERE userid = ? AND groupid = ?", prohibitedUser, groupID)
 
 	// A membership rippling created for the poster (rippled = 1) carries no posting
 	// status because no moderator ever set one. It must not read as MODERATED.
 	rippledUser := CreateTestUser(t, prefix+"_rip", "User")
-	CreateTestMembership(t, rippledUser, groupID, "Member")
 	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", rippledUser, groupID)
 
 	// Fetch each user with modtools=true and check posting status.
@@ -3315,9 +3237,7 @@ func TestFetchMTModmailsCount(t *testing.T) {
 
 	targetID := CreateTestUser(t, prefix+"_target", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, targetID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Insert a modmail record on the mod's group. Use a high logid to avoid collisions.
@@ -3343,10 +3263,6 @@ func TestFetchMTModmailsGroupFilter(t *testing.T) {
 	db := database.DBConn
 
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupA := CreateTestGroup(t, prefix+"_a")
-	groupB := CreateTestGroup(t, prefix+"_b")
-	CreateTestMembership(t, targetID, groupA, "Member")
-	CreateTestMembership(t, targetID, groupB, "Member")
 
 	// Modmail on group B only. Use a high logid to avoid collisions.
 	db.Exec("INSERT INTO users_modmails (userid, logid, timestamp, groupid) VALUES (?, ?, NOW(), ?)",
@@ -3354,7 +3270,7 @@ func TestFetchMTModmailsGroupFilter(t *testing.T) {
 
 	// Mod on group A only — should see 0 modmails.
 	modAID := CreateTestUser(t, prefix+"_modA", "User")
-	CreateTestMembership(t, modAID, groupA, "Moderator")
+	PromoteTestUserToModerator(t, modAID)
 	_, modAToken := CreateTestSession(t, modAID)
 
 	url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, modAToken)
@@ -3368,7 +3284,7 @@ func TestFetchMTModmailsGroupFilter(t *testing.T) {
 
 	// Mod on group B — should see 1 modmail.
 	modBID := CreateTestUser(t, prefix+"_modB", "User")
-	CreateTestMembership(t, modBID, groupB, "Moderator")
+	PromoteTestUserToModerator(t, modBID)
 	_, modBToken := CreateTestSession(t, modBID)
 
 	url2 := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, modBToken)
@@ -3418,20 +3334,17 @@ func TestFetchMTRepliesByType(t *testing.T) {
 func TestGetUserReplies(t *testing.T) {
 	prefix := uniquePrefix("replies")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
 
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, replierID, groupID, "Member")
 
 	// Create a test message.
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: Test item", 54.0, -2.8)
+	msgID := CreateTestMessage(t, posterID, "OFFER: Test item", 54.0, -2.8)
 
 	// Create a chat room and an INTERESTED chat message from replier.
 	var roomID uint64
@@ -3492,14 +3405,11 @@ func TestGetUserReplies(t *testing.T) {
 
 func TestGetUserReplies_NonModForbidden(t *testing.T) {
 	prefix := uniquePrefix("replies_nomod")
-	groupID := CreateTestGroup(t, prefix)
 
 	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, userToken := CreateTestSession(t, userID)
 
 	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, otherID, groupID, "Member")
 
 	url := fmt.Sprintf("/api/user/%d/replies?jwt=%s", otherID, userToken)
 	req := httptest.NewRequest("GET", url, nil)
@@ -3514,9 +3424,7 @@ func TestGetUserReplies_NonModForbidden(t *testing.T) {
 
 func TestPublicLocation_ValidUser(t *testing.T) {
 	prefix := uniquePrefix("publoc")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/user/%d/publiclocation", userID), nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -3606,23 +3514,20 @@ func TestPublicLocation_MostRecentMembership(t *testing.T) {
 	require.Greater(t, targetUserID, uint64(0))
 
 	// Create two groups.
-	olderGroupID := CreateTestGroup(t, prefix+"_older")
-	newerGroupID := CreateTestGroup(t, prefix+"_newer")
 
 	// Set distinct full names so we can tell which is returned.
 	db.Exec("UPDATE `groups` SET namefull = ? WHERE id = ?", "Older Town Freegle", olderGroupID)
 	db.Exec("UPDATE `groups` SET namefull = ? WHERE id = ?", "Newer Town Freegle", newerGroupID)
 
 	// Make the viewing user a moderator of both groups so they have permission.
-	CreateTestMembership(t, modUserID, olderGroupID, "Moderator")
-	CreateTestMembership(t, modUserID, newerGroupID, "Moderator")
+	PromoteTestUserToModerator(t, modUserID)
+	PromoteTestUserToModerator(t, modUserID)
 
 	// Add target user to the older group first, then the newer group.
 	// Explicitly set `added` timestamps 1 second apart because MySQL TIMESTAMP
 	// has only second precision — both inserts in the same second would make
 	// ORDER BY m.added DESC non-deterministic.
-	CreateTestMembership(t, targetUserID, olderGroupID, "Member")
-	CreateTestMembership(t, targetUserID, newerGroupID, "Moderator")
+	PromoteTestUserToModerator(t, targetUserID)
 	db.Exec("UPDATE memberships SET added = DATE_SUB(added, INTERVAL 1 SECOND) WHERE userid = ? AND groupid = ?",
 		targetUserID, olderGroupID)
 
@@ -3794,8 +3699,7 @@ func TestGetDeletedUserNameAsMod(t *testing.T) {
 	// Create a mod who can view deleted users.
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	_, modToken := CreateTestSession(t, modID)
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 
 	// Mod should see the real name, not "Deleted User #ID".
 	url := fmt.Sprintf("/api/user/%d?jwt=%s", userID, modToken)
@@ -3844,10 +3748,8 @@ func TestGetUserReturnsEngagement(t *testing.T) {
 	db.Exec("UPDATE users SET engagement = 'Frequent' WHERE id = ?", userID)
 
 	// Create a mod who can view this user.
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
-	CreateTestMembership(t, userID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Fetch user with modtools=true — should include engagement.
@@ -4011,9 +3913,7 @@ func TestSettingsNotVisibleToOtherUsers(t *testing.T) {
 	// Create a mod viewer in a shared group — they should see settings.
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	_, modToken := CreateTestSession(t, modID)
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 
 	url = fmt.Sprintf("/api/user/%d?jwt=%s", targetID, modToken)
 	resp, err = getApp().Test(httptest.NewRequest("GET", url, nil))
@@ -4068,8 +3968,7 @@ func TestGetUserFetchMT_ModSeesEmailsForBannedUser(t *testing.T) {
 	db := database.DBConn
 
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	groupID := CreateTestGroup(t, prefix+"_grp")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	targetID := CreateTestUser(t, prefix+"_target", "User")
@@ -4512,12 +4411,10 @@ func TestRecentWanted_GoAPI_ExcludesNonApproved(t *testing.T) {
 	prefix := uniquePrefix("recentwanted_coll")
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	// A real group moderator has systemrole=Moderator (synced by SyncSystemRole in production).
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Approved WANTED — 10 days old, within the 31-day $recentwanted window.
@@ -4616,9 +4513,7 @@ func TestUserLocationChangesModInfo(t *testing.T) {
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	_, modToken := CreateTestSession(t, modID)
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 
 	// Three distinct postcodes within the window, a duplicate (must not double-count) and one older
 	// than 90 days (must be excluded).
@@ -4669,12 +4564,9 @@ func TestActivedistanceExcludesRippleOnlyMemberships(t *testing.T) {
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	_, modToken := CreateTestSession(t, modID)
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	group1 := CreateTestGroup(t, prefix+"_g1")
-	group2 := CreateTestGroup(t, prefix+"_g2")
-	CreateTestMembership(t, modID, group1, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	// The target is a genuine current member of group1 (as a ripple auto-join leaves them) - this
 	// is what makes the mod a mod of this member (IsModOfUser) and gates activedistance into the response.
-	CreateTestMembership(t, targetID, group1, "Member")
 
 	// Edinburgh and London - far enough apart to trigger the "miles apart" warning.
 	db.Exec("UPDATE `groups` SET lat = 55.9533, lng = -3.1883, publish = 1, onmap = 1 WHERE id = ?", group1)
@@ -4716,10 +4608,7 @@ func TestActivedistanceStillFlagsGenuineSpread(t *testing.T) {
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	_, modToken := CreateTestSession(t, modID)
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	group1 := CreateTestGroup(t, prefix+"_g1")
-	group2 := CreateTestGroup(t, prefix+"_g2")
-	CreateTestMembership(t, modID, group1, "Moderator")
-	CreateTestMembership(t, targetID, group1, "Member")
+	PromoteTestUserToModerator(t, modID)
 
 	db.Exec("UPDATE `groups` SET lat = 55.9533, lng = -3.1883, publish = 1, onmap = 1 WHERE id = ?", group1)
 	db.Exec("UPDATE `groups` SET lat = 51.5074, lng = -0.1278, publish = 1, onmap = 1 WHERE id = ?", group2)
@@ -4758,12 +4647,10 @@ func TestGetUserMessageHistory_IncludesPending(t *testing.T) {
 	prefix := uniquePrefix("msghistory_pending")
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	// A real group moderator has systemrole=Moderator (synced by SyncSystemRole in production).
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Insert a Pending message — simulates a post awaiting moderation.
@@ -4836,7 +4723,6 @@ func TestMessageHistory_NoDuplicatesOnRepost(t *testing.T) {
 	prefix := uniquePrefix("mh_dup")
 
 	userID := CreateTestUser(t, prefix, "User")
-	groupID := CreateTestGroup(t, prefix)
 
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" Table", 55.9533, -3.1883)
 
@@ -4872,8 +4758,6 @@ func TestMessageHistory_NoDuplicatesOnRipple(t *testing.T) {
 	prefix := uniquePrefix("mh_ripple")
 
 	userID := CreateTestUser(t, prefix, "User")
-	originGroup := CreateTestGroup(t, prefix)
-	rippledGroup := CreateTestGroup(t, prefix+"r")
 
 	msgID := CreateTestMessage(t, userID, originGroup, prefix+" Table", 55.9533, -3.1883)
 
@@ -4904,8 +4788,6 @@ func TestUserInfo_OfferCountNotInflatedByRipple(t *testing.T) {
 	prefix := uniquePrefix("info_ripple")
 
 	userID := CreateTestUser(t, prefix, "User")
-	originGroup := CreateTestGroup(t, prefix)
-	rippledGroup := CreateTestGroup(t, prefix+"r")
 
 	msgID := CreateTestMessage(t, userID, originGroup, prefix+" Chair", 55.9533, -3.1883)
 
@@ -4939,8 +4821,6 @@ func TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary(t *testing.T) {
 	db := database.DBConn
 
 	userID := CreateTestUser(t, prefix, "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
 
 	// Create a Pending message (simulates a post awaiting mod approval).
 	subject := prefix + " OFFER free table"
@@ -5003,8 +4883,6 @@ func TestMessageHistory_ArrivalUsesLatestGroupPosting(t *testing.T) {
 	prefix := uniquePrefix("mh_grp_arr")
 
 	userID := CreateTestUser(t, prefix, "User")
-	groupA := CreateTestGroup(t, prefix+"a")
-	groupB := CreateTestGroup(t, prefix+"b")
 
 	// Create message approved in both groups.
 	msgID := CreateTestMessage(t, userID, groupA, prefix+" Chair", 55.9533, -3.1883)
@@ -5057,9 +4935,6 @@ func TestGetUserInfoOffersNotInflatedByRippling(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("uinfo_ripple_off")
 
-	groupOrigin := CreateTestGroup(t, prefix+"Origin")
-	groupRippledA := CreateTestGroup(t, prefix+"RippledA")
-	groupRippledB := CreateTestGroup(t, prefix+"RippledB")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 
 	// Native OFFER on the origin group (origin row, rippled_in defaults to 0).
@@ -5097,8 +4972,6 @@ func TestGetUserInfoWantedsNotInflatedByRippling(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("uinfo_ripple_wtd")
 
-	groupOrigin := CreateTestGroup(t, prefix+"Origin")
-	groupRippled := CreateTestGroup(t, prefix+"Rippled")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 
 	subject := prefix + " WANTED: rippled item"
@@ -5144,9 +5017,7 @@ func TestPatchUserSettingsBySharedGroupModPersists(t *testing.T) {
 
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	targetID := CreateTestUser(t, prefix+"_target", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	db.Exec(`UPDATE users SET settings = '{"notifications":{"email":false}}' WHERE id = ?`, targetID)

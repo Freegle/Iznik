@@ -204,7 +204,7 @@ class MatchedPostsService
                     ->whereColumn('messages_outcomes.msgid', 'messages.id')
                     ->whereIn('messages_outcomes.outcome', ['Taken', 'Received', 'Withdrawn']);
             })
-            ->with(['attachments', 'fromUser', 'groups'])
+            ->with(['attachments', 'fromUser'])
             ->get()
             ->keyBy('id');
     }

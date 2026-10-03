@@ -14,7 +14,6 @@ class ContentCheckCommand extends Command
     protected $signature = 'messages:contentcheck
                             {--dry-run : Show decisions without making changes}
                             {--audit  : Scan Pending + Approved messages and report disagreements (read-only)}
-                            {--group= : Restrict --audit to a single group ID}
                             {--limit=500 : Max rows per collection to examine in --audit mode (0 = no limit)}
                             {--since= : In --audit mode, only consider messages with arrival within the last N days}';
 
@@ -53,15 +52,13 @@ class ContentCheckCommand extends Command
 
     private function runAudit(ContentCheckService $service): int
     {
-        $groupid   = $this->option('group') !== null ? (int) $this->option('group') : null;
         $limit     = (int) $this->option('limit');
         $sinceDays = $this->option('since') !== null ? (int) $this->option('since') : null;
 
-        $scope  = $groupid ? "group #{$groupid}" : 'all groups';
         $window = $sinceDays !== null && $sinceDays > 0 ? " within the last {$sinceDays} days" : '';
-        $this->info("AUDIT MODE (read-only) — scanning Pending + Approved messages across {$scope}{$window}, limit {$limit} per collection...");
+        $this->info("AUDIT MODE (read-only) — scanning Pending + Approved messages{$window}, limit {$limit} per collection...");
 
-        $disagreements = $service->auditExisting($groupid, $limit, $sinceDays);
+        $disagreements = $service->auditExisting($limit, $sinceDays);
 
         if (empty($disagreements)) {
             $this->info('No disagreements found.');
@@ -83,7 +80,7 @@ class ContentCheckCommand extends Command
             $this->newLine();
             $this->warn('=== APPROVED messages that content check would FLAG ===');
             foreach ($shouldFlag as $d) {
-                $this->line(sprintf('  msg #%d  group #%d  moderated=%s', $d['msgid'], $d['groupid'], $d['is_moderated'] ? 'yes' : 'no'));
+                $this->line(sprintf('  msg #%d  moderated=%s', $d['msgid'], $d['is_moderated'] ? 'yes' : 'no'));
                 foreach ($d['reasons'] as $r) {
                     $this->line(sprintf('    [%s] %s', $r['check'], $r['detail']));
                 }
@@ -94,7 +91,7 @@ class ContentCheckCommand extends Command
             $this->newLine();
             $this->info('=== PENDING messages that content check would AUTO-APPROVE ===');
             foreach ($shouldApprove as $d) {
-                $this->line(sprintf('  msg #%d  group #%d', $d['msgid'], $d['groupid']));
+                $this->line(sprintf('  msg #%d', $d['msgid']));
             }
         }
 

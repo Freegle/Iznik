@@ -168,7 +168,6 @@ import NumberIncrementDecrement from './NumberIncrementDecrement'
 import PostPhoto from './PostPhoto.vue'
 import { useMessageStore } from '~/stores/message'
 import { useComposeStore } from '~/stores/compose'
-import { useGroupStore } from '~/stores/group'
 import { uid } from '~/composables/useId'
 import PostCode from '~/components/PostCode'
 import { useOurModal } from '~/composables/useOurModal'
@@ -198,7 +197,6 @@ const emit = defineEmits(['hidden'])
 
 const messageStore = useMessageStore()
 const composeStore = useComposeStore()
-const groupStore = useGroupStore()
 
 const { modal, hide } = useOurModal()
 
@@ -269,27 +267,15 @@ const placeholder = computed(() => {
     : 'Size, colour, any specific requirements...'
 })
 
-const groupid = computed(() => {
-  return message?.groups?.[0]?.groupid
-})
-
-const group = computed(() => {
-  return groupStore?.get(groupid.value)
-})
-
 const typeOptions = computed(() => {
   return [
     {
       value: 'Offer',
-      text: group.value?.settings?.keywords?.offer
-        ? group.value.settings.keywords.offer
-        : 'OFFER',
+      text: 'OFFER',
     },
     {
       value: 'Wanted',
-      text: group.value?.settings?.keywords?.wanted
-        ? group.value.settings.keywords.wanted
-        : 'WANTED',
+      text: 'WANTED',
     },
   ]
 })
@@ -326,7 +312,6 @@ async function save(finishSpinner) {
 
     const params = {
       id: props.id,
-      groupid: groupid.value,
       msgtype: type.value,
       item: edititem.value,
       location: postcode.value?.name,

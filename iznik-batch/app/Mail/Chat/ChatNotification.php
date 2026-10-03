@@ -13,21 +13,21 @@ use App\Models\ChatRoom;
 use App\Models\Message;
 use App\Models\User;
 use App\Models\UserAddress;
+use App\Services\DonateLinkService;
+use App\Services\UnsubscribeService;
 use App\Support\AmpEmailSupport;
 use App\Support\EmojiUtils;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Collection;
 use Symfony\Component\Mime\Email;
-use App\Services\DonateLinkService;
-use App\Services\UnsubscribeService;
 
 class ChatNotification extends MjmlMailable implements RetryableMailable
 {
-    use AvatarResolver;
-    use TrackableEmail;
-    use LoggableEmail;
     use AmpEmail;
+    use AvatarResolver;
+    use LoggableEmail;
+    use TrackableEmail;
 
     public User $recipient;
 
@@ -87,11 +87,6 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     protected string $userDomain;
 
     /**
-     * The friendly group name for display (prefers namefull over nameshort).
-     */
-    protected string $groupDisplayName;
-
-    /**
      * Create a new message instance.
      */
     public function __construct(
@@ -100,7 +95,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         ChatRoom $chatRoom,
         ChatMessage $message,
         string $chatType,
-        ?Collection $previousMessages = NULL,
+        ?Collection $previousMessages = null,
         bool $waitingForReply = false
     ) {
         $this->recipient = $recipient;
@@ -123,8 +118,8 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         $this->isOwnMessage = $message->userid === $recipient->id;
 
         // For User2Mod chats, determine if recipient is a moderator or the member.
-        // user1 in the chat is always the member, moderators are checked via group membership.
-        if ($chatType === ChatRoom::TYPE_USER2MOD && $chatRoom->groupid) {
+        // user1 in the chat is always the member; anyone else in a User2Mod room is a moderator.
+        if ($chatType === ChatRoom::TYPE_USER2MOD) {
             $this->member = User::find($chatRoom->user1);
             // Recipient is a moderator if they're NOT the member (user1)
             $this->isModerator = $recipient->id !== $chatRoom->user1;
@@ -132,61 +127,52 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
 
         // For Mod2Mod chats, all participants are moderators.
         if ($chatType === ChatRoom::TYPE_MOD2MOD) {
-            $this->isModerator = TRUE;
+            $this->isModerator = true;
         }
-
-        // Get the friendly group name (prefer namedisplay/namefull over nameshort).
-        $this->groupDisplayName = $chatRoom->group?->namedisplay
-            ?: $chatRoom->group?->namefull
-            ?: $chatRoom->group?->nameshort
-            ?: 'Freegle';
 
         // Set chat URL based on whether recipient is a moderator.
         // Moderators use ModTools, members use the user site.
         $this->chatUrl = $this->isModerator
-            ? $this->modSite . '/chats/' . $chatRoom->id
-            : $this->userSite . '/chats/' . $chatRoom->id;
+            ? $this->modSite.'/chats/'.$chatRoom->id
+            : $this->userSite.'/chats/'.$chatRoom->id;
 
         // Build the subject line.
         $this->replySubject = $this->generateSubject();
 
         // Build reply-to address for chat routing.
         // Format: notify-{chatid}-{userid}@{domain}
-        $this->replyToAddress = 'notify-' . $chatRoom->id . '-' . $recipient->id . '@' . $this->userDomain;
+        $this->replyToAddress = 'notify-'.$chatRoom->id.'-'.$recipient->id.'@'.$this->userDomain;
 
-        // Build from display name based on chat type.
-        // For User2Mod chats, we follow the legacy V1 behaviour:
-        // - Member receives: "{GroupName} Volunteers" (hide mod identity)
+        // Build from display name based on chat type. There is one national mod pool,
+        // so User2Mod/Mod2Mod display names use the site name rather than any group:
+        // - Member receives: "Freegle Volunteers" (hide mod identity)
         // - Mod receives from member: "{MemberName} via Freegle"
-        // - Mod receives from another mod: "{GroupName} Volunteers"
+        // - Mod receives from another mod: "Freegle Volunteers"
         $siteName = config('freegle.branding.name', 'Freegle');
 
         if ($chatType === ChatRoom::TYPE_USER2MOD) {
-            $groupName = $chatRoom->group?->namedisplay ?? $chatRoom->group?->nameshort ?? $siteName;
-
             if ($this->isModerator) {
                 // Moderator receiving - check if message is from member or another mod.
                 if ($sender && $sender->id === $chatRoom->user1) {
                     // Message from member - show member's name.
                     $senderName = $sender->displayname ?? 'A member';
-                    $this->fromDisplayName = $senderName . ' via ' . $siteName;
+                    $this->fromDisplayName = $senderName.' via '.$siteName;
                 } else {
-                    // Message from another mod - use group volunteers.
-                    $this->fromDisplayName = $groupName . ' Volunteers';
+                    // Message from another mod - use the volunteers identity.
+                    $this->fromDisplayName = $siteName.' Volunteers';
                 }
             } else {
-                // Member receiving - always show group volunteers, hide mod identity.
-                $this->fromDisplayName = $groupName . ' Volunteers';
+                // Member receiving - always show the volunteers identity, hide mod identity.
+                $this->fromDisplayName = $siteName.' Volunteers';
             }
         } elseif ($chatType === ChatRoom::TYPE_MOD2MOD) {
             // Mod2Mod - show sender name, mods can see each other's identities.
-            $groupName = $chatRoom->group?->namedisplay ?? $chatRoom->group?->nameshort ?? $siteName;
             $senderName = $sender?->displayname ?? 'A volunteer';
-            $this->fromDisplayName = $senderName . ' (' . $groupName . ' Volunteers)';
+            $this->fromDisplayName = $senderName.' ('.$siteName.' Volunteers)';
         } else {
             // User2User - show sender name.
             $senderName = $sender?->displayname ?? 'Someone';
-            $this->fromDisplayName = $senderName . ' on ' . $siteName;
+            $this->fromDisplayName = $senderName.' on '.$siteName;
         }
 
         // Initialize email tracking.
@@ -205,7 +191,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             'ChatNotification',
             $this->recipient->email_preferred,
             $userId,
-            NULL,
+            null,
             $this->replySubject,
             [
                 'chat_id' => $chatRoom->id,
@@ -261,19 +247,19 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     public static function rebuildFromDescriptor(array $descriptor): ?self
     {
         $recipient = User::find($descriptor['recipient'] ?? null);
-        if (!$recipient || !$recipient->email_preferred) {
+        if (! $recipient || ! $recipient->email_preferred) {
             return null;
         }
 
         $message = ChatMessage::find($descriptor['messageid'] ?? null);
         $chatRoom = ChatRoom::find($descriptor['chatid'] ?? null);
-        if (!$message || !$chatRoom) {
+        if (! $message || ! $chatRoom) {
             return null;
         }
 
         $sender = isset($descriptor['sender']) ? User::find($descriptor['sender']) : null;
 
-        $previous = !empty($descriptor['previous'])
+        $previous = ! empty($descriptor['previous'])
             ? ChatMessage::whereIn('id', $descriptor['previous'])->orderBy('id')->get()
             : collect();
 
@@ -320,17 +306,17 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         $outcomeUrls = $showOutcomeButtons ? $this->getOutcomeUrls() : [];
 
         // Check if reply is expected.
-        $replyExpected = $this->message->replyexpected ?? FALSE;
+        $replyExpected = $this->message->replyexpected ?? false;
 
         // Get job ads for the recipient and add tracked URLs.
         $jobAds = $this->recipient->getJobAds();
         $jobCount = count($jobAds['jobs']);
         foreach ($jobAds['jobs'] as $index => $job) {
             $job->tracked_url = $this->trackedUrl(
-                config('freegle.sites.user') . '/job/' . $job->id .
-                '?source=email&campaign=chat_notification&position=' . $index .
-                '&list_length=' . $jobCount,
-                'job_ad_' . $index,
+                config('freegle.sites.user').'/job/'.$job->id.
+                '?source=email&campaign=chat_notification&position='.$index.
+                '&list_length='.$jobCount,
+                'job_ad_'.$index,
                 'job_click'
             );
         }
@@ -345,29 +331,28 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         // Any message notification to a member is from volunteers (even if sender is NULL).
         // We don't need to check who the sender is - members always see "Volunteers".
         $shouldHideModIdentity = $this->chatType === ChatRoom::TYPE_USER2MOD
-            && !$this->isModerator;  // Recipient is a member
+            && ! $this->isModerator;  // Recipient is a member
 
         // Build sender page URL (for clicking on sender name/image).
         // Moderators should go to ModTools, members to user site.
-        // For hidden mod identity, link to group explore page.
+        // For hidden mod identity there's no individual or group page to send them to,
+        // so the sender name isn't a link.
         if ($shouldHideModIdentity) {
-            $groupName = $this->chatRoom->group?->nameshort ?? '';
-            $senderPageUrl = $groupName
-                ? $this->trackedUrl($this->userSite . '/explore/' . urlencode($groupName), 'group_profile', 'group')
-                : null;
+            $senderPageUrl = null;
         } elseif ($this->sender?->id) {
             $profileSite = $this->isModerator ? $this->modSite : $this->userSite;
-            $senderPageUrl = $this->trackedUrl($profileSite . '/profile/' . $this->sender->id, 'sender_profile', 'profile');
+            $senderPageUrl = $this->trackedUrl($profileSite.'/profile/'.$this->sender->id, 'sender_profile', 'profile');
         } else {
             $senderPageUrl = null;
         }
 
         // Get sender name and profile, hiding mod identity for members.
+        $siteName = config('freegle.branding.name', 'Freegle');
         $senderName = $shouldHideModIdentity
-            ? $this->groupDisplayName . ' Volunteers'
+            ? $siteName.' Volunteers'
             : ($this->sender?->displayname ?? 'Someone');
         $senderProfileUrl = $shouldHideModIdentity
-            ? $this->getGroupProfileUrl()
+            ? $this->resolveAvatarUrl(null, 40)
             : $this->getSenderProfileUrl();
 
         // For mod view, determine if the sender is the member or another mod.
@@ -419,27 +404,23 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
                 'senderIsMember' => $senderIsMember,
                 'member' => $this->member,
                 'memberName' => $this->member?->displayname ?? 'the member',
-                'memberProfileUrl' => ($this->isModerator && $this->member && $this->chatRoom->groupid)
-                    ? $this->trackedUrl(
-                        $this->modSite . '/members/approved/' . $this->chatRoom->groupid . '/' . $this->member->id,
-                        'member_profile',
-                        'profile'
-                    )
-                    : null,
-                'groupName' => $this->groupDisplayName,
-                'groupShortName' => $this->chatRoom->group?->nameshort ?? 'Freegle',
+                // ModTools has no member-profile route that isn't scoped to a group any
+                // more, so there's nowhere group-free to send this link yet.
+                'memberProfileUrl' => null,
+                'groupName' => $siteName,
+                'groupShortName' => $siteName,
                 'settingsUrl' => $this->trackedUrl(
-                    $this->isModerator ? $this->modSite . '/settings' : $this->userSite . '/settings',
+                    $this->isModerator ? $this->modSite.'/settings' : $this->userSite.'/settings',
                     'footer_settings',
                     'settings'
                 ),
                 'unsubscribeUrl' => $this->trackedUrl(
-                    $this->isModerator ? $this->modSite . '/settings' : $this->userSite . '/unsubscribe',
+                    $this->isModerator ? $this->modSite.'/settings' : $this->userSite.'/unsubscribe',
                     'footer_unsubscribe',
                     'unsubscribe'
                 ),
                 'jobAds' => $jobAds['jobs'],
-                'jobsUrl' => $this->trackedUrl($this->userSite . '/jobs', 'jobs_link', 'jobs'),
+                'jobsUrl' => $this->trackedUrl($this->userSite.'/jobs', 'jobs_link', 'jobs'),
                 // Our own Stripe donate page rather than the PayPal-only
                 // shortlink, so Apple Pay / Google Pay / Link are on offer too.
                 // See DonateLinkService.
@@ -538,12 +519,6 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
                 $headers->addTextHeader('X-Freegle-From-UID', (string) $this->sender->id);
             }
 
-            // Add group ID for User2Mod and Mod2Mod chats.
-            if (($this->chatType === ChatRoom::TYPE_USER2MOD || $this->chatType === ChatRoom::TYPE_MOD2MOD)
-                && $this->chatRoom->groupid) {
-                $headers->addTextHeader('X-Freegle-Group-Volunteer', (string) $this->chatRoom->groupid);
-            }
-
             // Add read receipt headers for User2User and Mod2Mod chats.
             if (($this->chatType === ChatRoom::TYPE_USER2USER || $this->chatType === ChatRoom::TYPE_MOD2MOD)
                 && $this->recipient->exists) {
@@ -577,11 +552,11 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
      * to get the item subject, since that's the most likely thing they're talking about.
      *
      * For User2Mod chats:
-     * - Member gets: "Your conversation with the {GroupName} volunteers"
-     * - Moderator gets: "Member conversation on {GroupShortName} with {MemberName} ({email})"
+     * - Member gets: "Your conversation with the {SiteName} Volunteers"
+     * - Moderator gets: "Member conversation with {MemberName} ({email})"
      *
      * For Mod2Mod chats:
-     * - All mods get: "{GroupShortName} Volunteer Chat: {SenderName}"
+     * - All mods get: "{SiteName} Volunteer Chat: {SenderName}"
      */
     protected function generateSubject(): string
     {
@@ -590,7 +565,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         // Chase-up of an expected reply: prefix to match the legacy V1 PHP
         // ChatRoom::chaseupExpected() behaviour.
         if ($this->waitingForReply) {
-            return 'WAITING FOR REPLY: ' . $subject;
+            return 'WAITING FOR REPLY: '.$subject;
         }
 
         return $subject;
@@ -602,26 +577,26 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     protected function generateBaseSubject(): string
     {
         if ($this->chatType === ChatRoom::TYPE_USER2MOD) {
-            $group = $this->chatRoom->group;
+            $siteName = config('freegle.branding.name', 'Freegle');
 
             if ($this->isModerator) {
-                // Moderator subject - matches the legacy V1 PHP implementation exactly.
-                $groupName = $group?->nameshort ?? 'Freegle';
+                // Moderator subject. No group name - there is one national mod pool
+                // rather than a group the member happened to contact.
                 $memberName = $this->member?->displayname ?? 'A member';
                 $memberEmail = $this->member?->email_preferred ?? '';
-                return "Member conversation on {$groupName} with {$memberName} ({$memberEmail})";
+
+                return "Member conversation with {$memberName} ({$memberEmail})";
             }
 
             // Member subject.
-            $groupName = $group?->namefull ?? $group?->nameshort ?? 'your local Freegle group';
-            return "Your conversation with the {$groupName} Volunteers";
+            return "Your conversation with the {$siteName} Volunteers";
         }
 
         if ($this->chatType === ChatRoom::TYPE_MOD2MOD) {
-            $group = $this->chatRoom->group;
-            $groupName = $group?->nameshort ?? 'Freegle';
+            $siteName = config('freegle.branding.name', 'Freegle');
             $senderName = $this->sender?->displayname ?? 'A volunteer';
-            return "{$groupName} Volunteer Chat: {$senderName}";
+
+            return "{$siteName} Volunteer Chat: {$senderName}";
         }
 
         // For USER2USER chats, find the last "interested in" message to get the item subject.
@@ -646,7 +621,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         }
 
         // Fallback if no interested message found.
-        return "[Freegle] You have a new message";
+        return '[Freegle] You have a new message';
     }
 
     /**
@@ -666,13 +641,13 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             ->orderByDesc('id')
             ->first();
 
-        if (!$interestedMessage) {
-            return NULL;
+        if (! $interestedMessage) {
+            return null;
         }
 
         $refMessage = $interestedMessage->refMessage;
-        if (!$refMessage) {
-            return NULL;
+        if (! $refMessage) {
+            return null;
         }
 
         return [
@@ -684,7 +659,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
      * Get a clean snippet of the message for use in subject lines.
      * Matches the snippet format used in the legacy V1 PHP ChatRoom::getSnippet().
      *
-     * @param int $maxLength Maximum length of the snippet
+     * @param  int  $maxLength  Maximum length of the snippet
      */
     protected function getSubjectSnippet(int $maxLength = 40): string
     {
@@ -703,11 +678,13 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             case ChatMessage::TYPE_COMPLETED:
                 // Match the legacy V1 PHP implementation: different text for OFFER (TAKEN) vs WANTED (RECEIVED).
                 if ($this->refMessage?->type === Message::TYPE_OFFER) {
-                    if (!empty($text)) {
+                    if (! empty($text)) {
                         break; // Use the text below.
                     }
+
                     return 'Item marked as TAKEN';
                 }
+
                 return 'Item marked as RECEIVED...';
             case ChatMessage::TYPE_IMAGE:
                 // If there's text with the image, use that; otherwise use generic.
@@ -721,7 +698,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
                     return 'Interested...';
                 }
                 break;
-            // For DEFAULT and MODMAIL, use the actual text.
+                // For DEFAULT and MODMAIL, use the actual text.
         }
 
         // Decode emoji escape sequences.
@@ -737,7 +714,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
 
         // Truncate with ellipsis if needed.
         if (mb_strlen($text) > $maxLength) {
-            $text = mb_substr($text, 0, $maxLength - 1) . '…';
+            $text = mb_substr($text, 0, $maxLength - 1).'…';
         }
 
         return $text;
@@ -756,9 +733,9 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     /**
      * Prepare a single message for display.
      *
-     * For User2Mod chats, we follow the legacy V1 behaviour:
-     * - When notifying a member, mod messages show "Volunteers" and group profile
-     * - When notifying a mod, messages show actual user names/profiles
+     * For User2Mod chats:
+     * - When notifying a member, mod messages show "Volunteers" and a generic avatar.
+     * - When notifying a mod, messages show actual user names/profiles.
      */
     protected function prepareMessage(ChatMessage $message): array
     {
@@ -785,13 +762,14 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         // For User2Mod chats when notifying a member, hide mod identity.
         // This matches the legacy V1 PHP prepareForTwig() behavior.
         $shouldHideModIdentity = $this->chatType === ChatRoom::TYPE_USER2MOD
-            && !$this->isModerator  // Recipient is a member
+            && ! $this->isModerator  // Recipient is a member
             && $isFromMod;          // Message is from a mod
 
         // Get profile image URL.
-        // For mod messages to members, use group profile instead of individual mod profile.
+        // For mod messages to members, use the generic volunteers avatar instead of
+        // the individual mod's profile - there is no group to attribute it to.
         if ($shouldHideModIdentity) {
-            $profileUrl = $this->getGroupProfileUrl();
+            $profileUrl = $this->resolveAvatarUrl(null, 40);
         } else {
             $profileUrl = $this->getProfileImageUrl($messageUser);
         }
@@ -804,15 +782,12 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
 
         // Get user page URL for clicking on profile.
         // Moderators should go to ModTools, members to user site.
-        // For hidden mod identity, link to group explore page.
+        // For hidden mod identity there's no individual or group page to link to.
         if ($shouldHideModIdentity) {
-            $groupName = $this->chatRoom->group?->nameshort ?? '';
-            $userPageUrl = $groupName
-                ? $this->trackedUrl($this->userSite . '/explore/' . urlencode($groupName), 'group_profile', 'group')
-                : null;
+            $userPageUrl = null;
         } elseif ($messageUser?->id) {
             $profileSite = $this->isModerator ? $this->modSite : $this->userSite;
-            $userPageUrl = $this->trackedUrl($profileSite . '/profile/' . $messageUser->id, 'message_profile', 'profile');
+            $userPageUrl = $this->trackedUrl($profileSite.'/profile/'.$messageUser->id, 'message_profile', 'profile');
         } else {
             $userPageUrl = null;
         }
@@ -823,7 +798,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         // Determine the display name for the message author.
         // For mod messages to members, show "Volunteers" instead of individual name.
         $userName = $shouldHideModIdentity
-            ? $this->groupDisplayName . ' Volunteers'
+            ? config('freegle.branding.name', 'Freegle').' Volunteers'
             : ($messageUser?->displayname ?? 'Someone');
 
         return [
@@ -840,7 +815,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             // in UK local time (honours BST) rather than UTC. Matches UnifiedDigest.
             'formattedDate' => $message->date?->setTimezone('Europe/London')->format('M j, g:i a') ?? '',
             'isFromRecipient' => $isFromRecipient,
-            'replyExpected' => $message->replyexpected ?? FALSE,
+            'replyExpected' => $message->replyexpected ?? false,
             'refMessage' => $refMessageInfo,
             'mapUrl' => $mapUrl,
         ];
@@ -852,7 +827,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     protected function getMessageRefInfo(ChatMessage $message): ?array
     {
         $refMsg = $message->refMessage;
-        if (!$refMsg) {
+        if (! $refMsg) {
             return null;
         }
 
@@ -863,7 +838,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
 
         $imageUrl = null;
         if ($attachment) {
-            if (!empty($attachment->externalurl)) {
+            if (! empty($attachment->externalurl)) {
                 $imageUrl = $this->getDeliveryUrl($attachment->externalurl, 75);
             } else {
                 $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
@@ -873,10 +848,11 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
 
         // Use ModTools for moderators, user site for members.
         $messageSite = $this->isModerator ? $this->modSite : $this->userSite;
+
         return [
             'subject' => $refMsg->subject,
             'imageUrl' => $imageUrl,
-            'url' => $this->trackedUrl($messageSite . '/message/' . $refMsg->id, 'ref_message', 'view_item'),
+            'url' => $this->trackedUrl($messageSite.'/message/'.$refMsg->id, 'ref_message', 'view_item'),
         ];
     }
 
@@ -921,32 +897,35 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
                 if ($message->userid === $this->recipient->id) {
                     return "You promised this to {$otherName}:";
                 }
+
                 return "{$otherName} promised this to you:";
 
             case ChatMessage::TYPE_RENEGED:
                 $otherName = $this->getOtherUserName();
                 if ($message->userid === $this->recipient->id) {
-                    return "You cancelled your promise for:";
+                    return 'You cancelled your promise for:';
                 }
+
                 return "{$otherName} cancelled their promise for:";
 
             case ChatMessage::TYPE_COMPLETED:
-                return "This item is no longer available:";
+                return 'This item is no longer available:';
 
             case ChatMessage::TYPE_ADDRESS:
                 return $this->getAddressDisplayText($message);
 
             case ChatMessage::TYPE_NUDGE:
                 if ($message->userid === $this->recipient->id) {
-                    return "You sent a nudge - please can you reply?";
+                    return 'You sent a nudge - please can you reply?';
                 }
-                return "Nudge - please can you reply?";
+
+                return 'Nudge - please can you reply?';
 
             case ChatMessage::TYPE_MODMAIL:
-                return "Message from Volunteers: " . $text;
+                return 'Message from Volunteers: '.$text;
 
             case ChatMessage::TYPE_REPORTEDUSER:
-                return "This member reported another member with the comment: " . $text;
+                return 'This member reported another member with the comment: '.$text;
 
             case ChatMessage::TYPE_IMAGE:
                 return $text ?: 'Sent an image';
@@ -972,28 +951,28 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
 
         // The message field contains the address ID.
         $addressId = intval($message->message);
-        if (!$addressId) {
+        if (! $addressId) {
             return $intro;
         }
 
         // Look up the address.
         $userAddress = UserAddress::find($addressId);
-        if (!$userAddress) {
+        if (! $userAddress) {
             return $intro;
         }
 
         // Get the formatted multiline address.
         $formattedAddress = $userAddress->getMultiLine();
-        if (!$formattedAddress) {
+        if (! $formattedAddress) {
             return $intro;
         }
 
         // Build the full text with the address.
-        $result = $intro . "\n\n" . $formattedAddress;
+        $result = $intro."\n\n".$formattedAddress;
 
         // Add collection instructions if present.
-        if (!empty($userAddress->instructions)) {
-            $result .= "\n\n" . $userAddress->instructions;
+        if (! empty($userAddress->instructions)) {
+            $result .= "\n\n".$userAddress->instructions;
         }
 
         return $result;
@@ -1010,19 +989,19 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
 
         // The message field contains the address ID.
         $addressId = intval($message->message);
-        if (!$addressId) {
+        if (! $addressId) {
             return null;
         }
 
         // Look up the address.
         $userAddress = UserAddress::find($addressId);
-        if (!$userAddress) {
+        if (! $userAddress) {
             return null;
         }
 
         // Get coordinates (falls back to postcode if needed).
         [$lat, $lng] = $userAddress->getCoordinates();
-        if (!$lat || !$lng) {
+        if (! $lat || ! $lng) {
             return null;
         }
 
@@ -1035,47 +1014,24 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     /**
      * Get profile image URL for a user, optimized via delivery service.
      *
-     * @param User|null $user The user
-     * @param int $width The desired width (default 40px for message avatars)
+     * @param  User|null  $user  The user
+     * @param  int  $width  The desired width (default 40px for message avatars)
      */
     protected function getProfileImageUrl(?User $user, int $width = 40): string
     {
         // Check both for a user ID and that the user exists in the database.
         // Mock/test users may have IDs but exists=false.
-        if (!$user || !$user->id || !$user->exists) {
+        if (! $user || ! $user->id || ! $user->exists) {
             return $this->resolveAvatarUrl(null, $width);
         }
 
         // Get the user's profile image URL from their users_images record.
-        $sourceUrl = $user->getProfileImageUrl(TRUE);
+        $sourceUrl = $user->getProfileImageUrl(true);
 
-        if (!$sourceUrl) {
+        if (! $sourceUrl) {
             return $this->resolveAvatarUrl($user, $width);
         }
 
-        return $this->getDeliveryUrl($sourceUrl, $width);
-    }
-
-    /**
-     * Get group profile image URL for User2Mod chats.
-     *
-     * This matches the legacy V1 PHP behaviour where mod messages to members
-     * use the group's profile image instead of the individual mod's profile.
-     * Format: gimg_{profile_image_id}.jpg where profile is from groups.profile column
-     */
-    protected function getGroupProfileUrl(int $width = 40): string
-    {
-        $group = $this->chatRoom->group;
-
-        if (!$group || !$group->profile) {
-            // No group image — generate a boring-avatar using the group name.
-            $name    = $group?->nameshort ?? 'group';
-            $baseUrl = rtrim(config('freegle.avatar_server_url', ''), '/');
-            return $baseUrl . '/' . rawurlencode($name) . '.png' . ($width !== 48 ? "?size={$width}" : '');
-        }
-
-        $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
-        $sourceUrl = "{$imagesDomain}/gimg_{$group->profile}.jpg";
         return $this->getDeliveryUrl($sourceUrl, $width);
     }
 
@@ -1090,16 +1046,16 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     /**
      * Get a URL via the delivery service for image resizing/optimization.
      *
-     * @param string $sourceUrl The source image URL
-     * @param int $width The desired width
+     * @param  string  $sourceUrl  The source image URL
+     * @param  int  $width  The desired width
      */
     protected function getDeliveryUrl(string $sourceUrl, int $width): string
     {
-        if (!$this->deliveryUrl) {
+        if (! $this->deliveryUrl) {
             return $sourceUrl;
         }
 
-        return $this->deliveryUrl . '/?url=' . urlencode($sourceUrl) . '&w=' . $width;
+        return $this->deliveryUrl.'/?url='.urlencode($sourceUrl).'&w='.$width;
     }
 
     /**
@@ -1108,7 +1064,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     protected function getMessageImageUrl(ChatMessage $message): ?string
     {
         if ($message->type !== ChatMessage::TYPE_IMAGE) {
-            return NULL;
+            return null;
         }
 
         $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
@@ -1116,6 +1072,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         // Chat message images use mimg_{id}.jpg format (m = message/chat).
         if ($message->imageid) {
             $sourceUrl = "{$imagesDomain}/mimg_{$message->imageid}.jpg";
+
             return $this->getDeliveryUrl($sourceUrl, 200);
         }
 
@@ -1123,10 +1080,11 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         $image = $message->images()->first();
         if ($image) {
             $sourceUrl = "{$imagesDomain}/mimg_{$image->id}.jpg";
+
             return $this->getDeliveryUrl($sourceUrl, 200);
         }
 
-        return NULL;
+        return null;
     }
 
     /**
@@ -1135,18 +1093,18 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
      */
     protected function shouldShowOutcomeButtons(): bool
     {
-        if (!$this->refMessage) {
-            return FALSE;
+        if (! $this->refMessage) {
+            return false;
         }
 
         // Only for OFFER items.
         if ($this->refMessage->type !== Message::TYPE_OFFER) {
-            return FALSE;
+            return false;
         }
 
         // Only if recipient is the poster.
         if ($this->refMessage->fromuser !== $this->recipient->id) {
-            return FALSE;
+            return false;
         }
 
         // Only if this is an Interested message.
@@ -1158,7 +1116,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
      */
     protected function getOutcomeUrls(): array
     {
-        if (!$this->refMessage) {
+        if (! $this->refMessage) {
             return [];
         }
 
@@ -1166,12 +1124,12 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
 
         return [
             'taken' => $this->trackedUrl(
-                $this->userSite . '/message/' . $msgId . '?outcome=Taken',
+                $this->userSite.'/message/'.$msgId.'?outcome=Taken',
                 'outcome_taken',
                 'outcome'
             ),
             'withdrawn' => $this->trackedUrl(
-                $this->userSite . '/message/' . $msgId . '?outcome=Withdrawn',
+                $this->userSite.'/message/'.$msgId.'?outcome=Withdrawn',
                 'outcome_withdrawn',
                 'outcome'
             ),
@@ -1183,7 +1141,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
      */
     protected function getRefMessageImageUrl(): ?string
     {
-        if (!$this->refMessage) {
+        if (! $this->refMessage) {
             return null;
         }
 
@@ -1192,12 +1150,12 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             ->orderByDesc('primary')
             ->first();
 
-        if (!$attachment) {
+        if (! $attachment) {
             return null;
         }
 
         // If there's an external URL, use it directly.
-        if (!empty($attachment->externalurl)) {
+        if (! empty($attachment->externalurl)) {
             return $this->getDeliveryUrl($attachment->externalurl, 200);
         }
 

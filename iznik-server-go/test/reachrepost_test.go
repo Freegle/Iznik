@@ -22,7 +22,6 @@ func TestRepostBumpsTheReachRowSoThePassSeesIt(t *testing.T) {
 	prefix := uniquePrefix("repost_reach")
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	_, token := CreateTestSession(t, userID)
 
@@ -61,7 +60,6 @@ func TestRepostWithoutAReachRowCreatesNone(t *testing.T) {
 	prefix := uniquePrefix("repost_noreach")
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	_, token := CreateTestSession(t, userID)
 

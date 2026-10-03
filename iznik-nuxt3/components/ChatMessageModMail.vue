@@ -5,22 +5,7 @@
         <div class="media">
           <b-card border-variant="success" :class="{ 'ms-auto': !amUser }">
             <b-card-title>
-              <h4 v-if="groupless">Message from Freegle</h4>
-              <div v-else-if="group">
-                <h4>
-                  <ProfileImage
-                    v-if="group"
-                    :image="group.profile"
-                    class="me-1 mb-1 mt-1 inline"
-                    is-thumbnail
-                    size="sm"
-                  />
-                  <span class="align-middle">
-                    Message from {{ group.namedisplay }} Volunteers
-                  </span>
-                </h4>
-              </div>
-              <h4 v-else>Message from Freegle Volunteers</h4>
+              <h4>Message from Freegle</h4>
               <div v-if="realMod" class="text-muted small">
                 <div class="small">
                   (Sent by
@@ -71,18 +56,14 @@
                   message - they'll go to the other freegler. If you want to
                   contact the volunteers, please use the button below.
                 </p>
-                <GroupSelect
-                  v-model="contactGroupId"
-                  remember="contactmods"
-                  class="mb-3"
-                />
-                <ChatButton
-                  :groupid="contactGroupId"
-                  size="md"
-                  title="Contact community volunteers"
+                <b-button
                   variant="primary"
                   class="mb-2"
-                />
+                  :disabled="contacting"
+                  @click="contactMods"
+                >
+                  Contact Freegle volunteers
+                </b-button>
               </NoticeMessage>
             </b-card-text>
           </b-card>
@@ -92,22 +73,16 @@
   </div>
 </template>
 <script setup>
-import { useGroupless } from '~/composables/useGroupless'
-
 import { ref, computed } from 'vue'
 import NoticeMessage from './NoticeMessage'
-import ChatButton from './ChatButton'
 import { useComposeStore } from '~/stores/compose'
+import { useChatStore } from '~/stores/chat'
 import { useMiscStore } from '~/stores/misc'
 import {
   fetchReferencedMessage,
   useChatMessageBase,
 } from '~/composables/useChat'
-import ProfileImage from '~/components/ProfileImage'
-import GroupSelect from '~/components/GroupSelect'
 import { useRouter } from '#imports'
-// Experiment: no community identity on the member site.
-const groupless = useGroupless()
 
 const props = defineProps({
   chatid: {
@@ -140,15 +115,12 @@ const { chat, chatmessage, emessage, refmsg, me, myid, realMe } =
   useChatMessageBase(props.chatid, props.id, props.pov)
 
 const composeStore = useComposeStore()
+const chatStore = useChatStore()
 const miscStore = useMiscStore()
-const contactGroupId = ref(null)
+const contacting = ref(false)
 
 // Setup
 await fetchReferencedMessage(props.chatid, props.id)
-
-const group = computed(() => {
-  return chat.value && chat.value.group ? chat.value.group : null
-})
 
 const amUser = computed(() => {
   return chat.value && chat.value.user && chat.value.user.id === myid
@@ -188,6 +160,18 @@ async function repost() {
 
     const router = useRouter()
     router.push(message.type === 'Offer' ? '/give' : '/ask')
+  }
+}
+
+async function contactMods() {
+  contacting.value = true
+
+  try {
+    const chatid = await chatStore.openChatToMods()
+    const router = useRouter()
+    router.push('/chats/' + chatid)
+  } finally {
+    contacting.value = false
   }
 }
 </script>

@@ -24,12 +24,9 @@ const mockMe = ref({
   trustlevel: 'Basic',
   isModerator: false,
   isAdmin: false,
-  settings: {
-    browseView: 'nearby',
-  },
+  settings: {},
 })
 
-const mockMyGroups = ref([{ id: 1, microvolunteeringallowed: true }])
 const mockFetchMe = vi.fn()
 
 vi.mock('~/stores/microvolunteering', () => ({
@@ -47,7 +44,6 @@ vi.mock('~/stores/auth', () => ({
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: mockMe,
-    myGroups: mockMyGroups,
     fetchMe: mockFetchMe,
   }),
 }))
@@ -61,11 +57,8 @@ describe('MicroVolunteering', () => {
       trustlevel: 'Basic',
       isModerator: false,
       isAdmin: false,
-      settings: {
-        browseView: 'nearby',
-      },
+      settings: {},
     }
-    mockMyGroups.value = [{ id: 1, microvolunteeringallowed: true }]
     mockMiscStore.modtools = false
     mockMiscStore.get.mockReturnValue(null)
     mockMicroVolunteeringStore.challenge.mockResolvedValue(null)
@@ -331,20 +324,9 @@ describe('MicroVolunteering', () => {
     })
   })
 
-  describe('group microvolunteering check', () => {
-    it('checks if group allows microvolunteering', () => {
-      mockMyGroups.value = [{ id: 1, microvolunteeringallowed: false }]
-      mockMe.value.trustlevel = null
-      const wrapper = createWrapper()
-      // Should not show invite if not allowed
-      expect(wrapper.exists()).toBe(true)
-    })
-  })
-
   describe('gate mode (reply gate)', () => {
     it('asks for a graded task whatever the usual gating says', async () => {
       mockMiscStore.get.mockReturnValue(Date.now())
-      mockMyGroups.value = [{ id: 1, microvolunteeringallowed: false }]
       mockMicroVolunteeringStore.challenge.mockResolvedValue({
         type: 'CheckMessage',
         msgid: 7,

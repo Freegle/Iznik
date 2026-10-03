@@ -53,13 +53,13 @@ class ReachBoundsService
      */
     public static function outerExpr(string $polyExpr): string
     {
-        return "ST_Buffer(ST_Simplify($polyExpr, " . self::TOLERANCE . '), ' . self::TOLERANCE . ')';
+        return "ST_Buffer(ST_Simplify($polyExpr, ".self::TOLERANCE.'), '.self::TOLERANCE.')';
     }
 
     /** As outerExpr, for the inner bound (negative buffer). */
     public static function innerExpr(string $polyExpr): string
     {
-        return "ST_Buffer(ST_Simplify($polyExpr, " . self::TOLERANCE . '), -' . self::TOLERANCE . ')';
+        return "ST_Buffer(ST_Simplify($polyExpr, ".self::TOLERANCE.'), -'.self::TOLERANCE.')';
     }
 
     /**
@@ -67,8 +67,8 @@ class ReachBoundsService
      * (or needs them re-verified): prefer bounds the routing server derived on its own
      * rasterisation grid, fall back to deriving from the stored polygon. Provided
      * bounds are verified against the stored polygon — they bound the raw tick
-     * isochrone, while the stored polygon may have been unioned with the origin
-     * group's area and clipped by rejections, so verbatim trust would be wrong.
+     * isochrone, while the stored polygon may have been clipped by rejections, so
+     * verbatim trust would be wrong.
      *
      * The provided INNER is additionally held to a usefulness bar, not just a
      * correctness one: a verified inner covering a sliver of the polygon (see
@@ -88,7 +88,7 @@ class ReachBoundsService
             DB::update(
                 'UPDATE rippling_reach
                     SET outer_bound = ST_GeomFromText(?, 3857), '
-                    . ($innerWkt !== null ? 'inner_bound = ST_GeomFromText(?, 3857), ' : 'inner_bound = NULL, ') .
+                    .($innerWkt !== null ? 'inner_bound = ST_GeomFromText(?, 3857), ' : 'inner_bound = NULL, ').
                     'updated_at = updated_at
                   WHERE msgid = ?',
                 $innerWkt !== null ? [$outerWkt, $innerWkt, $msgid] : [$outerWkt, $msgid]
@@ -97,7 +97,7 @@ class ReachBoundsService
         } catch (\Throwable) {
             // Unusable provided geometry — derive from the polygon instead.
         }
-        if (!$stored) {
+        if (! $stored) {
             $this->syncFromPolygon($msgid);
 
             return;
@@ -107,22 +107,11 @@ class ReachBoundsService
             // A retired row has no grid: every verify below reads it and can
             // only answer "cannot say", costing three round trips to conclude
             // nothing and then DISCARDING the inner bound just written. The
-            // routing-provided bounds are trusted directly; the one real step
-            // kept is widening the outer with the origin group's area, since
-            // the provided outer bounds the raw isochrone only.
-            $this->unionOuterWithOriginGroup($msgid);
-
+            // routing-provided bounds are trusted directly.
             return;
         }
 
         [$outerOk, $innerOk] = $this->verifySandwich($msgid);
-        if ($outerOk !== 1) {
-            // The provided outer bounds the raw tick isochrone; the STORED polygon may
-            // additionally include the origin group's area (unionWithOriginGroupArea).
-            // Union that area into the outer and re-verify before falling back.
-            $this->unionOuterWithOriginGroup($msgid);
-            [$outerOk, $innerOk] = $this->verifySandwich($msgid);
-        }
         if ($outerOk !== 1) {
             $this->fallbackToEnvelope($msgid);
 
@@ -195,7 +184,7 @@ class ReachBoundsService
             if ($row === null || $row->outer_type === 'POINT') {
                 return 'skipped';
             }
-            if (!(int) $row->missing && (float) $row->ratio >= $minRatio) {
+            if (! (int) $row->missing && (float) $row->ratio >= $minRatio) {
                 return 'kept';
             }
         } catch (\Throwable) {
@@ -209,7 +198,7 @@ class ReachBoundsService
             // catch: a degraded completed-post row must never get an inner resurrected.
             DB::update(
                 "UPDATE rippling_reach$join
-                    SET inner_bound = " . self::innerExpr($poly) . ',
+                    SET inner_bound = ".self::innerExpr($poly).',
                         updated_at = updated_at
                   WHERE msgid = ? AND ST_GeometryType(outer_bound) <> \'POINT\'',
                 array_merge($binds, [$msgid])
@@ -254,8 +243,8 @@ class ReachBoundsService
             // keep-raw: embeds the outerExpr/innerExpr GIS derivations; updated_at preserved deliberately
             DB::update(
                 "UPDATE rippling_reach$join
-                    SET outer_bound = " . self::outerExpr($poly) . ',
-                        inner_bound = ' . self::innerExpr($poly) . ',
+                    SET outer_bound = ".self::outerExpr($poly).',
+                        inner_bound = '.self::innerExpr($poly).',
                         updated_at = updated_at
                   WHERE msgid = ?',
                 array_merge($binds, $binds, [$msgid])
@@ -265,7 +254,7 @@ class ReachBoundsService
             // Invalid stored geometry — fall through to the envelope fallback.
         }
 
-        if (!$derived) {
+        if (! $derived) {
             $this->fallbackToEnvelope($msgid);
 
             return;
@@ -337,35 +326,6 @@ class ReachBoundsService
             return [(int) ($check->o ?? 0), (int) ($check->i ?? 0)];
         } catch (\Throwable) {
             return [0, 0];
-        }
-    }
-
-    /**
-     * Union the post's origin-group area into its outer bound — the repair step for
-     * provided bounds when the stored polygon was widened by unionWithOriginGroupArea.
-     * Best-effort: verification afterwards decides the outcome either way.
-     */
-    private function unionOuterWithOriginGroup(int $msgid): void
-    {
-        try {
-            DB::update(
-                'UPDATE rippling_reach rr
-                    SET rr.outer_bound = COALESCE(
-                        (SELECT ST_Union(rr.outer_bound, g.polyindex)
-                           FROM messages_groups mg
-                           JOIN `groups` g ON g.id = mg.groupid
-                          WHERE mg.msgid = rr.msgid AND mg.deleted = 0
-                            AND g.polyindex IS NOT NULL
-                            AND ST_GeometryType(g.polyindex) <> \'POINT\'
-                          ORDER BY mg.arrival ASC
-                          LIMIT 1),
-                        rr.outer_bound),
-                        rr.updated_at = rr.updated_at
-                  WHERE rr.msgid = ?',
-                [$msgid]
-            );
-        } catch (\Throwable) {
-            // Leave the stored outer as-is; verification decides.
         }
     }
 

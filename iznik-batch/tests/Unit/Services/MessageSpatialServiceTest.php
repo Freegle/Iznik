@@ -3,7 +3,6 @@
 namespace Tests\Unit\Services;
 
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Services\MessageSpatialService;
 use App\Services\SpatialAdminService;
 use Illuminate\Support\Facades\DB;
@@ -14,6 +13,7 @@ class MessageSpatialServiceTest extends TestCase
     use \Tests\Support\SeedsReachCells;
 
     protected MessageSpatialService $service;
+
     protected SpatialAdminService $spatialAdmin;
 
     protected function setUp(): void
@@ -28,7 +28,6 @@ class MessageSpatialServiceTest extends TestCase
     public function test_adds_new_approved_message_to_spatial_index(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -40,12 +39,7 @@ class MessageSpatialServiceTest extends TestCase
             'arrival' => now()->subDays(5),
             'lat' => 51.5,
             'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(5),
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         $result = $this->service->updateSpatialIndex();
@@ -57,7 +51,6 @@ class MessageSpatialServiceTest extends TestCase
     public function test_removes_withdrawn_message_from_spatial_index(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -69,18 +62,13 @@ class MessageSpatialServiceTest extends TestCase
             'arrival' => now()->subDays(5),
             'lat' => 51.5,
             'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(5),
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         // Put it in the spatial index.
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
-            [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
+            "INSERT INTO messages_spatial (msgid, point, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?)",
+            [$message->id, Message::TYPE_OFFER, now()->subDays(5)]
         );
 
         // Mark as withdrawn.
@@ -94,136 +82,9 @@ class MessageSpatialServiceTest extends TestCase
         $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $message->id)->count());
     }
 
-    public function test_does_not_index_soft_deleted_membership(): void
-    {
-        // Rippling's "removed on origin removal" sets messages_groups.deleted=1 but leaves
-        // collection=Approved and messages.deleted NULL. Such a removed copy — even with a recent
-        // arrival (e.g. one autorepost wrongly bumped) — must NOT be indexed into browse.
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        $message = Message::create([
-            'type' => Message::TYPE_OFFER,
-            'fromuser' => $user->id,
-            'subject' => 'OFFER: removed copy (London)',
-            'textbody' => 'Removed on origin removal.',
-            'source' => 'Platform',
-            'date' => now()->subDays(2),
-            'arrival' => now()->subDays(2),
-            'lat' => 51.5,
-            'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(2),
-            'deleted' => 1,
-        ]);
-
-        $this->service->updateSpatialIndex();
-
-        $this->assertEquals(
-            0,
-            DB::table('messages_spatial')->where('msgid', $message->id)->count(),
-            'a soft-deleted (removed) membership must not be indexed'
-        );
-    }
-
-    public function test_removes_spatial_row_when_membership_soft_deleted(): void
-    {
-        // An already-indexed row whose backing membership is later soft-deleted (deleted=1,
-        // collection still Approved) must be removed — otherwise the removed copy lingers in
-        // browse until removeOldMessages ages it out (up to 31 days).
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        $message = Message::create([
-            'type' => Message::TYPE_OFFER,
-            'fromuser' => $user->id,
-            'subject' => 'OFFER: lingering (London)',
-            'textbody' => 'Indexed then removed.',
-            'source' => 'Platform',
-            'date' => now()->subDays(2),
-            'arrival' => now()->subDays(2),
-            'lat' => 51.5,
-            'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(2),
-            'deleted' => 1,
-        ]);
-        // Already in the index, pointing at this now-removed group.
-        DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
-            [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(2)]
-        );
-
-        $this->service->updateSpatialIndex();
-
-        $this->assertEquals(
-            0,
-            DB::table('messages_spatial')->where('msgid', $message->id)->count(),
-            'the spatial row is removed when its backing membership is soft-deleted'
-        );
-    }
-
-    public function test_pending_rippled_in_row_keeps_approved_origin_spatial_row(): void
-    {
-        // #6 regression: removeNonApprovedMessages keys on (msgid, groupid), not msgid alone.
-        // A post Approved on its origin group A (with a spatial row) gets rippled Pending into
-        // group B. The Pending B row must NOT cause the still-Approved origin spatial row to be
-        // deleted — otherwise the post flickers out of browse on every spatial-index run.
-        $user = $this->createTestUser();
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-
-        $message = Message::create([
-            'type' => Message::TYPE_OFFER,
-            'fromuser' => $user->id,
-            'subject' => 'OFFER: lamp (London)',
-            'textbody' => 'A lamp.',
-            'source' => 'Platform',
-            'date' => now()->subDays(2),
-            'arrival' => now()->subDays(2),
-            'lat' => 51.5,
-            'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $groupA->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(2),
-        ]);
-        // Rippled into B, still awaiting that group's moderation.
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $groupB->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now(),
-        ]);
-        // The post's single spatial row belongs to its approved origin group A.
-        DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
-            [$message->id, $groupA->id, Message::TYPE_OFFER, now()->subDays(2)]
-        );
-
-        $this->service->updateSpatialIndex();
-
-        $this->assertEquals(
-            1,
-            DB::table('messages_spatial')->where('msgid', $message->id)->where('groupid', $groupA->id)->count(),
-            'approved origin spatial row survives a Pending rippled-in row on another group'
-        );
-    }
-
     public function test_removes_deleted_message_from_spatial_index(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -235,17 +96,12 @@ class MessageSpatialServiceTest extends TestCase
             'arrival' => now()->subDays(5),
             'lat' => 51.5,
             'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(5),
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
-            [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
+            "INSERT INTO messages_spatial (msgid, point, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?)",
+            [$message->id, Message::TYPE_OFFER, now()->subDays(5)]
         );
 
         // Mark message as deleted.
@@ -259,7 +115,6 @@ class MessageSpatialServiceTest extends TestCase
     public function test_removes_old_messages_from_spatial_index(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -271,17 +126,12 @@ class MessageSpatialServiceTest extends TestCase
             'arrival' => now()->subDays(32),
             'lat' => 51.5,
             'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(32),
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
-            [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(32)]
+            "INSERT INTO messages_spatial (msgid, point, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?)",
+            [$message->id, Message::TYPE_OFFER, now()->subDays(32)]
         );
 
         $this->service->updateSpatialIndex();
@@ -292,7 +142,6 @@ class MessageSpatialServiceTest extends TestCase
     public function test_marks_taken_message_as_successful(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -304,17 +153,12 @@ class MessageSpatialServiceTest extends TestCase
             'arrival' => now()->subDays(5),
             'lat' => 51.5,
             'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(5),
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival, successful) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?, 0)",
-            [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
+            "INSERT INTO messages_spatial (msgid, point, msgtype, arrival, successful) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, 0)",
+            [$message->id, Message::TYPE_OFFER, now()->subDays(5)]
         );
 
         DB::table('messages_outcomes')->insert([
@@ -332,7 +176,6 @@ class MessageSpatialServiceTest extends TestCase
     public function test_notifies_spatial_admin_when_withdrawn_message_hard_deleted(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -344,17 +187,12 @@ class MessageSpatialServiceTest extends TestCase
             'arrival' => now()->subDays(5),
             'lat' => 51.5,
             'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(5),
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
-            [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
+            "INSERT INTO messages_spatial (msgid, point, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?)",
+            [$message->id, Message::TYPE_OFFER, now()->subDays(5)]
         );
 
         DB::table('messages_outcomes')->insert([
@@ -373,7 +211,6 @@ class MessageSpatialServiceTest extends TestCase
     public function test_notifies_spatial_admin_when_deleted_message_removed(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -385,17 +222,12 @@ class MessageSpatialServiceTest extends TestCase
             'arrival' => now()->subDays(5),
             'lat' => 51.5,
             'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(5),
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
-            [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
+            "INSERT INTO messages_spatial (msgid, point, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?)",
+            [$message->id, Message::TYPE_OFFER, now()->subDays(5)]
         );
 
         DB::table('messages')->where('id', $message->id)->update(['deleted' => now()]);
@@ -408,63 +240,11 @@ class MessageSpatialServiceTest extends TestCase
         $this->service->updateSpatialIndex();
     }
 
-    public function test_crosspost_approved_on_two_groups_yields_one_spatial_row(): void
+    public function test_spatial_row_removed_when_message_moves_to_non_approved(): void
     {
-        // messages_spatial has UNIQUE(msgid) — one row per message regardless of how many
-        // groups it is approved on.
+        // removeNonApprovedMessages joins the spatial row to its message on msgid and
+        // removes it once the message's own collection leaves Approved.
         $user = $this->createTestUser();
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-
-        $message = Message::create([
-            'type' => Message::TYPE_OFFER,
-            'fromuser' => $user->id,
-            'subject' => 'OFFER: bookcase (London)',
-            'textbody' => 'A bookcase.',
-            'source' => 'Platform',
-            'date' => now()->subDays(5),
-            'arrival' => now()->subDays(5),
-            'lat' => 51.5,
-            'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $groupA->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(5),
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $groupB->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(5),
-        ]);
-
-        $this->service->updateSpatialIndex();
-
-        $this->assertEquals(
-            1,
-            DB::table('messages_spatial')->where('msgid', $message->id)->count(),
-            'a message approved on two groups must produce exactly one messages_spatial row'
-        );
-
-        // A second run must not add a second row (ON DUPLICATE KEY UPDATE is idempotent).
-        $this->service->updateSpatialIndex();
-
-        $this->assertEquals(
-            1,
-            DB::table('messages_spatial')->where('msgid', $message->id)->count(),
-            'the single spatial row must be stable across repeated reconciler runs'
-        );
-    }
-
-    public function test_spatial_row_removed_when_stored_group_moves_to_non_approved(): void
-    {
-        // The single spatial row stores the groupid it was written for. When that
-        // messages_groups row moves to a non-Approved collection, removeNonApprovedMessages
-        // (which joins on both msgid AND groupid) must remove the spatial row.
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -476,18 +256,13 @@ class MessageSpatialServiceTest extends TestCase
             'arrival' => now()->subDays(5),
             'lat' => 51.5,
             'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now()->subDays(5),
+            'collection' => Message::COLLECTION_PENDING,
         ]);
 
-        // Seed the spatial row as if the group was previously Approved.
+        // Seed the spatial row as if the message was previously Approved.
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
-            [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
+            "INSERT INTO messages_spatial (msgid, point, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?)",
+            [$message->id, Message::TYPE_OFFER, now()->subDays(5)]
         );
 
         $this->service->updateSpatialIndex();
@@ -495,63 +270,7 @@ class MessageSpatialServiceTest extends TestCase
         $this->assertEquals(
             0,
             DB::table('messages_spatial')->where('msgid', $message->id)->count(),
-            'the spatial row must be removed when the stored group moves to a non-Approved collection'
-        );
-    }
-
-    public function test_withdrawal_removes_single_spatial_row_and_notifies_external_once(): void
-    {
-        // A message approved on two groups has ONE spatial row. Withdrawing the message
-        // must remove that single row and notify the external spatial server exactly once
-        // (not once per messages_groups row).
-        $user = $this->createTestUser();
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-
-        $message = Message::create([
-            'type' => Message::TYPE_OFFER,
-            'fromuser' => $user->id,
-            'subject' => 'OFFER: wardrobe (London)',
-            'textbody' => 'A wardrobe.',
-            'source' => 'Platform',
-            'date' => now()->subDays(5),
-            'arrival' => now()->subDays(5),
-            'lat' => 51.5,
-            'lng' => -0.1,
-        ]);
-        foreach ([$groupA->id, $groupB->id] as $gid) {
-            MessageGroup::create([
-                'msgid' => $message->id,
-                'groupid' => $gid,
-                'collection' => MessageGroup::COLLECTION_APPROVED,
-                'arrival' => now()->subDays(5),
-            ]);
-        }
-
-        // One spatial row (the one-row model).
-        DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
-            [$message->id, $groupA->id, Message::TYPE_OFFER, now()->subDays(5)]
-        );
-
-        DB::table('messages_outcomes')->insert([
-            'msgid' => $message->id,
-            'outcome' => Message::OUTCOME_WITHDRAWN,
-        ]);
-
-        // The external spatial server is keyed by msgid, so exactly one removeItems call
-        // is expected regardless of how many groups the message belonged to.
-        $this->spatialAdmin
-            ->expects($this->once())
-            ->method('removeItems')
-            ->with('messages', $this->containsEqual($message->id));
-
-        $this->service->updateSpatialIndex();
-
-        $this->assertEquals(
-            0,
-            DB::table('messages_spatial')->where('msgid', $message->id)->count(),
-            'the single spatial row must be removed when the message is withdrawn'
+            'the spatial row must be removed when the message moves to a non-Approved collection'
         );
     }
 
@@ -563,7 +282,6 @@ class MessageSpatialServiceTest extends TestCase
     private function seedSpatialWithReachAndBounds(): int
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
             'fromuser' => $user->id,
@@ -574,17 +292,12 @@ class MessageSpatialServiceTest extends TestCase
             'arrival' => now()->subDays(2),
             'lat' => 51.5,
             'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(2),
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
-             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
-            [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(2)]
+            "INSERT INTO messages_spatial (msgid, point, msgtype, arrival)
+             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?)",
+            [$message->id, Message::TYPE_OFFER, now()->subDays(2)]
         );
         DB::statement(
             "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
@@ -680,19 +393,14 @@ class MessageSpatialServiceTest extends TestCase
     }
 
     /**
-     * The origin membership a post is created with carries no msgtype: only the
-     * ripple, move and email paths fill that denormalised copy in. The spatial
-     * row must still record the type, because browse's type filter, the sitemap
-     * and vector search all read messages_spatial.msgtype and treat NULL as
+     * A fresh post carries no msgtype of its own on messages_spatial until it is indexed.
+     * The upsert must record the type from messages.type, because browse's type filter,
+     * the sitemap and vector search all read messages_spatial.msgtype and treat NULL as
      * neither an Offer nor a Wanted.
      */
-    public function test_upsert_takes_msgtype_from_the_message_not_the_membership(): void
+    public function test_upsert_sets_msgtype_from_the_message(): void
     {
         $msgid = $this->eligiblePost();
-        $this->assertNull(
-            DB::table('messages_groups')->where('msgid', $msgid)->value('msgtype'),
-            'the origin membership is expected to have no type of its own'
-        );
 
         $this->service->updateSpatialIndex();
 
@@ -711,11 +419,11 @@ class MessageSpatialServiceTest extends TestCase
     public function test_upsert_heals_a_spatial_row_left_with_no_msgtype(): void
     {
         $msgid = $this->eligiblePost();
-        $mg = DB::table('messages_groups')->where('msgid', $msgid)->first(['groupid', 'arrival']);
+        $arrival = DB::table('messages')->where('id', $msgid)->value('arrival');
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
-             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, NULL, ?)",
-            [$msgid, $mg->groupid, $mg->arrival]
+            "INSERT INTO messages_spatial (msgid, point, msgtype, arrival)
+             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), NULL, ?)",
+            [$msgid, $arrival]
         );
 
         $this->service->updateSpatialIndex();
@@ -730,7 +438,6 @@ class MessageSpatialServiceTest extends TestCase
     private function eligiblePost(): int
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
@@ -742,24 +449,19 @@ class MessageSpatialServiceTest extends TestCase
             'arrival' => now()->subDays(5),
             'lat' => 51.5,
             'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(5),
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         return (int) $message->id;
     }
 
-    /** Put the eligible post in the index too (some tests need the row present first), mirroring its membership exactly. */
+    /** Put the eligible post in the index too (some tests need the row present first), mirroring the message's own arrival exactly. */
     private function indexPost(int $msgid): void
     {
-        $mg = DB::table('messages_groups')->where('msgid', $msgid)->first(['groupid', 'arrival']);
+        $arrival = DB::table('messages')->where('id', $msgid)->value('arrival');
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
-            [$msgid, $mg->groupid, Message::TYPE_OFFER, $mg->arrival]
+            "INSERT INTO messages_spatial (msgid, point, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?)",
+            [$msgid, Message::TYPE_OFFER, $arrival]
         );
     }
 
@@ -836,262 +538,23 @@ class MessageSpatialServiceTest extends TestCase
     }
 
     /**
-     * THE production churn case: an old post revived by a repost (fresh live membership)
-     * still carries stale DEAD memberships - the tombstones left when its rippled-in
-     * copies were retracted. The age pass must not delete it off those: a post is only
-     * over-age when NO live approved membership is within the window. Before this rule
-     * ~3,000 such posts were deleted at the end of every index run and re-added by the
-     * next, flickering out of browse for minutes of every cycle.
-     */
-    public function test_keeps_reposted_post_despite_stale_dead_tombstones(): void
-    {
-        $msgid = $this->eligiblePost();
-        $this->indexPost($msgid);
-
-        // Two retracted-copy tombstones from an earlier ripple, now over the window.
-        $groupB = $this->createTestGroup();
-        $groupC = $this->createTestGroup();
-        DB::table('messages_groups')->insert([
-            ['msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
-                'arrival' => now()->subDays(40), 'deleted' => 1, 'rippled_in' => 1],
-            ['msgid' => $msgid, 'groupid' => $groupC->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
-                'arrival' => now()->subDays(45), 'deleted' => 1, 'rippled_in' => 1],
-        ]);
-
-        $this->service->updateSpatialIndex();
-
-        $this->assertEquals(
-            1,
-            DB::table('messages_spatial')->where('msgid', $msgid)->count(),
-            'stale DEAD memberships must not age a freshly-reposted post out of the index'
-        );
-    }
-
-    /**
-     * The same rule the other way round: a dead membership must not KEEP a post in
-     * either. Only live approved memberships count, on both sides of the age decision.
-     */
-    public function test_removes_post_whose_only_fresh_membership_is_dead(): void
-    {
-        $msgid = $this->eligiblePost();
-        $this->indexPost($msgid);
-        // The live membership ages out...
-        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(40)]);
-        // ...and the only fresh membership is a dead tombstone.
-        $groupB = $this->createTestGroup();
-        DB::table('messages_groups')->insert([
-            'msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(1), 'deleted' => 1, 'rippled_in' => 1,
-        ]);
-
-        $this->service->updateSpatialIndex();
-
-        $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $msgid)->count());
-    }
-
-    /**
-     * messages_spatial holds ONE row per post, and everything downstream reads its
-     * groupid as the post's own community. A post rippled into other groups has
-     * several qualifying memberships, and the upsert used to select EVERY one whose
-     * groupid/arrival differed from the stored row, rewriting the same row to a
-     * different membership each run - the recorded community and arrival ping-ponged
-     * forever, ~182K row rewrites per run for a ~56K-row table. One membership must
-     * represent the post: the origin (non-rippled) one, latest arrival first.
-     */
-    public function test_upsert_keeps_spatial_row_on_the_origin_membership(): void
-    {
-        $msgid = $this->eligiblePost();
-        $originGroup = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
-        $this->indexPost($msgid);
-
-        // A live rippled-in copy with a FRESHER arrival must not steal the row.
-        $groupB = $this->createTestGroup();
-        DB::table('messages_groups')->insert([
-            'msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(1), 'deleted' => 0, 'rippled_in' => 1,
-        ]);
-
-        $this->service->updateSpatialIndex();
-
-        $originArrival = DB::table('messages_groups')
-            ->where('msgid', $msgid)->where('groupid', $originGroup)->value('arrival');
-        $row = DB::table('messages_spatial')->where('msgid', $msgid)->first(['groupid', 'arrival']);
-        $this->assertNotNull($row);
-        $this->assertSame($originGroup, (int) $row->groupid, 'the spatial row must stay on the origin membership');
-        // Second precision: messages_groups returns microseconds, messages_spatial does not.
-        $this->assertSame(
-            substr((string) $originArrival, 0, 19),
-            substr((string) $row->arrival, 0, 19),
-            'the recorded arrival is the origin membership\'s too'
-        );
-    }
-
-    /**
-     * The other half of the ping-pong: once the row matches its post's representative
-     * membership, the next run must have nothing left to rewrite. Measured as a
-     * dry-run candidate delta because the suite's shared DB contributes its own rows.
-     */
-    public function test_upsert_converges_after_one_run(): void
-    {
-        $this->service->updateSpatialIndex();
-        $baseline = $this->service->updateSpatialIndex(true)['upserted_recent'];
-
-        $msgid = $this->eligiblePost();
-        $groupB = $this->createTestGroup();
-        DB::table('messages_groups')->insert([
-            'msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(1), 'deleted' => 0, 'rippled_in' => 1,
-        ]);
-
-        $this->service->updateSpatialIndex();
-
-        $this->assertSame(
-            $baseline,
-            $this->service->updateSpatialIndex(true)['upserted_recent'],
-            'after one run the post must no longer be an upsert candidate'
-        );
-
-        // And the row itself is stable: another real run leaves it where it is.
-        $chosen = (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('groupid');
-        $this->service->updateSpatialIndex();
-        $this->assertSame(
-            $chosen,
-            (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('groupid'),
-            'the recorded group must not change between runs'
-        );
-    }
-
-    /** Within the same class (two rippled copies), the fresher arrival represents the post. */
-    public function test_representative_prefers_fresher_arrival_within_same_class(): void
-    {
-        $msgid = $this->eligiblePost();
-        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(40)]);
-        $groupB = $this->createTestGroup();
-        $groupC = $this->createTestGroup();
-        DB::table('messages_groups')->insert([
-            ['msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
-                'arrival' => now()->subDays(2), 'deleted' => 0, 'rippled_in' => 1],
-            ['msgid' => $msgid, 'groupid' => $groupC->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
-                'arrival' => now()->subDays(1), 'deleted' => 0, 'rippled_in' => 1],
-        ]);
-
-        $this->service->updateSpatialIndex();
-
-        $this->assertSame(
-            (int) $groupC->id,
-            (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('groupid'),
-            'the fresher rippled copy wins within the rippled class'
-        );
-    }
-
-    /** Exact ties (same class, same arrival) break on the lower groupid, so exactly one row wins. */
-    public function test_representative_breaks_exact_ties_by_lower_groupid(): void
-    {
-        $msgid = $this->eligiblePost();
-        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(40)]);
-        $arrival = now()->subDays(1)->startOfMinute();
-        $groupB = $this->createTestGroup();
-        $groupC = $this->createTestGroup();
-        DB::table('messages_groups')->insert([
-            ['msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
-                'arrival' => $arrival, 'deleted' => 0, 'rippled_in' => 1],
-            ['msgid' => $msgid, 'groupid' => $groupC->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
-                'arrival' => $arrival, 'deleted' => 0, 'rippled_in' => 1],
-        ]);
-
-        $this->service->updateSpatialIndex();
-
-        $this->assertSame(
-            min((int) $groupB->id, (int) $groupC->id),
-            (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('groupid'),
-            'an exact tie must resolve deterministically to the lower groupid'
-        );
-    }
-
-    /**
-     * The fallback when only a rippled copy keeps the post alive: it is still the
-     * post's one row in browse, recorded against the rippled group.
-     */
-    public function test_indexes_post_kept_alive_only_by_rippled_copy(): void
-    {
-        $msgid = $this->eligiblePost();
-        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(40)]);
-        $groupB = $this->createTestGroup();
-        DB::table('messages_groups')->insert([
-            'msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(1), 'deleted' => 0, 'rippled_in' => 1,
-        ]);
-
-        $this->service->updateSpatialIndex();
-
-        $row = DB::table('messages_spatial')->where('msgid', $msgid)->first(['groupid']);
-        $this->assertNotNull($row, 'a live rippled membership keeps the post browsable');
-        $this->assertSame((int) $groupB->id, (int) $row->groupid);
-    }
-
-    /**
      * The immediate-add path must consider the same CANDIDATES as the reconciler, not
-     * just apply the same ordering. A membership outside the 31-day window is not a
+     * just apply the same ordering. A message outside the 31-day window is not a
      * candidate: adding it puts the post into browse for five minutes until
      * removeOldMessages takes it straight back out.
      */
-    public function test_add_approved_message_ignores_out_of_window_membership(): void
+    public function test_add_approved_message_ignores_out_of_window_message(): void
     {
         $msgid = $this->eligiblePost();
-        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(40)]);
+        DB::table('messages')->where('id', $msgid)->update(['arrival' => now()->subDays(40)]);
 
         $this->service->addApprovedMessage($msgid);
 
         $this->assertEquals(
             0,
             DB::table('messages_spatial')->where('msgid', $msgid)->count(),
-            'an out-of-window membership must not be added, or the reconciler immediately removes it again'
+            'an out-of-window message must not be added, or the reconciler immediately removes it again'
         );
-    }
-
-    /**
-     * When the origin membership has aged out of the window but a live rippled copy is
-     * fresh - the approval that typically triggers this call - the rippled copy is the
-     * representative, exactly as the reconciler would choose. Recording the stale
-     * origin instead made a just-approved post sort as weeks old in browse.
-     */
-    public function test_add_approved_message_picks_fresh_rippled_copy_over_stale_origin(): void
-    {
-        $msgid = $this->eligiblePost();
-        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(40)]);
-        $groupB = $this->createTestGroup();
-        DB::table('messages_groups')->insert([
-            'msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(1), 'deleted' => 0, 'rippled_in' => 1,
-        ]);
-
-        $this->service->addApprovedMessage($msgid);
-
-        $row = DB::table('messages_spatial')->where('msgid', $msgid)->first(['groupid']);
-        $this->assertNotNull($row);
-        $this->assertSame(
-            (int) $groupB->id,
-            (int) $row->groupid,
-            'the fresh rippled copy is the representative when the origin is out of the window'
-        );
-    }
-
-    /** The immediate-add path must pick the same representative membership as the reconciler. */
-    public function test_add_approved_message_prefers_origin_membership(): void
-    {
-        $msgid = $this->eligiblePost();
-        $originGroup = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
-        $groupB = $this->createTestGroup();
-        DB::table('messages_groups')->insert([
-            'msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(1), 'deleted' => 0, 'rippled_in' => 1,
-        ]);
-
-        $this->service->addApprovedMessage($msgid);
-
-        $row = DB::table('messages_spatial')->where('msgid', $msgid)->first(['groupid']);
-        $this->assertNotNull($row);
-        $this->assertSame($originGroup, (int) $row->groupid, 'immediate add must not record a rippled group as the post\'s own');
     }
 
     public function test_still_qualify_includes_live_post(): void
@@ -1127,17 +590,10 @@ class MessageSpatialServiceTest extends TestCase
         $this->assertSame([], MessageSpatialService::stillQualifyForIndex([$msgid]));
     }
 
-    public function test_still_qualify_excludes_soft_deleted_membership(): void
+    public function test_still_qualify_excludes_non_approved_message(): void
     {
         $msgid = $this->eligiblePost();
-        DB::table('messages_groups')->where('msgid', $msgid)->update(['deleted' => 1]);
-        $this->assertSame([], MessageSpatialService::stillQualifyForIndex([$msgid]));
-    }
-
-    public function test_still_qualify_excludes_non_approved_membership(): void
-    {
-        $msgid = $this->eligiblePost();
-        DB::table('messages_groups')->where('msgid', $msgid)->update(['collection' => MessageGroup::COLLECTION_PENDING]);
+        DB::table('messages')->where('id', $msgid)->update(['collection' => Message::COLLECTION_PENDING]);
         $this->assertSame([], MessageSpatialService::stillQualifyForIndex([$msgid]));
     }
 
@@ -1152,173 +608,8 @@ class MessageSpatialServiceTest extends TestCase
     public function test_still_qualify_excludes_aged_out_post(): void
     {
         $msgid = $this->eligiblePost();
-        DB::table('messages_groups')->where('msgid', $msgid)
+        DB::table('messages')->where('id', $msgid)
             ->update(['arrival' => now()->subDays(MessageSpatialService::RECENT_DAYS + 9)]);
         $this->assertSame([], MessageSpatialService::stillQualifyForIndex([$msgid]));
-    }
-
-    /**
-     * The reconciler picks each post's representative membership with a ranked derived table,
-     * not a correlated anti-join.
-     *
-     * upsertRecentMessages runs every five minutes and was the largest single batch consumer on
-     * db2: 28.8s mean, 58s max, 288 runs a day. Two things were wrong, and both had to be fixed
-     * before it moved (measured on production 2026-09-18):
-     *
-     *   current                      37.10s
-     *   FORCE INDEX (arrival) only   14.95s
-     *   ROW_NUMBER only              32.43s
-     *   both                          4.69s
-     *
-     * The optimiser drove from messages_groups on the `collection` index, which has 21 distinct
-     * values across the table - 5,524,838 rows examined at filtered: 6.13 - when the selective
-     * predicate is `arrival >= cutoff`, a 626,197-row window with an index on it. On top of that
-     * it ran the three-armed REPRESENTATIVE_ORDER anti-join once per driving row.
-     *
-     * Asserted on the query text because the rewrite is required to change nothing observable:
-     * the representative it picks is pinned by the behaviour tests above
-     * (test_representative_prefers_fresher_arrival_within_same_class,
-     * test_representative_breaks_exact_ties_by_lower_groupid,
-     * test_upsert_keeps_spatial_row_on_the_origin_membership).
-     */
-    public function test_reconciler_ranks_memberships_instead_of_running_a_correlated_antijoin(): void
-    {
-        $sql = $this->captureUpsertQuery();
-
-        $this->assertMatchesRegularExpression(
-            '/row_number\(\)\s*over\s*\(\s*partition\s+by\s+msgid/i',
-            $sql,
-            'the reconciler must rank memberships per msgid with ROW_NUMBER'
-        );
-        $this->assertMatchesRegularExpression(
-            '/force\s+index\s*\(\s*`?arrival`?\s*\)/i',
-            $sql,
-            'the ranked derived table must drive from the arrival index; ROW_NUMBER alone barely '
-                . 'moves the query (32.43s against 37.10s)'
-        );
-        $this->assertDoesNotMatchRegularExpression(
-            '/not\s+exists\s*\(\s*select\s+`?better`?/i',
-            $sql,
-            'the correlated representative anti-join must be gone, not merely supplemented'
-        );
-    }
-
-    /**
-     * The ROW_NUMBER ordering is generated from REPRESENTATIVE_ORDER, so it cannot drift from
-     * the ORDER BY in addApprovedMessage. That shared constant is the whole reason the immediate
-     * add path and the reconciler agree about which membership represents a post; a hand-written
-     * ORDER BY in the derived table would quietly reintroduce the ping-pong it was built to stop.
-     */
-    public function test_representative_ranking_follows_the_shared_order_constant(): void
-    {
-        $sql = $this->captureUpsertQuery();
-
-        $this->assertMatchesRegularExpression(
-            '/order\s+by\s+rippled_in\s+asc\s*,\s*arrival\s+desc\s*,\s*groupid\s+asc/i',
-            $sql,
-            'the ranking must follow REPRESENTATIVE_ORDER: rippled_in asc, arrival desc, groupid asc'
-        );
-    }
-
-    /**
-     * stillQualifyForIndex must NOT carry the reconciler's index hint.
-     *
-     * It answers "are these specific posts supposed to be indexed right now?" for a handful of
-     * msgids at a time - ripple:expand calls it before reading an absence from messages_spatial
-     * as a removal. Its selective predicate is `messages.id IN (...)`, so it wants the msgid
-     * index on messages_groups. Forcing the arrival index there would make every call walk the
-     * whole RECENT_DAYS window instead, turning a keyed lookup into a scan - the exact opposite
-     * of what the hint does for the reconciler, which has no msgid restriction at all.
-     *
-     * The two share qualifyingMemberships() deliberately, so the hint has to live on the
-     * reconciler's own membership source and nowhere else.
-     */
-    public function test_still_qualify_for_index_does_not_force_the_arrival_index(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        $message = Message::create([
-            'type' => Message::TYPE_OFFER,
-            'fromuser' => $user->id,
-            'subject' => 'OFFER: hint leak check (London)',
-            'textbody' => 'A thing.',
-            'source' => 'Platform',
-            'date' => now()->subDays(2),
-            'arrival' => now()->subDays(2),
-            'lat' => 51.5,
-            'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(2),
-        ]);
-
-        $seen = [];
-        DB::listen(function ($query) use (&$seen) {
-            if (stripos($query->sql, 'messages_groups') !== false) {
-                $seen[] = $query->sql;
-            }
-        });
-
-        MessageSpatialService::stillQualifyForIndex([$message->id]);
-
-        $this->assertNotEmpty($seen, 'stillQualifyForIndex did not query messages_groups');
-        foreach ($seen as $sql) {
-            $this->assertDoesNotMatchRegularExpression(
-                '/force\s+index/i',
-                $sql,
-                'stillQualifyForIndex looks posts up by msgid and must not be forced onto the '
-                    . 'arrival index; that hint belongs to the reconciler alone'
-            );
-        }
-    }
-
-    /**
-     * Runs one reconcile pass and returns the SQL of the membership scan it drives from.
-     * Filtered on messages_spatial because the pass issues several statements and only the
-     * driving SELECT left-joins the index it is reconciling against.
-     */
-    private function captureUpsertQuery(): string
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        $message = Message::create([
-            'type' => Message::TYPE_OFFER,
-            'fromuser' => $user->id,
-            'subject' => 'OFFER: reconcile shape probe (London)',
-            'textbody' => 'A thing.',
-            'source' => 'Platform',
-            'date' => now()->subDays(2),
-            'arrival' => now()->subDays(2),
-            'lat' => 51.5,
-            'lng' => -0.1,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(2),
-        ]);
-
-        $seen = [];
-        DB::listen(function ($query) use (&$seen) {
-            if (
-                stripos($query->sql, 'messages_groups') !== false
-                && stripos($query->sql, 'messages_spatial') !== false
-                && stripos($query->sql, 'select') === 0
-            ) {
-                $seen[] = $query->sql;
-            }
-        });
-
-        $this->service->updateSpatialIndex(dryRun: true);
-
-        $this->assertNotEmpty($seen, 'the reconciler did not run its membership scan');
-
-        return $seen[0];
     }
 }

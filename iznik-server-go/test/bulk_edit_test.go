@@ -62,12 +62,10 @@ type httptestResponse struct {
 func TestBulkEditGetOfferByToken(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkeditget")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Office Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, prefix+"Desk", 4, "Good")
 	addBulkItem(t, msgID, prefix+"Chair", 14, "Used")
 
@@ -103,11 +101,9 @@ func TestBulkEditGetOfferByToken(t *testing.T) {
 func TestBulkEditUpdateAvailability(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkeditavail")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, prefix+"Desk", 4, "Good")
 	chairID := addBulkItem(t, msgID, prefix+"Chair", 14, "Used")
 
@@ -142,11 +138,9 @@ func TestBulkEditUpdateAvailability(t *testing.T) {
 func TestBulkEditUpdateQuantity(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkeditqty")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, prefix+"Desk", 4, "Good")
 	addBulkItem(t, msgID, prefix+"Chair", 14, "Used")
 
@@ -168,13 +162,11 @@ func TestBulkEditUpdateQuantity(t *testing.T) {
 // TestBulkEditItemNotInOffer: a token for one offer cannot edit another offer's item.
 func TestBulkEditItemNotInOffer(t *testing.T) {
 	prefix := uniquePrefix("bulkeditxoffer")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgA := CreateTestMessage(t, ownerID, groupID, prefix+" A", 55.95, -3.18)
+	msgA := CreateTestMessage(t, ownerID, prefix+" A", 55.95, -3.18)
 	addBulkItem(t, msgA, prefix+"A-item", 3, "Good")
-	msgB := CreateTestMessage(t, ownerID, groupID, prefix+" B", 55.95, -3.18)
+	msgB := CreateTestMessage(t, ownerID, prefix+" B", 55.95, -3.18)
 	bItem := addBulkItem(t, msgB, prefix+"B-item", 5, "Good")
 
 	token := fmt.Sprintf("edittok_%s_0123456789abcdef", prefix)
@@ -198,12 +190,10 @@ func TestBulkEditBadToken(t *testing.T) {
 // refused; a non-bulk message is rejected.
 func TestBulkEditLinkMint(t *testing.T) {
 	prefix := uniquePrefix("bulkeditmint")
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	strangerID := CreateTestUser(t, prefix+"_stranger", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 
-	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	addBulkItem(t, msgID, prefix+"Desk", 4, "Good")
 
 	mint := func(userID uint64) (int, string) {
@@ -242,7 +232,7 @@ func TestBulkEditLinkMint(t *testing.T) {
 	assert.Equal(t, 403, strangerStatus)
 
 	// A message with no bulk items is not a bulk offer.
-	plainMsg := CreateTestMessage(t, ownerID, groupID, prefix+" Plain", 55.95, -3.18)
+	plainMsg := CreateTestMessage(t, ownerID, prefix+" Plain", 55.95, -3.18)
 	plainTok := getToken(t, ownerID)
 	body, _ := json.Marshal(map[string]interface{}{"id": plainMsg, "action": "BulkEditLink"})
 	req := httptest.NewRequest("POST", "/api/message?jwt="+plainTok, bytes.NewBuffer(body))

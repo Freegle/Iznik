@@ -23,9 +23,6 @@ func TestMyGroupsOwnPostFlaggedMine(t *testing.T) {
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
 	otherID := CreateTestUser(t, prefix+"_other", "Other")
 
-	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, viewerID, group, "Member")
-	CreateTestMembership(t, otherID, group, "Member")
 
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
@@ -61,9 +58,6 @@ func TestBoundsOwnPostFlaggedMine(t *testing.T) {
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
 	otherID := CreateTestUser(t, prefix+"_other", "Other")
 
-	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, viewerID, group, "Member")
-	CreateTestMembership(t, otherID, group, "Member")
 
 	own := CreateTestMessage(t, viewerID, group, prefix+" my own offer", 51.5, -0.1)
 	rival := CreateTestMessage(t, otherID, group, prefix+" someone else's offer", 51.5, -0.1)

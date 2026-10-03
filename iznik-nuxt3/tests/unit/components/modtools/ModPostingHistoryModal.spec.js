@@ -4,30 +4,17 @@ import { ref } from 'vue'
 import ModPostingHistoryModal from '~/modtools/components/ModPostingHistoryModal.vue'
 
 // Mock stores
-const groupData = {
-  123: { namedisplay: 'Test Group 1' },
-  456: { namedisplay: 'Test Group 2' },
-}
-
-const mockGroupStore = {
-  get: (id) => groupData[id] || null,
-  fetch: vi.fn().mockResolvedValue(null),
-}
-
 let mockUserData = {}
 
 const mockUserStore = {
   byId: (id) => mockUserData[id] || null,
   fetchMT: vi.fn().mockResolvedValue(null),
+  fetch: vi.fn().mockResolvedValue(null),
 }
 
 const mockHide = vi.fn()
 const mockModalShow = vi.fn()
 const mockModalRef = { show: mockModalShow }
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
-}))
 
 vi.mock('~/stores/user', () => ({
   useUserStore: () => mockUserStore,
@@ -51,7 +38,6 @@ describe('ModPostingHistoryModal', () => {
         subject: 'Offer: Sofa',
         type: 'Offer',
         arrival: '2024-01-15T10:00:00Z',
-        groupid: 123,
         outcome: 'Taken',
         repost: false,
         autorepost: false,
@@ -62,7 +48,6 @@ describe('ModPostingHistoryModal', () => {
         subject: 'Wanted: Table',
         type: 'Wanted',
         arrival: '2024-01-10T10:00:00Z',
-        groupid: 456,
         outcome: null,
         repost: true,
         autorepost: true,
@@ -73,7 +58,6 @@ describe('ModPostingHistoryModal', () => {
         subject: 'Offer: Chair',
         type: 'Offer',
         arrival: '2024-01-20T10:00:00Z',
-        groupid: 123,
         outcome: null,
         repost: true,
         autorepost: false,
@@ -125,11 +109,6 @@ describe('ModPostingHistoryModal', () => {
             template: '<div class="notice" :class="variant"><slot /></div>',
             props: ['variant'],
           },
-          ModGroupSelect: {
-            template:
-              '<select class="group-select" :value="modelValue" @change="$emit(\'update:modelValue\', parseInt($event.target.value))"><option :value="null">All</option><option :value="123">Group 1</option><option :value="456">Group 2</option></select>',
-            props: ['modelValue', 'modonly'],
-          },
         },
         mocks: {
           datetimeshort: (val) => `formatted:${val}`,
@@ -147,11 +126,6 @@ describe('ModPostingHistoryModal', () => {
     it('shows user displayname in title', () => {
       const wrapper = mountComponent()
       expect(wrapper.find('.modal').attributes('title')).toContain('Test User')
-    })
-
-    it('shows ModGroupSelect filter', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.find('.group-select').exists()).toBe(true)
     })
 
     it('shows message rows', () => {
@@ -179,39 +153,6 @@ describe('ModPostingHistoryModal', () => {
       expect(messages[0].id).toBe(103) // Jan 20
       expect(messages[1].id).toBe(101) // Jan 15
       expect(messages[2].id).toBe(102) // Jan 10
-    })
-
-    it('adds groupname from store', () => {
-      const wrapper = mountComponent()
-      const messages = wrapper.vm.messages
-      expect(messages.some((m) => m.groupname === 'Test Group 1')).toBe(true)
-      expect(messages.some((m) => m.groupname === 'Test Group 2')).toBe(true)
-    })
-
-    it('uses fallback groupname when group not found', () => {
-      const user = createUser({
-        messagehistory: [
-          {
-            id: 104,
-            subject: 'Test',
-            type: 'Offer',
-            arrival: '2024-01-25T10:00:00Z',
-            groupid: 999, // Not in store
-            outcome: null,
-            collection: 'Approved',
-          },
-        ],
-      })
-      populateUserStore(user)
-      const wrapper = mountComponent({ user })
-      expect(wrapper.vm.messages[0].groupname).toBe('#999')
-    })
-
-    it('filters by selected groupid', async () => {
-      const wrapper = mountComponent()
-      wrapper.vm.groupid = 123
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.messages.every((m) => m.groupid === 123)).toBe(true)
     })
 
     it('returns empty array when no messagehistory', () => {
@@ -249,18 +190,12 @@ describe('ModPostingHistoryModal', () => {
 
     it('shows still open when no outcome', () => {
       const wrapper = mountComponent()
-      expect(wrapper.text()).toContain('still open')
+      expect(wrapper.text()).toContain('Still open')
     })
 
     it('shows Pending status in red', () => {
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain('Pending')
-    })
-
-    it('shows group name', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.text()).toContain('Test Group 1')
-      expect(wrapper.text()).toContain('Test Group 2')
     })
 
     it('shows auto-repost icon', () => {
@@ -288,17 +223,6 @@ describe('ModPostingHistoryModal', () => {
   })
 
   describe('show method', () => {
-    it('resets groupid to null when show is called', async () => {
-      const wrapper = mountComponent()
-      wrapper.vm.groupid = 123
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.groupid).toBe(123)
-      // The show() method would reset it, but we can't call it without a real modal
-      // Test that groupid starts null when component mounts
-      const wrapper2 = mountComponent()
-      expect(wrapper2.vm.groupid).toBeNull()
-    })
-
     it('is exposed for external access', () => {
       const wrapper = mountComponent()
       expect(wrapper.vm.show).toBeDefined()
@@ -312,27 +236,6 @@ describe('ModPostingHistoryModal', () => {
       const closeButton = wrapper.find('button')
       await closeButton.trigger('click')
       expect(mockHide).toHaveBeenCalled()
-    })
-  })
-
-  describe('group filter', () => {
-    it('starts with null groupid (all groups)', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.vm.groupid).toBeNull()
-    })
-
-    it('updates groupid when select changes', async () => {
-      const wrapper = mountComponent()
-      const select = wrapper.find('.group-select')
-      await select.setValue('123')
-      expect(wrapper.vm.groupid).toBe(123)
-    })
-
-    it('includes all group messages when groupid is 0', async () => {
-      const wrapper = mountComponent()
-      wrapper.vm.groupid = 0
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.messages.length).toBe(3)
     })
   })
 })

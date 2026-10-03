@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Mail\Stories\AskMail;
-use App\Models\Group;
 use App\Models\Message;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -66,50 +65,43 @@ class StoriesAskService
             }
 
             // Record that we've considered this user — prevents repeated consideration
-            // even if we don't end up sending (e.g. no groups with stories enabled)
-            if (!$dryRun) {
+            // even if we don't end up sending (e.g. member has opted out of stories)
+            if (! $dryRun) {
                 DB::table('users_stories_requested')->insertOrIgnore([
                     'userid' => $userId,
                     'date' => now(),
                 ]);
             }
 
-            // Only send if user is a member of at least one Freegle group with stories enabled
-            $storiesEnabled = DB::table('memberships')
-                ->join('groups', 'groups.id', '=', 'memberships.groupid')
-                ->where('memberships.userid', $userId)
-                ->where('groups.type', Group::TYPE_FREEGLE)
-                ->where('groups.publish', 1)
-                ->where(function ($q) {
-                    // stories defaults to 1 when not set; only disabled if explicitly 0.
-                    // Compare as integers (not strings) to avoid JSON_UNQUOTE type-coercion issues.
-                    $q->whereNull('groups.settings')
-                        ->orWhereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.stories'), 1) != 0");
-                })
-                ->exists();
+            // Only ask a member who hasn't opted out of stories - the same
+            // "Newsletters & stories" preference Stories Newsletter and
+            // Community News honour.
+            $storiesEnabled = (bool) DB::table('users')
+                ->where('id', $userId)
+                ->value('newslettersallowed');
 
-            if (!$storiesEnabled) {
+            if (! $storiesEnabled) {
                 continue;
             }
 
             $asked++;
 
-            if (!$dryRun) {
+            if (! $dryRun) {
                 // V1 parity: skip our own per-user-alias domains so the mail can't loop back as chat.
                 $userModel = \App\Models\User::find($userId);
                 $email = $userModel?->email_preferred;
 
                 $user = DB::table('users')->where('id', $userId)->first();
                 $name = $user?->fullname
-                    ?? trim(($user?->firstname ?? '') . ' ' . ($user?->lastname ?? ''))
+                    ?? trim(($user?->firstname ?? '').' '.($user?->lastname ?? ''))
                     ?: 'Freegle User';
 
                 if ($email) {
                     app(\App\Services\EmailSpoolerService::class)->spool(new AskMail(
                         recipientName: $name,
                         recipientEmail: $email,
-                        storiesUrl: config('freegle.sites.user') . '/stories',
-                        unsubscribeUrl: config('freegle.sites.user') . '/unsubscribe',
+                        storiesUrl: config('freegle.sites.user').'/stories',
+                        unsubscribeUrl: config('freegle.sites.user').'/unsubscribe',
                     ));
                 }
             }

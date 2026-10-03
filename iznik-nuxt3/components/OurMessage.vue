@@ -62,7 +62,6 @@ import {
   onBeforeUnmount,
 } from 'vue'
 import { useMessageStore } from '~/stores/message'
-import { useGroupStore } from '~/stores/group'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { action } from '~/composables/useClientLog'
@@ -152,7 +151,6 @@ const emit = defineEmits(['notFound', 'view', 'visible', 'replied'])
 
 // Stores
 const messageStore = useMessageStore()
-const groupStore = useGroupStore()
 const authStore = useAuthStore()
 const miscStore = useMiscStore()
 const me = computed(() => authStore.user)
@@ -228,21 +226,7 @@ onBeforeUnmount(cancelDwellView)
 try {
   const messageData = await messageStore.fetch(props.id)
 
-  if (messageData) {
-    // Get the groups into store too.
-    const promises = []
-    messageData.groups.forEach((g) => {
-      if (!groupStore.get(g.groupid)) {
-        try {
-          promises.push(groupStore.fetch(g.groupid))
-        } catch (e) {
-          console.log('Fetch fail', e)
-        }
-      }
-    })
-
-    await Promise.all(promises)
-  } else {
+  if (!messageData) {
     emit('notFound')
   }
 } catch (e) {

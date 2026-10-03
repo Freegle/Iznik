@@ -262,8 +262,7 @@ class DetectRelatedAccountsCommandTest extends TestCase
         $a = $this->createTestUser();
         $b = $this->createTestUser();
         $offerer = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $post = $this->createTestMessage($offerer, $group);
+        $post = $this->createTestMessage($offerer);
 
         $chatA = $this->newChat($a->id, $offerer->id);
         $chatB = $this->newChat($b->id, $offerer->id);

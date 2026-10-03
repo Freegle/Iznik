@@ -671,15 +671,6 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 			return fiber.NewError(fiber.StatusBadRequest, "User is not partner-linked")
 		}
 
-		// V1 parity (User::delete): drop approved memberships so the user immediately
-		// disappears from group member lists. Emit the per-group (Group, Left) audit
-		// log first (byuser NULL — no acting Freegle user in the partner flow), since
-		// the eager delete leaves nothing for the later cleanup cron to log.
-		user.LogGroupLeftForApprovedMemberships(db, targetID, 0)
-		// Converted together with its
-		// identical twin in the self-service flow below (54406e904bd5).
-		db.Table("memberships").Where("userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED).Delete(nil)
-
 		// Converted together with its
 		// identical twin in the self-service flow below (da41536965a2).
 		db.Table("users").Where("id = ?", targetID).Update("deleted", gorm.Expr("NOW()"))
@@ -720,14 +711,6 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 			"htmlbody":     gorm.Expr("NULL"),
 			"deleted":      gorm.Expr("NOW()"),
 		})
-		// gorm.Expr("1") rather than a
-		// bare 1: the original writes the literal into the statement, and a
-		// plain Go value binds as a placeholder instead, which is a different
-		// statement text even though it sets the same value.
-		db.Table("messages_groups").
-			Where("msgid IN (SELECT id FROM messages WHERE fromuser = ?)", targetID).
-			Update("deleted", gorm.Expr("1"))
-
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 
@@ -737,15 +720,11 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
-	// Moderators must demote themselves first to avoid accidental deletion.
-	var modRole string
-	db.Table("memberships").Select("role").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
-		Limit(1).Scan(&modRole)
-
-	if modRole != "" {
+	// Moderators must stand down first to avoid accidental deletion.
+	if auth.IsModerator(myid) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"ret":    2,
-			"status": "Please demote yourself to a member first",
+			"status": "Please stand down as a moderator first",
 		})
 	}
 
@@ -763,15 +742,6 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 
 	// Signal the auth middleware to skip the post-handler session check.
 	c.Locals("skipPostAuthCheck", true)
-
-	// V1 parity (User::delete): drop approved memberships so the user no longer appears
-	// in group member lists during the grace period. Emit the per-group (Group, Left)
-	// audit log first (byuser = the user themselves), since the eager delete leaves
-	// nothing for the later cleanup cron to log.
-	user.LogGroupLeftForApprovedMemberships(db, myid, myid)
-	// Converted together with its
-	// identical twin in the partner flow above (aeda8c91f9ff).
-	db.Table("memberships").Where("userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED).Delete(nil)
 
 	// Soft-delete: user can recover by logging back in within ~14 days.
 	// GDPR erasure of message content (and any other personal data) is performed by the
@@ -823,37 +793,6 @@ func handleRelated(c *fiber.Ctx, userlist []uint64) error {
 		"ret":    0,
 		"status": "Success",
 	})
-}
-
-// isActiveModForGroup checks the membership settings JSON to determine if the
-// moderator is actively moderating this group. Defaults to active=1, then checks
-// the 'active' key in the JSON settings, falling back to the legacy 'showmessages' key.
-func isActiveModForGroup(settingsJSON *string) bool {
-	if settingsJSON == nil || *settingsJSON == "" {
-		return true // default to active when no settings are present
-	}
-	var settings map[string]interface{}
-	if err := json.Unmarshal([]byte(*settingsJSON), &settings); err != nil {
-		return true
-	}
-	if active, ok := settings["active"]; ok {
-		switch v := active.(type) {
-		case bool:
-			return v
-		case float64:
-			return v != 0
-		}
-	}
-	// Fallback to legacy showmessages flag (default true if absent).
-	if sm, ok := settings["showmessages"]; ok {
-		switch v := sm.(type) {
-		case bool:
-			return v
-		case float64:
-			return v != 0
-		}
-	}
-	return true
 }
 
 // GetSession returns current session info for the logged-in user.
@@ -955,19 +894,6 @@ func GetSession(c *fiber.Ctx) error {
 		Ourdomain int        `json:"ourdomain"`
 	}
 
-	type MembershipRow struct {
-		Groupid                  uint64    `json:"groupid"`
-		Role                     string    `json:"role"`
-		Emailfrequency           int       `json:"emailfrequency"`
-		Eventsallowed            int       `json:"eventsallowed"`
-		Volunteeringallowed      int       `json:"volunteeringallowed"`
-		Microvolunteeringallowed int       `json:"microvolunteeringallowed"`
-		Configid                 *uint64   `json:"configid"`
-		Added                    time.Time `json:"added"`  // When they joined - the feed folds a community's header up after the first week
-		Active                   int       `json:"active"` // 1=active mod, 0=backup mod
-		Type                     string    `json:"-"`      // Used server-side for moderator detection, not returned to client
-		Settings                 *string   `json:"-"`      // Per-group membership settings JSON, used to determine active/inactive
-	}
 
 	type LocationRow struct {
 		Name string  `json:"name"`
@@ -1011,7 +937,6 @@ func GetSession(c *fiber.Ctx) error {
 	var wg sync.WaitGroup
 	var userRow UserRow
 	var emails []EmailRow
-	var memberships []MembershipRow
 	var sessionRow SessionRow
 	var aboutme AboutmeRow
 
@@ -1022,7 +947,7 @@ func GetSession(c *fiber.Ctx) error {
 	}
 	var supporterInfo supporterRow
 
-	wg.Add(6)
+	wg.Add(5)
 	go func() {
 		defer wg.Done()
 		db.Table("users").Select("id, fullname, firstname, lastname, systemrole, settings, lastaccess, added, lastlocation, onholidaytill, source, deleted, forgotten, trustlevel, permissions, marketingconsent, bouncing, relevantallowed, newslettersallowed, engagement AS engagementlevel").
@@ -1032,15 +957,6 @@ func GetSession(c *fiber.Ctx) error {
 		defer wg.Done()
 		db.Table("users_emails").Select("id, email, preferred, validated, bounced").
 			Where("userid = ?", myid).Order("preferred DESC").Scan(&emails)
-	}()
-	go func() {
-		defer wg.Done()
-		db.Table("memberships m").
-			Select("m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, m.added, g.type, m.settings, g.microvolunteering AS microvolunteeringallowed").
-			Joins("JOIN `groups` g ON g.id = m.groupid").
-			Where("m.userid = ? AND m.collection = ?", myid, utils.COLLECTION_APPROVED).
-			Order("LOWER(CASE WHEN g.namefull IS NOT NULL THEN g.namefull ELSE g.nameshort END)").
-			Scan(&memberships)
 	}()
 	go func() {
 		defer wg.Done()
@@ -1073,42 +989,20 @@ func GetSession(c *fiber.Ctx) error {
 		emails[i].Ourdomain = utils.OurDomain(emails[i].Email)
 	}
 
-	// Populate the Active field on each membership from the settings JSON.
-	for i := range memberships {
-		if isActiveModForGroup(memberships[i].Settings) {
-			memberships[i].Active = 1
-		} else {
-			memberships[i].Active = 0
-		}
-	}
+	// National moderation: there are no per-community groups any more, so a
+	// moderator either sees all national work counts or none. The old
+	// active/inactive split (blue vs red badges by which groups a mod had
+	// marked themselves active on) has no national equivalent — a moderator
+	// is simply a moderator.
+	isMod := auth.IsModerator(myid)
 
-	// Compute work counts and discourse stats for moderators (depends on memberships).
 	var work fiber.Map
 	var discourse fiber.Map
 
-	// Collect group IDs where user is a moderator or owner, split by active/inactive.
-	// The memberships.settings JSON 'active' flag determines if a mod is actively
-	// moderating a group. Inactive groups' work counts show as blue (info) badges instead
-	// of red (danger) badges. Default is active.
-	var modGroupIDs, activeGroupIDs, inactiveGroupIDs []uint64
-	isFreegleMod := false
-	for _, m := range memberships {
-		if m.Role == utils.ROLE_OWNER || m.Role == utils.ROLE_MODERATOR {
-			modGroupIDs = append(modGroupIDs, m.Groupid)
-			if m.Active == 1 {
-				activeGroupIDs = append(activeGroupIDs, m.Groupid)
-			} else {
-				inactiveGroupIDs = append(inactiveGroupIDs, m.Groupid)
-			}
-			if m.Type == utils.GROUP_TYPE_FREEGLE {
-				isFreegleMod = true
-			}
-		}
-	}
-
-	// Start discourse fetch in parallel with work counts (only for Freegle moderators).
+	// Start discourse fetch in parallel with work counts. Moderators are
+	// national now, so this is no longer restricted to Freegle-type groups.
 	var discourseWg sync.WaitGroup
-	if isFreegleMod {
+	if isMod {
 		discourseWg.Add(1)
 		go func() {
 			defer discourseWg.Done()
@@ -1116,14 +1010,11 @@ func GetSession(c *fiber.Ctx) error {
 		}()
 	}
 
-	if len(modGroupIDs) > 0 {
-		// Work counts are split by active/inactive group status.
-		// Active groups → primary fields (red/danger badges in UI).
-		// Inactive groups → "other" fields (blue/info badges in UI).
-		// Counts that only appear for active groups: spam, pendingevents, pendingvolunteering,
-		// pendingadmins, editreview, happiness, relatedmembers.
-		// Counts split by active/inactive: pending/pendingother, spammembers/spammembersother,
-		// chatreview/chatreviewother.
+	if isMod {
+		// pendingother, spammembersother and chatreviewother have no national
+		// equivalent of the old active/inactive split, so most stay at their
+		// zero value below; the one exception is documented at the pending
+		// messages goroutine, which still needs a held/unheld split.
 		var pending, pendingother, spam int64
 		var pendingmembers, spammembers, spammembersother int64
 		var pendingevents, pendingadmins, editreview int64
@@ -1136,186 +1027,126 @@ func GetSession(c *fiber.Ctx) error {
 
 		var wg2 sync.WaitGroup
 
-		// --- Pending messages: active groups split by held, inactive all → pendingother ---
-		// Only count messages where contentcheck_checked_at IS NOT NULL: the content
-		// check has run and left the message pending (moderated user/group or flagged
-		// content). Messages that have not yet been content-checked may still be
-		// auto-approved and must not trigger a phantom notification or inflate the
-		// badge count. Discourse #9481 post 563.
+		// --- Pending messages: unheld → pending, held → pendingother ---
+		// Only count messages where contentcheck_checked_at IS NOT NULL: the
+		// content check has run and left the message pending (moderated user or
+		// flagged content). Messages that have not yet been content-checked may
+		// still be auto-approved and must not trigger a phantom notification or
+		// inflate the badge count. Discourse #9481 post 563.
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			if len(activeGroupIDs) > 0 {
-				// Unheld pending in active groups → pending (red).
-				db.Table("messages_groups mg").
-					Joins("INNER JOIN messages m ON m.id = mg.msgid").
-					Joins("INNER JOIN users u ON u.id = m.fromuser").
-					Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NULL AND mg.contentcheck_checked_at IS NOT NULL",
-						activeGroupIDs, utils.COLLECTION_PENDING).
-					Count(&pending)
-				// Held pending in active groups → pendingother (blue). No
-				// contentcheck_checked_at filter here: that filter exists so a post which
-				// might still auto-approve does not raise a phantom badge, which only
-				// applies while nobody has claimed it. A held post has been claimed by a
-				// moderator, will never auto-approve, and is already showing in their list
-				// as "Held by ..." — dropping it left mods with a badge lower than the
-				// number of held posts in front of them (Discourse 9481/635).
-				var heldActive int64
-				db.Table("messages_groups mg").
-					Joins("INNER JOIN messages m ON m.id = mg.msgid").
-					Joins("INNER JOIN users u ON u.id = m.fromuser").
-					Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NOT NULL",
-						activeGroupIDs, utils.COLLECTION_PENDING).
-					Count(&heldActive)
-				pendingother += heldActive
-			}
-			if len(inactiveGroupIDs) > 0 {
-				// All pending in inactive groups → pendingother (blue). Same rule as
-				// above: an unchecked post might still auto-approve so it waits for the
-				// content check, but a held one is claimed work and always counts.
-				var inact int64
-				db.Table("messages_groups mg").
-					Joins("INNER JOIN messages m ON m.id = mg.msgid").
-					Joins("INNER JOIN users u ON u.id = m.fromuser").
-					Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND (mg.contentcheck_checked_at IS NOT NULL OR mg.heldby IS NOT NULL)",
-						inactiveGroupIDs, utils.COLLECTION_PENDING).
-					Count(&inact)
-				pendingother += inact
-			}
+			// Unheld pending → pending (red).
+			db.Table("messages m").
+				Joins("INNER JOIN users u ON u.id = m.fromuser").
+				Where("m.collection = ? AND m.deleted IS NULL AND u.deleted IS NULL AND m.heldby IS NULL AND m.contentcheck_checked_at IS NOT NULL",
+					utils.COLLECTION_PENDING).
+				Count(&pending)
+			// Held pending → pendingother (blue). No contentcheck_checked_at
+			// filter here: that filter exists so a post which might still
+			// auto-approve does not raise a phantom badge, which only applies
+			// while nobody has claimed it. A held post has been claimed by a
+			// moderator, will never auto-approve, and is already showing in
+			// their list as "Held by ..." — dropping it left mods with a badge
+			// lower than the number of held posts in front of them (Discourse
+			// 9481/635).
+			var heldPending int64
+			db.Table("messages m").
+				Joins("INNER JOIN users u ON u.id = m.fromuser").
+				Where("m.collection = ? AND m.deleted IS NULL AND u.deleted IS NULL AND m.heldby IS NOT NULL",
+					utils.COLLECTION_PENDING).
+				Count(&heldPending)
+			pendingother = heldPending
 		}()
 
-		// --- Spam messages (only for active groups) ---
+		// --- Spam messages ---
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			if len(activeGroupIDs) > 0 {
-				// Match the Pending review list (message_list.go): Spam-collection
-				// messages older than 30 days are aged out of the queue, so they
-				// must not be counted in the badge either — otherwise the badge
-				// shows a total with no visible, clickable home (an inflated
-				// hamburger count and no red left-menu count).
-				db.Table("messages_groups mg").
-					Joins("INNER JOIN messages m ON m.id = mg.msgid").
-					Joins("INNER JOIN users u ON u.id = m.fromuser").
-					Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND mg.arrival >= (NOW() - INTERVAL 30 DAY)",
-						activeGroupIDs, utils.COLLECTION_SPAM).
-					Count(&spam)
-			}
+			// Match the Pending review list (message_list.go): Spam-collection
+			// messages older than 30 days are aged out of the queue, so they
+			// must not be counted in the badge either — otherwise the badge
+			// shows a total with no visible, clickable home (an inflated
+			// hamburger count and no red left-menu count).
+			db.Table("messages m").
+				Joins("INNER JOIN users u ON u.id = m.fromuser").
+				Where("m.collection = ? AND m.deleted IS NULL AND u.deleted IS NULL AND m.arrival >= (NOW() - INTERVAL 30 DAY)",
+					utils.COLLECTION_SPAM).
+				Count(&spam)
 		}()
 
-		// --- Pending members (all groups, no active/inactive split) ---
+		// --- Pending members: no national equivalent. Group membership itself
+		// is gone, so there is no "pending" state to review here any more —
+		// pendingmembers stays at its zero value declared above.
+
+		// --- Spam members: users flagged for review ---
+		// Condition matches getSpamMembers: flag set and either never reviewed
+		// or re-flagged after the last review action. There is no
+		// users.heldby column, so there is no national equivalent of the old
+		// held/unheld split — spammembersother stays at its zero value.
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			db.Table("memberships").Where("groupid IN ? AND collection = ?",
-				modGroupIDs, utils.COLLECTION_PENDING).Count(&pendingmembers)
+			db.Table("users").
+				Where("reviewrequestedat IS NOT NULL AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) AND deleted IS NULL").
+				Count(&spammembers)
 		}()
 
-		// --- Spam members: active split by held, inactive all → spammembersother ---
+		// --- Pending community events ---
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			if len(activeGroupIDs) > 0 {
-				// Unheld spam members in active groups → spammembers (red).
-				// Condition matches getSpamMembers list: flag set and either never reviewed
-				// or re-flagged after the last review action.
-				db.Table("memberships").
-					Where("groupid IN ? AND reviewrequestedat IS NOT NULL "+
-						"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) "+
-						"AND heldby IS NULL",
-						activeGroupIDs).Count(&spammembers)
-				// Held spam members in active groups → spammembersother (blue).
-				var heldActive int64
-				db.Table("memberships").
-					Where("groupid IN ? AND reviewrequestedat IS NOT NULL "+
-						"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) "+
-						"AND heldby IS NOT NULL",
-						activeGroupIDs).Count(&heldActive)
-				spammembersother += heldActive
-			}
-			if len(inactiveGroupIDs) > 0 {
-				// All spam members in inactive groups → spammembersother (blue).
-				var inact int64
-				db.Table("memberships").
-					Where("groupid IN ? AND reviewrequestedat IS NOT NULL "+
-						"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat)",
-						inactiveGroupIDs).Count(&inact)
-				spammembersother += inact
-			}
+			db.Table("communityevents ce").
+				Select("COUNT(DISTINCT ce.id)").
+				Joins("INNER JOIN communityevents_dates ced ON ced.eventid = ce.id").
+				Where("ce.pending = 1 AND ce.deleted = 0 AND ced.end >= NOW()").
+				Scan(&pendingevents)
 		}()
 
-		// --- Pending community events (only active groups) ---
+		// --- Pending admin applications ---
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			if len(activeGroupIDs) > 0 {
-				db.Table("communityevents ce").
-					Select("COUNT(DISTINCT ce.id)").
-					Joins("INNER JOIN communityevents_groups ceg ON ceg.eventid = ce.id").
-					Joins("INNER JOIN communityevents_dates ced ON ced.eventid = ce.id").
-					Where("ceg.groupid IN ? AND ce.pending = 1 AND ce.deleted = 0 AND ced.end >= NOW()",
-						activeGroupIDs).
-					Scan(&pendingevents)
-			}
+			db.Table("admins").Where("complete IS NULL AND pending = 1 AND heldby IS NULL").
+				Count(&pendingadmins)
 		}()
 
-		// --- Pending admin applications (only active groups) ---
+		// --- Edit reviews ---
+		// Matches ListMessagesMT's national Editreview: no more rippled-in
+		// copies to exclude, since rippling no longer creates a second
+		// per-group row for the same post.
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			if len(activeGroupIDs) > 0 {
-				db.Table("admins").Where("groupid IN ? AND complete IS NULL AND pending = 1 AND heldby IS NULL",
-					activeGroupIDs).Count(&pendingadmins)
-			}
+			db.Table("messages_edits me").
+				Select("COUNT(DISTINCT me.msgid)").
+				Joins("INNER JOIN messages m ON m.id = me.msgid AND m.deleted IS NULL").
+				Where("me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY)").
+				Scan(&editreview)
 		}()
 
-		// --- Edit reviews (only active groups) ---
+		// --- Pending volunteering ---
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			if len(activeGroupIDs) > 0 {
-				// rippled_in = 0: an edit belongs to the post's origin group only;
-				// without this the Edit badge counts rippled-in copies that the Edit
-				// list (filtered rippled_in=0) never shows — a ghost count (Discourse
-				// 9839). Matches ListMessagesMT and groupWork's per-group Editreview.
-				db.Table("messages_edits me").
-					Select("COUNT(DISTINCT me.msgid)").
-					Joins("INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0").
-					Where("mg.groupid IN ? AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY)",
-						activeGroupIDs).
-					Scan(&editreview)
-			}
+			db.Table("volunteering v").
+				Select("COUNT(DISTINCT v.id)").
+				Joins("LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id").
+				Where("v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND (vd.end IS NULL OR vd.end >= NOW())").
+				Scan(&pendingvolunteering)
 		}()
 
-		// --- Pending volunteering (only active groups) ---
+		// --- Stories: must match the listing query in story.go ---
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			if len(activeGroupIDs) > 0 {
-				db.Table("volunteering v").
-					Select("COUNT(DISTINCT v.id)").
-					Joins("INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id").
-					Joins("LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id").
-					Where("vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND (vd.end IS NULL OR vd.end >= NOW())",
-						activeGroupIDs).
-					Scan(&pendingvolunteering)
-			}
-		}()
-
-		// --- Stories (active groups only — must match the listing query in story.go) ---
-		wg2.Add(1)
-		go func() {
-			defer wg2.Done()
-			if len(activeGroupIDs) > 0 {
-				storyCutoff := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
-				db.Table("users_stories us").
-					Select("COUNT(DISTINCT us.id)").
-					Joins("INNER JOIN memberships m ON m.userid = us.userid").
-					Joins("INNER JOIN users ON users.id = us.userid").
-					Where("m.groupid IN ? AND m.collection = ? AND us.date > ? AND us.reviewed = 0 AND users.deleted IS NULL",
-						activeGroupIDs, utils.COLLECTION_APPROVED, storyCutoff).
-					Scan(&stories)
-			}
+			storyCutoff := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
+			db.Table("users_stories us").
+				Select("COUNT(DISTINCT us.id)").
+				Joins("INNER JOIN users ON users.id = us.userid").
+				Where("us.reviewed = 0 AND us.userid IS NOT NULL AND users.deleted IS NULL AND us.date > ?",
+					storyCutoff).
+				Scan(&stories)
 		}()
 
 		// --- Spammer pending counts (SpamAdmin permission only) ---
@@ -1333,57 +1164,18 @@ func GetSession(c *fiber.Ctx) error {
 			}
 		}()
 
-		// --- Chat review: RECIPIENT matching + active/inactive split ---
-		// Review counts are based on the RECIPIENT's group membership (not either participant).
-		// Active groups: not-held -> chatreview, held -> chatreviewother.
-		// Inactive groups: all -> chatreviewother.
-		//
-		// The chat review SQL uses CASE WHEN to find the recipient:
-		//   CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END
-		// Primary: recipient IS a member of a Freegle group.
-		// Secondary: recipient is NOT a member → use sender's group instead.
+		// --- Chat review: national queue, no group scoping ---
+		// Every moderator sees the same queue now, so there is no recipient
+		// group-membership matching and no wider-review split any more.
+		// held/unheld still splits chatreview (red) from chatreviewother
+		// (blue), matching chatmessage.go's getReviewQueue.
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
 			chatCutoff := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
 
-			// Helper SQL for recipient-based chat review counting.
-			// Count chat messages pending review. Must match the logic in
-			// chatmessage_review.go getReviewQueue() so the sidebar count
-			// equals the number of displayed messages.
-			//
-			// heldFilter is the only toggle - 2 possible rendered forms, both
-			// proven by the retired ormharness (shapes.json /
-			// TestTier3Shapes_f43d5f680ef9, removed in d22ba1d6c).
-			chatReviewSQL := func(groupIDs []uint64, heldFilter string) int64 {
-				if len(groupIDs) == 0 {
-					return 0
-				}
-				// WHERE built as a single string for ONE Where() call: GORM's
-				// clause.Where wraps any fragment containing "AND"/"OR" in an
-				// extra paren pair once there is more than one Where
-				// expression to combine (clause/where.go buildExprs), which
-				// would diverge from the golden.
-				whereSQL := "cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date >= ? " +
-					heldFilter + " AND (" +
-					// User2Mod: chat belongs to one of the mod's groups.
-					"  (cr.chattype = ? AND cr.groupid IN ?) " +
-					"  OR " +
-					// User2User case 1: recipient (other user) is in mod's groups.
-					"  (cr.chattype = ? AND " +
-					"    EXISTS (SELECT 1 FROM memberships m " +
-					"      INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? " +
-					"      WHERE m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) AND m.groupid IN ?)) " +
-					"  OR " +
-					// User2User case 2: recipient has no Freegle memberships, sender in mod's groups.
-					"  (cr.chattype = ? AND " +
-					"    NOT EXISTS (SELECT 1 FROM memberships m " +
-					"      INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? " +
-					"      WHERE m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)) " +
-					"    AND EXISTS (SELECT 1 FROM memberships m " +
-					"      INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? " +
-					"      WHERE m.userid = cm.userid AND m.groupid IN ?))" +
-					")"
+			chatReviewSQL := func(heldFilter string) int64 {
+				whereSQL := "cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date >= ? " + heldFilter
 
 				var count int64
 				db.Table("chat_messages cm").
@@ -1391,71 +1183,13 @@ func GetSession(c *fiber.Ctx) error {
 					Joins("INNER JOIN chat_rooms cr ON cr.id = cm.chatid").
 					Joins("INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL").
 					Joins("LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id").
-					Where(whereSQL, chatCutoff,
-						utils.CHAT_TYPE_USER2MOD, groupIDs,
-						utils.CHAT_TYPE_USER2USER, utils.GROUP_TYPE_FREEGLE, groupIDs,
-						utils.CHAT_TYPE_USER2USER, utils.GROUP_TYPE_FREEGLE, utils.GROUP_TYPE_FREEGLE, groupIDs).
+					Where(whereSQL, chatCutoff).
 					Scan(&count)
 				return count
 			}
 
-			// Active groups: not held → chatreview (red), held → chatreviewother (blue).
-			chatreview = chatReviewSQL(activeGroupIDs, "AND cmh.userid IS NULL")
-			chatreviewother = chatReviewSQL(activeGroupIDs, "AND cmh.userid IS NOT NULL")
-			// Inactive groups: all → chatreviewother (blue).
-			chatreviewother += chatReviewSQL(inactiveGroupIDs, "AND cmh.userid IS NULL")
-			chatreviewother += chatReviewSQL(inactiveGroupIDs, "AND cmh.userid IS NOT NULL")
-
-			// Wider chat review: unheld messages from groups with widerchatreview=1
-			// that are NOT already counted in the base queries above.
-			// These go into chatreviewother (blue badge).
-			if user.HasWiderReview(myid) {
-				allModGroupIDs := append(activeGroupIDs, inactiveGroupIDs...)
-				var widerCount int64
-
-				// WHERE built as a single string for ONE Where() call: GORM's
-				// clause.Where wraps any fragment containing "AND"/"OR" in an
-				// extra paren pair once there is more than one Where
-				// expression to combine (clause/where.go buildExprs), which
-				// would diverge from the golden.
-				widerWhereSQL := "cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date >= ? AND cmh.id IS NULL " +
-					"AND JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 AND (cm.reportreason IS NULL OR cm.reportreason != 'User')"
-				widerWhereArgs := []interface{}{chatCutoff}
-
-				if len(allModGroupIDs) > 0 {
-					// Exclude messages where the recipient has ANY membership in
-					// the mod's own groups (those are already counted in the base
-					// chatreview/chatreviewother). We use NOT EXISTS rather than
-					// AND m.groupid NOT IN because a recipient may be on both a
-					// mod's group AND a separate wider-review group; the simple
-					// NOT IN only filters the mod-group JOIN row while still
-					// counting the wider-group JOIN row, causing double-counting.
-					//
-					// This branch (allModGroupIDs>0) has exactly one rendered
-					// form, proven by the retired ormharness (shapes.json /
-					// TestTier3Shapes_3f3696f3bba4, removed in d22ba1d6c).
-					recipientExpr := "(CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)"
-					widerWhereSQL += " AND NOT EXISTS (SELECT 1 FROM memberships m2 WHERE m2.userid = " + recipientExpr + " AND m2.groupid IN (?))"
-					widerWhereArgs = append(widerWhereArgs, allModGroupIDs)
-				}
-				// else: ORM migration site 76555fe088e5 (Tier 3 keep-raw
-				// review). This branch (no mod groups) has exactly one
-				// rendered form, proven by the retired ormharness
-				// (shapes.json / TestTier3Shapes_76555fe088e5, removed in
-				// d22ba1d6c).
-
-				db.Table("chat_messages cm").
-					Select("COUNT(DISTINCT cm.id)").
-					Joins("INNER JOIN chat_rooms cr ON cr.id = cm.chatid").
-					Joins("INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL").
-					Joins("LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id").
-					Joins("INNER JOIN memberships m ON m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)").
-					Joins("INNER JOIN `groups` g ON m.groupid = g.id AND g.type = '"+utils.GROUP_TYPE_FREEGLE+"'").
-					Where(widerWhereSQL, widerWhereArgs...).
-					Scan(&widerCount)
-
-				chatreviewother += widerCount
-			}
+			chatreview = chatReviewSQL("AND cmh.userid IS NULL")
+			chatreviewother = chatReviewSQL("AND cmh.userid IS NOT NULL")
 		}()
 
 		// --- Newsletter stories (global, no group scope) ---
@@ -1487,65 +1221,44 @@ func GetSession(c *fiber.Ctx) error {
 			db.Table("giftaid").Where("reviewed IS NULL AND deleted IS NULL AND period != 'Declined'").Count(&giftaid)
 		}()
 
-		// --- Happiness (only active groups) ---
+		// --- Happiness ---
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			if len(activeGroupIDs) > 0 {
-				hapCutoff := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
-				// rippled_in = 0: the aggregate Feedback work count must match
-				// the per-group badge (groupWork.go) and the list — only posts
-				// that originated on the group, not rippled-in copies. 9808/633.
-				db.Table("messages_outcomes mo").
-					Select("COUNT(DISTINCT mo.id)").
-					Joins("INNER JOIN messages_groups mg ON mg.msgid = mo.msgid").
-					Where("mo.timestamp >= ? AND mg.arrival >= ? AND mg.groupid IN ? "+
-						"AND mg.rippled_in = 0 "+
-						"AND mo.comments IS NOT NULL "+
-						"AND mo.comments != 'Sorry, this is no longer available.' "+
-						"AND mo.comments != 'Thanks, this has now been taken.' "+
-						"AND mo.comments != 'Thanks, I''m no longer looking for this.' "+
-						"AND mo.comments != 'Sorry, this has now been taken.' "+
-						"AND mo.comments != 'Thanks for the interest, but this has now been taken.' "+
-						"AND mo.comments != 'Thanks, these have now been taken.' "+
-						"AND mo.comments != 'Thanks, this has now been received.' "+
-						"AND mo.comments != 'Withdrawn on user unsubscribe' "+
-						"AND mo.comments != 'Auto-Expired' "+
-						"AND (mo.happiness = 'Happy' OR mo.happiness IS NULL) "+
-						"AND mo.reviewed = 0",
-						hapCutoff, hapCutoff, activeGroupIDs).
-					Scan(&happiness)
-			}
+			hapCutoff := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
+			db.Table("messages_outcomes mo").
+				Select("COUNT(DISTINCT mo.id)").
+				Joins("INNER JOIN messages m ON m.id = mo.msgid").
+				Where("mo.timestamp >= ? AND m.arrival >= ? "+
+					"AND mo.comments IS NOT NULL "+
+					"AND mo.comments != 'Sorry, this is no longer available.' "+
+					"AND mo.comments != 'Thanks, this has now been taken.' "+
+					"AND mo.comments != 'Thanks, I''m no longer looking for this.' "+
+					"AND mo.comments != 'Sorry, this has now been taken.' "+
+					"AND mo.comments != 'Thanks for the interest, but this has now been taken.' "+
+					"AND mo.comments != 'Thanks, these have now been taken.' "+
+					"AND mo.comments != 'Thanks, this has now been received.' "+
+					"AND mo.comments != 'Withdrawn on user unsubscribe' "+
+					"AND mo.comments != 'Auto-Expired' "+
+					"AND (mo.happiness = 'Happy' OR mo.happiness IS NULL) "+
+					"AND mo.reviewed = 0",
+					hapCutoff, hapCutoff).
+				Scan(&happiness)
 		}()
 
-		// --- Related members (only active groups) ---
+		// --- Related members ---
+		// Membership no longer gates this: every related pair of ordinary
+		// users is national work now, not scoped to a group's moderators.
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			if len(activeGroupIDs) > 0 {
-				// Derived-table trick: GORM's
-				// Table() passes its name argument through verbatim (no quoting) once it
-				// contains a space, so a parenthesized UNION subquery can be given as the
-				// "table name" with its own bind args in Table()'s variadic args.
-				db.Table("(SELECT ur.user1 FROM users_related ur "+
-					"INNER JOIN memberships m ON m.userid = ur.user1 "+
-					"INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = ? "+
-					"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ? "+
-					"WHERE ur.user1 < ur.user2 AND ur.notified = 0 AND m.groupid IN ? "+
+			db.Table("users_related ur").
+				Joins("INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = ?", utils.SYSTEMROLE_USER).
+				Joins("INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ?", utils.SYSTEMROLE_USER).
+				Where("ur.user1 < ur.user2 AND ur.notified = 0 "+
 					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) > 0 "+
-					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0 "+
-					"UNION "+
-					"SELECT ur.user1 FROM users_related ur "+
-					"INNER JOIN memberships m ON m.userid = ur.user2 "+
-					"INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = ? "+
-					"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ? "+
-					"WHERE ur.user1 < ur.user2 AND ur.notified = 0 AND m.groupid IN ? "+
-					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) > 0 "+
-					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0) t",
-					utils.SYSTEMROLE_USER, utils.SYSTEMROLE_USER, activeGroupIDs, utils.SYSTEMROLE_USER, utils.SYSTEMROLE_USER, activeGroupIDs).
-					Select("COUNT(*)").
-					Scan(&relatedmembers)
-			}
+					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0").
+				Count(&relatedmembers)
 		}()
 
 		// --- Housekeeping tasks: overdue or failed (Admin only) ---
@@ -1840,15 +1553,10 @@ func GetSession(c *fiber.Ctx) error {
 		}
 	}
 
-	if memberships == nil {
-		memberships = make([]MembershipRow, 0)
-	}
-
 	resp := fiber.Map{
 		"ret":        0,
 		"status":     "Success",
 		"me":         me,
-		"groups":     memberships,
 		"emails":     emails,
 		"persistent": persistent,
 		"jwt":        jwtString,

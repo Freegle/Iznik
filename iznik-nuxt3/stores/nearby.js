@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import { nextTick } from 'vue'
 import api from '~/api'
-import { useAuthStore } from '~/stores/auth'
 
 // Rippling-out (nearby-reach flip): this store used to hold the member's own
 // isochrone polygons for the "Nearby" browse view. There's no client-side
@@ -24,13 +23,10 @@ export const useNearbyStore = defineStore('nearby', {
           await this.fetchingMessages
           await nextTick()
         } else {
-          // Pass the user's browse view so the list matches the count: 'mygroups' returns
-          // member-group posts, anything else the nearby (reach-based) feed. The endpoint
-          // is still /isochrone/message - that name is legacy, but the URL is kept.
-          const browseView = useAuthStore().user?.settings?.browseView
-          this.fetchingMessages = api(this.config).isochrone.fetchMessages(
-            browseView ? { browseView } : undefined
-          )
+          // The endpoint is still /isochrone/message - that name is legacy, but the URL is
+          // kept. There's only one browse view now (the nearby, reach-based feed), so no
+          // params are needed to select it.
+          this.fetchingMessages = api(this.config).isochrone.fetchMessages()
           this.messageList = await this.fetchingMessages
           this.fetchingMessages = null
         }

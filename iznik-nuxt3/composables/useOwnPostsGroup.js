@@ -18,7 +18,7 @@
  * A missing `mine` flag counts as not the viewer's - older cached feeds, and any path that
  * did not populate it, must not have their posts hidden behind the collapsed row.
  *
- * Only OPEN own posts collapse into the row. The mygroups feed also carries freegled posts
+ * Only OPEN own posts collapse into the row. The browse feed also carries freegled posts
  * (rendered as the spaced social-proof cards), and lifting the viewer's own completed posts
  * into "posts by you" resurrected them at the top of browse - a completed post belongs in
  * My Posts, so it flows with everyone else's freegled cards instead.

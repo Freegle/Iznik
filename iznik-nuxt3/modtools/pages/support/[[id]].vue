@@ -111,13 +111,6 @@
             />
           </b-tab>
 
-          <!-- Spam Tab -->
-          <b-tab>
-            <template #title>
-              <h2 class="ms-2 me-2">Spam</h2>
-            </template>
-            <ModSupportConcernKeywords />
-          </b-tab>
         </b-tabs>
       </div>
     </div>

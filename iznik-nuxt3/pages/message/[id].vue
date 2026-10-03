@@ -185,12 +185,12 @@ const authStore = useAuthStore()
 
 // This page is the entry point from digest/notification emails, so the user's
 // context here is items, not discussion. Claim the remembered home page for
-// Browse ('mygroups' is what /browse itself sets): when their history unwinds
+// Browse ('browse' is what /browse itself sets): when their history unwinds
 // to /, goHome() then lands them on Browse. Without this, a member whose
 // remembered home page was ChitChat would press Back from an emailed OFFER and
 // be dropped in front of the public "What's on your mind?" composer — which is
 // exactly how item replies end up posted publicly on ChitChat.
-useFavoritePage('mygroups')
+useFavoritePage('browse')
 
 // We don't use lazy because we want the page to be rendered for SEO.
 const id = route?.params?.id ? parseInt(route.params.id) : 0
@@ -258,9 +258,7 @@ const gone = computed(() => {
   const m = message.value
 
   return Boolean(
-    m.outcomes?.length > 0 ||
-    m.deleted ||
-    (m.groups?.length && m.groups.every((g) => g.collection === 'Rejected'))
+    m.outcomes?.length > 0 || m.deleted || m.collection === 'Rejected'
   )
 })
 

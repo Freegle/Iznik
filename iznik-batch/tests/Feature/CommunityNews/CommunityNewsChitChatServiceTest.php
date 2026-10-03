@@ -23,12 +23,10 @@ class CommunityNewsChitChatServiceTest extends TestCase
     private function area(array $attrs = []): CommunityNewsArea
     {
         return CommunityNewsArea::create(array_merge([
-            'anchorgroupid' => 1,
+            'authorityid' => 910401,
             'name' => 'Testville',
             'lat' => 51.5,
             'lng' => -0.12,
-            'groupids' => [1],
-            'groupcount' => 1,
         ], $attrs));
     }
 

@@ -3,26 +3,19 @@
 namespace App\Services;
 
 use App\Mail\Newsfeed\NewsfeedDigestMail;
-use App\Models\Group;
-use App\Models\Membership;
 use App\Models\User;
-use App\Services\SpatialQueryService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
  * Send the newsfeed ("chitchat") digest to recently-active users.
  *
- * Mirrors the legacy V1 PHP newsfeed_digest cron script + Newsfeed::digest():
- *
- * - Iterates published, on-here, non-playground Freegle groups whose 'newsfeed'
- *   setting is on (default on), and for each approved member builds a digest of
- *   recent nearby chitchat they have not yet seen.
- * - "Nearby" uses the user's lat/lng and a spatial bounding box (V1
- *   getNearbyDistance + MBRContains on newsfeed.position), expanding the radius
- *   until ~10 recent posters are in range (capped at ~20 miles).
- * - A newsfeed_users marker (highest newsfeed id sent) prevents re-sending, so a
- *   user who belongs to several groups is only mailed once per run.
+ * Freegle is a single national site, so there is no group or membership list
+ * to iterate: every non-deleted user is a candidate, and digestForUser()
+ * applies the per-user eligibility checks (mail preference, notificationmails
+ * setting, known location) and finds nearby chitchat via the spatial server's
+ * "newsfeed" dataset.
+ * A newsfeed_users marker (highest newsfeed id sent) prevents re-sending.
  */
 class NewsfeedDigestService
 {
@@ -56,7 +49,9 @@ class NewsfeedDigestService
     private const NEARBY_CANDIDATES = 500;
 
     /**
-     * Process all eligible groups/members.
+     * Process all eligible users. There is no group/membership list on a
+     * single national site, so every non-deleted user is a candidate;
+     * digestForUser() applies the real eligibility checks per user.
      *
      * @return int Number of digest emails sent.
      */
@@ -66,39 +61,17 @@ class NewsfeedDigestService
             return $this->digestForUser($onlyUserId, $dryRun);
         }
 
-        $groups = DB::table('groups')
-            ->where('type', Group::TYPE_FREEGLE)
-            ->where('onhere', 1)
-            ->where('publish', 1)
-            ->where('nameshort', 'not like', '%playground%')
-            ->get(['id', 'nameshort', 'settings']);
-
         $sent = 0;
-        $processedUsers = [];
 
-        foreach ($groups as $group) {
-            $settings = is_string($group->settings) ? json_decode($group->settings, true) : (array) $group->settings;
-            // V1: $g->getSetting('newsfeed', TRUE) — default on.
-            if (! ($settings['newsfeed'] ?? true)) {
-                continue;
-            }
+        $candidateIds = DB::table('users')
+            ->whereNull('deleted')
+            ->select('id')
+            ->orderBy('id')
+            ->lazyById(1000)
+            ->pluck('id');
 
-            $memberIds = DB::table('memberships')
-                ->where('groupid', $group->id)
-                ->where('collection', Membership::COLLECTION_APPROVED)
-                ->distinct()
-                ->pluck('userid');
-
-            foreach ($memberIds as $userId) {
-                // The newsfeed_users marker already dedupes re-sends, but skip
-                // users we've handled this run to avoid redundant work.
-                if (isset($processedUsers[$userId])) {
-                    continue;
-                }
-                $processedUsers[$userId] = true;
-
-                $sent += $this->digestForUser((int) $userId, $dryRun);
-            }
+        foreach ($candidateIds as $userId) {
+            $sent += $this->digestForUser((int) $userId, $dryRun);
         }
 
         Log::info('NewsfeedDigestService: completed', ['sent' => $sent, 'dry_run' => $dryRun]);
@@ -145,7 +118,7 @@ class NewsfeedDigestService
         // grow-the-radius-until-10-posters box; like the Go API's nearby
         // newsfeed, this uses nearest-N (the final ORDER BY timestamp + the
         // MAX_ITEMS/window filters keep the same "latest nearby posts" result).
-        $ids = (new SpatialQueryService())->nearestIds('newsfeed', $lat, $lng, self::NEARBY_CANDIDATES);
+        $ids = (new SpatialQueryService)->nearestIds('newsfeed', $lat, $lng, self::NEARBY_CANDIDATES);
         if (empty($ids)) {
             return 0;
         }
@@ -166,7 +139,7 @@ class NewsfeedDigestService
                AND newsfeed.timestamp >= ?
                AND TIMESTAMPDIFF(HOUR, newsfeed.timestamp, NOW()) >= ?
              ORDER BY newsfeed.pinned DESC, newsfeed.timestamp DESC
-             LIMIT " . self::MAX_ITEMS,
+             LIMIT ".self::MAX_ITEMS,
             array_merge($ids, [$userId], self::FEED_TYPES, [$oldest, self::MIN_HOUR_AGE])
         );
 
@@ -212,6 +185,7 @@ class NewsfeedDigestService
             if (! $dryRun && $maxId > $lastSeen) {
                 DB::table('newsfeed_users')->updateOrInsert(['userid' => $userId], ['newsfeedid' => $maxId]);
             }
+
             return 0;
         }
 
@@ -250,9 +224,9 @@ class NewsfeedDigestService
         }
 
         [$lat, $lng] = $user->getLatLng();
+
         return [$lat, $lng];
     }
-
 
     /**
      * The poster's public location name with the group suffix stripped (V1
@@ -270,6 +244,7 @@ class NewsfeedDigestService
         }
 
         $pos = strrpos($name, ',');
+
         return $pos !== false ? trim(substr($name, 0, $pos)) : $name;
     }
 
@@ -282,15 +257,16 @@ class NewsfeedDigestService
 
         switch ($post->type) {
             case 'AboutMe':
-                return $message === '' ? null : '"' . $message . '"';
+                return $message === '' ? null : '"'.$message.'"';
 
             case 'Noticeboard':
                 $decoded = json_decode($message, true);
                 $name = is_array($decoded) ? ($decoded['name'] ?? '') : '';
-                return $name === '' ? null : 'I put up a poster for Freegle: "' . $name . '"';
+
+                return $name === '' ? null : 'I put up a poster for Freegle: "'.$name.'"';
 
             case 'Story':
-                return $message === '' ? null : "Here's my Freegle story: " . $message;
+                return $message === '' ? null : "Here's my Freegle story: ".$message;
 
             default: // Message
                 return $message === '' ? null : $message;
@@ -325,8 +301,9 @@ class NewsfeedDigestService
         if (! $u) {
             return 'A freegler';
         }
+
         return $u->fullname
-            ?: trim(($u->firstname ?? '') . ' ' . ($u->lastname ?? ''))
+            ?: trim(($u->firstname ?? '').' '.($u->lastname ?? ''))
             ?: 'A freegler';
     }
 
@@ -336,6 +313,7 @@ class NewsfeedDigestService
         if (mb_strlen($text) <= $length) {
             return $text;
         }
-        return rtrim(mb_substr($text, 0, $length)) . '…';
+
+        return rtrim(mb_substr($text, 0, $length)).'…';
     }
 }

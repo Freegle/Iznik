@@ -4,7 +4,6 @@ namespace App\Services\CommunityNews;
 
 use App\Models\CommunityNewsArea;
 use App\Models\CommunityNewsItem;
-use App\Models\Group;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Process;
@@ -28,8 +27,7 @@ class CommunityNewsResearchService
         private CommunityNewsSourceService $sources,
         private SourceFreshness $freshness,
         private CommunityNewsAreaService $areas,
-    ) {
-    }
+    ) {}
 
     /**
      * Research one area and (unless dry-run) store fresh CommunityNewsItem rows.
@@ -40,7 +38,7 @@ class CommunityNewsResearchService
     {
         // Maintain the curated source store (spot dead feeds) on each real run,
         // then seed the model with the live known-good local sources.
-        if (!$dryRun) {
+        if (! $dryRun) {
             $this->sources->maintainArea($area);
         }
         $seedSources = $this->sources->liveSourcesForArea($area);
@@ -63,6 +61,7 @@ class CommunityNewsResearchService
                     'area' => $area->id,
                     'url' => $it['url'],
                 ]);
+
                 continue;
             }
 
@@ -76,6 +75,7 @@ class CommunityNewsResearchService
                     'url' => $it['url'],
                     'reason' => $stale,
                 ]);
+
                 continue;
             }
 
@@ -111,6 +111,7 @@ class CommunityNewsResearchService
         $mode = $this->driverMode();
         if ($mode === null) {
             Log::warning('CommunityNews: no Anthropic credentials — set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) to run on a Claude subscription, or ANTHROPIC_API_KEY; cannot research', ['area' => $area->id]);
+
             return null;
         }
 
@@ -122,6 +123,7 @@ class CommunityNewsResearchService
 
         if ($finalText === null || trim($finalText) === '') {
             Log::warning('CommunityNews: empty research response', ['area' => $area->id]);
+
             return null;
         }
 
@@ -203,7 +205,7 @@ class CommunityNewsResearchService
         // With curated local feeds to hand, let the model fetch them directly.
         // web_fetch only fetches URLs already in the conversation — i.e. the seed
         // list we put in the prompt — so it can't wander off to arbitrary pages.
-        if (!empty($seedSources)) {
+        if (! empty($seedSources)) {
             $tools[] = [
                 'type' => 'web_fetch_20260209',
                 'name' => 'web_fetch',
@@ -228,15 +230,17 @@ class CommunityNewsResearchService
                     ]);
             } catch (\Throwable $e) {
                 Log::warning('CommunityNews research call threw', ['area' => $area->id, 'error' => $e->getMessage()]);
+
                 return null;
             }
 
-            if (!$response->successful()) {
+            if (! $response->successful()) {
                 Log::warning('CommunityNews research call failed', [
                     'area' => $area->id,
                     'status' => $response->status(),
                     'body' => mb_substr($response->body(), 0, 500),
                 ]);
+
                 return null;
             }
 
@@ -255,6 +259,7 @@ class CommunityNewsResearchService
             // echo the assistant turn back and continue (no new user message).
             if ($stop === 'pause_turn') {
                 $messages[] = ['role' => 'assistant', 'content' => $content];
+
                 continue;
             }
 
@@ -285,7 +290,7 @@ class CommunityNewsResearchService
 
         $configDir = trim((string) config('freegle.communitynews.claude_config_dir', ''));
         if ($configDir === '') {
-            $configDir = rtrim(sys_get_temp_dir(), '/') . '/cn-claude-' . $area->id;
+            $configDir = rtrim(sys_get_temp_dir(), '/').'/cn-claude-'.$area->id;
         }
         @mkdir($configDir, 0700, true);
 
@@ -318,25 +323,28 @@ class CommunityNewsResearchService
                 ->run($command);
         } catch (\Throwable $e) {
             Log::warning('CommunityNews claude CLI threw', ['area' => $area->id, 'error' => $e->getMessage()]);
+
             return null;
         }
 
-        if (!$result->successful()) {
+        if (! $result->successful()) {
             Log::warning('CommunityNews claude CLI failed', [
                 'area' => $area->id,
                 'exit' => $result->exitCode(),
                 'err' => mb_substr($result->errorOutput(), 0, 500),
             ]);
+
             return null;
         }
 
         // --output-format json => {"type":"result","result":"<text>","total_cost_usd":...}
         $decoded = json_decode($result->output(), true);
-        if (!is_array($decoded) || !array_key_exists('result', $decoded)) {
+        if (! is_array($decoded) || ! array_key_exists('result', $decoded)) {
             Log::warning('CommunityNews: unparseable claude CLI output', [
                 'area' => $area->id,
                 'raw' => mb_substr($result->output(), 0, 300),
             ]);
+
             return null;
         }
 
@@ -351,6 +359,7 @@ class CommunityNewsResearchService
         $json = $this->extractJson($text);
         if ($json === null) {
             Log::warning('CommunityNews: could not parse research JSON', ['preview' => mb_substr($text, 0, 300)]);
+
             return null;
         }
 
@@ -362,7 +371,7 @@ class CommunityNewsResearchService
 
         $items = [];
         foreach ((array) ($json['items'] ?? []) as $it) {
-            if (!is_array($it)) {
+            if (! is_array($it)) {
                 continue;
             }
             $title = $this->replaceEmDashes(trim((string) ($it['title'] ?? '')));
@@ -371,7 +380,7 @@ class CommunityNewsResearchService
                 continue;
             }
             $url = isset($it['url']) ? trim((string) $it['url']) : '';
-            if ($url !== '' && !preg_match('#^https?://#i', $url)) {
+            if ($url !== '' && ! preg_match('#^https?://#i', $url)) {
                 $url = '';
             }
             $items[] = [
@@ -405,11 +414,11 @@ class CommunityNewsResearchService
      */
     private function parseEventDate(mixed $raw): ?string
     {
-        if (!is_string($raw)) {
+        if (! is_string($raw)) {
             return null;
         }
         $value = trim($raw);
-        if ($value === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+        if ($value === '' || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
             return null;
         }
 
@@ -496,18 +505,17 @@ class CommunityNewsResearchService
         $name = $area->name;
         $lat = $area->lat;
         $lng = $area->lng;
-        $groups = $this->groupNames($area);
         $places = $this->places($area);
         $placeLine = $places
-            ? "\nPlaces in this area, biggest first: " . implode(', ', $places)
-                . ". Spread the items across them rather than clustering on {$name}."
+            ? "\nPlaces in this area, biggest first: ".implode(', ', $places)
+                .". Spread the items across them rather than clustering on {$name}."
             : '';
         $seedBlock = $this->seedBlock($seedSources);
         // The model cannot resolve "this Saturday" without knowing today's date.
         $today = now()->toDateString();
 
         return <<<USER
-        Area: {$name} (roughly centred on {$lat}, {$lng}; it covers the Freegle communities: {$groups}).{$placeLine}
+        Area: {$name} (roughly centred on {$lat}, {$lng}).{$placeLine}
         {$seedBlock}
         Find up to {$maxItems} interesting, genuinely local community happenings for readers here, this week or in the next couple of weeks.
 
@@ -527,7 +535,7 @@ class CommunityNewsResearchService
 
         $lines = [];
         foreach (array_slice($seedSources, 0, 30) as $s) {
-            $lines[] = '- ' . $s['name'] . ' (' . $s['url'] . ')';
+            $lines[] = '- '.$s['name'].' ('.$s['url'].')';
         }
         $list = implode("\n", $lines);
 
@@ -557,8 +565,8 @@ class CommunityNewsResearchService
         $list = implode(', ', $places);
 
         return "This area takes in {$list}. Readers live across all of it, so cover the area as a whole: "
-            . 'a round-up that only ever visits the biggest town is no use to someone at the other end. '
-            . 'One round-up for the lot, with the items spread about.';
+            .'a round-up that only ever visits the biggest town is no use to someone at the other end. '
+            .'One round-up for the lot, with the items spread about.';
     }
 
     /** How to describe the area's ground in a sentence. */
@@ -570,25 +578,6 @@ class CommunityNewsResearchService
         }
 
         return implode(', ', $places);
-    }
-
-    private function groupNames(CommunityNewsArea $area): string
-    {
-        $ids = array_map('intval', $area->groupids ?? []);
-        if (empty($ids)) {
-            return $area->name;
-        }
-
-        $names = Group::whereIn('id', $ids)
-            ->orderBy('id')
-            ->limit(30)
-            ->pluck('namefull', 'id')
-            ->map(fn ($full, $id) => $full)
-            ->filter()
-            ->values()
-            ->all();
-
-        return $names ? implode(', ', $names) : $area->name;
     }
 
     private function plainAreaName(CommunityNewsArea $area): string

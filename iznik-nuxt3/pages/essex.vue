@@ -44,22 +44,11 @@
               </div>
               <hr class="text-muted m-0 mb-1" />
               <GiveAsk />
-              <client-only class="ps-2">
-                <PlaceAutocomplete
-                  class="mb-2"
-                  labeltext="Or enter your location and we'll help you join your local
-                  Freegle community."
-                  labeltext-sr="Enter your location"
-                  @selected="explorePlace($event)"
-                />
-              </client-only>
             </div>
             <client-only>
               <PostMapAndList
                 v-if="initialBounds"
                 :initial-bounds="initialBounds"
-                show-start-message
-                :show-closest-groups="false"
                 force-messages
                 :isochrone-override="{
                   polygon: poly,
@@ -86,17 +75,14 @@ import {
   useHead,
   useRuntimeConfig,
   useRoute,
-  useRouter,
 } from '#imports'
 import GiveAsk from '~/components/GiveAsk.vue'
-import PlaceAutocomplete from '~/components/PlaceAutocomplete.vue'
 import PostMapAndList from '~/components/PostMapAndList.vue'
 import ExternalLink from '~/components/ExternalLink.vue'
 
 console.log('Starting Essex page')
 const runtimeConfig = useRuntimeConfig()
 const route = useRoute()
-const router = useRouter()
 
 useHead(
   buildHead(
@@ -149,11 +135,6 @@ function idle(map) {
 
     addedPolygon.value = true
   }
-}
-
-function explorePlace(place) {
-  place.minZoom = 12
-  router.push('/explore/place/' + JSON.stringify(place))
 }
 </script>
 <style scoped lang="scss">

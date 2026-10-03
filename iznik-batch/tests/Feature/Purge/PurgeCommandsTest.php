@@ -6,7 +6,6 @@ use App\Models\ChatImage;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Models\User;
 use Tests\TestCase;
 
@@ -118,10 +117,9 @@ class PurgeCommandsTest extends TestCase
     public function test_purge_messages_purges_pending(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // Create pending message older than threshold.
-        $message = Message::create([
+        Message::create([
             'type' => Message::TYPE_OFFER,
             'fromuser' => $user->id,
             'subject' => 'OFFER: Old Pending (Location)',
@@ -129,13 +127,7 @@ class PurgeCommandsTest extends TestCase
             'source' => 'Platform',
             'date' => now()->subDays(100),
             'arrival' => now()->subDays(100),
-        ]);
-
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now()->subDays(100),
+            'collection' => Message::COLLECTION_PENDING,
         ]);
 
         $this->artisan('purge:messages', ['--pending-days' => 90])
@@ -145,10 +137,9 @@ class PurgeCommandsTest extends TestCase
     public function test_purge_messages_purges_deleted(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         // Create deleted message.
-        $message = Message::create([
+        Message::create([
             'type' => Message::TYPE_OFFER,
             'fromuser' => $user->id,
             'subject' => 'OFFER: Deleted Item (Location)',
@@ -157,13 +148,7 @@ class PurgeCommandsTest extends TestCase
             'date' => now()->subDays(5),
             'arrival' => now()->subDays(5),
             'deleted' => now()->subDays(3),
-        ]);
-
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now()->subDays(5),
+            'collection' => Message::COLLECTION_APPROVED,
         ]);
 
         $this->artisan('purge:messages', ['--deleted-retention' => 2])

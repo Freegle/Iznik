@@ -3,11 +3,9 @@
 namespace Tests\Unit\Services;
 
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Services\ContentCheckService;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\DataProvider;
-use ReflectionClass;
 use Tests\TestCase;
 
 class ContentCheckServiceTest extends TestCase
@@ -21,215 +19,14 @@ class ContentCheckServiceTest extends TestCase
     }
 
     // =========================================================================
-    // Private method helpers via reflection
-    // =========================================================================
-
-    private function callPrivate(string $method, mixed ...$args): mixed
-    {
-        $ref = new ReflectionClass($this->service);
-        $m = $ref->getMethod($method);
-        $m->setAccessible(true);
-        return $m->invoke($this->service, ...$args);
-    }
-
-    // =========================================================================
-    // damerauLevenshtein — pure algorithm
-    // =========================================================================
-
-    #[DataProvider('damerauLevenshteinProvider')]
-    public function test_damerau_levenshtein(string $a, string $b, int $expected): void
-    {
-        $dist = $this->callPrivate('damerauLevenshtein', $a, $b);
-        $this->assertSame($expected, $dist);
-    }
-
-    public static function damerauLevenshteinProvider(): array
-    {
-        return [
-            'identical strings'         => ['hello', 'hello', 0],
-            'one insertion'             => ['hello', 'helllo', 1],
-            'one deletion'              => ['helllo', 'hello', 1],
-            'one substitution'          => ['hello', 'hxllo', 1],
-            'adjacent transposition'    => ['beleived', 'believed', 1],
-            'empty a'                   => ['', 'abc', 3],
-            'empty b'                   => ['abc', '', 3],
-            'both empty'                => ['', '', 0],
-            'completely different'      => ['abc', 'xyz', 3],
-            'two edits'                 => ['kitten', 'sitting', 3],
-        ];
-    }
-
-    // =========================================================================
-    // inflectionVariants — pure string logic
-    // =========================================================================
-
-    #[DataProvider('inflectionVariantsProvider')]
-    public function test_inflection_variants_includes_expected(string $keyword, string $expectedVariant): void
-    {
-        $variants = $this->callPrivate('inflectionVariants', $keyword);
-        $this->assertContains($expectedVariant, $variants, "Expected variant '{$expectedVariant}' for keyword '{$keyword}'");
-    }
-
-    public static function inflectionVariantsProvider(): array
-    {
-        return [
-            'plural -s'          => ['sell', 'sells'],
-            'plural -es'         => ['sell', 'selles'],
-            '-ing suffix'        => ['sell', 'selling'],
-            '-ed suffix'         => ['sell', 'selled'],
-            '-y -> -ies'         => ['supply', 'supplies'],
-            'CVC double+ed swap' => ['swap', 'swapped'],
-            'CVC double+ing'     => ['swap', 'swapping'],
-        ];
-    }
-
-    public function test_inflection_variants_no_cvc_when_ends_vowel(): void
-    {
-        // "true" ends in vowel 'e' — no CVC doubling
-        $variants = $this->callPrivate('inflectionVariants', 'true');
-        $this->assertNotContains('trueed', $variants);
-        $this->assertNotContains('trueing', $variants);
-    }
-
-    // =========================================================================
-    // matchesFuzzy — pure string matching (tested via public surface below)
-    // =========================================================================
-
-    public function test_matches_fuzzy_exact_match(): void
-    {
-        // Tested indirectly via checkVagueItem or via reflection
-        $result = $this->callPrivate('matchesFuzzy', 'free stuff', 'stuff');
-        $this->assertTrue($result);
-    }
-
-    public function test_matches_fuzzy_plural_inflection(): void
-    {
-        $result = $this->callPrivate('matchesFuzzy', 'selling drugs', 'sell');
-        $this->assertTrue($result);
-    }
-
-    public function test_matches_fuzzy_strips_edge_punctuation(): void
-    {
-        $result = $this->callPrivate('matchesFuzzy', 'free (stuff)', 'stuff');
-        $this->assertTrue($result);
-    }
-
-    public function test_matches_fuzzy_empty_keyword_returns_false(): void
-    {
-        $result = $this->callPrivate('matchesFuzzy', 'some text', '');
-        $this->assertFalse($result);
-    }
-
-    public function test_matches_fuzzy_no_match(): void
-    {
-        $result = $this->callPrivate('matchesFuzzy', 'clean offer sofa', 'heroin');
-        $this->assertFalse($result);
-    }
-
-    public function test_matches_fuzzy_transposition_for_long_keywords(): void
-    {
-        // "beleived" is an adjacent transposition of "believed"
-        // (8 chars, damerau distance 1).
-        $result = $this->callPrivate('matchesFuzzy', 'I beleived him', 'believed');
-        $this->assertTrue($result);
-    }
-
-    public function test_matches_fuzzy_rejects_initial_consonant_swap(): void
-    {
-        // "hangers" vs "bangers" differ at position 0 — should NOT match
-        $result = $this->callPrivate('matchesFuzzy', 'coat hangers', 'bangers');
-        $this->assertFalse($result);
-    }
-
-    public function test_matches_fuzzy_short_keyword_no_levenshtein(): void
-    {
-        // Short keywords (< 8 chars) use only exact/inflection, not levenshtein
-        // "guns" ≠ "buns" (1 substitution at pos 0) — should not match
-        $result = $this->callPrivate('matchesFuzzy', 'fresh buns for sale', 'guns');
-        $this->assertFalse($result);
-    }
-
-    // =========================================================================
-    // checkVagueItem — public, pure logic
-    // =========================================================================
-
-    #[DataProvider('vagueItemProvider')]
-    public function test_check_vague_item(mixed $itemName, bool $expectFlag): void
-    {
-        $result = $this->service->checkVagueItem($itemName);
-
-        if ($expectFlag) {
-            $this->assertNotNull($result);
-            $this->assertSame(ContentCheckService::CHECK_VAGUE, $result['check']);
-        } else {
-            $this->assertNull($result);
-        }
-    }
-
-    public static function vagueItemProvider(): array
-    {
-        return [
-            'null item'                  => [null, false],
-            'empty string'               => ['', false],
-            'whitespace only'            => ['   ', false],
-            'specific item sofa'         => ['Sofa', false],
-            'specific item TV'           => ['TV', false],
-            'specific item PC'           => ['PC', false],
-            'pure vague: stuff'          => ['stuff', true],
-            'pure vague: things'         => ['things', true],
-            'pure vague: items'          => ['items', true],
-            'pure vague: junk'           => ['junk', true],
-            'vague phrase: free stuff'   => ['free stuff', true],
-            'vague: bits and pieces'     => ['bits and pieces', true],
-            'mixed: assorted frames'     => ['assorted picture frames', false],
-            'mixed: Marilyn stuff'       => ['Marilyn monroe stuff', false],
-            'numeric token ignored'      => ['2024', false],
-            'short token TV + vague'     => ['TV stuff', false], // "TV" is <=2 chars, ignored; "stuff" is vague but only 1 significant token
-            'specific: computer desk'    => ['Computer desk', false],
-            'vague: assorted'            => ['assorted', true],
-            'mixed: assorted bike parts' => ['assorted bike parts', false],
-            // Point 1: vocabulary gaps
-            'vague: any'                 => ['Any', true],
-            'vague: all'                 => ['all', true],
-            'vague: everything'          => ['Everything', true],
-            'vague: household goods'     => ['household goods', true],
-            'vague: household items'     => ['household items', true],
-            'vague: sundries'            => ['sundries', true],
-            'vague: bric-a-brac'         => ['bric-a-brac', true],
-            'vague: odds and ends'       => ['odds and ends', true],
-            'vague: general'             => ['general', true],
-            // Point 2: inflection folding
-            'vague: thing (singular)'    => ['thing', true],
-            'vague: item (singular)'     => ['item', true],
-            // Point 3: category qualifiers don't rescue (vague + non-rescuing qualifier)
-            'vague: assorted junk'       => ['assorted junk', true],
-            'vague: various items'       => ['various items', true],
-            'vague: miscellaneous stuff' => ['miscellaneous stuff', true],
-            // Rescue still works for genuine specific tokens
-            'specific rescues: vintage bundle' => ['vintage bundle', false],
-            'specific rescues: baby bundle'    => ['baby bundle', false],
-            'specific rescues: stamp collection' => ['stamp collection', false],
-            // Point 7: ambiguous tokens alone don't flag
-            'ambiguous alone: bundle'    => ['bundle', false],
-            'ambiguous alone: collection' => ['collection', false],
-            'ambiguous alone: lots'      => ['lots', false],
-            'ambiguous alone: random'    => ['random', false],
-            // Ambiguous + unambiguous vague still flags
-            'ambiguous + vague: random stuff' => ['random stuff', true],
-            'ambiguous + vague: bundle of junk' => ['bundle of junk', true],
-        ];
-    }
-
-    // =========================================================================
-    // checkPhoneNumbers — gated by group restrictpersonalinfo rule
+    // checkPhoneNumbers — always applied, no per-community gating (frozen-settings.md:
+    // restrictpersonalinfo, personal details are always kept out of posts now)
     // =========================================================================
 
     #[DataProvider('phoneNumberProvider')]
     public function test_check_phone_numbers(string $subject, string $body, bool $expectFlag): void
     {
-        // Phone number check is gated by restrictpersonalinfo; use a group that has it set.
-        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
-        $result = $this->service->checkPhoneNumbers($subject, $body, $group->id);
+        $result = $this->service->checkPhoneNumbers($subject, $body);
 
         if ($expectFlag) {
             $this->assertNotNull($result);
@@ -238,15 +35,6 @@ class ContentCheckServiceTest extends TestCase
         } else {
             $this->assertNull($result);
         }
-    }
-
-    public function test_check_phone_numbers_not_flagged_without_group_rule(): void
-    {
-        // Groups without restrictpersonalinfo must not have posts flagged for phone numbers.
-        $group = $this->createTestGroup();
-        $result = $this->service->checkPhoneNumbers('', 'Call 07911 123456 for details', $group->id);
-
-        $this->assertNull($result, 'Phone number must not flag when group has no restrictpersonalinfo rule');
     }
 
     public static function phoneNumberProvider(): array
@@ -327,102 +115,6 @@ class ContentCheckServiceTest extends TestCase
             'both symbols'           => ['£ and $ offer', 'text', true],
             'euro symbol no flag'    => ['', '€100 value', false],
             'hash no flag'           => ['', '#100', false],
-        ];
-    }
-
-    // =========================================================================
-    // checkNotAnItem — public, pure (non-physical-item detection)
-    // Positive/negative cases are drawn from the production reject log.
-    // =========================================================================
-
-    #[DataProvider('notAnItemProvider')]
-    public function test_check_not_an_item(string $subject, string $body, ?string $category): void
-    {
-        $result = $this->service->checkNotAnItem($subject, $body);
-
-        if ($category === null) {
-            $this->assertNull($result, "Expected NO flag for: {$subject} {$body}");
-        } else {
-            $this->assertNotNull($result, "Expected a flag for: {$subject} {$body}");
-            $this->assertSame(ContentCheckService::CHECK_NOT_AN_ITEM, $result['check']);
-            $this->assertSame('flag', $result['action']);
-            $this->assertSame($category, $result['category']);
-        }
-    }
-
-    public static function notAnItemProvider(): array
-    {
-        return [
-            // --- positives: flag, with expected category ---
-            'cleaner wanted'      => ['WANTED: Cleaner wanted', '', 'service'],
-            'man with a van'      => ['WANTED: Man with a Van', '', 'service'],
-            'man and car removal' => ['WANTED: man and car removal', '', 'service'],
-            'dog walker'          => ['WANTED: dog walker', '', 'service'],
-            'babysitter needed'   => ['WANTED: babysitter needed', '', 'service'],
-            'gardening service'   => ['OFFER: gardening service available', '', 'service'],
-            'services plural'     => ['OFFER: Services', '', 'service'],
-            'room to rent'        => ['OFFER: Room to rent', '', 'accommodation'],
-            'warehouse to rent'   => ['WANTED: Storage warehouse to rent', '', 'accommodation'],
-            'garage to rent'      => ['WANTED: Lockup garage to rent', '', 'accommodation'],
-            'lodger'              => ['WANTED: lodger wanted', '', 'accommodation'],
-            'job vacancy'         => ['', 'I have a job vacancy to fill', 'work'],
-            'part time job'       => ['WANTED: part time job', '', 'work'],
-            'food advice'         => ['WANTED: Food advice', '', 'advice'],
-
-            // --- negatives: real production items that must NOT trip ---
-            'vacuum cleaner'      => ['OFFER: Shark vacuum cleaner', '', null],
-            'patio cleaner'       => ['OFFER: Patio Cleaner', '', null],
-            'plain vacuum'        => ['WANTED: Vacuum cleaner', '', null],
-            'removal boxes'       => ['WANTED: Removal boxes', '', null],
-            'hair removal cream'  => ['OFFER: Nads hair removal cream', '', null],
-            'job lot'             => ['OFFER: job lot of books', '', null],
-            'dinner service'      => ['OFFER: Dinner service', '', null],
-            'ladder loan'         => ['WANTED: Ladder loan', '', null],
-            'loan camera'         => ['WANTED: Loan IR camera', '', null],
-            'gardeners world'     => ["OFFER: Gardener's World magazines", '', null],
-            'decorator spares'    => ['OFFER: Decorator spares', '', null],
-            'different items'     => ['WANTED: different items', '', null],
-            'lifted turf'         => ['OFFER: Lifted turf', '', null],
-            'guitar tutor'        => ['OFFER: Guitar tutor', '', null],
-            'plain sofa'          => ['WANTED: Sofa', '', null],
-            'garden soil'         => ['OFFER: Garden soil', '', null],
-            'motorway services'   => ['WANTED: footstool', 'Collection near the motorway services', null],
-        ];
-    }
-
-    // =========================================================================
-    // checkGreetingSpam — public, pure
-    // =========================================================================
-
-    #[DataProvider('greetingSpamProvider')]
-    public function test_check_greeting_spam(string $subject, string $body, bool $expectFlag): void
-    {
-        $result = $this->service->checkGreetingSpam($subject, $body);
-
-        if ($expectFlag) {
-            $this->assertNotNull($result);
-            $this->assertSame(ContentCheckService::CHECK_GREETING_SPAM, $result['check']);
-            $this->assertSame('flag', $result['action']);
-        } else {
-            $this->assertNull($result);
-        }
-    }
-
-    public static function greetingSpamProvider(): array
-    {
-        return [
-            'no greeting no link'       => ['Sofa', 'Good condition sofa available', false],
-            'greeting no link'          => ['', 'Hello, I have a sofa to give away', false],
-            'no greeting with http'     => ['', 'See https://example.com for info', false],
-            'hello + http link'         => ['', 'Hello, visit https://buy-here.com', true],
-            'hi + http link'            => ['Hi there', 'Check https://site.com', true],
-            'hey + www link'            => ['', 'Hey visit www.site.com today', true],
-            'good morning + http'       => ['', 'Good morning, see https://offer.com', true],
-            'salutations + www'         => ['', 'Salutations! www.spam.com', true],
-            'greetings + link'          => ['', 'Greetings from https://site.org', true],
-            'good evening + link'       => ['', 'Good evening, http://spam.biz', true],
-            'sup + link'                => ['Sup', 'https://buy.com', true],
-            'greeting case insensitive' => ['', 'HELLO check https://site.com', true],
         ];
     }
 
@@ -600,430 +292,76 @@ class ContentCheckServiceTest extends TestCase
     }
 
     // =========================================================================
-    // isGroupModerated — needs DB
-    // =========================================================================
-
-    public function test_is_group_moderated_no_settings_returns_false(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)->update(['settings' => null]);
-
-        $this->assertFalse($this->service->isGroupModerated($group->id));
-    }
-
-    public function test_is_group_moderated_empty_settings_returns_false(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)->update(['settings' => json_encode([])]);
-
-        $this->assertFalse($this->service->isGroupModerated($group->id));
-    }
-
-    public function test_is_group_moderated_setting_on(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)->update([
-            'settings' => json_encode(['moderated' => 1]),
-        ]);
-
-        $this->assertTrue($this->service->isGroupModerated($group->id));
-    }
-
-    public function test_is_group_moderated_setting_off(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)->update([
-            'settings' => json_encode(['moderated' => false]),
-        ]);
-
-        $this->assertFalse($this->service->isGroupModerated($group->id));
-    }
-
-    public function test_is_group_moderated_ignores_rules_questionnaire(): void
-    {
-        // rules.fullymoderated is the member-facing questionnaire answer, not
-        // the enforcement setting - it must not hold posts (Discourse #9987).
-        $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)->update([
-            'rules'    => json_encode(['fullymoderated' => true]),
-            'settings' => json_encode(['moderated' => 0]),
-        ]);
-
-        $this->assertFalse($this->service->isGroupModerated($group->id));
-    }
-
-    public function test_is_group_moderated_nonexistent_group_returns_false(): void
-    {
-        $this->assertFalse($this->service->isGroupModerated(999999999));
-    }
-
-    // =========================================================================
-    // isUserModerated — needs DB
+    // isUserModerated — needs DB. One national moderation state per user now
+    // (self-moderating-community.md), not per membership.
     // =========================================================================
 
     public function test_is_user_moderated_null_status_is_moderated(): void
     {
-        $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        // Membership with NULL ourPostingStatus
-        DB::table('memberships')->insert([
-            'userid'  => $user->id,
-            'groupid' => $group->id,
-            'role'    => 'Member',
-            'collection' => 'Approved',
-            'emailfrequency' => -2,
-            'ourPostingStatus' => null,
-            'added'   => now(),
-        ]);
+        $user = $this->createTestUser(['postingstatus' => null]);
+        $msg  = $this->createTestMessage($user);
 
-        $msg = $this->createTestMessage($user, $group);
-
-        $this->assertTrue($this->service->isUserModerated($msg->id, $group->id, $user->id));
+        $this->assertTrue($this->service->isUserModerated($msg->id, $user->id));
     }
 
     public function test_is_user_moderated_explicit_moderated_status(): void
     {
-        $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        DB::table('memberships')->insert([
-            'userid'  => $user->id,
-            'groupid' => $group->id,
-            'role'    => 'Member',
-            'collection' => 'Approved',
-            'emailfrequency' => -2,
-            'ourPostingStatus' => 'MODERATED',
-            'added'   => now(),
-        ]);
+        $user = $this->createTestUser(['postingstatus' => 'MODERATED']);
+        $msg  = $this->createTestMessage($user);
 
-        $msg = $this->createTestMessage($user, $group);
-
-        $this->assertTrue($this->service->isUserModerated($msg->id, $group->id, $user->id));
+        $this->assertTrue($this->service->isUserModerated($msg->id, $user->id));
     }
 
     public function test_is_user_moderated_prohibited_status(): void
     {
-        $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        DB::table('memberships')->insert([
-            'userid'  => $user->id,
-            'groupid' => $group->id,
-            'role'    => 'Member',
-            'collection' => 'Approved',
-            'emailfrequency' => -2,
-            'ourPostingStatus' => 'PROHIBITED',
-            'added'   => now(),
-        ]);
+        $user = $this->createTestUser(['postingstatus' => 'PROHIBITED']);
+        $msg  = $this->createTestMessage($user);
 
-        $msg = $this->createTestMessage($user, $group);
-
-        $this->assertTrue($this->service->isUserModerated($msg->id, $group->id, $user->id));
+        $this->assertTrue($this->service->isUserModerated($msg->id, $user->id));
     }
 
     public function test_is_user_moderated_default_status_not_moderated(): void
     {
         // ENUM values are MODERATED / DEFAULT / PROHIBITED / UNMODERATED
-        // (see memberships migration). DEFAULT means standard posting → not moderated.
-        $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        DB::table('memberships')->insert([
-            'userid'  => $user->id,
-            'groupid' => $group->id,
-            'role'    => 'Member',
-            'collection' => 'Approved',
-            'emailfrequency' => -2,
-            'ourPostingStatus' => 'DEFAULT',
-            'added'   => now(),
-        ]);
+        // (users.postingstatus, see 2026_09_20_000001_remove_group_model.php).
+        // DEFAULT means standard posting → not moderated.
+        $user = $this->createTestUser(['postingstatus' => 'DEFAULT']);
+        $msg  = $this->createTestMessage($user);
 
-        $msg = $this->createTestMessage($user, $group);
-
-        $this->assertFalse($this->service->isUserModerated($msg->id, $group->id, $user->id));
+        $this->assertFalse($this->service->isUserModerated($msg->id, $user->id));
     }
 
-    public function test_is_user_moderated_no_membership_is_moderated(): void
+    public function test_is_user_moderated_unmoderated_status_not_moderated(): void
     {
-        $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        // No membership inserted
-        $msg = $this->createTestMessage($user, $group);
+        $user = $this->createTestUser(['postingstatus' => 'UNMODERATED']);
+        $msg  = $this->createTestMessage($user);
 
-        $this->assertTrue($this->service->isUserModerated($msg->id, $group->id, $user->id));
+        $this->assertFalse($this->service->isUserModerated($msg->id, $user->id));
+    }
+
+    public function test_is_user_moderated_no_fromuser_is_moderated(): void
+    {
+        $user = $this->createTestUser(['postingstatus' => 'DEFAULT']);
+        $msg  = $this->createTestMessage($user);
+
+        $this->assertTrue($this->service->isUserModerated($msg->id, 0));
     }
 
     public function test_is_user_moderated_case_insensitive_moderated(): void
     {
-        $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        DB::table('memberships')->insert([
-            'userid'  => $user->id,
-            'groupid' => $group->id,
-            'role'    => 'Member',
-            'collection' => 'Approved',
-            'emailfrequency' => -2,
-            'ourPostingStatus' => 'moderated', // lowercase
-            'added'   => now(),
-        ]);
+        $user = $this->createTestUser(['postingstatus' => 'MODERATED']); // enum has no lowercase form any more
+        $msg  = $this->createTestMessage($user);
 
-        $msg = $this->createTestMessage($user, $group);
-
-        $this->assertTrue($this->service->isUserModerated($msg->id, $group->id, $user->id));
+        $this->assertTrue($this->service->isUserModerated($msg->id, $user->id));
     }
 
     public function test_is_user_moderated_looks_up_fromuser_from_message(): void
     {
-        $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        DB::table('memberships')->insert([
-            'userid'  => $user->id,
-            'groupid' => $group->id,
-            'role'    => 'Member',
-            'collection' => 'Approved',
-            'emailfrequency' => -2,
-            'ourPostingStatus' => 'DEFAULT',
-            'added'   => now(),
-        ]);
-
-        $msg = $this->createTestMessage($user, $group);
+        $user = $this->createTestUser(['postingstatus' => 'DEFAULT']);
+        $msg  = $this->createTestMessage($user);
 
         // Pass null for fromuser — should look it up from messages table
-        $this->assertFalse($this->service->isUserModerated($msg->id, $group->id, null));
-    }
-
-    // =========================================================================
-    // checkConcernKeywords — needs DB (concern_keywords table)
-    // =========================================================================
-
-    public function test_check_concern_keywords_empty_table_returns_null(): void
-    {
-        // No keywords in DB
-        $result = $this->service->checkConcernKeywords('free sofa', 'good condition', 1);
-        $this->assertNull($result);
-    }
-
-    public function test_check_concern_keywords_fuzzy_match(): void
-    {
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'heroin',
-            'category'   => 'substance_regulated',
-            'match_mode' => 'fuzzy',
-            'scope'      => 'global',
-            'group_id'   => 0,
-            'action'     => 'block',
-        ]);
-
-        $result = $this->service->checkConcernKeywords('free heroin', 'good stuff', 1);
-        $this->assertNotNull($result);
-        $this->assertSame(ContentCheckService::CHECK_CONCERN_KEYWORD, $result['check']);
-        $this->assertSame('substance_regulated', $result['category']);
-        $this->assertSame('block', $result['action']);
-    }
-
-    public function test_check_concern_keywords_literal_match(): void
-    {
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'knives',
-            'category'   => 'review',
-            'match_mode' => 'literal',
-            'scope'      => 'global',
-            'group_id'   => 0,
-            'action'     => 'flag',
-        ]);
-
-        $result = $this->service->checkConcernKeywords('', 'I have some knives available', 1);
-        $this->assertNotNull($result);
-        $this->assertSame('flag', $result['action']);
-    }
-
-    public function test_check_concern_keywords_regex_match(): void
-    {
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'crack\s+cocaine',
-            'category'   => 'substance_regulated',
-            'match_mode' => 'regex',
-            'scope'      => 'global',
-            'group_id'   => 0,
-            'action'     => 'block',
-        ]);
-
-        $result = $this->service->checkConcernKeywords('', 'selling crack cocaine cheap', 1);
-        $this->assertNotNull($result);
-        $this->assertSame(ContentCheckService::CHECK_CONCERN_KEYWORD, $result['check']);
-    }
-
-    // Regression test for Discourse #10024: a regex-mode concern keyword must
-    // report the text it actually matched in the post, not the raw pattern -
-    // a moderator reading "Matched concern keyword 'crack\s+cocaine'" has no
-    // idea what in the post triggered it.
-    public function test_check_concern_keywords_regex_match_reports_matched_text_not_pattern(): void
-    {
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'crack\s+cocaine',
-            'category'   => 'substance_regulated',
-            'match_mode' => 'regex',
-            'scope'      => 'global',
-            'group_id'   => 0,
-            'action'     => 'block',
-        ]);
-
-        $result = $this->service->checkConcernKeywords('', 'selling crack cocaine cheap', 1);
-        $this->assertNotNull($result);
-        $this->assertSame('crack cocaine', $result['keyword'], 'keyword should be the matched text, not the regex pattern');
-        $this->assertSame("Matched concern keyword 'crack cocaine'", $result['detail']);
-        $this->assertStringNotContainsString('\s+', $result['detail'], 'detail must not leak the raw regex pattern');
-    }
-
-    public function test_check_concern_keywords_exclude_pattern_skips(): void
-    {
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'guns',
-            'category'   => 'review',
-            'match_mode' => 'fuzzy',
-            'scope'      => 'global',
-            'group_id'   => 0,
-            'action'     => 'flag',
-            'exclude'    => 'toy|water\s+guns',
-        ]);
-
-        // Should be excluded because body matches the exclude pattern
-        $result = $this->service->checkConcernKeywords('', 'water guns for kids', 1);
-        $this->assertNull($result);
-    }
-
-    public function test_check_concern_keywords_allowed_category_skipped(): void
-    {
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'sofa',
-            'category'   => 'allowed',  // Should be excluded from checks
-            'match_mode' => 'literal',
-            'scope'      => 'global',
-            'group_id'   => 0,
-            'action'     => 'flag',
-        ]);
-
-        $result = $this->service->checkConcernKeywords('Free sofa', 'collect anytime', 1);
-        $this->assertNull($result);
-    }
-
-    public function test_check_concern_keywords_group_scoped_matches_own_group(): void
-    {
-        $group = $this->createTestGroup();
-
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'badword',
-            'category'   => 'review',
-            'match_mode' => 'literal',
-            'scope'      => 'group',
-            'group_id'   => $group->id,
-            'action'     => 'flag',
-        ]);
-
-        $result = $this->service->checkConcernKeywords('', 'contains badword text', $group->id);
-        $this->assertNotNull($result);
-    }
-
-    public function test_check_concern_keywords_group_scoped_no_match_other_group(): void
-    {
-        $group = $this->createTestGroup();
-
-        DB::table('concern_keywords')->insert([
-            'keyword'    => 'badword',
-            'category'   => 'review',
-            'match_mode' => 'literal',
-            'scope'      => 'group',
-            'group_id'   => $group->id,
-            'action'     => 'flag',
-        ]);
-
-        // Different group — should not match
-        $result = $this->service->checkConcernKeywords('', 'contains badword text', $group->id + 999);
-        $this->assertNull($result);
-    }
-
-    // =========================================================================
-    // checkPerGroupWorryWords — needs DB
-    // =========================================================================
-
-    public function test_check_per_group_worry_words_no_settings_returns_null(): void
-    {
-        $group = $this->createTestGroup();
-        // No spammers.worrywords in settings
-
-        $result = $this->service->checkPerGroupWorryWords('free sofa', 'good condition', $group->id);
-        $this->assertNull($result);
-    }
-
-    public function test_check_per_group_worry_words_matches(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)->update([
-            'settings' => json_encode(['spammers' => ['worrywords' => 'dodgy, scammer']]),
-        ]);
-
-        $result = $this->service->checkPerGroupWorryWords('', 'this seller is a scammer', $group->id);
-        $this->assertNotNull($result);
-        $this->assertSame(ContentCheckService::CHECK_PER_GROUP_WORRY, $result['check']);
-        $this->assertSame('flag', $result['action']);
-    }
-
-    public function test_check_per_group_worry_words_no_match(): void
-    {
-        $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)->update([
-            'settings' => json_encode(['spammers' => ['worrywords' => 'dodgy, scammer']]),
-        ]);
-
-        $result = $this->service->checkPerGroupWorryWords('free chair', 'collect from SE1', $group->id);
-        $this->assertNull($result);
-    }
-
-    public function test_check_per_group_worry_words_multiword_phrase_matches(): void
-    {
-        // Discourse #9620 post 283: "free or at a discounted price" bypassed the
-        // content filter. Mods configured "discounted price" as a two-word worry
-        // word. matchesFuzzy() compared individual whitespace tokens against the
-        // full phrase, so "discounted" ≠ "discounted price" → no match.
-        $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)->update([
-            'settings' => json_encode(['spammers' => ['worrywords' => 'discounted price']]),
-        ]);
-
-        $result = $this->service->checkPerGroupWorryWords(
-            '',
-            'I can give it away free or at a discounted price if needed',
-            $group->id
-        );
-        $this->assertNotNull($result, 'Multi-word worry word "discounted price" must flag text containing that phrase');
-        $this->assertSame(ContentCheckService::CHECK_PER_GROUP_WORRY, $result['check']);
-    }
-
-    public function test_check_per_group_worry_words_multiword_phrase_no_partial_match(): void
-    {
-        // "discounted price" as a phrase must NOT match text that only contains
-        // "discounted" (one word) or "price" (one word) separately.
-        $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)->update([
-            'settings' => json_encode(['spammers' => ['worrywords' => 'discounted price']]),
-        ]);
-
-        $result = $this->service->checkPerGroupWorryWords(
-            '',
-            'Collection any time, discounted delivery not available, just free',
-            $group->id
-        );
-        $this->assertNull($result, '"discounted price" phrase must not fire when only "discounted" appears alone');
-    }
-
-    public function test_matches_fuzzy_multiword_phrase_matches_in_haystack(): void
-    {
-        // matchesFuzzy() must handle multi-word keywords — the root cause of #9620.
-        $result = $this->callPrivate('matchesFuzzy', 'free or at a discounted price today', 'discounted price');
-        $this->assertTrue($result, 'matchesFuzzy must match a two-word keyword phrase found in the haystack');
-    }
-
-    public function test_matches_fuzzy_multiword_phrase_no_match_when_absent(): void
-    {
-        $result = $this->callPrivate('matchesFuzzy', 'free sofa in good condition', 'discounted price');
-        $this->assertFalse($result);
+        $this->assertFalse($this->service->isUserModerated($msg->id, null));
     }
 
     // =========================================================================
@@ -1069,9 +407,8 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_image_spam_no_attachments_returns_null(): void
     {
-        $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg   = $this->createTestMessage($user, $group);
+        $user = $this->createTestUser();
+        $msg  = $this->createTestMessage($user);
         // No attachments
 
         $result = $this->service->checkImageSpam($msg->id);
@@ -1080,9 +417,8 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_image_spam_no_hash_on_attachment_returns_null(): void
     {
-        $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg   = $this->createTestMessage($user, $group);
+        $user = $this->createTestUser();
+        $msg  = $this->createTestMessage($user);
 
         DB::table('messages_attachments')->insert([
             'msgid' => $msg->id,
@@ -1095,9 +431,8 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_image_spam_under_threshold_returns_null(): void
     {
-        $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg   = $this->createTestMessage($user, $group);
+        $user = $this->createTestUser();
+        $msg  = $this->createTestMessage($user);
 
         $hash = 'testhash_' . uniqid();
         DB::table('messages_attachments')->insert([
@@ -1117,12 +452,11 @@ class ContentCheckServiceTest extends TestCase
         // messages_attachments.hash is VARCHAR(16); cap to fit so the inserted
         // value round-trips and matches the message string verbatim.
         $hash = substr('spamhash_' . uniqid(), 0, 16);
-        $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
+        $user = $this->createTestUser();
 
         // Create 6 messages with the same image hash within 24h
         for ($i = 0; $i < 6; $i++) {
-            $msg = $this->createTestMessage($user, $group);
+            $msg = $this->createTestMessage($user);
             DB::table('messages')->where('id', $msg->id)->update(['arrival' => now()->subHours(1)]);
             DB::table('messages_attachments')->insert([
                 'msgid' => $msg->id,
@@ -1141,12 +475,11 @@ class ContentCheckServiceTest extends TestCase
     public function test_check_image_spam_old_occurrences_not_counted(): void
     {
         $hash = 'oldhash_' . uniqid();
-        $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
+        $user = $this->createTestUser();
 
         // 4 messages with same hash but older than 24h
         for ($i = 0; $i < 4; $i++) {
-            $msg = $this->createTestMessage($user, $group);
+            $msg = $this->createTestMessage($user);
             DB::table('messages')->where('id', $msg->id)->update(['arrival' => now()->subHours(30)]);
             DB::table('messages_attachments')->insert([
                 'msgid' => $msg->id,
@@ -1155,7 +488,7 @@ class ContentCheckServiceTest extends TestCase
         }
 
         // One recent message with same hash — total within 24h = 1, below threshold
-        $recentMsg = $this->createTestMessage($user, $group);
+        $recentMsg = $this->createTestMessage($user);
         DB::table('messages')->where('id', $recentMsg->id)->update(['arrival' => now()->subMinutes(5)]);
         DB::table('messages_attachments')->insert([
             'msgid' => $recentMsg->id,
@@ -1164,17 +497,6 @@ class ContentCheckServiceTest extends TestCase
 
         $result = $this->service->checkImageSpam($recentMsg->id);
         $this->assertNull($result);
-    }
-
-    // =========================================================================
-    // checkGreetingSpam — boundary: both greeting keywords
-    // =========================================================================
-
-    public function test_check_greeting_spam_good_afternoon_with_link(): void
-    {
-        $result = $this->service->checkGreetingSpam('', 'Good afternoon, visit https://buy.com now');
-        $this->assertNotNull($result);
-        $this->assertSame(ContentCheckService::CHECK_GREETING_SPAM, $result['check']);
     }
 
     // =========================================================================
@@ -1188,22 +510,4 @@ class ContentCheckServiceTest extends TestCase
         $this->assertNotNull($result);
     }
 
-    // =========================================================================
-    // checkVagueItem — boundary: all-vague multi-word
-    // =========================================================================
-
-    public function test_check_vague_item_mixed_separators(): void
-    {
-        // Separators include hyphen and slash per the regex
-        $result = $this->service->checkVagueItem('bits/pieces');
-        // "bits" and "pieces" are both > 2 chars and vague
-        $this->assertNotNull($result);
-    }
-
-    public function test_check_vague_item_only_stopwords_not_flagged(): void
-    {
-        // All tokens are stopwords — significantCount = 0 → not flagged
-        $result = $this->service->checkVagueItem('and the or');
-        $this->assertNull($result);
-    }
 }

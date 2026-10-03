@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { ref } from 'vue'
 import ModComment from '~/modtools/components/ModComment.vue'
 
 // Mock composables
@@ -10,40 +11,33 @@ vi.mock('~/composables/useModMembers', () => ({
   }),
 }))
 
+const mockMyid = ref(999)
+const mockSupportOrAdmin = ref(false)
+
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
-    myid: 999,
-    supportOrAdmin: false,
-    myGroup: vi.fn((groupid) =>
-      groupid === 1 ? { id: 1, namedisplay: 'My Test Group' } : null
-    ),
+    myid: mockMyid,
+    supportOrAdmin: mockSupportOrAdmin,
   }),
 }))
 
-vi.mock('~/composables/useModMe', () => ({
+// Moderators are national (users.systemrole), not per-community: amAModerator
+// takes no group argument.
+const mockAmAModerator = vi.fn(() => false)
+
+vi.mock('~/modtools/composables/useModMe', () => ({
   useModMe: () => ({
-    amAModOn: vi.fn((groupid) => groupid === 1),
+    amAModerator: mockAmAModerator,
   }),
 }))
 
 // Mock Pinia stores
-const mockGroupStore = {
-  get: vi.fn((id) =>
-    id === 2 ? { id: 2, namedisplay: 'Fetched Group' } : null
-  ),
-  fetch: vi.fn(),
-}
-
 const mockUserStore = {
   fetch: vi.fn().mockResolvedValue(),
   fetchMT: vi.fn(),
   byId: vi.fn(),
   deleteComment: vi.fn(),
 }
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
-}))
 
 vi.mock('~/stores/user', () => ({
   useUserStore: () => mockUserStore,
@@ -60,7 +54,6 @@ describe('ModComment', () => {
     byuserid: 456,
     date: '2024-01-15T10:00:00Z',
     reviewed: '2024-01-15T10:00:00Z',
-    groupid: 1,
   }
 
   const defaultUser = {
@@ -115,7 +108,7 @@ describe('ModComment', () => {
           },
           ModCommentEditModal: {
             template: '<div class="edit-modal" />',
-            props: ['userid', 'comment', 'groupname'],
+            props: ['userid', 'comment'],
           },
         },
       },
@@ -126,6 +119,9 @@ describe('ModComment', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockMyid.value = 999
+    mockSupportOrAdmin.value = false
+    mockAmAModerator.mockReturnValue(false)
   })
 
   describe('rendering', () => {
@@ -205,43 +201,33 @@ describe('ModComment', () => {
     })
   })
 
-  describe('groupname computed property', () => {
-    it('returns group namedisplay when found via myGroup', async () => {
-      const wrapper = await createWrapper({ groupid: 1 })
-      expect(wrapper.text()).toContain('My Test Group')
-    })
-
-    it('returns fallback #groupid when group not found', async () => {
-      const wrapper = await createWrapper({ groupid: 99 })
-      expect(wrapper.text()).toContain('#99')
-    })
-
-    it('uses groupStore.get when myGroup returns null', async () => {
-      const wrapper = await createWrapper({ groupid: 2 })
-      expect(wrapper.text()).toContain('Fetched Group')
-    })
-
-    it('does not show groupname section when groupid is null', async () => {
-      const wrapper = await createWrapper({ groupid: null })
-      expect(wrapper.text()).not.toContain(' on ')
-    })
-  })
-
   describe('edit/delete buttons visibility', () => {
-    it('shows buttons when user is mod on comment group', async () => {
-      const wrapper = await createWrapper({ groupid: 1 })
+    it('shows buttons when user is a moderator', async () => {
+      mockAmAModerator.mockReturnValue(true)
+      const wrapper = await createWrapper({ byuserid: 456 })
+      expect(wrapper.text()).toContain('Edit')
+      expect(wrapper.text()).toContain('Delete')
+    })
+
+    it('shows buttons when user is support or admin', async () => {
+      mockSupportOrAdmin.value = true
+      const wrapper = await createWrapper({ byuserid: 456 })
       expect(wrapper.text()).toContain('Edit')
       expect(wrapper.text()).toContain('Delete')
     })
 
     it('shows buttons when user created the comment', async () => {
-      const wrapper = await createWrapper({ groupid: 99, byuserid: 999 })
+      mockMyid.value = 999
+      const wrapper = await createWrapper({ byuserid: 999 })
       expect(wrapper.text()).toContain('Edit')
       expect(wrapper.text()).toContain('Delete')
     })
 
     it('hides buttons when user has no permission', async () => {
-      const wrapper = await createWrapper({ groupid: 99, byuserid: 456 })
+      mockAmAModerator.mockReturnValue(false)
+      mockSupportOrAdmin.value = false
+      mockMyid.value = 999
+      const wrapper = await createWrapper({ byuserid: 456 })
       expect(wrapper.text()).not.toContain('Edit')
       expect(wrapper.text()).not.toContain('Delete')
     })
@@ -249,7 +235,8 @@ describe('ModComment', () => {
 
   describe('deleteIt method', () => {
     it('sets showConfirmDelete to true when delete clicked', async () => {
-      const wrapper = await createWrapper({ groupid: 1 })
+      mockAmAModerator.mockReturnValue(true)
+      const wrapper = await createWrapper()
       const deleteButton = wrapper
         .findAll('button')
         .find((b) => b.text().includes('Delete'))
@@ -260,7 +247,8 @@ describe('ModComment', () => {
 
   describe('editIt method', () => {
     it('shows edit modal and emits editing event', async () => {
-      const wrapper = await createWrapper({ groupid: 1 })
+      mockAmAModerator.mockReturnValue(true)
+      const wrapper = await createWrapper()
       const editButton = wrapper
         .findAll('button')
         .find((b) => b.text().includes('Edit'))
@@ -272,7 +260,7 @@ describe('ModComment', () => {
 
   describe('deleteConfirmed method', () => {
     it('calls userStore.deleteComment with comment id', async () => {
-      const wrapper = await createWrapper({ groupid: 1, id: 555 })
+      const wrapper = await createWrapper({ id: 555 })
 
       mockUserStore.byId.mockReturnValue({
         ...defaultUser,
@@ -325,11 +313,6 @@ describe('ModComment', () => {
         user3: null,
       })
       expect(wrapper.find('.notice-message').exists()).toBe(true)
-    })
-
-    it('fetches group when groupid present but not found locally', async () => {
-      await createWrapper({ groupid: 999 })
-      expect(mockGroupStore.fetch).toHaveBeenCalledWith(999)
     })
   })
 })

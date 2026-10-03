@@ -2,7 +2,7 @@
 
 namespace App\Monitoring;
 
-use App\Models\MessageGroup;
+use App\Models\Message;
 use App\Monitoring\Checks\BacklogCheck;
 use App\Monitoring\Checks\CallbackCheck;
 use App\Monitoring\Checks\FreshnessCheck;
@@ -35,9 +35,11 @@ class ScheduledOutcomeRegistry
         return array_merge([
             // ---- Fire-once: did it produce output this period? -------------
 
-            // stats:generate-daily (daily 02:30) writes one `stats` row per
-            // group/type for YESTERDAY. Strong fire-once signal. Only checked
-            // from 06:00 so the 02:30 run has comfortably completed.
+            // stats:generate-daily (daily 02:30) writes a `stats` row for
+            // YESTERDAY. Strong fire-once signal. Only checked from 06:00 so
+            // the 02:30 run has comfortably completed. The site is national
+            // now, so there is no per-community coverage to assert — one row
+            // is the whole signal.
             (new ProducedSinceCheck(
                 'stats:generate-daily',
                 'stats',
@@ -45,59 +47,7 @@ class ScheduledOutcomeRegistry
                 fn (CarbonInterface $now) => $now->copy()->setTimezone($tz)->startOfDay()->subDay(),
                 (int) config('freegle.monitoring.stats_daily_min_expected', 1),
             ))
-                ->describedAs('Per-group daily stats rows generated for yesterday')
-                ->inCategory('fire-once-output')
-                ->activeBetween(6, 24, $tz),
-
-            // The check above has a floor of 1, so it only says the 02:30 run started. That is
-            // the same shape that let the daily digest collapse for three days while its own
-            // check passed (see the digest window check below). Here the floor needs no
-            // guessing at all: stats:generate-daily writes for EVERY group, and over
-            // 2026-09-07..16 coverage was 507 of 507 on all ten days without exception, while
-            // the raw row count wandered between 4,227 and 4,395 with activity. So assert
-            // coverage rather than volume, and take the expected number from the groups table
-            // at check time - it then tracks communities being added or retired by itself.
-            (new CallbackCheck(
-                'stats:generate-daily coverage',
-                function (CarbonInterface $now) use ($tz) {
-                    $slug = 'stats:generate-daily coverage';
-                    $day = $now->copy()->setTimezone($tz)->startOfDay()->subDay()->toDateString();
-
-                    // Groups founded AFTER the day in question have no stats for it and must
-                    // not count against coverage. founded is NULL on a handful of the oldest
-                    // groups, which long pre-date any day this could check.
-                    $expected = DB::table('groups')
-                        ->where(function ($q) use ($day) {
-                            $q->whereNull('founded')->orWhere('founded', '<', $day);
-                        })
-                        ->count();
-
-                    if ($expected === 0) {
-                        return OutcomeResult::skipped($slug, 'no groups existed on '.$day);
-                    }
-
-                    $covered = DB::table('stats')
-                        ->where('date', $day)
-                        ->distinct()
-                        ->count('groupid');
-
-                    if ($covered < $expected) {
-                        $missing = $expected - $covered;
-
-                        return OutcomeResult::breach(
-                            $slug,
-                            "daily stats cover {$covered} of {$expected} communities for {$day} - "
-                            ."{$missing} missing. The 02:30 run did not get through them all."
-                        );
-                    }
-
-                    return OutcomeResult::ok(
-                        $slug,
-                        "daily stats cover all {$expected} communities for {$day}"
-                    );
-                }
-            ))
-                ->describedAs('Every community got daily stats for yesterday')
+                ->describedAs('Daily stats row generated for yesterday')
                 ->inCategory('fire-once-output')
                 ->activeBetween(6, 24, $tz),
 
@@ -206,26 +156,24 @@ class ScheduledOutcomeRegistry
 
             // messages:contentcheck (every minute) promotes/blocks Pending
             // posts and always stamps contentcheck_checked_at. A Pending,
-            // un-checked, undeleted post whose message+user are live (mirrors
-            // the worker's exact join) that has sat past $backlogMin = a stalled
+            // un-checked, undeleted post whose user is live (mirrors the
+            // worker's exact join) that has sat past $backlogMin = a stalled
             // moderation pipeline. The predicates exclude rows the worker skips
-            // (deleted message / null fromuser / held-by-a-mod) so they don't
+            // (deleted / null fromuser / held-by-a-mod) so they don't
             // false-alarm: a held post is deliberately pulled back for review and
             // is never checked until a mod releases it, so it can sit indefinitely.
             (new BacklogCheck(
                 'messages:contentcheck',
-                'messages_groups as mg',
-                'mg.arrival',
+                'messages',
+                'arrival',
                 $backlogMin,
                 fn ($q) => $q
-                    ->join('messages as m', 'm.id', '=', 'mg.msgid')
-                    ->join('users as u', 'u.id', '=', 'm.fromuser')
-                    ->where('mg.collection', MessageGroup::COLLECTION_PENDING)
-                    ->whereNull('mg.contentcheck_checked_at')
-                    ->where('mg.deleted', 0)
-                    ->whereNull('mg.heldby')
-                    ->whereNull('m.deleted')
-                    ->whereNotNull('m.fromuser')
+                    ->join('users as u', 'u.id', '=', 'messages.fromuser')
+                    ->where('messages.collection', Message::COLLECTION_PENDING)
+                    ->whereNull('messages.contentcheck_checked_at')
+                    ->whereNull('messages.deleted')
+                    ->whereNull('messages.heldby')
+                    ->whereNotNull('messages.fromuser')
                     ->whereNull('u.deleted'),
             ))
                 ->describedAs('Content-check moderation queue not backing up')
@@ -242,19 +190,6 @@ class ScheduledOutcomeRegistry
                 fn ($q) => $q->where('processingrequired', 1),
             ))
                 ->describedAs('Incoming chat-message processing queue not backing up')
-                ->inCategory('cursor-staleness'),
-
-            // memberships:process (every minute) clears processingrequired on
-            // every history row it visits. A row still flagged past $backlogMin
-            // = welcome-mail / review processing is stuck.
-            (new BacklogCheck(
-                'memberships:process',
-                'memberships_history',
-                'added',
-                $backlogMin,
-                fn ($q) => $q->where('processingrequired', 1),
-            ))
-                ->describedAs('Membership-history processing queue not backing up')
                 ->inCategory('cursor-staleness'),
 
             // users:process-exports (every minute) sets completed when a GDPR

@@ -10,10 +10,6 @@ export default class VolunteeringAPI extends BaseAPI {
     return this.$getv2('/volunteering', params)
   }
 
-  listGroup(id) {
-    return this.$getv2('/volunteering/group/' + id)
-  }
-
   save(data) {
     return this.$patchv2('/volunteering', data, notAHeldConflict)
   }
@@ -21,18 +17,6 @@ export default class VolunteeringAPI extends BaseAPI {
   async add(data) {
     const { id } = await this.$postv2('/volunteering', data)
     return id
-  }
-
-  addGroup(id, groupid) {
-    return this.$patchv2('/volunteering', { id, groupid, action: 'AddGroup' })
-  }
-
-  removeGroup(id, groupid) {
-    return this.$patchv2('/volunteering', {
-      id,
-      groupid,
-      action: 'RemoveGroup',
-    })
   }
 
   setPhoto(id, photoid) {

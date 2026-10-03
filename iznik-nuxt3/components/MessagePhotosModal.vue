@@ -161,8 +161,7 @@ const props = defineProps({
 const emit = defineEmits(['hidden'])
 
 const messageStore = useMessageStore()
-const authStore = useAuthStore()
-const { supportOrAdmin } = useMe()
+const { supportOrAdmin, isModerator } = useMe()
 
 // Handle browser back button/swipe to close modal
 useModalHistory(`photos-${props.id ?? 'compose'}`, () => emit('hidden'))
@@ -175,17 +174,14 @@ const photos = computed(
 
 const attachmentCount = computed(() => photos.value.length)
 
-// Moderators of a group the post is on, and Support/Admin, can take a photo off the
-// post from here, with the same "why are you removing it?" question ModTools asks for
-// an AI image (Discourse 9630, post 92). Members cannot, and photos that are not yet a
-// post (the compose flow) have nothing to remove from. The server checks the same
-// standing on the PATCH, so this only decides whether to offer the control.
+// Moderators, and Support/Admin, can take a photo off the post from here, with the
+// same "why are you removing it?" question ModTools asks for an AI image (Discourse
+// 9630, post 92). Members cannot, and photos that are not yet a post (the compose
+// flow) have nothing to remove from. The server checks the same standing on the
+// PATCH, so this only decides whether to offer the control.
 const canRemove = computed(() => {
   if (!props.id || props.attachments || !message.value) return false
-  if (supportOrAdmin.value) return true
-  return (message.value.groups || []).some((g) =>
-    ['Moderator', 'Owner'].includes(authStore.member(g.groupid))
-  )
+  return supportOrAdmin.value || isModerator.value
 })
 
 const confirmRemove = ref(false)

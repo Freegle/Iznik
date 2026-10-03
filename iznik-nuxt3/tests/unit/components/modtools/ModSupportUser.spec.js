@@ -9,8 +9,6 @@ const mockApiFns = {
   fetchEmailHistory: vi.fn().mockResolvedValue([]),
   fetchBans: vi.fn().mockResolvedValue([]),
   fetchNewsfeed: vi.fn().mockResolvedValue([]),
-  fetchApplied: vi.fn().mockResolvedValue([]),
-  fetchMembershipHistory: vi.fn().mockResolvedValue([]),
   fetchLogins: vi.fn().mockResolvedValue([]),
 }
 
@@ -73,10 +71,7 @@ describe('ModSupportUser', () => {
     systemrole: 'User',
     bouncing: false,
     spammer: null,
-    memberships: [],
     emails: [{ id: 1, email: 'test@example.com', preferred: true }],
-    applied: [],
-    membershiphistory: [],
     messagehistory: [],
     emailhistory: [],
     chatrooms: [],
@@ -190,9 +185,9 @@ describe('ModSupportUser', () => {
             template: '<div class="member-summary" />',
             props: ['userid'],
           },
-          ModSupportMembership: {
-            template: '<div class="support-membership" />',
-            props: ['membershipid', 'userid'],
+          ModModeration: {
+            template: '<div class="mod-moderation" />',
+            props: ['userid', 'size'],
           },
           ModSupportChatList: {
             template: '<div class="chat-list" />',
@@ -255,8 +250,6 @@ describe('ModSupportUser', () => {
     mockApiFns.fetchEmailHistory.mockResolvedValue([])
     mockApiFns.fetchBans.mockResolvedValue([])
     mockApiFns.fetchNewsfeed.mockResolvedValue([])
-    mockApiFns.fetchApplied.mockResolvedValue([])
-    mockApiFns.fetchMembershipHistory.mockResolvedValue([])
     mockApiFns.fetchLogins.mockResolvedValue([])
   })
 
@@ -268,31 +261,36 @@ describe('ModSupportUser', () => {
     // dozens of those at once, so collapsed cards must not fetch extras.
     it('does not fetch support extras when mounted collapsed', async () => {
       await mountComponent()
-      expect(mockApiFns.fetchMembershipHistory).not.toHaveBeenCalled()
-      expect(mockApiFns.fetchLogins).not.toHaveBeenCalled()
       expect(mockApiFns.fetchChatrooms).not.toHaveBeenCalled()
+      expect(mockApiFns.fetchEmailHistory).not.toHaveBeenCalled()
+      expect(mockApiFns.fetchBans).not.toHaveBeenCalled()
+      expect(mockApiFns.fetchNewsfeed).not.toHaveBeenCalled()
+      expect(mockApiFns.fetchLogins).not.toHaveBeenCalled()
     })
 
     it('fetches support extras when mounted expanded', async () => {
       await mountComponent({ expand: true })
-      expect(mockApiFns.fetchMembershipHistory).toHaveBeenCalledTimes(1)
+      expect(mockApiFns.fetchChatrooms).toHaveBeenCalledTimes(1)
+      expect(mockApiFns.fetchEmailHistory).toHaveBeenCalledTimes(1)
+      expect(mockApiFns.fetchBans).toHaveBeenCalledTimes(1)
+      expect(mockApiFns.fetchNewsfeed).toHaveBeenCalledTimes(1)
       expect(mockApiFns.fetchLogins).toHaveBeenCalledTimes(1)
     })
 
     it('fetches support extras once on first expansion only', async () => {
       const wrapper = await mountComponent()
-      expect(mockApiFns.fetchMembershipHistory).not.toHaveBeenCalled()
+      expect(mockApiFns.fetchChatrooms).not.toHaveBeenCalled()
 
       await wrapper.find('.card-header').trigger('click')
       await flushPromises()
-      expect(mockApiFns.fetchMembershipHistory).toHaveBeenCalledTimes(1)
+      expect(mockApiFns.fetchChatrooms).toHaveBeenCalledTimes(1)
 
       // Collapse and re-expand: already fetched, no refetch.
       await wrapper.find('.card-header').trigger('click')
       await flushPromises()
       await wrapper.find('.card-header').trigger('click')
       await flushPromises()
-      expect(mockApiFns.fetchMembershipHistory).toHaveBeenCalledTimes(1)
+      expect(mockApiFns.fetchChatrooms).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -417,23 +415,6 @@ describe('ModSupportUser', () => {
     it('admin returns false when systemrole is not Admin', async () => {
       const wrapper = await mountComponent({}, { systemrole: 'User' })
       expect(wrapper.vm.admin).toBe(false)
-    })
-
-    it('freegleMemberships filters and sorts groups', async () => {
-      const wrapper = await mountComponent(
-        {},
-        {
-          memberships: [
-            { id: 1, nameshort: 'ZGroup', type: 'Freegle' },
-            { id: 2, nameshort: 'AGroup', type: 'Freegle' },
-            { id: 3, nameshort: 'Other', type: 'Other' },
-          ],
-        }
-      )
-      const memberships = wrapper.vm.freegleMemberships
-      expect(memberships).toHaveLength(2)
-      expect(memberships[0].nameshort).toBe('AGroup')
-      expect(memberships[1].nameshort).toBe('ZGroup')
     })
 
     it('otherEmails filters out primary and ourdomain emails', async () => {
@@ -756,65 +737,10 @@ describe('ModSupportUser', () => {
     })
   })
 
-  describe('join-method display', () => {
-    it('shows join-method text in parentheses for a Manual Joined entry', async () => {
-      mockApiFns.fetchMembershipHistory.mockResolvedValueOnce([
-        {
-          type: 'Joined',
-          nameshort: 'TestGroup',
-          timestamp: new Date().toISOString(),
-          text: 'Manual',
-        },
-      ])
+  describe('moderation status', () => {
+    it('renders ModModeration for the user', async () => {
       const wrapper = await mountComponent({ expand: true })
-      await flushPromises()
-      const joinMethod = wrapper.find('.join-method')
-      expect(joinMethod.exists()).toBe(true)
-      expect(joinMethod.text()).toContain('Manual')
-    })
-
-    it('shows join-method text in parentheses for an Auto Joined entry', async () => {
-      mockApiFns.fetchMembershipHistory.mockResolvedValueOnce([
-        {
-          type: 'Joined',
-          nameshort: 'TestGroup',
-          timestamp: new Date().toISOString(),
-          text: 'Auto',
-        },
-      ])
-      const wrapper = await mountComponent({ expand: true })
-      await flushPromises()
-      const joinMethod = wrapper.find('.join-method')
-      expect(joinMethod.exists()).toBe(true)
-      expect(joinMethod.text()).toContain('Auto')
-    })
-
-    it('does not show join-method span when text is empty', async () => {
-      mockApiFns.fetchMembershipHistory.mockResolvedValueOnce([
-        {
-          type: 'Joined',
-          nameshort: 'TestGroup',
-          timestamp: new Date().toISOString(),
-          text: '',
-        },
-      ])
-      const wrapper = await mountComponent({ expand: true })
-      await flushPromises()
-      expect(wrapper.find('.join-method').exists()).toBe(false)
-    })
-
-    it('does not show join-method span for non-Joined entry', async () => {
-      mockApiFns.fetchMembershipHistory.mockResolvedValueOnce([
-        {
-          type: 'Left',
-          nameshort: 'TestGroup',
-          timestamp: new Date().toISOString(),
-          text: 'Manual',
-        },
-      ])
-      const wrapper = await mountComponent({ expand: true })
-      await flushPromises()
-      expect(wrapper.find('.join-method').exists()).toBe(false)
+      expect(wrapper.find('.mod-moderation').exists()).toBe(true)
     })
   })
 })

@@ -15,7 +15,6 @@ class LoveJunkServiceTest extends TestCase
         DB::table('lovejunk')->delete();
         DB::table('messages_promises')->delete();
         DB::table('messages_outcomes')->delete();
-        DB::table('messages_groups')->delete();
         DB::table('messages_items')->delete();
         DB::table('messages_attachments')->delete();
         DB::table('messages_edits')->delete();
@@ -25,24 +24,6 @@ class LoveJunkServiceTest extends TestCase
         DB::table('items')->delete();
         DB::table('users')->delete();
         DB::table('locations')->delete();
-        DB::table('groups')->update(['onlovejunk' => 0]);
-    }
-
-    private function createGroup(array $attrs = []): int
-    {
-        $nameshort = $attrs['nameshort'] ?? ('TestLJGroup_' . uniqid());
-        $onlovejunk = $attrs['onlovejunk'] ?? 1;
-
-        // polyindex is NOT NULL spatial — must be set in the INSERT statement
-        DB::statement("
-            INSERT INTO `groups`
-                (nameshort, namefull, type, onlovejunk, onhere, publish, lat, lng, polyindex)
-            VALUES
-                (?, 'Test LoveJunk Group', 'Freegle', ?, 1, 1, 51.5, -0.1,
-                 ST_GeomFromText('POLYGON((-1 51,-1 52,0 52,0 51,-1 51))',3857))
-        ", [$nameshort, $onlovejunk]);
-
-        return (int) DB::getPdo()->lastInsertId();
     }
 
     private function createUser(array $attrs = []): int
@@ -65,9 +46,9 @@ class LoveJunkServiceTest extends TestCase
         ], $attrs));
     }
 
-    private function createMessage(int $userId, int $groupId, int $locationId, array $attrs = []): int
+    private function createMessage(int $userId, int $locationId, array $attrs = []): int
     {
-        $msgId = DB::table('messages')->insertGetId(array_merge([
+        return DB::table('messages')->insertGetId(array_merge([
             'fromuser' => $userId,
             'type' => 'Offer',
             'subject' => 'OFFER: Old sofa (London)',
@@ -78,16 +59,8 @@ class LoveJunkServiceTest extends TestCase
             'lng' => -0.1419,
             'arrival' => now(),
             'date' => now(),
-        ], $attrs));
-
-        DB::table('messages_groups')->insert([
-            'msgid' => $msgId,
-            'groupid' => $groupId,
             'collection' => 'Approved',
-            'arrival' => now(),
-        ]);
-
-        return $msgId;
+        ], $attrs));
     }
 
     private function fakeSuccessfulPost(array $body = []): void
@@ -102,9 +75,8 @@ class LoveJunkServiceTest extends TestCase
         $this->fakeSuccessfulPost();
 
         $userId = $this->createUser();
-        $groupId = $this->createGroup();
         $locationId = $this->createLocation();
-        $msgId = $this->createMessage($userId, $groupId, $locationId);
+        $msgId = $this->createMessage($userId, $locationId);
 
         // Add item name
         $itemId = DB::table('items')->insertGetId(['name' => 'Sofa', 'popularity' => 1, 'updated' => now()]);
@@ -129,9 +101,8 @@ class LoveJunkServiceTest extends TestCase
         Http::fake();
 
         $userId = $this->createUser();
-        $groupId = $this->createGroup();
         $locationId = $this->createLocation();
-        $msgId = $this->createMessage($userId, $groupId, $locationId);
+        $msgId = $this->createMessage($userId, $locationId);
 
         // Pre-insert lovejunk record (already sent)
         DB::table('lovejunk')->insert(['msgid' => $msgId, 'success' => 1, 'status' => '{"draftId":"existing"}']);
@@ -151,9 +122,8 @@ class LoveJunkServiceTest extends TestCase
         Http::fake();
 
         $userId = $this->createUser();
-        $groupId = $this->createGroup();
         $locationId = $this->createLocation();
-        $msgId = $this->createMessage($userId, $groupId, $locationId);
+        $msgId = $this->createMessage($userId, $locationId);
 
         // Mark it as a bulk offer by giving it catalogue items.
         DB::table('messages_bulk_items')->insert([
@@ -171,28 +141,11 @@ class LoveJunkServiceTest extends TestCase
         $this->assertNull(DB::table('lovejunk')->where('msgid', $msgId)->first());
     }
 
-    public function test_skips_message_from_non_lovejunk_group(): void
-    {
-        Http::fake();
-
-        $userId = $this->createUser();
-        $groupId = $this->createGroup(['onlovejunk' => 0]);
-        $locationId = $this->createLocation();
-        $this->createMessage($userId, $groupId, $locationId);
-
-        $service = new LoveJunkService();
-        $result = $service->sync();
-
-        $this->assertEquals(0, $result['sent']);
-        Http::assertNothingSent();
-    }
-
     public function test_skips_message_without_postcode(): void
     {
         Http::fake();
 
         $userId = $this->createUser();
-        $groupId = $this->createGroup();
         // No locationId for this message
         $msgId = DB::table('messages')->insertGetId([
             'fromuser' => $userId,
@@ -205,8 +158,8 @@ class LoveJunkServiceTest extends TestCase
             'lng' => null,
             'arrival' => now(),
             'date' => now(),
+            'collection' => 'Approved',
         ]);
-        DB::table('messages_groups')->insert(['msgid' => $msgId, 'groupid' => $groupId, 'collection' => 'Approved', 'arrival' => now()]);
 
         $service = new LoveJunkService();
         $result = $service->sync();
@@ -222,9 +175,8 @@ class LoveJunkServiceTest extends TestCase
         ]);
 
         $userId = $this->createUser();
-        $groupId = $this->createGroup();
         $locationId = $this->createLocation();
-        $msgId = $this->createMessage($userId, $groupId, $locationId);
+        $msgId = $this->createMessage($userId, $locationId);
 
         $service = new LoveJunkService();
         $result = $service->sync();
@@ -245,9 +197,8 @@ class LoveJunkServiceTest extends TestCase
         ]);
 
         $userId = $this->createUser();
-        $groupId = $this->createGroup();
         $locationId = $this->createLocation();
-        $msgId = $this->createMessage($userId, $groupId, $locationId);
+        $msgId = $this->createMessage($userId, $locationId);
 
         // Pre-insert a successful lovejunk record
         DB::table('lovejunk')->insert([
@@ -278,9 +229,8 @@ class LoveJunkServiceTest extends TestCase
         ]);
 
         $userId = $this->createUser();
-        $groupId = $this->createGroup();
         $locationId = $this->createLocation();
-        $msgId = $this->createMessage($userId, $groupId, $locationId);
+        $msgId = $this->createMessage($userId, $locationId);
 
         DB::table('lovejunk')->insert([
             'msgid' => $msgId,
@@ -314,9 +264,8 @@ class LoveJunkServiceTest extends TestCase
 
         $senderId = $this->createUser();
         $promiseeId = $this->createUser(['ljuserid' => 888]);
-        $groupId = $this->createGroup();
         $locationId = $this->createLocation();
-        $msgId = $this->createMessage($senderId, $groupId, $locationId);
+        $msgId = $this->createMessage($senderId, $locationId);
 
         DB::table('lovejunk')->insert([
             'msgid' => $msgId,
@@ -363,9 +312,8 @@ class LoveJunkServiceTest extends TestCase
         ]);
 
         $userId = $this->createUser();
-        $groupId = $this->createGroup();
         $locationId = $this->createLocation();
-        $msgId = $this->createMessage($userId, $groupId, $locationId);
+        $msgId = $this->createMessage($userId, $locationId);
 
         $itemId = DB::table('items')->insertGetId(['name' => 'Table', 'popularity' => 1, 'updated' => now()]);
         DB::table('messages_items')->insert(['msgid' => $msgId, 'itemid' => $itemId]);
@@ -393,9 +341,8 @@ class LoveJunkServiceTest extends TestCase
         ]);
 
         $userId = $this->createUser();
-        $groupId = $this->createGroup();
         $locationId = $this->createLocation();
-        $msgId = $this->createMessage($userId, $groupId, $locationId, [
+        $msgId = $this->createMessage($userId, $locationId, [
             'subject' => 'OFFER: Vintage lamp (Shoreditch)',
         ]);
 
@@ -423,9 +370,8 @@ class LoveJunkServiceTest extends TestCase
         ]);
 
         $userId = $this->createUser();
-        $groupId = $this->createGroup();
         $locationId = $this->createLocation();
-        $msgId = $this->createMessage($userId, $groupId, $locationId);
+        $msgId = $this->createMessage($userId, $locationId);
         $itemId = DB::table('items')->insertGetId(['name' => 'Sofa', 'popularity' => 1, 'updated' => now()]);
         DB::table('messages_items')->insert(['msgid' => $msgId, 'itemid' => $itemId]);
 
@@ -459,9 +405,8 @@ class LoveJunkServiceTest extends TestCase
         ]);
 
         $userId = $this->createUser();
-        $groupId = $this->createGroup();
         $locationId = $this->createLocation();
-        $msgId = $this->createMessage($userId, $groupId, $locationId);
+        $msgId = $this->createMessage($userId, $locationId);
         $itemId = DB::table('items')->insertGetId(['name' => 'Sofa', 'popularity' => 1, 'updated' => now()]);
         DB::table('messages_items')->insert(['msgid' => $msgId, 'itemid' => $itemId]);
 

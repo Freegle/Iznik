@@ -14,14 +14,14 @@ class CommunityNewsSourceServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->dir = sys_get_temp_dir() . '/cn-sources-' . uniqid();
+        $this->dir = sys_get_temp_dir().'/cn-sources-'.uniqid();
         @mkdir($this->dir, 0777, true);
         config(['freegle.communitynews.sources_path' => $this->dir]);
     }
 
     protected function tearDown(): void
     {
-        foreach (glob($this->dir . '/*') ?: [] as $f) {
+        foreach (glob($this->dir.'/*') ?: [] as $f) {
             @unlink($f);
         }
         @rmdir($this->dir);
@@ -35,8 +35,9 @@ class CommunityNewsSourceServiceTest extends TestCase
 
     private function writePlace(string $file, array $data): string
     {
-        $path = $this->dir . '/' . $file . '.json';
+        $path = $this->dir.'/'.$file.'.json';
         file_put_contents($path, json_encode($data));
+
         return $path;
     }
 
@@ -54,27 +55,21 @@ class CommunityNewsSourceServiceTest extends TestCase
         return json_decode(file_get_contents($file), true);
     }
 
-    public function test_places_for_area_matches_by_group_and_by_name(): void
+    public function test_places_for_area_matches_by_place_name(): void
     {
-        $group = $this->createTestGroup();
-        $this->writePlace('bygroup', ['place' => 'Nowhereton', 'groups' => [$group->nameshort], 'sources' => [$this->source('https://a.example/feed')]]);
-        $this->writePlace('byname', ['place' => 'Oxford', 'groups' => ['SomeOtherGroup'], 'sources' => [$this->source('https://b.example/feed')]]);
+        $this->writePlace('elsewhere', ['place' => 'Nowhereton', 'sources' => [$this->source('https://a.example/feed')]]);
+        $this->writePlace('byname', ['place' => 'Oxford', 'sources' => [$this->source('https://b.example/feed')]]);
 
-        $areaByGroup = CommunityNewsArea::create(['anchorgroupid' => $group->id, 'name' => 'Whatever', 'lat' => 51.5, 'lng' => -0.1, 'groupids' => [$group->id], 'groupcount' => 1]);
-        $matched = $this->svc()->placesForArea($areaByGroup);
+        $areaByName = CommunityNewsArea::create(['authorityid' => 910301, 'name' => 'Oxford & nearby', 'lat' => 51.7, 'lng' => -1.2]);
+        $matched = $this->svc()->placesForArea($areaByName);
         $this->assertCount(1, $matched);
-        $this->assertSame('Nowhereton', $matched[0]['data']['place']);
-
-        $areaByName = CommunityNewsArea::create(['anchorgroupid' => 999999, 'name' => 'Oxford & nearby', 'lat' => 51.7, 'lng' => -1.2, 'groupids' => [], 'groupcount' => 0]);
-        $matched2 = $this->svc()->placesForArea($areaByName);
-        $this->assertCount(1, $matched2);
-        $this->assertSame('Oxford', $matched2[0]['data']['place']);
+        $this->assertSame('Oxford', $matched[0]['data']['place']);
     }
 
     public function test_live_sources_excludes_dead(): void
     {
-        $area = CommunityNewsArea::create(['anchorgroupid' => 1, 'name' => 'Oxford', 'lat' => 51.7, 'lng' => -1.2, 'groupids' => [], 'groupcount' => 0]);
-        $this->writePlace('oxford', ['place' => 'Oxford', 'groups' => [], 'sources' => [
+        $area = CommunityNewsArea::create(['authorityid' => 910302, 'name' => 'Oxford', 'lat' => 51.7, 'lng' => -1.2]);
+        $this->writePlace('oxford', ['place' => 'Oxford', 'sources' => [
             $this->source('https://live.example/feed', ['status' => 'ok']),
             $this->source('https://dead.example/feed', ['status' => 'dead']),
         ]]);
@@ -87,7 +82,7 @@ class CommunityNewsSourceServiceTest extends TestCase
     public function test_health_check_marks_dead_after_failures_then_revives(): void
     {
         config(['freegle.communitynews.source_dead_after' => 2]);
-        $file = $this->writePlace('oxford', ['place' => 'Oxford', 'groups' => [], 'sources' => [$this->source('https://feed.example/rss')]]);
+        $file = $this->writePlace('oxford', ['place' => 'Oxford', 'sources' => [$this->source('https://feed.example/rss')]]);
 
         // Two failures then a success across the three health-checks. A single
         // fake with a sequence — re-calling Http::fake() would merge stubs and the
@@ -121,7 +116,7 @@ class CommunityNewsSourceServiceTest extends TestCase
     public function test_discover_appends_only_verified_new_sources(): void
     {
         config(['freegle.communitynews.anthropic_api_key' => 'test-key']);
-        $file = $this->writePlace('oxford', ['place' => 'Oxford', 'groups' => [], 'last_discovered' => null, 'sources' => [$this->source('https://known.example/feed')]]);
+        $file = $this->writePlace('oxford', ['place' => 'Oxford', 'last_discovered' => null, 'sources' => [$this->source('https://known.example/feed')]]);
 
         $json = json_encode(['sources' => [
             ['name' => 'Fresh Local News', 'url' => 'https://fresh.example/feed', 'type' => 'rss'],

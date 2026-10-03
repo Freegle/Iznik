@@ -130,16 +130,11 @@ describe('ModCommentUser', () => {
 
     it('renders member name as a link to the member profile page', () => {
       const wrapper = mountComponent()
-      // The nuxt-link stub renders as <a href="/members/approved/<groupid>/<userid>">
-      const link = wrapper.find('a[href="/members/approved/456/123"]')
+      // The nuxt-link stub renders as <a href="/members/approved/<userid>">
+      // - moderators are national now, so there is no groupid in the link.
+      const link = wrapper.find('a[href="/members/approved/123"]')
       expect(link.exists()).toBe(true)
       expect(link.text()).toContain('Test User')
-    })
-
-    it('uses groupid 0 in link when comment has no groupid', () => {
-      const wrapper = mountComponent({}, { groupid: null })
-      const link = wrapper.find('a[href="/members/approved/0/123"]')
-      expect(link.exists()).toBe(true)
     })
   })
 

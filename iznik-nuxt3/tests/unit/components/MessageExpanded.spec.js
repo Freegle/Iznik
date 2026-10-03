@@ -45,7 +45,6 @@ const {
       attachments: [
         { id: 1, path: '/img/test1.jpg', paththumb: '/img/test1_thumb.jpg' },
       ],
-      groups: [{ groupid: 1 }],
       successful: false,
       promised: false,
       promisedtome: false,
@@ -166,23 +165,6 @@ vi.mock('vue', async (importOriginal) => {
   }
 })
 
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({
-    get: (id) => ({
-      id,
-      nameshort: 'testville',
-      namedisplay: 'Freegle Testville',
-    }),
-    fetch: vi.fn().mockResolvedValue(null),
-    fetchBatch: vi.fn().mockResolvedValue(null),
-  }),
-}))
-
-const mockGroupless = { value: false }
-vi.mock('~/composables/useGroupless', () => ({
-  useGroupless: () => mockGroupless.value,
-}))
-
 describe('MessageExpanded', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -199,7 +181,6 @@ describe('MessageExpanded', () => {
       attachments: [
         { id: 1, path: '/img/test1.jpg', paththumb: '/img/test1_thumb.jpg' },
       ],
-      groups: [{ groupid: 1 }],
       successful: false,
       promised: false,
       promisedtome: false,
@@ -871,9 +852,8 @@ describe('MessageExpanded', () => {
       expect(wrapper.text()).toContain('Share')
     })
 
-    it('renders report button when logged in and has groups', async () => {
+    it('renders report button when logged in', async () => {
       mockLoggedIn.value = true
-      mockMessage.value.groups = [{ groupid: 1 }]
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('Report')
     })
@@ -882,14 +862,6 @@ describe('MessageExpanded', () => {
       mockLoggedIn.value = false
       const wrapper = await createWrapper()
       // Report text might still be in page but button should be hidden
-      const reportButtons = wrapper.findAll('.action-button--report')
-      expect(reportButtons.length).toBe(0)
-    })
-
-    it('hides report button when no groups', async () => {
-      mockLoggedIn.value = true
-      mockMessage.value.groups = []
-      const wrapper = await createWrapper()
       const reportButtons = wrapper.findAll('.action-button--report')
       expect(reportButtons.length).toBe(0)
     })
@@ -1373,23 +1345,11 @@ describe('MessageExpanded', () => {
     })
   })
 
-
-  describe('groupless site (experiment)', () => {
-    it('says which communities a post is on today', async () => {
-      mockGroupless.value = false
-      const wrapper = await createWrapper()
-      expect(wrapper.find('.posted-on-groups').exists()).toBe(true)
-      expect(wrapper.text()).toContain('On:')
-      expect(wrapper.text()).toContain('Freegle Testville')
-    })
-
-    it('does not say which communities a post is on', async () => {
-      mockGroupless.value = true
+  describe('no community identity', () => {
+    it('never names a community on a post', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.find('.posted-on-groups').exists()).toBe(false)
-      expect(wrapper.text()).not.toContain('On:')
       expect(wrapper.text()).not.toContain('Freegle Testville')
-      mockGroupless.value = false
     })
   })
 })

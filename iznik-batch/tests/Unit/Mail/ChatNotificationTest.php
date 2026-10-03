@@ -16,12 +16,12 @@ class ChatNotificationTest extends TestCase
      * Returns an array with users, room, message, and mail objects ready to use.
      * This reduces the ~20 lines of boilerplate repeated in most tests.
      *
-     * @param array $options Optional overrides:
-     *   - user1_attrs: array of attributes for user1
-     *   - user2_attrs: array of attributes for user2
-     *   - message_text: string message content
-     *   - message_type: ChatMessage type constant
-     *   - message_attrs: array of additional message attributes
+     * @param  array  $options  Optional overrides:
+     *                          - user1_attrs: array of attributes for user1
+     *                          - user2_attrs: array of attributes for user2
+     *                          - message_text: string message content
+     *                          - message_type: ChatMessage type constant
+     *                          - message_attrs: array of additional message attributes
      * @return array{user1: User, user2: User, room: ChatRoom, message: ChatMessage, mail: ChatNotification}
      */
     protected function createUser2UserChatSetup(array $options = []): array
@@ -53,16 +53,15 @@ class ChatNotificationTest extends TestCase
     /**
      * Create a User2Mod chat setup for testing moderator notifications.
      *
-     * @param array $options Optional overrides:
-     *   - member_attrs: array of attributes for the member
-     *   - moderator_attrs: array of attributes for the moderator (if needed)
-     *   - group_attrs: array of attributes for the group
-     *   - message_text: string message content
-     *   - message_type: ChatMessage type constant
-     *   - message_attrs: array of additional message attributes
-     *   - sender: 'member' or 'moderator' (default: 'member')
-     *   - recipient: 'member' or 'moderator' (default: 'member' - member receives notification)
-     * @return array{member: User, moderator: User|null, group: \App\Models\Group, room: ChatRoom, message: ChatMessage, mail: ChatNotification}
+     * @param  array  $options  Optional overrides:
+     *                          - member_attrs: array of attributes for the member
+     *                          - moderator_attrs: array of attributes for the moderator (if needed)
+     *                          - message_text: string message content
+     *                          - message_type: ChatMessage type constant
+     *                          - message_attrs: array of additional message attributes
+     *                          - sender: 'member' or 'moderator' (default: 'member')
+     *                          - recipient: 'member' or 'moderator' (default: 'member' - member receives notification)
+     * @return array{member: User, moderator: User|null, room: ChatRoom, message: ChatMessage, mail: ChatNotification}
      */
     protected function createUser2ModChatSetup(array $options = []): array
     {
@@ -70,12 +69,10 @@ class ChatNotificationTest extends TestCase
         $moderator = isset($options['moderator_attrs']) || ($options['recipient'] ?? 'member') === 'moderator'
             ? $this->createTestUser($options['moderator_attrs'] ?? [])
             : null;
-        $group = $this->createTestGroup($options['group_attrs'] ?? []);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $member->id,
-            'groupid' => $group->id,
             'created' => now(),
         ]);
 
@@ -107,7 +104,7 @@ class ChatNotificationTest extends TestCase
             ChatRoom::TYPE_USER2MOD
         );
 
-        return compact('member', 'moderator', 'group', 'room', 'message', 'mail');
+        return compact('member', 'moderator', 'room', 'message', 'mail');
     }
 
     public function test_chat_notification_can_be_constructed(): void
@@ -125,7 +122,7 @@ class ChatNotificationTest extends TestCase
         $this->assertEquals($user1->id, $mail->sender->id);
         $this->assertEquals($room->id, $mail->chatRoom->id);
         $this->assertNotEmpty($mail->userSite);
-        $this->assertStringContainsString('/chats/' . $room->id, $mail->chatUrl);
+        $this->assertStringContainsString('/chats/'.$room->id, $mail->chatUrl);
     }
 
     public function test_chat_notification_returns_recipient_user_id(): void
@@ -162,10 +159,8 @@ class ChatNotificationTest extends TestCase
     {
         $user1 = $this->createTestUser(['fullname' => 'John Doe']);
         $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user1, $group);
 
-        $refMessage = $this->createTestMessage($user1, $group, [
+        $refMessage = $this->createTestMessage($user1, [
             'subject' => 'OFFER: Double Bed Frame (London)',
         ]);
 
@@ -238,10 +233,8 @@ class ChatNotificationTest extends TestCase
         // text/plain part carries the literal character (reported 2026-07-26).
         $user1 = $this->createTestUser(['fullname' => 'Coralie']);
         $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user1, $group);
 
-        $refMessage = $this->createTestMessage($user1, $group, [
+        $refMessage = $this->createTestMessage($user1, [
             'subject' => "OFFER: Lavazza A Modo Mio 'Jolie' Coffee Pod Machine (Oxford OX1)",
         ]);
 
@@ -280,12 +273,10 @@ class ChatNotificationTest extends TestCase
     public function test_chat_notification_user2mod_subject(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $user->id,
-            'groupid' => $group->id,
             'created' => now(),
         ]);
 
@@ -312,11 +303,9 @@ class ChatNotificationTest extends TestCase
             ChatRoom::TYPE_USER2MOD
         );
 
-        // USER2MOD subject format: "Your conversation with the {groupNameFull} Volunteers"
-        // For member-facing emails, we use the friendly full group name.
+        // USER2MOD subject format: "Your conversation with the {SiteName} Volunteers".
         $this->assertStringContainsString('Your conversation with the', $mail->replySubject);
-        // Group name contains the namefull (unique per test).
-        $this->assertStringContainsString($group->namefull, $mail->replySubject);
+        $this->assertStringContainsString(config('freegle.branding.name', 'Freegle'), $mail->replySubject);
         $this->assertStringContainsString('Volunteers', $mail->replySubject);
     }
 
@@ -338,10 +327,8 @@ class ChatNotificationTest extends TestCase
         // we need an actual TYPE_INTERESTED message in the chat to use the item subject.
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user1, $group);
 
-        $refMessage = $this->createTestMessage($user1, $group, [
+        $refMessage = $this->createTestMessage($user1, [
             'subject' => 'OFFER: Test Item (Location)',
         ]);
 
@@ -428,10 +415,8 @@ class ChatNotificationTest extends TestCase
     {
         $user1 = $this->createTestUser(['fullname' => 'Alice']);
         $user2 = $this->createTestUser(['fullname' => 'Bob']);
-        $group = $this->createTestGroup();
-        $this->createMembership($user1, $group);
 
-        $refMessage = $this->createTestMessage($user1, $group, [
+        $refMessage = $this->createTestMessage($user1, [
             'subject' => 'OFFER: Test Item (Location)',
         ]);
 
@@ -468,7 +453,6 @@ class ChatNotificationTest extends TestCase
 
         // Subject should be based on the interested message - no group name.
         $this->assertStringContainsString('Regarding:', $mail->replySubject);
-        $this->assertStringNotContainsString($group->namefull, $mail->replySubject);
         $this->assertStringContainsString('OFFER: Test Item', $mail->replySubject);
 
         $mail->build();
@@ -532,7 +516,7 @@ class ChatNotificationTest extends TestCase
         // Reply-to should be in the format notify-{chatid}-{userid}@domain.
         $replyTo = $envelope->replyTo;
         $this->assertNotEmpty($replyTo);
-        $this->assertStringContainsString('notify-' . $room->id . '-' . $user2->id, $replyTo[0]->address);
+        $this->assertStringContainsString('notify-'.$room->id.'-'.$user2->id, $replyTo[0]->address);
     }
 
     public function test_chat_notification_from_display_name(): void
@@ -576,7 +560,7 @@ class ChatNotificationTest extends TestCase
         // Reply-To should be the notify address for routing replies through the chat system.
         $this->assertNotEmpty($envelope->replyTo);
         $this->assertStringContainsString(
-            'notify-' . $room->id . '-' . $user2->id,
+            'notify-'.$room->id.'-'.$user2->id,
             $envelope->replyTo[0]->address,
             'Reply-To should be the notify address for chat routing'
         );
@@ -650,10 +634,8 @@ class ChatNotificationTest extends TestCase
     {
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user1, $group);
 
-        $refMessage = $this->createTestMessage($user1, $group, [
+        $refMessage = $this->createTestMessage($user1, [
             'subject' => 'OFFER: Test Item (Location)',
         ]);
 
@@ -693,7 +675,6 @@ class ChatNotificationTest extends TestCase
         $this->assertStringStartsWith('Regarding:', $mail->replySubject);
         $this->assertStringNotContainsString('Re:', $mail->replySubject);
         // And no group name - the subject is just "Regarding: <item subject>".
-        $this->assertStringNotContainsString($group->namefull, $mail->replySubject);
         $this->assertEquals(
             'Regarding: OFFER: Test Item (Location)',
             $mail->replySubject
@@ -704,7 +685,7 @@ class ChatNotificationTest extends TestCase
     {
         ['room' => $room, 'mail' => $mail] = $this->createUser2UserChatSetup();
 
-        $this->assertStringContainsString('/chats/' . $room->id, $mail->chatUrl);
+        $this->assertStringContainsString('/chats/'.$room->id, $mail->chatUrl);
     }
 
     public function test_chat_notification_image_message_type(): void
@@ -796,30 +777,30 @@ class ChatNotificationTest extends TestCase
 
         // Build debug message for assertion failure.
         $debug = sprintf(
-            "\n=== DEBUG INFO ===\n" .
-            "config('freegle.amp.enabled'): %s\n" .
-            "config('freegle.branding.name'): %s\n" .
-            "config('view.compiled'): %s\n" .
-            "config('view.check_cache_timestamps'): %s\n" .
-            "mail->recipient->exists: %s\n" .
-            "mail->recipient->email_preferred: %s\n" .
-            "mail->chatType: %s\n" .
-            "footer view exists: %s\n" .
-            "HTML length: %d\n" .
-            "Footer text 'This email was sent...': %s\n" .
-            "--- Direct footer render test ---\n" .
-            "Direct footer render length: %d\n" .
-            "Direct footer render error: %s\n" .
-            "Direct footer has 'This email was sent': %s\n" .
-            "--- Footer content checks in mail HTML ---\n" .
-            "Has 'Unsubscribe': %s\n" .
-            "Has 'Change your email settings': %s\n" .
-            "Has 'HMRC': %s\n" .
-            "Has 'registered as a charity': %s\n" .
-            "Has footer bg color #f5f5f5: %s\n" .
-            "Has Reply button: %s\n" .
-            "Has tracking pixel: %s\n" .
-            "--- Content after Reply button (first 200 chars) ---\n%s\n" .
+            "\n=== DEBUG INFO ===\n".
+            "config('freegle.amp.enabled'): %s\n".
+            "config('freegle.branding.name'): %s\n".
+            "config('view.compiled'): %s\n".
+            "config('view.check_cache_timestamps'): %s\n".
+            "mail->recipient->exists: %s\n".
+            "mail->recipient->email_preferred: %s\n".
+            "mail->chatType: %s\n".
+            "footer view exists: %s\n".
+            "HTML length: %d\n".
+            "Footer text 'This email was sent...': %s\n".
+            "--- Direct footer render test ---\n".
+            "Direct footer render length: %d\n".
+            "Direct footer render error: %s\n".
+            "Direct footer has 'This email was sent': %s\n".
+            "--- Footer content checks in mail HTML ---\n".
+            "Has 'Unsubscribe': %s\n".
+            "Has 'Change your email settings': %s\n".
+            "Has 'HMRC': %s\n".
+            "Has 'registered as a charity': %s\n".
+            "Has footer bg color #f5f5f5: %s\n".
+            "Has Reply button: %s\n".
+            "Has tracking pixel: %s\n".
+            "--- Content after Reply button (first 200 chars) ---\n%s\n".
             "==================\n",
             var_export(config('freegle.amp.enabled'), true),
             var_export(config('freegle.branding.name'), true),
@@ -845,7 +826,7 @@ class ChatNotificationTest extends TestCase
         );
 
         // Footer should indicate AMP was included.
-        $this->assertStringContainsString('sent with AMP', $html, "Expected 'sent with AMP' in HTML but not found." . $debug);
+        $this->assertStringContainsString('sent with AMP', $html, "Expected 'sent with AMP' in HTML but not found.".$debug);
     }
 
     public function test_chat_notification_no_amp_indicator_when_disabled(): void
@@ -1051,16 +1032,15 @@ class ChatNotificationTest extends TestCase
 
     public function test_user2mod_moderator_subject_includes_member_info(): void
     {
-        ['group' => $group, 'mail' => $mail] = $this->createUser2ModChatSetup([
+        ['mail' => $mail] = $this->createUser2ModChatSetup([
             'member_attrs' => ['fullname' => 'Alice Member'],
             'moderator_attrs' => ['fullname' => 'Bob Moderator'],
             'message_text' => 'Help me please',
             'recipient' => 'moderator',
         ]);
 
-        // Subject should be "Member conversation on {GroupShortName} with {MemberName} ({email})".
-        $this->assertStringContainsString('Member conversation on', $mail->replySubject);
-        $this->assertStringContainsString($group->nameshort, $mail->replySubject);
+        // Subject should be "Member conversation with {MemberName} ({email})".
+        $this->assertStringContainsString('Member conversation with', $mail->replySubject);
         $this->assertStringContainsString('Alice', $mail->replySubject);
         // Email is auto-generated as test{id}@test.com.
         $this->assertStringContainsString('@test.com', $mail->replySubject);
@@ -1073,7 +1053,7 @@ class ChatNotificationTest extends TestCase
             'message_text' => 'Help me please',
         ]);
 
-        // Subject should be "Your conversation with the {groupName} Volunteers".
+        // Subject should be "Your conversation with the {SiteName} Volunteers".
         $this->assertStringContainsString('Your conversation with the', $mail->replySubject);
         $this->assertStringContainsString('Volunteers', $mail->replySubject);
     }
@@ -1193,22 +1173,17 @@ class ChatNotificationTest extends TestCase
     }
 
     /**
-     * Test User2Mod: when member receives mod reply, FROM name should be "GroupName Volunteers"
+     * Test User2Mod: when member receives mod reply, FROM name should be "{SiteName} Volunteers",
      * not the individual moderator's name.
-     *
-     * This matches the legacy V1 PHP behavior in processUnmailedMessage():
-     * For User2Mod when notifying member, fromname is always "{group.namedisplay} volunteers"
      */
     public function test_user2mod_member_receives_mod_reply_from_name_is_volunteers(): void
     {
         $member = $this->createTestUser(['fullname' => 'Alice Member']);
         $moderator = $this->createTestUser(['fullname' => 'Sheila Mod']);
-        $group = $this->createTestGroup(['namedisplay' => 'Test Freegle Group']);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $member->id,
-            'groupid' => $group->id,
             'created' => now(),
         ]);
 
@@ -1239,7 +1214,7 @@ class ChatNotificationTest extends TestCase
 
         $envelope = $mail->envelope();
 
-        // From name should be "TestGroup Volunteers", NOT "Sheila Mod on Freegle".
+        // From name should be "{SiteName} Volunteers", NOT "Sheila Mod".
         $this->assertStringContainsString('Volunteers', $envelope->from->name);
         $this->assertStringNotContainsString('Sheila', $envelope->from->name);
     }
@@ -1247,20 +1222,15 @@ class ChatNotificationTest extends TestCase
     /**
      * Test User2Mod: when member receives mod reply, the message content should NOT
      * show the moderator's individual name - it should show "Volunteers" or similar.
-     *
-     * This matches the legacy V1 PHP prepareForTwig() which uses group profile
-     * instead of individual mod profile when notifying member.
      */
     public function test_user2mod_member_receives_mod_reply_hides_mod_identity_in_message(): void
     {
         $member = $this->createTestUser(['fullname' => 'Alice Member']);
         $moderator = $this->createTestUser(['fullname' => 'Sheila Mod']);
-        $group = $this->createTestGroup(['namedisplay' => 'Test Freegle Group']);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $member->id,
-            'groupid' => $group->id,
             'created' => now(),
         ]);
 
@@ -1295,7 +1265,7 @@ class ChatNotificationTest extends TestCase
         // This is critical for privacy - members should not see which mod replied.
         $this->assertStringNotContainsString('Sheila', $html);
 
-        // Should show the group name or "Volunteers" somewhere.
+        // Should show "Volunteers" somewhere.
         $this->assertStringContainsString('Volunteers', $html);
     }
 
@@ -1306,12 +1276,10 @@ class ChatNotificationTest extends TestCase
     {
         $member = $this->createTestUser(['fullname' => 'Alice Member']);
         $moderator = $this->createTestUser(['fullname' => 'Sheila Mod']);
-        $group = $this->createTestGroup();
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $member->id,
-            'groupid' => $group->id,
             'created' => now(),
         ]);
 
@@ -1356,12 +1324,10 @@ class ChatNotificationTest extends TestCase
     {
         $member = $this->createTestUser(['fullname' => 'Alice Member']);
         $moderator = $this->createTestUser(['fullname' => 'Sheila Mod']);
-        $group = $this->createTestGroup(['namedisplay' => 'Test Freegle Group']);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $member->id,
-            'groupid' => $group->id,
             'created' => now(),
         ]);
 
@@ -1550,10 +1516,11 @@ class ChatNotificationTest extends TestCase
     protected function getSymfonyHeaders(ChatNotification $mail): \Symfony\Component\Mime\Header\Headers
     {
         $mail->build();
-        $symfonyEmail = new \Symfony\Component\Mime\Email();
+        $symfonyEmail = new \Symfony\Component\Mime\Email;
         foreach ($mail->callbacks as $callback) {
             $callback($symfonyEmail);
         }
+
         return $symfonyEmail->getHeaders();
     }
 
@@ -1840,10 +1807,8 @@ class ChatNotificationTest extends TestCase
     {
         $user1 = $this->createTestUser(['fullname' => 'Alice']);
         $user2 = $this->createTestUser(['fullname' => 'Bob']);
-        $group = $this->createTestGroup();
-        $this->createMembership($user1, $group);
 
-        $refMessage = $this->createTestMessage($user1, $group, [
+        $refMessage = $this->createTestMessage($user1, [
             'subject' => 'OFFER: Audio cables (Bristol)',
         ]);
 
@@ -1879,10 +1844,8 @@ class ChatNotificationTest extends TestCase
     {
         $user1 = $this->createTestUser(['fullname' => 'Alice']);
         $user2 = $this->createTestUser(['fullname' => 'Bob']);
-        $group = $this->createTestGroup();
-        $this->createMembership($user1, $group);
 
-        $refMessage = $this->createTestMessage($user1, $group, [
+        $refMessage = $this->createTestMessage($user1, [
             'subject' => 'OFFER: Double Bed Frame (London)',
         ]);
 
@@ -1916,10 +1879,8 @@ class ChatNotificationTest extends TestCase
     {
         $user1 = $this->createTestUser(['fullname' => 'Alice']);
         $user2 = $this->createTestUser(['fullname' => 'Bob']);
-        $group = $this->createTestGroup();
-        $this->createMembership($user1, $group);
 
-        $refMessage = $this->createTestMessage($user1, $group, [
+        $refMessage = $this->createTestMessage($user1, [
             'subject' => 'OFFER: Kitchen Table (Manchester)',
         ]);
 
@@ -2057,7 +2018,7 @@ class ChatNotificationTest extends TestCase
     public function test_chat_notification_preheader_user2user_shows_sender_and_snippet(): void
     {
         ['mail' => $mail] = $this->createUser2UserChatSetup([
-            'user1_attrs'  => ['fullname' => 'Alice Sender'],
+            'user1_attrs' => ['fullname' => 'Alice Sender'],
             'message_text' => 'I am still interested in the sofa, is it available?',
         ]);
 
@@ -2072,15 +2033,13 @@ class ChatNotificationTest extends TestCase
      */
     public function test_chat_notification_preheader_user2mod_moderator_shows_member_name(): void
     {
-        $member    = $this->createTestUser(['fullname' => 'Bob Member']);
+        $member = $this->createTestUser(['fullname' => 'Bob Member']);
         $moderator = $this->createTestUser();
-        $group     = $this->createTestGroup();
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
-            'user1'    => $member->id,
-            'groupid'  => $group->id,
-            'created'  => now(),
+            'user1' => $member->id,
+            'created' => now(),
         ]);
 
         $message = $this->createTestChatMessage($room, $member, [
@@ -2112,9 +2071,9 @@ class ChatNotificationTest extends TestCase
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2USER,
-            'user1'    => $user1->id,
-            'user2'    => $user2->id,
-            'created'  => now(),
+            'user1' => $user1->id,
+            'user2' => $user2->id,
+            'created' => now(),
         ]);
 
         // Message sent BY user1 and notification sent TO user1 (copy to self)
@@ -2142,15 +2101,13 @@ class ChatNotificationTest extends TestCase
      */
     public function test_chat_notification_preheader_mod2mod_shows_sender_and_snippet(): void
     {
-        $mod1  = $this->createTestUser(['fullname' => 'Eve Moderator']);
-        $mod2  = $this->createTestUser();
-        $group = $this->createTestGroup();
+        $mod1 = $this->createTestUser(['fullname' => 'Eve Moderator']);
+        $mod2 = $this->createTestUser();
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_MOD2MOD,
-            'user1'    => $mod1->id,
-            'groupid'  => $group->id,
-            'created'  => now(),
+            'user1' => $mod1->id,
+            'created' => now(),
         ]);
 
         $message = $this->createTestChatMessage($room, $mod1, [

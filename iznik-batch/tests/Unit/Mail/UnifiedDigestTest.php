@@ -3,7 +3,6 @@
 namespace Tests\Unit\Mail;
 
 use App\Mail\Digest\UnifiedDigest;
-use App\Models\Membership;
 use App\Services\EmailSpoolerService;
 use App\Services\UnifiedDigestService;
 use Carbon\Carbon;
@@ -46,17 +45,14 @@ class UnifiedDigestTest extends TestCase
     public function test_can_be_constructed(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Sofa (London)',
         ]);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -67,17 +63,14 @@ class UnifiedDigestTest extends TestCase
     public function test_build_returns_self(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Sofa (London)',
         ]);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -89,17 +82,14 @@ class UnifiedDigestTest extends TestCase
     public function test_subject_with_single_post(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Sofa (London)',
         ]);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -108,123 +98,20 @@ class UnifiedDigestTest extends TestCase
         $this->assertEquals("What's New (1 post) - Sofa", $envelope->subject);
     }
 
-    public function test_immediate_subject_prefers_recipients_group_for_cross_post(): void
-    {
-        // A post on groups A and B; the recipient is a member of B only. The
-        // immediate-digest subject prefix must name B (the recipient's group),
-        // not an arbitrary first group.
-        $user = $this->createTestUser();
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $this->createMembership($user, $groupB);
-
-        $poster = $this->createTestUser();
-        $this->createMembership($poster, $groupA);
-        $message = $this->createTestMessage($poster, $groupA, [
-            'subject' => 'OFFER: Sofa (London)',
-        ]);
-
-        $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
-        ]);
-
-        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
-        $envelope = $mail->envelope();
-
-        $groupBName = $groupB->namefull ?: $groupB->nameshort;
-        $groupAName = $groupA->namefull ?: $groupA->nameshort;
-        $this->assertStringStartsWith("[{$groupBName}]", $envelope->subject);
-        $this->assertStringNotContainsString("[{$groupAName}]", $envelope->subject);
-    }
-
-    public function test_immediate_subject_prefers_immediate_group_over_muted_membership(): void
-    {
-        // Discourse #9808: a rippled-in post reaches a member because it ripples
-        // into a group they receive IMMEDIATELY (emailfrequency=-1). The post is
-        // also on its origin group, which the member happens to be a (muted)
-        // member of. The subject must name the group whose immediate setting
-        // actually drives the email — not the muted origin group — otherwise a
-        // mod/member turns off a group that isn't sending the mail and it keeps
-        // coming. Member of A (origin, muted) and B (immediate); label must be B.
-        $user = $this->createTestUser();
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        // A: member but email OFF for this group (the post's origin group).
-        $this->createMembership($user, $groupA, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_NEVER,
-        ]);
-        // B: the group the member receives immediately on — what actually sends.
-        $this->createMembership($user, $groupB, [
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_IMMEDIATE,
-        ]);
-
-        $poster = $this->createTestUser();
-        $this->createMembership($poster, $groupA);
-        $message = $this->createTestMessage($poster, $groupA, [
-            'subject' => 'OFFER: Sofa (London)',
-        ]);
-
-        // Origin group A listed first (as messages_groups returns the origin).
-        $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
-        ]);
-
-        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
-        $envelope = $mail->envelope();
-
-        $groupBName = $groupB->namefull ?: $groupB->nameshort;
-        $groupAName = $groupA->namefull ?: $groupA->nameshort;
-        $this->assertStringStartsWith("[{$groupBName}]", $envelope->subject);
-        $this->assertStringNotContainsString("[{$groupAName}]", $envelope->subject);
-    }
-
-    public function test_select_preferred_group_prefers_priority_then_membership_then_first(): void
-    {
-        // Pure-function contract for the labelling choice.
-        // 1) A priority group (e.g. the immediate-membership group) wins even when
-        //    a plain-membership group sorts earlier in the post's group list.
-        $this->assertSame(
-            30,
-            UnifiedDigest::selectPreferredGroup([10, 20, 30], [10, 20, 30], [30]),
-            'priority group should win over earlier plain memberships'
-        );
-        // 2) With no priority list, behaviour is unchanged: first membership match.
-        $this->assertSame(
-            10,
-            UnifiedDigest::selectPreferredGroup([10, 20, 30], [10, 20, 30]),
-            'no priority -> first posted-to group the recipient is a member of'
-        );
-        // 3) Priority id not on the post -> fall back to first membership match.
-        $this->assertSame(
-            20,
-            UnifiedDigest::selectPreferredGroup([20, 30], [20, 30], [99]),
-            'priority id absent from post -> first membership match'
-        );
-        // 4) Recipient in none -> first posted-to group.
-        $this->assertSame(
-            20,
-            UnifiedDigest::selectPreferredGroup([20, 30], [], [99]),
-            'recipient in neither -> first posted-to group'
-        );
-    }
-
     public function test_subject_with_multiple_posts(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
-        $msg1 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (London)']);
-        $msg2 = $this->createTestMessage($poster, $group, ['subject' => 'WANTED: Table (London)']);
-        $msg3 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Books (London)']);
+        $msg1 = $this->createTestMessage($poster, ['subject' => 'OFFER: Sofa (London)']);
+        $msg2 = $this->createTestMessage($poster, ['subject' => 'WANTED: Table (London)']);
+        $msg3 = $this->createTestMessage($poster, ['subject' => 'OFFER: Books (London)']);
 
         $posts = collect([
-            ['message' => $msg1, 'postedToGroups' => [$group->id]],
-            ['message' => $msg2, 'postedToGroups' => [$group->id]],
-            ['message' => $msg3, 'postedToGroups' => [$group->id]],
+            ['message' => $msg1],
+            ['message' => $msg2],
+            ['message' => $msg3],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -242,18 +129,14 @@ class UnifiedDigestTest extends TestCase
         $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
 
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
-        $message = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (London)']);
+        $message = $this->createTestMessage($poster, ['subject' => 'OFFER: Sofa (London)']);
 
         // One more post than the body cap so the truncation bites.
         $posts = collect(array_fill(0, $cap + 1, [
             'message' => $message,
-            'postedToGroups' => [$group->id],
         ]));
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -273,17 +156,13 @@ class UnifiedDigestTest extends TestCase
         $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
 
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
-        $message = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (London)']);
+        $message = $this->createTestMessage($poster, ['subject' => 'OFFER: Sofa (London)']);
 
         $posts = collect(array_fill(0, $cap, [
             'message' => $message,
-            'postedToGroups' => [$group->id],
         ]));
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -304,23 +183,19 @@ class UnifiedDigestTest extends TestCase
         $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
 
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $fillerMessage = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (London)']);
+        $fillerMessage = $this->createTestMessage($poster, ['subject' => 'OFFER: Sofa (London)']);
 
         $posts = collect(array_fill(0, $cap, [
             'message' => $fillerMessage,
-            'postedToGroups' => [$group->id],
         ]));
 
         // The recipient's own post, appended last — past the cap.
-        $ownMessage = $this->createTestMessage($user, $group, [
+        $ownMessage = $this->createTestMessage($user, [
             'subject' => 'OFFER: RecipientsOwnUniqueSofa (London)',
         ]);
-        $posts->push(['message' => $ownMessage, 'postedToGroups' => [$group->id]]);
+        $posts->push(['message' => $ownMessage]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
         $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
@@ -347,20 +222,17 @@ class UnifiedDigestTest extends TestCase
         $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
 
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
         $posts = collect();
         for ($i = 1; $i <= $cap + 3; $i++) {
-            $own = $this->createTestMessage($user, $group, ['subject' => "OFFER: OwnItem{$i}Zq (London)"]);
-            $posts->push(['message' => $own, 'postedToGroups' => [$group->id]]);
+            $own = $this->createTestMessage($user, ['subject' => "OFFER: OwnItem{$i}Zq (London)"]);
+            $posts->push(['message' => $own]);
         }
         for ($i = 1; $i <= 2; $i++) {
-            $other = $this->createTestMessage($poster, $group, ['subject' => "OFFER: OtherItem{$i}Zq (London)"]);
-            $posts->push(['message' => $other, 'postedToGroups' => [$group->id]]);
+            $other = $this->createTestMessage($poster, ['subject' => "OFFER: OtherItem{$i}Zq (London)"]);
+            $posts->push(['message' => $other]);
         }
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -383,19 +255,16 @@ class UnifiedDigestTest extends TestCase
         $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP;
 
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
         $posts = collect();
         for ($i = 1; $i <= $cap + 3; $i++) {
-            $filler = $this->createTestMessage($poster, $group, ['subject' => "OFFER: Filler{$i}Zq (London)"]);
-            $posts->push(['message' => $filler, 'postedToGroups' => [$group->id]]);
+            $filler = $this->createTestMessage($poster, ['subject' => "OFFER: Filler{$i}Zq (London)"]);
+            $posts->push(['message' => $filler]);
         }
-        $ownMessage = $this->createTestMessage($user, $group, ['subject' => 'OFFER: OwnLastZq (London)']);
-        $posts->push(['message' => $ownMessage, 'postedToGroups' => [$group->id]]);
+        $ownMessage = $this->createTestMessage($user, ['subject' => 'OFFER: OwnLastZq (London)']);
+        $posts->push(['message' => $ownMessage]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
 
@@ -428,18 +297,15 @@ class UnifiedDigestTest extends TestCase
     public function test_tracked_urls_contain_post_positions(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
-        $msg1 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (London)']);
-        $msg2 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Table (London)']);
+        $msg1 = $this->createTestMessage($poster, ['subject' => 'OFFER: Sofa (London)']);
+        $msg2 = $this->createTestMessage($poster, ['subject' => 'OFFER: Table (London)']);
 
         $posts = collect([
-            ['message' => $msg1, 'postedToGroups' => [$group->id]],
-            ['message' => $msg2, 'postedToGroups' => [$group->id]],
+            ['message' => $msg1],
+            ['message' => $msg2],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -458,17 +324,14 @@ class UnifiedDigestTest extends TestCase
     private function digestForRecipientEmail(string $email): UnifiedDigest
     {
         $user = $this->createTestUser(['email_preferred' => $email]);
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Sofa (London)',
         ]);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         return new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -496,26 +359,23 @@ class UnifiedDigestTest extends TestCase
         config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
 
         $user = $this->createTestUser(['email_preferred' => 'recipient@gmail.com']);
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
         $posts = collect();
         for ($i = 1; $i <= $otherPosts; $i++) {
-            $message = $this->createTestMessage($poster, $group, [
+            $message = $this->createTestMessage($poster, [
                 'subject' => "OFFER: Chair {$i} (London)",
             ]);
-            $posts->push(['message' => $message, 'postedToGroups' => [$group->id]]);
+            $posts->push(['message' => $message]);
         }
 
         $ownId = 0;
         if ($withOwnPost) {
-            $own = $this->createTestMessage($user, $group, [
+            $own = $this->createTestMessage($user, [
                 'subject' => 'OFFER: My own lamp (London)',
             ]);
             $ownId = (int) $own->id;
-            $posts->push(['message' => $own, 'postedToGroups' => [$group->id]]);
+            $posts->push(['message' => $own]);
         }
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -618,17 +478,14 @@ class UnifiedDigestTest extends TestCase
         config(['freegle.amp.enabled' => true, 'freegle.amp.secret' => 'test-secret']);
 
         $user = $this->createTestUser(['email_preferred' => 'recipient@gmail.com']);
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Sofa (London)',
         ]);
 
         $mail = new UnifiedDigest(
             $user,
-            collect([['message' => $message, 'postedToGroups' => [$group->id]]]),
+            collect([['message' => $message]]),
             UnifiedDigestService::MODE_IMMEDIATE
         );
         $mail->build();
@@ -819,143 +676,15 @@ class UnifiedDigestTest extends TestCase
         $this->assertStringContainsString('https://example.com/job/2?t=1', $text);
     }
 
-    public function test_prepared_posts_carry_group_name_and_explore_url(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-        $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (Town)']);
-
-        $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
-        ]);
-        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
-
-        $ref = new \ReflectionProperty(UnifiedDigest::class, 'preparedPosts');
-        $ref->setAccessible(true);
-        $prepared = $ref->getValue($mail);
-        $card = $prepared->first();
-
-        // Friendly full name (not the short name) is the displayed group label.
-        $this->assertSame($group->namefull, $card['groupName']);
-        // The link points at the group's /explore page. It's wrapped by the
-        // compact click-tracker (…/e/d/r/{ref}/g/{idEnc}/{pos}); the Go handler
-        // reconstructs /explore/{groupId} from it (see emailtracking/compact.go,
-        // which keys explore on the numeric group id). Decode the encoded id
-        // and assert the link targets this group's explore page.
-        $this->assertNotNull($card['groupUrl']);
-        $target = $card['groupUrl'];
-        if (preg_match('#/e/d/r/[^/]+/g/([^/]+)/#', $card['groupUrl'], $mm)) {
-            $b64 = strtr($mm[1], '-_', '+/');
-            $b64 = str_pad($b64, (int) (ceil(strlen($b64) / 4) * 4), '=', STR_PAD_RIGHT);
-            $gid = 0;
-            foreach (str_split(base64_decode($b64)) as $ch) {
-                $gid = ($gid << 8) | ord($ch);
-            }
-            $target = '/explore/'.$gid;
-        } elseif (preg_match('/[?&]url=([^&]+)/', $card['groupUrl'], $mm)) {
-            $target = base64_decode(urldecode($mm[1])) ?: $target;
-        }
-        $this->assertStringContainsString('/explore/', $target);
-        $this->assertStringContainsString('/explore/'.$group->id, $target);
-    }
-
-    public function test_byline_uses_recipients_group_for_cross_post(): void
-    {
-        // Recipient is a member of group B only; the post is cross-posted to A and
-        // B (A listed first). The "Posted on …" byline must name B — the group the
-        // recipient is actually in — not the arbitrary first group A.
-        $user = $this->createTestUser();
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $this->createMembership($user, $groupB);
-
-        $poster = $this->createTestUser();
-        $this->createMembership($poster, $groupA);
-        $message = $this->createTestMessage($poster, $groupA, ['subject' => 'OFFER: Sofa (Town)']);
-
-        $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
-        ]);
-        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
-
-        $ref = new \ReflectionProperty(UnifiedDigest::class, 'preparedPosts');
-        $ref->setAccessible(true);
-        $card = $ref->getValue($mail)->first();
-
-        $this->assertSame($groupB->namefull, $card['groupName'], 'byline should name the recipient\'s group');
-        $this->assertNotSame($groupA->namefull, $card['groupName']);
-    }
-
-    public function test_byline_falls_back_to_first_group_when_recipient_in_neither(): void
-    {
-        // Edge case: the recipient is a member of NEITHER posted-to group (e.g. a
-        // cross-group digest, or membership changed). selectPreferredGroup must
-        // degrade gracefully to the first posted-to group — a real, non-empty group
-        // name — rather than group 0 / a blank byline.
-        $user = $this->createTestUser();
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        // Deliberately no membership of either group for $user.
-
-        $poster = $this->createTestUser();
-        $this->createMembership($poster, $groupA);
-        $message = $this->createTestMessage($poster, $groupA, ['subject' => 'OFFER: Lamp (Town)']);
-
-        $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
-        ]);
-        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
-
-        $ref = new \ReflectionProperty(UnifiedDigest::class, 'preparedPosts');
-        $ref->setAccessible(true);
-        $card = $ref->getValue($mail)->first();
-
-        $this->assertSame($groupA->namefull, $card['groupName'], 'byline should fall back to the first posted-to group');
-        $this->assertNotEmpty($card['groupName'], 'byline group name must not be blank');
-    }
-
-    public function test_cross_post_text_shown_for_multiple_groups(): void
-    {
-        $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-        $this->createMembership($user, $group1);
-        $this->createMembership($user, $group2);
-
-        $poster = $this->createTestUser();
-        $this->createMembership($poster, $group1);
-        $this->createMembership($poster, $group2);
-
-        $message = $this->createTestMessage($poster, $group1, [
-            'subject' => 'OFFER: Sofa (London)',
-        ]);
-
-        $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group1->id, $group2->id]],
-        ]);
-
-        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
-        $mail->build();
-
-        // The mail was built successfully with cross-post data.
-        $this->assertInstanceOf(UnifiedDigest::class, $mail);
-    }
-
     public function test_tracking_metadata_contains_mode_and_count(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -972,20 +701,17 @@ class UnifiedDigestTest extends TestCase
     public function test_tracking_metadata_records_post_composition_in_order(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
-        $msg1 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (London)']);
-        $msg2 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Table (London)']);
-        $msg3 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Chair (London)']);
+        $msg1 = $this->createTestMessage($poster, ['subject' => 'OFFER: Sofa (London)']);
+        $msg2 = $this->createTestMessage($poster, ['subject' => 'OFFER: Table (London)']);
+        $msg3 = $this->createTestMessage($poster, ['subject' => 'OFFER: Chair (London)']);
 
         $posts = collect([
-            ['message' => $msg1, 'postedToGroups' => [$group->id]],
-            ['message' => $msg2, 'postedToGroups' => [$group->id]],
-            ['message' => $msg3, 'postedToGroups' => [$group->id]],
+            ['message' => $msg1],
+            ['message' => $msg2],
+            ['message' => $msg3],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -998,55 +724,6 @@ class UnifiedDigestTest extends TestCase
         $this->assertEquals(3, $metadata['post_count']);
     }
 
-    public function test_immediate_records_groupid_daily_does_not(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
-        $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group);
-
-        $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
-        ]);
-
-        // An immediate digest is about one community → record which group.
-        $immediateMail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
-        $this->assertEquals($group->id, $immediateMail->getTracking()->groupid);
-
-        // A daily digest spans the member's groups → not tied to one.
-        $dailyMail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
-        $this->assertNull($dailyMail->getTracking()->groupid);
-    }
-
-    public function test_immediate_tracking_groupid_uses_recipients_group_for_cross_post(): void
-    {
-        // A post on groups A and B; the recipient is a member of B only. The
-        // immediate-digest tracking groupid must record B (the recipient's group),
-        // not an arbitrary first group.
-        $user = $this->createTestUser();
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
-        $this->createMembership($user, $groupB);
-
-        $poster = $this->createTestUser();
-        $this->createMembership($poster, $groupA);
-        $message = $this->createTestMessage($poster, $groupA, [
-            'subject' => 'OFFER: Sofa (London)',
-        ]);
-
-        $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$groupA->id, $groupB->id]],
-        ]);
-
-        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
-
-        $this->assertEquals($groupB->id, $mail->getTracking()->groupid);
-        $this->assertNotEquals($groupA->id, $mail->getTracking()->groupid);
-    }
-
     public function test_immediate_mode_envelope_from_is_noreply_for_amp(): void
     {
         // Gmail's AMP-for-Email dynamic-mail allowlist keys on the From:
@@ -1056,17 +733,14 @@ class UnifiedDigestTest extends TestCase
         // the registered noreply sender; Reply-To carries the per-message
         // routing instead (covered by the test below).
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser(['fullname' => 'Test Poster']);
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Sofa (London)',
         ]);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
@@ -1083,8 +757,6 @@ class UnifiedDigestTest extends TestCase
         // messages.fromname, which was often empty and produced "Freegler on
         // Freegle" in the inbox while the body said "Ewalina".
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         // displayname is a computed accessor (User::getDisplayNameAttribute),
         // not a stored column — it derives from fullname, so set fullname here.
@@ -1092,8 +764,7 @@ class UnifiedDigestTest extends TestCase
         $poster = $this->createTestUser([
             'fullname' => 'Ewalina',
         ]);
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Sofa (London)',
             'fromname' => '', // empty, so the resolver must use User->displayname
         ]);
@@ -1101,7 +772,7 @@ class UnifiedDigestTest extends TestCase
         $message->setRelation('fromUser', $poster);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
@@ -1118,22 +789,19 @@ class UnifiedDigestTest extends TestCase
         // site name with " on ", so this reads "Ewalina on Freegle" rather than
         // surfacing partner branding or the jarring double "via ... via".
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser([
             'fullname' => 'Ewalina via Trash Nothing',
             'displayname' => 'Ewalina via Trash Nothing',
         ]);
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Sofa (London)',
             'fromname' => 'Ewalina via Trash Nothing',
         ]);
         $message->setRelation('fromUser', $poster);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
@@ -1155,17 +823,14 @@ class UnifiedDigestTest extends TestCase
         // will then route a "Reply" back to the original poster via the
         // inbound mail handler that decodes that address.
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser(['fullname' => 'Test Poster']);
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Sofa (London)',
         ]);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
@@ -1190,15 +855,12 @@ class UnifiedDigestTest extends TestCase
         // X-Freegle-Mail-Type — V1 header name that TN consumes (sits next to
         // the V2-style X-Freegle-Email-Type from MjmlMailable).
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
@@ -1222,12 +884,9 @@ class UnifiedDigestTest extends TestCase
         // photo (primary=1) wins over an AI-generated fallback (primary=0)
         // even when the AI one has a lower attachment id.
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
 
         // AI attachment first (lower id), user photo second (higher id).
         $aiId = \Illuminate\Support\Facades\DB::table('messages_attachments')->insertGetId([
@@ -1246,7 +905,7 @@ class UnifiedDigestTest extends TestCase
 
         $message->load('attachments');
 
-        $mail = new UnifiedDigest($user, collect([['message' => $message, 'postedToGroups' => [$group->id]]]), UnifiedDigestService::MODE_IMMEDIATE);
+        $mail = new UnifiedDigest($user, collect([['message' => $message]]), UnifiedDigestService::MODE_IMMEDIATE);
         $rc = new \ReflectionClass($mail);
         $m = $rc->getMethod('getMessageImageUrl');
         $m->setAccessible(true);
@@ -1264,12 +923,9 @@ class UnifiedDigestTest extends TestCase
         // externaluid IS NOT NULL OR externalurl IS NOT NULL. Without that
         // filter we'd pick an in-flight attachment row and 404.
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
 
         // Half-written attachment: primary=1 but no externaluid/url/archived.
         \Illuminate\Support\Facades\DB::table('messages_attachments')->insert([
@@ -1282,7 +938,7 @@ class UnifiedDigestTest extends TestCase
 
         $message->load('attachments');
 
-        $mail = new UnifiedDigest($user, collect([['message' => $message, 'postedToGroups' => [$group->id]]]), UnifiedDigestService::MODE_IMMEDIATE);
+        $mail = new UnifiedDigest($user, collect([['message' => $message]]), UnifiedDigestService::MODE_IMMEDIATE);
         $rc = new \ReflectionClass($mail);
         $m = $rc->getMethod('getMessageImageUrl');
         $m->setAccessible(true);
@@ -1301,20 +957,17 @@ class UnifiedDigestTest extends TestCase
         // now uses {!! nl2br(e(…)) !!} — same pattern as the chat
         // notification template — so per-line breaks survive.
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
         $body = "First line of description\nSecond line\n\nNew paragraph after blank";
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject'  => 'OFFER: Sofa (London)',
             'textbody' => $body,
         ]);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
@@ -1346,25 +999,22 @@ class UnifiedDigestTest extends TestCase
         // rather than a real photo. An OFFER post must use the OFFER placeholder
         // and a WANTED post the WANTED placeholder — never each other's.
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
         // No attachment → no photo → isPlaceholder → type placeholder.
-        $offerMsg = $this->createTestMessage($poster, $group, [
+        $offerMsg = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Coloplast supplies (Craigmount EH12)',
             'type' => 'Offer',
         ]);
-        $wantedMsg = $this->createTestMessage($poster, $group, [
+        $wantedMsg = $this->createTestMessage($poster, [
             'subject' => 'WANTED: Child\'s bike (Craigmount EH12)',
             'type' => 'Wanted',
         ]);
 
         $posts = collect([
-            ['message' => $offerMsg, 'postedToGroups' => [$group->id]],
-            ['message' => $wantedMsg, 'postedToGroups' => [$group->id]],
+            ['message' => $offerMsg],
+            ['message' => $wantedMsg],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -1397,15 +1047,12 @@ class UnifiedDigestTest extends TestCase
         config(['freegle.amp.secret' => '']);
 
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -1425,21 +1072,18 @@ class UnifiedDigestTest extends TestCase
         $locationId = DB::table('locations')->insertGetId([
             'name' => 'TestUserLocation',
             'type' => 'Point',
-            'lat'  => 51.55,    // ~3 miles north of the default group/message lat
+            'lat'  => 51.55,    // ~3 miles north of the default message lat
             'lng'  => -0.1278,
         ]);
 
         $user  = $this->createTestUser(['lastlocation' => $locationId]);
-        $group = $this->createTestGroup(); // defaults: lat=51.5074, lng=-0.1278
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Bicycle (London)',
         ]);
 
-        $posts = collect([['message' => $message, 'postedToGroups' => [$group->id]]]);
+        $posts = collect([['message' => $message]]);
         $mail  = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
 
         $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
@@ -1463,20 +1107,17 @@ class UnifiedDigestTest extends TestCase
         // item was reposted). Without this test the firstPostedFormatted branch
         // in UnifiedDigest::prepareCard() was never covered.
         $user  = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
         $originalDate = Carbon::now()->subDays(3);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Bookshelf (London)',
             'date'    => $originalDate,
             'arrival' => Carbon::now(),
         ]);
 
-        $posts = collect([['message' => $message, 'postedToGroups' => [$group->id]]]);
+        $posts = collect([['message' => $message]]);
         $mail  = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
 
         $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
@@ -1500,20 +1141,17 @@ class UnifiedDigestTest extends TestCase
         // email (the <mj-preview> content becomes a hidden element in the
         // compiled HTML).
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
-        $msg1 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Wardrobe (Bristol)']);
-        $msg2 = $this->createTestMessage($poster, $group, ['subject' => 'WANTED: Bicycle (Bristol)']);
-        $msg3 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Dining Table (Bristol)']);
+        $msg1 = $this->createTestMessage($poster, ['subject' => 'OFFER: Wardrobe (Bristol)']);
+        $msg2 = $this->createTestMessage($poster, ['subject' => 'WANTED: Bicycle (Bristol)']);
+        $msg3 = $this->createTestMessage($poster, ['subject' => 'OFFER: Dining Table (Bristol)']);
 
         $posts = collect([
-            ['message' => $msg1, 'postedToGroups' => [$group->id]],
-            ['message' => $msg2, 'postedToGroups' => [$group->id]],
-            ['message' => $msg3, 'postedToGroups' => [$group->id]],
+            ['message' => $msg1],
+            ['message' => $msg2],
+            ['message' => $msg3],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -1550,17 +1188,14 @@ class UnifiedDigestTest extends TestCase
         // <mj-preview> element; after MJML compilation it becomes a display:none
         // span in the compiled HTML.
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Rocking Chair (Edinburgh)',
         ]);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);

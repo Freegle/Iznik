@@ -10,7 +10,6 @@
 </template>
 <script setup>
 import { useMessageStore } from '~/stores/message'
-import { useGroupStore } from '~/stores/group'
 import MessageSummary from '~/components/MessageSummary'
 
 console.log(
@@ -41,11 +40,6 @@ const msgid = computed(() => {
 })
 
 const messageStore = useMessageStore()
-const groupStore = useGroupStore()
-
-console.log('[VISUALISE_LIST_DEBUG] Fetching group store...')
-await groupStore.fetch()
-console.log('[VISUALISE_LIST_DEBUG] Group store fetched successfully')
 
 onMounted(() => {
   console.log(

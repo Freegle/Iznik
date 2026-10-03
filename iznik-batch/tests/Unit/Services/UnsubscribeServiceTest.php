@@ -2,7 +2,6 @@
 
 namespace Tests\Unit\Services;
 
-use App\Models\Membership;
 use App\Models\User;
 use App\Services\UnsubscribeService;
 use Tests\TestCase;
@@ -17,61 +16,41 @@ class UnsubscribeServiceTest extends TestCase
         $this->service = new UnsubscribeService;
     }
 
-    private function memberWithGroups(int $count = 2): User
+    private function memberWithMailSettings(): User
     {
-        $user = $this->createTestUser();
-
-        for ($i = 0; $i < $count; $i++) {
-            $group = $this->createTestGroup();
-            Membership::create([
-                'userid' => $user->id,
-                'groupid' => $group->id,
-                'role' => Membership::ROLE_MEMBER,
-                'collection' => Membership::COLLECTION_APPROVED,
-                'emailfrequency' => 24,
-                'eventsallowed' => 1,
-                'volunteeringallowed' => 1,
-            ]);
-        }
-
-        return $user->fresh();
+        return $this->createTestUser([
+            'emailfrequency' => 24,
+            'eventsallowed' => 1,
+            'volunteeringallowed' => 1,
+        ]);
     }
 
-    public function test_digest_unsubscribe_covers_every_community(): void
+    public function test_digest_unsubscribe_turns_off_email(): void
     {
-        // A unified digest spans all their communities, so turning it off for only one
-        // would leave the same email still arriving and look like unsubscribe is broken.
-        $user = $this->memberWithGroups(3);
+        $user = $this->memberWithMailSettings();
 
         $changed = $this->service->apply($user, UnsubscribeService::TYPE_DIGEST);
+        $user->refresh();
 
         $this->assertSame([UnsubscribeService::TYPE_DIGEST], $changed);
-        $this->assertSame(
-            0,
-            Membership::where('userid', $user->id)->where('emailfrequency', '!=', 0)->count(),
-            'Every membership should be at emailfrequency 0'
-        );
+        $this->assertSame(0, $user->emailfrequency);
     }
 
     public function test_digest_unsubscribe_leaves_other_categories_alone(): void
     {
-        $user = $this->memberWithGroups();
+        $user = $this->memberWithMailSettings();
 
         $this->service->apply($user, UnsubscribeService::TYPE_DIGEST);
         $user->refresh();
 
         $this->assertEquals(1, $user->relevantallowed);
         $this->assertEquals(1, $user->newslettersallowed);
-        $this->assertSame(
-            2,
-            Membership::where('userid', $user->id)->where('eventsallowed', 1)->count(),
-            'Events should be untouched by a digest unsubscribe'
-        );
+        $this->assertEquals(1, $user->eventsallowed, 'Events should be untouched by a digest unsubscribe');
     }
 
     public function test_newsletter_and_relevant_unsubscribe_clear_the_user_columns(): void
     {
-        $user = $this->memberWithGroups();
+        $user = $this->memberWithMailSettings();
 
         $this->service->apply($user, UnsubscribeService::TYPE_NEWSLETTER);
         $this->service->apply($user, UnsubscribeService::TYPE_RELEVANT);
@@ -83,7 +62,7 @@ class UnsubscribeServiceTest extends TestCase
 
     public function test_chat_unsubscribe_writes_the_nested_setting_without_losing_others(): void
     {
-        $user = $this->memberWithGroups();
+        $user = $this->memberWithMailSettings();
         $user->settings = [
             'simplemail' => 'Full',
             'notifications' => ['email' => true, 'push' => true],
@@ -103,7 +82,7 @@ class UnsubscribeServiceTest extends TestCase
     {
         // Absent means "on" for these settings, so an absent key still has to be written -
         // otherwise the unsubscribe silently does nothing.
-        $user = $this->memberWithGroups();
+        $user = $this->memberWithMailSettings();
         $user->settings = ['simplemail' => 'Full'];
         $user->save();
 
@@ -117,7 +96,7 @@ class UnsubscribeServiceTest extends TestCase
 
     public function test_all_turns_off_every_category(): void
     {
-        $user = $this->memberWithGroups();
+        $user = $this->memberWithMailSettings();
 
         $changed = $this->service->apply($user, UnsubscribeService::TYPE_ALL);
         $user->refresh();
@@ -133,7 +112,7 @@ class UnsubscribeServiceTest extends TestCase
     {
         // The acknowledgement email has to be honest about this, rather than claiming to
         // have turned off something that was already off.
-        $user = $this->memberWithGroups();
+        $user = $this->memberWithMailSettings();
         $this->service->apply($user, UnsubscribeService::TYPE_RELEVANT);
 
         $changed = $this->service->apply($user->fresh(), UnsubscribeService::TYPE_RELEVANT);
@@ -143,7 +122,7 @@ class UnsubscribeServiceTest extends TestCase
 
     public function test_still_on_lists_the_remaining_categories(): void
     {
-        $user = $this->memberWithGroups();
+        $user = $this->memberWithMailSettings();
 
         $this->service->apply($user, UnsubscribeService::TYPE_DIGEST);
         $stillOn = $this->service->stillOn($user->fresh());
@@ -155,7 +134,7 @@ class UnsubscribeServiceTest extends TestCase
 
     public function test_unknown_type_is_rejected(): void
     {
-        $user = $this->memberWithGroups();
+        $user = $this->memberWithMailSettings();
 
         $this->assertFalse(UnsubscribeService::isValidType('nonsense'));
         $this->assertFalse(UnsubscribeService::isValidType(null));
@@ -197,7 +176,7 @@ class UnsubscribeServiceTest extends TestCase
     {
         // "Stop all Freegle email" reads as "leave Freegle", and taking chat with it means
         // someone offers a sofa, a neighbour replies, and they never find out.
-        $user = $this->memberWithGroups();
+        $user = $this->memberWithMailSettings();
 
         $changed = $this->service->apply($user, UnsubscribeService::TYPE_ALL_EXCEPT_REPLIES);
         $user->refresh();
@@ -217,7 +196,7 @@ class UnsubscribeServiceTest extends TestCase
     {
         // One-clicking Unsubscribe on a chat notification has to stop chat notifications,
         // so TYPE_ALL must not quietly start sparing them.
-        $user = $this->memberWithGroups();
+        $user = $this->memberWithMailSettings();
 
         $this->service->apply($user, UnsubscribeService::TYPE_ALL);
 

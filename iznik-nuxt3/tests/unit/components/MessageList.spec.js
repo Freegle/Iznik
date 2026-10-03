@@ -1,11 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-
-const mockGroupStore = {
-  get: vi.fn(),
-}
 
 const mockMessageStore = {
   byId: vi.fn(),
@@ -14,10 +8,6 @@ const mockMessageStore = {
   fetchCount: vi.fn(),
   count: 5,
 }
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
-}))
 
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
@@ -29,9 +19,8 @@ vi.mock('~/composables/useThrottle', () => ({
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
-    me: ref({ id: 1, settings: { browseView: 'tiles' } }),
+    me: ref({ id: 1, settings: {} }),
     myid: ref(1),
-    myGroups: ref([]),
   }),
 }))
 
@@ -52,11 +41,6 @@ describe('MessageList', () => {
       expect(propDef.default).toBe(null)
     })
 
-    it('should accept optional selectedGroup prop', () => {
-      const propDef = { type: Number, default: null }
-      expect(propDef.default).toBe(null)
-    })
-
     it('should accept optional selectedType prop', () => {
       const propDef = { type: String, default: 'All' }
       expect(propDef.default).toBe('All')
@@ -70,11 +54,6 @@ describe('MessageList', () => {
     it('should accept optional loading prop', () => {
       const propDef = { type: Boolean, default: false }
       expect(propDef.default).toBe(false)
-    })
-
-    it('should accept optional showGroupHeader prop', () => {
-      const propDef = { type: Boolean, default: true }
-      expect(propDef.default).toBe(true)
     })
 
     it('should accept optional showCountsUnseen prop', () => {
@@ -92,36 +71,6 @@ describe('MessageList', () => {
     it('should emit update:visible', () => {
       const emits = ['update:none', 'update:visible']
       expect(emits).toContain('update:visible')
-    })
-  })
-
-  describe('group header', () => {
-    it('shows GroupHeader when group and showGroupHeader', () => {
-      // v-if="group && showGroupHeader"
-      expect(true).toBe(true)
-    })
-
-    it('passes showGiveAsk prop to GroupHeader', () => {
-      // :show-give-ask="showGiveAsk"
-      expect(true).toBe(true)
-    })
-
-    it('has visually hidden heading for accessibility', () => {
-      // h2.visually-hidden "Community Information"
-      expect(true).toBe(true)
-    })
-
-    it('lets the header fold up for an established member', () => {
-      // The feed filtered to one community shows that community's header. After the first
-      // week of membership it should start as a compact bar, which GroupHeader only does
-      // when asked - the community's own page keeps the full header.
-      const src = readFileSync(
-        resolve(process.cwd(), 'components/MessageList.vue'),
-        'utf8'
-      )
-      const tag = src.match(/<GroupHeader[\s\S]*?\/>/)[0]
-      expect(tag).toMatch(/\bcollapsible\b/)
-      expect(tag).toMatch(/v-model:collapsed="groupHeaderCollapsed"/)
     })
   })
 
@@ -237,11 +186,6 @@ describe('MessageList', () => {
       expect(true).toBe(true)
     })
 
-    it('filters by selectedGroup', () => {
-      // !selectedGroup || parseInt(m?.groupid) === parseInt(selectedGroup)
-      expect(true).toBe(true)
-    })
-
     it('excludes specified message', () => {
       // m.id !== props.exclude
       expect(true).toBe(true)
@@ -254,28 +198,11 @@ describe('MessageList', () => {
       expect(true).toBe(true)
     })
 
-    it('prefers the duplicate copy on a group the user is a member of', () => {
-      // Mirrors deDuplicatedMessages: among duplicates (same poster+subject) it
-      // keeps the copy whose group the user already belongs to, so replying does
-      // not auto-join them to a non-member group (Discourse 9733 / 9729).
-      const myGroupIdSet = new Set([10])
+    it('keeps the first copy seen among duplicates by user and subject', () => {
       const store = {
-        1: {
-          id: 1,
-          fromuser: 5,
-          subject: 'OFFER: Sofa',
-          groups: [{ groupid: 20 }],
-        },
-        2: {
-          id: 2,
-          fromuser: 5,
-          subject: 'OFFER: Sofa',
-          groups: [{ groupid: 10 }],
-        },
+        1: { id: 1, fromuser: 5, subject: 'OFFER: Sofa' },
+        2: { id: 2, fromuser: 5, subject: 'OFFER: Sofa' },
       }
-      const isOnMyGroup = (m) =>
-        !!m?.groups &&
-        m.groups.some((g) => myGroupIdSet.has(parseInt(g.groupid)))
 
       const ret = []
       const dups = []
@@ -285,18 +212,11 @@ describe('MessageList', () => {
         if (!(key in dups)) {
           ret.push(m)
           dups[key] = m.id
-        } else {
-          const keptId = dups[key]
-          if (isOnMyGroup(message) && !isOnMyGroup(store[keptId])) {
-            const idx = ret.findIndex((x) => x.id === keptId)
-            if (idx !== -1) ret[idx] = m
-            dups[key] = m.id
-          }
         }
       })
 
       expect(ret).toHaveLength(1)
-      expect(ret[0].id).toBe(2) // the copy on member group 10, not non-member 20
+      expect(ret[0].id).toBe(1)
     })
 
     it('deduplicates same user+subject with differing trailing location text (Discourse 9733/7)', () => {
@@ -310,14 +230,12 @@ describe('MessageList', () => {
           fromuser: 5,
           type: 'Offer',
           subject: 'OFFER: bike (Bethnal Green)',
-          groups: [{ groupid: 20 }],
         },
         2: {
           id: 2,
           fromuser: 5,
           type: 'Offer',
           subject: 'OFFER: bike (Bethel)',
-          groups: [{ groupid: 10 }],
         },
       }
 
@@ -435,13 +353,8 @@ describe('MessageList', () => {
   })
 
   describe('store integrations', () => {
-    it('uses groupStore for group data', () => {
-      const stores = ['group', 'message']
-      expect(stores).toContain('group')
-    })
-
     it('uses messageStore for message data', () => {
-      const stores = ['group', 'message']
+      const stores = ['message']
       expect(stores).toContain('message')
     })
   })
@@ -461,17 +374,12 @@ describe('MessageList', () => {
   describe('async components', () => {
     it('lazy loads OurMessage', () => {
       // defineAsyncComponent(() => import('~/components/OurMessage.vue'))
-      const asyncComponents = ['OurMessage', 'GroupHeader', 'MessageSkeleton']
+      const asyncComponents = ['OurMessage', 'MessageSkeleton']
       expect(asyncComponents).toContain('OurMessage')
     })
 
-    it('lazy loads GroupHeader', () => {
-      const asyncComponents = ['OurMessage', 'GroupHeader', 'MessageSkeleton']
-      expect(asyncComponents).toContain('GroupHeader')
-    })
-
     it('lazy loads MessageSkeleton', () => {
-      const asyncComponents = ['OurMessage', 'GroupHeader', 'MessageSkeleton']
+      const asyncComponents = ['OurMessage', 'MessageSkeleton']
       expect(asyncComponents).toContain('MessageSkeleton')
     })
   })

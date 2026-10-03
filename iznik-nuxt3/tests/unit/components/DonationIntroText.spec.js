@@ -6,16 +6,15 @@ describe('DonationIntroText', () => {
   function createWrapper(props = {}) {
     return mount(DonationIntroText, {
       props: {
-        groupname: 'Test Freegle',
         ...props,
       },
     })
   }
 
   describe('rendering', () => {
-    it('displays group name', () => {
-      const wrapper = createWrapper({ groupname: 'Local Freegle' })
-      expect(wrapper.text()).toContain('Local Freegle')
+    it('mentions Freegle', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.text()).toContain('Freegle')
     })
 
     it('mentions being a charity', () => {
@@ -37,6 +36,11 @@ describe('DonationIntroText', () => {
     it('asks to please donate', () => {
       const wrapper = createWrapper()
       expect(wrapper.text()).toContain('please donate')
+    })
+
+    it('always raises across the UK', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.text()).toContain('across the UK')
     })
   })
 
@@ -62,21 +66,6 @@ describe('DonationIntroText', () => {
     it('does not show previous donor message when not donated', () => {
       const wrapper = createWrapper({ donated: null })
       expect(wrapper.text()).not.toContain("You've donated before")
-    })
-
-    it('shows "for this community" when groupid set and target not met', () => {
-      const wrapper = createWrapper({ groupid: 123, targetMet: false })
-      expect(wrapper.text()).toContain('for this community')
-    })
-
-    it('shows "across the UK" when no groupid', () => {
-      const wrapper = createWrapper({ groupid: null })
-      expect(wrapper.text()).toContain('across the UK')
-    })
-
-    it('shows "across the UK" when target is met', () => {
-      const wrapper = createWrapper({ groupid: 123, targetMet: true })
-      expect(wrapper.text()).toContain('across the UK')
     })
   })
 

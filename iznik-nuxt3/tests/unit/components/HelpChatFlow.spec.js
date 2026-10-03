@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import HelpChatFlow from '~/components/HelpChatFlow.vue'
 import { useAuthStore } from '~/stores/auth'
 
@@ -10,10 +10,27 @@ vi.mock('~/stores/auth', () => ({
   })),
 }))
 
+const mockChatStore = {
+  openChatToMods: vi.fn().mockResolvedValue(999),
+}
+
+const mockRouterPush = vi.fn()
+
+vi.mock('~/stores/chat', () => ({
+  useChatStore: () => mockChatStore,
+}))
+
+vi.mock('#imports', () => ({
+  useRouter: () => ({
+    push: mockRouterPush,
+  }),
+}))
+
 describe('HelpChatFlow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useAuthStore.mockReturnValue({ user: null })
+    mockChatStore.openChatToMods.mockResolvedValue(999)
   })
 
   function createWrapper() {
@@ -35,16 +52,6 @@ describe('HelpChatFlow', () => {
               '<a :href="to" :data-to="to" class="nuxt-link"><slot /></a>',
             props: ['to'],
             inheritAttrs: true,
-          },
-          GroupRememberSelect: {
-            template:
-              '<select class="group-select" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)"><option>Mock Group</option></select>',
-            props: ['modelValue', 'remember'],
-          },
-          ChatButton: {
-            template:
-              '<button class="chat-button" :data-groupid="groupid">{{ title }}</button>',
-            props: ['groupid', 'size', 'title', 'variant'],
           },
           NoticeMessage: {
             template:
@@ -470,7 +477,7 @@ describe('HelpChatFlow', () => {
           .find((o) => o.text().includes('Help using Freegle'))
         await usageOption.trigger('click')
         expect(wrapper.text()).toContain(
-          'Your local volunteer team are happy to help'
+          'Our volunteer team are happy to help'
         )
       })
 
@@ -485,7 +492,7 @@ describe('HelpChatFlow', () => {
         expect(wrapper.text()).toContain('Please log in to contact')
       })
 
-      it('shows GroupRememberSelect and ChatButton when logged in', async () => {
+      it('does not name a community anywhere in the contact copy', async () => {
         useAuthStore.mockReturnValue({ user: { id: 123 } })
         const wrapper = createWrapper()
         await wrapper.find('.contact-header').trigger('click')
@@ -493,11 +500,11 @@ describe('HelpChatFlow', () => {
           .findAll('.contact-option')
           .find((o) => o.text().includes('Help using Freegle'))
         await usageOption.trigger('click')
-        expect(wrapper.find('.group-select').exists()).toBe(true)
-        expect(wrapper.find('.chat-button').exists()).toBe(true)
+        expect(wrapper.text()).not.toContain('community')
+        expect(wrapper.text()).not.toContain('local volunteer team')
       })
 
-      it('ChatButton has correct title', async () => {
+      it('shows a single national contact button when logged in', async () => {
         useAuthStore.mockReturnValue({ user: { id: 123 } })
         const wrapper = createWrapper()
         await wrapper.find('.contact-header').trigger('click')
@@ -505,9 +512,24 @@ describe('HelpChatFlow', () => {
           .findAll('.contact-option')
           .find((o) => o.text().includes('Help using Freegle'))
         await usageOption.trigger('click')
-        expect(wrapper.find('.chat-button').text()).toContain(
-          'Contact community volunteers'
-        )
+        const contactBtn = wrapper.find('.contact-submit-btn')
+        expect(contactBtn.exists()).toBe(true)
+        expect(contactBtn.text()).toContain('Message Freegle volunteers')
+      })
+
+      it('opens a national mod chat and navigates to it when clicked', async () => {
+        useAuthStore.mockReturnValue({ user: { id: 123 } })
+        const wrapper = createWrapper()
+        await wrapper.find('.contact-header').trigger('click')
+        const usageOption = wrapper
+          .findAll('.contact-option')
+          .find((o) => o.text().includes('Help using Freegle'))
+        await usageOption.trigger('click')
+        await wrapper.find('.contact-submit-btn').trigger('click')
+        await flushPromises()
+        expect(mockChatStore.openChatToMods).toHaveBeenCalledTimes(1)
+        expect(mockChatStore.openChatToMods).toHaveBeenCalledWith()
+        expect(mockRouterPush).toHaveBeenCalledWith('/chats/999')
       })
     })
 

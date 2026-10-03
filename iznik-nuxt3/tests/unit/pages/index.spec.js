@@ -1,10 +1,10 @@
 /**
  * pages/index.vue boot behaviour.
  *
- * The landing page's data cascade (group list → message inbounds → message
- * details) exists as an SSR prefetch for the web build. In the Capacitor app
- * build (ssr: false, runtimeConfig.public.ISAPP) it used to run client-side as
- * top-level awaits, blocking first paint on ~3 sequential API round trips even
+ * The landing page's data cascade (message inbounds → message details)
+ * exists as an SSR prefetch for the web build. In the Capacitor app build
+ * (ssr: false, runtimeConfig.public.ISAPP) it used to run client-side as
+ * top-level awaits, blocking first paint on sequential API round trips even
  * for logged-in users who are immediately redirected to /browse.
  *
  * Contract:
@@ -38,11 +38,6 @@ vi.mock('~/stores/message', () => ({
     fetchInBounds: mockFetchInBounds,
     fetch: mockMessageFetch,
   }),
-}))
-
-const mockGroupFetch = vi.fn()
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({ fetch: mockGroupFetch }),
 }))
 
 vi.mock('~/api', () => ({
@@ -97,7 +92,6 @@ function setAppBuild(isApp) {
 describe('pages/index boot data cascade', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockGroupFetch.mockResolvedValue(undefined)
     mockFetchInBounds.mockResolvedValue([])
     mockMessageFetch.mockResolvedValue({})
     setAuth()
@@ -121,14 +115,13 @@ describe('pages/index boot data cascade', () => {
     mountPage()
     await flushPromises()
 
-    expect(mockGroupFetch).not.toHaveBeenCalled()
     expect(mockFetchInBounds).not.toHaveBeenCalled()
   })
 
   it('app build logged out renders immediately and fetches after mount', async () => {
     setAppBuild(true)
     // Landing fetches hang forever - the page must still render.
-    mockGroupFetch.mockReturnValue(new Promise(() => {}))
+    mockFetchInBounds.mockReturnValue(new Promise(() => {}))
 
     const wrapper = mountPage()
     await flushPromises()
@@ -138,20 +131,20 @@ describe('pages/index boot data cascade', () => {
     expect(wrapper.find('.landing-page').exists()).toBe(true)
 
     // And the fetch was kicked off (after mount).
-    expect(mockGroupFetch).toHaveBeenCalledTimes(1)
+    expect(mockFetchInBounds).toHaveBeenCalledTimes(1)
   })
 
   it('web build (client) keeps the blocking prefetch', async () => {
     setAppBuild(false)
-    // While the group fetch hangs, Suspense must NOT resolve - this is the
+    // While the fetch hangs, Suspense must NOT resolve - this is the
     // existing web behaviour, preserved.
-    mockGroupFetch.mockReturnValue(new Promise(() => {}))
+    mockFetchInBounds.mockReturnValue(new Promise(() => {}))
 
     const wrapper = mountPage()
     await flushPromises()
     await nextTick()
 
-    expect(mockGroupFetch).toHaveBeenCalledTimes(1)
+    expect(mockFetchInBounds).toHaveBeenCalledTimes(1)
     expect(wrapper.find('.landing-page').exists()).toBe(false)
   })
 
@@ -165,7 +158,6 @@ describe('pages/index boot data cascade', () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    expect(mockGroupFetch).toHaveBeenCalledTimes(1)
     expect(mockFetchInBounds).toHaveBeenCalledTimes(1)
     // Only offers get detail-preloaded.
     expect(mockMessageFetch).toHaveBeenCalledTimes(1)

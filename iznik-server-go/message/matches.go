@@ -78,7 +78,7 @@ func Matches(c *fiber.Ctx) error {
 	swlng := float32(lng - matchBoxDegrees)
 	nelat := float32(lat + matchBoxDegrees)
 	nelng := float32(lng + matchBoxDegrees)
-	candidates := embedding.Global.Search(queryVec, limit*3, "Offer", nil, nil, swlat, swlng, nelat, nelng)
+	candidates := embedding.Global.Search(queryVec, limit*3, "Offer", nil, swlat, swlng, nelat, nelng)
 
 	myid := user.WhoAmI(c)
 
@@ -100,7 +100,6 @@ func Matches(c *fiber.Ctx) error {
 		blat, blng := roadblur.RoadBlur(cnd.Lat, cnd.Lng, utils.BLUR_USER)
 		out = append(out, SimilarResult{
 			Msgid:   cnd.Msgid,
-			Groupid: cnd.Groupid,
 			Score:   cnd.SubjectCos,
 			Lat:     blat,
 			Lng:     blng,

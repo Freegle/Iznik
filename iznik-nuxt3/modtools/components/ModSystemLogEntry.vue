@@ -95,31 +95,6 @@
             >
               <v-icon icon="exclamation-triangle" scale="0.8" />
             </ExternalLink>
-            <!-- Group display -->
-            <span v-if="displayGroup" class="entity-tag group-tag">
-              <ProfileImage
-                v-if="displayGroup.profile"
-                :image="displayGroup.profile"
-                :name="displayGroup.namedisplay || displayGroup.nameshort"
-                class="entity-avatar"
-                is-thumbnail
-              />
-              <ExternalLink
-                :href="
-                  'https://www.ilovefreegle.org/explore/' +
-                  displayGroup.nameshort
-                "
-                :title="'View group on Freegle: ' + displayGroup.nameshort"
-              >
-                {{ displayGroup.nameshort || displayGroup.namedisplay }}
-              </ExternalLink>
-            </span>
-            <span
-              v-else-if="log.group_id"
-              class="entity-tag group-tag text-muted"
-            >
-              group #{{ log.group_id }}
-            </span>
             <!-- Message display -->
             <span v-if="log.message_id" class="entity-tag message-tag">
               <v-icon icon="envelope" scale="0.8" />
@@ -300,29 +275,6 @@
             </div>
             <span v-else>#{{ log.byuser_id }}</span>
           </div>
-        </div>
-
-        <!-- Group -->
-        <div v-if="log.group_id" class="detail-section">
-          <h6>Group</h6>
-          <div v-if="displayGroup">
-            <ProfileImage
-              v-if="displayGroup.profile"
-              :image="displayGroup.profile"
-              :name="displayGroup.namedisplay || displayGroup.nameshort"
-              class="entity-avatar me-2"
-              is-thumbnail
-            />
-            <ExternalLink
-              :href="
-                'https://www.ilovefreegle.org/explore/' + displayGroup.nameshort
-              "
-            >
-              {{ displayGroup.namedisplay || displayGroup.nameshort }}
-            </ExternalLink>
-            <span class="text-muted ms-1">(#{{ log.group_id }})</span>
-          </div>
-          <span v-else>#{{ log.group_id }}</span>
         </div>
 
         <!-- Message -->
@@ -523,7 +475,6 @@ import {
 } from '../composables/useSystemLogFormatter'
 import { useSystemLogsStore } from '../stores/systemlogs'
 import { useUserStore } from '~/stores/user'
-import { useGroupStore } from '~/stores/group'
 import api from '~/api'
 
 const props = defineProps({
@@ -557,13 +508,11 @@ const emit = defineEmits(['filter-trace', 'filter-session', 'filter-ip'])
 
 const systemLogsStore = useSystemLogsStore()
 const userStore = useUserStore()
-const groupStore = useGroupStore()
 
 // Look up the log object from the store by ID.
 const log = computed(() => systemLogsStore.getLog(props.logId) || {})
 
 const userLoading = ref(false)
-const groupLoading = ref(false)
 const isExpanded = ref(false)
 const showModal = ref(false)
 // API headers (fetched on demand for v1 API logs)
@@ -654,14 +603,6 @@ const actionTextClean = computed(() => {
     )
   }
 
-  // Replace group #ID with group name
-  if (displayGroup.value?.nameshort) {
-    text = text.replace(
-      new RegExp(`group #${log.value.group_id}\\b`, 'gi'),
-      displayGroup.value.nameshort
-    )
-  }
-
   return text
 })
 
@@ -719,13 +660,6 @@ const displayUser = computed(() => {
 const byUser = computed(() => {
   if (log.value.byuser_id) {
     return userStore.list[log.value.byuser_id]
-  }
-  return null
-})
-
-const displayGroup = computed(() => {
-  if (log.value.group_id) {
-    return groupStore.get(log.value.group_id)
   }
   return null
 })
@@ -908,16 +842,6 @@ watch(
   { immediate: true }
 )
 
-watch(
-  () => log.value.group_id,
-  (id) => {
-    if (id && !groupStore.get(id)) {
-      fetchGroup(id)
-    }
-  },
-  { immediate: true }
-)
-
 watch(showModal, (newVal) => {
   // Fetch headers when modal opens for API logs
   if (newVal && isApiLog.value && !apiHeaders.value && !headersLoading.value) {
@@ -934,18 +858,6 @@ async function fetchUser(id) {
     console.error('Failed to fetch user', id, e)
   } finally {
     userLoading.value = false
-  }
-}
-
-async function fetchGroup(id) {
-  if (!id) return
-  groupLoading.value = true
-  try {
-    await groupStore.fetch(id)
-  } catch (e) {
-    console.error('Failed to fetch group', id, e)
-  } finally {
-    groupLoading.value = false
   }
 }
 
@@ -1326,20 +1238,6 @@ async function fetchApiHeaders() {
   width: 16px;
   height: 16px;
   border-radius: 2px;
-}
-
-.group-tag {
-  background: #e7f3ff;
-  color: #0056b3;
-}
-
-.group-tag a {
-  color: inherit;
-  text-decoration: none;
-}
-
-.group-tag a:hover {
-  text-decoration: underline;
 }
 
 .message-tag {

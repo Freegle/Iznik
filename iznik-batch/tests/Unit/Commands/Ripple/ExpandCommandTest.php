@@ -93,34 +93,6 @@ class ExpandCommandTest extends TestCase
     }
 
     /**
-     * --within-group accepts a comma-separated list of group ids (the experiment scope) and resolves
-     * it to the union of those groups' polyindex polygons. MySQL ST_Union is binary, so the command
-     * chains it over per-id subqueries; this exercises that path with two real group polygons.
-     */
-    public function test_within_group_accepts_a_csl_and_resolves_the_union(): void
-    {
-        Http::fake();
-        $g1 = $this->createTestGroup();
-        $g2 = $this->createTestGroup();
-        DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857) WHERE id = ?",
-            [$g1->id]
-        );
-        DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((0.0 51.4,0.2 51.4,0.2 51.6,0.0 51.6,0.0 51.4))', 3857) WHERE id = ?",
-            [$g2->id]
-        );
-
-        $this->artisan('ripple:expand', [
-            '--within-group' => $g1->id.','.$g2->id,
-            '--dry-run' => true,
-            '--limit' => 10,
-        ])
-            ->expectsOutputToContain('union of 2 area polygon(s)')
-            ->assertExitCode(0);
-    }
-
-    /**
      * Single-instance guard: the scheduler's withoutOverlapping() is unreliable for
      * runInBackground() jobs (the overlap mutex is freed when the foreground tick forks), so on
      * 2026-06-26 dozens of ripple:expand runs piled up and starved the serial worker with

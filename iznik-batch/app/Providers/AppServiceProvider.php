@@ -10,6 +10,8 @@ use App\Database\DeadlockRetryConnection;
 use App\Database\FailoverConnectionFactory;
 use App\Listeners\CronJobStatusListener;
 use App\Listeners\SpamCheckListener;
+use App\Services\Judgement\ClaudeJudge;
+use App\Services\Judgement\Judge;
 use App\Services\LokiService;
 use Illuminate\Console\Events\CommandStarting;
 use Illuminate\Console\Events\ScheduledTaskFinished;
@@ -46,6 +48,13 @@ class AppServiceProvider extends ServiceProvider
         // Register LokiService as a singleton.
         $this->app->singleton(LokiService::class, function ($app) {
             return new LokiService();
+        });
+
+        // Rules-as-questions content judge (ai-judgement.md). Bound to the real
+        // Claude-backed implementation here; tests swap in FakeJudge via the
+        // container instead of hitting the network.
+        $this->app->singleton(Judge::class, function ($app) {
+            return new ClaudeJudge();
         });
 
         // How HostHealthCheck reaches the estate's hosts (monitor:scheduled-

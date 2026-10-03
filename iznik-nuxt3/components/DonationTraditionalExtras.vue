@@ -8,17 +8,10 @@
       <!-- eslint-disable-next-line -->
       Anything you can give is very welcome. You can find other ways to donate (e.g. bank transfer or cheque) <nuxt-link no-prefetch to="/donate?noguard=true">here</nuxt-link>.
     </p>
-    <p
-      v-if="groupid && !targetMet && !hideThermometer"
-      class="text-muted small mt-1"
-    >
+    <p v-if="!targetMet" class="text-muted small mt-1">
       This will contribute to the general fund for the ongoing support of
       Freegle. If we raise more than the target, we'll use it to support other
       communities.
-    </p>
-    <p v-if="groupid && hideThermometer" class="text-muted small mt-1">
-      This will contribute to the general fund for the ongoing support of
-      {{ groupname }} and other communities.
     </p>
   </div>
 </template>
@@ -27,20 +20,7 @@
 import SupporterInfo from './SupporterInfo'
 
 defineProps({
-  groupid: {
-    type: Number,
-    required: false,
-    default: null,
-  },
-  groupname: {
-    type: String,
-    required: true,
-  },
   targetMet: {
-    type: Boolean,
-    default: false,
-  },
-  hideThermometer: {
     type: Boolean,
     default: false,
   },

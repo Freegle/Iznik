@@ -54,7 +54,7 @@ class RippleReplyService
      * while it has a non-'released' rippling row. Add `AND <this>` to the WHERE of any
      * query that decides whether to notify the poster of a chat message.
      *
-     * @param string $cmAlias the chat_messages alias/column to match on (e.g. 'chat_messages.id')
+     * @param  string  $cmAlias  the chat_messages alias/column to match on (e.g. 'chat_messages.id')
      */
     public static function deliveryGateSql(string $cmAlias = 'chat_messages.id'): string
     {
@@ -93,7 +93,7 @@ class RippleReplyService
         if ($lat === null || $lng === null) {
             return false;
         }
-        if (!$this->hasReach($msgid)) {
+        if (! $this->hasReach($msgid)) {
             return false;
         }
         $verdict = $this->reach->reachVerdict($msgid, $lat, $lng, $band);
@@ -106,7 +106,7 @@ class RippleReplyService
             return false;
         }
 
-        return !$this->qualifiesForFirstReplyPassthrough($msgid, $lat, $lng);
+        return ! $this->qualifiesForFirstReplyPassthrough($msgid, $lat, $lng);
     }
 
     /**
@@ -119,13 +119,13 @@ class RippleReplyService
      */
     public function qualifiesForFirstReplyPassthrough(int $msgid, float $lat, float $lng): bool
     {
-        if (!config('freegle.firstreply.enabled') || !config('freegle.firstreply.passthrough.enabled')) {
+        if (! config('freegle.firstreply.enabled') || ! config('freegle.firstreply.passthrough.enabled')) {
             return false;
         }
 
         // Trial arm: a post outside the rollout behaves exactly as it did before
         // any of this existed, which is what makes it a usable control.
-        if (!Rollout::includes($msgid)) {
+        if (! Rollout::includes($msgid)) {
             return false;
         }
 
@@ -134,7 +134,7 @@ class RippleReplyService
             return false;
         }
 
-        if (!$this->maxReach()->isWithinMaxReach($msgid, $lat, $lng)) {
+        if (! $this->maxReach()->isWithinMaxReach($msgid, $lat, $lng)) {
             return false;
         }
 
@@ -272,7 +272,7 @@ class RippleReplyService
      * post rather than once per held reply. The origin is only the fallback measure now;
      * the real one is the distance past the reach boundary.
      *
-     * @param array{lat:float,lng:float} $origin
+     * @param  array{lat:float,lng:float}  $origin
      */
     private function dueFrom(int $msgid, array $origin, Carbon $heldAt, ?float $lat, ?float $lng): Carbon
     {
@@ -367,7 +367,7 @@ class RippleReplyService
      */
     public function releaseDue(int $msgid): int
     {
-        if (!config('freegle.ripple.reply_delay.enabled', true)) {
+        if (! config('freegle.ripple.reply_delay.enabled', true)) {
             return 0;
         }
 
@@ -403,7 +403,7 @@ class RippleReplyService
             // Keep the stamp in step with the policy, so changing the config re-dates
             // rows that have not come off hold rather than leaving a stale promise.
             $stamped = $row->dueat === null ? null : Carbon::parse($row->dueat);
-            if ($stamped === null || !$stamped->equalTo($due)) {
+            if ($stamped === null || ! $stamped->equalTo($due)) {
                 DB::table('rippling_held_replies')->where('id', $row->id)
                     ->update(['dueat' => $due]);
             }
@@ -433,7 +433,7 @@ class RippleReplyService
         try {
             DB::statement(
                 'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, 1) '
-                . 'ON DUPLICATE KEY UPDATE count = count + 1',
+                .'ON DUPLICATE KEY UPDATE count = count + 1',
                 [$event]
             );
         } catch (\Throwable $e) {
@@ -465,7 +465,7 @@ class RippleReplyService
             if ($row->lat === null || $row->lng === null) {
                 continue;
             }
-            if (!$this->reach->isWithinReach($msgid, (float) $row->lat, (float) $row->lng, $row->density_band ?? null)) {
+            if (! $this->reach->isWithinReach($msgid, (float) $row->lat, (float) $row->lng, $row->density_band ?? null)) {
                 continue;
             }
             $this->release($row->id, 'covered');
@@ -590,10 +590,10 @@ class RippleReplyService
         // release, keyed off the message's own date via GREATEST so we never move
         // latestmessage backwards.
         DB::update(
-            'UPDATE chat_rooms cr ' .
-            'JOIN rippling_held_replies rhr ON rhr.id = ? ' .
-            'JOIN chat_messages cm ON cm.id = rhr.chatmsgid ' .
-            'SET cr.latestmessage = GREATEST(COALESCE(cr.latestmessage, cm.date), cm.date) ' .
+            'UPDATE chat_rooms cr '.
+            'JOIN rippling_held_replies rhr ON rhr.id = ? '.
+            'JOIN chat_messages cm ON cm.id = rhr.chatmsgid '.
+            'SET cr.latestmessage = GREATEST(COALESCE(cr.latestmessage, cm.date), cm.date) '.
             'WHERE cr.id = rhr.chatid',
             [$ripplingRowId]
         );

@@ -5,47 +5,35 @@
         <div class="donation-ask-content">
           <!-- Traditional variant: Show intro text -->
           <DonationIntroText
-            v-if="!isMinimalVariant && !birthdayMode"
-            :groupid="groupid"
-            :groupname="groupname"
+            v-if="!isMinimalVariant"
             :target="target"
-            :target-met="targetMet"
             :donated="donated"
             :hide-intro="hideIntro"
           />
 
           <!-- Minimal variant: Show simple message -->
-          <p v-if="isMinimalVariant && !birthdayMode" class="donation-message">
+          <p v-if="isMinimalVariant" class="donation-message">
             Freegle is volunteer-run and free to use. Donate to help us
             continue? You'll get a supporter badge for a year and no ads for a
             month.
           </p>
 
-          <DonationBirthdayDisplay
-            v-if="birthdayMode"
-            v-model="otherAmount"
-            :price="price"
-            :monthly="monthly"
-          />
-
-          <div v-else>
-            <div class="donation-controls">
-              <div class="amount-display">
-                <div class="amount-label">Donation Amount</div>
-                <div class="amount-value">£{{ selectedAmount.toFixed(2) }}</div>
-              </div>
-              <input
-                v-model.number="selectedAmount"
-                type="range"
-                min="2"
-                max="25"
-                step="1"
-                class="amount-slider"
-              />
-              <div class="slider-labels">
-                <span>£2</span>
-                <span>£25</span>
-              </div>
+          <div class="donation-controls">
+            <div class="amount-display">
+              <div class="amount-label">Donation Amount</div>
+              <div class="amount-value">£{{ selectedAmount.toFixed(2) }}</div>
+            </div>
+            <input
+              v-model.number="selectedAmount"
+              type="range"
+              min="2"
+              max="25"
+              step="1"
+              class="amount-slider"
+            />
+            <div class="slider-labels">
+              <span>£2</span>
+              <span>£25</span>
             </div>
           </div>
 
@@ -85,9 +73,8 @@
         </div>
         <!-- Traditional variant: Show thermometer inside container -->
         <DonationThermometer
-          v-if="!hideThermometer && !isMinimalVariant"
+          v-if="!isMinimalVariant"
           ref="thermo"
-          :groupid="groupid"
           class="ml-md-4 flex-shrink-0"
         />
       </div>
@@ -95,10 +82,7 @@
            two-column row so the text can use the full modal width. -->
       <DonationTraditionalExtras
         v-if="!isMinimalVariant"
-        :groupid="groupid"
-        :groupname="groupname"
         :target-met="targetMet"
-        :hide-thermometer="hideThermometer"
         class="text-center"
       />
     </div>
@@ -109,22 +93,12 @@
 import { ref, watch, onMounted, computed } from 'vue'
 import DonationButton from './DonationButton'
 import DonationIntroText from './DonationIntroText'
-import DonationBirthdayDisplay from './DonationBirthdayDisplay'
 import DonationTraditionalExtras from './DonationTraditionalExtras'
 import Api from '~/api'
 import { useMobileStore } from '~/stores/mobile'
 import { action } from '~/composables/useClientLog'
 
 const props = defineProps({
-  groupid: {
-    type: Number,
-    required: false,
-    default: null,
-  },
-  groupname: {
-    type: String,
-    required: true,
-  },
   target: {
     type: Number,
     default: 2000,
@@ -156,16 +130,6 @@ const props = defineProps({
     required: false,
     default: false,
   },
-  hideThermometer: {
-    type: Boolean,
-    required: false,
-    default: false,
-  },
-  birthdayMode: {
-    type: Boolean,
-    required: false,
-    default: false,
-  },
 })
 
 const emit = defineEmits(['score', 'success', 'cancel'])
@@ -178,7 +142,6 @@ const isApp = ref(mobileStore.isApp)
 const monthly = ref(false)
 const price = ref(props.default)
 const payPalFallback = ref(false)
-const otherAmount = ref(null)
 const belowStripe = ref(null)
 const thermo = ref(null)
 
@@ -212,14 +175,6 @@ watch(selectedAmount, (newVal, oldVal) => {
       input_method: 'slider',
     })
   }, 500)
-})
-
-watch(otherAmount, (newVal) => {
-  if (newVal) {
-    price.value = parseFloat(newVal)
-  } else {
-    price.value = props.default
-  }
 })
 
 function score(amount) {
@@ -266,40 +221,38 @@ function cancel() {
 }
 
 onMounted(async () => {
-  if (!props.birthdayMode) {
-    try {
-      const chosen = await api.bandit.choose({
-        uid: 'donation',
-      })
+  try {
+    const chosen = await api.bandit.choose({
+      uid: 'donation',
+    })
 
-      if (chosen && chosen.variant) {
-        // Handle legacy 'stripe' variant - map it to traditional-5
-        if (!chosen.variant.includes('-')) {
-          variation.value = 'traditional'
-          const flooredAmount = Math.max(5, props.default)
-          testAmount.value = flooredAmount
-          selectedAmount.value = flooredAmount
-          price.value = flooredAmount
-        } else {
-          const parts = chosen.variant.split('-')
-          const amount = parseFloat(parts[parts.length - 1])
-          const varType = parts.slice(0, -1).join('-')
-          const flooredAmount = Math.max(amount, props.default)
+    if (chosen && chosen.variant) {
+      // Handle legacy 'stripe' variant - map it to traditional-5
+      if (!chosen.variant.includes('-')) {
+        variation.value = 'traditional'
+        const flooredAmount = Math.max(5, props.default)
+        testAmount.value = flooredAmount
+        selectedAmount.value = flooredAmount
+        price.value = flooredAmount
+      } else {
+        const parts = chosen.variant.split('-')
+        const amount = parseFloat(parts[parts.length - 1])
+        const varType = parts.slice(0, -1).join('-')
+        const flooredAmount = Math.max(amount, props.default)
 
-          variation.value = varType
-          testAmount.value = flooredAmount
-          selectedAmount.value = flooredAmount
-          price.value = flooredAmount
-        }
+        variation.value = varType
+        testAmount.value = flooredAmount
+        selectedAmount.value = flooredAmount
+        price.value = flooredAmount
       }
-
-      await api.bandit.shown({
-        uid: 'donation',
-        variant: chosen?.variant || `${variation.value}-${testAmount.value}`,
-      })
-    } catch (err) {
-      console.error('Error with bandit API:', err)
     }
+
+    await api.bandit.shown({
+      uid: 'donation',
+      variant: chosen?.variant || `${variation.value}-${testAmount.value}`,
+    })
+  } catch (err) {
+    console.error('Error with bandit API:', err)
   }
 })
 </script>

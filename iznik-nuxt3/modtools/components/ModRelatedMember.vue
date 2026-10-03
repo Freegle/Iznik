@@ -49,7 +49,7 @@
 <script setup>
 import { computed } from 'vue'
 import dayjs from 'dayjs'
-import { useMemberStore } from '~/stores/member'
+import { useMemberStore } from '~/modtools/stores/member'
 import { useUserStore } from '~/stores/user'
 import { getPreferredEmail } from '~/modtools/composables/usePreferredEmail'
 

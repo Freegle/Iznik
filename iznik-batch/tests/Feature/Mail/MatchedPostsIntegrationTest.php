@@ -58,8 +58,6 @@ class MatchedPostsIntegrationTest extends TestCase
             $this->markTestSkipped('Mailpit is not available.');
         }
 
-        $group = $this->createTestGroup();
-
         // createTestUser already gives each user a preferred email; use it (adding
         // a second preferred email makes email_preferred ambiguous).
         $recipient = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 1, 'lastrelevantcheck' => null]);
@@ -67,20 +65,20 @@ class MatchedPostsIntegrationTest extends TestCase
         $offerer = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 1, 'lastrelevantcheck' => null]);
 
         // Recipient's fresh WANTED (driver: needs spatial + embedding).
-        $wanted = $this->createTestMessage($recipient, $group, ['type' => 'Wanted', 'subject' => 'WANTED: Bookcase (York)', 'arrival' => now()]);
+        $wanted = $this->createTestMessage($recipient, ['type' => 'Wanted', 'subject' => 'WANTED: Bookcase (York)', 'arrival' => now()]);
         DB::statement(
-            'INSERT INTO messages_spatial (msgid, groupid, msgtype, successful, promised, arrival, point)
-             VALUES (?, ?, ?, 0, 0, ?, ST_GeomFromText(?, 3857))',
-            [$wanted->id, $group->id, 'Wanted', now(), sprintf('POINT(%F %F)', $group->lng, $group->lat)]
+            'INSERT INTO messages_spatial (msgid, msgtype, successful, promised, arrival, point)
+             VALUES (?, ?, 0, 0, ?, ST_GeomFromText(?, 3857))',
+            [$wanted->id, 'Wanted', now(), sprintf('POINT(%F %F)', $wanted->lng, $wanted->lat)]
         );
         DB::statement('INSERT INTO messages_embeddings (msgid, subject_embedding, model_version) VALUES (?, ?, ?)',
             [$wanted->id, str_repeat("\0", 1024), 'test']);
 
         // Matching OFFER.
-        $offer = $this->createTestMessage($offerer, $group, ['type' => 'Offer', 'subject' => 'OFFER: Bookcase (York)', 'arrival' => now()->subHours(2)]);
+        $offer = $this->createTestMessage($offerer, ['type' => 'Offer', 'subject' => 'OFFER: Bookcase (York)', 'arrival' => now()->subHours(2)]);
 
         FreegleApiClient::fake([
-            ['body' => [['id' => $offer->id, 'score' => 0.85, 'groupid' => $group->id, 'lat' => 51.5, 'lng' => -0.1]]],
+            ['body' => [['id' => $offer->id, 'score' => 0.85, 'lat' => 51.5, 'lng' => -0.1]]],
         ]);
 
         $this->artisan('matches:notify')->assertExitCode(0);

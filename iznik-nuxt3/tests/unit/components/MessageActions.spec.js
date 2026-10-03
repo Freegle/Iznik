@@ -32,7 +32,7 @@ describe('MessageActions', () => {
   const mockMessage = {
     id: 123,
     url: 'https://freegle.example/message/123',
-    groups: [{ id: 1 }],
+    collection: 'Approved',
   }
 
   beforeEach(() => {
@@ -99,9 +99,9 @@ describe('MessageActions', () => {
   })
 
   describe('report button', () => {
-    it('shows report button when logged in and message has groups', () => {
+    it('shows report button when logged in and the post has been submitted', () => {
       mockLoggedIn.mockReturnValue(true)
-      mockById.mockReturnValue({ ...mockMessage, groups: [{ id: 1 }] })
+      mockById.mockReturnValue({ ...mockMessage, collection: 'Approved' })
       const wrapper = createWrapper()
       expect(wrapper.text()).toContain('Report this post')
     })
@@ -112,9 +112,9 @@ describe('MessageActions', () => {
       expect(wrapper.text()).not.toContain('Report this post')
     })
 
-    it('hides report button when message has no groups', () => {
+    it('hides report button when the post is still a draft', () => {
       mockLoggedIn.mockReturnValue(true)
-      mockById.mockReturnValue({ ...mockMessage, groups: [] })
+      mockById.mockReturnValue({ ...mockMessage, collection: 'Draft' })
       const wrapper = createWrapper()
       expect(wrapper.text()).not.toContain('Report this post')
     })
@@ -139,7 +139,7 @@ describe('MessageActions', () => {
   describe('report modal', () => {
     it('opens report modal when report clicked', async () => {
       mockLoggedIn.mockReturnValue(true)
-      mockById.mockReturnValue({ ...mockMessage, groups: [{ id: 1 }] })
+      mockById.mockReturnValue({ ...mockMessage, collection: 'Approved' })
       const wrapper = createWrapper()
       const reportButton = wrapper
         .findAll('button')

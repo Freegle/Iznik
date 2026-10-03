@@ -5,7 +5,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Log as Logger;
 use OwenIt\Auditing\Contracts\Auditable;
@@ -53,8 +52,6 @@ use OwenIt\Auditing\Contracts\Auditable;
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\ChatMessage> $chatMessages
  * @property-read int|null $chat_messages_count
  * @property-read \App\Models\User|null $fromUser
- * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\Group> $groups
- * @property-read int|null $groups_count
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\MessageOutcome> $outcomes
  * @property-read int|null $outcomes_count
  * @method static Builder<static>|Message approved()
@@ -136,6 +133,13 @@ class Message extends Model implements Auditable
     public const OUTCOME_RECEIVED = 'Received';
     public const OUTCOME_WITHDRAWN = 'Withdrawn';
     public const OUTCOME_EXPIRED = 'Expired';
+
+    // Moderation state (messages.collection). A post has one location and one state.
+    public const COLLECTION_INCOMING = 'Incoming';
+    public const COLLECTION_PENDING = 'Pending';
+    public const COLLECTION_APPROVED = 'Approved';
+    public const COLLECTION_SPAM = 'Spam';
+    public const COLLECTION_REJECTED = 'Rejected';
 
     /**
      * Keywords for message type detection.
@@ -260,19 +264,6 @@ class Message extends Model implements Auditable
     ];
 
     /**
-     * Get the message's groups.
-     *
-     * rippled_in distinguishes the ORIGIN row (0 - the group the member actually
-     * posted to) from copies the rippling engine spread the post into (1, with
-     * arrival = the ripple time, not the post time).
-     */
-    public function groups(): BelongsToMany
-    {
-        return $this->belongsToMany(Group::class, 'messages_groups', 'msgid', 'groupid')
-            ->withPivot(['collection', 'arrival', 'approvedby', 'deleted', 'rippled_in']);
-    }
-
-    /**
      * Get the message's outcomes.
      */
     public function outcomes(): HasMany
@@ -309,9 +300,7 @@ class Message extends Model implements Auditable
      */
     public function scopeApproved(Builder $query): Builder
     {
-        return $query->whereHas('groups', function ($q) {
-            $q->where('messages_groups.collection', 'Approved');
-        });
+        return $query->where('collection', self::COLLECTION_APPROVED);
     }
 
     /**

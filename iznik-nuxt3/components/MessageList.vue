@@ -1,16 +1,5 @@
 <template>
   <div ref="feedRoot">
-    <h2 v-if="group && showGroupHeader" class="visually-hidden">
-      Community Information
-    </h2>
-    <GroupHeader
-      v-if="group && showGroupHeader"
-      v-model:collapsed="groupHeaderCollapsed"
-      :group="group"
-      show-join
-      :show-give-ask="showGiveAsk"
-      collapsible
-    />
     <h2 class="visually-hidden">List of wanteds and offers</h2>
     <div id="visobserver" v-observe-visibility="visibilityChanged" />
 
@@ -209,12 +198,10 @@ import {
 } from 'vue'
 import MessageListUpToDate from './MessageListUpToDate'
 import ScrollGrid from '~/components/ScrollGrid'
-import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 import { useNearbyStore } from '~/stores/nearby'
 import { throttleFetches } from '~/composables/useThrottle'
 import { useMe } from '~/composables/useMe'
-import { useGroupHeaderCollapsed } from '~/composables/groupHeaderCollapse'
 import { useScrollDepth } from '~/composables/useScrollDepth'
 import { useFeedCountSync } from '~/composables/useFeedCountSync'
 import {
@@ -230,9 +217,6 @@ import {
 const OurMessage = defineAsyncComponent(
   () => import('~/components/OurMessage.vue')
 )
-const GroupHeader = defineAsyncComponent(
-  () => import('~/components/GroupHeader.vue')
-)
 const MessageSkeleton = defineAsyncComponent(
   () => import('~/components/MessageSkeleton.vue')
 )
@@ -245,11 +229,6 @@ const props = defineProps({
     required: true,
   },
   firstSeenMessage: {
-    type: Number,
-    required: false,
-    default: null,
-  },
-  selectedGroup: {
     type: Number,
     required: false,
     default: null,
@@ -289,16 +268,6 @@ const props = defineProps({
     required: false,
     default: true,
   },
-  showGiveAsk: {
-    type: Boolean,
-    required: false,
-    default: false,
-  },
-  showGroupHeader: {
-    type: Boolean,
-    required: false,
-    default: true,
-  },
   none: {
     type: Boolean,
     required: false,
@@ -318,10 +287,9 @@ const props = defineProps({
 
 const emit = defineEmits(['update:none', 'update:visible'])
 
-const groupStore = useGroupStore()
 const messageStore = useMessageStore()
 const nearbyStore = useNearbyStore()
-const { me, myid, myGroups: myMemberships } = useMe()
+const { me, myid } = useMe()
 
 // Browse-feed scroll-depth instrumentation: record how far down the feed this
 // session scrolls. 'search' vs 'browse' so the sysadmin "Scrolling" tab can tell
@@ -397,25 +365,7 @@ if (initialIds?.length) {
   initialFetchDone.value = true
 }
 
-// Batch-fetch the groups referenced by the whole list in one request, so the per-post
-// MessageTag components find their group cached instead of each firing its own
-// /group/{id} call. This matters most for the nearby/reach feed: a post can be in a group
-// the viewer isn't a member of, so it won't already be in the membership cache loaded at
-// login - without this, a heavy-membership user saw dozens of separate group fetches. The
-// feed summaries carry a groupid, so we can batch them upfront without waiting for the
-// per-message detail. fetchBatch de-dupes against what's already cached and no-ops if all
-// are present.
-const listGroupIds = [
-  ...new Set(
-    (props.messagesForList ?? []).map((m) => m.groupid).filter(Boolean)
-  ),
-]
-if (listGroupIds.length) {
-  groupStore.fetchBatch(listGroupIds)
-}
-
 // Data
-const myGroups = []
 const failedIds = ref(new Set())
 const distance = ref(2000)
 const prefetched = ref(0)
@@ -427,23 +377,6 @@ const MAX_POLL_COUNT = 30 // Poll for up to 30 seconds
 // Computed properties
 // Use the same count as the navbar - from the API via messageStore
 const browseCount = computed(() => messageStore.count)
-
-const group = computed(() => {
-  let ret = null
-
-  if (props.selectedGroup) {
-    ret = groupStore?.get(props.selectedGroup)
-  } else if (myGroups && myGroups.length === 1) {
-    ret = groupStore?.get(myGroups[0].id)
-  }
-
-  return ret
-})
-
-// Whether the community header above the feed is folded up to a compact bar. Starts folded
-// for a member of more than a week, full for a newer member or a non-member; the member can
-// toggle it, and it is reset when the feed moves to another community.
-const groupHeaderCollapsed = useGroupHeaderCollapsed(group, myMemberships)
 
 const reduceSuccessful = computed(() => {
   const ret = []
@@ -516,29 +449,14 @@ const filteredMessagesInStore = computed(() => {
   return ret
 })
 
-// Group ids the logged-in user is a member of, for duplicate-preference below.
-const myGroupIdSet = computed(
-  () => new Set((myMemberships?.value || []).map((g) => parseInt(g.id)))
-)
-
-// True if a message is posted to a group the user already belongs to.
-function isOnMyGroup(message) {
-  if (!message?.groups || !myGroupIdSet.value.size) {
-    return false
-  }
-  return message.groups.some((g) => myGroupIdSet.value.has(parseInt(g.groupid)))
-}
-
-// Collapse a poster's crosspost/repost of the same item to one entry, preferring the copy
-// on a group the viewer belongs to (Discourse 9733 / 9729); firstSeenMessage always wins.
-// Delegates to the pure deduplicateMessages, whose member-group swap is O(1) (id->index
-// Map) rather than the previous ret.findIndex() scan.
+// Collapse a poster's crosspost/repost of the same item to one entry; firstSeenMessage
+// always wins. Delegates to the pure deduplicateMessages, whose id->index Map keeps this
+// O(n) rather than the previous ret.findIndex() scan.
 const allDeDuplicatedMessages = computed(() =>
   deduplicateMessages(filteredMessagesToShow.value, {
     getMessage: (id) => filteredMessagesInStore.value[id],
     exclude: props.exclude,
     firstSeenMessage: props.firstSeenMessage,
-    isOnMyGroup,
     failedIds: failedIds.value,
   })
 )
@@ -629,11 +547,7 @@ const noneFound = computed(() => {
 
 // Methods
 function wantMessage(m) {
-  return (
-    (props.selectedType === 'All' || props.selectedType === m?.type) &&
-    (!props.selectedGroup ||
-      parseInt(m?.groupid) === parseInt(props.selectedGroup))
-  )
+  return props.selectedType === 'All' || props.selectedType === m?.type
 }
 
 function messageNotFound(id) {
@@ -655,11 +569,7 @@ function visibilityChanged(visible) {
 // posts behind it actually load - otherwise the page announces "1 new post" while the list it
 // is showing predates that post, and the member sees a count with nothing to open.
 useFeedCountSync(browseCount, async () => {
-  if (me.value?.settings?.browseView === 'mygroups') {
-    await messageStore.fetchMyGroups()
-  } else {
-    await nearbyStore.fetchMessages(true)
-  }
+  await nearbyStore.fetchMessages(true)
 })
 
 async function markSeen() {
@@ -695,7 +605,6 @@ function pollUntilZero() {
 
   markSeenTimer = setTimeout(async () => {
     const count = await messageStore.fetchCount(
-      me.value?.settings?.browseView,
       me.value?.settings?.browseMaxDistance,
       false
     )

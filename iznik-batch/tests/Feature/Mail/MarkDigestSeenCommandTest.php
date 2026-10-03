@@ -36,10 +36,9 @@ class MarkDigestSeenCommandTest extends TestCase
     public function test_opened_digest_marks_its_posts_seen_for_the_recipient(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
         $poster = $this->createTestUser();
-        $a = $this->createTestMessage($poster, $group);
-        $b = $this->createTestMessage($poster, $group);
+        $a = $this->createTestMessage($poster);
+        $b = $this->createTestMessage($poster);
 
         $this->seedDigest($user->id, [$a->id, $b->id], ['opened_at' => Carbon::now()->subMinutes(10)]);
 
@@ -52,8 +51,7 @@ class MarkDigestSeenCommandTest extends TestCase
     public function test_clicked_digest_marks_seen(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg = $this->createTestMessage($this->createTestUser(), $group);
+        $msg = $this->createTestMessage($this->createTestUser());
 
         // Clicks are detected via email_tracking_clicks (indexed clicked_at), not the
         // denormalised email_tracking.clicked_at.
@@ -71,8 +69,7 @@ class MarkDigestSeenCommandTest extends TestCase
     public function test_sent_but_not_opened_digest_does_not_mark_seen(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg = $this->createTestMessage($this->createTestUser(), $group);
+        $msg = $this->createTestMessage($this->createTestUser());
 
         // Delivered, never opened or clicked - we must not sink a post the member
         // may never have had a chance to see.
@@ -85,8 +82,7 @@ class MarkDigestSeenCommandTest extends TestCase
     public function test_open_outside_the_lookback_window_is_ignored(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg = $this->createTestMessage($this->createTestUser(), $group);
+        $msg = $this->createTestMessage($this->createTestUser());
 
         $this->seedDigest($user->id, [$msg->id], ['opened_at' => Carbon::now()->subHours(10)]);
 
@@ -97,8 +93,7 @@ class MarkDigestSeenCommandTest extends TestCase
     public function test_reprocessing_is_idempotent(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg = $this->createTestMessage($this->createTestUser(), $group);
+        $msg = $this->createTestMessage($this->createTestUser());
 
         $this->seedDigest($user->id, [$msg->id], ['opened_at' => Carbon::now()->subMinutes(10)]);
 

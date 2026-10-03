@@ -27,12 +27,10 @@ func TestDashboardHeatmap(t *testing.T) {
 func TestDashboardHeatmapWithData(t *testing.T) {
 	// Create some spatial data, then verify it appears in the heatmap.
 	prefix := uniquePrefix("DashHM")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 
 	// CreateTestMessage inserts into messages_spatial with successful=1 and arrival=NOW()
-	CreateTestMessage(t, userID, groupID, "Heatmap test "+prefix, 52.2, -0.1)
+	CreateTestMessage(t, userID, "Heatmap test "+prefix, 52.2, -0.1)
 
 	req := httptest.NewRequest("GET", "/api/dashboard?heatmap=true", nil)
 	resp, _ := getApp().Test(req)

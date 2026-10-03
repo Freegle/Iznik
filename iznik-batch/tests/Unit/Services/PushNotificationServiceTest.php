@@ -2,12 +2,9 @@
 
 namespace Tests\Unit\Services;
 
-use App\Models\ChatMessage;
 use App\Models\ChatRoom;
-use App\Models\Group;
-use App\Models\Membership;
 use App\Models\Message;
-use App\Models\MessageGroup;
+use App\Models\User;
 use App\Services\PushNotificationService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -15,7 +12,7 @@ use Tests\TestCase;
 /**
  * Tests for PushNotificationService::getBadgeCount().
  *
- * Each test creates its own mod + group + membership and only queries that mod's count.
+ * Each test creates its own national moderator and only queries that moderator's count.
  * Test isolation is provided by DatabaseTransactions in the base TestCase (each test
  * rolls back all DB changes). No shared state between tests.
  */
@@ -26,7 +23,7 @@ class PushNotificationServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new PushNotificationService();
+        $this->service = new PushNotificationService;
     }
 
     /**
@@ -38,9 +35,7 @@ class PushNotificationServiceTest extends TestCase
      */
     public function test_held_pending_messages_do_not_count_towards_badge(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $sender = $this->createTestUser();
         $message = Message::create([
@@ -51,17 +46,9 @@ class PushNotificationServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now(),
             'arrival' => now(),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now(),
-            'deleted' => 0,
-            // A hold belongs to a (message, group) pair, so it is this row that carries
-            // it — the badge reads the copy on the group, not the post as a whole.
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_PENDING,
             'heldby' => $mod->id,  // held — must not count
         ]);
 
@@ -75,9 +62,7 @@ class PushNotificationServiceTest extends TestCase
      */
     public function test_unheld_pending_messages_count_towards_badge(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $sender = $this->createTestUser();
         $message = Message::create([
@@ -88,16 +73,10 @@ class PushNotificationServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now(),
             'arrival' => now(),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_PENDING,
             'heldby' => null,  // not held — must count
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now(),
-            'deleted' => 0,
         ]);
 
         $count = $this->service->getBadgeCount($mod->id);
@@ -112,9 +91,7 @@ class PushNotificationServiceTest extends TestCase
      */
     public function test_spam_collection_messages_count_towards_badge(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $sender = $this->createTestUser();
         $message = Message::create([
@@ -125,16 +102,10 @@ class PushNotificationServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now(),
             'arrival' => now(),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_SPAM,
             'heldby' => null,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_SPAM,
-            'arrival' => now(),
-            'deleted' => 0,
         ]);
 
         $count = $this->service->getBadgeCount($mod->id);
@@ -147,9 +118,7 @@ class PushNotificationServiceTest extends TestCase
      */
     public function test_deleted_pending_messages_do_not_count_towards_badge(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $sender = $this->createTestUser();
         $message = Message::create([
@@ -160,16 +129,11 @@ class PushNotificationServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now(),
             'arrival' => now(),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_PENDING,
             'heldby' => null,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now(),
-            'deleted' => 1,  // deleted — must not count
+            'deleted' => now(),  // deleted — must not count
         ]);
 
         $count = $this->service->getBadgeCount($mod->id);
@@ -182,9 +146,7 @@ class PushNotificationServiceTest extends TestCase
      */
     public function test_null_fromuser_messages_do_not_count_towards_badge(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $message = Message::create([
             'fromuser' => null,  // no sender — must not count
@@ -194,15 +156,9 @@ class PushNotificationServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now(),
             'arrival' => now(),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now(),
-            'deleted' => 0,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_PENDING,
         ]);
 
         $count = $this->service->getBadgeCount($mod->id);
@@ -219,13 +175,11 @@ class PushNotificationServiceTest extends TestCase
      * users.deleted IS NOT NULL), while the app menu (session.go) filters them via
      * INNER JOIN users ... u.deleted IS NULL. The phantom message is in the badge
      * but not the menu, so the mod can never clear it. Live data at diagnosis time:
-     * 32 such messages across 24 groups.
+     * 32 such messages nationally.
      */
     public function test_pending_message_from_deleted_user_does_not_count_towards_badge(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $sender = $this->createTestUser(['deleted' => now()]);  // author deleted
         $message = Message::create([
@@ -236,16 +190,10 @@ class PushNotificationServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now(),
             'arrival' => now(),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_PENDING,
             'heldby' => null,  // not held — would count if author were live
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now(),
-            'deleted' => 0,
         ]);
 
         $count = $this->service->getBadgeCount($mod->id);
@@ -253,64 +201,17 @@ class PushNotificationServiceTest extends TestCase
         $this->assertEquals(0, $count, 'Pending messages from deleted users must not inflate badge count (Discourse #9654/12)');
     }
 
-    /**
-     * Pending messages in inactive groups must NOT count towards the badge.
-     *
-     * Session.go excludes inactive group work from `total` (it goes to pendingother/blue).
-     * A mod can set themselves inactive via membership settings.active=0.
-     */
-    public function test_inactive_group_pending_messages_do_not_count_towards_badge(): void
-    {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, [
-            'role' => Membership::ROLE_MODERATOR,
-            'settings' => ['active' => 0],  // inactive — must not count (Membership model has array cast)
-        ]);
-
-        $sender = $this->createTestUser();
-        $message = Message::create([
-            'fromuser' => $sender->id,
-            'type' => Message::TYPE_OFFER,
-            'subject' => 'OFFER: Test (Location)',
-            'textbody' => 'Test',
-            'source' => 'Platform',
-            'date' => now(),
-            'arrival' => now(),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
-            'heldby' => null,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now(),
-            'deleted' => 0,
-        ]);
-
-        $count = $this->service->getBadgeCount($mod->id);
-
-        $this->assertEquals(0, $count, 'Inactive group pending messages must not inflate badge count');
-    }
-
     public function test_pending_volunteering_ops_count_towards_badge(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
-        // Create a pending volunteering op linked to this group.
-        $volunteeringId = DB::table('volunteering')->insertGetId([
+        // Create a pending volunteering op owned by this moderator.
+        DB::table('volunteering')->insert([
             'pending' => 1,
             'deleted' => 0,
             'expired' => 0,
             'title' => 'Test volunteer op',
             'userid' => $mod->id,
-        ]);
-        DB::table('volunteering_groups')->insert([
-            'volunteeringid' => $volunteeringId,
-            'groupid' => $group->id,
         ]);
 
         $count = $this->service->getBadgeCount($mod->id);
@@ -320,21 +221,15 @@ class PushNotificationServiceTest extends TestCase
 
     public function test_non_pending_volunteering_ops_do_not_count(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         // Approved (non-pending) volunteering op — should not inflate badge.
-        $volunteeringId = DB::table('volunteering')->insertGetId([
+        DB::table('volunteering')->insert([
             'pending' => 0,
             'deleted' => 0,
             'expired' => 0,
             'title' => 'Approved op',
             'userid' => $mod->id,
-        ]);
-        DB::table('volunteering_groups')->insert([
-            'volunteeringid' => $volunteeringId,
-            'groupid' => $group->id,
         ]);
 
         $count = $this->service->getBadgeCount($mod->id);
@@ -349,7 +244,7 @@ class PushNotificationServiceTest extends TestCase
      * notification never appears in the system tray — the bug that made
      * real mod-work pushes invisible while the forceVisible test push worked.
      */
-    public function test_buildAndroidFcmMessage_includes_notification_block_for_modtools(): void
+    public function test_build_android_fcm_message_includes_notification_block_for_modtools(): void
     {
         $payload = [
             'title' => '3 messages pending',
@@ -374,7 +269,7 @@ class PushNotificationServiceTest extends TestCase
      * This protects the user-app chat path (notifyIndividualMessages) which
      * relies on data-only messages with action buttons built by the app.
      */
-    public function test_buildAndroidFcmMessage_omits_notification_block_for_non_modtools(): void
+    public function test_build_android_fcm_message_omits_notification_block_for_non_modtools(): void
     {
         $payload = [
             'title' => 'New chat message',
@@ -392,7 +287,7 @@ class PushNotificationServiceTest extends TestCase
      * forceVisible (used by the test-push command) always adds the block,
      * regardless of channel.
      */
-    public function test_buildAndroidFcmMessage_forceVisible_adds_notification_block(): void
+    public function test_build_android_fcm_message_force_visible_adds_notification_block(): void
     {
         $payload = [
             'title' => 'Test',
@@ -409,7 +304,7 @@ class PushNotificationServiceTest extends TestCase
      * Empty-title payload (e.g. zero-count modtools push to clear the badge)
      * must NOT add a notification block — we don't want an empty tray entry.
      */
-    public function test_buildAndroidFcmMessage_skips_notification_block_when_title_empty(): void
+    public function test_build_android_fcm_message_skips_notification_block_when_title_empty(): void
     {
         $payload = [
             'title' => '',
@@ -431,16 +326,14 @@ class PushNotificationServiceTest extends TestCase
      * $modtools=TRUE, and getNotificationPayload(TRUE) included ALL notification types
      * in $total, so a chitchat comment triggered a spurious "1 pending" modtools push.
      *
-     * V2 fix: getBadgeCount() queries only messages_groups (pending/spam) and
+     * V2 fix: getBadgeCount() queries only messages (pending/spam) and
      * volunteering — it never touches users_notifications. Chitchat activity therefore
      * cannot inflate the modtools badge.
      */
-    public function test_getBadgeCount_not_inflated_by_chitchat_notification(): void
+    public function test_get_badge_count_not_inflated_by_chitchat_notification(): void
     {
-        $mod = $this->createTestUser();
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
         $sender = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Insert a CommentOnYourPost notification (chitchat) for the mod — simulates a
         // newsfeed comment arriving while the mod has no pending modtools work.
@@ -466,11 +359,9 @@ class PushNotificationServiceTest extends TestCase
      * This confirms the full V2 chain: chitchat-only activity → badge=0 → title=''
      * → no notification block → no tray entry in ModTools app.
      */
-    public function test_buildModToolsPayload_returns_zero_badge_when_no_modtools_work(): void
+    public function test_build_mod_tools_payload_returns_zero_badge_when_no_modtools_work(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
         $method->setAccessible(true);
@@ -489,23 +380,17 @@ class PushNotificationServiceTest extends TestCase
      * (no pending messages), the notification must route to /volunteering — not /messages/pending
      * (empty page) and not /modtools (catch-all redirect with 2s delay).
      */
-    public function test_buildModToolsPayload_volunteering_only_routes_to_volunteering(): void
+    public function test_build_mod_tools_payload_volunteering_only_routes_to_volunteering(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         // Pending volunteering op — no pending messages
-        $volunteeringId = DB::table('volunteering')->insertGetId([
+        DB::table('volunteering')->insert([
             'pending' => 1,
             'deleted' => 0,
             'expired' => 0,
             'title' => 'Help needed',
             'userid' => $mod->id,
-        ]);
-        DB::table('volunteering_groups')->insert([
-            'volunteeringid' => $volunteeringId,
-            'groupid' => $group->id,
         ]);
 
         $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
@@ -529,11 +414,9 @@ class PushNotificationServiceTest extends TestCase
      * V1 parity: pending → route /messages/pending, title "N pending message(s)".
      * The /modtools/ prefix hits the catch-all redirect page (Discourse #9692/10).
      */
-    public function test_buildModToolsPayload_pending_only_routes_to_messages_pending(): void
+    public function test_build_mod_tools_payload_pending_only_routes_to_messages_pending(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $sender = $this->createTestUser();
         $message = Message::create([
@@ -544,16 +427,10 @@ class PushNotificationServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now(),
             'arrival' => now(),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_PENDING,
             'heldby' => null,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now(),
-            'deleted' => 0,
         ]);
 
         $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
@@ -571,11 +448,9 @@ class PushNotificationServiceTest extends TestCase
      *
      * V1 parity: spam → route /messages/pending, title "N message(s) to review".
      */
-    public function test_buildModToolsPayload_spam_only_routes_to_messages_pending(): void
+    public function test_build_mod_tools_payload_spam_only_routes_to_messages_pending(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $sender = $this->createTestUser();
         $message = Message::create([
@@ -586,16 +461,10 @@ class PushNotificationServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now(),
             'arrival' => now(),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_SPAM,
             'heldby' => null,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_SPAM,
-            'arrival' => now(),
-            'deleted' => 0,
         ]);
 
         $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
@@ -614,11 +483,9 @@ class PushNotificationServiceTest extends TestCase
      * With both pending messages and volunteering ops, route must be /messages/pending
      * and the title must mention both categories (multi-line, "\n"-joined).
      */
-    public function test_buildModToolsPayload_mixed_pending_wins_over_volunteering(): void
+    public function test_build_mod_tools_payload_mixed_pending_wins_over_volunteering(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         // Add a pending message
         $sender = $this->createTestUser();
@@ -630,29 +497,19 @@ class PushNotificationServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now(),
             'arrival' => now(),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_PENDING,
             'heldby' => null,
-        ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now(),
-            'deleted' => 0,
         ]);
 
         // Add a pending volunteering op
-        $volunteeringId = DB::table('volunteering')->insertGetId([
+        DB::table('volunteering')->insert([
             'pending' => 1,
             'deleted' => 0,
             'expired' => 0,
             'title' => 'Help needed',
             'userid' => $mod->id,
-        ]);
-        DB::table('volunteering_groups')->insert([
-            'volunteeringid' => $volunteeringId,
-            'groupid' => $group->id,
         ]);
 
         $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
@@ -673,11 +530,9 @@ class PushNotificationServiceTest extends TestCase
     /**
      * Zero-work payload must route to "/" not "/modtools" (V1 parity).
      */
-    public function test_buildModToolsPayload_zero_routes_to_root(): void
+    public function test_build_mod_tools_payload_zero_routes_to_root(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
         $method->setAccessible(true);
@@ -693,7 +548,7 @@ class PushNotificationServiceTest extends TestCase
      * Visible ModTools push: priority high and notification.tag set so the
      * latest "N pending" entry replaces the previous one in the tray.
      */
-    public function test_buildAndroidConfig_visible_modtools_gets_high_priority_and_tag(): void
+    public function test_build_android_config_visible_modtools_gets_high_priority_and_tag(): void
     {
         $payload = [
             'title' => '3 messages pending',
@@ -714,7 +569,7 @@ class PushNotificationServiceTest extends TestCase
      * notification message on some devices/Capacitor builds and surfaces an
      * empty tray entry — the bug we're fixing.
      */
-    public function test_buildAndroidConfig_zero_count_modtools_is_silent(): void
+    public function test_build_android_config_zero_count_modtools_is_silent(): void
     {
         $payload = [
             'title' => '',
@@ -734,7 +589,7 @@ class PushNotificationServiceTest extends TestCase
      * forceVisible (test-push command) always rides high priority even for
      * non-modtools channels, but never gets the modtools tag.
      */
-    public function test_buildAndroidConfig_forceVisible_high_priority_no_tag_for_non_modtools(): void
+    public function test_build_android_config_force_visible_high_priority_no_tag_for_non_modtools(): void
     {
         $payload = [
             'title' => 'Test',
@@ -749,20 +604,18 @@ class PushNotificationServiceTest extends TestCase
     }
 
     /**
-     * A mod of several communities must not get the same banner once per community.
+     * A mod must not get the same banner twice for the same unchanged work.
      *
-     * ModTools pushes are queued per GROUP but the payload is per USER - the aggregate
-     * work summary across every community they moderate. On prod 2026-08-23 a mod of
-     * three neighbouring London communities had 47 push tasks fire at 33 distinct
-     * instants, several of them 2-3 at a time for a single crossposted post, and each
-     * one landed as its own banner and beep (Discourse 9808/744).
+     * ModTools pushes are queued per work item but the payload is per USER - the
+     * aggregate national summary across everything they can moderate. On prod
+     * 2026-08-23 a mod had 47 push tasks fire at 33 distinct instants, several
+     * of them 2-3 at a time for a single crossposted post, and each one landed
+     * as its own banner and beep (Discourse 9808/744).
      */
     public function test_notify_does_not_repeat_an_identical_modtools_push(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
-        $this->createPendingMessage($group);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $this->createPendingMessage();
         $this->registerModToolsDevice($mod->id, 'tok-dupe');
         $fake = $this->fakeMessaging();
 
@@ -770,7 +623,7 @@ class PushNotificationServiceTest extends TestCase
         $second = $this->service->notify($mod->id, true);
 
         $this->assertSame(1, $first, 'First push must be sent');
-        $this->assertSame(0, $second, 'Second identical push is the per-group fan-out, not new work');
+        $this->assertSame(0, $second, 'Second identical push must be suppressed as a duplicate, not sent again');
         $this->assertCount(1, $fake->sent, 'Only one FCM message may reach the device');
     }
 
@@ -780,15 +633,13 @@ class PushNotificationServiceTest extends TestCase
      */
     public function test_notify_sends_again_when_the_work_changes(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
-        $this->createPendingMessage($group);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $this->createPendingMessage();
         $this->registerModToolsDevice($mod->id, 'tok-changed');
         $fake = $this->fakeMessaging();
 
         $this->service->notify($mod->id, true);
-        $this->createPendingMessage($group);
+        $this->createPendingMessage();
         $second = $this->service->notify($mod->id, true);
 
         $this->assertSame(1, $second, 'A different pending count must still be pushed');
@@ -801,10 +652,8 @@ class PushNotificationServiceTest extends TestCase
      */
     public function test_notify_sends_again_once_the_duplicate_window_has_passed(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
-        $this->createPendingMessage($group);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $this->createPendingMessage();
         $this->registerModToolsDevice($mod->id, 'tok-window');
         $fake = $this->fakeMessaging();
 
@@ -822,10 +671,8 @@ class PushNotificationServiceTest extends TestCase
      */
     public function test_notify_deduplicates_each_device_separately(): void
     {
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
-        $this->createPendingMessage($group);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $this->createPendingMessage();
         $this->registerModToolsDevice($mod->id, 'tok-phone');
         $this->registerModToolsDevice($mod->id, 'tok-tablet');
         $fake = $this->fakeMessaging();
@@ -843,7 +690,7 @@ class PushNotificationServiceTest extends TestCase
      * Android already does this via notification.tag; iOS needs apns-collapse-id, whose
      * absence is why the fan-out showed up as three banners and beeps at once.
      */
-    public function test_buildApnsConfig_modtools_collapses_to_one_banner(): void
+    public function test_build_apns_config_modtools_collapses_to_one_banner(): void
     {
         $payload = [
             'title' => '2 pending messages',
@@ -864,7 +711,7 @@ class PushNotificationServiceTest extends TestCase
     /**
      * The silent badge-clear push has no banner to collapse onto.
      */
-    public function test_buildApnsConfig_zero_count_modtools_does_not_collapse(): void
+    public function test_build_apns_config_zero_count_modtools_does_not_collapse(): void
     {
         $payload = [
             'title' => '',
@@ -883,7 +730,7 @@ class PushNotificationServiceTest extends TestCase
      * Chat and new-post pushes are about a specific chat or post: collapsing them would
      * replace an unread one with the next and lose it.
      */
-    public function test_buildApnsConfig_non_modtools_pushes_never_collapse(): void
+    public function test_build_apns_config_non_modtools_pushes_never_collapse(): void
     {
         $payload = [
             'title' => 'New chat message',
@@ -902,7 +749,7 @@ class PushNotificationServiceTest extends TestCase
      * The NSE flag the rich daily-posts notification depends on must survive the
      * extraction of this config out of sendFcm().
      */
-    public function test_buildApnsConfig_new_posts_keeps_mutable_content(): void
+    public function test_build_apns_config_new_posts_keeps_mutable_content(): void
     {
         $payload = [
             'title' => '5 new posts near you',
@@ -922,7 +769,8 @@ class PushNotificationServiceTest extends TestCase
      */
     private function fakeMessaging(): object
     {
-        $fake = new class {
+        $fake = new class
+        {
             public array $sent = [];
 
             public function validate($message): void {}
@@ -963,10 +811,11 @@ class PushNotificationServiceTest extends TestCase
         return $subscription;
     }
 
-    private function createPendingMessage(Group $group): Message
+    private function createPendingMessage(): Message
     {
         $sender = $this->createTestUser();
-        $message = Message::create([
+
+        return Message::create([
             'fromuser' => $sender->id,
             'type' => Message::TYPE_OFFER,
             'subject' => 'OFFER: Test (Location)',
@@ -974,24 +823,17 @@ class PushNotificationServiceTest extends TestCase
             'source' => 'Platform',
             'date' => now(),
             'arrival' => now(),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+            'collection' => Message::COLLECTION_PENDING,
         ]);
-        MessageGroup::create([
-            'msgid' => $message->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now(),
-            'deleted' => 0,
-        ]);
-
-        return $message;
     }
 
     private function invokeBuildApnsConfig(int $userId, array $payload): array
     {
         $method = new \ReflectionMethod($this->service, 'buildApnsConfig');
         $method->setAccessible(true);
+
         return $method->invoke($this->service, $userId, $payload);
     }
 
@@ -999,6 +841,7 @@ class PushNotificationServiceTest extends TestCase
     {
         $method = new \ReflectionMethod($this->service, 'buildAndroidFcmMessage');
         $method->setAccessible(true);
+
         return $method->invoke($this->service, $token, $payload, $forceVisible);
     }
 
@@ -1006,6 +849,7 @@ class PushNotificationServiceTest extends TestCase
     {
         $method = new \ReflectionMethod($this->service, 'buildAndroidConfig');
         $method->setAccessible(true);
+
         return $method->invoke($this->service, $userId, $payload, $forceVisible);
     }
 
@@ -1013,7 +857,8 @@ class PushNotificationServiceTest extends TestCase
     //
     // These pin the V1 ChatRoom::notifyMembers() target table from
     // the legacy V1 PHP implementation. Each test corresponds
-    // to a cell in that table or an invariant ($excludeuser, getMemberships()>0).
+    // to a cell in that table or an invariant ($excludeuser, a membership count check
+    // that no longer applies now moderators and reach are national).
     //
     // Tests target the new getChatMessageRecipients(messageId) method which
     // returns ['fd' => int[], 'mt' => int[]] — the FD-app and MT-app push
@@ -1023,9 +868,6 @@ class PushNotificationServiceTest extends TestCase
     {
         $sender = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($sender, $group);
-        $this->createMembership($recipient, $group);
 
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender);
@@ -1042,9 +884,6 @@ class PushNotificationServiceTest extends TestCase
     {
         $sender = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($sender, $group);
-        $this->createMembership($recipient, $group);
 
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender);
@@ -1058,18 +897,12 @@ class PushNotificationServiceTest extends TestCase
     public function test_u2m_returns_user1_in_fd_and_active_mods_in_mt(): void
     {
         $member = $this->createTestUser();
-        $modA = $this->createTestUser();
-        $modB = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        $this->createMembership($member, $group);
-        $this->createMembership($modA, $group, ['role' => Membership::ROLE_MODERATOR]);
-        $this->createMembership($modB, $group, ['role' => Membership::ROLE_OWNER]);
+        $modA = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $modB = $this->createTestUser(['systemrole' => User::SYSTEMROLE_ADMIN]);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $member->id,
-            'groupid' => $group->id,
             'created' => now(),
         ]);
         $msg = $this->createTestChatMessage($room, $member);
@@ -1079,26 +912,20 @@ class PushNotificationServiceTest extends TestCase
         $this->assertEquals([], $result['fd'],
             'U2M FD recipients exclude the sender (member here)');
         $this->assertEqualsCanonicalizing([$modA->id, $modB->id], $result['mt'],
-            'U2M MT recipients = all active group mods minus sender');
+            'U2M MT recipients = all national moderators minus sender');
     }
 
     public function test_u2m_mod_sender_excluded_from_mt_recipients(): void
     {
-        // Mod sends a message to a member in their own group → mod shouldn't
-        // get a push notification about their own outgoing message.
+        // Mod sends a message to a member → mod shouldn't get a push
+        // notification about their own outgoing message.
         $member = $this->createTestUser();
-        $modSender = $this->createTestUser();
-        $modOther = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        $this->createMembership($member, $group);
-        $this->createMembership($modSender, $group, ['role' => Membership::ROLE_MODERATOR]);
-        $this->createMembership($modOther, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $modSender = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $modOther = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $member->id,
-            'groupid' => $group->id,
             'created' => now(),
         ]);
         $msg = $this->createTestChatMessage($room, $modSender);
@@ -1111,46 +938,12 @@ class PushNotificationServiceTest extends TestCase
             'Sender mod must be excluded from MT recipients (V1 $excludeuser)');
     }
 
-    public function test_u2m_excludes_inactive_mods_from_mt(): void
-    {
-        $member = $this->createTestUser();
-        $activeMod = $this->createTestUser();
-        $inactiveMod = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        $this->createMembership($member, $group);
-        $this->createMembership($activeMod, $group, [
-            'role' => Membership::ROLE_MODERATOR,
-            'settings' => ['active' => 1],
-        ]);
-        $this->createMembership($inactiveMod, $group, [
-            'role' => Membership::ROLE_MODERATOR,
-            'settings' => ['active' => 0],
-        ]);
-
-        $room = ChatRoom::create([
-            'chattype' => ChatRoom::TYPE_USER2MOD,
-            'user1' => $member->id,
-            'groupid' => $group->id,
-            'created' => now(),
-        ]);
-        $msg = $this->createTestChatMessage($room, $member);
-
-        $result = $this->service->getChatMessageRecipients($msg->id);
-
-        $this->assertEqualsCanonicalizing([$activeMod->id], $result['mt'],
-            'Inactive mods (settings.active=0) must not receive MT push (V1 parity)');
-    }
-
     public function test_recipient_who_blocked_chat_is_excluded(): void
     {
         // V1 notifyIndividualMessages filter: chat_roster.status = 'Blocked'
         // means the recipient blocked the conversation — no push for them.
         $sender = $this->createTestUser();
         $blocker = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($sender, $group);
-        $this->createMembership($blocker, $group);
 
         $room = $this->createTestChatRoom($sender, $blocker);
 
@@ -1169,34 +962,12 @@ class PushNotificationServiceTest extends TestCase
             'Users who blocked this chat must not receive push (V1 parity)');
     }
 
-    public function test_recipient_with_zero_memberships_is_excluded(): void
-    {
-        // V1: pokeMembers/notify only fires for users with getMemberships() > 0.
-        // Stops ex-members and never-joined users from getting pushes.
-        $sender = $this->createTestUser();
-        $exMember = $this->createTestUser();  // no createMembership
-
-        $group = $this->createTestGroup();
-        $this->createMembership($sender, $group);
-
-        $room = $this->createTestChatRoom($sender, $exMember);
-        $msg = $this->createTestChatMessage($room, $sender);
-
-        $result = $this->service->getChatMessageRecipients($msg->id);
-
-        $this->assertEquals([], $result['fd'],
-            'Users with zero memberships must not be pushed (V1 invariant)');
-    }
-
     public function test_held_for_review_message_returns_empty_recipients(): void
     {
         // V1: !$review gate. Even if enqueued by mistake, the handler must
         // double-check and refuse to push for reviewed content.
         $sender = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($sender, $group);
-        $this->createMembership($recipient, $group);
 
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, ['reviewrequired' => 1]);
@@ -1211,9 +982,6 @@ class PushNotificationServiceTest extends TestCase
     {
         $sender = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($sender, $group);
-        $this->createMembership($recipient, $group);
 
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, ['reviewrejected' => 1]);
@@ -1236,17 +1004,13 @@ class PushNotificationServiceTest extends TestCase
     {
         // V1 notifyMembers() has no case for Mod2Mod — only pokeMembers does.
         // Out of scope here; push side returns empty.
-        $mod1 = $this->createTestUser();
-        $mod2 = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($mod1, $group, ['role' => Membership::ROLE_MODERATOR]);
-        $this->createMembership($mod2, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod1 = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $mod2 = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_MOD2MOD,
             'user1' => $mod1->id,
             'user2' => $mod2->id,
-            'groupid' => $group->id,
             'created' => now(),
         ]);
         $msg = $this->createTestChatMessage($room, $mod1);
@@ -1270,7 +1034,7 @@ class PushNotificationServiceTest extends TestCase
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, ['message' => 'Hello there']);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertEquals('chat_messages', $payload['channel_id'],
             'FD chat payload must use the chat_messages Android channel');
@@ -1284,7 +1048,7 @@ class PushNotificationServiceTest extends TestCase
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, ['message' => 'Hi']);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, TRUE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, true);
 
         $this->assertEquals('modtools', $payload['channel_id']);
         $this->assertEquals('1', (string) $payload['modtools']);
@@ -1305,7 +1069,7 @@ class PushNotificationServiceTest extends TestCase
             'message' => "No worries, I'll delete it for you \\\\u1f642\\\\u",
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertStringContainsString("\u{1F642}", $payload['message'],
             'the emoji itself must reach the phone');
@@ -1322,10 +1086,10 @@ class PushNotificationServiceTest extends TestCase
         $recipient = $this->createTestUser();
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, [
-            'message' => "Flag \\\\u1f1ec-1f1e7\\\\u",
+            'message' => 'Flag \\\\u1f1ec-1f1e7\\\\u',
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertStringContainsString("\u{1F1EC}\u{1F1E7}", $payload['message']);
         $this->assertStringNotContainsString('1f1ec', $payload['message']);
@@ -1346,10 +1110,10 @@ class PushNotificationServiceTest extends TestCase
         // ENCODED string but well inside it once decoded.
         $padding = str_repeat('a', 250);
         $msg = $this->createTestChatMessage($room, $sender, [
-            'message' => $padding . "\\\\u1f642\\\\u tail",
+            'message' => $padding.'\\\\u1f642\\\\u tail',
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertStringNotContainsString('\\u', $payload['message'],
             'a severed escape must never appear');
@@ -1367,7 +1131,7 @@ class PushNotificationServiceTest extends TestCase
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, ['message' => 'Hi']);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertEquals((string) $room->id, (string) $payload['notId']);
     }
@@ -1379,9 +1143,9 @@ class PushNotificationServiceTest extends TestCase
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, ['message' => 'Hi']);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
-        $this->assertEquals('/chats/' . $room->id, $payload['route']);
+        $this->assertEquals('/chats/'.$room->id, $payload['route']);
         $this->assertEquals((string) $room->id, (string) $payload['chatid']);
         $this->assertEquals((string) $room->id, (string) $payload['chatids']);
     }
@@ -1394,7 +1158,7 @@ class PushNotificationServiceTest extends TestCase
         $long = str_repeat('A', 500);
         $msg = $this->createTestChatMessage($room, $sender, ['message' => $long]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertLessThanOrEqual(260, strlen($payload['message']),
             'Payload message should be truncated for push display (~256 chars)');
@@ -1413,17 +1177,14 @@ class PushNotificationServiceTest extends TestCase
     {
         $sender = $this->createTestUser(['fullname' => 'richard mackay']);
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($sender, $group);
-        $this->createMembership($recipient, $group);
 
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, [
-            'type'    => \App\Models\ChatMessage::TYPE_DEFAULT,
+            'type' => \App\Models\ChatMessage::TYPE_DEFAULT,
             'message' => 'Hi, is this still available?',
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertSame('richard mackay', $payload['title'],
             'Title must be the sender name');
@@ -1445,11 +1206,11 @@ class PushNotificationServiceTest extends TestCase
         $recipient = $this->createTestUser();
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, [
-            'type'    => \App\Models\ChatMessage::TYPE_DEFAULT,
+            'type' => \App\Models\ChatMessage::TYPE_DEFAULT,
             'message' => 'Still available?',
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertSame('alice', $payload['title'],
             'Push title must use the display name, which drops the TrashNothing -gNNN suffix');
@@ -1466,17 +1227,14 @@ class PushNotificationServiceTest extends TestCase
     {
         $sender = $this->createTestUser(['fullname' => 'richard mackay']);
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($sender, $group);
-        $this->createMembership($recipient, $group);
 
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, [
-            'type'    => \App\Models\ChatMessage::TYPE_IMAGE,
+            'type' => \App\Models\ChatMessage::TYPE_IMAGE,
             'message' => null,  // image-only: no text body
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertSame('richard mackay', $payload['title'],
             'Title must still be the sender name');
@@ -1493,17 +1251,14 @@ class PushNotificationServiceTest extends TestCase
     {
         $sender = $this->createTestUser(['fullname' => 'Alice']);
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($sender, $group);
-        $this->createMembership($recipient, $group);
 
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, [
-            'type'    => \App\Models\ChatMessage::TYPE_INTERESTED,
+            'type' => \App\Models\ChatMessage::TYPE_INTERESTED,
             'message' => null,
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertSame('Interested', $payload['message'],
             '"Interested" type message body must be "Interested"');
@@ -1518,17 +1273,14 @@ class PushNotificationServiceTest extends TestCase
     {
         $sender = $this->createTestUser(['fullname' => 'Bob']);
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($sender, $group);
-        $this->createMembership($recipient, $group);
 
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, [
-            'type'    => \App\Models\ChatMessage::TYPE_ADDRESS,
+            'type' => \App\Models\ChatMessage::TYPE_ADDRESS,
             'message' => null,
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertSame('Sent an address', $payload['message'],
             '"Address" type message body must be "Sent an address"');
@@ -1536,29 +1288,25 @@ class PushNotificationServiceTest extends TestCase
             'Body must not repeat the sender name');
     }
 
-    public function test_u2m_mod_to_member_payload_uses_group_volunteers_title(): void
+    public function test_u2m_mod_to_member_payload_uses_site_volunteers_title(): void
     {
         // V1 hides individual mod identity from members: when a mod replies in
-        // a User2Mod chat, the push title shows "{GroupName} Volunteers", not
+        // a User2Mod chat, the push title shows "{SiteName} Volunteers", not
         // the mod's personal display name. Matches the email notification.
         $member = $this->createTestUser(['fullname' => 'MemberAlice']);
-        $mod = $this->createTestUser(['fullname' => 'ModBob']);
-        $group = $this->createTestGroup();
-        $this->createMembership($member, $group);
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $mod = $this->createTestUser(['fullname' => 'ModBob', 'systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $member->id,
-            'groupid' => $group->id,
             'created' => now(),
         ]);
         $msg = $this->createTestChatMessage($room, $mod, ['message' => 'Hello from the team']);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $member->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $member->id, false);
 
         $this->assertStringContainsString('Volunteers', $payload['title'],
-            'Mod sender to member in U2M must show "{Group} Volunteers" as title');
+            'Mod sender to member in U2M must show "{Site} Volunteers" as title');
         $this->assertStringNotContainsString('ModBob', $payload['title'],
             'Individual mod name must NOT leak to the member in push title');
     }
@@ -1568,14 +1316,14 @@ class PushNotificationServiceTest extends TestCase
      * The stories exhort is scheduled with a full URL in users_notifications.url,
      * which would otherwise be routed to verbatim and land on a 404.
      */
-    public function test_buildUserNotificationPayload_strips_site_from_absolute_notification_url(): void
+    public function test_build_user_notification_payload_strips_site_from_absolute_notification_url(): void
     {
         $user = $this->createTestUser();
 
         DB::table('users_notifications')->insert([
             'touser' => $user->id,
             'type' => 'Exhort',
-            'url' => rtrim(config('freegle.sites.user'), '/') . '/stories',
+            'url' => rtrim(config('freegle.sites.user'), '/').'/stories',
             'title' => 'Tell us your Freegle story!',
             'text' => 'We love to hear why people Freegle.',
             'seen' => 0,
@@ -1588,7 +1336,7 @@ class PushNotificationServiceTest extends TestCase
             'Absolute notification URLs on our own site must become a router path');
     }
 
-    public function test_buildUserNotificationPayload_keeps_relative_notification_url(): void
+    public function test_build_user_notification_payload_keeps_relative_notification_url(): void
     {
         $user = $this->createTestUser();
 
@@ -1624,7 +1372,7 @@ class PushNotificationServiceTest extends TestCase
      * Sanity check: a recent, non-spam unseen notification does count, so the
      * exclusion tests below aren't vacuously true.
      */
-    public function test_consumerUnreadCounts_counts_recent_unseen_notification(): void
+    public function test_consumer_unread_counts_counts_recent_unseen_notification(): void
     {
         $user = $this->createTestUser();
         $sender = $this->createTestUser();
@@ -1648,7 +1396,7 @@ class PushNotificationServiceTest extends TestCase
      * notification actually rendered in the list), so it must not permanently
      * inflate the app-icon badge.
      */
-    public function test_consumerUnreadCounts_excludes_notification_older_than_bell_window(): void
+    public function test_consumer_unread_counts_excludes_notification_older_than_bell_window(): void
     {
         $user = $this->createTestUser();
         $sender = $this->createTestUser();
@@ -1673,7 +1421,7 @@ class PushNotificationServiceTest extends TestCase
      * chaseup mailer (NotificationChaseUpService::SPAM_COLLECTIONS) - the
      * push-computed badge must exclude them too.
      */
-    public function test_consumerUnreadCounts_excludes_notification_from_spam_sender(): void
+    public function test_consumer_unread_counts_excludes_notification_from_spam_sender(): void
     {
         $user = $this->createTestUser();
         $spammer = $this->createTestUser();
@@ -1702,7 +1450,7 @@ class PushNotificationServiceTest extends TestCase
      * A Whitelisted spam_users row must not exclude the sender's notifications -
      * only Spammer/PendingAdd hide a notification from the bell.
      */
-    public function test_consumerUnreadCounts_does_not_exclude_whitelisted_sender(): void
+    public function test_consumer_unread_counts_does_not_exclude_whitelisted_sender(): void
     {
         $user = $this->createTestUser();
         $sender = $this->createTestUser();
@@ -1764,16 +1512,12 @@ class PushNotificationServiceTest extends TestCase
         }
     }
 
-
     public function test_warn_not_hold_pushes_a_held_message_with_a_warning_not_the_text(): void
     {
         config(['freegle.moderation.chat_warn_not_hold' => true]);
 
         $sender = $this->createTestUser();
         $recipient = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($sender, $group);
-        $this->createMembership($recipient, $group);
 
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, [

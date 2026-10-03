@@ -67,18 +67,6 @@
               <v-icon icon="map-marker-alt" />
               <span>{{ event.location }}</span>
             </div>
-            <div
-              v-if="event.groups && event.groups.length > 0"
-              class="event-card__meta-item"
-            >
-              <v-icon icon="users" />
-              <span>
-                Posted on
-                <ShowMore :items="groups" :limit="3" inline>
-                  <template #item="{ item }">{{ item.namedisplay }}</template>
-                </ShowMore>
-              </span>
-            </div>
           </div>
           <read-more
             v-if="description"
@@ -121,7 +109,6 @@
 import { ref, computed, defineAsyncComponent } from 'vue'
 import { useCommunityEventStore } from '~/stores/communityevent'
 import { useUserStore } from '~/stores/user'
-import { useGroupStore } from '~/stores/group'
 import ReadMore from '~/components/ReadMore'
 import { twem } from '~/composables/useTwem'
 
@@ -138,11 +125,6 @@ const props = defineProps({
     type: Number,
     required: true,
   },
-  filterGroup: {
-    type: Number,
-    required: false,
-    default: null,
-  },
   titleTag: {
     type: String,
     required: false,
@@ -153,7 +135,6 @@ const props = defineProps({
 // Store references
 const communityEventStore = useCommunityEventStore()
 const userStore = useUserStore()
-const groupStore = useGroupStore()
 
 // State
 const showModal = ref(false)
@@ -164,41 +145,12 @@ if (props.id) {
 
   if (v) {
     await userStore.fetch(v.userid)
-
-    v.groups?.forEach(async (id) => {
-      await groupStore.fetch(id)
-    })
   }
 }
 
 // Computed properties
 const event = computed(() => {
-  const v = communityEventStore?.byId(props.id)
-
-  if (v) {
-    if (!props.filterGroup) {
-      return v
-    }
-
-    if (v.groups.includes(props.filterGroup)) {
-      return v
-    }
-  }
-
-  return null
-})
-
-const groups = computed(() => {
-  const ret = []
-  event.value?.groups?.forEach((id) => {
-    const group = groupStore?.get(id)
-
-    if (group) {
-      ret.push(group)
-    }
-  })
-
-  return ret
+  return communityEventStore?.byId(props.id)
 })
 
 const description = computed(() => {

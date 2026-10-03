@@ -36,11 +36,9 @@ func TestDiscourseSSO_ValidFlow(t *testing.T) {
 	os.Setenv("DISCOURSE_SECRET", testDiscourseSecret)
 	defer os.Unsetenv("DISCOURSE_SECRET")
 
-	// Create a moderator user on a Freegle group.
+	// A moderator is a national role; no group or membership is involved.
 	userID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	email := prefix + "_mod@test.com"
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Moderator")
 
 	// Create a session.
 	sessionID, _ := CreateTestSession(t, userID)
@@ -74,7 +72,7 @@ func TestDiscourseSSO_ValidFlow(t *testing.T) {
 	assert.Contains(t, location, "sso=", "Should have sso parameter")
 	assert.Contains(t, location, "sig=", "Should have sig parameter")
 
-	// Verify the response payload contains the user's email.
+	// Verify the response payload contains the user's email and a moderator bio.
 	parsedURL, err := url.Parse(location)
 	assert.NoError(t, err)
 	ssoResp := parsedURL.Query().Get("sso")
@@ -84,6 +82,7 @@ func TestDiscourseSSO_ValidFlow(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, email, values.Get("email"))
 	assert.Equal(t, fmt.Sprint(userID), values.Get("external_id"))
+	assert.Contains(t, values.Get("bio"), "is a Freegle moderator")
 }
 
 func TestDiscourseSSO_InvalidSignature(t *testing.T) {

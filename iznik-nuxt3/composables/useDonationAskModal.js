@@ -13,12 +13,10 @@ export function useDonationAskModal(requestedVariant = null) {
   const me = authStore.user
 
   const variant = ref(requestedVariant)
-  const groupId = ref(null)
 
   const { $bus } = useNuxtApp()
 
   $bus.$on('outcome', (params) => {
-    groupId.value = params.groupid
     const { outcome } = params
 
     if (outcome === 'Taken' || outcome === 'Received') {
@@ -101,5 +99,5 @@ export function useDonationAskModal(requestedVariant = null) {
     console.log('stripe uDAM end', variant.value)
   }
 
-  return { showDonationAskModal, variant, groupId, show }
+  return { showDonationAskModal, variant, show }
 }

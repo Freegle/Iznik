@@ -4,7 +4,6 @@ import { setActivePinia, createPinia } from 'pinia'
 const mockListv2 = vi.fn()
 const mockFetchv2 = vi.fn()
 const mockFetchStories = vi.fn()
-const mockByGroupv2 = vi.fn()
 const mockAdd = vi.fn()
 const mockLove = vi.fn()
 const mockUnlove = vi.fn()
@@ -15,7 +14,6 @@ vi.mock('~/api', () => ({
       listv2: mockListv2,
       fetchv2: mockFetchv2,
       fetch: mockFetchStories,
-      byGroupv2: mockByGroupv2,
       add: mockAdd,
       love: mockLove,
       unlove: mockUnlove,
@@ -223,18 +221,6 @@ describe('story store', () => {
       const result = await store.fetchByAuthority(5, 10)
 
       expect(result).toEqual([])
-    })
-  })
-
-  describe('fetchByGroup', () => {
-    it('fetches stories by group and stores in recent', async () => {
-      const store = useStoryStore()
-      store.init({ public: {} })
-      mockByGroupv2.mockResolvedValue([{ id: 1 }])
-
-      await store.fetchByGroup(10, 5)
-      expect(store.recent).toEqual([{ id: 1 }])
-      expect(mockByGroupv2).toHaveBeenCalledWith(10, 5)
     })
   })
 

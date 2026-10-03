@@ -141,17 +141,12 @@ func buildDBSpecs(userID int64, chatIDs, recentChatIDs, msgIDs, trackIDs []inter
 	add("users_thanks", "userid = ?", u, 0)
 	add("merges", "user1 = ? OR user2 = ? OR offeredby = ?", []interface{}{userID, userID, userID}, 0)
 
-	// Memberships.
-	add("memberships", "userid = ?", u, 0)
-	add("memberships_history", "userid = ?", u, 0)
-
 	// Posts.
 	add("messages", "fromuser = ?", u, 0)
 	add("messages_drafts", "userid = ?", u, 0)
 
 	if in, args := inClause(msgIDs); in != "" {
 		withU := func(a []interface{}) []interface{} { return append([]interface{}{userID}, a...) }
-		add("messages_groups", "msgid IN "+in, args, 0)
 		add("messages_attachments", "msgid IN "+in, args, 0)
 		add("messages_items", "msgid IN "+in, args, 0)
 		add("messages_deadlines", "msgid IN "+in, args, 0)
@@ -180,14 +175,14 @@ func buildDBSpecs(userID int64, chatIDs, recentChatIDs, msgIDs, trackIDs []inter
 	// Room membership is NOT windowed: which conversations someone is in is
 	// cheap to collect and support needs the whole picture. The message BODIES
 	// are, because they are not cheap. A moderator sits in the roster of every
-	// Mod2Mod and User2Mod chat on their groups - one real admin is in 18,664
-	// rooms - and "chat_messages WHERE chatid IN (18,664 ids)" with no date
-	// bound cannot finish: a bare COUNT of it against production ran for over
-	// two minutes, so the dump always blew the caller's timeout and that member
-	// could never be investigated at all. Only 332 of those rooms had any
-	// activity in the default 90-day window, so anchoring the messages on the
-	// rooms active within the window - the window the dump already documents
-	// via ?since= - collapses the query while losing nothing anyone asked for.
+	// Mod2Mod and User2Mod chat - one real admin is in 18,664 rooms - and
+	// "chat_messages WHERE chatid IN (18,664 ids)" with no date bound cannot
+	// finish: a bare COUNT of it against production ran for over two minutes,
+	// so the dump always blew the caller's timeout and that member could
+	// never be investigated at all. Only 332 of those rooms had any activity
+	// in the default 90-day window, so anchoring the messages on the rooms
+	// active within the window - the window the dump already documents via
+	// ?since= - collapses the query while losing nothing anyone asked for.
 	// The (chatid, date) index serves exactly this shape.
 	if in, args := inClause(chatIDs); in != "" {
 		add("chat_rooms", "id IN "+in, args, 0)
@@ -208,7 +203,6 @@ func buildDBSpecs(userID int64, chatIDs, recentChatIDs, msgIDs, trackIDs []inter
 
 	// Moderation.
 	add("users_comments", "userid = ? OR byuserid = ?", uu, 0)
-	add("users_banned", "userid = ? OR byuser = ?", uu, 0)
 	add("spam_users", "userid = ? OR byuserid = ?", uu, 0)
 	add("spam_whitelist_links", "userid = ?", u, 0)
 	add("microactions", "userid = ?", u, 0)

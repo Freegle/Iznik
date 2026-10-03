@@ -272,22 +272,19 @@ func TestTeamGetMembersGravatarDefault(t *testing.T) {
 }
 
 func TestTeamGetVolunteersWithMember(t *testing.T) {
-	// Populate the Volunteers pseudo-team: a moderator membership on a
-	// Freegle-type group whose user has settings.showmod=true. Covers the
-	// loop body and displayname/profile construction in getVolunteers.
+	// Populate the Volunteers pseudo-team: a national moderator whose user
+	// has settings.showmod=true. Covers the loop body and
+	// displayname/profile construction in getVolunteers.
 	prefix := uniquePrefix("TeamVols")
-	groupID := CreateTestGroup(t, prefix)
 
 	db := database.DBConn
 	// Create a user with showmod=true directly so the settings string is exact.
 	fullname := "Vol " + prefix
 	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, settings) "+
-		"VALUES ('Vol', ?, ?, 'User', '{\"showmod\":true}')", prefix, fullname)
+		"VALUES ('Vol', ?, ?, 'Moderator', '{\"showmod\":true}')", prefix, fullname)
 	var userID uint64
 	db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", fullname).Scan(&userID)
 	assert.NotZero(t, userID)
-
-	CreateTestMembership(t, userID, groupID, "Moderator")
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/team?name=Volunteers", nil))
 	assert.Equal(t, 200, resp.StatusCode)

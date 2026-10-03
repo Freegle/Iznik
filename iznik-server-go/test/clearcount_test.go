@@ -31,7 +31,6 @@ func TestClearCountDrainsCountWithoutClientIDs(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("clearcount")
 
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix+"_u", "User")
 	posterID := CreateTestUser(t, prefix+"_p", "User")
 	_, token := CreateTestSession(t, userID)
@@ -72,7 +71,6 @@ func TestClearCountIsScopedToTheCaller(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("clearcountscope")
 
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix+"_u", "User")
 	otherID := CreateTestUser(t, prefix+"_o", "User")
 	posterID := CreateTestUser(t, prefix+"_p", "User")

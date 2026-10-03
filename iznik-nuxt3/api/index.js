@@ -27,24 +27,22 @@ import DonationsAPI from './DonationsAPI.js'
 import EmailTrackingAPI from './EmailTrackingAPI.js'
 import ExportAPI from './ExportAPI.js'
 import GiftAidAPI from './GiftAidAPI.js'
-import GroupAPI from './GroupAPI.js'
 import HousekeeperAPI from './HousekeeperAPI.js'
 import ImageAPI from './ImageAPI.js'
 import IsochroneAPI from './IsochroneAPI.js'
 import JobAPI from './JobAPI.js'
 import LocationAPI from './LocationAPI.js'
 import LogsAPI from './LogsAPI.js'
-import MembershipsAPI from './MembershipsAPI.js'
 import MergeAPI from './MergeAPI.js'
 import MessageAPI from './MessageAPI.js'
 import MicroVolunteeringAPI from './MicroVolunteeringAPI.js'
 import ModConfigsAPI from './ModConfigsAPI.js'
+import ModMembersAPI from './ModMembersAPI.js'
 import NewsAPI from './NewsAPI.js'
 import NoticeboardAPI from './NoticeboardAPI.js'
 import NotificationAPI from './NotificationAPI.js'
 import PartnershipsAPI from './PartnershipsAPI.js'
 import RecommendationsAPI from './RecommendationsAPI.js'
-import RipplingAPI from './RipplingAPI.js'
 import SessionAPI from './SessionAPI.js'
 import ShortlinksAPI from './ShortlinksAPI.js'
 import SpammersAPI from './SpammersAPI.js'
@@ -82,24 +80,22 @@ export default (config) => {
     emailtracking: new EmailTrackingAPI(options),
     export: new ExportAPI(options),
     giftaid: new GiftAidAPI(options),
-    group: new GroupAPI(options),
     housekeeper: new HousekeeperAPI(options),
     image: new ImageAPI(options),
     isochrone: new IsochroneAPI(options),
     job: new JobAPI(options),
     location: new LocationAPI(options),
     logs: new LogsAPI(options),
-    memberships: new MembershipsAPI(options),
     merge: new MergeAPI(options),
     message: new MessageAPI(options),
     microvolunteering: new MicroVolunteeringAPI(options),
     modconfigs: new ModConfigsAPI(options),
+    modmembers: new ModMembersAPI(options),
     news: new NewsAPI(options),
     noticeboard: new NoticeboardAPI(options),
     notification: new NotificationAPI(options),
     partnerships: new PartnershipsAPI(options),
     recommendations: new RecommendationsAPI(options),
-    rippling: new RipplingAPI(options),
     session: new SessionAPI(options),
     shortlinks: new ShortlinksAPI(options),
     spammers: new SpammersAPI(options),

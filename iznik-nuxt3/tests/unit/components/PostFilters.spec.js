@@ -9,10 +9,6 @@ const mockMiscStore = {
 
 const mockMessageStore = {
   fetchCount: vi.fn(),
-  // The "all my communities" feed the slider scales to on the mygroups view.
-  get myGroupsList() {
-    return mockMyGroupsList.value
-  },
 }
 
 const mockAuthStore = {
@@ -22,25 +18,20 @@ const mockAuthStore = {
 const mockMe = ref({
   id: 1,
   settings: {
-    browseView: 'nearby',
     browseSort: 'Unseen',
   },
 })
 
-const mockMyGroups = ref([{ id: 1, nameshort: 'TestGroup' }])
-
 // Rippling-out relevance ordering + distance slider (#D): the slider's max is scaled
 // to the farthest `distance` in the loaded nearby feed. Declared via vi.hoisted so it
 // exists before the (hoisted) vi.mock factory below references it.
-const { mockNearbyMessageList, mockMyGroupsList, mockWhichPostsShow } =
-  vi.hoisted(() => {
-    const { ref: hoistedRef } = require('vue')
-    return {
-      mockNearbyMessageList: hoistedRef([]),
-      mockMyGroupsList: hoistedRef([]),
-      mockWhichPostsShow: vi.fn(),
-    }
-  })
+const { mockNearbyMessageList, mockWhichPostsShow } = vi.hoisted(() => {
+  const { ref: hoistedRef } = require('vue')
+  return {
+    mockNearbyMessageList: hoistedRef([]),
+    mockWhichPostsShow: vi.fn(),
+  }
+})
 
 // PostFilters.vue + useReachDistance need the distance-slider sentinel and the time-based slider
 // bounds from '~/constants' - mock them explicitly (matching the plain-factory style other spec files
@@ -105,7 +96,6 @@ vi.mock('~/stores/nearby', () => ({
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: mockMe,
-    myGroups: mockMyGroups,
   }),
 }))
 
@@ -129,19 +119,15 @@ describe('PostFilters', () => {
     mockMe.value = {
       id: 1,
       settings: {
-        browseView: 'nearby',
         browseSort: 'Unseen',
       },
     }
-    mockMyGroups.value = [{ id: 1, nameshort: 'TestGroup' }]
     mockNearbyMessageList.value = []
-    mockMyGroupsList.value = []
   })
 
   function createWrapper(props = {}) {
     return mount(PostFilters, {
       props: {
-        selectedGroup: 0,
         selectedType: 'All',
         selectedSort: 'Unseen',
         forceShowFilters: false,
@@ -156,18 +142,6 @@ describe('PostFilters', () => {
             template:
               '<div class="b-collapse" :class="{ show: modelValue }"><slot /></div>',
             props: ['modelValue'],
-          },
-          GroupSelect: {
-            template: '<select class="group-select" />',
-            props: [
-              'modelValue',
-              'label',
-              'all',
-              'allMy',
-              'customName',
-              'customVal',
-            ],
-            emits: ['update:modelValue'],
           },
           'b-form-select': {
             template:
@@ -267,11 +241,6 @@ describe('PostFilters', () => {
   })
 
   describe('props', () => {
-    it('has selectedGroup prop with 0 default', () => {
-      const props = PostFilters.props || {}
-      expect(props.selectedGroup.default).toBe(0)
-    })
-
     it('has selectedType prop with All default', () => {
       const props = PostFilters.props || {}
       expect(props.selectedType.default).toBe('All')
@@ -297,11 +266,6 @@ describe('PostFilters', () => {
     it('defines update:search emit', () => {
       const emits = PostFilters.emits || []
       expect(emits).toContain('update:search')
-    })
-
-    it('defines update:selectedGroup emit', () => {
-      const emits = PostFilters.emits || []
-      expect(emits).toContain('update:selectedGroup')
     })
 
     it('defines update:selectedType emit', () => {
@@ -401,19 +365,6 @@ describe('PostFilters', () => {
     })
   })
 
-  describe('group select', () => {
-    it('shows GroupSelect when user logged in', () => {
-      const wrapper = createWrapper({ forceShowFilters: true })
-      expect(wrapper.find('.group-select').exists()).toBe(true)
-    })
-
-    it('hides GroupSelect when no user', () => {
-      mockMe.value = null
-      const wrapper = createWrapper({ forceShowFilters: true })
-      expect(wrapper.find('.group-select').exists()).toBe(false)
-    })
-  })
-
   describe('nearby reach text (#1)', () => {
     it('shows the automatic-reach help text in Nearby', () => {
       const wrapper = createWrapper({ forceShowFilters: true })
@@ -470,11 +421,6 @@ describe('PostFilters', () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       expect(wrapper.text()).toContain('Sort by')
     })
-
-    it('shows group label', () => {
-      const wrapper = createWrapper({ forceShowFilters: true })
-      expect(wrapper.find('.group-select').exists()).toBe(true)
-    })
   })
 
   describe('distance slider (#D)', () => {
@@ -484,7 +430,6 @@ describe('PostFilters', () => {
         lat: 51.5,
         lng: -0.1,
         settings: {
-          browseView: 'nearby',
           browseSort: 'Unseen',
           ...overrides,
         },
@@ -499,24 +444,15 @@ describe('PostFilters', () => {
       ]
     })
 
-    it('renders when browseView is nearby and the viewer has a location', () => {
+    it('renders when the viewer has a location', () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       expect(wrapper.find('.range-slider-stub').exists()).toBe(true)
     })
 
     it('hides the slider when the viewer has no known location', () => {
-      mockMe.value = { id: 1, settings: { browseView: 'nearby' } }
+      mockMe.value = { id: 1, settings: {} }
       const wrapper = createWrapper({ forceShowFilters: true })
       expect(wrapper.find('.range-slider-stub').exists()).toBe(false)
-    })
-
-    it('shows the slider in the mygroups view when the viewer has a location', () => {
-      // The mygroups feed now carries a per-post distance (server-side), so the slider
-      // narrows any "Show posts from" view - not just Nearby - as long as we know where
-      // the viewer is.
-      mockMe.value = meWithLocation({ browseView: 'mygroups' })
-      const wrapper = createWrapper({ forceShowFilters: true })
-      expect(wrapper.find('.range-slider-stub').exists()).toBe(true)
     })
 
     // The slider is a TRAVEL-TIME range in MINUTES, not a miles scale tied to the feed - so the
@@ -532,12 +468,8 @@ describe('PostFilters', () => {
     })
 
     it('keeps the fixed range regardless of the loaded feed', () => {
-      mockMe.value = meWithLocation({ browseView: 'mygroups' })
+      mockMe.value = meWithLocation()
       mockNearbyMessageList.value = []
-      mockMyGroupsList.value = [
-        { id: 1, distance: 2.1 },
-        { id: 2, distance: 8.4 },
-      ]
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
       expect(Number(input.attributes('max'))).toBe(30)
@@ -639,16 +571,7 @@ describe('PostFilters', () => {
     it('shows the badge when sort is not Unseen', () => {
       mockMe.value = {
         id: 1,
-        settings: { browseView: 'nearby', browseSort: 'Newest' },
-      }
-      const wrapper = createWrapper({ forceShowFilters: false })
-      expect(wrapper.find('.filters-active-badge').exists()).toBe(true)
-    })
-
-    it('shows the badge when the view is not nearby (a specific group/mygroups)', () => {
-      mockMe.value = {
-        id: 1,
-        settings: { browseView: 'mygroups', browseSort: 'Unseen' },
+        settings: { browseSort: 'Newest' },
       }
       const wrapper = createWrapper({ forceShowFilters: false })
       expect(wrapper.find('.filters-active-badge').exists()).toBe(true)
@@ -658,7 +581,6 @@ describe('PostFilters', () => {
       mockMe.value = {
         id: 1,
         settings: {
-          browseView: 'nearby',
           browseSort: 'Unseen',
           browseType: 'Offer',
         },
@@ -671,7 +593,6 @@ describe('PostFilters', () => {
       mockMe.value = {
         id: 1,
         settings: {
-          browseView: 'nearby',
           browseSort: 'Unseen',
           browseMaxDistance: 3,
         },
@@ -686,7 +607,6 @@ describe('PostFilters', () => {
       mockMe.value = {
         id: 1,
         settings: {
-          browseView: 'nearby',
           browseSort: 'Unseen',
           browseType: 'Offer',
         },
@@ -708,84 +628,4 @@ describe('PostFilters', () => {
     })
   })
 
-  // "Show posts from" used to forget a single community on reload: only the two whole-feed
-  // views were stored, so the dropdown sprang back to Nearby every visit (Discourse 10096).
-  describe('community stickiness', () => {
-    function pickGroup(wrapper, val) {
-      return wrapper
-        .findComponent('.group-select')
-        .vm.$emit('update:modelValue', val)
-    }
-
-    it('remembers a single community and emits it', async () => {
-      const wrapper = createWrapper({ forceShowFilters: true })
-
-      pickGroup(wrapper, 1)
-      await flushPromises()
-
-      expect(mockAuthStore.saveAndGet).toHaveBeenCalledWith({
-        settings: expect.objectContaining({
-          browseGroup: 1,
-          // Naming a community narrows the feed it is already showing; it is not a third
-          // whole-feed view, so browseView is left where it was.
-          browseView: 'nearby',
-        }),
-      })
-      expect(wrapper.emitted('update:selectedGroup')[0]).toEqual([1])
-    })
-
-    it('opens on the community the page restored, not on Nearby', () => {
-      // The panel is lazily mounted, so it can appear after the page has already restored a
-      // saved community. Saying "-- Nearby --" over a feed filtered to one is the same
-      // mismatch, wearing the other face.
-      mockMe.value.settings.browseGroup = 1
-      const wrapper = createWrapper({ forceShowFilters: true, selectedGroup: 1 })
-
-      expect(wrapper.findComponent('.group-select').props('modelValue')).toBe(1)
-    })
-
-    it('clears the remembered community when the member goes back to Nearby', async () => {
-      mockMe.value.settings.browseGroup = 1
-      const wrapper = createWrapper({ forceShowFilters: true, selectedGroup: 1 })
-
-      pickGroup(wrapper, -1)
-      await flushPromises()
-
-      expect(mockAuthStore.saveAndGet).toHaveBeenCalledWith({
-        settings: expect.objectContaining({
-          browseGroup: null,
-          browseView: 'nearby',
-        }),
-      })
-      expect(wrapper.emitted('update:selectedGroup')[0]).toEqual([0])
-    })
-
-    it('clears it for all my communities too', async () => {
-      mockMe.value.settings.browseGroup = 1
-      const wrapper = createWrapper({ forceShowFilters: true, selectedGroup: 1 })
-
-      pickGroup(wrapper, 0)
-      await flushPromises()
-
-      expect(mockAuthStore.saveAndGet).toHaveBeenCalledWith({
-        settings: expect.objectContaining({
-          browseGroup: null,
-          browseView: 'mygroups',
-        }),
-      })
-    })
-
-    it('does not write the saved community back when the page restores it', async () => {
-      // The restore arrives as a selectedGroup prop change, which lands in the same watcher.
-      // Writing there would spend a save on every visit to Browse putting back what is stored.
-      mockMe.value.settings.browseGroup = 1
-      const wrapper = createWrapper({ forceShowFilters: true })
-
-      await wrapper.setProps({ selectedGroup: 1 })
-      await flushPromises()
-      expect(wrapper.emitted('update:selectedGroup')[0]).toEqual([1])
-
-      expect(mockAuthStore.saveAndGet).not.toHaveBeenCalled()
-    })
-  })
 })

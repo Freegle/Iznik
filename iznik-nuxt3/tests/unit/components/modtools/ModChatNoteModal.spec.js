@@ -12,9 +12,6 @@ const mockChatStore = {
   }),
   send: mockSend,
 }
-const mockMyGroup = vi.fn().mockReturnValue({
-  namedisplay: 'Test Group',
-})
 const mockSendMT = vi.fn().mockResolvedValue({})
 
 vi.mock('#app', () => ({
@@ -36,12 +33,6 @@ vi.mock('~/composables/useOurModal', () => ({
   useOurModal: () => ({
     modal: ref(null),
     hide: mockHide,
-  }),
-}))
-
-vi.mock('~/composables/useMe', () => ({
-  useMe: () => ({
-    myGroup: mockMyGroup,
   }),
 }))
 
@@ -69,12 +60,6 @@ describe('ModChatNoteModal', () => {
           'b-form-textarea': {
             template: '<textarea v-model="modelValue" />',
             props: ['modelValue'],
-            emits: ['update:modelValue'],
-          },
-          ModGroupSelect: {
-            template:
-              '<select v-model="modelValue"><option value="1">Group</option></select>',
-            props: ['modelValue', 'modonly'],
             emits: ['update:modelValue'],
           },
         },
@@ -156,13 +141,12 @@ describe('ModChatNoteModal', () => {
     it('sends message with modnote=true via chatStore.send', async () => {
       const wrapper = mountComponent()
       wrapper.vm.note = 'Test mod note'
-      wrapper.vm.groupid = 1
 
       await wrapper.vm.addit()
 
       expect(mockSend).toHaveBeenCalledWith(
         123, // chatid
-        'Test mod note\n\nTest Group Volunteer', // message with group suffix
+        'Test mod note\n\nFreegle Volunteer', // message with fixed signature
         null, // addressid
         null, // imageid
         null, // refmsgid

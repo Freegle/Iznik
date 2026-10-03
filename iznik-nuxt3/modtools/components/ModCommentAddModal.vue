@@ -9,8 +9,6 @@
     >
       <template #title>
         Add Note for {{ user ? user.displayname : '#' + userid }}
-        <span v-if="groupname">on</span>
-        {{ groupname }}
       </template>
       <template #default>
         <p>
@@ -78,16 +76,6 @@ const props = defineProps({
     type: Number,
     required: true,
   },
-  groupid: {
-    type: Number,
-    required: false,
-    default: null,
-  },
-  groupname: {
-    type: String,
-    required: false,
-    default: null,
-  },
 })
 
 const emit = defineEmits(['hidden', 'added'])
@@ -139,7 +127,6 @@ async function save() {
   // Go direct to API because comments aren't in the Store separately.
   await $api.comment.add({
     userid: props.userid,
-    groupid: props.groupid,
     user1: user1.value,
     user2: user2.value,
     user3: user3.value,

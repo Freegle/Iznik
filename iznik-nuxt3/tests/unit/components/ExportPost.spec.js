@@ -20,7 +20,6 @@ describe('ExportPost', () => {
     id: 12345,
     arrival: '2024-01-15T10:30:00Z',
     subject: 'OFFER: Free Sofa',
-    groups: [{ namedisplay: 'Test Freegle Group' }],
   }
 
   function mountExportPost(props = {}) {
@@ -44,11 +43,10 @@ describe('ExportPost', () => {
   })
 
   describe('rendering', () => {
-    it('renders post data: ID, date, group, subject, and details button', () => {
+    it('renders post data: ID, date, subject, and details button', () => {
       const wrapper = mountExportPost()
       expect(wrapper.text()).toContain('#12345')
       expect(wrapper.text()).toContain('Formatted: 2024-01-15T10:30:00Z')
-      expect(wrapper.text()).toContain('Test Freegle Group')
       expect(wrapper.text()).toContain('OFFER: Free Sofa')
       expect(wrapper.find('button').text()).toBe('Details')
     })
@@ -69,9 +67,6 @@ describe('ExportPost', () => {
 
   describe('edge cases', () => {
     it.each([
-      [{ groups: null }, 'null groups'],
-      [{ groups: [] }, 'empty groups'],
-      [{ groups: [{}] }, 'group without namedisplay'],
       [{ id: 0 }, 'zero ID'],
       [{ subject: null }, 'null subject'],
       [{ arrival: undefined }, 'undefined arrival'],
@@ -80,19 +75,6 @@ describe('ExportPost', () => {
       const post = { ...defaultPost, ...overrides }
       const wrapper = mountExportPost({ post })
       expect(wrapper.find('div').exists()).toBe(true)
-    })
-
-    it('shows all groups when multiple groups exist', () => {
-      const multiGroupPost = {
-        ...defaultPost,
-        groups: [
-          { groupid: 1, namedisplay: 'First Group' },
-          { groupid: 2, namedisplay: 'Second Group' },
-        ],
-      }
-      const wrapper = mountExportPost({ post: multiGroupPost })
-      expect(wrapper.text()).toContain('First Group')
-      expect(wrapper.text()).toContain('Second Group')
     })
   })
 })

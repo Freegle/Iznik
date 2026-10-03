@@ -537,14 +537,14 @@ func TestLogApiHeaders_NilUserID_NoLabel(t *testing.T) {
 
 func TestLogFromLogsTable_Disabled_NoFile(t *testing.T) {
 	l := newDirectDisabledClient()
-	l.LogFromLogsTable("TN", "subtype", nil, nil, nil, nil, "text")
+	l.LogFromLogsTable("TN", "subtype", nil, nil, nil, "text")
 	assert.Nil(t, l.currentFile)
 }
 
 func TestLogFromLogsTable_Enabled_BasicEntry(t *testing.T) {
 	dir := t.TempDir()
 	l := newDirectEnabledClient(dir)
-	l.LogFromLogsTable("TN", "message", nil, nil, nil, nil, "some text")
+	l.LogFromLogsTable("TN", "message", nil, nil, nil, "some text")
 	l.Close()
 
 	entries := readAllLogEntries(t, dir)
@@ -555,22 +555,11 @@ func TestLogFromLogsTable_Enabled_BasicEntry(t *testing.T) {
 	assert.Equal(t, "message", labels["subtype"])
 }
 
-func TestLogFromLogsTable_WithGroupID_LabelSet(t *testing.T) {
-	dir := t.TempDir()
-	l := newDirectEnabledClient(dir)
-	gid := uint64(42)
-	l.LogFromLogsTable("TN", "sub", &gid, nil, nil, nil, "text")
-	l.Close()
-
-	entries := readAllLogEntries(t, dir)
-	assert.Equal(t, "42", labelsOf(t, entries[0])["groupid"])
-}
-
 func TestLogFromLogsTable_WithUserID_LabelSet(t *testing.T) {
 	dir := t.TempDir()
 	l := newDirectEnabledClient(dir)
 	uid := uint64(77)
-	l.LogFromLogsTable("TN", "sub", nil, &uid, nil, nil, "text")
+	l.LogFromLogsTable("TN", "sub", &uid, nil, nil, "text")
 	l.Close()
 
 	entries := readAllLogEntries(t, dir)
@@ -581,7 +570,7 @@ func TestLogFromLogsTable_ZeroUserID_NoLabel(t *testing.T) {
 	dir := t.TempDir()
 	l := newDirectEnabledClient(dir)
 	uid := uint64(0)
-	l.LogFromLogsTable("TN", "sub", nil, &uid, nil, nil, "text")
+	l.LogFromLogsTable("TN", "sub", &uid, nil, nil, "text")
 	l.Close()
 
 	entries := readAllLogEntries(t, dir)
@@ -592,7 +581,7 @@ func TestLogFromLogsTable_ZeroUserID_NoLabel(t *testing.T) {
 func TestLogFromLogsTable_AllOptionalFieldsNil(t *testing.T) {
 	dir := t.TempDir()
 	l := newDirectEnabledClient(dir)
-	l.LogFromLogsTable("EVT", "custom", nil, nil, nil, nil, "")
+	l.LogFromLogsTable("EVT", "custom", nil, nil, nil, "")
 	l.Close()
 
 	entries := readAllLogEntries(t, dir)
@@ -602,11 +591,10 @@ func TestLogFromLogsTable_AllOptionalFieldsNil(t *testing.T) {
 func TestLogFromLogsTable_WithAllIDs(t *testing.T) {
 	dir := t.TempDir()
 	l := newDirectEnabledClient(dir)
-	gid := uint64(1)
 	uid := uint64(2)
 	byUser := uint64(3)
 	msgID := uint64(4)
-	l.LogFromLogsTable("TN", "sub", &gid, &uid, &byUser, &msgID, "test")
+	l.LogFromLogsTable("TN", "sub", &uid, &byUser, &msgID, "test")
 	l.Close()
 
 	entries := readAllLogEntries(t, dir)

@@ -14,10 +14,8 @@ type Ratings struct {
 }
 
 type Publiclocation struct {
-	Display   string `json:"display"`
-	Groupid   uint64 `json:"groupid"`
-	Groupname string `json:"groupname"`
-	Location  string `json:"location"`
+	Display  string `json:"display"`
+	Location string `json:"location"`
 }
 
 type PrivatePosition struct {
@@ -108,8 +106,7 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 			Joins("INNER JOIN messages ON messages.id = messages_by.msgid").
 			Joins("INNER JOIN chat_messages ON chat_messages.refmsgid = messages.id AND messages.type = ? AND chat_messages.type = ?",
 				utils.OFFER, utils.CHAT_MESSAGE_INTERESTED).
-			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
-			Where("chat_messages.userid = ? AND messages_by.userid = ? AND messages_by.userid != messages.fromuser AND messages_groups.arrival >= ?",
+			Where("chat_messages.userid = ? AND messages_by.userid = ? AND messages_by.userid != messages.fromuser AND messages.arrival >= ?",
 				id, id, start)
 		var info2 UserInfo
 		res.Scan(&info2)
@@ -122,18 +119,13 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 	go func() {
 		defer wg.Done()
 
-		// COUNT(DISTINCT messages.id), not COUNT(*): rippling-out adds a messages_groups
-		// row (rippled_in = 1) per group a post ripples into, and genuine cross-posting
-		// adds one origin row (rippled_in = 0) per group posted to directly - either way
-		// the join fans out to multiple rows per message. Without the DISTINCT a single
-		// post reaching N groups inflated the Offers/Wanteds (and Openoffers/Openwanteds)
-		// counts by a factor of N. Same rippling pattern as the dashboard Popular Posts
-		// and mygroups counts (0e639acdf, 9fda94a29).
+		// A message now has one row and one moderation state of its own, not one per
+		// group, so there is no fan-out to guard against here any more (this used to
+		// join messages_groups; see Discourse #9672 and #9851).
 		rows, _ := db.Table("messages").
-			Select("COUNT(DISTINCT messages.id) AS count, messages.type, messages_outcomes.outcome").
-			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+			Select("COUNT(messages.id) AS count, messages.type, messages_outcomes.outcome").
 			Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id").
-			Where("fromuser = ? AND messages.arrival > ? AND collection = ? AND messages_groups.deleted = 0", id, start, utils.COLLECTION_APPROVED).
+			Where("fromuser = ? AND messages.arrival > ? AND collection = ?", id, start, utils.COLLECTION_APPROVED).
 			Group("messages.type, messages_outcomes.outcome").
 			Rows()
 
@@ -267,7 +259,7 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 }
 
 // GetPublicLocationForUser returns the public location for a user, derived from their
-// lastlocation or most recent group membership.
+// stored location preference or their lastlocation postcode area.
 func GetPublicLocationForUser(userid uint64) *Publiclocation {
 	db := database.DBConn
 
@@ -297,28 +289,6 @@ func GetPublicLocationForUser(userid uint64) *Publiclocation {
 		return &Publiclocation{
 			Display:  locName,
 			Location: locName,
-		}
-	}
-
-	// Fall back to most recent group membership.
-	var groupLoc struct {
-		Groupid   uint64
-		Groupname string
-	}
-	db.Table("memberships m").
-		Select("m.groupid, COALESCE(g.namefull, g.nameshort) AS groupname").
-		Joins("INNER JOIN `groups` g ON g.id = m.groupid").
-		Where("m.userid = ? AND m.collection = ?", userid, utils.COLLECTION_APPROVED).
-		Order("m.added DESC").
-		Limit(1).
-		Scan(&groupLoc)
-
-	if groupLoc.Groupid > 0 {
-		return &Publiclocation{
-			Display:   groupLoc.Groupname,
-			Location:  groupLoc.Groupname,
-			Groupid:   groupLoc.Groupid,
-			Groupname: groupLoc.Groupname,
 		}
 	}
 

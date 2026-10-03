@@ -4,9 +4,7 @@ namespace Tests\Unit\Models;
 
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
-use App\Models\Membership;
 use App\Models\User;
-use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class ChatRoomModelTest extends TestCase
@@ -38,11 +36,9 @@ class ChatRoomModelTest extends TestCase
             'created' => now(),
         ]);
 
-        $group = $this->createTestGroup();
         $user2mod = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $user1->id,
-            'groupid' => $group->id,
             'created' => now(),
         ]);
 
@@ -55,13 +51,10 @@ class ChatRoomModelTest extends TestCase
     public function test_user2mod_scope(): void
     {
         $user1 = $this->createTestUser();
-        $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $user2mod = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $user1->id,
-            'groupid' => $group->id,
             'created' => now(),
         ]);
 
@@ -72,11 +65,8 @@ class ChatRoomModelTest extends TestCase
 
     public function test_mod2mod_scope(): void
     {
-        $group = $this->createTestGroup();
-
         $mod2mod = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_MOD2MOD,
-            'groupid' => $group->id,
             'created' => now(),
         ]);
 
@@ -199,7 +189,6 @@ class ChatRoomModelTest extends TestCase
     {
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $user2user = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2USER,
@@ -211,7 +200,6 @@ class ChatRoomModelTest extends TestCase
         $user2mod = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2MOD,
             'user1' => $user1->id,
-            'groupid' => $group->id,
             'created' => now(),
         ]);
 
@@ -297,21 +285,6 @@ class ChatRoomModelTest extends TestCase
         $this->assertEquals($user2->id, $room->user2()->first()->id);
     }
 
-    public function test_group_relationship(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        $room = ChatRoom::create([
-            'chattype' => ChatRoom::TYPE_USER2MOD,
-            'user1' => $user->id,
-            'groupid' => $group->id,
-            'created' => now(),
-        ]);
-
-        $this->assertEquals($group->id, $room->group->id);
-    }
-
     public function test_roster_relationship(): void
     {
         $user1 = $this->createTestUser();
@@ -349,58 +322,40 @@ class ChatRoomModelTest extends TestCase
         $this->assertEquals('Mod2Mod', ChatRoom::TYPE_MOD2MOD);
         $this->assertEquals('User2Mod', ChatRoom::TYPE_USER2MOD);
         $this->assertEquals('User2User', ChatRoom::TYPE_USER2USER);
-        $this->assertEquals('Group', ChatRoom::TYPE_GROUP);
     }
 
     public function test_get_or_create_user2mod_creates_new(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
-        $chat = ChatRoom::getOrCreateUser2Mod($user->id, $group->id);
+        $chat = ChatRoom::getOrCreateUser2Mod($user->id);
 
         $this->assertNotNull($chat);
         $this->assertEquals(ChatRoom::TYPE_USER2MOD, $chat->chattype);
         $this->assertEquals($user->id, $chat->getAttributeValue('user1'));
-        $this->assertEquals($group->id, $chat->groupid);
     }
 
     public function test_get_or_create_user2mod_returns_existing(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
-        $chat1 = ChatRoom::getOrCreateUser2Mod($user->id, $group->id);
-        $chat2 = ChatRoom::getOrCreateUser2Mod($user->id, $group->id);
+        $chat1 = ChatRoom::getOrCreateUser2Mod($user->id);
+        $chat2 = ChatRoom::getOrCreateUser2Mod($user->id);
 
         $this->assertEquals($chat1->id, $chat2->id, 'Should return existing chat, not create duplicate');
 
         // Verify only one row exists.
         $count = ChatRoom::where('user1', $user->id)
-            ->where('groupid', $group->id)
             ->where('chattype', ChatRoom::TYPE_USER2MOD)
             ->count();
         $this->assertEquals(1, $count, 'Should have exactly one User2Mod chat');
     }
 
-    public function test_get_or_create_user2mod_different_groups(): void
-    {
-        $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-
-        $chat1 = ChatRoom::getOrCreateUser2Mod($user->id, $group1->id);
-        $chat2 = ChatRoom::getOrCreateUser2Mod($user->id, $group2->id);
-
-        $this->assertNotEquals($chat1->id, $chat2->id, 'Different groups should create different chats');
-    }
-
     public function test_get_or_create_user2mod_adds_member_to_roster(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
-        $chat = ChatRoom::getOrCreateUser2Mod($user->id, $group->id);
+        $chat = ChatRoom::getOrCreateUser2Mod($user->id);
 
         $this->assertDatabaseHas('chat_roster', [
             'chatid' => $chat->id,
@@ -408,38 +363,31 @@ class ChatRoomModelTest extends TestCase
         ]);
     }
 
-    public function test_get_or_create_user2mod_adds_group_mods_to_roster(): void
+    public function test_get_or_create_user2mod_adds_national_mods_to_roster(): void
     {
         $member = $this->createTestUser();
-        $mod = $this->createTestUser();
-        $owner = $this->createTestUser();
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $admin = $this->createTestUser(['systemrole' => User::SYSTEMROLE_ADMIN]);
         $nonMod = $this->createTestUser();
-        $group = $this->createTestGroup();
 
-        Membership::create(['userid' => $mod->id, 'groupid' => $group->id, 'role' => 'Moderator', 'added' => now()]);
-        Membership::create(['userid' => $owner->id, 'groupid' => $group->id, 'role' => 'Owner', 'added' => now()]);
-        Membership::create(['userid' => $nonMod->id, 'groupid' => $group->id, 'role' => 'Member', 'added' => now()]);
-
-        $chat = ChatRoom::getOrCreateUser2Mod($member->id, $group->id);
+        $chat = ChatRoom::getOrCreateUser2Mod($member->id);
 
         $this->assertDatabaseHas('chat_roster', ['chatid' => $chat->id, 'userid' => $member->id]);
         $this->assertDatabaseHas('chat_roster', ['chatid' => $chat->id, 'userid' => $mod->id]);
-        $this->assertDatabaseHas('chat_roster', ['chatid' => $chat->id, 'userid' => $owner->id]);
+        $this->assertDatabaseHas('chat_roster', ['chatid' => $chat->id, 'userid' => $admin->id]);
         $this->assertDatabaseMissing('chat_roster', ['chatid' => $chat->id, 'userid' => $nonMod->id]);
     }
 
-    public function test_get_or_create_user2mod_adds_roster_for_existing_chat(): void
+    public function test_get_or_create_user2mod_adds_roster_for_new_mod_on_existing_chat(): void
     {
         $member = $this->createTestUser();
-        $mod = $this->createTestUser();
-        $group = $this->createTestGroup();
 
-        // Create the chat first without any memberships.
-        $chat = ChatRoom::getOrCreateUser2Mod($member->id, $group->id);
+        // Create the chat first, before the new moderator exists.
+        $chat = ChatRoom::getOrCreateUser2Mod($member->id);
 
-        // Now add a mod membership and call again.
-        Membership::create(['userid' => $mod->id, 'groupid' => $group->id, 'role' => 'Moderator', 'added' => now()]);
-        $chat2 = ChatRoom::getOrCreateUser2Mod($member->id, $group->id);
+        // Now a new national moderator appears, and the member messages Freegle again.
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+        $chat2 = ChatRoom::getOrCreateUser2Mod($member->id);
 
         $this->assertEquals($chat->id, $chat2->id);
         $this->assertDatabaseHas('chat_roster', ['chatid' => $chat->id, 'userid' => $member->id]);

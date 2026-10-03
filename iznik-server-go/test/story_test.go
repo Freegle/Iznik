@@ -106,9 +106,7 @@ func TestGroupStory(t *testing.T) {
 func TestGroupStory_WithData(t *testing.T) {
 	// Story is linked to group via user's membership, not a separate table
 	prefix := uniquePrefix("storygrp")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	createTestStory(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/story/group/"+fmt.Sprint(groupID), nil))
@@ -184,9 +182,7 @@ func TestListStoryPublicFilter(t *testing.T) {
 
 func TestListStoryGroupReviewedFilter(t *testing.T) {
 	prefix := uniquePrefix("story_group_rev")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 
 	// Create reviewed and unreviewed stories for this group member
 	reviewedID := CreateTestStory(t, userID, "Group Reviewed "+prefix, "reviewed", true, true)
@@ -220,9 +216,7 @@ func TestListStoryGroupReviewedFilter(t *testing.T) {
 func TestGroupStory_ExcludesRippleOnlyMembership(t *testing.T) {
 	prefix := uniquePrefix("story_rippled")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 
 	// Downgrade the membership to ripple-only: the user's sole tie to this group is a post of
 	// theirs that rippled in, not anything they did themselves.
@@ -375,9 +369,7 @@ func TestPatchStory(t *testing.T) {
 	prefix := uniquePrefix("stwr_patch")
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	storyID := CreateTestStory(t, ownerID, "Patch Test "+prefix, "A story to patch", false, false)
@@ -407,8 +399,6 @@ func TestPatchStoryNotMod(t *testing.T) {
 	prefix := uniquePrefix("stwr_patchnm")
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	otherID := CreateTestUser(t, prefix+"_other", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	// other user is NOT a mod and NOT in the same group
 	_, otherToken := CreateTestSession(t, otherID)
 
@@ -431,9 +421,7 @@ func TestPatchStoryMakesPublic(t *testing.T) {
 	prefix := uniquePrefix("stwr_patchpub")
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Set a location on the owner so the newsfeed entry can be created with a position
@@ -464,9 +452,7 @@ func TestPatchStoryMakesPublicNotFromNewsfeed(t *testing.T) {
 	prefix := uniquePrefix("stwr_patchnf")
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create story that came from newsfeed (fromnewsfeed = 1)
@@ -497,9 +483,7 @@ func TestDeleteStory(t *testing.T) {
 	prefix := uniquePrefix("stwr_del")
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	storyID := CreateTestStory(t, ownerID, "Delete Test "+prefix, "A story to delete", true, true)
@@ -523,8 +507,6 @@ func TestDeleteStoryNotMod(t *testing.T) {
 	prefix := uniquePrefix("stwr_delnm")
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	otherID := CreateTestUser(t, prefix+"_other", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	// other user is NOT a mod and NOT in the same group
 	_, otherToken := CreateTestSession(t, otherID)
 
@@ -570,17 +552,15 @@ func TestStoryReviewListIgnoresPublicFlag(t *testing.T) {
 	// of the public flag. The count query (session work) should also match.
 	prefix := uniquePrefix("StoryRevPub")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
 
 	// Create an unreviewed story with public=true (the common case).
 	storyID := CreateTestStory(t, memberID, prefix+"_headline", "My story", false, true)
 
 	// Create a mod who can see stories for this group.
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// The review listing (reviewed=0) should include this story regardless of public flag.
@@ -612,13 +592,11 @@ func TestReviewStory_ExcludesRippleOnlyMembership(t *testing.T) {
 	prefix := uniquePrefix("story_rev_rippled")
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	authorID := CreateTestUser(t, prefix+"_author", "User")
-	CreateTestMembership(t, authorID, groupID, "Member")
 	// The author's only tie to this group is a post of theirs that rippled in.
 	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", authorID, groupID)
 

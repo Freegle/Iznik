@@ -58,20 +58,17 @@ class UnifiedDigestSummaryTest extends TestCase
     private function buildDigest(int $count, string $mode): array
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
         $words = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf'];
         $messages = [];
         $posts = collect();
         for ($i = 0; $i < $count; $i++) {
-            $m = $this->createTestMessage($poster, $group, [
+            $m = $this->createTestMessage($poster, [
                 'subject' => 'OFFER: '.$words[$i].' (TestLocation)',
             ]);
             $messages[] = $m;
-            $posts->push(['message' => $m, 'postedToGroups' => [$group->id]]);
+            $posts->push(['message' => $m]);
         }
 
         return [new UnifiedDigest($user, $posts, $mode), $messages];
@@ -289,19 +286,16 @@ class UnifiedDigestSummaryTest extends TestCase
     public function test_html_daily_caps_live_posts_at_65_and_shows_intro(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
         $cap = \App\Mail\Digest\DigestStyle::DIGEST_POST_CAP; // 65
         $total = $cap + 1; // one over the cap, so the last post is dropped
         $posts = collect();
         for ($i = 0; $i < $total; $i++) {
-            $m = $this->createTestMessage($poster, $group, [
+            $m = $this->createTestMessage($poster, [
                 'subject' => 'OFFER: CapWord'.$i.' (TestLocation)',
             ]);
-            $posts->push(['message' => $m, 'postedToGroups' => [$group->id]]);
+            $posts->push(['message' => $m]);
         }
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
 

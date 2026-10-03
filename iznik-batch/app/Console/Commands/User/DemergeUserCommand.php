@@ -19,8 +19,11 @@ class DemergeUserCommand extends Command
     protected $description = 'Undo a user merge using data from a backup database';
 
     // Tables with auto-increment 'id': delete backup rows from live by userid + id.
+    // memberships/memberships_history were dropped by
+    // 2026_09_20_000001_remove_group_model.php (ai-judgement.md) - there is no
+    // longer a membership concept for a merge to have carried over, so nothing
+    // to demerge for them.
     private const TABLES = [
-        'memberships'              => ['userid'],
         'spam_users'               => ['userid', 'byuserid'],
         'users_logins'             => ['userid'],
         'users_emails'             => ['userid'],
@@ -33,14 +36,7 @@ class DemergeUserCommand extends Command
         'chat_roster'              => ['userid'],
         'chat_messages'            => ['userid'],
         'users_searches'           => ['userid'],
-        'memberships_history'      => ['userid'],
         'newsfeed'                 => ['userid'],
-    ];
-
-    // Tables with composite primary keys (no auto-increment 'id'):
-    // 'userid_col' is the user FK, 'other_keys' are the remaining PK columns.
-    private const TABLES_COMPOSITE = [
-        'users_banned' => ['userid_col' => 'userid', 'other_keys' => ['groupid']],
     ];
 
     public function handle(): int
@@ -135,28 +131,34 @@ class DemergeUserCommand extends Command
                 }
             }
 
-            foreach (self::TABLES_COMPOSITE as $table => $spec) {
-                $useridCol = $spec['userid_col'];
-                $otherKeys = $spec['other_keys'];
-                $selectCols = array_merge([$useridCol], $otherKeys);
+            // users_banned (one row per group) was dropped by
+            // 2026_09_20_000001_remove_group_model.php in favour of a single
+            // users.banned/bannedby pair on `users` itself (ai-judgement.md) - there
+            // is no child-table row left to delete. Undo it the way
+            // UnspamUserCommand does: if live's "into" user currently holds exactly
+            // the ban backup shows for the demerge target, the merge carried it
+            // over, so clear it. Leave any ban the "into" user already had in its
+            // own right alone.
+            $backupBan = DB::connection('backup_demerge')
+                ->table('users')
+                ->where('id', $backupUserId)
+                ->first(['banned', 'bannedby']);
 
-                $backupRows = DB::connection('backup_demerge')
-                    ->table($table)
-                    ->where($useridCol, $backupUserId)
-                    ->get($selectCols);
+            if ($backupBan && $backupBan->banned) {
+                $liveBan = DB::table('users')
+                    ->where('id', $fromBackupUserId)
+                    ->first(['banned', 'bannedby']);
 
-                foreach ($backupRows as $row) {
-                    $query = DB::table($table)->where($useridCol, $fromBackupUserId);
-                    foreach ($otherKeys as $col) {
-                        $query->where($col, $row->$col);
-                    }
-                    $deleted = $query->delete();
+                if ($liveBan
+                    && (string) $liveBan->banned === (string) $backupBan->banned
+                    && (string) $liveBan->bannedby === (string) $backupBan->bannedby
+                ) {
+                    DB::table('users')
+                        ->where('id', $fromBackupUserId)
+                        ->update(['banned' => null, 'bannedby' => null]);
 
-                    if ($deleted) {
-                        $keyDesc = implode(',', array_map(fn($c) => "{$c}={$row->$c}", $otherKeys));
-                        $this->line("  Deleted {$table}.({$useridCol}={$fromBackupUserId},{$keyDesc})");
-                        $totalDeleted++;
-                    }
+                    $this->line("  Cleared users.banned/bannedby carried onto user #{$fromBackupUserId}");
+                    $totalDeleted++;
                 }
             }
 

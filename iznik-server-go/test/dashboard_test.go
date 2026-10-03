@@ -155,9 +155,8 @@ func TestGetDashboardDiscourseTopicsNotMod(t *testing.T) {
 func TestGetDashboardDiscourseTopicsNoConfig(t *testing.T) {
 	// A moderator gets nil when DISCOURSE_API/DISCOURSE_APIKEY are not set.
 	prefix := uniquePrefix("DashDiscNC")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, userID)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=DiscourseTopics&group=%d&jwt=%s", groupID, token), nil)
@@ -175,11 +174,9 @@ func TestGetDashboardDiscourseTopicsNoConfig(t *testing.T) {
 func TestDashboardNewMessagesNoDoubleCount(t *testing.T) {
 	// A message on two groups should be counted once, not twice.
 	prefix := uniquePrefix("DashNoDup")
-	groupA := CreateTestGroup(t, prefix+"A")
-	groupB := CreateTestGroup(t, prefix+"B")
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupA, "Moderator")
-	CreateTestMembership(t, userID, groupB, "Moderator")
+	PromoteTestUserToModerator(t, userID)
+	PromoteTestUserToModerator(t, userID)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -219,11 +216,9 @@ func TestDashboardNewMessagesNoDoubleCount(t *testing.T) {
 // still surfaces the poster.
 func TestDashboardWideRangeBoundedWalk(t *testing.T) {
 	prefix := uniquePrefix("DashWide")
-	groupA := CreateTestGroup(t, prefix+"A")
-	groupB := CreateTestGroup(t, prefix+"B")
 	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupA, "Moderator")
-	CreateTestMembership(t, userID, groupB, "Moderator")
+	PromoteTestUserToModerator(t, userID)
+	PromoteTestUserToModerator(t, userID)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -298,9 +293,8 @@ func TestGetDashboardHeatmap(t *testing.T) {
 func createModDashboardFixtures(t *testing.T, prefix string) (uint64, uint64, string) {
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, userID)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a message in the group so components have data.
@@ -312,7 +306,6 @@ func createModDashboardFixtures(t *testing.T, prefix string) (uint64, uint64, st
 
 	// Create a chat reply referencing the message.
 	poster := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
 	var chatID uint64
 	db.Exec("INSERT INTO chat_rooms (user1, user2, chattype) VALUES (?, ?, 'User2User')", userID, poster)
 	db.Raw("SELECT LAST_INSERT_ID()").Scan(&chatID)
@@ -499,10 +492,8 @@ func TestGetDashboardHappinessCountsOneVotePerRating(t *testing.T) {
 
 	// The same post also sits on a second group the moderator runs, and has rippled
 	// into a third. Neither may make the one rating count again.
-	groupB := CreateTestGroup(t, prefix+"B")
-	CreateTestMembership(t, userID, groupB, "Moderator")
-	groupC := CreateTestGroup(t, prefix+"C")
-	CreateTestMembership(t, userID, groupC, "Moderator")
+	PromoteTestUserToModerator(t, userID)
+	PromoteTestUserToModerator(t, userID)
 
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
 		"VALUES (?, ?, 'Approved', NOW(), 0, 0)", msgID, groupB)
@@ -562,11 +553,9 @@ func TestGetDashboardPopularPostsNoDuplicateAcrossRippledGroups(t *testing.T) {
 	prefix := uniquePrefix("DashPPDup")
 	db := database.DBConn
 
-	groupA := CreateTestGroup(t, prefix+"A")
-	groupB := CreateTestGroup(t, prefix+"B")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	PromoteTestUserToModerator(t, modID)
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Native post on groupA (origin row, rippled_in defaults to 0).
@@ -614,11 +603,9 @@ func TestGetDashboardPopularPostsExcludesRippledIn(t *testing.T) {
 	prefix := uniquePrefix("DashPPRin")
 	db := database.DBConn
 
-	origin := CreateTestGroup(t, prefix+"Origin")
-	rippledTo := CreateTestGroup(t, prefix+"RippledTo")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, rippledTo, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Native post on the origin group (mod does not moderate it).

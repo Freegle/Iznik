@@ -29,7 +29,6 @@
 <script setup>
 import { useChatStore } from '~/stores/chat'
 import { useMessageStore } from '~/stores/message'
-import { useMiscStore } from '~/stores/misc'
 import { useRouter } from '#imports'
 import { useMe } from '~/composables/useMe'
 import { action } from '~/composables/useClientLog'
@@ -49,11 +48,6 @@ const props = defineProps({
     type: String,
     required: false,
     default: 'primary',
-  },
-  groupid: {
-    type: Number,
-    required: false,
-    default: null,
   },
   userid: {
     type: Number,
@@ -85,7 +79,6 @@ const props = defineProps({
 const emit = defineEmits(['click', 'sent'])
 const chatStore = useChatStore()
 const messageStore = useMessageStore()
-const miscStore = useMiscStore()
 const router = useRouter()
 
 // Use me and myid computed properties from useMe composable for consistency
@@ -108,26 +101,9 @@ const openChat = async (
   replySource = null
 ) => {
   emit('click')
-  console.log(
-    'Open chat',
-    firstmessage,
-    firstmsgid,
-    props.groupid,
-    props.userid
-  )
+  console.log('Open chat', firstmessage, firstmsgid, props.userid)
 
-  if (props.groupid > 0) {
-    // Open a chat to the mods. If we are in FD then we just pass the group id and the chat opens from us to the
-    // mods; if we're in MT we pass the groupid and userid and it opens from us mods to the user.
-    const chatuserid = miscStore.modtools ? props.userid : 0
-    const chatid = await chatStore.openChatToMods(props.groupid, chatuserid)
-
-    if (openInNewTab && typeof window !== 'undefined' && window.open) {
-      window.open(`/chats/${chatid}`, '_blank')
-    } else {
-      router.push('/chats/' + chatid)
-    }
-  } else if (props.userid > 0) {
+  if (props.userid > 0) {
     let chatid = null
     try {
       chatid = await chatStore.openChatToUser({
@@ -191,8 +167,8 @@ const openChat = async (
       // close the modal.
       //
       // noNavigate lets the reply flow create + send the chat without leaving
-      // the current page — used when replying from a list (browse/explore) so
-      // the user stays put and can reply to more items.
+      // the current page — used when replying from the browse list so the
+      // user stays put and can reply to more items.
       if (!noNavigate) {
         if (openInNewTab) {
           window.open(`/chats/${chatid}`, '_blank')

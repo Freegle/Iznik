@@ -5,7 +5,7 @@ import { defineComponent, Suspense, h } from 'vue'
 import dayjs from 'dayjs'
 import { DASHBOARD_CHART_HEADER } from '~/composables/useAuthoritySearch'
 
-import StatsPage from '~/pages/stats/[[groupname]].vue'
+import StatsPage from '~/pages/stats/index.vue'
 
 // ── Stubs ─────────────────────────────────────────────────────────────────
 vi.mock('~/components/StatsImpact.vue', () => ({
@@ -17,7 +17,7 @@ vi.mock('~/components/StatsImpact.vue', () => ({
 vi.mock('~/components/ActivityGraph.vue', () => ({
   default: {
     template: '<div class="activity-graph" />',
-    props: ['groupid', 'systemwide', 'start', 'end'],
+    props: ['start', 'end'],
   },
 }))
 vi.mock('vue-google-charts', () => ({
@@ -57,14 +57,6 @@ vi.mock('~/stores/stats', () => ({
   }),
 }))
 
-// ── Group store stub ───────────────────────────────────────────────────────
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({
-    fetch: vi.fn().mockResolvedValue(undefined),
-    get: vi.fn(() => null),
-  }),
-}))
-
 // ── Composable mocks ──────────────────────────────────────────────────────
 vi.mock('~/composables/useBuildHead', () => ({
   buildHead: vi.fn(() => ({})),
@@ -75,7 +67,7 @@ vi.mock('~/composables/useReuseBenefit', () => ({
 }))
 
 // ── #imports shim ─────────────────────────────────────────────────────────
-let mockRouteReturn = { params: { groupname: undefined }, query: {} }
+let mockRouteReturn = { params: {}, query: {} }
 
 vi.hoisted(() => {
   vi.resetModules()
@@ -122,21 +114,17 @@ function mountPage() {
         'b-col': { template: '<div><slot /></div>' },
         ExternalLink: { template: '<a><slot /></a>' },
         Spinner: { template: '<div class="spinner" />', props: ['size'] },
-        GroupHeader: {
-          template: '<div class="group-header" />',
-          props: ['id', 'group', 'showJoin'],
-        },
       },
     },
   })
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
-describe('pages/stats/[[groupname]].vue', () => {
+describe('pages/stats/index.vue', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
-    mockRouteReturn = { params: { groupname: undefined }, query: {} }
+    mockRouteReturn = { params: {}, query: {} }
     storeData = {}
   })
 

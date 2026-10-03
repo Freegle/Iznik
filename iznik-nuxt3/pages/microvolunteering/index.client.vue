@@ -7,13 +7,10 @@
     </b-col>
     <b-col cols="12" md="6" class="bg-white pt-4">
       <NoticeMessage v-if="!allowed" variant="warning">
+        <p>You need to be signed in to Freegle to help out this way.</p>
         <p>
-          You are not a member of any Freegle communities who have chosen to
-          allow microvolunteering.
-        </p>
-        <p>
-          If you'd like to discuss this with your Freegle volunteers, you can
-          contact them from the <nuxt-link to="/help">Help</nuxt-link> page.
+          If you have any questions, you can get in touch from the
+          <nuxt-link to="/help">Help</nuxt-link> page.
         </p>
       </NoticeMessage>
       <b-card-text v-else-if="!inviteAccepted">
@@ -206,27 +203,16 @@ if (debug) {
   })
 }
 
-// Use me and myGroups computed properties from useMe composable for consistency
-const { me, myGroups, fetchMe } = useMe()
+const { me, fetchMe } = useMe()
 
 const inviteAccepted = ref(
   me.value?.trustlevel && me.value.trustlevel !== 'Declined'
 )
 
-const allowed = ref(debug)
-
-if (me.value) {
-  // Check if we're on a group with microvolunteering enabled.
-  // myGroups already destructured from useMe() above
-
-  if (myGroups.value && myGroups.value.length) {
-    myGroups.value.forEach((g) => {
-      if (g.microvolunteeringallowed) {
-        allowed.value = true
-      }
-    })
-  }
-}
+// Microvolunteering used to be gated per-community (only groups with
+// microvolunteeringallowed set could ask). There's one national community now, so this is
+// a hardcoded constant rather than a check against the member's groups.
+const allowed = ref(debug || !!me.value)
 
 const showTask = ref(false)
 const todo = ref(5)
@@ -325,14 +311,7 @@ async function inviteResponse(callback, response) {
     })
 
     inviteAccepted.value = true
-
-    if (myGroups.value && myGroups.value.length) {
-      myGroups.value.forEach((g) => {
-        if (g.microvolunteeringallowed) {
-          allowed.value = true
-        }
-      })
-    }
+    allowed.value = true
 
     await getTask()
   } else {

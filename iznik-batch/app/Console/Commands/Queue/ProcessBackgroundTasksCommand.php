@@ -245,18 +245,21 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
-     * Send push notifications to all moderators of a group.
+     * Send push notifications to all national moderators (Moderator/Support/Admin).
+     *
+     * There are no communities any more (self-moderating-community.md), so
+     * notifyGroupMods() already ignores its argument and queries every mod
+     * nationally. group_id is accepted (and passed through unchanged) only
+     * because old-shaped payloads may still be in flight; ContentCheckService
+     * now enqueues {msgid} with no group_id at all, so this must not throw
+     * when it is absent.
      */
     protected function handlePushNotifyGroupMods(array $data, PushNotificationService $pushService): void
     {
-        $groupId = $data['group_id'] ?? NULL;
+        $groupId = (int) ($data['group_id'] ?? 0);
 
-        if (! $groupId) {
-            throw new \RuntimeException('push_notify_group_mods requires group_id');
-        }
-
-        $count = $pushService->notifyGroupMods((int) $groupId);
-        Log::info('Notified group mods', ['group_id' => $groupId, 'notified' => $count]);
+        $count = $pushService->notifyGroupMods($groupId);
+        Log::info('Notified mods', ['msgid' => $data['msgid'] ?? null, 'group_id' => $groupId ?: null, 'notified' => $count]);
     }
 
     /**

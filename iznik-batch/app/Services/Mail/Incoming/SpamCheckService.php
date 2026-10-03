@@ -9,7 +9,6 @@ use Illuminate\Support\Facades\Log;
  * Spam detection service for incoming email.
  *
  * Implements all spam checks from the legacy V1 PHP Spam and MailRouter classes:
- * - Keyword matching (spam_keywords table)
  * - IP country blocking (spam_countries + GeoIP)
  * - IP whitelist (spam_whitelist_ips)
  * - Subject reuse detection across groups
@@ -54,15 +53,11 @@ class SpamCheckService
 
     public const REASON_REFERRED_TO_SPAMMER = 'Referenced known spammer';
 
-    public const REASON_KNOWN_KEYWORD = 'Known spam keyword';
-
     public const REASON_DBL = 'URL on DBL';
 
     public const REASON_BULK_VOLUNTEER_MAIL = 'BulkVolunteerMail';
 
     public const REASON_USED_OUR_DOMAIN = 'UsedOurDomain';
-
-    public const REASON_WORRY_WORD = 'WorryWord';
 
     public const REASON_SCRIPT = 'Script';
 
@@ -75,11 +70,6 @@ class SpamCheckService
     public const REASON_LANGUAGE = 'Language';
 
     public const REASON_IMAGE_SENT_MANY_TIMES = 'SameImage';
-
-    // Actions matching legacy
-    public const ACTION_SPAM = 'Spam';
-
-    public const ACTION_REVIEW = 'Review';
 
     // Greetings for greeting spam detection
     private const GREETINGS = [
@@ -99,19 +89,11 @@ class SpamCheckService
         'goo.gl/forms',
     ];
 
-    private ?array $cachedSpamWords = null;
-
-    /**
-     * Clear the cached spam words.
-     *
-     * This is primarily for testing - when tests insert keywords after the
-     * service is created, this allows them to clear the cache so new keywords
-     * are picked up.
-     */
-    public function clearKeywordCache(): void
-    {
-        $this->cachedSpamWords = null;
-    }
+    // spam_keywords was read here (getSpamWords(), cachedSpamWords, clearKeywordCache())
+    // until 2026-09-27: the keyword-list checks in checkSpamKeywords() and checkReview()
+    // below were deleted along with every other reader of concern_keywords/spam_keywords
+    // (ai-judgement.md) - the mail path gets the same AI judge as every other post, once
+    // the message this spam check clears reaches Pending, rather than its own keyword list.
 
     /**
      * Run all message-level spam checks (matching legacy Spam::checkMessage).
@@ -195,20 +177,20 @@ class SpamCheckService
             return [true, self::REASON_REFERRED_TO_SPAMMER, "Refers to known spammer {$spammerRef}"];
         }
 
-        // Keyword-based spam checks (body + subject, both Spam and Review actions)
+        // Spamhaus DBL / our-domain-spoofing checks (body + subject)
         $fromAddress = $email->fromAddress ?? '';
         $supportAddr = config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org');
         $infoAddr = 'info@'.explode('@', $supportAddr)[1];
 
         if ($fromAddress !== $supportAddr && $fromAddress !== $infoAddr) {
-            $keywordResult = $this->checkSpamKeywords($body, [self::ACTION_REVIEW, self::ACTION_SPAM]);
+            $keywordResult = $this->checkSpamKeywords($body);
             if ($keywordResult !== null) {
                 return $keywordResult;
             }
 
             // Subject-keyword check skipped for chat replies (subject echoes original post).
             if (! $forChatReply) {
-                $keywordResult = $this->checkSpamKeywords($subject, [self::ACTION_REVIEW, self::ACTION_SPAM]);
+                $keywordResult = $this->checkSpamKeywords($subject);
                 if ($keywordResult !== null) {
                     return $keywordResult;
                 }
@@ -219,15 +201,17 @@ class SpamCheckService
     }
 
     /**
-     * Check message content for spam keywords (matching legacy Spam::checkSpam).
+     * Check message content against Spamhaus DBL and our-domain spoofing in URLs.
      *
-     * Also checks Spamhaus DBL for URLs and our-domain spoofing in URLs.
+     * Used to be "checkSpamKeywords" (matching legacy Spam::checkSpam) and also ran a
+     * spam_keywords lookup here; that keyword check was deleted 2026-09-27 along with
+     * every other reader of concern_keywords/spam_keywords (ai-judgement.md) - kept the
+     * name and the two URL-only checks below, which never depended on the keyword table.
      *
      * @param  string  $message  Text to check
-     * @param  array  $actions  Actions to match ('Spam', 'Review')
      * @return array{bool, string, string}|null
      */
-    public function checkSpamKeywords(string $message, array $actions): ?array
+    public function checkSpamKeywords(string $message): ?array
     {
         $ret = null;
 
@@ -239,26 +223,6 @@ class SpamCheckService
         $message = str_replace('&#537;', 's', $message);
         $message = str_replace('&#206;', 'I', $message);
         $message = str_replace('=C2', '£', $message);
-
-        // Check keywords
-        $keywords = $this->getSpamWords();
-        foreach ($keywords as $keyword) {
-            $word = trim($keyword->word);
-            if (strlen($word) === 0) {
-                continue;
-            }
-
-            $pattern = '/\b'.preg_quote($word, '/').'\b/i';
-
-            if (in_array($keyword->action, $actions) && preg_match($pattern, $message)) {
-                // Check exclude pattern
-                if (! empty($keyword->exclude) && @preg_match('/'.$keyword->exclude.'/i', $message)) {
-                    continue;
-                }
-
-                $ret = [true, self::REASON_KNOWN_KEYWORD, "Refers to keyword '{$word}'"];
-            }
-        }
 
         // Check URLs for Spamhaus DBL and our-domain spoofing
         if (preg_match_all(self::URL_PATTERN, $message, $matches)) {
@@ -329,20 +293,6 @@ class SpamCheckService
         // URL/link detection
         if (! $check) {
             $check = $this->checkReviewLinks($message);
-        }
-
-        // Keyword check (Review action only)
-        if (! $check) {
-            $keywords = $this->getSpamWords();
-            foreach ($keywords as $word) {
-                $w = $word->type === 'Literal' ? preg_quote($word->word, '/') : $word->word;
-
-                if ($word->action === 'Review' &&
-                    preg_match('/\b'.$w.'\b/i', $message) &&
-                    (empty($word->exclude) || ! @preg_match('/'.$word->exclude.'/i', $message))) {
-                    $check = self::REASON_KNOWN_KEYWORD;
-                }
-            }
         }
 
         // Money symbols
@@ -864,17 +814,5 @@ class SpamCheckService
             ->count();
 
         return $count > self::IMAGE_THRESHOLD;
-    }
-
-    /**
-     * Get spam keywords from database (cached for the request).
-     */
-    private function getSpamWords(): array
-    {
-        if ($this->cachedSpamWords === null) {
-            $this->cachedSpamWords = DB::table('spam_keywords')->get()->all();
-        }
-
-        return $this->cachedSpamWords;
     }
 }

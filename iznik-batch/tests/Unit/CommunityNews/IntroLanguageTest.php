@@ -15,16 +15,11 @@ class IntroLanguageTest extends TestCase
     public function test_strips_a_leading_welsh_greeting_sentence(): void
     {
         $cases = [
-            'Shwmae, Caernarfon! The castle is busier than ever this fortnight.'
-                => 'The castle is busier than ever this fortnight.',
-            'Bore da, Cwmbran! The schools are still off and the farm is full of falconry.'
-                => 'The schools are still off and the farm is full of falconry.',
-            'Croeso to your Port Talbot round-up! The seafront is still in full summer swing.'
-                => 'The seafront is still in full summer swing.',
-            'Croeso i mid August, Wrecsam! The balloons are inflating.'
-                => 'The balloons are inflating.',
-            'Prynhawn da, Merthyr! Plenty to tempt you out this week.'
-                => 'Plenty to tempt you out this week.',
+            'Shwmae, Caernarfon! The castle is busier than ever this fortnight.' => 'The castle is busier than ever this fortnight.',
+            'Bore da, Cwmbran! The schools are still off and the farm is full of falconry.' => 'The schools are still off and the farm is full of falconry.',
+            'Croeso to your Port Talbot round-up! The seafront is still in full summer swing.' => 'The seafront is still in full summer swing.',
+            'Croeso i mid August, Wrecsam! The balloons are inflating.' => 'The balloons are inflating.',
+            'Prynhawn da, Merthyr! Plenty to tempt you out this week.' => 'Plenty to tempt you out this week.',
         ];
 
         foreach ($cases as $in => $want) {

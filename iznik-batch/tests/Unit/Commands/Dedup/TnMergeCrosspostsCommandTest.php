@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Commands\Dedup;
 
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -15,28 +16,15 @@ use Tests\TestCase;
  */
 class TnMergeCrosspostsCommandTest extends TestCase
 {
-    private function createTnMessage(string $tnPostId, int $groupid, int $userid): int
+    private function createTnMessage(string $tnPostId, User $user): int
     {
-        $msgid = DB::table('messages')->insertGetId([
-            'date' => now(),
-            'arrival' => now(),
-            'source' => 'Email',
-            'fromuser' => $userid,
+        $message = $this->createTestMessage($user, [
             'subject' => 'OFFER: Singular Merge Fixture (London)',
             'tnpostid' => $tnPostId,
             'messageid' => uniqid('mid-', true),
-            'type' => 'Offer',
         ]);
 
-        DB::table('messages_groups')->insert([
-            'msgid' => $msgid,
-            'groupid' => $groupid,
-            'collection' => 'Approved',
-            'arrival' => now(),
-            'msgtype' => 'Offer',
-        ]);
-
-        return $msgid;
+        return (int) $message->id;
     }
 
     /**
@@ -66,19 +54,16 @@ class TnMergeCrosspostsCommandTest extends TestCase
 
     public function test_merges_copies_and_leaves_nothing_pointing_at_them(): void
     {
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
         $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tnmerge')]);
 
         $tnPostId = 'tn-merge-'.uniqid();
-        $canonical = $this->createTnMessage($tnPostId, $groupA->id, $user->id);
-        $copy = $this->createTnMessage($tnPostId, $groupB->id, $user->id);
+        $canonical = $this->createTnMessage($tnPostId, $user);
+        $copy = $this->createTnMessage($tnPostId, $user);
 
         // Rows on the copy across three shapes: no unique key on msgid (messages_history,
         // logs) and a UNIQUE msgid that cannot move if the canonical already has one
         // (messages_spatial - what the browse feed reads).
         DB::table('messages_history')->insert([
-            'groupid' => $groupB->id,
             'source' => 'Email',
             'fromuser' => $user->id,
             'subject' => 'OFFER: Singular Merge Fixture (London)',
@@ -88,15 +73,14 @@ class TnMergeCrosspostsCommandTest extends TestCase
             'timestamp' => now(),
             'type' => 'Message',
             'subtype' => 'Received',
-            'groupid' => $groupB->id,
             'user' => $user->id,
             'msgid' => $copy,
         ]);
         foreach ([$canonical, $copy] as $id) {
             DB::statement(
-                'INSERT INTO messages_spatial (msgid, point, successful, groupid, msgtype, arrival)
-                 VALUES (?, ST_SRID(POINT(-0.1, 51.5), 3857), 0, ?, ?, ?)',
-                [$id, $id === $canonical ? $groupA->id : $groupB->id, 'Offer', now()]
+                'INSERT INTO messages_spatial (msgid, point, successful, msgtype, arrival)
+                 VALUES (?, ST_SRID(POINT(-0.1, 51.5), 3857), 0, ?, ?)',
+                [$id, 'Offer', now()]
             );
         }
 
@@ -109,11 +93,6 @@ class TnMergeCrosspostsCommandTest extends TestCase
         $copyRow = DB::table('messages')->where('id', $copy)->first();
         $this->assertNotNull($copyRow->deleted, 'the copy must be soft-deleted');
         $this->assertNull($copyRow->tnpostid, 'the copy must lose its tnpostid so it cannot become canonical');
-
-        // The canonical must have inherited the copy's group.
-        $groupIds = DB::table('messages_groups')->where('msgid', $canonical)->pluck('groupid')->sort()->values()->all();
-        $expected = collect([$groupA->id, $groupB->id])->sort()->values()->all();
-        $this->assertSame($expected, $groupIds, 'the canonical must carry both groups');
 
         // Completeness: nothing anywhere may still point at the merged copy.
         $orphans = [];
@@ -133,13 +112,11 @@ class TnMergeCrosspostsCommandTest extends TestCase
 
     public function test_dry_run_changes_nothing(): void
     {
-        $groupA = $this->createTestGroup();
-        $groupB = $this->createTestGroup();
         $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tnmerge')]);
 
         $tnPostId = 'tn-merge-'.uniqid();
-        $canonical = $this->createTnMessage($tnPostId, $groupA->id, $user->id);
-        $copy = $this->createTnMessage($tnPostId, $groupB->id, $user->id);
+        $canonical = $this->createTnMessage($tnPostId, $user);
+        $copy = $this->createTnMessage($tnPostId, $user);
 
         $this->artisan('tn:merge-crossposts', ['--dry-run' => true])->assertSuccessful();
 

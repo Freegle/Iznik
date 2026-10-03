@@ -2,7 +2,6 @@ import { computed, watch } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
 import { useUserStore } from '~/stores/user'
-import { useGroupStore } from '~/stores/group'
 import { useNearbyStore } from '~/stores/nearby'
 import { useMe } from '~/composables/useMe'
 import {
@@ -23,7 +22,6 @@ export function useMessageDisplay(messageId) {
   const messageStore = useMessageStore()
   const authStore = useAuthStore()
   const userStore = useUserStore()
-  const groupStore = useGroupStore()
   const nearbyStore = useNearbyStore()
   const { me } = useMe()
 
@@ -52,12 +50,6 @@ export function useMessageDisplay(messageId) {
   const isPinned = computed(() => {
     const id = Number(messageId?.value ?? messageId)
     return Number.isFinite(id) && nearbyStore.pinnedIds.has(id)
-  })
-
-  // Get the group for this message (first group it's posted to)
-  const messageGroup = computed(() => {
-    const groupId = message.value?.groups?.[0]?.groupid
-    return groupId ? groupStore.get(groupId) : null
   })
 
   // Fetch poster info when message changes
@@ -90,9 +82,9 @@ export function useMessageDisplay(messageId) {
 
   const strippedSubject = computed(() => {
     const subject = message.value?.subject || ''
-    // Strip the keyword prefix using the group's configured keywords (+ common
-    // variants). Shared with the ModTools subject-colour check via buildKeywordRegex.
-    const regex = buildKeywordRegex(messageGroup.value?.settings?.keywords)
+    // Strip the OFFER/WANTED keyword prefix (+ common variants). Shared with the
+    // ModTools subject-colour check via buildKeywordRegex.
+    const regex = buildKeywordRegex()
     return subject.replace(regex, '')
   })
 
@@ -128,21 +120,13 @@ export function useMessageDisplay(messageId) {
     return message.value?.attachments?.length || 0
   })
 
-  // The timestamp the card's age reads from. Group arrival gives accurate
-  // autopost/repost times (like MessageHistory) - but under rippling, groups[]
-  // also contains rippled-IN copies whose arrival is the ripple-bump time, and
-  // groups[0] is whichever row the API returned first. Showing a bump time made
-  // a 7-hour-old post read "1 hour" while "Newest posted" (correctly) sorted it
-  // by original post time, so the feed order looked shuffled. Use the ORIGIN
-  // row (rippled_in = 0; absent on non-rippled feeds where !rippled_in is true).
-  // The same number the feed sorts by (useMessageSort), so the order can never contradict the
-  // dates on the cards. It used to pick the origin group's arrival and fall back to the
-  // ripple-bumped summary arrival - a different clock from the sort's.
+  // The timestamp the card's age reads from. The API returns a single top-level
+  // arrival, so there's no per-group origin/ripple-bump row to choose between -
+  // just use it directly. The same number the feed sorts by (useMessageSort), so
+  // the order can never contradict the dates on the cards.
   const displayTimestamp = computed(() => {
     const m = message.value
-    if (m?.visibleSince) return m.visibleSince
-    const origin = m?.groups?.find((g) => !g.rippled_in)
-    return origin?.arrival || m?.arrival || m?.date
+    return m?.visibleSince || m?.arrival || m?.date
   })
 
   const timeAgo = computed(() => {

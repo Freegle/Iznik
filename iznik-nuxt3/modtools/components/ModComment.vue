@@ -39,10 +39,9 @@
         <span v-else :title="datetimeshort(savedComment.date)">
           {{ timeadapt(savedComment.date) }}
         </span>
-        <span v-if="savedComment.groupid"> on {{ groupname }} </span>
         <span
           v-if="
-            amAModOn(savedComment.groupid) ||
+            amAModerator() ||
             supportOrAdmin ||
             savedComment.byuserid === myid
           "
@@ -66,7 +65,6 @@
         ref="editComment"
         :userid="userid"
         :comment="comment"
-        :groupname="groupname"
         @edited="updateComments"
         @hidden="showCommentEditModal = false"
       />
@@ -79,10 +77,9 @@ import { ref, computed, onMounted } from 'vue'
 import ReadMore from 'vue-read-more3/src/ReadMoreComponent'
 import cloneDeep from 'lodash.clonedeep'
 import { setupModMembers } from '~/composables/useModMembers'
-import { useGroupStore } from '~/stores/group'
 import { useUserStore } from '~/stores/user'
 import { useMe } from '~/composables/useMe'
-import { useModMe } from '~/composables/useModMe'
+import { useModMe } from '~/modtools/composables/useModMe'
 
 const props = defineProps({
   commentid: {
@@ -102,11 +99,10 @@ const props = defineProps({
 
 const emit = defineEmits(['updated', 'editing'])
 
-const groupStore = useGroupStore()
 const userStore = useUserStore()
 const { bump, context } = setupModMembers()
-const { myid, supportOrAdmin, myGroup } = useMe()
-const { amAModOn } = useModMe()
+const { myid, supportOrAdmin } = useMe()
+const { amAModerator } = useModMe()
 
 const showConfirmDelete = ref(false)
 const showCommentEditModal = ref(false)
@@ -117,24 +113,6 @@ const user = computed(() => userStore.byId(props.userid))
 const comment = computed(() => {
   if (!user.value || !user.value.comments) return null
   return user.value.comments.find((c) => c.id === props.commentid) || null
-})
-
-const group = computed(() => {
-  let ret = null
-
-  if (comment.value?.groupid) {
-    ret = myGroup(comment.value.groupid)
-
-    if (!ret) {
-      ret = groupStore.get(comment.value.groupid)
-    }
-  }
-
-  return ret
-})
-
-const groupname = computed(() => {
-  return group.value ? group.value.namedisplay : '#' + comment.value?.groupid
 })
 
 async function updateComments() {
@@ -171,11 +149,6 @@ onMounted(() => {
   // To stop it updating on screen when editing in a modal.
   if (comment.value) {
     savedComment.value = cloneDeep(comment.value)
-  }
-
-  if (comment.value?.groupid && !group.value) {
-    // Need to fetch group
-    groupStore.fetch(comment.value.groupid)
   }
 })
 </script>

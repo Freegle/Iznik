@@ -18,10 +18,7 @@
               }}
             </span>
           </span>
-          <span>
-            member of <strong>{{ groupName }}</strong
-            >, posted {{ timeago(story.date) }}
-          </span>
+          <span> Posted {{ timeago(story.date) }} </span>
           <span>
             <v-icon icon="hashtag" scale="0.75" class="text-muted" />{{
               story.id
@@ -71,7 +68,6 @@
           <ChatButton
             v-if="storyUser"
             :userid="storyUser.id"
-            :groupid="firstGroupId"
             title="Chat"
             variant="white"
             class="me-2 mb-1"
@@ -84,7 +80,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useUserStore } from '@/stores/user'
-import { useGroupStore } from '@/stores/group'
 import { useStoryStore } from '@/stores/stories'
 import { useModMe } from '~/modtools/composables/useModMe'
 import { twem } from '~/composables/useTwem'
@@ -92,7 +87,6 @@ import { usePreferredEmail } from '~/modtools/composables/usePreferredEmail'
 
 const { $api } = useNuxtApp()
 const userStore = useUserStore()
-const groupStore = useGroupStore()
 const storyStore = useStoryStore()
 const { checkWork } = useModMe()
 
@@ -118,30 +112,9 @@ const storyUser = computed(() => {
 
 const primaryEmail = usePreferredEmail(storyUser)
 
-const firstGroupId = computed(() => {
-  const u = storyUser.value
-  if (u?.memberships?.length) {
-    return u.memberships[0].groupid
-  }
-  return null
-})
-
-const groupName = computed(() => {
-  const gid = firstGroupId.value
-  if (gid) {
-    const g = groupStore.get(gid)
-    return g?.namedisplay || g?.nameshort || ''
-  }
-  return ''
-})
-
 onMounted(async () => {
   if (story.value?.userid) {
-    const u = await userStore.fetch(story.value.userid)
-    // Fetch the first group so we can show its name.
-    if (u?.memberships?.length) {
-      await groupStore.fetch(u.memberships[0].groupid)
-    }
+    await userStore.fetch(story.value.userid)
   }
 })
 

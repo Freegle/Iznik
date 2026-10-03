@@ -20,13 +20,12 @@ class EmailTrackingModelTest extends TestCase
     public function test_create_for_email_creates_tracking_record(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
 
         $tracking = EmailTracking::createForEmail(
             'Digest',
             $user->email_preferred,
             $user->id,
-            $group->id,
+            null,
             'Test Subject',
             ['custom' => 'data']
         );
@@ -34,7 +33,6 @@ class EmailTrackingModelTest extends TestCase
         $this->assertNotNull($tracking->id);
         $this->assertEquals('Digest', $tracking->email_type);
         $this->assertEquals($user->id, $tracking->userid);
-        $this->assertEquals($group->id, $tracking->groupid);
         $this->assertEquals($user->email_preferred, $tracking->recipient_email);
         $this->assertEquals('Test Subject', $tracking->subject);
         $this->assertEquals(['custom' => 'data'], $tracking->metadata);
@@ -54,7 +52,6 @@ class EmailTrackingModelTest extends TestCase
         $this->assertEquals('Welcome', $tracking->email_type);
         $this->assertEquals($email, $tracking->recipient_email);
         $this->assertNull($tracking->userid);
-        $this->assertNull($tracking->groupid);
         $this->assertNull($tracking->subject);
         $this->assertNull($tracking->metadata);
         $this->assertFalse((bool) $tracking->has_amp);
@@ -106,20 +103,6 @@ class EmailTrackingModelTest extends TestCase
         );
 
         $this->assertEquals($user->id, $tracking->user->id);
-    }
-
-    public function test_group_relationship(): void
-    {
-        $group = $this->createTestGroup();
-
-        $tracking = EmailTracking::createForEmail(
-            'Test',
-            $this->uniqueEmail('tracking'),
-            null,
-            $group->id
-        );
-
-        $this->assertEquals($group->id, $tracking->group->id);
     }
 
     public function test_clicks_relationship(): void
@@ -245,12 +228,12 @@ class EmailTrackingModelTest extends TestCase
 
         // Signature over "redirect:" + destination, verified by the Go
         // Click handler (hasValidLinkSignature) to allow external sites.
-        $expected = hash_hmac('sha256', 'redirect:' . $destination, 'test-link-signing-secret');
-        $this->assertStringContainsString('sig=' . $expected, $url);
+        $expected = hash_hmac('sha256', 'redirect:'.$destination, 'test-link-signing-secret');
+        $this->assertStringContainsString('sig='.$expected, $url);
 
         // The base64 url param must be percent-encoded so '+' and '/'
         // survive the query string.
-        $this->assertStringContainsString('url=' . rawurlencode(base64_encode($destination)), $url);
+        $this->assertStringContainsString('url='.rawurlencode(base64_encode($destination)), $url);
     }
 
     public function test_get_tracked_link_url_no_signature_without_secret(): void

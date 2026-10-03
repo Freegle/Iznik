@@ -6,7 +6,6 @@ use App\Mail\CommunityNews\CommunityNewsMail;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\CommunityNewsArea;
 use App\Models\CommunityNewsItem;
-use App\Models\Group;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
 use App\Services\GeminiService;
@@ -32,8 +31,7 @@ class CommunityNewsEmailService
     public function __construct(
         private CommunityNewsImageService $images,
         private GeminiService $gemini,
-    ) {
-    }
+    ) {}
 
     /**
      * Send the weekly digest for each due area to its members.
@@ -44,8 +42,9 @@ class CommunityNewsEmailService
     {
         $stats = ['areas' => 0, 'sent' => 0];
 
-        if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
+        if (! self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
             Log::info('CommunityNews emails disabled via FREEGLE_MAIL_ENABLED_TYPES');
+
             return $stats;
         }
 
@@ -60,7 +59,13 @@ class CommunityNewsEmailService
         }
 
         foreach ($query->get() as $area) {
-            if (!$force && $area->lastemailed && $area->lastemailed->gt(now()->subDays($minDays))) {
+            if (! $force && $area->lastemailed && $area->lastemailed->gt(now()->subDays($minDays))) {
+                continue;
+            }
+
+            // An area with no authority behind it has nowhere to find members
+            // or a story: nothing to send.
+            if (! $area->authorityid) {
                 continue;
             }
 
@@ -94,11 +99,6 @@ class CommunityNewsEmailService
                 continue;
             }
 
-            $groupIds = array_map('intval', $area->groupids ?? []);
-            if (empty($groupIds)) {
-                continue;
-            }
-
             $itemData = $items->map(function ($i) {
                 $uploaded = $this->images->uploadItemImage($i);
 
@@ -117,17 +117,17 @@ class CommunityNewsEmailService
             // until the area is next researched.
             $intro = IntroLanguage::stripForeignGreeting((string) ($area->intro ?? ''))
                 ?: "Here's a little round-up of what's going on around {$area->name}.";
-            $story = $this->pickStory($groupIds, $area);
+            $story = $this->pickStory($area);
 
             $sentForArea = 0;
-            foreach ($this->eligibleMembers($groupIds)->lazyById(1000, 'users.id', 'id') as $member) {
+            foreach ($this->eligibleMembers($area)->lazyById(1000, 'users.id', 'id') as $member) {
                 $user = DB::table('users')->where('id', $member->id)->first();
-                if (!$user || $user->bouncing) {
+                if (! $user || $user->bouncing) {
                     continue;
                 }
 
                 $email = User::find($member->id)?->email_preferred;
-                if (!$email) {
+                if (! $email) {
                     continue;
                 }
 
@@ -141,10 +141,10 @@ class CommunityNewsEmailService
                 }
 
                 $name = $user->fullname
-                    ?? trim(($user->firstname ?? '') . ' ' . ($user->lastname ?? ''))
+                    ?? trim(($user->firstname ?? '').' '.($user->lastname ?? ''))
                     ?: 'Freegle Member';
 
-                if (!$dryRun) {
+                if (! $dryRun) {
                     app(EmailSpoolerService::class)->spool(new CommunityNewsMail(
                         userId: (int) $member->id,
                         recipientName: $name,
@@ -163,7 +163,7 @@ class CommunityNewsEmailService
             }
 
             if ($sentForArea > 0) {
-                if (!$dryRun) {
+                if (! $dryRun) {
                     CommunityNewsItem::whereIn('id', $items->pluck('id'))->update(['emailed_at' => now()]);
                     $area->update(['lastemailed' => now()]);
                 }
@@ -175,8 +175,9 @@ class CommunityNewsEmailService
     }
 
     /**
-     * One member story from the area's groups to warm the email up, if a good
-     * one was told since the last mail.
+     * One member story from the area to warm the email up, if a good one was
+     * told since the last mail. Candidates are Freegle members whose location
+     * falls within the area's authority.
      *
      * Candidates must already carry the moderator "suitable for newsletter"
      * flags (public + newsletterreviewed + newsletter — the same bar the
@@ -186,16 +187,21 @@ class CommunityNewsEmailService
      *
      * @return array{headline:string, story:string, name:string}|null
      */
-    public function pickStory(array $groupIds, CommunityNewsArea $area): ?array
+    public function pickStory(CommunityNewsArea $area): ?array
     {
+        if (! $area->authorityid) {
+            return null;
+        }
+
         $minDays = (int) config('freegle.communitynews.email_min_days', 7);
         $since = $area->lastemailed ?: now()->subDays($minDays);
 
         $candidates = DB::table('users_stories')
             ->join('users', 'users.id', '=', 'users_stories.userid')
-            ->join('memberships', 'memberships.userid', '=', 'users_stories.userid')
-            ->whereIn('memberships.groupid', array_map('intval', $groupIds))
-            ->where('memberships.collection', 'Approved')
+            ->leftJoin('locations as lastloc', 'lastloc.id', '=', 'users.lastlocation')
+            ->crossJoin('authorities')
+            ->where('authorities.id', (int) $area->authorityid)
+            ->whereRaw("ST_Contains(authorities.polygon, {$this->memberPointSql()})")
             ->where('users_stories.public', 1)
             ->where('users_stories.newsletterreviewed', 1)
             ->where('users_stories.newsletter', 1)
@@ -218,19 +224,19 @@ class CommunityNewsEmailService
         })->implode("\n\n");
 
         $verdict = $this->gemini->generateJson(
-            "These are stories Freegle members told about giving or receiving things in {$area->name}. " .
-            "Pick the ONE best suited to a cheery local email round-up: it must be genuinely positive in tone, " .
-            "clearly written, and make sense on its own. If none qualifies, choose null.\n\n{$numbered}\n\n" .
+            "These are stories Freegle members told about giving or receiving things in {$area->name}. ".
+            'Pick the ONE best suited to a cheery local email round-up: it must be genuinely positive in tone, '.
+            "clearly written, and make sense on its own. If none qualifies, choose null.\n\n{$numbered}\n\n".
             'Reply with JSON only: {"choice": <story number or null>}'
         );
 
         $choice = $verdict['choice'] ?? null;
-        if (!is_int($choice) && !ctype_digit((string) $choice)) {
+        if (! is_int($choice) && ! ctype_digit((string) $choice)) {
             return null;
         }
 
         $picked = $candidates->values()->get((int) $choice - 1);
-        if (!$picked) {
+        if (! $picked) {
             return null;
         }
 
@@ -244,71 +250,60 @@ class CommunityNewsEmailService
     }
 
     /**
-     * Distinct, opted-in, deliverable members of any group in the area whose
-     * HOME GROUP that group is: the group's catchment (groups.polyindex, the
-     * COALESCE of DPA poly / CGA polyofficial) must contain the member's
-     * location. Membership alone is not enough — someone who joined Oxford but
-     * lives in Edinburgh is not mailed Oxford's news.
-     *
-     * The member's point is settings.mylocation (when both coords are present)
-     * else lastlocation — the same resolution order as
+     * Distinct, opted-in, deliverable members whose location falls within the
+     * area's authority: authorities.polygon must ST_Contains the member's
+     * point. The member's point is settings.mylocation (when both coords are
+     * present) else lastlocation — the same resolution order as
      * UnifiedDigestService/resolveUserLatLng. Members with no resolvable
-     * location, and groups whose polyindex is the fallback POINT (no
-     * poly/polyofficial), simply don't match ST_Contains and are not mailed.
-     *
-     * whereExists-free join + distinct on users.id gives one row per user even
-     * when they belong to several covering groups in the area (dedup).
+     * location simply don't match ST_Contains and are not mailed.
      *
      * "Deliverable" is User::scopeReceivingOurMails — the same gate the Stories
      * newsletter and the events/volunteering roundups use, and the SQL form of
      * V1's User::sendOurMails().
      */
-    public function eligibleMembers(array $groupIds)
+    public function eligibleMembers(CommunityNewsArea $area)
     {
-        $srid = (int) config('freegle.srid', 3857);
-
-        $memberPoint = "ST_SRID(POINT(" .
-            "CASE WHEN JSON_EXTRACT(users.settings, '$.mylocation.lat') IS NOT NULL" .
-            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL" .
-            "     THEN CAST(JSON_EXTRACT(users.settings, '$.mylocation.lng') AS DECIMAL(10,6))" .
-            "     ELSE lastloc.lng END, " .
-            "CASE WHEN JSON_EXTRACT(users.settings, '$.mylocation.lat') IS NOT NULL" .
-            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL" .
-            "     THEN CAST(JSON_EXTRACT(users.settings, '$.mylocation.lat') AS DECIMAL(10,6))" .
-            "     ELSE lastloc.lat END" .
-            "), {$srid})";
+        if (! $area->authorityid) {
+            return User::query()->whereRaw('1 = 0')->select('users.id');
+        }
 
         return User::query()
-            ->join('memberships', 'memberships.userid', '=', 'users.id')
-            ->join('groups', function ($join) {
-                $join->on('groups.id', '=', 'memberships.groupid')
-                    ->where('groups.type', Group::TYPE_FREEGLE)
-                    ->where('groups.publish', 1);
-            })
+            ->crossJoin('authorities')
             ->leftJoin('locations as lastloc', 'lastloc.id', '=', 'users.lastlocation')
-            ->whereIn('memberships.groupid', $groupIds)
-            ->where('memberships.collection', 'Approved')
+            ->where('authorities.id', (int) $area->authorityid)
             ->where('users.newslettersallowed', 1)
             // People we should be mailing at all: not deleted, seen within
             // User::USER_INACTIVE_DAYS, simplemail not 'None', not on holiday,
             // not bouncing — the SQL form of V1's User::sendOurMails(), shared
             // with the events/volunteering roundups and the Stories newsletter.
             // Without the activity half of it the 2026-08-15 send spooled
-            // 643,931 mails — every member of every enabled group however
-            // dormant — and the dead mailboxes among them caused a mass
-            // deferral storm at the relay. The hand-rolled version this
-            // replaces also let through members who have never logged in at
-            // all, are on holiday, or have asked for no mail whatsoever.
+            // 643,931 mails — every member however dormant — and the dead
+            // mailboxes among them caused a mass deferral storm at the relay.
             ->receivingOurMails()
-            // The ModTools "Send newsletters to members?" group toggle
-            // (settings.newsletter). For Community News this defaults OFF —
-            // stricter than StoriesNewsletterService's default-on — so a group
-            // is mailed only when its mods have newsletters explicitly enabled.
-            ->whereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.newsletter'), 0) != 0")
-            // Home group: this membership's group must actually cover where
-            // the member lives.
-            ->whereRaw("ST_Contains(groups.polyindex, {$memberPoint})")
+            ->whereRaw("ST_Contains(authorities.polygon, {$this->memberPointSql()})")
             ->distinct()
             ->select('users.id');
+    }
+
+    /**
+     * The member's location point for ST_Contains checks: settings.mylocation
+     * when both coordinates are present, else the resolved lastlocation — the
+     * same resolution order as UnifiedDigestService/resolveUserLatLng.
+     * Requires a `lastloc` alias for `locations` to already be joined.
+     */
+    private function memberPointSql(): string
+    {
+        $srid = (int) config('freegle.srid', 3857);
+
+        return 'ST_SRID(POINT('.
+            "CASE WHEN JSON_EXTRACT(users.settings, '$.mylocation.lat') IS NOT NULL".
+            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL".
+            "     THEN CAST(JSON_EXTRACT(users.settings, '$.mylocation.lng') AS DECIMAL(10,6))".
+            '     ELSE lastloc.lng END, '.
+            "CASE WHEN JSON_EXTRACT(users.settings, '$.mylocation.lat') IS NOT NULL".
+            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL".
+            "     THEN CAST(JSON_EXTRACT(users.settings, '$.mylocation.lat') AS DECIMAL(10,6))".
+            '     ELSE lastloc.lat END'.
+            "), {$srid})";
     }
 }

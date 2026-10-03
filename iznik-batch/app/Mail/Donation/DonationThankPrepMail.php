@@ -9,8 +9,8 @@ use Illuminate\Mail\Mailables\Envelope;
 /**
  * Card-per-donation digest for the person composing thank-you replies.
  * Separate from {@see DonationSummaryMail} — that one is the simple finance
- * status table; this one carries the full donor context (history, GA,
- * memberships, mod notes, chat snippets, deep links into Modtools).
+ * status table; this one carries the full donor context (history, GA, mod
+ * notes, chat snippets, deep links into Modtools).
  */
 class DonationThankPrepMail extends MjmlMailable
 {
@@ -23,7 +23,7 @@ class DonationThankPrepMail extends MjmlMailable
     }
 
     /**
-     * @param  array<int, array<string, mixed>>  $cards Per-donation context blocks
+     * @param  array<int, array<string, mixed>>  $cards  Per-donation context blocks
      */
     public function __construct(
         public readonly string $recipientEmail,
@@ -41,10 +41,10 @@ class DonationThankPrepMail extends MjmlMailable
         // the donor's name, email address and amount in the subject so each
         // donor is an identifiable thread in the thanker's inbox.
         if (count($this->cards) === 1) {
-            $card     = $this->cards[0];
+            $card = $this->cards[0];
             $donation = $card['donation'] ?? [];
-            $name     = trim((string) (($card['user']['displayName'] ?? '') ?: ($donation['payerName'] ?? '')));
-            $email    = (string) (($card['aliases'][0] ?? '') ?: ($donation['payer'] ?? ''));
+            $name = trim((string) (($card['user']['displayName'] ?? '') ?: ($donation['payerName'] ?? '')));
+            $email = (string) (($card['aliases'][0] ?? '') ?: ($donation['payer'] ?? ''));
             if ($name === '' || $name === 'Unknown') {
                 $name = $email !== '' ? $email : 'Unknown donor';
             }
@@ -54,6 +54,7 @@ class DonationThankPrepMail extends MjmlMailable
 
         // Legacy multi-card digest shape (kept for safety; no live caller).
         $n = count($this->cards);
+
         return "Donations needing thanks: {$n} donors, £{$totalFormatted}";
     }
 

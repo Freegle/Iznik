@@ -1,32 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
-import { createMockUserStore } from '../../mocks/stores'
 import ModBanMemberConfirmModal from '~/modtools/components/ModBanMemberConfirmModal.vue'
 
-const mockUserStore = createMockUserStore()
-const mockModGroupStore = {
-  get: vi.fn().mockReturnValue({
-    id: 1,
-    name: 'Test Group',
-    poly: null,
-    polyofficial: null,
-  }),
-}
 const mockHide = vi.fn()
 const mockShow = vi.fn()
-
-vi.mock('~/stores/user', () => ({
-  useUserStore: () => mockUserStore,
-}))
-
-vi.mock('~/modtools/stores/modgroup', () => ({
-  useModGroupStore: () => mockModGroupStore,
-}))
-
-vi.mock('@/stores/modgroup', () => ({
-  useModGroupStore: () => mockModGroupStore,
-}))
 
 // Mock with proper Vue ref to avoid template ref warnings
 vi.mock('~/composables/useOurModal', () => ({
@@ -37,33 +15,12 @@ vi.mock('~/composables/useOurModal', () => ({
   }),
 }))
 
-// Mock wicket library
-vi.mock('wicket', () => ({
-  default: {
-    Wkt: vi.fn().mockImplementation(() => ({
-      read: vi.fn(),
-      toObject: vi.fn().mockReturnValue({
-        getBounds: vi.fn().mockReturnValue({
-          contains: vi.fn().mockReturnValue(false),
-        }),
-      }),
-    })),
-  },
-}))
-
 describe('ModBanMemberConfirmModal', () => {
   const defaultProps = {
     userid: 123,
-    groupid: 456,
   }
 
   function mountComponent(props = {}) {
-    mockUserStore.byId.mockReturnValue({
-      id: 123,
-      settings: { mylocation: { lat: 52.0, lng: -1.0 } },
-      memberships: [{ id: 456 }, { id: 789 }],
-    })
-
     return mount(ModBanMemberConfirmModal, {
       props: { ...defaultProps, ...props },
       global: {
@@ -91,17 +48,6 @@ describe('ModBanMemberConfirmModal', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    mockModGroupStore.get.mockReturnValue({
-      id: 456,
-      name: 'Test Group',
-      poly: null,
-      polyofficial: null,
-    })
-    mockUserStore.byId.mockReturnValue({
-      id: 123,
-      settings: { mylocation: { lat: 52.0, lng: -1.0 } },
-      memberships: [{ id: 456 }, { id: 789 }],
-    })
   })
 
   describe('rendering', () => {
@@ -115,24 +61,9 @@ describe('ModBanMemberConfirmModal', () => {
       expect(wrapper.text()).toContain('Ban')
     })
 
-    it('displays responsible use notice when not home group', () => {
+    it('displays responsible use notice', () => {
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain('Please be responsible')
-    })
-  })
-
-  describe('computed properties', () => {
-    it('gets group from modGroupStore using groupid prop', () => {
-      mountComponent({ groupid: 789 })
-      expect(mockModGroupStore.get).toHaveBeenCalledWith(789)
-    })
-
-    it('gets user from userStore using userid prop', () => {
-      const wrapper = mountComponent({ userid: 999 })
-      // Access the user computed to ensure byId is called
-      const user = wrapper.vm.user
-      expect(user).toBeDefined()
-      expect(mockUserStore.byId).toHaveBeenCalled()
     })
   })
 
@@ -157,38 +88,6 @@ describe('ModBanMemberConfirmModal', () => {
       wrapper.vm.reason = null
       await wrapper.vm.ban()
       expect(wrapper.emitted('confirm')).toBeFalsy()
-    })
-  })
-
-  describe('home group detection', () => {
-    it('shows generic warning when geometry parsing fails', () => {
-      mockModGroupStore.get.mockReturnValue({
-        id: 456,
-        name: 'Test Group',
-        poly: 'INVALID_WKT_DATA',
-        polyofficial: null,
-      })
-
-      const wrapper = mountComponent()
-
-      // Should NOT show any TODO/developer message
-      expect(wrapper.text()).not.toContain('TO DO')
-      expect(wrapper.text()).not.toContain('Get code working')
-      // Should fall through to generic responsible-use warning
-      expect(wrapper.text()).toContain('Please be responsible')
-    })
-
-    it('shows generic warning when group has no polygon', () => {
-      mockModGroupStore.get.mockReturnValue({
-        id: 456,
-        name: 'Test Group',
-        poly: null,
-        polyofficial: null,
-      })
-
-      const wrapper = mountComponent()
-      expect(wrapper.text()).toContain('Please be responsible')
-      expect(wrapper.text()).not.toContain('home group')
     })
   })
 

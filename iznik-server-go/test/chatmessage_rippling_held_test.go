@@ -36,17 +36,14 @@ func TestFetchChatMessages_HeldByRippling(t *testing.T) {
 		INDEX (status)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: rippling hold test", 51.5, -0.1)
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	msgID := CreateTestMessage(t, posterID, "OFFER: rippling hold test", 51.5, -0.1)
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 
 	// Create a chat reply from the replier — pre-processed (processingrequired=0,
 	// processingsuccessful=1) so it passes the normal review filter.
@@ -131,17 +128,14 @@ func TestFetchChatMessages_HeldByRippling_ReleasedNotFlagged(t *testing.T) {
 	prefix := uniquePrefix("ripplereleased")
 
 	// Table created by the first test via IF NOT EXISTS.
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: rippling released test", 51.5, -0.1)
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	msgID := CreateTestMessage(t, posterID, "OFFER: rippling released test", 51.5, -0.1)
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 
 	db.Exec(
 		"INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) "+

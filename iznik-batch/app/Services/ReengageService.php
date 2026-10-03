@@ -4,8 +4,6 @@ namespace App\Services;
 
 use App\Mail\Reengage\ReengageMail;
 use App\Mail\Traits\FeatureFlags;
-use App\Models\Group;
-use App\Models\Membership;
 use App\Models\User;
 use App\Support\ExperimentBucket;
 use Illuminate\Support\Carbon;
@@ -30,9 +28,8 @@ use Illuminate\Support\Facades\Mail;
  * Excluded: TrashNothing and LoveJunk proxy accounts (they onboard through their
  * own platform), plus the usual bounce / holiday / marketing-opt-out gates.
  *
- * Personalised: every tip is signed off by a real local volunteer from a
- * community the member genuinely joined (see ReengageContentService), or the
- * plain Freegle voice when there's no such volunteer.
+ * Personalised: every tip is signed off by the Freegle team. Onboarding mail
+ * carries no local identity (see ReengageContentService).
  *
  * Experiment/instrumentation layer (dark until rollout_pct > 0): each member
  * gets a stable arm ('control'|'a'|'b') and a journey segment, recorded per send
@@ -65,9 +62,8 @@ class ReengageService
     ];
 
     public function __construct(
-        private readonly ReengageContentService $content = new ReengageContentService(),
-    ) {
-    }
+        private readonly ReengageContentService $content = new ReengageContentService,
+    ) {}
 
     /**
      * Process the whole candidate cohort of new members.
@@ -169,31 +165,6 @@ class ReengageService
         // Belt-and-braces: skip TN/LJ even if they slipped through the SQL gate
         // (e.g. a domain the query didn't catch).
         if ($user->isTN() || $user->isLJ()) {
-            return null;
-        }
-
-        // Must have genuinely joined a real Freegle group (approved member).
-        $hasMembership = DB::table('memberships')
-            ->join('groups', 'groups.id', '=', 'memberships.groupid')
-            ->where('memberships.userid', $userId)
-            ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-            ->where('groups.type', Group::TYPE_FREEGLE)
-            ->exists();
-
-        if (! $hasMembership) {
-            return null;
-        }
-
-        // Respect the per-group engagement opt-out (same key the engage flow uses).
-        $engagementEnabled = DB::table('memberships')
-            ->join('groups', 'groups.id', '=', 'memberships.groupid')
-            ->where('memberships.userid', $userId)
-            ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-            ->where('groups.type', Group::TYPE_FREEGLE)
-            ->selectRaw('MAX(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(memberships.settings, "$.engagement")), 1)) AS enabled')
-            ->value('enabled');
-
-        if ($engagementEnabled === '0' || $engagementEnabled === 0) {
             return null;
         }
 
@@ -300,12 +271,6 @@ class ReengageService
                 'bucket' => $bucket,
                 'segment' => $segment,
                 'email_tracking_id' => $trackingId,
-                // Which community the sign-off came from, and how it was chosen
-                // (home catchment / nearest centre / unknown / none). Only the
-                // sent arm resolves a volunteer; control holdouts stay NULL, so
-                // the sysadmin breakdown measures the mailed population.
-                'volunteer_groupid' => $content['volunteerGroupId'] ?? null,
-                'volunteer_source' => $content['volunteerSource'] ?? 'none',
                 'sentat' => now(),
             ]);
 
@@ -342,7 +307,7 @@ class ReengageService
             return ['', 'a', $inBucket];
         }
 
-        $resolved = ExperimentBucket::resolveArm($userId, $name . ':arm', $arms);
+        $resolved = ExperimentBucket::resolveArm($userId, $name.':arm', $arms);
         $arm = $resolved['arm'] !== '' ? $resolved['arm'] : 'a';
 
         return [$name, $arm, $resolved['bucket']];
@@ -448,7 +413,7 @@ class ReengageService
 
         for ($day = 1; $day <= self::TIPS; $day++) {
             $content = $this->content->previewContent($day, $email);
-            $subject = '[Preview] ' . $this->subjectFor($day, $content, 'a', 'other');
+            $subject = '[Preview] '.$this->subjectFor($day, $content, 'a', 'other');
 
             Mail::to($email)->send(new ReengageMail(
                 recipientName: $content['name'] ?? 'there',

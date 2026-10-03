@@ -3,8 +3,6 @@
 namespace App\Services;
 
 use App\Mail\Donation\DonationSummaryMail;
-use App\Models\Group;
-use App\Support\SafeMail;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -15,8 +13,8 @@ class DonationSummaryService
     /**
      * Send daily donation summary email.
      *
-     * Queries today's donations, annotates each with recurring/birthday flags,
-     * and sends an HTML summary to the fundraising address.
+     * Queries today's donations, annotates each with a recurring flag, and
+     * sends an HTML summary to the fundraising address.
      *
      * @return array{donations: int, total: float, sent: bool}
      */
@@ -33,46 +31,22 @@ class DonationSummaryService
             return ['donations' => 0, 'total' => 0.0, 'sent' => false];
         }
 
-        $total    = 0.0;
+        $total = 0.0;
         $rowsHtml = '';
 
         foreach ($donations as $donation) {
             $total += (float) $donation->GrossAmount;
 
             $recurring = in_array($donation->TransactionType, self::RECURRING_TYPES, true);
-            $birthday  = false;
-
-            if ($donation->userid) {
-                $skipBirthdayCheck = false;
-
-                if ($recurring) {
-                    $lastMonth = DB::table('users_donations')
-                        ->where('userid', $donation->userid)
-                        ->where('GrossAmount', $donation->GrossAmount)
-                        ->whereIn('TransactionType', self::RECURRING_TYPES)
-                        ->whereRaw('DATE(timestamp) >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)')
-                        ->whereRaw('DATE(timestamp) < CURDATE()')
-                        ->count();
-
-                    $skipBirthdayCheck = $lastMonth > 0;
-                }
-
-                if (!$skipBirthdayCheck) {
-                    $birthday = $this->donorHasBirthdayGroup((int) $donation->userid);
-                }
-            }
 
             $flags = [];
             if ($recurring) {
                 $flags[] = 'Recurring';
             }
-            if ($birthday) {
-                $flags[] = 'Birthday?';
-            }
 
             $statusCell = implode(', ', $flags);
-            $amount     = number_format((float) $donation->GrossAmount, 2);
-            $payer      = htmlspecialchars((string) ($donation->Payer ?? ''), ENT_QUOTES);
+            $amount = number_format((float) $donation->GrossAmount, 2);
+            $payer = htmlspecialchars((string) ($donation->Payer ?? ''), ENT_QUOTES);
 
             // users_donations.timestamp is stored in UTC (the batch container's
             // MySQL session and PHP both run UTC). V1's mail implicitly showed
@@ -92,19 +66,19 @@ class DonationSummaryService
             // propagate per-cell rules. The donation-row class is what the
             // template's media query targets to tighten padding + font on
             // narrow screens.
-            $td       = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:left;"';
-            $tdTime   = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:left;white-space:nowrap;"';
+            $td = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:left;"';
+            $tdTime = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:left;white-space:nowrap;"';
             $tdAmount = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;"';
-            $tdPayer  = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:left;word-break:break-word;"';
-            $rowsHtml .= "<tr class=\"donation-row\">"
-                . "<td {$tdTime}>{$localTs}</td>"
-                . "<td {$tdAmount}><b>&pound;{$amount}</b></td>"
-                . "<td {$tdPayer}>{$payer}</td>"
-                . "<td {$td}>{$statusCell}</td>"
-                . "</tr>\n";
+            $tdPayer = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:left;word-break:break-word;"';
+            $rowsHtml .= '<tr class="donation-row">'
+                ."<td {$tdTime}>{$localTs}</td>"
+                ."<td {$tdAmount}><b>&pound;{$amount}</b></td>"
+                ."<td {$tdPayer}>{$payer}</td>"
+                ."<td {$td}>{$statusCell}</td>"
+                ."</tr>\n";
         }
 
-        if (!$dryRun) {
+        if (! $dryRun) {
             // Pass only the row HTML — the template uses <mj-table> which
             // emits its own <table><tbody>. Previously we passed a full
             // <table><tbody>...</table> through <mj-raw>, which MJML injected
@@ -119,36 +93,17 @@ class DonationSummaryService
             // recipientEmail via its envelope; passing it again is harmless
             // and makes the call self-documenting.
             app(\App\Services\EmailSpoolerService::class)->spool(new DonationSummaryMail(
-                    recipientEmail: $fundraisingAddr,
-                    htmlContent: $rowsHtml,
-                    total: $total,
-                ),
-                $fundraisingAddr,);
+                recipientEmail: $fundraisingAddr,
+                htmlContent: $rowsHtml,
+                total: $total,
+            ),
+                $fundraisingAddr, );
         }
 
         return [
             'donations' => $donations->count(),
-            'total'     => $total,
-            'sent'      => !$dryRun,
+            'total' => $total,
+            'sent' => ! $dryRun,
         ];
-    }
-
-    private function donorHasBirthdayGroup(int $userId): bool
-    {
-        $today     = date('m-d');
-        $yesterday = date('m-d', strtotime('-1 day'));
-        $twoDaysAgo = date('m-d', strtotime('-2 days'));
-
-        $count = DB::table('groups')
-            ->join('memberships', 'groups.id', '=', 'memberships.groupid')
-            ->where('memberships.userid', $userId)
-            ->where('groups.type', Group::TYPE_FREEGLE)
-            ->where('groups.publish', 1)
-            ->where('groups.onmap', 1)
-            ->whereRaw("DATE_FORMAT(groups.founded, '%m-%d') IN (?, ?, ?)", [$today, $yesterday, $twoDaysAgo])
-            ->whereRaw("YEAR(NOW()) - YEAR(groups.founded) > 0")
-            ->count();
-
-        return $count > 0;
     }
 }

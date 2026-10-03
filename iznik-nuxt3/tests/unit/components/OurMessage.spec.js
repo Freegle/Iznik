@@ -12,7 +12,6 @@ const { mockMessage } = vi.hoisted(() => {
       textbody: 'Nice sofa, free to collect.',
       unseen: true,
       successful: false,
-      groups: [{ groupid: 100 }],
     },
   }
 })
@@ -21,11 +20,6 @@ const mockMessageStore = {
   fetch: vi.fn().mockResolvedValue(mockMessage),
   byId: vi.fn().mockReturnValue(mockMessage),
   view: vi.fn().mockResolvedValue(undefined),
-}
-
-const mockGroupStore = {
-  get: vi.fn().mockReturnValue(null),
-  fetch: vi.fn().mockResolvedValue({ id: 100, nameshort: 'TestGroup' }),
 }
 
 const mockAuthStore = {
@@ -38,10 +32,6 @@ const mockMiscStore = {
 
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
 }))
 
 vi.mock('~/stores/auth', () => ({
@@ -235,11 +225,6 @@ describe('OurMessage', () => {
     it('fetches message on mount', async () => {
       await createWrapper()
       expect(mockMessageStore.fetch).toHaveBeenCalledWith(1)
-    })
-
-    it('fetches group data', async () => {
-      await createWrapper()
-      expect(mockGroupStore.fetch).toHaveBeenCalledWith(100)
     })
 
     it('emits notFound when message fetch fails', async () => {

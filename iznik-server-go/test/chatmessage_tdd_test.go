@@ -21,17 +21,15 @@ func TestGetChatMessages_ModSeesDeletedUserMessages(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("modviewdel")
 
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	victimID := CreateTestUser(t, prefix+"_victim", "User")
 	phisherID := CreateTestUser(t, prefix+"_phisher", "User")
 
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, victimID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	// phisher has no membership (already unsubscribed)
 
 	// User2User chat: victim initiated, phisher replied with scam
-	chatID := CreateTestChatRoom(t, victimID, &phisherID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, victimID, &phisherID, "User2User")
 
 	db.Exec(
 		"INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, reviewrejected, processingsuccessful) "+
@@ -89,17 +87,14 @@ func TestGetChatMessages_HeldReplyHiddenFromPoster(t *testing.T) {
 		"source ENUM('email','tn','web') NOT NULL DEFAULT 'email', " +
 		"lat DOUBLE NULL, lng DOUBLE NULL, status VARCHAR(20) DEFAULT 'held', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
 
 	// The original post (messages.id) that the chat is about — required by the FK on rippling_held_replies.msgid.
-	postMsgID := CreateTestMessage(t, posterID, groupID, "OFFER: Test item (heldreply)", 51.5, -0.1)
+	postMsgID := CreateTestMessage(t, posterID, "OFFER: Test item (heldreply)", 51.5, -0.1)
 
 	// Poster initiated the chat; replier replied (a fully-processed, normally-visible message).
-	chatID := CreateTestChatRoom(t, posterID, &replierID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, posterID, &replierID, "User2User")
 	db.Exec(
 		"INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, reviewrejected, processingsuccessful) "+
 			"VALUES (?, ?, 'I can collect this please', NOW(), 0, 0, 1)",

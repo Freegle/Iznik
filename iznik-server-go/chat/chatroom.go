@@ -14,7 +14,6 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/firstreply"
 	"github.com/freegle/iznik-server-go/message"
-	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -31,7 +30,6 @@ type Tabler interface {
 type ChatRoomListEntry struct {
 	ID            uint64     `json:"id" gorm:"primary_key"`
 	Chattype      string     `json:"chattype"`
-	Groupid       uint64     `json:"groupid"`
 	User1         uint64     `json:"user1"`
 	User2         uint64     `json:"user2"`
 	Otheruid      uint64     `json:"otheruid"`
@@ -43,8 +41,6 @@ type ChatRoomListEntry struct {
 	Lastmsgseen   uint64     `json:"lastmsgseen"`
 	Lasttype      *time.Time `json:"lasttype"`
 	Name          string     `json:"name"`
-	Nameshort     string     `json:"-"`
-	Namefull      string     `json:"-"`
 	Firstname     string     `json:"-"`
 	Lastname      string     `json:"-"`
 	Fullname      string     `json:"-"`
@@ -63,7 +59,6 @@ type ChatRoomListEntry struct {
 	Refmsgtype     string          `json:"-"`
 	Hasmessages    bool            `json:"-" gorm:"column:hasmessages"`
 	Hasvisiblemsg  bool            `json:"-" gorm:"column:hasvisiblemsg"`
-	Gimageid       uint64          `json:"-"`
 	U1imageid      uint64          `json:"-"`
 	U2imageid      uint64          `json:"-"`
 	U1imageurl     string          `json:"-"`
@@ -260,7 +255,7 @@ func GetChatRoom(id uint64, myid uint64) (ChatRoomListEntry, bool) {
 
 	// listChats only returns chats where the user is a direct participant
 	// (or a moderator for User2Mod chats). Moderators may also need to view
-	// User2User chats in their groups (for chat review, support, etc.).
+	// User2User chats (for chat review, support, etc.).
 	// Fall back to a direct lookup with permission check via canSeeChatRoom,
 	// then fetch enriched data by running listChats as a participant.
 	db := database.DBConn
@@ -269,18 +264,17 @@ func GetChatRoom(id uint64, myid uint64) (ChatRoomListEntry, bool) {
 		ID       uint64 `gorm:"column:id"`
 		User1    uint64 `gorm:"column:user1"`
 		User2    uint64 `gorm:"column:user2"`
-		Groupid  uint64 `gorm:"column:groupid"`
 		Chattype string `gorm:"column:chattype"`
 	}
 	var room roomBasic
-	db.Table("chat_rooms").Select("id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype").Where("id = ?", id).Scan(&room)
+	db.Table("chat_rooms").Select("id, user1, user2, chattype").Where("id = ?", id).Scan(&room)
 
 	if room.ID == 0 {
 		var chat ChatRoomListEntry
 		return chat, true
 	}
 
-	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
+	if !canSeeChatRoom(myid, room.User1, room.User2) {
 		var chat ChatRoomListEntry
 		return chat, true
 	}
@@ -295,7 +289,7 @@ func GetChatRoom(id uint64, myid uint64) (ChatRoomListEntry, bool) {
 	if len(chats) > 0 {
 		// The list ran as the participant, so a held message's preview was masked for them.
 		// The caller here is a moderator, who reads the text as before.
-		if WarnNotHold() && chats[0].Chatmsgheld {
+		if chats[0].Chatmsgheld {
 			chats[0].Snippet = getSnippet(chats[0].Chatmsgtype, chats[0].Chatmsg, chats[0].Refmsgtype)
 		}
 		return chats[0], false
@@ -349,7 +343,6 @@ func GetChatRoomsMT(c *fiber.Ctx) error {
 
 type PutChatRoomRequest struct {
 	Userid       uint64 `json:"userid"`
-	Groupid      uint64 `json:"groupid"`
 	Chattype     string `json:"chattype"`
 	UpdateRoster *bool  `json:"updateRoster"`
 }
@@ -389,44 +382,31 @@ func PutChatRoom(c *fiber.Ctx) error {
 		if req.Userid == myid {
 			return fiber.NewError(fiber.StatusBadRequest, "Cannot create a chat with yourself")
 		}
-	} else if chattype == utils.CHAT_TYPE_USER2MOD {
-		if req.Groupid == 0 {
-			return fiber.NewError(fiber.StatusBadRequest, "groupid is required for User2Mod")
-		}
 	}
 
 	db := database.DBConn
 	now := time.Now()
 
 	if chattype == utils.CHAT_TYPE_USER2MOD {
-		// Determine the target user for this User2Mod chat.
-		// If a moderator provides userid, they want to open the MEMBER's existing
-		// chat (e.g. from ModTools Feedback page). Non-mods always get their own chat.
+		// National: every member has one Freegle room. A moderator opening a
+		// member's room (req.Userid set, different from the caller) needs the
+		// national moderator role; a member always gets their own room.
 		chatUserID := myid
-		modOpeningMembersChat := req.Userid > 0 && req.Userid != myid && auth.IsModOfGroup(myid, req.Groupid)
+		modOpeningMembersChat := req.Userid > 0 && req.Userid != myid
 		if modOpeningMembersChat {
+			if !auth.IsModerator(myid) {
+				return fiber.NewError(fiber.StatusForbidden, "Not a moderator")
+			}
 			chatUserID = req.Userid
 		}
 
-		// Find or create a chat between the target user and the group's mods.
+		// Find or create the member's single Freegle room.
 		var existingID uint64
-		db.Table("chat_rooms").Select("id").Where("user1 = ? AND chattype = ? AND groupid = ?",
-			chatUserID, utils.CHAT_TYPE_USER2MOD, req.Groupid).Limit(1).Scan(&existingID)
+		db.Table("chat_rooms").Select("id").Where("user1 = ? AND chattype = ?",
+			chatUserID, utils.CHAT_TYPE_USER2MOD).Limit(1).Scan(&existingID)
 
 		if existingID > 0 {
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": existingID})
-		}
-
-		// Rippling auto-joins a poster to every group their post reached
-		// (memberships.rippled = 1, ExpandService::addPosterMembershipToRippledGroups).
-		// That is a record of where a post travelled, not a relationship with the
-		// community, so it gives that group's moderators nobody to start a conversation
-		// with (Discourse 10102). Answering a chat the member started is unaffected: an
-		// existing room is returned above, before this runs. The member's own route to
-		// the volunteers is unaffected too — this only guards the mod-initiated branch.
-		if modOpeningMembersChat && rippling.IsRippleOnlyMembership(db, chatUserID, req.Groupid) {
-			return fiber.NewError(fiber.StatusForbidden,
-				"This member's only tie to the group is a post that rippled in, so there is no chat to start")
 		}
 
 		// Create new User2Mod chat.
@@ -437,7 +417,7 @@ func PutChatRoom(c *fiber.Ctx) error {
 				{Column: clause.Column{Name: "latestmessage"}, Value: clause.Column{Table: "excluded", Name: "latestmessage"}},
 			},
 		}).Create(map[string]interface{}{
-			"user1": chatUserID, "chattype": utils.CHAT_TYPE_USER2MOD, "groupid": req.Groupid, "latestmessage": now,
+			"user1": chatUserID, "chattype": utils.CHAT_TYPE_USER2MOD, "latestmessage": now,
 		})
 		if tx.Error != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create chat room")
@@ -452,11 +432,9 @@ func PutChatRoom(c *fiber.Ctx) error {
 
 		chatID := uint64(lastID)
 
-		// Create roster entry for the chat owner.
-		// Converted together with its
-		// two identical twins below (e611588b2309, 60aa69c60334): a
-		// half-converted group renumbers the survivors' site IDs, so gate (h)
-		// refuses the split state.
+		// Create roster entry for the chat owner. National moderators are not
+		// pre-added to the roster; whichever moderator replies is added by the
+		// normal send-message roster upsert.
 		db.Table("chat_roster").Clauses(clause.OnConflict{
 			DoUpdates: clause.Set{
 				{Column: clause.Column{Name: "date"}, Value: clause.Column{Table: "excluded", Name: "date"}},
@@ -465,18 +443,9 @@ func PutChatRoom(c *fiber.Ctx) error {
 			"chatid": chatID, "userid": chatUserID, "status": utils.CHAT_STATUS_ONLINE, "date": now,
 		})
 
-		// add ALL group moderators to the roster so they get notifications.
-		var modIDs []uint64
-		db.Table("memberships").Where("groupid = ? AND role IN (?, ?) AND collection = ?",
-			req.Groupid, utils.ROLE_OWNER, utils.ROLE_MODERATOR, utils.COLLECTION_APPROVED).Pluck("userid", &modIDs)
-		for _, modID := range modIDs {
-			db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
-				"chatid": chatID, "userid": modID, "status": utils.CHAT_STATUS_ONLINE, "date": now,
-			})
-		}
-
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": chatID})
 	}
+
 
 	// User2User flow below.
 
@@ -557,24 +526,20 @@ func PutChatRoom(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": chatID})
 }
 
-// GetOrCreateUser2ModChat finds or creates a User2Mod chat room for a user on a group.
-// Uses transaction + SELECT FOR UPDATE to prevent duplicate creation, matching V1
-// ChatRoom::createUser2Mod(). The unique key (user1, user2, chattype) does NOT prevent
-// User2Mod duplicates because user2 is NULL and MySQL treats NULLs as distinct in
-// unique indexes. We must lock explicitly.
+// GetOrCreateUser2ModChat finds or creates a user's User2Mod chat room (their
+// chat with Freegle/moderators). Uses transaction + SELECT FOR UPDATE to
+// prevent duplicate creation, matching V1 ChatRoom::createUser2Mod(). The
+// unique key (user1, user2, chattype) does NOT prevent User2Mod duplicates
+// because user2 is NULL and MySQL treats NULLs as distinct in unique
+// indexes. We must lock explicitly.
 //
-// ORM migration sites 65fde41159df (locked SELECT), 2451a0b54d63 (UPDATE),
-// 69ed53a55edc (INSERT). db.Transaction() gives the same single-connection
-// guarantee the previous db.DB().Begin()-based *sql.Tx had: under the
-// read/write split, gorm.io/plugin/dbresolver's routing callbacks
-// (switchSource/switchReplica/switchGuess) all no-op once
-// db.Statement.ConnPool is already a transaction (see dbresolver's
-// isTransaction check in callbacks.go), so every statement below - the
-// locked SELECT, the UPDATE, and the INSERT - runs on the ONE connection
-// Begin() opened, which is always the source/write host (Begin() itself is
-// never routed to a replica). Verified empirically against two
-// distinguishable real MySQL hosts, not just reasoned from source.
-func GetOrCreateUser2ModChat(db *gorm.DB, userID uint64, groupID uint64) (uint64, error) {
+// db.Transaction() gives the same single-connection guarantee a plain
+// db.DB().Begin()-based *sql.Tx would: under the read/write split,
+// gorm.io/plugin/dbresolver's routing callbacks all no-op once
+// db.Statement.ConnPool is already a transaction, so every statement below -
+// the locked SELECT, the UPDATE, and the INSERT - runs on the ONE connection
+// Begin() opened, which is always the source/write host.
+func GetOrCreateUser2ModChat(db *gorm.DB, userID uint64) (uint64, error) {
 	var chatID uint64
 
 	err := db.Transaction(func(tx *gorm.DB) error {
@@ -582,12 +547,11 @@ func GetOrCreateUser2ModChat(db *gorm.DB, userID uint64, groupID uint64) (uint64
 		// original's exact corner-case behaviour of falling through to the
 		// create branch below on ANY Scan failure, not just "no rows found" -
 		// chatID stays 0 either way, and only chatID (not the Scan error) is
-		// checked, same as the raw row.Scan(&chatID); err == nil && chatID > 0
-		// condition this replaces.
+		// checked.
 		_ = tx.Table("chat_rooms").
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			Select("id").
-			Where("user1 = ? AND groupid = ? AND chattype = ?", userID, groupID, utils.CHAT_TYPE_USER2MOD).
+			Where("user1 = ? AND chattype = ?", userID, utils.CHAT_TYPE_USER2MOD).
 			Scan(&chatID)
 
 		if chatID > 0 {
@@ -598,7 +562,7 @@ func GetOrCreateUser2ModChat(db *gorm.DB, userID uint64, groupID uint64) (uint64
 		// No existing chat — create one inside the same transaction.
 		res := gorm.WithResult()
 		if err := tx.Table("chat_rooms").Clauses(res).Create(map[string]interface{}{
-			"user1": userID, "groupid": groupID, "chattype": utils.CHAT_TYPE_USER2MOD, "latestmessage": gorm.Expr("NOW()"),
+			"user1": userID, "chattype": utils.CHAT_TYPE_USER2MOD, "latestmessage": gorm.Expr("NOW()"),
 		}).Error; err != nil {
 			return fmt.Errorf("failed to insert chat room: %w", err)
 		}
@@ -614,22 +578,18 @@ func GetOrCreateUser2ModChat(db *gorm.DB, userID uint64, groupID uint64) (uint64
 		return 0, err
 	}
 
-	// Ensure the user and group mods are in the roster so that
-	// chat notifications reach everyone.
-	// Outside the
-	// row-locked tx above (this runs on the plain db handle after tx.Commit/
-	// Rollback) and its result is discarded - no id to read back, so the
-	// row-lock entanglement above does not apply to this statement.
-	// INSERT IGNORE -> clause.Insert{Modifier: "IGNORE"}, the wave 3
-	// convention (never clause.OnConflict{DoNothing}, proven by the retired
-	// ormharness's upsert_test.go, removed in d22ba1d6c).
+	// Ensure the user and every national moderator are in the roster so that
+	// chat notifications reach everyone. Outside the row-locked tx above (this
+	// runs on the plain db handle after tx.Commit/Rollback) and its result is
+	// discarded - no id to read back, so the row-lock entanglement above does
+	// not apply to this statement. INSERT IGNORE -> clause.Insert{Modifier:
+	// "IGNORE"}, never clause.OnConflict{DoNothing}.
 	db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{"chatid": chatID, "userid": userID})
 
 	var modUserIDs []uint64
-	db.Table("memberships").Select("userid").Where("groupid = ? AND role IN (?, ?)", groupID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Scan(&modUserIDs)
+	db.Table("users").Select("id").Where("systemrole IN (?, ?, ?)", utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN).Scan(&modUserIDs)
 	for _, modUID := range modUserIDs {
-		// Same as
-		// 1c2cfaaab39b above, once per mod; also outside the row-locked tx.
+		// Same as above, once per mod; also outside the row-locked tx.
 		db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{"chatid": chatID, "userid": modUID})
 	}
 
@@ -693,53 +653,6 @@ func GetOrCreateUser2UserChat(db *gorm.DB, userA, userB uint64) (uint64, error) 
 	return chatID, nil
 }
 
-// CommonGroup is a group that both participants of a chat belong to.
-type CommonGroup struct {
-	ID          uint64 `json:"id"`
-	Namedisplay string `json:"namedisplay"`
-}
-
-// GetCommonGroups handles GET /chat/{id}/commongroups - the groups the two
-// participants of a chat have in common. The report flow uses this to decide
-// whether to route a report to a community's moderators (a common group exists)
-// or to the central spam team (none). Caller must be a participant.
-func GetCommonGroups(c *fiber.Ctx) error {
-	myid := user.WhoAmI(c)
-	if myid == 0 {
-		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
-	}
-
-	id, err := strconv.ParseUint(c.Params("id"), 10, 64)
-	if err != nil || id == 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "Invalid chat ID")
-	}
-
-	db := database.DBConn
-
-	var room struct {
-		ID    uint64
-		User1 uint64
-		User2 uint64
-	}
-	db.Table("chat_rooms").Select("id, user1, user2").Where("id = ?", id).Scan(&room)
-	if room.ID == 0 {
-		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
-	}
-	if room.User1 != myid && room.User2 != myid {
-		return fiber.NewError(fiber.StatusForbidden, "Not a member of this chat")
-	}
-
-	groups := []CommonGroup{}
-	db.Table("`groups` g").
-		Select("g.id, COALESCE(NULLIF(g.namefull, ''), g.nameshort) AS namedisplay").
-		Joins("INNER JOIN memberships m1 ON m1.groupid = g.id AND m1.userid = ?", room.User1).
-		Joins("INNER JOIN memberships m2 ON m2.groupid = g.id AND m2.userid = ?", room.User2).
-		Order("namedisplay").
-		Scan(&groups)
-
-	return c.JSON(groups)
-}
-
 // =============================================================================
 // POST handler (roster updates, nudge, typing, actions)
 // =============================================================================
@@ -783,8 +696,6 @@ func PostChatRoom(c *fiber.Ctx) error {
 		return handleTyping(c, db, myid, req.ID)
 	case "ReferToSupport":
 		return handleReferToSupport(c, db, myid, req.ID)
-	case "ReportNoGroup":
-		return handleReportNoGroup(c, db, myid, req)
 	default:
 		if req.ID == 0 {
 			return fiber.NewError(fiber.StatusBadRequest, "Chat ID required")
@@ -799,6 +710,7 @@ func PostChatRoom(c *fiber.Ctx) error {
 
 func listChats(myid uint64, chattypes []string, start string, search string, onlyChat uint64, keepChat uint64, includeClosed bool, memberOnly bool) []ChatRoomListEntry {
 	var r []ChatRoomListEntry
+	isMod := auth.IsModerator(myid)
 
 	// V1 parity: unseen messages older than CHAT_ACTIVE_LIMIT days are excluded
 	// from the count, regardless of the chat list's own start date (which may be
@@ -811,9 +723,10 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 	// - a specific chat which we have asked for which was closed or blocked, which we would otherwise exclude
 	//
 	// We build UNION branches dynamically based on the requested chat types.
-	// For User2Mod: user is user1 (the member contacting the group)
-	// For User2User: user is either user1 or user2
-	// For Mod2Mod: user is a moderator of the group (joined via memberships)
+	// For User2Mod: user is user1 (the member); a moderator sees every member's chat,
+	// a non-moderator only their own.
+	// For User2User: user is either user1 or user2.
+	// For Mod2Mod: a single national chat, visible only to moderators.
 	var chats []ChatRoomListEntry
 
 	statusq := " "
@@ -835,7 +748,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 		onlyChatq += " AND chat_rooms.id = " + strconv.FormatUint(onlyChat, 10) + " "
 	}
 
-	atts := "chat_rooms.id, chat_rooms.chattype, chat_rooms.groupid, chat_rooms.user1, chat_rooms.user2, chat_rooms.latestmessage"
+	atts := "chat_rooms.id, chat_rooms.chattype, chat_rooms.user1, chat_rooms.user2, chat_rooms.latestmessage"
 
 	// Build UNION branches dynamically based on requested chat types.
 	unions := []string{}
@@ -848,41 +761,50 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				// Freegle (user-facing): only show User2Mod chats where we are the member (user1).
 				// Moderators should not see other members' modmails on their personal Freegle chat list.
 				unions = append(unions,
-					"SELECT 0 AS search, user1 AS otheruid, nameshort, namefull, "+
+					"SELECT 0 AS search, user1 AS otheruid, "+
 						"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS firstname, "+
 						"'' AS lastname, "+
 						"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS fullname, "+
 						"(SELECT deleted FROM users WHERE users.id = user1) AS otherdeleted, "+
 						atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
-						"INNER JOIN `groups` ON groups.id = chat_rooms.groupid "+
 						"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 						"WHERE chattype = ? AND latestmessage >= ? "+
 						"AND user1 = ? "+
 						statusq+" "+onlyChatq)
 				params = append(params, myid, utils.CHAT_TYPE_USER2MOD, start, myid)
-			} else {
-				// ModTools: show User2Mod chats where we are the member OR a moderator of the group.
-				// Exclude backup mods (active:0 in membership settings) unless searching.
+			} else if isMod {
+				// ModTools, moderator: every member's chat with Freegle is visible nationally.
 				unions = append(unions,
-					"SELECT 0 AS search, user1 AS otheruid, nameshort, namefull, "+
+					"SELECT 0 AS search, user1 AS otheruid, "+
 						"COALESCE((SELECT firstname FROM users WHERE users.id = user1), '') AS firstname, "+
 						"COALESCE((SELECT lastname FROM users WHERE users.id = user1), '') AS lastname, "+
 						"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS fullname, "+
 						"(SELECT deleted FROM users WHERE users.id = user1) AS otherdeleted, "+
 						atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
-						"INNER JOIN `groups` ON groups.id = chat_rooms.groupid "+
 						"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 						"WHERE chattype = ? AND latestmessage >= ? "+
-						"AND (user1 = ? OR EXISTS(SELECT 1 FROM memberships WHERE memberships.userid = ? AND memberships.groupid = chat_rooms.groupid AND memberships.role IN (?, ?) "+
-						"AND (memberships.settings IS NULL OR LOCATE('\"active\"', memberships.settings) = 0 OR LOCATE('\"active\":1', memberships.settings) > 0))) "+
 						statusq+" "+onlyChatq)
-				params = append(params, myid, utils.CHAT_TYPE_USER2MOD, start, myid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER)
+				params = append(params, myid, utils.CHAT_TYPE_USER2MOD, start)
+			} else {
+				// ModTools, non-moderator (defensive - route has no explicit gate): only our own chat.
+				unions = append(unions,
+					"SELECT 0 AS search, user1 AS otheruid, "+
+						"COALESCE((SELECT firstname FROM users WHERE users.id = user1), '') AS firstname, "+
+						"COALESCE((SELECT lastname FROM users WHERE users.id = user1), '') AS lastname, "+
+						"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS fullname, "+
+						"(SELECT deleted FROM users WHERE users.id = user1) AS otherdeleted, "+
+						atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
+						"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
+						"WHERE chattype = ? AND latestmessage >= ? "+
+						"AND user1 = ? "+
+						statusq+" "+onlyChatq)
+				params = append(params, myid, utils.CHAT_TYPE_USER2MOD, start, myid)
 			}
 
 		case utils.CHAT_TYPE_USER2USER:
 			// User2User: user is user1
 			unions = append(unions,
-				"SELECT 0 AS search, user2 AS otheruid, '' AS nameshort, '' AS namefull, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
+				"SELECT 0 AS search, user2 AS otheruid, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
 					atts+", c1.status, c2.lasttype FROM chat_rooms "+
 					"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 					"LEFT JOIN chat_roster c2 ON c2.userid = user2 AND chat_rooms.id = c2.chatid "+
@@ -892,7 +814,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 
 			// User2User: user is user2
 			unions = append(unions,
-				"SELECT 0 AS search, user1 AS otheruid, '' AS nameshort, '' AS namefull, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
+				"SELECT 0 AS search, user1 AS otheruid, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
 					atts+", c1.status, c2.lasttype FROM chat_rooms "+
 					"INNER JOIN users ON users.id = user1 "+
 					"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
@@ -901,19 +823,19 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 			params = append(params, myid, myid, utils.CHAT_TYPE_USER2USER, start)
 
 		case utils.CHAT_TYPE_MOD2MOD:
-			// Mod2Mod: user is a moderator of the group.
-			// Exclude backup mods and all-spam chats.
+			if !isMod {
+				continue
+			}
+
+			// Mod2Mod: a single national chat, visible to every moderator. Exclude all-spam chats.
 			unions = append(unions,
-				"SELECT 0 AS search, 0 AS otheruid, nameshort, namefull, '' AS firstname, '' AS lastname, '' AS fullname, NULL AS otherdeleted, "+
+				"SELECT 0 AS search, 0 AS otheruid, '' AS firstname, '' AS lastname, '' AS fullname, NULL AS otherdeleted, "+
 					atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
-					"INNER JOIN `groups` ON groups.id = chat_rooms.groupid "+
-					"INNER JOIN memberships ON memberships.groupid = chat_rooms.groupid AND memberships.userid = ? AND memberships.role IN (?, ?) "+
-					"AND (memberships.settings IS NULL OR LOCATE('\"active\"', memberships.settings) = 0 OR LOCATE('\"active\":1', memberships.settings) > 0) "+
 					"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 					"WHERE chattype = ? AND latestmessage >= ? "+
 					"AND (chat_rooms.msgvalid + chat_rooms.msginvalid = 0 OR chat_rooms.msgvalid > 0) "+
 					statusq+" "+onlyChatq)
-			params = append(params, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid, utils.CHAT_TYPE_MOD2MOD, start)
+			params = append(params, myid, utils.CHAT_TYPE_MOD2MOD, start)
 		}
 	}
 
@@ -925,7 +847,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 			case utils.CHAT_TYPE_USER2USER:
 				// Search User2User chats where user is user1 — by message content/subject.
 				unions = append(unions,
-					"SELECT 1 AS search, user2 AS otheruid, '' AS nameshort, '' AS namefull, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
+					"SELECT 1 AS search, user2 AS otheruid, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
 						atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
 						"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 						"INNER JOIN users ON users.id = user2 "+
@@ -937,7 +859,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 
 				// Search User2User chats where user is user1 — by other user's name/email.
 				unions = append(unions,
-					"SELECT 1 AS search, user2 AS otheruid, '' AS nameshort, '' AS namefull, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
+					"SELECT 1 AS search, user2 AS otheruid, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
 						atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
 						"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 						"INNER JOIN users ON users.id = user2 "+
@@ -948,7 +870,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 
 				// Search User2User chats where user is user2 — by message content/subject.
 				unions = append(unions,
-					"SELECT 1 AS search, user1 AS otheruid, '' AS nameshort, '' AS namefull, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
+					"SELECT 1 AS search, user1 AS otheruid, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
 						atts+", c1.status, c2.lasttype FROM chat_rooms "+
 						"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 						"LEFT JOIN chat_roster c2 ON c2.userid = user1 AND chat_rooms.id = c2.chatid "+
@@ -961,7 +883,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 
 				// Search User2User chats where user is user2 — by other user's name/email.
 				unions = append(unions,
-					"SELECT 1 AS search, user1 AS otheruid, '' AS nameshort, '' AS namefull, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
+					"SELECT 1 AS search, user1 AS otheruid, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
 						atts+", c1.status, c2.lasttype FROM chat_rooms "+
 						"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 						"LEFT JOIN chat_roster c2 ON c2.userid = user1 AND chat_rooms.id = c2.chatid "+
@@ -975,13 +897,12 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				if memberOnly {
 					// Freegle: search only User2Mod chats where we are the member — by message content/subject.
 					unions = append(unions,
-						"SELECT 1 AS search, user1 AS otheruid, nameshort, namefull, "+
+						"SELECT 1 AS search, user1 AS otheruid, "+
 							"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS firstname, "+
 							"'' AS lastname, "+
 							"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS fullname, "+
 							"(SELECT deleted FROM users WHERE users.id = user1) AS otherdeleted, "+
 							atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
-							"INNER JOIN `groups` ON groups.id = chat_rooms.groupid "+
 							"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 							"INNER JOIN chat_messages ON chat_messages.chatid = chat_rooms.id "+
 							"LEFT JOIN messages ON messages.id = chat_messages.refmsgid "+
@@ -990,57 +911,72 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 							onlyChatq+" "+
 							"AND (chat_messages.message LIKE ? OR messages.subject LIKE ?) ")
 					params = append(params, myid, utils.CHAT_TYPE_USER2MOD, myid, searchLike, searchLike)
-				} else {
-					// ModTools: search User2Mod chats visible to user — by message content/subject.
+				} else if isMod {
+					// ModTools, moderator: search every member's chat with Freegle — by message content/subject.
 					unions = append(unions,
-						"SELECT 1 AS search, user1 AS otheruid, nameshort, namefull, "+
+						"SELECT 1 AS search, user1 AS otheruid, "+
 							"COALESCE((SELECT firstname FROM users WHERE users.id = user1), '') AS firstname, "+
 							"COALESCE((SELECT lastname FROM users WHERE users.id = user1), '') AS lastname, "+
 							"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS fullname, "+
 							"(SELECT deleted FROM users WHERE users.id = user1) AS otherdeleted, "+
 							atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
-							"INNER JOIN `groups` ON groups.id = chat_rooms.groupid "+
 							"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 							"INNER JOIN chat_messages ON chat_messages.chatid = chat_rooms.id "+
 							"LEFT JOIN messages ON messages.id = chat_messages.refmsgid "+
 							"WHERE chattype = ? "+
-							"AND (user1 = ? OR EXISTS(SELECT 1 FROM memberships WHERE memberships.userid = ? AND memberships.groupid = chat_rooms.groupid AND memberships.role IN (?, ?))) "+
 							onlyChatq+" "+
 							"AND (chat_messages.message LIKE ? OR messages.subject LIKE ?) ")
-					params = append(params, myid, utils.CHAT_TYPE_USER2MOD, myid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, searchLike, searchLike)
+					params = append(params, myid, utils.CHAT_TYPE_USER2MOD, searchLike, searchLike)
 
-					// ModTools: search User2Mod chats by member's name/email.
+					// ModTools, moderator: search by member's name/email.
 					unions = append(unions,
-						"SELECT 1 AS search, user1 AS otheruid, nameshort, namefull, "+
+						"SELECT 1 AS search, user1 AS otheruid, "+
 							"COALESCE(users.firstname, '') AS firstname, "+
 							"COALESCE(users.lastname, '') AS lastname, "+
 							"COALESCE(users.fullname, '') AS fullname, "+
 							"users.deleted AS otherdeleted, "+
 							atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
-							"INNER JOIN `groups` ON groups.id = chat_rooms.groupid "+
 							"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 							"INNER JOIN users ON users.id = user1 "+
 							"LEFT JOIN users_emails ON users_emails.userid = user1 "+
 							"WHERE chattype = ? "+
-							"AND (user1 = ? OR EXISTS(SELECT 1 FROM memberships WHERE memberships.userid = ? AND memberships.groupid = chat_rooms.groupid AND memberships.role IN (?, ?))) "+
 							onlyChatq+" "+
 							"AND (users.fullname LIKE ? OR users_emails.email LIKE ?) ")
-					params = append(params, myid, utils.CHAT_TYPE_USER2MOD, myid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, searchLike, searchLike)
+					params = append(params, myid, utils.CHAT_TYPE_USER2MOD, searchLike, searchLike)
+				} else {
+					// ModTools, non-moderator (defensive): search only our own chat — by message content/subject.
+					unions = append(unions,
+						"SELECT 1 AS search, user1 AS otheruid, "+
+							"COALESCE((SELECT firstname FROM users WHERE users.id = user1), '') AS firstname, "+
+							"COALESCE((SELECT lastname FROM users WHERE users.id = user1), '') AS lastname, "+
+							"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS fullname, "+
+							"(SELECT deleted FROM users WHERE users.id = user1) AS otherdeleted, "+
+							atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
+							"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
+							"INNER JOIN chat_messages ON chat_messages.chatid = chat_rooms.id "+
+							"LEFT JOIN messages ON messages.id = chat_messages.refmsgid "+
+							"WHERE chattype = ? "+
+							"AND user1 = ? "+
+							onlyChatq+" "+
+							"AND (chat_messages.message LIKE ? OR messages.subject LIKE ?) ")
+					params = append(params, myid, utils.CHAT_TYPE_USER2MOD, myid, searchLike, searchLike)
 				}
 
 			case utils.CHAT_TYPE_MOD2MOD:
-				// Search Mod2Mod chats visible to user as moderator — by message content/subject.
+				if !isMod {
+					continue
+				}
+
+				// Search Mod2Mod chats — by message content/subject.
 				unions = append(unions,
-					"SELECT 1 AS search, 0 AS otheruid, nameshort, namefull, '' AS firstname, '' AS lastname, '' AS fullname, NULL AS otherdeleted, "+
+					"SELECT 1 AS search, 0 AS otheruid, '' AS firstname, '' AS lastname, '' AS fullname, NULL AS otherdeleted, "+
 						atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
-						"INNER JOIN `groups` ON groups.id = chat_rooms.groupid "+
-						"INNER JOIN memberships ON memberships.groupid = chat_rooms.groupid AND memberships.userid = ? AND memberships.role IN (?, ?) "+
 						"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 						"INNER JOIN chat_messages ON chat_messages.chatid = chat_rooms.id "+
 						"LEFT JOIN messages ON messages.id = chat_messages.refmsgid "+
 						"WHERE chattype = ? "+onlyChatq+" "+
 						"AND (chat_messages.message LIKE ? OR messages.subject LIKE ?) ")
-				params = append(params, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid, utils.CHAT_TYPE_MOD2MOD, searchLike, searchLike)
+				params = append(params, myid, utils.CHAT_TYPE_MOD2MOD, searchLike, searchLike)
 			}
 		}
 	}
@@ -1054,13 +990,12 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 			switch ct {
 			case utils.CHAT_TYPE_USER2MOD:
 				unions = append(unions,
-					"SELECT 0 AS search, user1 AS otheruid, nameshort, namefull, "+
+					"SELECT 0 AS search, user1 AS otheruid, "+
 						"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS firstname, "+
 						"'' AS lastname, "+
 						"COALESCE((SELECT fullname FROM users WHERE users.id = user1), '') AS fullname, "+
 						"(SELECT deleted FROM users WHERE users.id = user1) AS otherdeleted, "+
 						atts+", c1.status, NULL AS lasttype FROM chat_rooms "+
-						"INNER JOIN `groups` ON groups.id = chat_rooms.groupid "+
 						"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 						"WHERE chattype = ? AND user1 = ? AND chat_rooms.id = "+keepChatID+statusq)
 				params = append(params, myid, utils.CHAT_TYPE_USER2MOD, myid)
@@ -1068,7 +1003,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 			case utils.CHAT_TYPE_USER2USER:
 				// User is user1.
 				unions = append(unions,
-					"SELECT 0 AS search, user2 AS otheruid, '' AS nameshort, '' AS namefull, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
+					"SELECT 0 AS search, user2 AS otheruid, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
 						atts+", c1.status, c2.lasttype FROM chat_rooms "+
 						"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 						"LEFT JOIN chat_roster c2 ON c2.userid = user2 AND chat_rooms.id = c2.chatid "+
@@ -1078,7 +1013,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 
 				// User is user2.
 				unions = append(unions,
-					"SELECT 0 AS search, user1 AS otheruid, '' AS nameshort, '' AS namefull, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
+					"SELECT 0 AS search, user1 AS otheruid, firstname, lastname, fullname, users.deleted AS otherdeleted, "+
 						atts+", c1.status, c2.lasttype FROM chat_rooms "+
 						"INNER JOIN users ON users.id = user1 "+
 						"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
@@ -1093,7 +1028,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 		return r
 	}
 
-	sql := "SELECT MAX(t.search) AS search, t.otheruid, t.nameshort, t.namefull, t.firstname, t.lastname, t.fullname, t.otherdeleted, t.id, t.chattype, t.groupid, t.user1, t.user2, t.latestmessage, t.status, t.lasttype FROM (" + strings.Join(unions, " UNION ") + ") t GROUP BY t.id ORDER BY t.latestmessage DESC"
+	sql := "SELECT MAX(t.search) AS search, t.otheruid, t.firstname, t.lastname, t.fullname, t.otherdeleted, t.id, t.chattype, t.user1, t.user2, t.latestmessage, t.status, t.lasttype FROM (" + strings.Join(unions, " UNION ") + ") t GROUP BY t.id ORDER BY t.latestmessage DESC"
 
 	db := database.DBConn
 	db.Raw(sql, params...).Scan(&chats)
@@ -1103,31 +1038,15 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 
 	for ix, chat := range chats {
 		if chat.Chattype == utils.CHAT_TYPE_USER2MOD {
-			// Show the member's name to the moderator.
-			if chat.Otheruid != myid && len(chat.Fullname) > 0 {
-				groupName := chat.Nameshort
-				if groupName == "" {
-					groupName = chat.Namefull
-				}
+			if chat.Otheruid == myid {
+				// My own view of my Freegle chat.
+				chats[ix].Name = "Freegle"
+			} else if len(chat.Fullname) > 0 {
+				// A moderator's view: show the member's name.
 				chats[ix].Name = tnre.ReplaceAllString(chat.Fullname, "$1")
-				if groupName != "" {
-					chats[ix].Name += " (" + groupName + ")"
-				}
-			} else if chat.Otheruid != myid && (len(chat.Firstname) > 0 || len(chat.Lastname) > 0) {
-				// Member has no fullname but does have firstname/lastname — use those.
-				groupName := chat.Nameshort
-				if groupName == "" {
-					groupName = chat.Namefull
-				}
+			} else if len(chat.Firstname) > 0 || len(chat.Lastname) > 0 {
 				name := strings.TrimSpace(chat.Firstname + " " + chat.Lastname)
 				chats[ix].Name = tnre.ReplaceAllString(name, "$1")
-				if groupName != "" {
-					chats[ix].Name += " (" + groupName + ")"
-				}
-			} else if len(chat.Namefull) > 0 {
-				chats[ix].Name = chat.Namefull + " Volunteers"
-			} else if len(chat.Nameshort) > 0 {
-				chats[ix].Name = chat.Nameshort + " Volunteers"
 			}
 
 			// For User2Mod, otheruid should be user1 only when user1 != myid.
@@ -1135,11 +1054,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				chats[ix].Otheruid = 0
 			}
 		} else if chat.Chattype == utils.CHAT_TYPE_MOD2MOD {
-			if len(chat.Nameshort) > 0 {
-				chats[ix].Name = chat.Nameshort + " Mods"
-			} else if len(chat.Namefull) > 0 {
-				chats[ix].Name = chat.Namefull + " Mods"
-			}
+			chats[ix].Name = "Freegle Moderators"
 		} else {
 			if chat.Otherdeleted == nil {
 				if len(chat.Fullname) > 0 {
@@ -1154,10 +1069,6 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 			chats[ix].Name = tnre.ReplaceAllString(chats[ix].Name, "$1")
 		}
 
-		// Independent of chat type: Freegle talks to members in an ordinary
-		// User2User room, so the only way the client can tell it apart from a
-		// person is by who is on the other side. Resolved once per process; 0
-		// means the account does not exist yet, so no chat is flagged.
 		if freegleID := firstreply.SystemUserID(db); freegleID > 0 && chat.Otheruid == freegleID {
 			chats[ix].Systemchat = true
 		}
@@ -1188,7 +1099,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 
 			idlist := "(" + strings.Join(ids, ",") + ") "
 
-			sql = "SELECT chat_rooms.id, chat_rooms.chattype, chat_rooms.groupid, chat_rooms.user1, chat_rooms.user2, " +
+			sql = "SELECT chat_rooms.id, chat_rooms.chattype, chat_rooms.user1, chat_rooms.user2, " +
 				"CASE WHEN JSON_EXTRACT(u1.settings, '$.useprofile') IS NULL THEN 1 ELSE JSON_EXTRACT(u1.settings, '$.useprofile') END AS u1useprofile, " +
 				"CASE WHEN JSON_EXTRACT(u2.settings, '$.useprofile') IS NULL THEN 1 ELSE JSON_EXTRACT(u2.settings, '$.useprofile') END AS u2useprofile, " +
 				"(SELECT COUNT(*) AS count FROM chat_messages WHERE id > " +
@@ -1209,7 +1120,6 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				"i2.externalmods AS u2externalmods, " +
 				"COALESCE(i1.archived, 0) AS u1archived, " +
 				"COALESCE(i2.archived, 0) AS u2archived, " +
-				"i3.id AS gimageid, " +
 				"(SELECT chat_roster.lastmsgseen FROM chat_roster WHERE chatid = chat_rooms.id AND userid = ?) AS lastmsgseen, " +
 				"messages.type AS refmsgtype, " +
 				// Whether the room contains ANY message at all, and whether it contains any
@@ -1324,23 +1234,14 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 						chats[ix].Replyexpected = chat.Replyexpected
 
 						if chat.Chattype == utils.CHAT_TYPE_MOD2MOD {
-							// Mod2Mod: show group logo.
-							if chat.Gimageid > 0 {
-								chats[ix].Icon = "https://" + os.Getenv("IMAGE_DOMAIN") + "/gimg_" + strconv.FormatUint(chat.Gimageid, 10) + ".jpg"
-							} else {
-								chats[ix].Icon = "https://" + os.Getenv("IMAGE_DOMAIN") + "/defaultprofile.png"
-							}
+							// Mod2Mod: no per-chat logo any more - default icon for everyone.
+							chats[ix].Icon = "https://" + os.Getenv("IMAGE_DOMAIN") + "/defaultprofile.png"
 						} else if chat.Chattype == utils.CHAT_TYPE_USER2MOD {
 							// User2Mod: depends on perspective.
-							// - Member (user1) sees group logo (they're chatting with volunteers)
-							// - Mod sees member's (user1) profile picture
+							// - Member (user1) sees the default Freegle icon (no group to show a logo for).
+							// - Mod sees member's (user1) profile picture.
 							if chat.User1 == myid {
-								// I'm the member — show group logo.
-								if chat.Gimageid > 0 {
-									chats[ix].Icon = "https://" + os.Getenv("IMAGE_DOMAIN") + "/gimg_" + strconv.FormatUint(chat.Gimageid, 10) + ".jpg"
-								} else {
-									chats[ix].Icon = "https://" + os.Getenv("IMAGE_DOMAIN") + "/defaultprofile.png"
-								}
+								chats[ix].Icon = "https://" + os.Getenv("IMAGE_DOMAIN") + "/defaultprofile.png"
 							} else {
 								// I'm a mod — show member's profile picture.
 								if chat.U1useprofile && chat.U1imageid > 0 {
@@ -1372,7 +1273,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 					// Snippet is set for all chats, including deleted users.
 					if chats[ix].Search {
 						chats[ix].Snippet = "...contains '" + search + "'"
-					} else if WarnNotHold() && chat.Chatmsgheld && chat.Chatmsguserid != myid {
+					} else if chat.Chatmsgheld && chat.Chatmsguserid != myid {
 						// A held message is delivered behind a warning; the preview must
 						// not show the text the warning is there to guard.
 						chats[ix].Snippet = SensitiveSnippet
@@ -1682,7 +1583,7 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64)
 
 	// Verify user is a member of this chat.
 	var room ChatRoom
-	db.Table("chat_rooms").Select("id, chattype, user1, user2, groupid").Where("id = ?", chatid).Scan(&room)
+	db.Table("chat_rooms").Select("id, chattype, user1, user2").Where("id = ?", chatid).Scan(&room)
 	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
 	}
@@ -1694,48 +1595,6 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64)
 	db.Table("background_tasks").Create(map[string]interface{}{
 		"task_type": "refer_to_support",
 		"data":      gorm.Expr("JSON_OBJECT('chatid', ?, 'userid', ?)", chatid, myid),
-	})
-
-	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
-}
-
-// handleReportNoGroup queues a report to the central spam team for a User2User
-// chat whose participants share no Freegle group (so it can't be routed to a
-// community's moderators). The server re-checks "no common group" so a client
-// cannot misuse this to bypass community routing.
-func handleReportNoGroup(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPostRequest) error {
-	if req.ID == 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "Chat ID required")
-	}
-	if req.Reason == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "Reason required")
-	}
-
-	var room ChatRoom
-	db.Table("chat_rooms").Select("id, chattype, user1, user2").Where("id = ?", req.ID).Scan(&room)
-	if room.ID == 0 {
-		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
-	}
-	if room.User1 != myid && room.User2 != myid {
-		return fiber.NewError(fiber.StatusForbidden, "Not a member of this chat")
-	}
-
-	// Re-check that there really is no group in common; if there is, the client
-	// should have used the normal group-routed report flow.
-	var common int64
-	db.Table("memberships m1").
-		Select("COUNT(*)").
-		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
-		Where("m1.userid = ? AND m2.userid = ?", room.User1, room.User2).
-		Scan(&common)
-	if common > 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "Groups in common exist; use the normal report flow")
-	}
-
-	db.Table("background_tasks").Create(map[string]interface{}{
-		"task_type": "email_chat_spam_report",
-		"data": gorm.Expr("JSON_OBJECT('chatid', ?, 'userid', ?, 'reason', ?, 'comment', ?)",
-			req.ID, myid, req.Reason, req.Comment),
 	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1841,6 +1700,8 @@ func countUnseenMT(c *fiber.Ctx, myid uint64, chattypes []string) error {
 }
 
 // getModeratorChatIDs returns chat room IDs visible to a moderator for the given chat types.
+// Mod2Mod is a single national chat, visible only to moderators. User2Mod is visible to every
+// moderator across all members; a non-moderator caller only sees their own chat.
 func getModeratorChatIDs(db *gorm.DB, myid uint64, chattypes []string, search string, age int) []uint64 {
 	activeDays := chatActiveLimitMT
 	if age > 0 {
@@ -1848,76 +1709,48 @@ func getModeratorChatIDs(db *gorm.DB, myid uint64, chattypes []string, search st
 	}
 	activeSince := time.Now().AddDate(0, 0, -activeDays).Format("2006-01-02")
 
+	isMod := auth.IsModerator(myid)
+
 	var allIDs []uint64
 
-	// Filter to exclude chats where all messages are held for review (likely spam).
-	// The countq and activeq fragment strings that used to live here are gone:
-	// each branch below now builds its own conditions through the GORM chain,
-	// so the shared strings had no remaining reader and left the package
-	// failing to compile.
-	//
-	// The backup-mod filter they carried is unchanged - a member with
-	// active:0 in their membership settings is still excluded unless a specific
-	// chat is being searched for, which is now expressed as a conditional
-	// .Where on each chain and declared as two shapes per site in the retired
-	// ormharness's shapes.json (removed in d22ba1d6c).
 	for _, ct := range chattypes {
 		var ids []uint64
 
 		switch ct {
 		case utils.CHAT_TYPE_MOD2MOD:
-			// activeq
-			// is only appended when search=="", so this statement has exactly 2
-			// possible rendered forms, both proven by the retired ormharness
-			// (shapes.json / TestTier3Shapes_35023816be21, removed in
-			// d22ba1d6c).
-			// The WHERE is built as a single string and passed to ONE Where()
-			// call: GORM's clause.Where wraps any fragment containing
-			// "AND"/"OR" in an extra paren pair once there is more than one
-			// Where expression to combine (clause/where.go buildExprs), which
-			// would diverge from the golden.
-			mod2modWhere := "memberships.userid = ? AND memberships.role IN (?, ?)"
-			mod2modArgs := []interface{}{myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER}
-			if search == "" {
-				mod2modWhere += " AND (memberships.settings IS NULL OR LOCATE('\"active\"', memberships.settings) = 0 OR LOCATE('\"active\":1', memberships.settings) > 0)"
+			if !isMod {
+				continue
 			}
-			mod2modWhere += " AND chat_rooms.chattype = ? AND (chat_roster.status IS NULL OR chat_roster.status != ?) " +
+
+			mod2modWhere := "chat_rooms.chattype = ? AND (chat_roster.status IS NULL OR chat_roster.status != ?) " +
 				"AND chat_rooms.latestmessage >= ? AND (chat_rooms.msgvalid + chat_rooms.msginvalid = 0 OR chat_rooms.msgvalid > 0)"
-			mod2modArgs = append(mod2modArgs, utils.CHAT_TYPE_MOD2MOD, utils.CHAT_STATUS_CLOSED, activeSince)
+			mod2modArgs := []interface{}{utils.CHAT_TYPE_MOD2MOD, utils.CHAT_STATUS_CLOSED, activeSince}
 
 			db.Table("chat_rooms").
 				Select("DISTINCT chat_rooms.id").
-				Joins("INNER JOIN memberships ON chat_rooms.groupid = memberships.groupid").
 				Joins("LEFT JOIN chat_roster ON chat_roster.userid = ? AND chat_rooms.id = chat_roster.chatid", myid).
 				Where(mod2modWhere, mod2modArgs...).
 				Scan(&ids)
 
 		case utils.CHAT_TYPE_USER2MOD:
-			// User2Mod chats on modtools are not subject to the count query filter.
-			//
-			// Same
-			// activeq toggle as the MOD2MOD branch above - 2 possible rendered
-			// forms, both proven by the retired ormharness (shapes.json /
-			// TestTier3Shapes_e99680f74b2e, removed in d22ba1d6c). The WHERE
-			// is built as a single string and passed to ONE Where() call: GORM's
-			// clause.Where wraps any fragment containing "AND"/"OR" in an extra
-			// paren pair once there is more than one Where expression to
-			// combine (clause/where.go buildExprs), which would diverge from
-			// the golden.
-			user2modWhere := "memberships.userid = ? AND (memberships.role IN (?, ?) OR chat_rooms.user1 = ?)"
-			user2modArgs := []interface{}{myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid}
-			if search == "" {
-				user2modWhere += " AND (memberships.settings IS NULL OR LOCATE('\"active\"', memberships.settings) = 0 OR LOCATE('\"active\":1', memberships.settings) > 0)"
+			// A moderator sees every member's chat; anyone else only sees their own
+			// (route-level access to this endpoint is otherwise unrestricted, so this
+			// is the only thing stopping a member from listing everyone else's chat).
+			var user2modWhere string
+			var user2modArgs []interface{}
+			if isMod {
+				user2modWhere = "chat_rooms.chattype = ? AND (chat_roster.status IS NULL OR chat_roster.status != ?) AND chat_rooms.latestmessage >= ?"
+				user2modArgs = []interface{}{utils.CHAT_TYPE_USER2MOD, utils.CHAT_STATUS_CLOSED, activeSince}
+			} else {
+				user2modWhere = "chat_rooms.user1 = ? AND chat_rooms.chattype = ? AND (chat_roster.status IS NULL OR chat_roster.status != ?) AND chat_rooms.latestmessage >= ?"
+				user2modArgs = []interface{}{myid, utils.CHAT_TYPE_USER2MOD, utils.CHAT_STATUS_CLOSED, activeSince}
 			}
-			user2modWhere += " AND chat_rooms.chattype = ? AND (chat_roster.status IS NULL OR chat_roster.status != ?) AND chat_rooms.latestmessage >= ?"
-			user2modArgs = append(user2modArgs, utils.CHAT_TYPE_USER2MOD, utils.CHAT_STATUS_CLOSED, activeSince)
 
-			inner := db.Table("chat_rooms").
-				Select("chat_rooms.id").
-				Joins("INNER JOIN memberships ON chat_rooms.groupid = memberships.groupid").
+			db.Table("chat_rooms").
+				Select("DISTINCT chat_rooms.id").
 				Joins("LEFT JOIN chat_roster ON chat_roster.userid = ? AND chat_rooms.id = chat_roster.chatid", myid).
-				Where(user2modWhere, user2modArgs...)
-			db.Table("(?) AS combined", inner).Select("DISTINCT id").Scan(&ids)
+				Where(user2modWhere, user2modArgs...).
+				Scan(&ids)
 		}
 
 		allIDs = append(allIDs, ids...)
@@ -1925,9 +1758,6 @@ func getModeratorChatIDs(db *gorm.DB, myid uint64, chattypes []string, search st
 
 	// Apply search filter if provided.
 	if search != "" && len(allIDs) > 0 {
-		// allIDs is bound directly
-		// as a []uint64 slice rather than spliced as literal decimal text
-		// via joinIDs.
 		searchLike := "%" + search + "%"
 		var filteredIDs []uint64
 		db.Table("chat_rooms").
@@ -1950,43 +1780,22 @@ func getModeratorChatIDs(db *gorm.DB, myid uint64, chattypes []string, search st
 }
 
 // getChatName returns a display name for a chat room based on type.
-// For User2Mod chats, returns the member's name (not the group name) so mods
-// can see who they're chatting with in the ModTools chat list.
-func getChatName(db *gorm.DB, chattype string, groupid uint64, user1 uint64, user2 uint64, myid uint64) string {
+func getChatName(db *gorm.DB, chattype string, user1 uint64, user2 uint64, myid uint64) string {
 	switch chattype {
 	case utils.CHAT_TYPE_USER2MOD:
-		// if I'm the member (user1), show "GroupName Volunteers".
-		// If I'm a mod, show "MemberName on GroupName".
+		// If I'm the member (user1), this is my own chat with Freegle.
+		// If I'm a moderator, show the member's name.
 		if user1 == myid {
-			if groupid > 0 {
-				var nameshort string
-				db.Table("groups").Select("COALESCE(namefull, nameshort)").Where("id = ?", groupid).Scan(&nameshort)
-				if nameshort != "" {
-					return nameshort + " Volunteers"
-				}
-			}
+			return "Freegle"
 		} else if user1 > 0 {
 			var fullname string
 			db.Table("users").Select("fullname").Where("id = ?", user1).Scan(&fullname)
 			if fullname != "" {
-				if groupid > 0 {
-					var groupname string
-					db.Table("groups").Select("COALESCE(namefull, nameshort)").Where("id = ?", groupid).Scan(&groupname)
-					if groupname != "" {
-						return fullname + " on " + groupname
-					}
-				}
 				return fullname
 			}
 		}
 	case utils.CHAT_TYPE_MOD2MOD:
-		if groupid > 0 {
-			var nameshort string
-			db.Table("groups").Select("nameshort").Where("id = ?", groupid).Scan(&nameshort)
-			if nameshort != "" {
-				return nameshort + " Mods"
-			}
-		}
+		return "Freegle Moderators"
 	default:
 		otheruid := user2
 		if user1 != myid {
@@ -2013,8 +1822,8 @@ func getChatName(db *gorm.DB, chattype string, groupid uint64, user1 uint64, use
 // named so that the property the select list depends on can be asserted in a test instead of
 // assumed.
 //
-// That property: every join here yields AT MOST ONE row per chat room. `groups`, `users` and
-// `messages` join on their primary keys; i1, i2, i3 and the latest-message join each match a
+// That property: every join here yields AT MOST ONE row per chat room. `users` and
+// `messages` join on their primary keys; i1, i2 and the latest-message join each match a
 // primary key against a scalar (SELECT ... ORDER BY ... LIMIT 1); and rcm is a derived table cut
 // to rn = 1 per chatid. Nothing can fan out, which is why the select list above runs without
 // DISTINCT. TestChatRoomListJoinsYieldOneRowPerRoom stacks extra rows on every one of those
@@ -2032,7 +1841,6 @@ func getChatName(db *gorm.DB, chattype string, groupid uint64, user1 uint64, use
 //  3. the rcm snippet CTE - its trailing "OR userid = ?"
 func ChatRoomListFrom(idlist string) string {
 	return "FROM chat_rooms " +
-		"LEFT JOIN `groups` ON groups.id = chat_rooms.groupid " +
 		"LEFT JOIN users u1 ON chat_rooms.user1 = u1.id " +
 		"LEFT JOIN users u2 ON chat_rooms.user2 = u2.id " +
 		// Profile image join must match GetProfileRecord() logic: latest image
@@ -2041,7 +1849,6 @@ func ChatRoomListFrom(idlist string) string {
 		// one causes avatar mismatch between chat list and chat header (#281).
 		"LEFT JOIN users_images i1 ON i1.id = (SELECT id FROM users_images WHERE userid = u1.id ORDER BY id DESC LIMIT 1) " +
 		"LEFT JOIN users_images i2 ON i2.id = (SELECT id FROM users_images WHERE userid = u2.id ORDER BY id DESC LIMIT 1) " +
-		"LEFT JOIN groups_images i3 ON i3.id = (SELECT id FROM groups_images WHERE groupid = chat_rooms.groupid ORDER BY id DESC LIMIT 1) " +
 		"LEFT JOIN chat_messages ON chat_messages.id = " +
 		"  (SELECT id FROM chat_messages WHERE chat_messages.chatid = chat_rooms.id AND " + deliverableSQL("") + " AND (processingsuccessful = 1 OR chat_messages.userid = ?) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') ORDER BY chat_messages.id DESC LIMIT 1) " +
 		"LEFT JOIN messages ON messages.id = chat_messages.refmsgid " +

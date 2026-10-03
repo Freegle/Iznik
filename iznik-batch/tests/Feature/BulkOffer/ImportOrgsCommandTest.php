@@ -20,8 +20,7 @@ class ImportOrgsCommandTest extends TestCase
 
         // A bulk offer is just a normal Offer message; create one to import against.
         $donor = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->msgid = $this->createTestMessage($donor, $group, [
+        $this->msgid = $this->createTestMessage($donor, [
             'subject' => 'OFFER: Office clearance - 23 desks, 23 chairs (Hampstead)',
         ])->id;
     }

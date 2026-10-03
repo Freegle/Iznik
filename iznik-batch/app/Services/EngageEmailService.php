@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Mail\Engage\EngageMail;
-use App\Models\Group;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
@@ -19,6 +18,7 @@ class EngageEmailService
     public const RESEND_INTERVAL_DAYS = 7;
 
     public const ENGAGEMENT_AT_RISK = 'AtRisk';
+
     public const ENGAGEMENT_INACTIVE = 'Inactive';
 
     /**
@@ -61,7 +61,7 @@ class EngageEmailService
 
         foreach ($userIds as $userId) {
             $user = User::find($userId);
-            if (!$user || !$user->email_preferred) {
+            if (! $user || ! $user->email_preferred) {
                 continue;
             }
 
@@ -74,36 +74,13 @@ class EngageEmailService
                 continue;
             }
 
-            if (!$force && !$user->relevantallowed) {
+            if (! $force && ! $user->relevantallowed) {
                 continue;
             }
 
             // Honour the "Encouragement emails" setting, which is also what the
             // `engagement` unsubscribe category turns off.
-            if (!$force && !$user->wantsEngagementMail()) {
-                continue;
-            }
-
-            // Check the user has a Freegle group membership
-            $hasMembership = DB::table('memberships')
-                ->join('groups', 'groups.id', '=', 'memberships.groupid')
-                ->where('memberships.userid', $userId)
-                ->where('groups.type', Group::TYPE_FREEGLE)
-                ->exists();
-
-            if (!$hasMembership) {
-                continue;
-            }
-
-            // Respect group-level engagement setting
-            $engagementEnabled = DB::table('memberships')
-                ->join('groups', 'groups.id', '=', 'memberships.groupid')
-                ->where('memberships.userid', $userId)
-                ->where('groups.type', Group::TYPE_FREEGLE)
-                ->selectRaw('MAX(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(memberships.settings, "$.engagement")), 1)) AS enabled')
-                ->value('enabled');
-
-            if ($engagementEnabled === '0' || $engagementEnabled === 0) {
+            if (! $force && ! $user->wantsEngagementMail()) {
                 continue;
             }
 
@@ -117,15 +94,15 @@ class EngageEmailService
             }
 
             $mail = $this->chooseMail($engagement);
-            if (!$mail) {
+            if (! $mail) {
                 continue;
             }
 
-            if (!$dryRun) {
+            if (! $dryRun) {
                 $engageId = $this->recordAttempt($userId, $mail->id, $engagement);
                 $this->incrementShown($mail->id);
 
-                $unsubscribeUrl = config('freegle.sites.user') . '/unsubscribe';
+                $unsubscribeUrl = config('freegle.sites.user').'/unsubscribe';
 
                 // Spool the mail rather than sending direct so a transient
                 // SMTP blip (e.g. mail-host hangs up between EHLO and MAIL

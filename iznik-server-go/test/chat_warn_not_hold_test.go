@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// A chat message the content check has held (reviewrequired=1) is today invisible to the
-// recipient until a moderator approves it. With CHAT_WARN_NOT_HOLD on, it is delivered with a
-// member-facing `sensitive` reason so the client can show it behind a warning instead.
+// A chat message the content check has held (reviewrequired=1) is delivered to the recipient
+// with a member-facing `sensitive` reason, so the client can show it behind a warning, rather
+// than being invisible until a moderator approves it.
 
 func insertHeldChatMessage(t *testing.T, chatID, userID uint64, text string, reportreason string, rejected int) uint64 {
 	db := database.DBConn
@@ -55,32 +55,13 @@ func fetchChatMessagesAs(t *testing.T, chatID uint64, token string) map[uint64]m
 }
 
 func setupWarnNotHoldChat(t *testing.T, prefix string) (senderID, recipientID, chatID uint64) {
-	groupID := CreateTestGroup(t, prefix)
 	senderID = CreateTestUser(t, prefix+"_sender", "User")
 	recipientID = CreateTestUser(t, prefix+"_recipient", "User")
-	CreateTestMembership(t, senderID, groupID, "Member")
-	CreateTestMembership(t, recipientID, groupID, "Member")
-	chatID = CreateTestChatRoom(t, senderID, &recipientID, nil, "User2User")
+	chatID = CreateTestChatRoom(t, senderID, &recipientID, "User2User")
 	return
 }
 
-func TestChatWarnNotHold_OffHidesHeldMessage(t *testing.T) {
-	t.Setenv("CHAT_WARN_NOT_HOLD", "0")
-	db := database.DBConn
-	prefix := uniquePrefix("warnoff")
-	senderID, recipientID, chatID := setupWarnNotHoldChat(t, prefix)
-
-	heldID := insertHeldChatMessage(t, chatID, senderID, "Send me £20 first", "Money", 0)
-	defer db.Exec("DELETE FROM chat_messages WHERE id = ?", heldID)
-
-	_, recipientToken := CreateTestSession(t, recipientID)
-	got := fetchChatMessagesAs(t, chatID, recipientToken)
-	_, seen := got[heldID]
-	assert.False(t, seen, "with the flag off a held message must stay hidden from the recipient")
-}
-
-func TestChatWarnNotHold_OnDeliversWithReason(t *testing.T) {
-	t.Setenv("CHAT_WARN_NOT_HOLD", "1")
+func TestChatWarnNotHold_DeliversWithReason(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("warnon")
 	senderID, recipientID, chatID := setupWarnNotHoldChat(t, prefix)
@@ -95,13 +76,13 @@ func TestChatWarnNotHold_OnDeliversWithReason(t *testing.T) {
 	got := fetchChatMessagesAs(t, chatID, recipientToken)
 
 	held, seen := got[heldID]
-	if assert.True(t, seen, "with the flag on a held message is delivered to the recipient") {
+	if assert.True(t, seen, "a held message is delivered to the recipient") {
 		assert.Equal(t, "money", held["sensitive"], "the member-facing reason travels with the message")
 		assert.Equal(t, "Send me £20 first", held["message"], "the text is delivered so the client can reveal it on tap")
 	}
 
 	_, rejectedSeen := got[rejectedID]
-	assert.False(t, rejectedSeen, "a message a moderator rejected stays hidden whatever the flag")
+	assert.False(t, rejectedSeen, "a message a moderator rejected stays hidden")
 
 	// A hold that comes from who the sender is, not what they wrote (a shadow ban is
 	// recorded with the generic 'Spam' reason), is not a warning to tap through.
@@ -152,15 +133,6 @@ func TestChatSensitiveReasonMapping(t *testing.T) {
 	assert.Equal(t, "checked", chat.SensitiveReason(nil), "a held message with no recorded reason is still flagged")
 }
 
-func TestChatWarnNotHoldFlag(t *testing.T) {
-	t.Setenv("CHAT_WARN_NOT_HOLD", "")
-	assert.False(t, chat.WarnNotHold(), "off by default: this is an experiment, not the shipped behaviour")
-	t.Setenv("CHAT_WARN_NOT_HOLD", "1")
-	assert.True(t, chat.WarnNotHold())
-	t.Setenv("CHAT_WARN_NOT_HOLD", "off")
-	assert.False(t, chat.WarnNotHold())
-}
-
 func fetchChatListAs(t *testing.T, token string) map[uint64]map[string]interface{} {
 	req := httptest.NewRequest("GET", "/api/chat?jwt="+token, nil)
 	resp, err := getApp().Test(req, -1)
@@ -194,15 +166,9 @@ func TestChatWarnNotHold_ListCountsHeldButMasksSnippet(t *testing.T) {
 
 	_, recipientToken := CreateTestSession(t, recipientID)
 
-	t.Setenv("CHAT_WARN_NOT_HOLD", "0")
-	off := fetchChatListAs(t, recipientToken)
-	_, listedOff := off[chatID]
-	assert.False(t, listedOff, "with the flag off a room whose only message is held is not listed")
-
-	t.Setenv("CHAT_WARN_NOT_HOLD", "1")
 	on := fetchChatListAs(t, recipientToken)
 	room, listedOn := on[chatID]
-	if assert.True(t, listedOn, "with the flag on the room is listed") {
+	if assert.True(t, listedOn, "a room whose only message is held is still listed") {
 		assert.Equal(t, float64(1), room["unseen"], "the held message counts as unread")
 		assert.Equal(t, chat.SensitiveSnippet, room["snippet"], "the preview does not show the held text")
 	}
@@ -217,17 +183,12 @@ func TestChatWarnNotHold_ListCountsHeldButMasksSnippet(t *testing.T) {
 
 // A moderator opening a member's chat for review reads the real preview, not the mask.
 func TestChatWarnNotHold_ModeratorSeesRealPreview(t *testing.T) {
-	t.Setenv("CHAT_WARN_NOT_HOLD", "1")
 	db := database.DBConn
 	prefix := uniquePrefix("warnmod")
-	groupID := CreateTestGroup(t, prefix)
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
 	recipientID := CreateTestUser(t, prefix+"_recipient", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, senderID, groupID, "Member")
-	CreateTestMembership(t, recipientID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	chatID := CreateTestChatRoom(t, senderID, &recipientID, nil, "User2User")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	chatID := CreateTestChatRoom(t, senderID, &recipientID, "User2User")
 
 	heldID := insertHeldChatMessage(t, chatID, senderID, "Send me £20 first", "Money", 0)
 	defer db.Exec("DELETE FROM chat_messages WHERE id = ?", heldID)

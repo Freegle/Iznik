@@ -13,8 +13,6 @@ const mockView = vi.fn()
 const mockMarkSeen = vi.fn()
 const mockCount = vi.fn()
 const mockNearbyMarkSeen = vi.fn()
-const mockHold = vi.fn()
-const mockRelease = vi.fn()
 const mockFetchMT = vi.fn()
 
 vi.mock('~/api', () => ({
@@ -28,8 +26,6 @@ vi.mock('~/api', () => ({
       view: mockView,
       markSeen: mockMarkSeen,
       count: mockCount,
-      hold: mockHold,
-      release: mockRelease,
       fetchMT: mockFetchMT,
     },
   }),
@@ -37,10 +33,6 @@ vi.mock('~/api', () => ({
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: vi.fn(),
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({}),
 }))
 
 vi.mock('~/stores/user', () => ({
@@ -209,14 +201,12 @@ describe('message store - searchMT()', () => {
 
     const ids = await store.searchMT({
       term: 'sofa',
-      groupid: 123,
       searchmode: 'vector',
     })
 
     expect(mockSearch).toHaveBeenCalledWith({
       search: 'sofa',
       messagetype: 'All',
-      groupids: '123',
       searchmode: 'vector',
     })
     expect(store.fetchMT).toHaveBeenCalledTimes(2)
@@ -225,41 +215,6 @@ describe('message store - searchMT()', () => {
     expect(store.list[101].matchedon).toEqual({ type: 'Vector', word: 'sofa' })
     expect(store.list[102].matchedon).toEqual({ type: 'Vector', word: 'sofa' })
     expect(ids).toEqual(expect.arrayContaining([101, 102]))
-  })
-
-  // 9808/798: the Approved Messages own-posts filter rides the search request as
-  // originonly=true; off, the parameter is not sent at all.
-  it('passes the own-posts filter to the search API', async () => {
-    useAuthStore.mockReturnValue({ user: { id: 1 } })
-    mockSearch.mockClear()
-    mockSearch.mockResolvedValue([])
-
-    const store = useMessageStore()
-    await store.searchMT({ term: 'sofa', groupid: 123, originonly: true })
-
-    expect(mockSearch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        search: 'sofa',
-        groupids: '123',
-        originonly: 'true',
-      })
-    )
-  })
-
-  it('omits the own-posts filter when it is off', async () => {
-    useAuthStore.mockReturnValue({ user: { id: 1 } })
-    mockSearch.mockClear()
-    mockSearch.mockResolvedValue([])
-
-    const store = useMessageStore()
-    await store.searchMT({ term: 'sofa', groupid: 123 })
-
-    expect(mockSearch).toHaveBeenCalledWith({
-      search: 'sofa',
-      messagetype: 'All',
-      groupids: '123',
-      searchmode: 'vector',
-    })
   })
 
   it('preserves score order from API response', async () => {
@@ -317,7 +272,7 @@ describe('message store - searchMT()', () => {
     expect(ids).toEqual([])
   })
 
-  it('omits groupids when no groupid provided', async () => {
+  it('never sends a group filter (search is national, not per-community)', async () => {
     useAuthStore.mockReturnValue({ user: { id: 1 } })
     mockSearch.mockResolvedValue([])
 
@@ -330,7 +285,6 @@ describe('message store - searchMT()', () => {
     expect(mockSearch).toHaveBeenCalledWith({
       search: 'chair',
       messagetype: 'All',
-      groupids: undefined,
       searchmode: 'vector',
     })
   })
@@ -349,7 +303,6 @@ describe('message store - searchMT()', () => {
 
     const ids = await store.searchMT({
       term: 'chair',
-      groupid: 100,
       searchmode: 'vector',
     })
 
@@ -375,7 +328,6 @@ describe('message store - searchMT()', () => {
 
     await store.searchMT({
       term: 'bike',
-      groupid: 50,
     })
 
     // The V2 vector endpoint is used regardless of searchmode; the old keyword
@@ -383,51 +335,10 @@ describe('message store - searchMT()', () => {
     expect(mockSearch).toHaveBeenCalledWith({
       search: 'bike',
       messagetype: 'All',
-      groupids: '50',
       searchmode: 'vector',
     })
     expect(mockFetchMessages).not.toHaveBeenCalled()
     expect(store.fetchMT).toHaveBeenCalledTimes(2)
-  })
-})
-
-describe('getByGroup', () => {
-  beforeEach(() => {
-    setActivePinia(createPinia())
-  })
-
-  it('returns messages matching any group in the groups array', () => {
-    const store = useMessageStore()
-
-    // Manually populate the store's list with test data.
-    store.list = {
-      1: { id: 1, subject: 'Sofa', groups: [{ groupid: 10 }, { groupid: 20 }] },
-      2: { id: 2, subject: 'Chair', groups: [{ groupid: 20 }] },
-      3: { id: 3, subject: 'Table', groups: [{ groupid: 30 }] },
-    }
-
-    // Group 20 should match messages 1 and 2.
-    const result = store.getByGroup(20)
-    expect(result).toHaveLength(2)
-    expect(result.map((m) => m.id).sort()).toEqual([1, 2])
-  })
-
-  it('returns empty array when no messages match the group', () => {
-    const store = useMessageStore()
-    store.list = {
-      1: { id: 1, subject: 'Sofa', groups: [{ groupid: 10 }] },
-    }
-
-    expect(store.getByGroup(99)).toHaveLength(0)
-  })
-
-  it('handles messages with empty groups array', () => {
-    const store = useMessageStore()
-    store.list = {
-      1: { id: 1, subject: 'Sofa', groups: [] },
-    }
-
-    expect(store.getByGroup(10)).toHaveLength(0)
   })
 })
 
@@ -520,11 +431,11 @@ describe('message store - markSeen()', () => {
     expect(store.list[999]).toBeUndefined()
   })
 
-  it('refreshes the count for the member browse view and distance, not the default', async () => {
+  it('refreshes the count for the member distance, not the default', async () => {
     useAuthStore.mockReturnValue({
       user: {
         id: 1,
-        settings: { browseView: 'mygroups', browseMaxDistance: 10 },
+        settings: { browseMaxDistance: 10 },
       },
     })
     const store = useMessageStore()
@@ -533,10 +444,10 @@ describe('message store - markSeen()', () => {
 
     await store.markSeen([1])
 
-    // fetchCount -> api.message.count(browseView, maxDistance, log): the badge must be
-    // recomputed for the member's actual view, else a mygroups/slider member sees a
-    // different view's number and it never drops to zero.
-    expect(mockCount).toHaveBeenCalledWith('mygroups', 10, true)
+    // fetchCount -> api.message.count(maxDistance, log): the badge must be recomputed for
+    // the member's actual distance limit, else a slider member sees a different distance's
+    // number and it never drops to zero.
+    expect(mockCount).toHaveBeenCalledWith(10, true)
   })
 })
 
@@ -590,130 +501,5 @@ describe('message store - markSeenSiblings()', () => {
     await store.markSeenSiblings([])
 
     expect(mockMarkSeen).not.toHaveBeenCalled()
-  })
-})
-
-// hold()/release() re-fetch the whole message after the API call and replace
-// this.list[id] with the fresh copy - which naturally carries the correct,
-// per-group messages_groups.heldby row. Since every component reads the
-// message via the reactive byId getter, this refetch is what keeps the
-// Hold/Release toggle and the held-by banner in sync with the server
-// (Discourse 9904/9481/642) - no separate optimistic patch of groups[] is
-// needed or attempted, and the store never adds a message-level heldby of
-// its own.
-describe('message store - hold()/release() update the matching per-group row', () => {
-  beforeEach(() => {
-    setActivePinia(createPinia())
-    vi.clearAllMocks()
-  })
-
-  it('replaces the message with a refetch whose groups[] row reflects the new hold', async () => {
-    const store = useMessageStore()
-    store.init({})
-    mockFetchMT.mockResolvedValue({
-      id: 42,
-      groups: [
-        { groupid: 10, collection: 'Pending', heldby: 999 },
-        { groupid: 20, collection: 'Approved', heldby: null },
-      ],
-    })
-
-    await store.hold({ id: 42, groupid: 10 })
-
-    expect(mockHold).toHaveBeenCalledWith(42, 10)
-    expect(mockFetchMT).toHaveBeenCalledWith({ id: 42 })
-    const row = store.byId(42).groups.find((g) => g.groupid === 10)
-    expect(row.heldby).toBe(999)
-    // The other group's row is unaffected - it was never held.
-    expect(
-      store.byId(42).groups.find((g) => g.groupid === 20).heldby
-    ).toBeNull()
-    // The store replaces list[id] wholesale with the server's payload; it
-    // never invents a message-level heldby of its own.
-    expect(store.byId(42).heldby).toBeUndefined()
-  })
-
-  it('replaces the message with a refetch whose groups[] row reflects the release', async () => {
-    const store = useMessageStore()
-    store.init({})
-    mockFetchMT.mockResolvedValue({
-      id: 42,
-      groups: [{ groupid: 10, collection: 'Pending', heldby: null }],
-    })
-
-    await store.release({ id: 42, groupid: 10 })
-
-    expect(mockRelease).toHaveBeenCalledWith(42, 10)
-    expect(mockFetchMT).toHaveBeenCalledWith({ id: 42 })
-    const row = store.byId(42).groups.find((g) => g.groupid === 10)
-    expect(row.heldby).toBeNull()
-    expect(store.byId(42).heldby).toBeUndefined()
-  })
-})
-
-// After a per-group approve/reject, a reported post that's pending on several of a mod's groups
-// must stay in the pending list so the next group's copy can be actioned without reloading
-// (Discourse 9862). refreshOrRemoveFromMTList re-fetches and keeps-or-drops it accordingly.
-describe('message store - refreshOrRemoveFromMTList()', () => {
-  beforeEach(() => {
-    setActivePinia(createPinia())
-    vi.clearAllMocks()
-  })
-
-  it('keeps the (refreshed) message when a group copy is still pending', async () => {
-    const store = useMessageStore()
-    store.list[500] = { id: 500, subject: 'stale' }
-    store.fetchMT = vi.fn().mockResolvedValue({
-      id: 500,
-      subject: 'fresh',
-      groups: [
-        { groupid: 1, collection: 'Approved' },
-        { groupid: 2, collection: 'Pending' },
-      ],
-    })
-
-    await store.refreshOrRemoveFromMTList(500)
-
-    expect(store.list[500]).toBeDefined()
-    expect(store.list[500].subject).toBe('fresh')
-  })
-
-  it('removes the message once no group copy is still in the review queue', async () => {
-    const store = useMessageStore()
-    store.list[500] = { id: 500, subject: 'stale' }
-    store.fetchMT = vi.fn().mockResolvedValue({
-      id: 500,
-      groups: [
-        { groupid: 1, collection: 'Approved' },
-        { groupid: 2, collection: 'Rejected' },
-      ],
-    })
-
-    await store.refreshOrRemoveFromMTList(500)
-
-    expect(store.list[500]).toBeUndefined()
-  })
-
-  it('treats Spam and PendingOther as still in the review queue', async () => {
-    const store = useMessageStore()
-    store.list[500] = { id: 500 }
-    store.fetchMT = vi.fn().mockResolvedValue({
-      id: 500,
-      groups: [{ groupid: 1, collection: 'Spam' }],
-    })
-
-    await store.refreshOrRemoveFromMTList(500)
-
-    expect(store.list[500]).toBeDefined()
-  })
-
-  it('removes the message if the re-fetch fails', async () => {
-    const store = useMessageStore()
-    store.list[500] = { id: 500 }
-    store.fetchMT = vi.fn().mockRejectedValue(new Error('gone'))
-
-    await store.refreshOrRemoveFromMTList(500)
-
-    expect(store.list[500]).toBeUndefined()
   })
 })

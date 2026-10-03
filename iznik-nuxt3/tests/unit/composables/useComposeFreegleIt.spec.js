@@ -22,12 +22,6 @@ vi.mock('~/stores/compose', () => ({
   }),
 }))
 
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({
-    get: vi.fn(),
-  }),
-}))
-
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({
     fetch: vi.fn().mockResolvedValue({}),
@@ -49,7 +43,7 @@ describe('freegleIt conversion events', () => {
       login: vi.fn().mockResolvedValue(undefined),
       saveAndGet: vi.fn().mockResolvedValue(undefined),
     }
-    mockSubmitResults = () => Promise.resolve([{ id: 123, groupid: null }])
+    mockSubmitResults = () => Promise.resolve([{ id: 123 }])
   })
 
   it('fires Give an Item only after an Offer submit succeeds', async () => {
@@ -69,7 +63,7 @@ describe('freegleIt conversion events', () => {
   it('fires Register with Website too when posting created a new account', async () => {
     mockSubmitResults = () =>
       Promise.resolve([
-        { id: 123, groupid: null, newuser: 456, newpassword: 'pw' },
+        { id: 123, newuser: 456, newpassword: 'pw' },
       ])
 
     await freegleIt('Offer', makeRouter())
@@ -107,7 +101,7 @@ describe('freegleIt posted ids in history state', () => {
       login: vi.fn().mockResolvedValue(undefined),
       saveAndGet: vi.fn().mockResolvedValue(undefined),
     }
-    mockSubmitResults = () => Promise.resolve([{ id: 123, groupid: null }])
+    mockSubmitResults = () => Promise.resolve([{ id: 123 }])
   })
 
   it.each(['Offer', 'Wanted'])(
@@ -129,8 +123,8 @@ describe('freegleIt posted ids in history state', () => {
   it('passes every posted id when several messages are submitted', async () => {
     mockSubmitResults = () =>
       Promise.resolve([
-        { id: 123, groupid: null },
-        { id: 456, groupid: null },
+        { id: 123 },
+        { id: 456 },
       ])
     const router = makeRouter()
 

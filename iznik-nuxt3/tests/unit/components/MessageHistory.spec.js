@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MessageHistory from '~/components/MessageHistory.vue'
 
-const { mockMessage, mockGroup, mockUser } = vi.hoisted(() => {
+const { mockMessage, mockUser } = vi.hoisted(() => {
   return {
     mockMessage: {
       id: 1,
@@ -11,25 +11,13 @@ const { mockMessage, mockGroup, mockUser } = vi.hoisted(() => {
       source: 'Platform',
       fromip: '192.168.1.1',
       fromcountry: 'United Kingdom',
-      groups: [
-        {
-          groupid: 100,
-          arrival: '2024-01-15T10:00:00Z',
-          approvedby: 200,
-        },
-      ],
+      arrival: '2024-01-15T10:00:00Z',
+      approvedby: 200,
       postings: [
         {
-          namedisplay: 'Freegle London',
           date: '2024-01-14T10:00:00Z',
         },
       ],
-    },
-    mockGroup: {
-      id: 100,
-      namedisplay: 'Freegle London',
-      nameshort: 'London',
-      exploreLink: 'london',
     },
     mockUser: {
       id: 200,
@@ -37,10 +25,6 @@ const { mockMessage, mockGroup, mockUser } = vi.hoisted(() => {
     },
   }
 })
-
-const mockGroupStore = {
-  get: vi.fn().mockReturnValue(mockGroup),
-}
 
 const mockMessageStore = {
   byId: vi.fn().mockReturnValue(mockMessage),
@@ -58,10 +42,6 @@ const mockUserStore = {
 const mockMiscStore = {
   breakpoint: 'lg',
 }
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
-}))
 
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
@@ -97,16 +77,10 @@ vi.mock('pinia', async (importOriginal) => {
   }
 })
 
-const mockGroupless = { value: false }
-vi.mock('~/composables/useGroupless', () => ({
-  useGroupless: () => mockGroupless.value,
-}))
-
 describe('MessageHistory', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockMessageStore.byId.mockReturnValue(mockMessage)
-    mockGroupStore.get.mockReturnValue(mockGroup)
     mockAuthStore.user = { id: 1, systemrole: 'User' }
     mockMiscStore.breakpoint = 'lg'
   })
@@ -124,10 +98,6 @@ describe('MessageHistory', () => {
         stubs: {
           'client-only': {
             template: '<div><slot /></div>',
-          },
-          'nuxt-link': {
-            template: '<a :href="to"><slot /></a>',
-            props: ['to', 'noPrefetch'],
           },
           'b-button': {
             template: '<button class="b-button" :to="to"><slot /></button>',
@@ -150,28 +120,16 @@ describe('MessageHistory', () => {
     })
   })
 
-  describe('group display', () => {
-    it('shows group link when not summary mode', () => {
-      const wrapper = createWrapper({ summary: false })
-      expect(wrapper.find('a').exists()).toBe(true)
-    })
-
-    it('shows group name', () => {
-      const wrapper = createWrapper({ summary: false })
-      expect(wrapper.text()).toContain('Freegle London')
-    })
-
-    it('links to explore page', () => {
-      const wrapper = createWrapper({ summary: false })
-      const link = wrapper.find('a')
-      expect(link.attributes('href')).toContain('/explore/')
-    })
-  })
-
   describe('message ID display', () => {
     it('shows message ID when not summary', () => {
       const wrapper = createWrapper({ summary: false })
       expect(wrapper.text()).toContain('#1')
+    })
+
+    it('links to the single message page', () => {
+      const wrapper = createWrapper({ summary: false })
+      const btn = wrapper.find('.b-button')
+      expect(btn.attributes('to')).toBe('/message/1')
     })
 
     it('hides message ID in summary mode on small screens', () => {
@@ -283,7 +241,6 @@ describe('MessageHistory', () => {
         ...mockMessage,
         postings: [
           {
-            namedisplay: 'Freegle London',
             date: mockMessage.date,
           },
         ],
@@ -308,65 +265,13 @@ describe('MessageHistory', () => {
     it('shows details on larger screens', () => {
       mockMiscStore.breakpoint = 'lg'
       const wrapper = createWrapper({ summary: true })
-      expect(wrapper.find('a').exists()).toBe(true)
+      expect(wrapper.find('.b-button').exists()).toBe(true)
     })
 
     it('hides details on xs screens in summary mode', () => {
       mockMiscStore.breakpoint = 'xs'
       const wrapper = createWrapper({ summary: true })
-      expect(wrapper.find('a').exists()).toBe(false)
-    })
-  })
-
-  describe('message ID link URL for collection types', () => {
-    function wrapperWithCollection(collection) {
-      mockMessageStore.byId.mockReturnValue({
-        ...mockMessage,
-        groups: [{ groupid: 100, arrival: '2024-01-15T10:00:00Z', collection }],
-      })
-      return createWrapper({ modinfo: true })
-    }
-
-    it('uses /pending/ URL for Pending collection', () => {
-      const wrapper = wrapperWithCollection('Pending')
-      const btn = wrapper.find('.b-button')
-      expect(btn.attributes('to')).toContain('/messages/pending/')
-    })
-
-    it('uses /pending/ URL for PendingOther collection', () => {
-      const wrapper = wrapperWithCollection('PendingOther')
-      const btn = wrapper.find('.b-button')
-      expect(btn.attributes('to')).toContain('/messages/pending/')
-    })
-
-    it('uses /pending/ URL for Spam collection (not /messages/spam/)', () => {
-      const wrapper = wrapperWithCollection('Spam')
-      const btn = wrapper.find('.b-button')
-      expect(btn.attributes('to')).toContain('/messages/pending/')
-      expect(btn.attributes('to')).not.toContain('/messages/spam/')
-    })
-
-    it('uses /approved/ URL for Approved collection', () => {
-      const wrapper = wrapperWithCollection('Approved')
-      const btn = wrapper.find('.b-button')
-      expect(btn.attributes('to')).toContain('/messages/approved/')
-    })
-
-    it('uses /approved/ URL when collection is null', () => {
-      const wrapper = wrapperWithCollection(null)
-      const btn = wrapper.find('.b-button')
-      expect(btn.attributes('to')).toContain('/messages/approved/')
-    })
-  })
-
-
-  describe('groupless site (experiment)', () => {
-    it('shows when, not where', async () => {
-      mockGroupless.value = true
-      const wrapper = await createWrapper({ showSummaryDetails: true })
-      expect(wrapper.text()).not.toContain('Freegle London')
-      expect(wrapper.text()).not.toMatch(/\bon\b/)
-      mockGroupless.value = false
+      expect(wrapper.find('.b-button').exists()).toBe(false)
     })
   })
 })

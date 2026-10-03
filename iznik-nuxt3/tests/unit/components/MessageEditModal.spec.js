@@ -14,25 +14,12 @@ const mockMessageStore = {
     location: { name: 'AB1 2CD' },
     item: { name: 'Test Item' },
     attachments: [],
-    groups: [{ groupid: 1 }],
   })),
   patch: vi.fn().mockResolvedValue({}),
 }
 
 const mockComposeStore = {
   uploading: false,
-}
-
-const mockGroupStore = {
-  get: vi.fn(() => ({
-    id: 1,
-    settings: {
-      keywords: {
-        offer: 'OFFER',
-        wanted: 'WANTED',
-      },
-    },
-  })),
 }
 
 const mockModal = ref(null)
@@ -43,10 +30,6 @@ vi.mock('~/stores/message', () => ({
 
 vi.mock('~/stores/compose', () => ({
   useComposeStore: () => mockComposeStore,
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
 }))
 
 vi.mock('~/composables/useOurModal', () => ({
@@ -77,7 +60,6 @@ describe('MessageEditModal', () => {
       location: { name: 'AB1 2CD' },
       item: { name: 'Test Item' },
       attachments: [],
-      groups: [{ groupid: 1 }],
     })
     mockComposeStore.uploading = false
   })
@@ -268,7 +250,6 @@ describe('MessageEditModal', () => {
         location: { name: 'AB1 2CD' },
         item: { name: 'Test Item' },
         attachments: [],
-        groups: [{ groupid: 1 }],
       })
       const wrapper = createWrapper()
       expect(wrapper.find('.number-increment').exists()).toBe(false)
@@ -293,7 +274,6 @@ describe('MessageEditModal', () => {
         location: { name: 'AB1 2CD' },
         item: { name: 'Test Item' },
         attachments: [],
-        groups: [{ groupid: 1 }],
       })
       const wrapper = createWrapper()
       const textarea = wrapper.find('.b-form-textarea')
@@ -307,11 +287,6 @@ describe('MessageEditModal', () => {
     it('fetches message by id from store', () => {
       createWrapper({ id: 42 })
       expect(mockMessageStore.byId).toHaveBeenCalledWith(42)
-    })
-
-    it('fetches group from store', () => {
-      createWrapper()
-      expect(mockGroupStore.get).toHaveBeenCalled()
     })
   })
 
@@ -333,7 +308,6 @@ describe('MessageEditModal', () => {
         location: { name: 'AB1 2CD' },
         item: { name: 'Test Item' },
         attachments: [{ id: 1, path: '/test.jpg' }],
-        groups: [{ groupid: 1 }],
       })
       const wrapper = createWrapper()
       const saveBtn = wrapper.find('.spin-button')
@@ -363,7 +337,6 @@ describe('MessageEditModal', () => {
         location: null,
         item: null,
         attachments: [],
-        groups: [],
       })
       const wrapper = createWrapper()
       expect(wrapper.find('.edit-form').exists()).toBe(false)
@@ -381,7 +354,6 @@ describe('MessageEditModal', () => {
         location: null,
         item: { name: 'Widget' },
         attachments: [],
-        groups: [{ groupid: 1 }],
       })
       const wrapper = createWrapper()
       expect(wrapper.find('.edit-form').exists()).toBe(true)
@@ -401,7 +373,6 @@ describe('MessageEditModal', () => {
         location: { name: 'AB1 2CD' },
         item: null,
         attachments: [],
-        groups: [{ groupid: 1 }],
       })
       const wrapper = createWrapper()
       expect(wrapper.find('.edit-form').exists()).toBe(true)
@@ -421,7 +392,6 @@ describe('MessageEditModal', () => {
         location: { name: 'AB1 2CD' },
         item: { name: 'Preferred Name' },
         attachments: [],
-        groups: [{ groupid: 1 }],
       })
       const wrapper = createWrapper()
       const input = wrapper.find('.post-item input')
@@ -439,7 +409,6 @@ describe('MessageEditModal', () => {
         location: { name: 'EH1 1AA' },
         item: { name: '' },
         attachments: [],
-        groups: [{ groupid: 1 }],
       })
       const wrapper = createWrapper()
       const input = wrapper.find('.post-item input')
@@ -457,7 +426,6 @@ describe('MessageEditModal', () => {
         location: { name: 'SW1 1AA' },
         item: { name: '' },
         attachments: [],
-        groups: [{ groupid: 1 }],
       })
       const wrapper = createWrapper()
       const input = wrapper.find('.post-item input')
@@ -475,7 +443,6 @@ describe('MessageEditModal', () => {
         location: { name: 'AB1 2CD' },
         item: { name: '' },
         attachments: [],
-        groups: [{ groupid: 1 }],
       })
       const wrapper = createWrapper()
       const input = wrapper.find('.post-item input')
@@ -493,7 +460,6 @@ describe('MessageEditModal', () => {
         location: { name: 'AB1 2CD' },
         item: { name: '' },
         attachments: [],
-        groups: [{ groupid: 1 }],
       })
       const wrapper = createWrapper()
       const input = wrapper.find('.post-item input')
@@ -511,7 +477,6 @@ describe('MessageEditModal', () => {
         location: { name: 'N1 1AA' },
         item: null,
         attachments: [],
-        groups: [{ groupid: 1 }],
       })
       const wrapper = createWrapper()
       const input = wrapper.find('.post-item input')
@@ -520,12 +485,12 @@ describe('MessageEditModal', () => {
   })
 
   describe('type options', () => {
-    it('gets offer keyword from group settings', () => {
+    it('shows the OFFER type option', () => {
       const wrapper = createWrapper()
       expect(wrapper.text()).toContain('OFFER')
     })
 
-    it('gets wanted keyword from group settings', () => {
+    it('shows the WANTED type option', () => {
       const wrapper = createWrapper()
       expect(wrapper.text()).toContain('WANTED')
     })
@@ -546,7 +511,6 @@ describe('MessageEditModal', () => {
           { id: 1, path: '/test1.jpg' },
           { id: 2, path: '/test2.jpg' },
         ],
-        groups: [{ groupid: 1 }],
       })
       const wrapper = createWrapper()
       expect(wrapper.find('.photo-grid').exists()).toBe(true)
@@ -574,7 +538,6 @@ describe('MessageEditModal', () => {
           { id: 1, path: '/test1.jpg' },
           { id: 2, path: '/test2.jpg' },
         ],
-        groups: [{ groupid: 1 }],
       })
       const wrapper = createWrapper()
 
@@ -612,7 +575,6 @@ describe('MessageEditModal', () => {
           { id: 1, path: '/test1.jpg' },
           { id: 2, path: '/test2.jpg' },
         ],
-        groups: [{ groupid: 1 }],
       })
       const wrapper = createWrapper()
       expect(wrapper.find('.draggable').exists()).toBe(true)

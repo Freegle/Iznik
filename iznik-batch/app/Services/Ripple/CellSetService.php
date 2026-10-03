@@ -42,7 +42,9 @@ use Illuminate\Support\Facades\Log;
 class CellSetService
 {
     private const CELL_DEGREES = 0.0003;
+
     private const FORMAT_MAGIC = 0x31534343;
+
     private const HEADER_SIZE = 20;
 
     /**
@@ -73,9 +75,9 @@ class CellSetService
             $base = rtrim((string) config('freegle.spatial_server_url'), '/');
             $r = Http::timeout(5)
                 ->withBody($wkt, 'text/plain')
-                ->post($base . '/v1/reach/rasterize');
+                ->post($base.'/v1/reach/rasterize');
 
-            if (!$r->successful()) {
+            if (! $r->successful()) {
                 Log::warning('cellset: rasterize failed', ['status' => $r->status()]);
 
                 return null;
@@ -153,7 +155,7 @@ class CellSetService
                 if ($target < $seen) {
                     return $cur;
                 }
-                $cur = !$cur;
+                $cur = ! $cur;
             }
         } catch (\Throwable) {
             return null;
@@ -188,7 +190,7 @@ class CellSetService
         }
         if ($h['cols'] * $h['rows'] > self::MAX_CELLS) {
             throw new \InvalidArgumentException(
-                'cellset: grid too large (' . $h['cols'] . 'x' . $h['rows'] . ' cells)'
+                'cellset: grid too large ('.$h['cols'].'x'.$h['rows'].' cells)'
             );
         }
 
@@ -238,7 +240,7 @@ class CellSetService
             throw new \InvalidArgumentException('cellset: zero-sized grid');
         }
         if ($cols * $rows > self::MAX_CELLS) {
-            throw new \InvalidArgumentException('cellset: grid too large (' . $cols . 'x' . $rows . ' cells)');
+            throw new \InvalidArgumentException('cellset: grid too large ('.$cols.'x'.$rows.' cells)');
         }
 
         $total = $cols * $rows;
@@ -259,7 +261,7 @@ class CellSetService
             } else {
                 $i += $run;
             }
-            $cur = !$cur;
+            $cur = ! $cur;
         }
 
         return [
@@ -290,62 +292,12 @@ class CellSetService
     }
 
     /**
-     * $a's cells minus $b's - the secondary-group rejection clip's cell-set
-     * equivalent of ST_Difference(polygon, group_area). Both decoded values
-     * share the SAME global lattice by construction, so this is set
-     * subtraction over global cell indices: no resampling, no ambiguity,
-     * safe to have in every language that reads a cell set (see the class
-     * doc comment's decode/encode reasoning - this is grid arithmetic, not
-     * rasterising a polygon boundary).
-     *
-     * The result keeps $a's own bounds (a superset of the true tight bbox
-     * after clipping, never a wrong cell), matching
-     * iznik-spatial-go/cellset's Subtract exactly. Callers that care whether
-     * anything is left should check for an empty `set` array, the same way
-     * they would check an ST_Difference result for emptiness.
-     *
-     * @param array{minCol:int,minRow:int,cols:int,rows:int,set:array<int,bool>} $a
-     * @param array{minCol:int,minRow:int,cols:int,rows:int,set:array<int,bool>} $b
-     * @return array{minCol:int,minRow:int,cols:int,rows:int,set:array<int,bool>}
-     */
-    public function subtract(array $a, array $b): array
-    {
-        $result = $a['set'];
-
-        foreach (array_keys($a['set']) as $localIndex) {
-            $row = intdiv($localIndex, $a['cols']);
-            $col = $localIndex % $a['cols'];
-
-            $globalCol = $a['minCol'] + $col;
-            $globalRow = $a['minRow'] + $row;
-
-            $bCol = $globalCol - $b['minCol'];
-            $bRow = $globalRow - $b['minRow'];
-            if ($bCol < 0 || $bRow < 0 || $bCol >= $b['cols'] || $bRow >= $b['rows']) {
-                continue;
-            }
-
-            if (isset($b['set'][$bRow * $b['cols'] + $bCol])) {
-                unset($result[$localIndex]);
-            }
-        }
-
-        return [
-            'minCol' => $a['minCol'],
-            'minRow' => $a['minRow'],
-            'cols' => $a['cols'],
-            'rows' => $a['rows'],
-            'set' => $result,
-        ];
-    }
-
-    /**
      * Packs an already-decoded value back into wire bytes - as unambiguous
      * as decoding, unlike rasterising a polygon boundary (see the class doc
      * comment), so this is safe here even though rasterisation itself stays
      * server-side. Byte-identical format to the real encoder's Encode().
      *
-     * @param array{minCol:int,minRow:int,cols:int,rows:int,set:array<int,bool>} $decoded
+     * @param  array{minCol:int,minRow:int,cols:int,rows:int,set:array<int,bool>}  $decoded
      */
     public function encode(array $decoded): string
     {
@@ -377,165 +329,15 @@ class CellSetService
         return $out;
     }
 
-    /**
-     * $a with $b's covered cells removed, working DIRECTLY on the run streams
-     * - never decode()ing either grid.
-     *
-     * WHY THIS EXISTS: decode() allocates one PHP array entry per COVERED
-     * CELL, so its memory follows the covered AREA, not the compressed size.
-     * That is survivable for a reach, but the clip subtracts a REJECTING
-     * GROUP's area, and a county-sized group rasterises to ~10M cells - about
-     * a gigabyte of PHP arrays. ripple:expand died on exactly that six times
-     * in three hours on 2026-08-26 (the first post-drop evening), each crash
-     * also wedging its overlap lock, and expansion fell to ~175 advances per
-     * half hour with 1,200+ posts overdue. This walk keeps memory
-     * proportional to the RUN COUNT (the boundary), a few kilobytes for the
-     * same inputs.
-     *
-     * The result keeps $a's exact frame: subtraction can only clear cells, so
-     * $a's bounding box remains valid (possibly loose, exactly like
-     * subtract()'s result, whose frame is also left untrimmed). A wholly
-     * clipped grid comes back as one clear run - "admits nobody" - matching
-     * the documented behaviour of the decode path.
-     *
-     * Null on unreadable input, mirroring the decode path's failure contract.
-     *
-     * B is indexed per GLOBAL row as [startCol, endCol) intervals - memory
-     * O(B's runs) - then A's stream is re-emitted row by row with those
-     * intervals cleared. Both grids sit on the same global lattice by
-     * construction, which is what makes the row alignment a plain integer
-     * offset.
-     */
-    public function subtractEncoded(string $a, string $b): ?string
-    {
-        try {
-            $ha = $this->header($a);
-            $hb = $this->header($b);
-        } catch (\Throwable) {
-            return null;
-        }
-
-        // Index B's SET runs as per-global-row column intervals.
-        $bRows = [];
-        $pos = self::HEADER_SIZE;
-        $len = strlen($b);
-        $total = $hb['cols'] * $hb['rows'];
-        $seen = 0;
-        $set = false; // runs alternate, starting CLEAR
-        while ($seen < $total) {
-            try {
-                [$run, $n] = $this->readVarint($b, $pos, $len);
-            } catch (\Throwable) {
-                return null;
-            }
-            $pos += $n;
-            if ($set && $run > 0) {
-                // A set run may span row boundaries; split per row.
-                $idx = $seen;
-                $left = $run;
-                while ($left > 0) {
-                    $row = intdiv($idx, $hb['cols']);
-                    $col = $idx % $hb['cols'];
-                    $take = min($left, $hb['cols'] - $col);
-                    $gRow = $hb['minRow'] + $row;
-                    $bRows[$gRow][] = [$hb['minCol'] + $col, $hb['minCol'] + $col + $take];
-                    $idx += $take;
-                    $left -= $take;
-                }
-            }
-            $seen += $run;
-            $set = !$set;
-        }
-        if ($seen !== $total) {
-            return null;
-        }
-
-        // Walk A row by row, clearing B's intervals, re-encoding as we go.
-        $out = pack('VVVVV', self::FORMAT_MAGIC,
-            $ha['minCol'] & 0xFFFFFFFF, $ha['minRow'] & 0xFFFFFFFF, $ha['cols'], $ha['rows']);
-        $emitCur = false; // encoder state: current colour, always starts clear
-        $emitRun = 0;
-        $emit = function (bool $colour, int $count) use (&$emitCur, &$emitRun, &$out): void {
-            if ($count === 0) {
-                return;
-            }
-            if ($colour === $emitCur) {
-                $emitRun += $count;
-
-                return;
-            }
-            $out .= $this->encodeVarint($emitRun);
-            $emitCur = $colour;
-            $emitRun = $count;
-        };
-
-        $pos = self::HEADER_SIZE;
-        $len = strlen($a);
-        $total = $ha['cols'] * $ha['rows'];
-        $seen = 0;
-        $set = false;
-        while ($seen < $total) {
-            try {
-                [$run, $n] = $this->readVarint($a, $pos, $len);
-            } catch (\Throwable) {
-                return null;
-            }
-            $pos += $n;
-            if ($run > 0) {
-                if (!$set) {
-                    $emit(false, $run);
-                } else {
-                    // Split the set run per row and clear B's overlap.
-                    $idx = $seen;
-                    $left = $run;
-                    while ($left > 0) {
-                        $row = intdiv($idx, $ha['cols']);
-                        $col = $idx % $ha['cols'];
-                        $take = min($left, $ha['cols'] - $col);
-                        $gRow = $ha['minRow'] + $row;
-                        $gStart = $ha['minCol'] + $col;      // global column span
-                        $gEnd = $gStart + $take;             // [gStart, gEnd)
-                        $cursor = $gStart;
-                        foreach ($bRows[$gRow] ?? [] as [$bs, $be]) {
-                            if ($be <= $cursor || $bs >= $gEnd) {
-                                continue;
-                            }
-                            if ($bs > $cursor) {
-                                $emit(true, $bs - $cursor);
-                                $cursor = $bs;
-                            }
-                            $clearTo = min($be, $gEnd);
-                            $emit(false, $clearTo - $cursor);
-                            $cursor = $clearTo;
-                        }
-                        if ($cursor < $gEnd) {
-                            $emit(true, $gEnd - $cursor);
-                        }
-                        $idx += $take;
-                        $left -= $take;
-                    }
-                }
-            }
-            $seen += $run;
-            $set = !$set;
-        }
-        if ($seen !== $total) {
-            return null;
-        }
-        $out .= $this->encodeVarint($emitRun); // flush the final run
-
-        return $out;
-    }
-
     private function encodeVarint(int $v): string
     {
         $out = '';
         while ($v >= 0x80) {
-            $out .= chr(($v & 0x7f) | 0x80);
+            $out .= chr(($v & 0x7F) | 0x80);
             $v >>= 7;
         }
 
-        return $out . chr($v);
+        return $out.chr($v);
     }
 
     /**
@@ -551,7 +353,7 @@ class CellSetService
         while ($pos + $consumed < $len) {
             $byte = ord($bytes[$pos + $consumed]);
             $consumed++;
-            $value |= ($byte & 0x7f) << $shift;
+            $value |= ($byte & 0x7F) << $shift;
             if (($byte & 0x80) === 0) {
                 return [$value, $consumed];
             }
@@ -576,20 +378,20 @@ class CellSetService
     {
         try {
             $base = rtrim((string) config('freegle.spatial_server_url'), '/');
-            $url = $base . '/v1/reach/vectorize';
+            $url = $base.'/v1/reach/vectorize';
             if ($toleranceDegrees > 0) {
-                $url .= '?tolerance=' . $toleranceDegrees;
+                $url .= '?tolerance='.$toleranceDegrees;
             }
             $r = Http::timeout(10)
                 ->withBody($bytes, 'application/octet-stream')
                 ->post($url);
-            if (!$r->successful()) {
+            if (! $r->successful()) {
                 Log::warning('cellset: vectorize failed', ['status' => $r->status()]);
 
                 return null;
             }
             $out = $r->json();
-            if (!is_array($out) || !is_string($out['wkt'] ?? null) || $out['wkt'] === '') {
+            if (! is_array($out) || ! is_string($out['wkt'] ?? null) || $out['wkt'] === '') {
                 Log::warning('cellset: vectorize returned no boundary');
 
                 return null;
@@ -598,45 +400,6 @@ class CellSetService
             return ['wkt' => $out['wkt'], 'geojson' => $out['geojson'] ?? null];
         } catch (\Throwable $e) {
             Log::warning('cellset: vectorize request failed', ['error' => $e->getMessage()]);
-
-            return null;
-        }
-    }
-
-    /**
-     * Which groups' areas does this grid touch, and is it entirely inside any
-     * of them - the cell form of the ST_Intersects/ST_Within pair the clip,
-     * the retraction pass and the crosspost count ask. Answered by the
-     * spatial server on the same lattice the reach itself uses. Returns a
-     * list of ['id' => int, 'within' => bool], or null on any failure so the
-     * caller can distinguish "touches no groups" from "could not ask".
-     */
-    public function groupsIntersecting(string $bytes): ?array
-    {
-        try {
-            $base = rtrim((string) config('freegle.spatial_server_url'), '/');
-            $r = Http::timeout(10)
-                ->withBody($bytes, 'application/octet-stream')
-                ->post($base . '/v1/groups/intersecting');
-            if (!$r->successful()) {
-                Log::warning('cellset: groups intersecting failed', ['status' => $r->status()]);
-
-                return null;
-            }
-            $out = $r->json();
-            if (!is_array($out) || !is_array($out['groups'] ?? null)) {
-                return null;
-            }
-            $groups = [];
-            foreach ($out['groups'] as $g) {
-                if (is_array($g) && isset($g['id'])) {
-                    $groups[] = ['id' => (int) $g['id'], 'within' => (bool) ($g['within'] ?? false)];
-                }
-            }
-
-            return $groups;
-        } catch (\Throwable $e) {
-            Log::warning('cellset: groups intersecting request failed', ['error' => $e->getMessage()]);
 
             return null;
         }
@@ -682,14 +445,14 @@ class CellSetService
     {
         try {
             $base = rtrim((string) config('freegle.spatial_server_url'), '/');
-            $r = Http::timeout(10)->get($base . '/v1/reach/containing', ['lng' => $lng, 'lat' => $lat]);
-            if (!$r->successful()) {
+            $r = Http::timeout(10)->get($base.'/v1/reach/containing', ['lng' => $lng, 'lat' => $lat]);
+            if (! $r->successful()) {
                 Log::warning('cellset: reach containing failed', ['status' => $r->status()]);
 
                 return null;
             }
             $in = $r->json('in');
-            if (!is_array($in)) {
+            if (! is_array($in)) {
                 return null;
             }
 
@@ -807,7 +570,7 @@ class CellSetService
                     }
                 }
                 $seen += $run;
-                $cur = !$cur;
+                $cur = ! $cur;
             }
         } catch (\Throwable) {
             return null;

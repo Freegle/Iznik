@@ -1,23 +1,11 @@
 package chat
 
-import (
-	"os"
-	"strings"
-)
-
-// Experiment: warn, do not hold.
+// Warn, do not hold.
 //
-// Today a chat message the content check flags (reviewrequired=1) is invisible to the
-// recipient until a moderator approves it, and nobody tells either side. With nobody there
-// the message is auto-rejected a week later. CHAT_WARN_NOT_HOLD=1 delivers the message
-// anyway, tagged with a short reason, so the client can show it behind a warning the member
-// taps through. A moderator can still reject it later, which hides it again.
-//
-// Off unless switched on. This is a thought experiment, not the shipped behaviour.
-func WarnNotHold() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("CHAT_WARN_NOT_HOLD")))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
-}
+// A chat message the content check flags (reviewrequired=1) is delivered to the recipient
+// anyway, tagged with a short reason, so the client shows it behind a warning the member taps
+// through, rather than being invisible until a moderator approves it. A moderator can still
+// reject it later, which hides it again.
 
 // SensitiveReason turns the stored reportreason into the short key the client uses to pick
 // its warning wording. The stored values are moderator-facing enum members; the member only
@@ -40,6 +28,8 @@ func SensitiveReason(reportreason *string) string {
 		return "concern"
 	case "Referenced known spammer", "Greetings spam", "Known spam keyword":
 		return "scam"
+	case "Abuse":
+		return "abuse"
 	default:
 		return "checked"
 	}
@@ -59,13 +49,10 @@ const HeldReasonsNeverDelivered = "'Spam', 'Fully', 'Last'"
 // deliverableSQL is the predicate that says a message from somebody else may be shown to a
 // member. col is the column prefix, such as "cmv." or "", exactly as the caller writes SQL.
 //
-// Normally a message held for review is not deliverable. Under the experiment a message the
-// content check held is delivered and the client warns; a message held because of who sent
-// it (HeldReasonsNeverDelivered) stays hidden, and so does a rejected one.
+// A message held for review because of who sent it (HeldReasonsNeverDelivered) stays hidden,
+// and so does a rejected one. A message the content check held for its content is delivered,
+// and the client warns.
 func deliverableSQL(col string) string {
-	if WarnNotHold() {
-		return "(" + col + "reviewrequired = 0 OR (" + col + "reportreason IS NOT NULL AND " +
-			col + "reportreason NOT IN (" + HeldReasonsNeverDelivered + "))) AND " + col + "reviewrejected = 0"
-	}
-	return col + "reviewrequired = 0 AND " + col + "reviewrejected = 0"
+	return "(" + col + "reviewrequired = 0 OR (" + col + "reportreason IS NOT NULL AND " +
+		col + "reportreason NOT IN (" + HeldReasonsNeverDelivered + "))) AND " + col + "reviewrejected = 0"
 }

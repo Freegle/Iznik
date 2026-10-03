@@ -11,14 +11,10 @@ vi.mock('~/composables/useOurModal', () => ({
 
 const mockOpenChatToMods = vi.fn()
 const mockReport = vi.fn()
-const mockReportNoGroup = vi.fn()
-const mockCommonGroups = vi.fn()
 vi.mock('~/stores/chat', () => ({
   useChatStore: () => ({
     openChatToMods: mockOpenChatToMods,
     report: mockReport,
-    reportNoGroup: mockReportNoGroup,
-    commonGroups: mockCommonGroups,
   }),
 }))
 
@@ -48,62 +44,51 @@ async function createWrapper(props = {}) {
   return wrapper
 }
 
-const mockGroupless = { value: false }
-vi.mock('~/composables/useGroupless', () => ({
-  useGroupless: () => mockGroupless.value,
-}))
-
 describe('ChatReportModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockOpenChatToMods.mockResolvedValue(999)
-    mockCommonGroups.mockResolvedValue([])
   })
 
-  describe('common group exists', () => {
-    beforeEach(() => {
-      mockCommonGroups.mockResolvedValue([{ id: 1, namedisplay: 'Group 1' }])
-    })
-
-    it('shows the community selector', async () => {
+  describe('rendering', () => {
+    it('never asks which community, and promises an outcome', async () => {
       const wrapper = await createWrapper()
-      expect(wrapper.text()).toContain('Which community is this about?')
-      expect(wrapper.find('[data-testid="group-select"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="group-select"]').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Which community')
+      expect(wrapper.text()).not.toContain('volunteers')
+      expect(wrapper.text()).toContain("let you know what happens")
     })
 
-    it('routes the report to the community mods', async () => {
+    it('shows the reason and comment fields', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.find('[data-testid="reason-select"]').exists()).toBe(true)
+      expect(wrapper.find('textarea').exists()).toBe(true)
+    })
+  })
+
+  describe('send', () => {
+    it('opens a national mod chat and reports, with an optional empty comment', async () => {
       const wrapper = await createWrapper()
       await wrapper.find('[data-testid="reason-select"]').setValue('Spam')
+      const sendBtn = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Send Report'))
+      await sendBtn.trigger('click')
+      await flushPromises()
+      expect(mockOpenChatToMods).toHaveBeenCalledWith()
+      expect(mockReport).toHaveBeenCalledWith(999, 'Spam', '', 123)
+    })
+
+    it('passes the comment when provided', async () => {
+      const wrapper = await createWrapper()
+      await wrapper.find('[data-testid="reason-select"]').setValue('Other')
       await wrapper.find('textarea').setValue('creepy')
       const sendBtn = wrapper
         .findAll('button')
         .find((b) => b.text().includes('Send Report'))
       await sendBtn.trigger('click')
       await flushPromises()
-      expect(mockOpenChatToMods).toHaveBeenCalledWith(1)
-      expect(mockReport).toHaveBeenCalled()
-      expect(mockReportNoGroup).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('no common group (spam-team fallback)', () => {
-    it('hides the selector and shows the central-volunteers note', async () => {
-      const wrapper = await createWrapper()
-      expect(wrapper.text()).not.toContain('Which community is this about?')
-      expect(wrapper.text()).toContain('central volunteers')
-      expect(wrapper.find('[data-testid="group-select"]').exists()).toBe(false)
-    })
-
-    it('routes the report to the spam team with an optional empty comment', async () => {
-      const wrapper = await createWrapper()
-      await wrapper.find('[data-testid="reason-select"]').setValue('Spam')
-      const sendBtn = wrapper
-        .findAll('button')
-        .find((b) => b.text().includes('Send Report'))
-      await sendBtn.trigger('click')
-      await flushPromises()
-      expect(mockReportNoGroup).toHaveBeenCalledWith(123, 'Spam', '')
-      expect(mockOpenChatToMods).not.toHaveBeenCalled()
+      expect(mockReport).toHaveBeenCalledWith(999, 'Other', 'creepy', 123)
     })
 
     it('does not send without a reason', async () => {
@@ -113,7 +98,8 @@ describe('ChatReportModal', () => {
         .find((b) => b.text().includes('Send Report'))
       await sendBtn.trigger('click')
       await flushPromises()
-      expect(mockReportNoGroup).not.toHaveBeenCalled()
+      expect(mockOpenChatToMods).not.toHaveBeenCalled()
+      expect(mockReport).not.toHaveBeenCalled()
     })
   })
 
@@ -125,20 +111,6 @@ describe('ChatReportModal', () => {
         .find((b) => b.text().includes('Close'))
       await closeBtn.trigger('click')
       expect(mockHide).toHaveBeenCalled()
-    })
-  })
-
-
-  describe('groupless site (experiment)', () => {
-    it('never asks which community, and promises an outcome', async () => {
-      mockGroupless.value = true
-      const wrapper = await createWrapper()
-      await flushPromises()
-      expect(wrapper.find('[data-testid="group-select"]').exists()).toBe(false)
-      expect(wrapper.text()).not.toContain('Which community')
-      expect(wrapper.text()).not.toContain('volunteers')
-      expect(wrapper.text()).toContain('let you know what happens')
-      mockGroupless.value = false
     })
   })
 })

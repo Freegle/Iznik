@@ -7,7 +7,7 @@
 </template>
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useMemberStore } from '~/stores/member'
+import { useMemberStore } from '~/modtools/stores/member'
 
 const props = defineProps({
   userid: {

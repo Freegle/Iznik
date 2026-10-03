@@ -1,19 +1,19 @@
 import { defineStore } from 'pinia'
-import { runHoldAware } from '~/api/heldConflict'
 import api from '~/api'
 import { useAuthStore } from '~/stores/auth'
 import { useUserStore } from '~/stores/user'
 
+// Self-moderating rework: the per-group membership queue (approve/reject/
+// reply/delete/hold/release, Pending/Spam/Edit-review collections) is gone —
+// see the "Member tools contract" in briefs/modtools-rework.md. What's kept
+// (member search-and-card: ban, posting status, notes, merge) now routes
+// through ModMembersAPI.js (api().modmembers), which is national — no
+// groupid anywhere in this file any more. Merge (askMerge/ignoreMerge) was
+// already national via api().merge and is unchanged.
 export const useMemberStore = defineStore('member', {
   state: () => ({
-    list: {}, // membershipid: member
-    // The context from the last fetch, used for fetchMore.
-    context: null,
-    // For spotting when we clear under the feet of an outstanding fetch
-    instance: 1,
+    list: {}, // id: member
     ratings: [],
-    rawindex: 0,
-    filtercount: null,
   }),
   actions: {
     init(config) {
@@ -21,374 +21,53 @@ export const useMemberStore = defineStore('member', {
     },
     clear() {
       this.list = {}
-      this.context = null
-      this.instance = 1
       this.ratings = []
-      this.rawindex = 0
-      this.filtercount = null
-    },
-    reviewHeld(params) {
-      Object.keys(this.list).forEach((key) => {
-        if (
-          parseInt(this.list[key].membershipid) ===
-          parseInt(params.membershipid)
-        ) {
-          this.list[key].heldby = params.heldby
-        }
-      })
-    },
-    async approve(params) {
-      await runHoldAware(
-        () =>
-          api(this.config).memberships.approveMember(
-            params.id,
-            params.groupid,
-            params.subject,
-            params.stdmsgid,
-            params.body
-          ),
-        () => this.fetch({ userid: params.id, groupid: params.groupid })
-      )
-    },
-    async reject(params) {
-      await runHoldAware(
-        () =>
-          api(this.config).memberships.rejectMember(
-            params.id,
-            params.groupid,
-            params.subject,
-            params.stdmsgid,
-            params.body
-          ),
-        () => this.fetch({ userid: params.id, groupid: params.groupid })
-      )
-    },
-    async reply(params) {
-      await api(this.config).memberships.reply(
-        params.id,
-        params.groupid,
-        params.subject,
-        params.stdmsgid,
-        params.body
-      )
-    },
-    async delete(params) {
-      await runHoldAware(
-        () =>
-          api(this.config).memberships.delete(
-            params.id,
-            params.groupid,
-            params.subject,
-            params.stdmsgid,
-            params.body
-          ),
-        () => this.fetch({ userid: params.id, groupid: params.groupid })
-      )
-      let foundid = false
-      for (const membership of Object.values(this.list)) {
-        if (
-          membership.userid === params.id &&
-          membership.groupid === params.groupid
-        ) {
-          foundid = membership.id
-        }
-      }
-      if (foundid) {
-        delete this.list[foundid]
-      }
     },
     async fetchMembers(params) {
-      // console.log('useMemberStore fetchMembers',params)
-      let received = 0
-      // Watch out for the store being cleared under the feet of this fetch. If that happens then we throw away the
-      // results.
-      const instance = this.instance
-
-      // V2 API expects context as a simple ID value
-      if (params.context && typeof params.context === 'object') {
-        params.context = params.context.id
+      const { members, ratings } = await api(this.config).modmembers.fetch(
+        params
+      )
+      members.forEach((member) => {
+        this.list[member.id] = member
+      })
+      if (ratings && ratings.length) {
+        this.ratings = ratings
       }
-
-      const { members, context, ratings, filtercount } = await api(
-        this.config
-      ).memberships.fetchMembers(params)
-
-      // console.log('fetchMembers', this.instance, instance, members.length)
-
-      if (this.instance === instance) {
-        this.filtercount = filtercount
-        for (let i = 0; i < members.length; i++) {
-          // Ensure collection and groupid are set from params as fallback.
-          if (!members[i].collection) members[i].collection = params.collection
-          if (!members[i].groupid) members[i].groupid = params.groupid
-        }
-        received += members.length
-
-        if (params.collection === 'Related') {
-          // V2 API returns {id, user1, user2, reason} pairs.  Store each pair keyed
-          // by its id, and create synthetic member entries for each user so
-          // that ModMember can look them up.
-          members.forEach((pair) => {
-            pair.rawindex = this.rawindex++
-            pair.collection = 'Related'
-            this.list[pair.id] = pair
-
-            // Synthetic member entries so ModMember can resolve them.
-            for (const uid of [pair.user1, pair.user2]) {
-              if (!this.list[uid]) {
-                this.list[uid] = {
-                  id: uid,
-                  userid: uid,
-                  collection: 'Related',
-                  rawindex: this.rawindex++,
-                  _syntheticRelated: true,
-                }
-              }
-            }
-          })
-
-          // If the backend returned no actionable pairs, the work counter must
-          // reflect reality — the backend may have auto-resolved pairs without
-          // going through askMerge/ignoreMerge (e.g. one user had no login history).
-          const remainingPairs = Object.values(this.list).filter(
-            (m) => m.collection === 'Related' && !m._syntheticRelated
-          ).length
-          if (remainingPairs === 0 && !params.groupid) {
-            const authStore = useAuthStore()
-            if (
-              authStore.work &&
-              typeof authStore.work.relatedmembers === 'number'
-            ) {
-              authStore.work.relatedmembers = 0
-            }
-          }
-        } else if (params.collection === 'Spam') {
-          // V2 API returns one row per membership. V1 grouped by userid and
-          // nested all memberships under one entry.  Replicate that here so
-          // the review page shows one card per user.
-          const byUser = {}
-          members.forEach((member) => {
-            const uid = member.userid
-            if (!byUser[uid]) {
-              byUser[uid] = {
-                ...member,
-                memberships: [],
-              }
-            }
-            byUser[uid].memberships.push({
-              id: member.id,
-              membershipid: member.id,
-              groupid: member.groupid,
-              added: member.added,
-              collection: member.collection,
-              role: member.role,
-              heldby: member.heldby,
-              reviewrequestedat: member.reviewrequestedat,
-              reviewedat: member.reviewedat,
-              reviewreason: member.reviewreason,
-            })
-          })
-          Object.values(byUser).forEach((member) => {
-            member.rawindex = this.rawindex++
-            this.list[member.id] = member
-          })
-        } else if (params.search && !params.groupid) {
-          // When searching across all groups, deduplicate by userid — a user
-          // can appear once per group they belong to but the card already shows
-          // all their memberships, so keep only the first entry per user.
-          const seen = {}
-          members.forEach((member) => {
-            const uid = member.userid
-            if (!seen[uid]) {
-              seen[uid] = true
-              member.rawindex = this.rawindex++
-              this.list[member.userid] = member
-            }
-          })
-        } else {
-          members.forEach((member) => {
-            member.rawindex = this.rawindex++
-            this.list[member.id] = member
-          })
-        }
-
-        if (ratings && ratings.length) {
-          this.ratings = ratings
-        }
-
-        this.context = context
-      }
-      // console.log('useMemberStore fetchMembers this.list',this.list)
-      return received
+      return members.length
     },
-    async fetch(params) {
-      // Don't log errors on fetches of individual members
-      // console.log('useMemberStore fetch', params)
-      const { member } = await api(this.config).memberships.fetch(params)
-      // const { member } = await this.$api.memberships.fetch(params, data => {
-      //  return data.ret !== 3
-      // })
+    async fetch(id) {
+      const { member } = await api(this.config).modmembers.fetchOne(id)
       this.list[member.id] = member
-      // console.log('useMemberStore fetch this.list',this.list)
     },
+    async ban(id, reason) {
+      await api(this.config).modmembers.ban(id, reason)
+    },
+    async unban(id) {
+      await api(this.config).modmembers.unban(id)
+    },
+    async setPostingStatus(id, postingstatus) {
+      await api(this.config).modmembers.setPostingStatus(id, postingstatus)
 
-    async spamignore(params) {
-      await api(this.config).memberships.reviewIgnore(
-        params.userid,
-        params.groupid
-      )
-
-      // ReviewIgnore is per-group: only the clicked group's flag is cleared
-      // (commit 4749246f6 reverted the all-groups broadcast from e67355026).
-      // Remove only the acted-on membership from the array so the card stays
-      // visible when the member is still under review on other groups (#9481).
-      // Delete the whole entry only when no memberships remain.
+      /*
+       * No event tells the frontend about the write, so the cached
+       * userStore entry for id keeps the pre-change value and any gate on
+       * posting status (e.g. ModMessageButtons' :cantpost prop) keeps
+       * failing on the next render (Discourse #10008 post 1). Force-refresh
+       * the cached entry so the next render picks up the new value.
+       */
+      const userStore = useUserStore()
+      await userStore.fetch(id, true)
+    },
+    async clearFlag(id) {
+      await api(this.config).modmembers.clearFlag(id)
       const key = Object.keys(this.list).find(
-        (k) => parseInt(this.list[k].userid) === parseInt(params.userid)
+        (k) => parseInt(this.list[k].id) === parseInt(id)
       )
-      if (key && this.list[key].memberships) {
-        this.list[key].memberships = this.list[key].memberships.filter(
-          (m) => parseInt(m.groupid) !== parseInt(params.groupid)
-        )
-        if (this.list[key].memberships.length === 0) {
-          delete this.list[key]
-        }
-      } else if (key) {
+      if (key) {
         delete this.list[key]
       }
     },
-
-    async updateMembership(params) {
-      await api(this.config).memberships.save(params)
-
-      /*
-       * ourPostingStatus gates the Approve button on a pending message
-       * elsewhere (ModMessage.vue's membership computed feeds
-       * ModMessageButtons' :cantpost prop). No event tells the frontend
-       * about the write, so the cached userStore entry for params.userid
-       * keeps the pre-change value and that gate keeps failing on the next
-       * render - a mod flipping Can't Post -> Moderated on the pending
-       * message's own page (ModModeration.vue) saw no Approve button appear
-       * until something unrelated forced a re-fetch (Discourse #10008 post
-       * 1). Force-refresh the cached entry so the next render picks up the
-       * new posting status.
-       */
-      if (params.userid && params.ourPostingStatus) {
-        const userStore = useUserStore()
-        await userStore.fetch(params.userid, true)
-      }
-    },
-
-    async remove(userid, groupid, membershipid) {
-      // membershipid may be undefined
-      // Remove approved member.
-      this.context = null
-      await api(this.config).memberships.remove(userid, groupid)
-
-      if (membershipid) {
-        delete this.list[membershipid]
-      } else {
-        // For Spam review entries (have a memberships array): only remove the
-        // acted-on membership so the card stays visible for other pending groups
-        // (#9481).  For single-membership entries: keep the original userid+groupid
-        // match to avoid deleting unrelated entries for the same user.
-        const spamKey = Object.keys(this.list).find(
-          (k) =>
-            parseInt(this.list[k].userid) === parseInt(userid) &&
-            Array.isArray(this.list[k].memberships)
-        )
-        if (spamKey) {
-          this.list[spamKey].memberships = this.list[
-            spamKey
-          ].memberships.filter((m) => parseInt(m.groupid) !== parseInt(groupid))
-          if (this.list[spamKey].memberships.length === 0) {
-            delete this.list[spamKey]
-          }
-        } else {
-          let foundid = false
-          for (const membership of Object.values(this.list)) {
-            if (
-              parseInt(membership.userid) === parseInt(userid) &&
-              parseInt(membership.groupid) === parseInt(groupid)
-            ) {
-              foundid = membership.id
-            }
-          }
-          if (foundid) {
-            delete this.list[foundid]
-          }
-        }
-      }
-    },
-    async update(params) {
-      const data = await api(this.config).memberships.update(params)
-      /*
-       * A role change PATCH triggers V1's setRole -> updateSystemRole, which
-       * UPDATEs users.systemrole on the DB. No event tells the frontend, so
-       * the cached userStore entry for params.userid still carries the
-       * pre-promotion systemrole and ModLogUser.vue's crown gate
-       * (systemrole !== 'User') keeps failing on the next render — the
-       * "Trainee not showing as a Mod in the group logs" report on
-       * Discourse #9481 post 545. Force-refresh the cached entry so the
-       * next render picks up the new systemrole.
-       *
-       * ourPostingStatus (e.g. changed via ModSupportMembership.vue) needs
-       * the same treatment: it gates the Approve button on a pending
-       * message elsewhere and otherwise stays stale in the cache
-       * (Discourse #10008 post 1).
-       */
-      if (params.userid && (params.role || params.ourPostingStatus)) {
-        const userStore = useUserStore()
-        await userStore.fetch(params.userid, true)
-      }
-      return data
-    },
-    async add(params) {
-      this.context = null
-      const ret = await api(this.config).memberships.put(params)
-      return ret.id
-    },
-    async ban(userid, groupid) {
-      await api(this.config).memberships.ban(userid, groupid)
-    },
-    async unban(userid, groupid) {
-      await api(this.config).memberships.unban(userid, groupid)
-    },
-    async happinessReviewed(params) {
-      await api(this.config).memberships.happinessReviewed({
-        userid: params.userid,
-        groupid: params.groupid,
-        happiness: String(params.happinessid),
-        action: 'HappinessReviewed',
-      })
-    },
-    async reviewHold(params) {
-      await api(this.config).memberships.reviewHold(
-        params.userid,
-        params.groupid
-      )
-      const authStore = useAuthStore()
-      const me = authStore.user
-      this.reviewHeld({
-        heldby: {
-          id: me.id,
-        },
-        membershipid: params.membershipid,
-      })
-    },
-
-    async reviewRelease(params) {
-      await api(this.config).memberships.reviewRelease(
-        params.userid,
-        params.groupid
-      )
-      this.reviewHeld({
-        heldby: null,
-        membershipid: params.membershipid,
-      })
-    },
     async askMerge(id, params) {
-      console.log('useMemberStore askMerge', id, params)
       await api(this.config).merge.ask(params)
       delete this.list[id]
       const authStore = useAuthStore()
@@ -401,7 +80,6 @@ export const useMemberStore = defineStore('member', {
       }
     },
     async ignoreMerge(id, params) {
-      console.log('useMemberStore ignoreMerge', id, params)
       await api(this.config).merge.ignore(params)
       delete this.list[id]
       const authStore = useAuthStore()
@@ -415,19 +93,8 @@ export const useMemberStore = defineStore('member', {
     },
   },
   getters: {
-    getByGroup: (state) => (groupid) => {
-      const ret = Object.values(state.list).filter((member) => {
-        return parseInt(member.groupid) === parseInt(groupid)
-      })
-      // console.log('memberStore:',groupid, ret.length)
-      return ret
-    },
     get: (state) => (id) => {
-      const ret = Object.values(state.list).filter((member) => {
-        return parseInt(member.id) === parseInt(id)
-      })
-      if (ret) return ret[0]
-      return ret
+      return state.list[id]
     },
     ratingById: (state) => (id) => {
       return state.ratings.find((r) => parseInt(r.id) === parseInt(id))

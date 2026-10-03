@@ -1,178 +1,91 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
-import ApprovedPage from '~/modtools/pages/members/approved/[[id]]/[[term]].vue'
+import ApprovedPage from '~/modtools/pages/members/approved/[[term]].vue'
 
-// Mock refs that will be shared between tests
-const mockBusy = ref(false)
-const mockContext = ref(null)
-const mockGroup = ref(null)
-const mockGroupid = ref(0)
-const mockLimit = ref(10)
-const mockShow = ref(0)
-const mockCollection = ref(null)
+// Self-moderating rework: this page used to be a per-community membership
+// browser (ModGroupSelect + groupid, [[id]]/[[term]] route). It's now a
+// national member-lookup tool: a numeric route term is a direct id lookup
+// (the links other components use to jump to a member), anything else is a
+// name/email search via the shared useModMembers composable's
+// filter=search contract. These tests replace the groupid-based suite.
+const mockBump = ref(0)
 const mockSearch = ref('')
-const mockFilter = ref('')
-const mockSort = ref(true)
+const mockFilter = ref('new')
 const mockDistance = ref(10)
 const mockMembers = ref([])
-const mockVisibleMembers = ref([])
-const mockBump = ref(0)
-const mockNextAfterRemoved = ref(null)
 const mockLoadMore = vi.fn()
 
-vi.mock('~/composables/useModMembers', () => ({
+vi.mock('@/composables/useModMembers', () => ({
   setupModMembers: () => ({
-    busy: mockBusy,
-    context: mockContext,
-    group: mockGroup,
-    groupid: mockGroupid,
-    limit: mockLimit,
-    show: mockShow,
-    collection: mockCollection,
+    bump: mockBump,
     search: mockSearch,
     filter: mockFilter,
-    sort: mockSort,
     distance: mockDistance,
     members: mockMembers,
-    visibleMembers: mockVisibleMembers,
-    bump: mockBump,
-    nextAfterRemoved: mockNextAfterRemoved,
     loadMore: mockLoadMore,
   }),
 }))
 
-// Mock stores
-const mockMemberStore = {
-  list: {},
-  clear: vi.fn(),
-}
+const mockFetch = vi.fn()
+const mockClear = vi.fn()
 
-vi.mock('@/stores/member', () => ({
-  useMemberStore: () => mockMemberStore,
-}))
-
-const mockMiscStore = {
-  get: vi.fn(),
-  set: vi.fn(),
-}
-
-vi.mock('@/stores/misc', () => ({
-  useMiscStore: () => mockMiscStore,
-}))
-
-// Mock useMe composable
-vi.mock('~/composables/useMe', () => ({
-  useMe: () => ({
-    myGroups: ref([{ id: 1, role: 'Moderator' }]),
+vi.mock('~/modtools/stores/member', () => ({
+  useMemberStore: () => ({
+    fetch: mockFetch,
+    clear: mockClear,
+    list: {},
   }),
 }))
 
-// Mock route params
-const mockRouteParams = ref({ id: undefined, term: undefined })
+const mockRouteParams = ref({ term: undefined })
 const mockRouterPush = vi.fn()
-// Use a ref so that Vue's reactivity system can track it as a computed dep
-const mockUseRouteReturnsUndefined = ref(false)
-
-vi.hoisted(() => {
-  vi.resetModules()
-})
 
 vi.mock('#imports', async () => {
   const actual = await vi.importActual('#imports')
   return {
     ...actual,
-    useRoute: () => {
-      if (mockUseRouteReturnsUndefined.value) return undefined
-      return { params: mockRouteParams.value }
-    },
+    useRoute: () => ({ params: mockRouteParams.value }),
     useRouter: () => ({
       push: mockRouterPush,
-      currentRoute: { value: { path: '/members/approved/' } },
+      currentRoute: {
+        value: {
+          path: mockRouteParams.value.term
+            ? '/members/approved/' + mockRouteParams.value.term
+            : '/members/approved/',
+        },
+      },
     }),
   }
 })
 
-// Make useRoute/useRouter available globally (Nuxt auto-imports these)
-globalThis.__testUseRoute = () => {
-  if (mockUseRouteReturnsUndefined.value) return undefined
-  return { params: mockRouteParams.value }
-}
-globalThis.__testUseRouter = () => ({
-  push: mockRouterPush,
-  currentRoute: { value: { path: '/members/approved/' } },
-})
-
-describe('members/approved/[[id]]/[[term]].vue page', () => {
+describe('members/approved/[[term]].vue page', () => {
   function mountComponent() {
     return mount(ApprovedPage, {
       global: {
         plugins: [createPinia()],
         stubs: {
-          'client-only': {
-            template: '<div><slot /></div>',
-          },
-          ScrollToTop: {
-            template: '<div class="scroll-to-top" />',
-            props: ['prepend'],
-          },
-          ModGroupSelect: {
-            template: '<div class="mod-group-select" />',
-            props: ['modelValue', 'modonly', 'remember'],
-          },
-          ModMemberTypeSelect: {
-            template: '<div class="mod-member-type-select" />',
-            props: ['modelValue'],
-          },
+          'client-only': { template: '<div><slot /></div>' },
           ModMemberSearchbox: {
             template: '<div class="mod-member-searchbox" />',
             props: ['search'],
             emits: ['search'],
           },
-          ModAddMemberModal: {
-            template: '<div class="mod-add-member-modal" />',
-            props: ['groupid'],
-            emits: ['hidden'],
-            methods: { show: vi.fn() },
+          ModMember: {
+            template: '<div class="mod-member" />',
+            props: ['membershipid'],
           },
-          ModBanMemberModal: {
-            template: '<div class="mod-ban-member-modal" />',
-            props: ['groupid'],
-            emits: ['hidden'],
-            methods: { show: vi.fn() },
-          },
-          ModMergeButton: {
-            template: '<div class="mod-merge-button" />',
-          },
-          ModMembers: {
-            template: '<div class="mod-members" />',
-          },
+          ModMembers: { template: '<div class="mod-members" />' },
           NoticeMessage: {
             template: '<div class="notice-message"><slot /></div>',
             props: ['variant'],
           },
-          'b-button': {
-            template: '<button @click="$emit(\'click\')"><slot /></button>',
-            props: ['variant'],
-          },
-          'b-img': {
-            template: '<img />',
-            props: ['src', 'alt', 'lazy'],
-          },
-          'v-icon': {
-            template: '<i :class="icon" />',
-            props: ['icon'],
-          },
+          Spinner: { template: '<div class="spinner" />', props: ['size'] },
           'infinite-loading': {
             template:
               '<div class="infinite-loading"><slot name="spinner" /><slot name="complete" /></div>',
-            props: [
-              'direction',
-              'forceUseInfiniteWrapper',
-              'distance',
-              'identifier',
-            ],
+            props: ['direction', 'distance', 'identifier'],
             emits: ['infinite'],
           },
         },
@@ -183,199 +96,97 @@ describe('members/approved/[[id]]/[[term]].vue page', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
-    mockBusy.value = false
-    mockContext.value = null
-    mockGroup.value = null
-    mockGroupid.value = 0
-    mockShow.value = 0
-    mockCollection.value = null
-    mockSearch.value = ''
-    mockFilter.value = ''
-    mockSort.value = true
-    mockMembers.value = []
-    mockVisibleMembers.value = []
     mockBump.value = 0
-    mockRouteParams.value = { id: undefined, term: undefined }
-    mockRouterPush.mockClear()
-    mockMemberStore.list = {}
-    mockUseRouteReturnsUndefined.value = false
+    mockSearch.value = ''
+    mockFilter.value = 'new'
+    mockMembers.value = []
+    mockRouteParams.value = { term: undefined }
   })
 
   describe('rendering', () => {
-    it('shows member controls when groupid is set', async () => {
-      mockRouteParams.value = { id: '123', term: undefined }
+    it('prompts to search when there is no term', async () => {
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.mod-member-type-select').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Search for a member')
+      expect(wrapper.find('.mod-member').exists()).toBe(false)
+      expect(wrapper.find('.mod-members').exists()).toBe(false)
     })
 
-    it('shows please select message when no group and no term', async () => {
-      mockGroupid.value = 0
-      mockRouteParams.value = { id: undefined, term: undefined }
+    it('shows the member card for a numeric route term', async () => {
+      mockRouteParams.value = { term: '456' }
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
-      expect(wrapper.text()).toContain('Please select a community')
-    })
-  })
-
-  describe('setup', () => {
-    it('sets collection to Approved', () => {
-      mountComponent()
-      expect(mockCollection.value).toBe('Approved')
-    })
-  })
-
-  describe('computed properties', () => {
-    it('id returns parsed route param when present', () => {
-      mockRouteParams.value = { id: '123', term: undefined }
-      const wrapper = mountComponent()
-      expect(wrapper.vm.id).toBe(123)
+      expect(wrapper.find('.mod-member').exists()).toBe(true)
     })
 
-    it('id returns 0 when no route param', () => {
-      mockRouteParams.value = { id: undefined, term: undefined }
-      const wrapper = mountComponent()
-      expect(wrapper.vm.id).toBe(0)
-    })
-
-    it('term returns route param when present', () => {
-      mockRouteParams.value = { id: '123', term: 'test-search' }
-      const wrapper = mountComponent()
-      expect(wrapper.vm.term).toBe('test-search')
-    })
-
-    it('term returns null when useRoute() returns undefined (SSR hydration race)', async () => {
-      mockRouteParams.value = { id: undefined, term: undefined }
+    it('shows the member list for a text route term', async () => {
+      mockRouteParams.value = { term: 'smith' }
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
-      // Simulate useRoute() returning undefined (SSR/hydration context).
-      // Using a ref so Vue's reactivity system invalidates the term computed.
-      mockUseRouteReturnsUndefined.value = true
-      await wrapper.vm.$nextTick()
-      expect(() => wrapper.vm.term).not.toThrow()
-      expect(wrapper.vm.term).toBeNull()
-    })
-
-    it('groupName returns group namedisplay when group exists', async () => {
-      mockGroup.value = { namedisplay: 'Test Group' }
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.groupName).toBe('Test Group')
-    })
-  })
-
-  describe('watchers', () => {
-    it('clears and bumps when filter changes', async () => {
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-      const initialBump = mockBump.value
-      vi.clearAllMocks()
-
-      mockFilter.value = 'Active'
-      await wrapper.vm.$nextTick()
-
-      expect(mockContext.value).toBe(null)
-      expect(mockMemberStore.clear).toHaveBeenCalled()
-      // Bump should have increased (don't check exact value as other tests may affect it)
-      expect(mockBump.value).toBeGreaterThan(initialBump)
-    })
-
-    it('navigates when chosengroupid changes to 0', async () => {
-      mockRouteParams.value = { id: '123', term: undefined }
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-      mockRouterPush.mockClear()
-
-      wrapper.vm.chosengroupid = 0
-      await wrapper.vm.$nextTick()
-      await flushPromises()
-
-      expect(mockRouterPush).toHaveBeenCalledWith('/members/approved/')
+      expect(wrapper.find('.mod-members').exists()).toBe(true)
     })
   })
 
   describe('mounted lifecycle', () => {
-    it('sets groupid and chosengroupid from route param', async () => {
-      mockRouteParams.value = { id: '789', term: undefined }
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-      expect(mockGroupid.value).toBe(789)
-      expect(wrapper.vm.chosengroupid).toBe(789)
+    it('sets filter to search', () => {
+      mountComponent()
+      expect(mockFilter.value).toBe('search')
     })
 
-    it('sets search from route param term', async () => {
-      mockRouteParams.value = { id: '789', term: 'test-search' }
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-      expect(mockSearch.value).toBe('test-search')
+    it('fetches a single member directly for a numeric term', async () => {
+      mockRouteParams.value = { term: '789' }
+      mountComponent()
+      await Promise.resolve()
+      expect(mockFetch).toHaveBeenCalledWith(789)
+      expect(mockSearch.value).toBe('')
     })
 
-    it('clears member store on mount', async () => {
-      mockRouteParams.value = { id: '789', term: undefined }
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-      expect(mockMemberStore.clear).toHaveBeenCalled()
+    it('sets search and bumps for a text term', async () => {
+      mockRouteParams.value = { term: 'jones' }
+      mountComponent()
+      expect(mockSearch.value).toBe('jones')
+      expect(mockClear).toHaveBeenCalled()
     })
 
-    it('disables sort when term is present', async () => {
-      mockRouteParams.value = { id: '789', term: 'test-search' }
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-      expect(mockSort.value).toBe(false)
+    it('leaves search empty with no term', () => {
+      mockRouteParams.value = { term: undefined }
+      mountComponent()
+      expect(mockSearch.value).toBe('')
     })
   })
 
-  describe('methods', () => {
-    it('addMember shows add modal', () => {
-      const wrapper = mountComponent()
-      wrapper.vm.addMember()
-      expect(wrapper.vm.showAddMember).toBe(true)
-    })
-
-    it('banMember shows ban modal', () => {
-      const wrapper = mountComponent()
-      wrapper.vm.banMember()
-      expect(wrapper.vm.showBanMember).toBe(true)
-    })
-
-    it('startsearch updates search and clears context', async () => {
-      mockRouteParams.value = { id: '123', term: undefined }
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-
-      wrapper.vm.startsearch('test search')
-
-      expect(mockSearch.value).toBe('test search')
-      expect(mockContext.value).toBe(null)
-      expect(mockMemberStore.clear).toHaveBeenCalled()
-    })
-
-    it('startsearch navigates with search term', async () => {
-      mockRouteParams.value = { id: '123', term: undefined }
+  describe('startsearch', () => {
+    it('navigates to the id route for a numeric search', async () => {
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
       mockRouterPush.mockClear()
 
-      wrapper.vm.startsearch('test')
+      wrapper.vm.startsearch('123')
 
-      expect(mockRouterPush).toHaveBeenCalledWith('/members/approved/123/test')
-    })
-  })
-
-  describe('data properties', () => {
-    it('initializes chosengroupid to 0', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.vm.chosengroupid).toBe(0)
+      expect(mockRouterPush).toHaveBeenCalledWith('/members/approved/123')
+      expect(mockFetch).toHaveBeenCalledWith(123)
     })
 
-    it('initializes showAddMember to false', () => {
+    it('navigates to the term route for a text search', async () => {
       const wrapper = mountComponent()
-      expect(wrapper.vm.showAddMember).toBe(false)
+      await wrapper.vm.$nextTick()
+      mockRouterPush.mockClear()
+
+      wrapper.vm.startsearch('smith')
+
+      expect(mockRouterPush).toHaveBeenCalledWith('/members/approved/smith')
+      expect(mockSearch.value).toBe('smith')
     })
 
-    it('initializes showBanMember to false', () => {
+    it('navigates to the bare page for an empty search', async () => {
+      mockRouteParams.value = { term: 'smith' }
       const wrapper = mountComponent()
-      expect(wrapper.vm.showBanMember).toBe(false)
+      await wrapper.vm.$nextTick()
+      mockRouterPush.mockClear()
+
+      wrapper.vm.startsearch('')
+
+      expect(mockRouterPush).toHaveBeenCalledWith('/members/approved/')
     })
   })
 })

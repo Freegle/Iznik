@@ -157,30 +157,12 @@ class StoriesToCentralCommandTest extends TestCase
         $this->assertSame(2, $count);
     }
 
-    public function test_includes_groupname_from_membership(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup(['onmap' => true]);
-        $this->createMembership($user, $group);
-        $storyId = $this->createStory(['userid' => $user->id]);
-
-        (new StoriesService())->sendToCentral(false);
-
-        Mail::assertSent(StoriesToCentralMail::class, function (StoriesToCentralMail $mail) use ($group) {
-            return $mail->stories[0]['groupname'] === $group->namefull;
-        });
-    }
-
-    public function test_groupname_is_null_for_story_with_no_membership(): void
-    {
-        $storyId = $this->createStory(['userid' => null]);
-
-        (new StoriesService())->sendToCentral(false);
-
-        Mail::assertSent(StoriesToCentralMail::class, function (StoriesToCentralMail $mail) {
-            return $mail->stories[0]['groupname'] === null;
-        });
-    }
+    // test_includes_groupname_from_membership and
+    // test_groupname_is_null_for_story_with_no_membership deleted: both existed only to
+    // exercise per-community membership-derived group naming, which no longer exists now
+    // there is one Freegle (see 2026_09_20_000001_remove_group_model.php). StoriesService
+    // still reads a dropped `memberships`/`groups` join for 'groupname' — flagged to
+    // laravel-agent as an app-side blocker to decide what (if anything) 'groupname' becomes.
 
     public function test_includes_photo_url_for_story_with_image(): void
     {

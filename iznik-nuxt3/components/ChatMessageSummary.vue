@@ -47,7 +47,6 @@
 <script setup>
 import { computed, defineAsyncComponent } from 'vue'
 import { useMessageStore } from '~/stores/message'
-import { useGroupStore } from '~/stores/group'
 import { useChatStore } from '~/stores/chat'
 import { useAuthStore } from '~/stores/auth'
 import ChatMessageCard from '~/components/ChatMessageCard'
@@ -69,7 +68,6 @@ const props = defineProps({
 })
 
 const messageStore = useMessageStore()
-const groupStore = useGroupStore()
 const authStore = useAuthStore()
 
 const myid = authStore.user?.id
@@ -77,14 +75,6 @@ const myid = authStore.user?.id
 // Fetch the message info.
 try {
   await messageStore.fetch(props.id)
-
-  const message = messageStore.byId(props.id)
-
-  if (message) {
-    message.groups.forEach(async (g) => {
-      await groupStore.fetch(g.groupid)
-    })
-  }
 } catch (e) {
   console.log('Message fetch failed', props.id, e)
 }

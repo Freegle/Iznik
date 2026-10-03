@@ -5,17 +5,7 @@
       <b-col cols="2">
         {{ dateonly(post.arrival) }}
       </b-col>
-      <b-col cols="2">
-        <ShowMore
-          v-if="post.groups && post.groups.length"
-          :items="post.groups"
-          :limit="3"
-          inline
-        >
-          <template #item="{ item }">{{ item.namedisplay }}</template>
-        </ShowMore>
-      </b-col>
-      <b-col cols="4">
+      <b-col cols="6">
         {{ post.subject }}
       </b-col>
       <b-col cols="2">

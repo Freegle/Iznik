@@ -262,10 +262,10 @@ var cellSetMagicLE = [4]byte{0x43, 0x43, 0x53, 0x31}
 // RasterizeWKT converts a polygon/multipolygon WKT string into its compact
 // cell-set form (plans/2026-08-24-rippling-reach-raster-storage.md), via the
 // spatial server's POST /v1/reach/rasterize - the ONE place a boundary
-// becomes a grid. Used by the reach clip (a secondary-group rejection has to
-// turn the REJECTING GROUP's own area into cells before it can subtract them
-// from a post's reach grid): the query API, not the admin one, since this is
-// a read-shaped conversion, not an index mutation.
+// becomes a grid. Used by the reach clip (an excluded area has to be turned
+// into cells before it can be subtracted from a post's reach grid): the
+// query API, not the admin one, since this is a read-shaped conversion, not
+// an index mutation.
 //
 // A 200 is not proof of a cell set: a misrouted request, a proxy's own 200,
 // or a server too old to know this endpoint would otherwise be returned and
@@ -339,46 +339,6 @@ func VectorizeCells(cells []byte, toleranceDegrees float64) (wkt string, geojson
 		return "", "", fmt.Errorf("spatial vectorize %s: empty boundary", reqURL)
 	}
 	return out.WKT, string(out.GeoJSON), nil
-}
-
-// GroupCellRelation mirrors the spatial server's response item for
-// GroupsIntersectingCells.
-type GroupCellRelation struct {
-	ID     int64 `json:"id"`
-	Within bool  `json:"within"`
-}
-
-// GroupsIntersectingCells calls POST /v1/groups/intersecting: which groups'
-// areas share at least one covered cell with this grid, each flagged with
-// whether the grid lies entirely within that group. The cell form of the
-// ST_Intersects/ST_Within pair the rejection clip, the retraction pass and
-// the crosspost count ask - answered by the spatial server so the comparison
-// happens on the same lattice as the reach itself, with the group rasters
-// cached there.
-func GroupsIntersectingCells(cells []byte) ([]GroupCellRelation, error) {
-	reqURL := fmt.Sprintf("%s/v1/groups/intersecting", baseURL())
-	resp, err := httpClient.Post(reqURL, "application/octet-stream", bytes.NewReader(cells))
-	if err != nil {
-		return nil, fmt.Errorf("spatial groups intersecting: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		return nil, fmt.Errorf("spatial dataset \"groups\" not ready")
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("spatial groups intersecting %s: HTTP %d", reqURL, resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("spatial groups intersecting %s: read body: %w", reqURL, err)
-	}
-	var out struct {
-		Groups []GroupCellRelation `json:"groups"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, fmt.Errorf("spatial groups intersecting %s: parse: %w", reqURL, err)
-	}
-	return out.Groups, nil
 }
 
 // ExtraString returns a string value from a QueryResult.Extra map, or "" if absent.

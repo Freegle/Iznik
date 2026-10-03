@@ -85,19 +85,6 @@ class UserForgetTest extends TestCase
         $this->assertEquals(0, DB::table('users_logins')->where('userid', $user->id)->count());
     }
 
-    public function test_forget_removes_memberships(): void
-    {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
-        $this->assertEquals(1, DB::table('memberships')->where('userid', $user->id)->count());
-
-        $user->forget('Test');
-
-        $this->assertEquals(0, DB::table('memberships')->where('userid', $user->id)->count());
-    }
-
     public function test_forget_clears_about_me(): void
     {
         $user = $this->createTestUser();
@@ -210,10 +197,8 @@ class UserForgetTest extends TestCase
     public function test_forget_clears_message_content(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
 
-        $message = $this->createTestMessage($user, $group, [
+        $message = $this->createTestMessage($user, [
             'textbody' => 'Personal details here',
         ]);
 

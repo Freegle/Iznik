@@ -39,7 +39,6 @@ describe('ModSystemLogSearch', () => {
     return mount(ModSystemLogSearch, {
       props: {
         userid: null,
-        groupid: null,
         msgid: null,
         ...props,
       },
@@ -160,13 +159,6 @@ describe('ModSystemLogSearch', () => {
       expect(wrapper.vm.userIdInput).toBe(123)
     })
 
-    it('syncs groupid prop to groupIdInput', async () => {
-      const wrapper = mountComponent({ groupid: 456 })
-      await wrapper.vm.$nextTick()
-      // Component stores numeric props as-is (not converted to string)
-      expect(wrapper.vm.groupIdInput).toBe(456)
-    })
-
     it('syncs msgid prop to msgIdInput', async () => {
       const wrapper = mountComponent({ msgid: 789 })
       await wrapper.vm.$nextTick()
@@ -251,13 +243,6 @@ describe('ModSystemLogSearch', () => {
       wrapper.vm.msgIdInput = '456'
       await wrapper.vm.doSearch()
       expect(wrapper.emitted('update:msgid')[0]).toEqual([456])
-    })
-
-    it('doSearch emits update:groupid with parsed value', async () => {
-      const wrapper = mountComponent()
-      wrapper.vm.groupIdInput = '789'
-      await wrapper.vm.doSearch()
-      expect(wrapper.emitted('update:groupid')[0]).toEqual([789])
     })
 
     it('doSearch sets IP filter when ipInput has value', async () => {

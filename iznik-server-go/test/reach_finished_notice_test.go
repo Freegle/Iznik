@@ -24,8 +24,7 @@ func TestReachFinishedNotice(t *testing.T) {
 
 	prefix := uniquePrefix("reachdone")
 	posterID := CreateTestUser(t, prefix, "Poster")
-	group := CreateTestGroup(t, prefix)
-	mid := CreateTestMessage(t, posterID, group, "OFFER: reach finished test", 51.5, -0.1)
+	mid := CreateTestMessage(t, posterID, "OFFER: reach finished test", 51.5, -0.1)
 
 	viewerID := CreateTestUser(t, prefix+"v", "Viewer")
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+

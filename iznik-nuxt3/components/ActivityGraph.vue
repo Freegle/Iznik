@@ -4,7 +4,6 @@
       <h3 class="d-flex justify-content-between flex-wrap">
         <span>
           {{ graphTitles[graphType] }}
-          <span v-if="groupName" class="text-muted">on {{ groupName }}</span>
         </span>
         <div class="d-flex">
           <b-form-select
@@ -56,10 +55,8 @@
       </p>
       <p v-if="graphType === 'ActiveUsers'">
         This is the number of freeglers active in the 30 days before each date.
-        Only available for individual communities at the moment; if you add up
-        across communities you'll get the wrong number because the same freegler
-        might be active on multiple communities. Data valid from around the
-        start of September 2020. Only includes freeglers who logged in.
+        Data valid from around the start of September 2020. Only includes
+        freeglers who logged in.
       </p>
       <div
         v-if="loading"
@@ -95,16 +92,6 @@ import { useNuxtApp } from '#app'
 const { $api } = useNuxtApp()
 
 const props = defineProps({
-  groupid: {
-    type: Number,
-    required: false,
-    default: null,
-  },
-  groupName: {
-    type: String,
-    required: false,
-    default: null,
-  },
   start: {
     type: Date,
     required: true,
@@ -144,11 +131,6 @@ const props = defineProps({
     default: false,
   },
   approvedmembers: {
-    type: Boolean,
-    required: false,
-    default: false,
-  },
-  systemwide: {
     type: Boolean,
     required: false,
     default: false,
@@ -252,13 +234,11 @@ const graphTypes = computed(() => {
     ret.push({ value: 'Weight', text: 'Weight estimates' })
   }
 
-  if (props.approvedmembers && (props.groupid === -2 || props.groupid > 0)) {
-    // Only available systemwide or on individual groups.
+  if (props.approvedmembers) {
     ret.push({ value: 'ApprovedMemberCount', text: 'Freeglers' })
   }
 
-  if (props.activeusers && (props.groupid === -2 || props.groupid > 0)) {
-    // Only available systemwide or on individual groups.
+  if (props.activeusers) {
     ret.push({ value: 'ActiveUsers', text: 'Active Freeglers' })
   }
 
@@ -434,10 +414,10 @@ const fetch = async (nodef) => {
     components: comp,
     start: props.start.toISOString(),
     end: props.end.toISOString(),
-    allgroups: !props.systemwide && !props.groupid,
-    group: props.groupid > 0 ? props.groupid : null,
-    systemwide: props.systemwide,
-    suppliedgroup: props.groupid,
+    allgroups: false,
+    group: null,
+    systemwide: true,
+    suppliedgroup: null,
     units: units.value,
   })
 
@@ -488,13 +468,6 @@ watch(
 
 watch(
   () => props.end,
-  () => {
-    maybeFetch()
-  }
-)
-
-watch(
-  () => props.groupid,
   () => {
     maybeFetch()
   }

@@ -3,8 +3,6 @@
 namespace Tests\Feature\Newsfeed;
 
 use App\Mail\Newsfeed\NewsfeedDigestMail;
-use App\Models\Group;
-use App\Models\Membership;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -46,26 +44,21 @@ class SendDigestCommandTest extends TestCase
     }
 
     /**
-     * Eligible recipient: recent lastaccess, a location, approved Freegle membership.
-     *
-     * @return array{0: User, 1: Group}
+     * Eligible recipient: recent lastaccess, a location. There is one Freegle now, so
+     * there is no membership to check (see 2026_09_20_000001_remove_group_model.php).
      */
-    private function makeEligibleUser(): array
+    private function makeEligibleUser(): User
     {
         $locId = $this->makeLocation();
-        $user = $this->createTestUser(['lastaccess' => now(), 'lastlocation' => $locId]);
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['role' => Membership::ROLE_MEMBER]);
 
-        return [$user, $group];
+        return $this->createTestUser(['lastaccess' => now(), 'lastlocation' => $locId]);
     }
 
-    private function createPost(int $userId, int $groupId, array $attributes = []): int
+    private function createPost(int $userId, array $attributes = []): int
     {
         // Default 1 day old: older than the 12h minhourage floor, within 14 days.
         $id = DB::table('newsfeed')->insertGetId(array_merge([
             'userid' => $userId,
-            'groupid' => $groupId,
             'type' => 'Message',
             'message' => self::LONG_MESSAGE,
             'added' => now()->subDay(),
@@ -95,7 +88,7 @@ class SendDigestCommandTest extends TestCase
     {
         Mail::fake();
 
-        [$user] = $this->makeEligibleUser();
+        $user = $this->makeEligibleUser();
 
         $this->artisan('mail:newsfeed:digest', ['--user' => $user->id])
             ->expectsOutputToContain('Sent 0 newsfeed digest(s)')
@@ -108,9 +101,9 @@ class SendDigestCommandTest extends TestCase
     {
         Mail::fake();
 
-        [$user, $group] = $this->makeEligibleUser();
+        $user = $this->makeEligibleUser();
         $other = $this->createTestUser();
-        $this->createPost($other->id, $group->id);
+        $this->createPost($other->id);
 
         $this->artisan('mail:newsfeed:digest', ['--user' => $user->id])
             ->expectsOutputToContain('Sent 1 newsfeed digest(s)')
@@ -127,9 +120,9 @@ class SendDigestCommandTest extends TestCase
     {
         Mail::fake();
 
-        [$user, $group] = $this->makeEligibleUser();
+        $user = $this->makeEligibleUser();
         $other = $this->createTestUser();
-        $this->createPost($other->id, $group->id, ['message' => 'too short']);
+        $this->createPost($other->id, ['message' => 'too short']);
 
         $this->artisan('mail:newsfeed:digest', ['--user' => $user->id])->assertExitCode(0);
 
@@ -140,8 +133,8 @@ class SendDigestCommandTest extends TestCase
     {
         Mail::fake();
 
-        [$user, $group] = $this->makeEligibleUser();
-        $this->createPost($user->id, $group->id);
+        $user = $this->makeEligibleUser();
+        $this->createPost($user->id);
 
         $this->artisan('mail:newsfeed:digest', ['--user' => $user->id])->assertExitCode(0);
 
@@ -152,9 +145,9 @@ class SendDigestCommandTest extends TestCase
     {
         Mail::fake();
 
-        [$user, $group] = $this->makeEligibleUser();
+        $user = $this->makeEligibleUser();
         $other = $this->createTestUser();
-        $postId = $this->createPost($other->id, $group->id);
+        $postId = $this->createPost($other->id);
 
         // Marker already at/above the post id → nothing new.
         DB::table('newsfeed_users')->insert(['userid' => $user->id, 'newsfeedid' => $postId]);
@@ -168,10 +161,10 @@ class SendDigestCommandTest extends TestCase
     {
         Mail::fake();
 
-        [$user, $group] = $this->makeEligibleUser();
+        $user = $this->makeEligibleUser();
         $other = $this->createTestUser();
-        $this->createPost($other->id, $group->id, ['deleted' => now()]);
-        $this->createPost($other->id, $group->id, ['hidden' => now()]);
+        $this->createPost($other->id, ['deleted' => now()]);
+        $this->createPost($other->id, ['hidden' => now()]);
 
         $this->artisan('mail:newsfeed:digest', ['--user' => $user->id])->assertExitCode(0);
 
@@ -182,9 +175,9 @@ class SendDigestCommandTest extends TestCase
     {
         Mail::fake();
 
-        [$user, $group] = $this->makeEligibleUser();
+        $user = $this->makeEligibleUser();
         $other = $this->createTestUser();
-        $this->createPost($other->id, $group->id, [
+        $this->createPost($other->id, [
             'added' => now()->subDays(20),
             'timestamp' => now()->subDays(20),
         ]);
@@ -199,10 +192,8 @@ class SendDigestCommandTest extends TestCase
         Mail::fake();
 
         $user = $this->createTestUser(['lastaccess' => now()]); // no lastlocation
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['role' => Membership::ROLE_MEMBER]);
         $other = $this->createTestUser();
-        $this->createPost($other->id, $group->id);
+        $this->createPost($other->id);
 
         $this->artisan('mail:newsfeed:digest', ['--user' => $user->id])->assertExitCode(0);
 
@@ -213,11 +204,11 @@ class SendDigestCommandTest extends TestCase
     {
         Mail::fake();
 
-        [$user, $group] = $this->makeEligibleUser();
+        $user = $this->makeEligibleUser();
         DB::table('users')->where('id', $user->id)
             ->update(['settings' => json_encode(['notificationmails' => false])]);
         $other = $this->createTestUser();
-        $this->createPost($other->id, $group->id);
+        $this->createPost($other->id);
 
         $this->artisan('mail:newsfeed:digest', ['--user' => $user->id])->assertExitCode(0);
 
@@ -228,9 +219,9 @@ class SendDigestCommandTest extends TestCase
     {
         Mail::fake();
 
-        [$user, $group] = $this->makeEligibleUser();
+        $user = $this->makeEligibleUser();
         $other = $this->createTestUser();
-        $postId = $this->createPost($other->id, $group->id);
+        $postId = $this->createPost($other->id);
 
         $this->artisan('mail:newsfeed:digest', ['--user' => $user->id])->assertExitCode(0);
 
@@ -242,10 +233,10 @@ class SendDigestCommandTest extends TestCase
     {
         Mail::fake();
 
-        [$user, $group] = $this->makeEligibleUser();
+        $user = $this->makeEligibleUser();
         $other = $this->createTestUser();
         // Only 2 hours old — below the 12h minhourage floor.
-        $this->createPost($other->id, $group->id, [
+        $this->createPost($other->id, [
             'added' => now()->subHours(2),
             'timestamp' => now()->subHours(2),
         ]);
@@ -259,11 +250,11 @@ class SendDigestCommandTest extends TestCase
     {
         Mail::fake();
 
-        [$user, $group] = $this->makeEligibleUser();
+        $user = $this->makeEligibleUser();
         $other = $this->createTestUser();
         $locId = $this->makeLocationNamed('Tuvalu Central, Testshire');
         DB::table('users')->where('id', $other->id)->update(['lastlocation' => $locId]);
-        $this->createPost($other->id, $group->id);
+        $this->createPost($other->id);
 
         $this->artisan('mail:newsfeed:digest', ['--user' => $user->id])->assertExitCode(0);
 
@@ -277,9 +268,9 @@ class SendDigestCommandTest extends TestCase
     {
         Mail::fake();
 
-        [$user, $group] = $this->makeEligibleUser();
+        $user = $this->makeEligibleUser();
         $other = $this->createTestUser();
-        $this->createPost($other->id, $group->id);
+        $this->createPost($other->id);
 
         $this->artisan('mail:newsfeed:digest', ['--user' => $user->id])->assertExitCode(0);
 
@@ -294,9 +285,9 @@ class SendDigestCommandTest extends TestCase
     {
         Mail::fake();
 
-        [$user, $group] = $this->makeEligibleUser();
+        $user = $this->makeEligibleUser();
         $other = $this->createTestUser();
-        $this->createPost($other->id, $group->id);
+        $this->createPost($other->id);
 
         $this->artisan('mail:newsfeed:digest', ['--user' => $user->id, '--dry-run' => true])
             ->expectsOutputToContain('DRY RUN')

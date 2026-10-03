@@ -23,8 +23,7 @@ class PollGmailOutreachCommandTest extends TestCase
         parent::setUp();
 
         $donor = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->msgid = $this->createTestMessage($donor, $group, [
+        $this->msgid = $this->createTestMessage($donor, [
             'subject' => 'OFFER: Office clearance (Hampstead)',
         ])->id;
     }

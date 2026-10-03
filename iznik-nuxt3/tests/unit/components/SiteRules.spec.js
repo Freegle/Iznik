@@ -28,12 +28,21 @@ describe('SiteRules', () => {
       'weapons',
       'medicines',
       'animals',
-      'alcohol',
       'tobacco',
       'personal details',
       'selling',
     ]) {
       expect(text.toLowerCase(), rule).toContain(rule)
+    }
+  })
+
+  it('does not mention the rules the majority voted to allow', () => {
+    const wrapper = createWrapper()
+    const text = wrapper.text().toLowerCase()
+    // Alcohol and event tickets are allowed everywhere and must not be named, even as
+    // "allowed" - see briefs/frozen-settings.md.
+    for (const notMentioned of ['alcohol', 'ticket']) {
+      expect(text, notMentioned).not.toContain(notMentioned)
     }
   })
 

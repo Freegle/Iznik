@@ -60,8 +60,8 @@ func TestToUint64UnknownType(t *testing.T) {
 
 func TestResolveTypePrefersImgType(t *testing.T) {
 	// Explicit ImgType wins over everything else.
-	req := &PostRequest{ImgType: "Group", CommunityEvent: true}
-	assert.Equal(t, "Group", req.resolveType())
+	req := &PostRequest{ImgType: "Newsletter", CommunityEvent: true}
+	assert.Equal(t, "Newsletter", req.resolveType())
 }
 
 func TestResolveTypeFallsBackToType(t *testing.T) {
@@ -105,11 +105,6 @@ func TestResolveTypeDefaultIsMessage(t *testing.T) {
 func TestResolveParentIDMessage(t *testing.T) {
 	req := &PostRequest{MsgID: 42}
 	assert.Equal(t, uint64(42), req.resolveParentID())
-}
-
-func TestResolveParentIDGroup(t *testing.T) {
-	req := &PostRequest{ImgType: "Group", GroupID: 7}
-	assert.Equal(t, uint64(7), req.resolveParentID())
 }
 
 func TestResolveParentIDNewsletter(t *testing.T) {
@@ -168,7 +163,7 @@ func TestResolveParentIDBoolFlagGivesZero(t *testing.T) {
 
 func TestTypeConfigsContainsKnownTypes(t *testing.T) {
 	// Regression guard: each imgtype string used by callers must have a config.
-	expected := []string{"Message", "Group", "Newsletter", "CommunityEvent",
+	expected := []string{"Message", "Newsletter", "CommunityEvent",
 		"Volunteering", "ChatMessage", "User", "Newsfeed", "Story", "Noticeboard"}
 	for _, name := range expected {
 		_, ok := typeConfigs[name]

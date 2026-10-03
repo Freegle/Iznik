@@ -52,10 +52,9 @@ class ReachQueryService
      * caller that reads that as "outside the reach" refuses people on the
      * strength of our own outage. On 2026-09-02 the reach engine was down for
      * 16 hours and that is exactly what happened: a member 13 minutes' drive
-     * from a post, in the post's own group since 2009, had her reply held and
-     * was shown a notice saying it had not reached her yet - carrying an
-     * arrival time already in the past, because the drive-time estimate behind
-     * that text kept working throughout.
+     * from a post had her reply held and was shown a notice saying it had not
+     * reached her yet - carrying an arrival time already in the past, because
+     * the drive-time estimate behind that text kept working throughout.
      *
      * Callers on a member's path must let an undecided through. The release
      * cron is the exception and stays as it is: it re-asks, so an undecided
@@ -91,12 +90,12 @@ class ReachQueryService
      * if ANY of the viewer's (lat,lng) points falls inside the reach — viewers can
      * define multiple browse locations and a post qualifies if any one is covered.
      *
-     * @param array<int,array{0:float,1:float}> $latLngPairs list of [lat, lng]
+     * @param  array<int,array{0:float,1:float}>  $latLngPairs  list of [lat, lng]
      */
     public function isWithinReachAny(int $msgid, array $latLngPairs, ?string $band = null): bool
     {
         foreach ($latLngPairs as $pair) {
-            if (!isset($pair[0], $pair[1])) {
+            if (! isset($pair[0], $pair[1])) {
                 continue;
             }
             if ($this->isWithinReach($msgid, (float) $pair[0], (float) $pair[1], $band)) {
@@ -136,7 +135,7 @@ class ReachQueryService
             if ($q !== null && $q >= 1 && $q <= $max) {
                 // Quoted: a JSON path member that is a number is not a bare identifier, so
                 // $.fairness.1 does not address the ring - it silently matches nothing.
-                return '$.fairness."' . $q . '"';
+                return '$.fairness."'.$q.'"';
             }
         }
 
@@ -155,8 +154,8 @@ class ReachQueryService
     {
         try {
             $base = rtrim((string) config('freegle.routing_server_url'), '/');
-            $r = Http::timeout(5)->get($base . '/v1/quintile', ['lat' => $lat, 'lng' => $lng]);
-            if (!$r->successful() || !$r->json('available')) {
+            $r = Http::timeout(5)->get($base.'/v1/quintile', ['lat' => $lat, 'lng' => $lng]);
+            if (! $r->successful() || ! $r->json('available')) {
                 return null;
             }
             $q = (int) $r->json('quintile');
@@ -201,7 +200,7 @@ class ReachQueryService
      */
     private function clusterPaths(): array
     {
-        if (!config('freegle.ripple.cluster.enabled', false)) {
+        if (! config('freegle.ripple.cluster.enabled', false)) {
             return [];
         }
 

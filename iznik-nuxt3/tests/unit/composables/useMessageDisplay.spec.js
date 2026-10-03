@@ -29,7 +29,6 @@ vi.mock('~/composables/useDistance', () => ({
 const mockByIdMessage = vi.fn()
 const mockFetchUser = vi.fn()
 const mockByIdUser = vi.fn()
-const mockGetGroup = vi.fn()
 
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({ byId: mockByIdMessage }),
@@ -37,10 +36,6 @@ vi.mock('~/stores/message', () => ({
 
 vi.mock('~/stores/user', () => ({
   useUserStore: () => ({ fetch: mockFetchUser, byId: mockByIdUser }),
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({ get: mockGetGroup }),
 }))
 
 // Nearby store lookups (server distance + pinned ids). Same Map/Set references throughout
@@ -72,14 +67,13 @@ const activeScopes = []
  * Instantiate useMessageDisplay with controlled message data.
  *
  * @param {object|null} msgData  - the message object returned by messageStore.byId
- * @param {object}      opts     - { me, poster, group, authUser }
+ * @param {object}      opts     - { me, poster, authUser }
  */
 function make(msgData, opts = {}) {
   mockByIdMessage.mockReturnValue(msgData)
 
   if (opts.me !== undefined) mockMe.value = opts.me
   if (opts.poster !== undefined) mockByIdUser.mockReturnValue(opts.poster)
-  if (opts.group !== undefined) mockGetGroup.mockReturnValue(opts.group)
   if (opts.authUser !== undefined) {
     globalThis.__mockAuthStore = { user: opts.authUser }
   }
@@ -102,7 +96,6 @@ beforeEach(() => {
   mockNearbyPinned.clear()
   mockMe.value = null
   mockByIdUser.mockReturnValue(null)
-  mockGetGroup.mockReturnValue(null)
   mockFetchUser.mockResolvedValue(undefined)
   mockTimeagoShort.mockReturnValue('2h')
   mockTimeagoMedium.mockReturnValue('2 hours')
@@ -198,34 +191,6 @@ describe('useMessageDisplay', () => {
     it('leaves empty subject as empty string', () => {
       const c = make({ id: 1, subject: '' })
       expect(c.strippedSubject.value).toBe('')
-    })
-
-    it('uses custom group keyword for offer when provided', () => {
-      const c = make(
-        {
-          id: 1,
-          subject: 'GIVE: Custom keyword item',
-          groups: [{ groupid: 10 }],
-        },
-        { group: { settings: { keywords: { offer: 'GIVE' } } } }
-      )
-      expect(c.strippedSubject.value).toBe('Custom keyword item')
-    })
-
-    it('uses custom group keyword for wanted when provided', () => {
-      const c = make(
-        { id: 1, subject: 'SEEKING: Garden chair', groups: [{ groupid: 10 }] },
-        { group: { settings: { keywords: { wanted: 'SEEKING' } } } }
-      )
-      expect(c.strippedSubject.value).toBe('Garden chair')
-    })
-
-    it('falls back to default keywords when group has no settings', () => {
-      const c = make(
-        { id: 1, subject: 'OFFER: Fallback test', groups: [{ groupid: 10 }] },
-        { group: {} } // group without settings
-      )
-      expect(c.strippedSubject.value).toBe('Fallback test')
     })
   })
 
@@ -323,54 +288,13 @@ describe('useMessageDisplay', () => {
   })
 
   describe('timeAgo', () => {
-    it('uses groups[0].arrival as primary timestamp', () => {
+    it('uses arrival as the primary timestamp', () => {
       const c = make({
         id: 1,
-        groups: [{ arrival: '2026-05-16T10:00:00Z' }],
         arrival: '2026-05-15T10:00:00Z',
         date: '2026-05-14T10:00:00Z',
       })
       // Access value first to trigger lazy computed evaluation
-      expect(c.timeAgo.value).toBe('2h')
-      expect(mockTimeagoShort).toHaveBeenCalledWith('2026-05-16T10:00:00Z')
-    })
-
-    it('uses the ORIGIN group arrival, not a rippled-in copy that happens to be first', () => {
-      // Rippling adds a messages_groups row per group the post spreads to, with
-      // arrival = the ripple-bump time, and groups[] order is arbitrary. Showing a
-      // bump time made a 7-hour-old post read "1 hour" and the "Newest posted"
-      // order look shuffled - the sort correctly uses original post time.
-      const c = make({
-        id: 1,
-        groups: [
-          { arrival: '2026-05-16T10:00:00Z', rippled_in: 1 },
-          { arrival: '2026-05-14T10:00:00Z', rippled_in: 0 },
-          { arrival: '2026-05-15T10:00:00Z', rippled_in: 1 },
-        ],
-        arrival: '2026-05-13T10:00:00Z',
-      })
-      expect(c.timeAgo.value).toBe('2h')
-      expect(mockTimeagoShort).toHaveBeenCalledWith('2026-05-14T10:00:00Z')
-    })
-
-    it('falls back to message arrival when every group row is rippled-in', () => {
-      // Should not happen (there is always an origin row), but a bump time must
-      // never be shown as the posted age.
-      const c = make({
-        id: 1,
-        groups: [{ arrival: '2026-05-16T10:00:00Z', rippled_in: 1 }],
-        arrival: '2026-05-15T10:00:00Z',
-      })
-      expect(c.timeAgo.value).toBe('2h')
-      expect(mockTimeagoShort).toHaveBeenCalledWith('2026-05-15T10:00:00Z')
-    })
-
-    it('falls back to arrival when groups arrival is absent', () => {
-      const c = make({
-        id: 1,
-        groups: [{}],
-        arrival: '2026-05-15T10:00:00Z',
-      })
       expect(c.timeAgo.value).toBe('2h')
       expect(mockTimeagoShort).toHaveBeenCalledWith('2026-05-15T10:00:00Z')
     })
@@ -397,18 +321,8 @@ describe('useMessageDisplay', () => {
       expect(c.timeAgoExpanded.value).toBe('3 days')
     })
 
-    it('uses groups[0].arrival as primary timestamp', () => {
-      const c = make({
-        id: 1,
-        groups: [{ arrival: '2026-05-16T10:00:00Z' }],
-        arrival: '2026-05-15T10:00:00Z',
-      })
-      expect(c.timeAgoExpanded.value).toBe('2 hours')
-      expect(mockTimeagoMedium).toHaveBeenCalledWith('2026-05-16T10:00:00Z')
-    })
-
-    it('falls back to arrival when groups arrival is absent', () => {
-      const c = make({ id: 1, groups: [{}], arrival: '2026-05-15T10:00:00Z' })
+    it('uses arrival as the primary timestamp', () => {
+      const c = make({ id: 1, arrival: '2026-05-15T10:00:00Z' })
       expect(c.timeAgoExpanded.value).toBe('2 hours')
       expect(mockTimeagoMedium).toHaveBeenCalledWith('2026-05-15T10:00:00Z')
     })
@@ -449,18 +363,8 @@ describe('useMessageDisplay', () => {
       expect(c.fullTimeAgo.value).toBe('')
     })
 
-    it('uses groups[0].arrival as primary timestamp', () => {
-      const c = make({
-        id: 1,
-        groups: [{ arrival: '2026-05-16T10:00:00Z' }],
-        arrival: '2026-05-15T10:00:00Z',
-      })
-      expect(c.fullTimeAgo.value).toBe('Posted 2 hours ago')
-      expect(mockTimeago).toHaveBeenCalledWith('2026-05-16T10:00:00Z')
-    })
-
-    it('falls back to arrival when groups arrival is absent', () => {
-      const c = make({ id: 1, groups: [{}], arrival: '2026-05-15T10:00:00Z' })
+    it('uses arrival as the primary timestamp', () => {
+      const c = make({ id: 1, arrival: '2026-05-15T10:00:00Z' })
       expect(c.fullTimeAgo.value).toBe('Posted 2 hours ago')
       expect(mockTimeago).toHaveBeenCalledWith('2026-05-15T10:00:00Z')
     })

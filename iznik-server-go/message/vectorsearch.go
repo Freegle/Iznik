@@ -65,7 +65,7 @@ type scoredResult struct {
 // logs — see the type comment for why.
 // allowedIDs, when non-nil, restricts the search to those msgids (the browse-feed universe
 // for browse-scoped searches); nil = no restriction.
-func VectorSearch(term string, limit int, groupids []uint64, allowedIDs map[uint64]bool, msgtype string,
+func VectorSearch(term string, limit int, allowedIDs map[uint64]bool, msgtype string,
 	nelat, nelng, swlat, swlng float32) ([]SearchResult, VectorStats, error) {
 
 	stats := VectorStats{StoreSize: embedding.Global.Count()}
@@ -83,7 +83,7 @@ func VectorSearch(term string, limit int, groupids []uint64, allowedIDs map[uint
 
 	// Fetch more than needed so we can re-rank with keyword boost.
 	storeStart := time.Now()
-	vecResults := embedding.Global.Search(queryVec, limit*3, msgtype, groupids,
+	vecResults := embedding.Global.Search(queryVec, limit*3, msgtype,
 		allowedIDs, swlat, swlng, nelat, nelng)
 	stats.StoreMs = float64(time.Since(storeStart).Microseconds()) / 1000.0
 	stats.Candidates = len(vecResults)
@@ -133,7 +133,6 @@ func VectorSearch(term string, limit int, groupids []uint64, allowedIDs map[uint
 		sr := SearchResult{
 			Msgid:   vr.Msgid,
 			Arrival: vr.Arrival,
-			Groupid: vr.Groupid,
 			Lat:     lat,
 			Lng:     lng,
 			Word:    term,
@@ -211,7 +210,7 @@ func fingerprintVec(v []float32) string {
 
 // logVectorSearch emits a structured diagnostic log to Loki summarising one
 // vector search call. Cheap no-op when Loki is disabled.
-func logVectorSearch(term string, groupids []uint64, msgtype string, userID uint64,
+func logVectorSearch(term string, msgtype string, userID uint64,
 	searchmode string, returned int, fallbackTaken bool, stats VectorStats) {
 
 	l := misc.GetLoki()
@@ -219,10 +218,6 @@ func logVectorSearch(term string, groupids []uint64, msgtype string, userID uint
 		return
 	}
 
-	groupStrs := make([]string, len(groupids))
-	for i, g := range groupids {
-		groupStrs[i] = strconv.FormatUint(g, 10)
-	}
 
 	labels := map[string]string{
 		"searchmode":     searchmode,
@@ -234,7 +229,6 @@ func logVectorSearch(term string, groupids []uint64, msgtype string, userID uint
 		"term":            term,
 		"term_len":        len(term),
 		"msgtype":         msgtype,
-		"groupids":        strings.Join(groupStrs, ","),
 		"user_id":         userID,
 		"returned":        returned,
 		"fallback_taken":  fallbackTaken,

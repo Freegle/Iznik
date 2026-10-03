@@ -144,8 +144,6 @@ function mountLayout(stubs = {}) {
           },
         },
         ModMenuItemLeft: { template: '<div />' },
-        ModMissingRules: { template: '<div />' },
-        ModMissingProfile: { template: '<div />' },
         SomethingWentWrong: { template: '<div />' },
         ExternalLink: { template: '<a><slot /></a>' },
         'b-navbar': { template: '<nav><slot /></nav>' },

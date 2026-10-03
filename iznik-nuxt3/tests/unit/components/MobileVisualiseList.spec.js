@@ -66,10 +66,6 @@ const mockMessageStore = {
   byId: vi.fn().mockImplementation((id) => mockOffers.find((o) => o.id === id)),
 }
 
-const mockGroupStore = {
-  fetch: vi.fn().mockResolvedValue([]),
-}
-
 vi.hoisted(() => {
   vi.resetModules()
 })
@@ -86,10 +82,6 @@ globalThis.__testUseRouter = () => mockRouter
 
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
 }))
 
 describe('MobileVisualiseList', () => {

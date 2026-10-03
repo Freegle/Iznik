@@ -19,10 +19,7 @@ func TestPostMessageTakenRetiresRippledPendingKeepsApproved(t *testing.T) {
 	prefix := uniquePrefix("outcome_ripple_pending")
 	db := database.DBConn
 
-	originGroup := CreateTestGroup(t, prefix+"_origin")
-	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, originGroup, "Member")
 	_, posterToken := CreateTestSession(t, posterID)
 
 	var locationID uint64
@@ -76,9 +73,7 @@ func TestPostMessageTakenSingleGroupPendingNotStranded(t *testing.T) {
 	prefix := uniquePrefix("outcome_single_pending")
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
 	_, posterToken := CreateTestSession(t, posterID)
 
 	var locationID uint64

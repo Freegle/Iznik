@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/utils"
 )
 
 // EmbeddingDim is 256-dim Matryoshka truncation of nomic-embed-text-v1.5.
@@ -18,8 +17,6 @@ const EmbeddingDim = 256
 type Entry struct {
 	Msgid      uint64
 	Fromuser   uint64
-	Groupid    uint64   // messages_spatial.groupid - only ever ONE group, even for a rippled/multi-group message
-	GroupIDs   []uint64 // every group the message is Approved on (origin + rippled-in copies) - used for group-scoped search
 	Msgtype    string
 	Lat        float64
 	Lng        float64
@@ -54,14 +51,12 @@ func StartRefresh(interval time.Duration) {
 		}
 	}()
 }
-
 // embeddingRow mirrors the columns fetched by fetchEntries.
 type embeddingRow struct {
 	Msgid            uint64    `gorm:"column:msgid"`
 	Fromuser         uint64    `gorm:"column:fromuser"`
 	SubjectEmbedding []byte    `gorm:"column:subject_embedding"`
 	BodyEmbedding    []byte    `gorm:"column:body_embedding"`
-	Groupid          uint64    `gorm:"column:groupid"`
 	Msgtype          string    `gorm:"column:msgtype"`
 	Lat              float64   `gorm:"column:lat"`
 	Lng              float64   `gorm:"column:lng"`
@@ -92,7 +87,7 @@ func fetchEntries(extraWhere string, args ...interface{}) ([]Entry, error) {
 	var rows []embeddingRow
 	tx := db.Table("messages_embeddings me").
 		Select("me.msgid, m.fromuser, me.subject_embedding, me.body_embedding, "+
-			"ms.groupid, ms.msgtype, ST_Y(ms.point) as lat, ST_X(ms.point) as lng, "+
+			"ms.msgtype, ST_Y(ms.point) as lat, ST_X(ms.point) as lng, "+
 			"m.subject, ms.arrival").
 		Joins("INNER JOIN messages_spatial ms ON ms.msgid = me.msgid").
 		Joins("INNER JOIN messages m ON m.id = me.msgid").
@@ -103,67 +98,15 @@ func fetchEntries(extraWhere string, args ...interface{}) ([]Entry, error) {
 	}
 
 	entries := make([]Entry, 0, len(rows))
-	msgids := make([]uint64, 0, len(rows))
 	for _, r := range rows {
-		e, err := decodeEntry(r.Msgid, r.Fromuser, r.Groupid, r.Msgtype, r.Lat, r.Lng, r.Subject, r.Arrival, r.SubjectEmbedding, r.BodyEmbedding)
+		e, err := decodeEntry(r.Msgid, r.Fromuser, r.Msgtype, r.Lat, r.Lng, r.Subject, r.Arrival, r.SubjectEmbedding, r.BodyEmbedding)
 		if err != nil {
 			continue // wrong-sized subject blob: skip
 		}
 		entries = append(entries, e)
-		msgids = append(msgids, e.Msgid)
-	}
-
-	groupIDs, err := fetchGroupIDs(msgids)
-	if err != nil {
-		return nil, err
-	}
-	for i := range entries {
-		entries[i].GroupIDs = groupIDs[entries[i].Msgid]
 	}
 
 	return entries, nil
-}
-
-// fetchGroupIDs maps each msgid to every group the message is Approved on.
-// messages_spatial.groupid names only ONE group per message even when the message
-// is Approved on several (rippling adds a messages_groups row per receiving group)
-// - see message/groups.go's spatialGroupFilter comment. Search matches a mod's
-// group against any of them, not just the one messages_spatial happened to store
-// (Discourse 9808/751: a rippled-in post was invisible to ModTools search scoped
-// to the receiving group).
-//
-// Errors are returned, never swallowed: silently returning an empty map would
-// scope every entry to its single messages_spatial group and hide rippled-in
-// posts from the receiving group's moderators. The callers keep the entries they
-// already hold and retry on the next refresh tick.
-func fetchGroupIDs(msgids []uint64) (map[uint64][]uint64, error) {
-	groupIDs := make(map[uint64][]uint64, len(msgids))
-	if len(msgids) == 0 {
-		return groupIDs, nil
-	}
-
-	db := database.DBConn
-	if db == nil {
-		return nil, fmt.Errorf("database not initialized")
-	}
-
-	type groupRow struct {
-		Msgid   uint64 `gorm:"column:msgid"`
-		Groupid uint64 `gorm:"column:groupid"`
-	}
-	var groupRows []groupRow
-	if err := db.Table("messages_groups").
-		Select("msgid, groupid").
-		Where("msgid IN (?) AND collection = ? AND deleted = 0", msgids, utils.COLLECTION_APPROVED).
-		Scan(&groupRows).Error; err != nil {
-		return nil, fmt.Errorf("groups query: %w", err)
-	}
-
-	for _, gr := range groupRows {
-		groupIDs[gr.Msgid] = append(groupIDs[gr.Msgid], gr.Groupid)
-	}
-
-	return groupIDs, nil
 }
 
 // Load reads all embeddings + spatial metadata from DB.
@@ -245,16 +188,6 @@ func (s *Store) Refresh() error {
 		}
 	}
 
-	// A message's groups change without the message itself changing: a post ripples
-	// into a nearby group minutes after approval, while it is already in the store.
-	// Re-map the groups for every open message, not just the ones being added, or
-	// the receiving group's moderators cannot find the post until the next full
-	// Load() (Discourse 9808/751).
-	groupIDs, err := fetchGroupIDs(openIds)
-	if err != nil {
-		return fmt.Errorf("refresh groups: %w", err)
-	}
-
 	s.mu.Lock()
 	kept := make([]Entry, 0, len(s.entries)+len(newEntries))
 	for i := range s.entries {
@@ -263,9 +196,6 @@ func (s *Store) Refresh() error {
 		}
 	}
 	s.entries = append(kept, newEntries...)
-	for i := range s.entries {
-		s.entries[i].GroupIDs = groupIDs[s.entries[i].Msgid]
-	}
 	s.mu.Unlock()
 
 	return nil
@@ -274,7 +204,7 @@ func (s *Store) Refresh() error {
 // decodeEntry builds an Entry from raw DB columns. Subject embedding is
 // required and must match EmbeddingDim; body embedding is optional and
 // silently skipped if the wrong size.
-func decodeEntry(msgid, fromuser, groupid uint64, msgtype string, lat, lng float64, subject string, arrival time.Time, subjectBytes, bodyBytes []byte) (Entry, error) {
+func decodeEntry(msgid, fromuser uint64, msgtype string, lat, lng float64, subject string, arrival time.Time, subjectBytes, bodyBytes []byte) (Entry, error) {
 	if len(subjectBytes) != EmbeddingDim*4 {
 		return Entry{}, fmt.Errorf("subject embedding wrong size: %d", len(subjectBytes))
 	}
@@ -282,7 +212,6 @@ func decodeEntry(msgid, fromuser, groupid uint64, msgtype string, lat, lng float
 	e := Entry{
 		Msgid:    msgid,
 		Fromuser: fromuser,
-		Groupid:  groupid,
 		Msgtype:  msgtype,
 		Lat:      lat,
 		Lng:      lng,
@@ -362,7 +291,6 @@ func (s *Store) Evict(msgid uint64) bool {
 type VectorSearchResult struct {
 	Msgid      uint64    `json:"id"`
 	Fromuser   uint64    `json:"-"` // Used to exclude a post's own author from similar results
-	Groupid    uint64    `json:"groupid"`
 	Msgtype    string    `json:"type"`
 	Lat        float64   `json:"lat"`
 	Lng        float64   `json:"lng"`
@@ -371,23 +299,6 @@ type VectorSearchResult struct {
 	HasBody    bool      `json:"hasBody"`
 	Subject    string    `json:"-"` // Used for hybrid keyword scoring, not serialized
 	Arrival    time.Time `json:"-"`
-}
-
-// entryInAnyGroup reports whether e is Approved on any of the requested groups.
-// Groupid alone (messages_spatial's single column) only ever names the origin
-// group, so a message rippled into another group would otherwise be invisible
-// to a search scoped to the receiving group (Discourse 9808/751) - GroupIDs
-// carries every group the message is actually Approved on.
-func entryInAnyGroup(e *Entry, groupSet map[uint64]bool) bool {
-	if groupSet[e.Groupid] {
-		return true
-	}
-	for _, g := range e.GroupIDs {
-		if groupSet[g] {
-			return true
-		}
-	}
-	return false
 }
 
 // Search performs brute-force cosine similarity on every entry and returns the
@@ -399,17 +310,12 @@ func entryInAnyGroup(e *Entry, groupSet map[uint64]bool) bool {
 // search to make the top-K selection happen WITHIN the member's feed universe rather than
 // filtering afterwards (which would let out-of-feed posts crowd feed posts out of the
 // candidate set). nil = no restriction.
-func (s *Store) Search(query []float32, limit int, msgtype string, groupids []uint64,
+func (s *Store) Search(query []float32, limit int, msgtype string,
 	allowedIDs map[uint64]bool, swlat, swlng, nelat, nelng float32) []VectorSearchResult {
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	groupSet := make(map[uint64]bool, len(groupids))
-	for _, g := range groupids {
-		groupSet[g] = true
-	}
-	hasGroupFilter := len(groupids) > 0
 	hasBoxFilter := nelat != 0 || nelng != 0 || swlat != 0 || swlng != 0
 
 	type scored struct {
@@ -429,9 +335,6 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 			continue
 		}
 		if msgtype == "Wanted" && e.Msgtype != "Wanted" {
-			continue
-		}
-		if hasGroupFilter && !entryInAnyGroup(e, groupSet) {
 			continue
 		}
 		if allowedIDs != nil && !allowedIDs[e.Msgid] {
@@ -494,7 +397,6 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 		out[i] = VectorSearchResult{
 			Msgid:      e.Msgid,
 			Fromuser:   e.Fromuser,
-			Groupid:    e.Groupid,
 			Msgtype:    e.Msgtype,
 			Lat:        e.Lat,
 			Lng:        e.Lng,

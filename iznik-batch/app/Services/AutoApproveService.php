@@ -3,12 +3,9 @@
 namespace App\Services;
 
 use App\Helpers\ItemQuality;
-use App\Models\Group;
-use App\Models\Membership;
-use App\Models\MessageGroup;
+use App\Models\Message;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 
 class AutoApproveService
 {
@@ -18,28 +15,25 @@ class AutoApproveService
     public const PENDING_HOURS = 48;
 
     /**
-     * Short mod-veto window for rippling-out rows (messages_groups.rippled_in = 1) that are
-     * already Approved on their origin group. They were vetted there, so they auto-approve
-     * on nearby groups after this window instead of sitting Pending until a human acts —
-     * the membership gate (the poster joins few of the groups their reach touches) and the
-     * 48h fallback would otherwise leave every rippled-in post stuck Pending forever.
+     * Account must be this many hours old before its messages auto-approve. Replaces V1's
+     * per-group membership-hours gate (memberships.added): there is one collection per
+     * message now (self-moderating-community.md), so "member of this group long enough" has
+     * no receiving group to be long enough on. users.added — the account's own creation
+     * time — is the natural national-equivalent gate, and is already used the same way for
+     * account-age logic elsewhere (ReengageService).
      */
-    public const RIPPLED_IN_PENDING_HOURS = 1;
-
-    /**
-     * User must be a member for this many hours before their messages auto-approve.
-     */
-    public const MEMBERSHIP_HOURS = 48;
+    public const ACCOUNT_HOURS = 48;
 
     /**
      * Auto-approve pending messages that meet all criteria.
      *
-     * Matches V1 autoapprove.php → Message::autoapprove().
-     * Processes per (msgid, groupid) pair — multi-group safe.
+     * Matches V1 autoapprove.php → Message::autoapprove(), collapsed from V1's
+     * (msgid, groupid) pairs to one row per message: messages.collection replaced
+     * messages_groups, so there is no per-group decision left to make.
      *
      * V1 side effects included:
      *   - notSpam(): records HAM in messages_spamham
-     *   - SQL UPDATE messages_groups (collection, approvedby, approvedat, arrival)
+     *   - SQL UPDATE messages (collection, approvedby, approvedat)
      *   - Log AUTOAPPROVED entry only (not the redundant APPROVED entry from approve())
      *
      * V1 side effects NOT included (handled elsewhere):
@@ -61,133 +55,69 @@ class AutoApproveService
         // FROM messages_groups INNER JOIN messages ON messages.id = messages_groups.msgid
         // WHERE collection = 'Pending' AND messages_groups.heldby IS NULL HAVING ago > 48
         //
-        // Returns one row per (msgid, groupid). We group by msgid to match V1's pattern:
-        // check logs once per message, then process all groups in the inner loop.
+        // One row per message now — messages.collection replaced messages_groups, so there
+        // is no group dimension left to group by or loop over.
         //
-        // The deleted filters (messages.deleted IS NULL, messages_groups.deleted = 0)
-        // were absent from V1, which caused soft-deleted messages to be auto-approved
-        // (mods don't see them in the queue, but the cron picked them up after 48h).
-        $candidates = DB::table('messages_groups')
-            ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
+        // The Spam-on-any-group exclusion V1 needed is gone too: collection is a single
+        // value, so filtering collection = Pending already excludes Spam outright.
+        //
+        // keep-raw: TIMESTAMPDIFF is a MySQL dialect function with no query-builder
+        // equivalent; whereRaw is the only way to compare it against a bound parameter.
+        $candidates = DB::table('messages')
+            ->join('users', 'users.id', '=', 'messages.fromuser')
             ->select(
-                'messages_groups.msgid',
-                'messages_groups.groupid',
-                'messages_groups.rippled_in',
-                'messages_groups.contentcheck_reasons',
+                'messages.id as msgid',
                 'messages.fromuser',
                 'messages.spamtype',
                 'messages.subject',
-                DB::raw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) AS hours_pending')
+                'messages.contentcheck_reasons',
+                'users.added as user_added'
             )
-            ->where('messages_groups.collection', MessageGroup::COLLECTION_PENDING)
-            ->whereNull('messages_groups.heldby')
-            ->where('messages_groups.deleted', 0)
+            ->where('messages.collection', Message::COLLECTION_PENDING)
+            ->whereNull('messages.heldby')
             ->whereNull('messages.deleted')
-            // Never auto-approve a message that is in the Spam collection on ANY
-            // group. Spam-collection messages now surface in the Pending review
-            // queue (Discourse #9654) but must be actioned by a human, never
-            // auto-sent after the 48h fallback.
-            ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('messages_groups as spam_mg')
-                    ->whereColumn('spam_mg.msgid', 'messages_groups.msgid')
-                    ->where('spam_mg.collection', MessageGroup::COLLECTION_SPAM)
-                    ->where('spam_mg.deleted', 0);
-            })
-            // Never auto-approve a post that has already been collected. A rippled-in row can
-            // still be Pending when the poster marks the item Taken/Received - the take retires the
-            // pending rows it can see, but a take via a non-Go path (V1 mark()) leaves them. Approving
-            // it would re-list a gone item in a new group and fire a "newly reached" mail, so skip
-            // anything with a Taken/Received outcome.
+            ->whereNull('users.deleted')
+            ->whereRaw('TIMESTAMPDIFF(HOUR, messages.arrival, NOW()) > ?', [self::PENDING_HOURS])
+            // Never auto-approve a post that has already been collected. The take retires
+            // the pending row it can see, but a take via a non-Go path (V1 mark()) leaves
+            // it. Approving it would re-list a gone item and fire a "newly reached" mail, so
+            // skip anything with a Taken/Received outcome.
             ->whereNotExists(function ($q) {
                 $q->select(DB::raw(1))
                     ->from('messages_outcomes')
-                    ->whereColumn('messages_outcomes.msgid', 'messages_groups.msgid')
+                    ->whereColumn('messages_outcomes.msgid', 'messages.id')
                     ->whereIn('messages_outcomes.outcome', ['Taken', 'Received']);
             })
-            ->where(function ($q) {
-                // Normal posts: the 48h fallback (unchanged).
-                $q->where(function ($q2) {
-                    $q2->where('messages_groups.rippled_in', 0)
-                        ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) > ?', [self::PENDING_HOURS]);
-                })
-                // Rippling-out rows already Approved on their origin group: a short mod-veto
-                // window, then auto-approve (membership gate bypassed in shouldApproveOnGroup).
-                ->orWhere(function ($q2) {
-                    // Configurable mod-veto window (default 1h via the const; 0 = immediate,
-                    // used during reach experiments to keep moderation load off receiving
-                    // groups). >= so that 0 means "eligible as soon as it arrives".
-                    $rippledInHours = (int) config('freegle.ripple.rippled_in_pending_hours', self::RIPPLED_IN_PENDING_HOURS);
-                    $q2->where('messages_groups.rippled_in', 1)
-                        ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) >= ?', [$rippledInHours])
-                        // A copy held by the receiving group's own rules is kept out in
-                        // shouldApproveOnGroup, from the reasons it carries. Not a NULL test
-                        // on the column here: the periodic content check annotates every
-                        // Pending row it visits (GroupModerated, MemberModerated, ...), so
-                        // "has reasons" is not "held by this group's rules".
-                        //
-                        // The vetting this window relies on is the ORIGIN copy being Approved:
-                        // the poster's own group's row, rippled_in = 0. Another receiving
-                        // group approving its rippled-in copy by hand is not that vetting and
-                        // must not unlock the fast-track everywhere else (Discourse 10102).
-                        ->whereExists(function ($q3) {
-                            $q3->select(DB::raw(1))
-                                ->from('messages_groups as origin_mg')
-                                ->whereColumn('origin_mg.msgid', 'messages_groups.msgid')
-                                ->whereColumn('origin_mg.groupid', '!=', 'messages_groups.groupid')
-                                ->where('origin_mg.collection', MessageGroup::COLLECTION_APPROVED)
-                                ->where('origin_mg.deleted', 0)
-                                ->where('origin_mg.rippled_in', 0);
-                        });
-                });
-            })
-            ->get()
-            ->groupBy('msgid');
+            ->get();
 
-        foreach ($candidates as $msgid => $groupRows) {
+        foreach ($candidates as $candidate) {
+            $msgid = $candidate->msgid;
+
             try {
                 // V1 parity: skip auto-approving a message that was recently held/unheld.
-                // Lazy-evaluated so the query only runs when there is at least one non-rippled-in
-                // candidate that needs the guard. Rippled-in rows bypass this check entirely:
-                // the relevant hold on the nearby group is already expressed by the heldby IS NULL
-                // filter in the candidates query, and finding an approval log from the ORIGIN group
-                // here must not block the short veto window on the receiving group (which is how
-                // ~30 posts "disappeared suddenly" — they were stuck Pending for 48h instead of 1h
-                // and then batch-approved when the origin-approval log aged out, Discourse 9812/3).
-                $recentLogsChecked = false;
-                $recentLogs = false;
+                $recentLogs = DB::table('logs')
+                    ->where('msgid', $msgid)
+                    ->where('timestamp', '>', now()->subHours(self::PENDING_HOURS))
+                    ->exists();
 
-                foreach ($groupRows as $candidate) {
-                    $isRippledIn = (int) ($candidate->rippled_in ?? 0) === 1;
-
-                    if (!$isRippledIn) {
-                        if (!$recentLogsChecked) {
-                            $recentLogs = DB::table('logs')
-                                ->where('msgid', $msgid)
-                                ->where('timestamp', '>', now()->subHours(self::PENDING_HOURS))
-                                ->exists();
-                            $recentLogsChecked = true;
-                        }
-                        if ($recentLogs) {
-                            $stats['skipped']++;
-                            continue;
-                        }
-                    }
-
-                    if ($this->shouldApproveOnGroup($candidate, $candidate->groupid)) {
-                        if ($dryRun) {
-                            Log::info("Dry run: would auto-approve message #{$candidate->msgid} on group #{$candidate->groupid}");
-                            $stats['approved']++;
-                        } else {
-                            $this->approveOnGroup($candidate, $candidate->groupid);
-                            $stats['approved']++;
-                        }
-                    } else {
-                        $stats['skipped']++;
-                    }
+                if ($recentLogs) {
+                    $stats['skipped']++;
+                    continue;
                 }
 
-                // A rippling post can be auto-approved on a newly-reached group AFTER its reach
+                if ($this->shouldApprove($candidate)) {
+                    if ($dryRun) {
+                        Log::info("Dry run: would auto-approve message #{$msgid}");
+                        $stats['approved']++;
+                    } else {
+                        $this->approve($candidate);
+                        $stats['approved']++;
+                    }
+                } else {
+                    $stats['skipped']++;
+                }
+
+                // A rippling post can be auto-approved on a newly-reached area AFTER its reach
                 // has finished expanding (the ExpandService tick loop only revisits 'expanding'
                 // posts), so mail any now-reachable immediate members here too. Idempotent and a
                 // no-op for non-rippling posts (the reach gate + ledger in mailNewlyReachedForPost).
@@ -204,89 +134,55 @@ class AutoApproveService
     }
 
     /**
-     * Check whether a message should be auto-approved on a specific group.
+     * Check whether a message should be auto-approved.
      *
-     * V1: $g->getSetting('publish', TRUE) && !$g->getSetting('closed', FALSE)
-     *     && !$g->getPrivate('autofunctionoverride')
-     *     && membership added > 48 hours ago
+     * V1 per-group settings (publish/closed/autofunctionoverride) are gone — there is no
+     * group left to carry them. The rippled-in fast-track (a short mod-veto window for a
+     * copy already vetted on its origin group) is gone too — there is no origin-vs-receiving
+     * distinction with a single collection per message; only the reach mail-out that fast
+     * track existed to unblock survives, in process() above.
      */
-    protected function shouldApproveOnGroup(object $candidate, int $groupid): bool
+    protected function shouldApprove(object $candidate): bool
     {
-        $group = Group::find($groupid);
-        if (!$group) {
-            return false;
-        }
-
-        if (!$group->getSetting('publish', true)) {
-            return false;
-        }
-
-        if ($group->isClosed()) {
-            return false;
-        }
-
-        if ($group->getAttribute('autofunctionoverride')) {
-            return false;
-        }
-
-        // Rippling-out rows were already vetted on their origin group (the orWhere in
-        // process() only selects rippled_in rows that are Approved elsewhere). The poster
-        // need not be a member of every nearby group their reach touches, so bypass the
-        // membership gate — the group publish/closed/override checks above still apply.
-        if ((int) ($candidate->rippled_in ?? 0) === 1) {
-            // The veto window means "no moderator objected". A rule the receiving group wrote
-            // down IS an objection: a copy held by its own keywords or worry words
-            // (ExpandService::rippleIntoNewGroups) waits for a moderator, not for the clock.
-            // Only those reasons count - the periodic content check annotates Pending rows
-            // with flags such as GroupModerated, and a flag is not a hold (Discourse 10102).
-            if (ContentCheckService::reasonsHoldByGroupOwnRules($candidate->contentcheck_reasons ?? null)) {
-                return false;
-            }
-
-            // Unless this group has blocked the poster outright. A stored MODERATED does not
-            // count: the v1 join path wrote it as its default, so 1.95M of the 1.96M rows
-            // carrying it record no moderator's decision at all (see
-            // ExpandService::rippleIntoNewGroups). PROHIBITED was always an explicit act.
-            $status = Membership::explicitPostingStatuses((int) $candidate->fromuser, [$groupid])[$groupid] ?? null;
-
-            return $status !== Membership::POSTING_STATUS_PROHIBITED;
-        }
+        // The concern-keyword hold that used to sit here (a matched keyword was an
+        // objection the 48h fallback had to respect) is gone along with concern_keywords
+        // itself (ai-judgement.md, 2026-09-27): the judge's own 'takedown' verdict already
+        // takes a post down directly via TakedownService before it ever reaches Pending, and
+        // a judge 'wait' verdict is deliberately the mild outcome — it goes live after this
+        // same delay, not held for a moderator. So nothing here needs to out-wait the 48h
+        // fallback any more; only the periodic content check's own flags (MemberModerated,
+        // NoLocation, ...) describe the row's situation and never held it either.
 
         // Low-quality / vague item ("anything", "free stuff", "various items", "things for the
         // garden"): do NOT auto-approve — leave it Pending so a moderator reviews it (they can
         // approve the genuine ones). This is deliberately more aggressive than the client-side
         // compose gate because Pending is reversible; live-data sized at ~3 posts/day across
-        // Freegle. Applied to ORIGIN rows only — a rippled-in copy was already vetted above.
+        // Freegle.
         if (ItemQuality::subjectItemIsVague($candidate->subject ?? null)) {
             return false;
         }
 
-        // V1: $joined = $u->getMembershipAtt($gid, 'added');
-        // $hoursago = round((time() - strtotime($joined)) / 3600);
-        $membership = DB::table('memberships')
-            ->where('userid', $candidate->fromuser)
-            ->where('groupid', $groupid)
-            ->first();
-
-        if (!$membership || !$membership->added) {
+        // V1: $joined = $u->getMembershipAtt($gid, 'added'); $hoursago = round((time() -
+        // strtotime($joined)) / 3600). Replaced with hours since the account itself was
+        // created (users.added) — see ACCOUNT_HOURS.
+        if (!$candidate->user_added) {
             return false;
         }
 
-        $memberHours = (int) round((time() - strtotime($membership->added)) / 3600);
-        if ($memberHours <= self::MEMBERSHIP_HOURS) {
-            return false;
-        }
+        $accountHours = (int) round((time() - strtotime($candidate->user_added)) / 3600);
 
-        return true;
+        return $accountHours > self::ACCOUNT_HOURS;
     }
 
     /**
-     * Approve a message on a specific group.
+     * Approve a message.
      *
      * Matches V1 Message::approve() + Message::autoapprove() side effects.
      */
-    protected function approveOnGroup(object $candidate, int $groupid): void
+    protected function approve(object $candidate): void
     {
+        $msgid = $candidate->msgid;
+
         // V1 notSpam(): if spamtype is SubjectUsedForDifferentGroups, whitelist the subject.
         // V1: Spam::notSpamSubject(getPrunedSubject()) → INSERT IGNORE INTO spam_whitelist_subjects
         if ($candidate->spamtype === 'SubjectUsedForDifferentGroups' && $candidate->subject) {
@@ -300,24 +196,24 @@ class AutoApproveService
         // V1 notSpam(): record HAM in messages_spamham if message was marked spam.
         if ($candidate->spamtype) {
             DB::table('messages_spamham')->upsert(
-                ['msgid' => $candidate->msgid, 'spamham' => 'Ham'],
+                ['msgid' => $msgid, 'spamham' => 'Ham'],
                 ['msgid'],
                 ['spamham']
             );
         }
 
         // V1 approve(): UPDATE messages_groups SET collection='Approved', approvedby=whoAmId(),
-        // approvedat=NOW(), arrival=NOW() WHERE msgid=? AND groupid=? AND collection!='Approved'
+        // approvedat=NOW() WHERE msgid=? AND groupid=? AND collection!='Approved'. Single row
+        // per message now, no groupid; arrival is left alone, matching
+        // ContentCheckService::processUnprocessed()'s own approve path.
         // V1 whoAmId() returns NULL in cron context (no session).
-        DB::table('messages_groups')
-            ->where('msgid', $candidate->msgid)
-            ->where('groupid', $groupid)
-            ->where('collection', '!=', MessageGroup::COLLECTION_APPROVED)
+        DB::table('messages')
+            ->where('id', $msgid)
+            ->where('collection', '!=', Message::COLLECTION_APPROVED)
             ->update([
-                'collection' => MessageGroup::COLLECTION_APPROVED,
+                'collection' => Message::COLLECTION_APPROVED,
                 'approvedby' => null,
                 'approvedat' => now(),
-                'arrival' => now(),
             ]);
 
         // V1 autoapprove() log: type=Message, subtype=Autoapproved.
@@ -325,12 +221,11 @@ class AutoApproveService
             'timestamp' => now(),
             'type' => 'Message',
             'subtype' => 'Autoapproved',
-            'msgid' => $candidate->msgid,
-            'groupid' => $groupid,
+            'msgid' => $msgid,
             'user' => $candidate->fromuser,
         ]);
 
-        Log::info("Auto-approved message #{$candidate->msgid} on group #{$groupid}");
+        Log::info("Auto-approved message #{$msgid}");
     }
 
     /**

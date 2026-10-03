@@ -3,7 +3,7 @@ import { runHoldAware } from '~/api/heldConflict'
 import api from '~/api'
 import { fetchMe } from '~/composables/useMe'
 import { useUserStore } from '~/stores/user'
-import { useMemberStore } from '~/stores/member'
+import { useMemberStore } from '~/modtools/stores/member'
 
 export const useSpammerStore = defineStore('spammer', {
   state: () => ({

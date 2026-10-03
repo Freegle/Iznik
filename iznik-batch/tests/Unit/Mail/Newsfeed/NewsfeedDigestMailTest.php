@@ -17,9 +17,9 @@ class NewsfeedDigestMailTest extends TestCase
     {
         return array_merge([
             [
-                'type'    => 'Message',
-                'text'    => 'Has anyone tried the new bakery on the high street?',
-                'author'  => 'Alice',
+                'type' => 'Message',
+                'text' => 'Has anyone tried the new bakery on the high street?',
+                'author' => 'Alice',
                 'replies' => [],
             ],
         ], $overrides);
@@ -34,12 +34,12 @@ class NewsfeedDigestMailTest extends TestCase
         $items = $this->makeItems();
 
         $html = view('emails.mjml.newsfeed.digest', [
-            'items'       => $items,
-            'count'       => count($items),
-            'readUrl'     => $userSite . '/chitchat?src=newsfeeddigest',
-            'settingsUrl' => $userSite . '/settings?src=newsfeeddigest',
-            'userSite'    => $userSite,
-            'email'       => 'recipient@example.com',
+            'items' => $items,
+            'count' => count($items),
+            'readUrl' => $userSite.'/chitchat?src=newsfeeddigest',
+            'settingsUrl' => $userSite.'/settings?src=newsfeeddigest',
+            'userSite' => $userSite,
+            'email' => 'recipient@example.com',
         ])->render();
 
         $this->assertStringContainsString(
@@ -57,32 +57,32 @@ class NewsfeedDigestMailTest extends TestCase
 
         $items = [
             [
-                'type'    => 'Message',
-                'text'    => 'Does anyone have a spare bicycle pump?',
-                'author'  => 'Bob',
+                'type' => 'Message',
+                'text' => 'Does anyone have a spare bicycle pump?',
+                'author' => 'Bob',
                 'replies' => [],
             ],
             [
-                'type'    => 'Message',
-                'text'    => 'Community litter pick this Saturday at 10am',
-                'author'  => 'Carol',
+                'type' => 'Message',
+                'text' => 'Community litter pick this Saturday at 10am',
+                'author' => 'Carol',
                 'replies' => [],
             ],
             [
-                'type'    => 'Message',
-                'text'    => 'Lost cat spotted near the park — ginger tabby',
-                'author'  => 'Dave',
+                'type' => 'Message',
+                'text' => 'Lost cat spotted near the park — ginger tabby',
+                'author' => 'Dave',
                 'replies' => [],
             ],
         ];
 
         $html = view('emails.mjml.newsfeed.digest', [
-            'items'       => $items,
-            'count'       => count($items),
-            'readUrl'     => $userSite . '/chitchat?src=newsfeeddigest',
-            'settingsUrl' => $userSite . '/settings?src=newsfeeddigest',
-            'userSite'    => $userSite,
-            'email'       => 'recipient@example.com',
+            'items' => $items,
+            'count' => count($items),
+            'readUrl' => $userSite.'/chitchat?src=newsfeeddigest',
+            'settingsUrl' => $userSite.'/settings?src=newsfeeddigest',
+            'userSite' => $userSite,
+            'email' => 'recipient@example.com',
         ])->render();
 
         // First item text must appear in the preview.
@@ -99,12 +99,12 @@ class NewsfeedDigestMailTest extends TestCase
         $items = $this->makeItems();
 
         $html = view('emails.mjml.newsfeed.digest', [
-            'items'       => $items,
-            'count'       => count($items),
-            'readUrl'     => $userSite . '/chitchat?src=newsfeeddigest',
-            'settingsUrl' => $userSite . '/settings?src=newsfeeddigest',
-            'userSite'    => $userSite,
-            'email'       => 'recipient@example.com',
+            'items' => $items,
+            'count' => count($items),
+            'readUrl' => $userSite.'/chitchat?src=newsfeeddigest',
+            'settingsUrl' => $userSite.'/settings?src=newsfeeddigest',
+            'userSite' => $userSite,
+            'email' => 'recipient@example.com',
         ])->render();
 
         $this->assertStringNotContainsString('- and 0 more', $html);
@@ -120,24 +120,24 @@ class NewsfeedDigestMailTest extends TestCase
         $longText = 'This is a very long chitchat post that goes well beyond eighty characters and should therefore be trimmed in the inbox preview so it does not overflow';
 
         $html = view('emails.mjml.newsfeed.digest', [
-            'items'       => [
+            'items' => [
                 [
-                    'type'    => 'Message',
-                    'text'    => $longText,
-                    'author'  => 'Eve',
+                    'type' => 'Message',
+                    'text' => $longText,
+                    'author' => 'Eve',
                     'replies' => [],
                 ],
             ],
-            'count'       => 1,
-            'readUrl'     => $userSite . '/chitchat?src=newsfeeddigest',
-            'settingsUrl' => $userSite . '/settings?src=newsfeeddigest',
-            'userSite'    => $userSite,
-            'email'       => 'recipient@example.com',
+            'count' => 1,
+            'readUrl' => $userSite.'/chitchat?src=newsfeeddigest',
+            'settingsUrl' => $userSite.'/settings?src=newsfeeddigest',
+            'userSite' => $userSite,
+            'email' => 'recipient@example.com',
         ])->render();
 
         // The raw long text must not appear verbatim inside the mj-preview tag.
         $this->assertStringNotContainsString(
-            '<mj-preview>' . $longText . '</mj-preview>',
+            '<mj-preview>'.$longText.'</mj-preview>',
             $html
         );
         // The truncation marker must appear in the preview.

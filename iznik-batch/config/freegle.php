@@ -732,6 +732,94 @@ return [
         'chat_warn_not_hold' => filter_var(env('CHAT_WARN_NOT_HOLD', false), FILTER_VALIDATE_BOOLEAN),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | AI judgement
+    |--------------------------------------------------------------------------
+    |
+    | Rules as questions instead of keyword lists (ai-judgement.md). ClaudeJudge answers each
+    | question in the 'questions' table below about a post, a chat message, an event, a
+    | volunteering opportunity, a newsfeed post or a report. 'outcome' is what a "yes" leads to:
+    | takedown (subject to the confidence threshold) or wait (goes live after the normal delay,
+    | reason shown in ModTools). The judge being unavailable never holds or takes anything down;
+    | the deterministic checks in ContentCheckService still run.
+    |
+    */
+    'judgement' => [
+        'model'      => env('JUDGEMENT_MODEL', 'claude-opus-5'),
+        'chat_model' => env('JUDGEMENT_CHAT_MODEL', env('JUDGEMENT_MODEL', 'claude-opus-5')),
+        'api_key'    => env('ANTHROPIC_API_KEY'),
+
+        // A "yes" below this confidence is a wait, not a takedown; a "no" below this
+        // confidence carries no weight either way (used by report quorum).
+        'threshold' => (float) env('JUDGEMENT_THRESHOLD', 0.8),
+
+        'timeout' => 30,
+        'retries' => 2,
+
+        'questions' => [
+            'free' => [
+                'question' => 'Is the poster asking for money, selling, swapping for payment, only lending the item rather than giving it away, or offering the item only in exchange for something?',
+                'outcome'  => 'takedown',
+            ],
+            'legal' => [
+                'question' => 'Is the item illegal to give away or to own in the UK, or counterfeit?',
+                'outcome'  => 'takedown',
+            ],
+            'medicine' => [
+                'question' => 'Is this a medicine (prescription or over-the-counter, for humans or animals), a supplement sold with medical claims, or a medical device meant for one patient?',
+                'outcome'  => 'takedown',
+            ],
+            'age_restricted' => [
+                'question' => 'Is the item age-restricted in the UK (tobacco, vapes or e-liquid, or adult material)? Alcohol is allowed and is not age-restricted for this question.',
+                'outcome'  => 'takedown',
+            ],
+            'animal' => [
+                'question' => 'Does this post offer or ask for a live animal (not just food, bedding, toys, cages or other accessories for animals)?',
+                'outcome'  => 'takedown',
+            ],
+            'unsafe_by_design' => [
+                'question' => 'Is this a weapon, ammunition, a sky lantern, or something else whose purpose is to injure or that is unsafe by its design (including air guns and crossbows)?',
+                'outcome'  => 'takedown',
+            ],
+            'cash_value' => [
+                'question' => 'Is this money, a gift card, a voucher, a lottery ticket, or anything else with cash value? Ordinary event tickets are allowed and are not cash value for this question.',
+                'outcome'  => 'takedown',
+            ],
+            'not_an_item' => [
+                'question' => 'Is this something other than an offer of or request for a physical item (a service, a job advert, a survey, a business advert, a political message, a general question)?',
+                'outcome'  => 'takedown',
+            ],
+            'scam' => [
+                'question' => 'Does this look like a scam, phishing, or an attempt to get members to contact someone off Freegle by phone, email, WhatsApp or another site?',
+                'outcome'  => 'takedown',
+            ],
+            'decent' => [
+                'question' => 'Is the text abusive, threatening, discriminatory or harassing?',
+                'outcome'  => 'takedown',
+            ],
+            'unsafe' => [
+                'question' => 'Does the poster describe a safety defect that makes the item dangerous to use (recalled, exposed live wiring, a faulty gas appliance, a damaged child seat)?',
+                'outcome'  => 'wait',
+            ],
+            'vague' => [
+                'question' => 'Does the title fail to say what the item actually is (for example "stuff", "various items", "bits and pieces"), so a reader could not tell what is on offer?',
+                'outcome'  => 'wait',
+            ],
+            'report' => [
+                'question' => 'A member reported this post. The report_reason field in the request holds the reporter\'s own words. Is the report justified by the post as described?',
+                'outcome'  => 'report',
+            ],
+        ],
+
+        // Which question a "yes" maps to on chat_messages.reportreason, for the chat path only.
+        'chat_reportreason' => [
+            'free'   => 'Money',
+            'scam'   => 'Link',
+            'decent' => 'Abuse',
+        ],
+    ],
+
     'ripple' => [
         // Master activation switch for the whole rippling-out feature. Ships DARK (false) so all the
         // server + app code can deploy (and clear the app stores) ahead of go-live; flip

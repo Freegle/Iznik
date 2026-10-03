@@ -58,9 +58,7 @@ func TestSystemLogs_ForbiddenForRegularUser(t *testing.T) {
 
 func TestSystemLogs_ModeratorAccess(t *testing.T) {
 	prefix := uniquePrefix("syslogs_mod")
-	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	userID := CreateTestUser(t, prefix, "Moderator")
 	_, token := CreateTestSession(t, userID)
 
 	// Moderator should get through auth. The actual query will likely fail
@@ -98,54 +96,31 @@ func TestSystemLogs_AdminAccess(t *testing.T) {
 	}
 }
 
-func TestSystemLogs_ModeratorCannotViewUnrelatedUser(t *testing.T) {
-	prefix := uniquePrefix("syslogs_moduser")
-	groupID := CreateTestGroup(t, prefix)
-	modUserID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modUserID, groupID, "Moderator")
+func TestSystemLogs_ModeratorCanViewAnyUser(t *testing.T) {
+	prefix := uniquePrefix("syslogs_modany")
+	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	_, modToken := CreateTestSession(t, modUserID)
 
-	// Create a user who is NOT in the moderator's group.
+	// Under the national moderator pool there is no group-scoping left: any
+	// moderator can view logs for any user.
 	otherUserID := CreateTestUser(t, prefix+"_other", "User")
 
-	// Moderator should not be able to view logs for a user not in their groups.
 	code, ok := testSystemLogsRequest(t, fmt.Sprintf("/api/modtools/systemlogs?jwt=%s&userid=%d", modToken, otherUserID))
 	if ok {
-		assert.Equal(t, 403, code)
+		assert.NotEqual(t, 403, code, "Moderator should be able to view any user's logs")
 	}
 }
 
-func TestSystemLogs_ModeratorCanViewGroupMember(t *testing.T) {
-	prefix := uniquePrefix("syslogs_modmem")
-	groupID := CreateTestGroup(t, prefix)
-	modUserID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modUserID, groupID, "Moderator")
-	_, modToken := CreateTestSession(t, modUserID)
-
-	// Create a user who IS in the moderator's group.
-	memberUserID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberUserID, groupID, "Member")
-
-	// Moderator should be able to view logs for users in their groups.
-	code, ok := testSystemLogsRequest(t, fmt.Sprintf("/api/modtools/systemlogs?jwt=%s&userid=%d", modToken, memberUserID))
-	if ok {
-		// Should not be 403 - auth passed. Could be 200 or 500 (Loki unavailable).
-		assert.NotEqual(t, 403, code, "Moderator should be able to view group member logs")
-	}
-}
-
-func TestSystemLogs_SupportBypassesGroupCheck(t *testing.T) {
-	prefix := uniquePrefix("syslogs_supbypass")
+func TestSystemLogs_SupportCanViewAnyUser(t *testing.T) {
+	prefix := uniquePrefix("syslogs_supany")
 	supportUserID := CreateTestUser(t, prefix+"_sup", "Support")
 	_, supToken := CreateTestSession(t, supportUserID)
 
-	// Create any user.
 	otherUserID := CreateTestUser(t, prefix+"_other", "User")
 
-	// Support should bypass group membership checks.
 	code, ok := testSystemLogsRequest(t, fmt.Sprintf("/api/modtools/systemlogs?jwt=%s&userid=%d", supToken, otherUserID))
 	if ok {
-		assert.NotEqual(t, 403, code, "Support should bypass group check")
+		assert.NotEqual(t, 403, code, "Support should be able to view any user's logs")
 	}
 }
 
@@ -200,9 +175,7 @@ func TestSystemLogsCounts_WithSources(t *testing.T) {
 
 func TestSystemLogsCounts_ModeratorAccess(t *testing.T) {
 	prefix := uniquePrefix("syslogscnt_mod")
-	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	userID := CreateTestUser(t, prefix, "Moderator")
 	_, token := CreateTestSession(t, userID)
 
 	code, ok := testSystemLogsRequest(t, "/api/modtools/systemlogs/counts?jwt="+token+"&sources=api")

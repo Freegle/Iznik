@@ -31,17 +31,16 @@ class ReachMemberReconcileService
         $queued = 0;
 
         // Joined since yesterday, with no reach mail since the join.
-        $joined = DB::table('memberships as m')
-            ->where('m.added', '>=', $since)
-            ->where('m.collection', 'Approved')
+        $joined = DB::table('users as u')
+            ->where('u.added', '>=', $since)
             ->whereNotExists(function ($q) {
                 $q->select(DB::raw(1))
                     ->from('rippling_reach_notified as n')
-                    ->whereColumn('n.userid', 'm.userid')
-                    ->whereColumn('n.notified_at', '>=', 'm.added');
+                    ->whereColumn('n.userid', 'u.id')
+                    ->whereColumn('n.notified_at', '>=', 'u.added');
             })
             ->distinct()
-            ->pluck('m.userid');
+            ->pluck('u.id');
 
         foreach ($joined as $userid) {
             if (! $dryRun) {

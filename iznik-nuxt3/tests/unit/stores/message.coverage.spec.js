@@ -1,12 +1,11 @@
 /**
  * Broad coverage pass over stores/message.js actions/getters that
- * message.spec.js and message.heldByOtherMod.spec.js don't touch: the
+ * message.spec.js doesn't touch: the
  * fetch()/processMessageBatch()/fetchMultiple() batching pipeline,
- * handleFetchError(), fetchInBounds/search/similar/matches/fetchMyGroups/
+ * handleFetchError(), fetchInBounds/search/similar/matches/
  * fetchByUser, bulkInterest(State), Helper actions, update(), remove/clear,
  * the promise/renege/addBy/removeBy/intend family, markSeen()'s 401 swallow,
- * fetchMT/fetchReach/updateMT, delete/approveedits/revertedits/backToPending,
- * approve/reject's fromuser re-fetch, reply/spam/move, searchMember, and the
+ * fetchMT/fetchReach/updateMT, approveedits/revertedits, reply, and the
  * remaining getters.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -25,14 +24,11 @@ const mockSearch = vi.fn()
 const mockSimilar = vi.fn()
 const mockMatches = vi.fn()
 const mockInbounds = vi.fn()
-const mockMygroups = vi.fn()
 const mockFetchMessages = vi.fn()
 const mockView = vi.fn()
 const mockMarkSeen = vi.fn()
 const mockCount = vi.fn()
 const mockNearbyMarkSeen = vi.fn()
-const mockHold = vi.fn()
-const mockRelease = vi.fn()
 const mockFetchMT = vi.fn()
 const mockBulkInterest = vi.fn()
 const mockBulkInterestState = vi.fn()
@@ -43,15 +39,9 @@ const mockAddBy = vi.fn()
 const mockRemoveBy = vi.fn()
 const mockIntend = vi.fn()
 const mockReach = vi.fn()
-const mockDelete = vi.fn()
-const mockApprove = vi.fn()
-const mockReject = vi.fn()
 const mockReply = vi.fn()
-const mockSpam = vi.fn()
 const mockApproveEdits = vi.fn()
 const mockRevertEdits = vi.fn()
-const mockGroupFetchBatch = vi.fn()
-const mockUserFetch = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -63,13 +53,10 @@ vi.mock('~/api', () => ({
       search: mockSearch,
       similar: mockSimilar,
       matches: mockMatches,
-      mygroups: mockMygroups,
       fetchMessages: mockFetchMessages,
       view: mockView,
       markSeen: mockMarkSeen,
       count: mockCount,
-      hold: mockHold,
-      release: mockRelease,
       fetchMT: mockFetchMT,
       bulkInterest: mockBulkInterest,
       bulkInterestState: mockBulkInterestState,
@@ -80,11 +67,7 @@ vi.mock('~/api', () => ({
       removeBy: mockRemoveBy,
       intend: mockIntend,
       reach: mockReach,
-      delete: mockDelete,
-      approve: mockApprove,
-      reject: mockReject,
       reply: mockReply,
-      spam: mockSpam,
       approveEdits: mockApproveEdits,
       revertEdits: mockRevertEdits,
     },
@@ -93,14 +76,6 @@ vi.mock('~/api', () => ({
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: vi.fn(),
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({ fetchBatch: mockGroupFetchBatch }),
-}))
-
-vi.mock('~/stores/user', () => ({
-  useUserStore: () => ({ fetch: mockUserFetch }),
 }))
 
 const mockNearbyStore = { markSeen: mockNearbyMarkSeen, messageList: [] }
@@ -322,7 +297,6 @@ describe('message store - fetchMultiple()', () => {
     await store.fetchMultiple([50], false)
 
     expect(mockApiFetch).not.toHaveBeenCalled()
-    expect(mockGroupFetchBatch).not.toHaveBeenCalled()
   })
 
   it('re-fetches an already cached id when force is true', async () => {
@@ -399,29 +373,6 @@ describe('message store - fetchMultiple()', () => {
     // finally block still ran and cleared the fetching flag
     expect(store.fetching[63]).toBeNull()
   })
-
-  it('batch-fetches the groups referenced by the newly fetched messages', async () => {
-    const store = useMessageStore()
-    store.init({})
-    mockApiFetch.mockResolvedValue([
-      { id: 70, groups: [{ groupid: 200 }, { groupid: 201 }] },
-      { id: 71, groups: [{ groupid: 201 }] },
-    ])
-
-    await store.fetchMultiple([70, 71], false)
-
-    expect(mockGroupFetchBatch).toHaveBeenCalledWith([200, 201])
-  })
-
-  it('does not call fetchBatch when no groups are referenced', async () => {
-    const store = useMessageStore()
-    store.init({})
-    mockApiFetch.mockResolvedValue([{ id: 72 }])
-
-    await store.fetchMultiple([72], false)
-
-    expect(mockGroupFetchBatch).not.toHaveBeenCalled()
-  })
 })
 
 describe('message store - fetchInBounds()', () => {
@@ -430,18 +381,18 @@ describe('message store - fetchInBounds()', () => {
     store.init({})
     mockInbounds.mockResolvedValue([{ id: 1 }])
 
-    const result = await store.fetchInBounds(1, 2, 3, 4, 5, 10, true)
+    const result = await store.fetchInBounds(1, 2, 3, 4, 10, true)
 
     expect(result).toEqual([{ id: 1 }])
-    expect(store.bounds['1:2:3:4:5']).toEqual([{ id: 1 }])
+    expect(store.bounds['1:2:3:4']).toEqual([{ id: 1 }])
   })
 
   it('returns the cached value without calling the API again', async () => {
     const store = useMessageStore()
     store.init({})
-    store.bounds['1:2:3:4:5'] = [{ id: 'cached' }]
+    store.bounds['1:2:3:4'] = [{ id: 'cached' }]
 
-    const result = await store.fetchInBounds(1, 2, 3, 4, 5, 10, true)
+    const result = await store.fetchInBounds(1, 2, 3, 4, 10, true)
 
     expect(result).toEqual([{ id: 'cached' }])
     expect(mockInbounds).not.toHaveBeenCalled()
@@ -450,10 +401,10 @@ describe('message store - fetchInBounds()', () => {
   it('does not use the cache when cache=false', async () => {
     const store = useMessageStore()
     store.init({})
-    store.bounds['1:2:3:4:5'] = [{ id: 'cached' }]
+    store.bounds['1:2:3:4'] = [{ id: 'cached' }]
     mockInbounds.mockResolvedValue([{ id: 'fresh' }])
 
-    const result = await store.fetchInBounds(1, 2, 3, 4, 5, 10, false)
+    const result = await store.fetchInBounds(1, 2, 3, 4, 10, false)
 
     expect(result).toEqual([{ id: 'fresh' }])
   })
@@ -493,50 +444,6 @@ describe('message store - search/similar/matches passthroughs', () => {
 
     expect(mockMatches).toHaveBeenCalledWith('chair', 1.1, 2.2, 3)
     expect(result).toEqual([{ id: 6 }])
-  })
-})
-
-describe('message store - fetchMyGroups()', () => {
-  it('stores the combined feed when no gid is given', async () => {
-    const store = useMessageStore()
-    store.init({})
-    mockMygroups.mockResolvedValue([{ id: 1 }, { id: 2 }])
-
-    const result = await store.fetchMyGroups()
-
-    expect(store.myGroupsList).toEqual([{ id: 1 }, { id: 2 }])
-    expect(result).toEqual([{ id: 1 }, { id: 2 }])
-  })
-
-  it('does not overwrite myGroupsList for a single-group fetch', async () => {
-    const store = useMessageStore()
-    store.init({})
-    store.myGroupsList = [{ id: 'existing' }]
-    mockMygroups.mockResolvedValue([{ id: 99 }])
-
-    await store.fetchMyGroups(5)
-
-    expect(store.myGroupsList).toEqual([{ id: 'existing' }])
-  })
-
-  it('a concurrent call awaits the in-flight fetch instead of firing a second request', async () => {
-    const store = useMessageStore()
-    store.init({})
-    let resolveApi
-    mockMygroups.mockReturnValue(
-      new Promise((resolve) => {
-        resolveApi = resolve
-      })
-    )
-
-    const p1 = store.fetchMyGroups()
-    const p2 = store.fetchMyGroups()
-    resolveApi([{ id: 1 }])
-    const [r1, r2] = await Promise.all([p1, p2])
-
-    expect(mockMygroups).toHaveBeenCalledTimes(1)
-    expect(r1).toEqual([{ id: 1 }])
-    expect(r2).toEqual([{ id: 1 }])
   })
 })
 
@@ -1012,25 +919,7 @@ describe('message store - fetchMT()/fetchReach()/updateMT()', () => {
   })
 })
 
-describe('message store - delete/approveedits/revertedits/backToPending', () => {
-  it('delete() calls the API then removes the message from list', async () => {
-    const store = useMessageStore()
-    store.init({})
-    store.list[200] = { id: 200 }
-    mockDelete.mockResolvedValue({})
-
-    await store.delete({
-      id: 200,
-      groupid: 9,
-      subject: 's',
-      stdmsgid: 1,
-      body: 'b',
-    })
-
-    expect(mockDelete).toHaveBeenCalledWith(200, 9, 's', 1, 'b')
-    expect(store.list[200]).toBeUndefined()
-  })
-
+describe('message store - approveedits/revertedits', () => {
   it('approveedits() calls the API then removes the message', async () => {
     const store = useMessageStore()
     store.init({})
@@ -1054,77 +943,10 @@ describe('message store - delete/approveedits/revertedits/backToPending', () => 
     expect(mockRevertEdits).toHaveBeenCalledWith(202)
     expect(store.list[202]).toBeUndefined()
   })
-
-  it('backToPending() posts the action then removes the message', async () => {
-    const store = useMessageStore()
-    store.init({})
-    store.list[203] = { id: 203 }
-    mockUpdate.mockResolvedValue({})
-
-    await store.backToPending(203, 44)
-
-    expect(mockUpdate).toHaveBeenCalledWith({
-      id: 203,
-      groupid: 44,
-      action: 'BackToPending',
-    })
-    expect(store.list[203]).toBeUndefined()
-  })
 })
 
-describe('message store - approve()/reject() re-fetch the sender', () => {
-  it('approve() refetches the sender by numeric fromuser id', async () => {
-    const store = useMessageStore()
-    store.init({})
-    store.list[300] = { id: 300, fromuser: 42 }
-    mockApprove.mockResolvedValue({})
-    mockFetchMT.mockResolvedValue({ id: 300, groups: [] })
-
-    await store.approve(300, 1, 's', 2, 'b')
-
-    expect(mockApprove).toHaveBeenCalledWith(300, 1, 's', 2, 'b')
-    expect(mockUserFetch).toHaveBeenCalledWith(42, true)
-  })
-
-  it('approve() refetches the sender by object fromuser.id', async () => {
-    const store = useMessageStore()
-    store.init({})
-    store.list[301] = { id: 301, fromuser: { id: 43 } }
-    mockApprove.mockResolvedValue({})
-    mockFetchMT.mockResolvedValue({ id: 301, groups: [] })
-
-    await store.approve(301, 1)
-
-    expect(mockUserFetch).toHaveBeenCalledWith(43, true)
-  })
-
-  it('approve() does not refetch a sender when the message has none cached', async () => {
-    const store = useMessageStore()
-    store.init({})
-    mockApprove.mockResolvedValue({})
-    mockFetchMT.mockResolvedValue({ id: 302, groups: [] })
-
-    await store.approve(302, 1)
-
-    expect(mockUserFetch).not.toHaveBeenCalled()
-  })
-
-  it('reject() refetches the sender the same way', async () => {
-    const store = useMessageStore()
-    store.init({})
-    store.list[303] = { id: 303, fromuser: 44 }
-    mockReject.mockResolvedValue({})
-    mockFetchMT.mockResolvedValue({ id: 303, groups: [] })
-
-    await store.reject(303, 1, 's', 2, 'b')
-
-    expect(mockReject).toHaveBeenCalledWith(303, 1, 's', 2, 'b')
-    expect(mockUserFetch).toHaveBeenCalledWith(44, true)
-  })
-})
-
-describe('message store - reply()/spam()/move()', () => {
-  it('reply() posts without removing the message from list', async () => {
+describe('message store - reply()', () => {
+  it('posts without removing the message from list', async () => {
     const store = useMessageStore()
     store.init({})
     store.list[400] = { id: 400 }
@@ -1132,91 +954,13 @@ describe('message store - reply()/spam()/move()', () => {
 
     await store.reply({
       id: 400,
-      groupid: 1,
       subject: 's',
       stdmsgid: 2,
       body: 'b',
     })
 
-    expect(mockReply).toHaveBeenCalledWith(400, 1, 's', 2, 'b')
+    expect(mockReply).toHaveBeenCalledWith(400, 's', 2, 'b')
     expect(store.list[400]).toBeDefined()
-  })
-
-  it('spam() removes the message from list', async () => {
-    const store = useMessageStore()
-    store.init({})
-    store.list[401] = { id: 401 }
-    mockSpam.mockResolvedValue({})
-
-    await store.spam({ id: 401, groupid: 1 })
-
-    expect(mockSpam).toHaveBeenCalledWith(401, 1)
-    expect(store.list[401]).toBeUndefined()
-  })
-
-  it('move() updates then refetches the message', async () => {
-    const store = useMessageStore()
-    store.init({})
-    mockUpdate.mockResolvedValue({})
-    mockFetchMT.mockResolvedValue({ id: 402, subject: 'moved' })
-
-    await store.move({ id: 402, groupid: 7 })
-
-    expect(mockUpdate).toHaveBeenCalledWith({
-      id: 402,
-      groupid: 7,
-      action: 'Move',
-    })
-    expect(store.list[402].subject).toBe('moved')
-  })
-})
-
-describe('message store - searchMember()', () => {
-  it('clears the store then fetches full details for each matched id', async () => {
-    const store = useMessageStore()
-    store.init({})
-    store.count = 5
-    mockFetchMessages.mockResolvedValue({ messages: [500, 501] })
-    store.fetchMT = vi.fn().mockImplementation(({ id }) => ({ id }))
-
-    await store.searchMember('bob', 9)
-
-    expect(mockFetchMessages).toHaveBeenCalledWith({
-      subaction: 'searchmemb',
-      search: 'bob',
-      groupid: 9,
-    })
-    expect(store.count).toBe(0)
-    expect(store.list[500]).toBeDefined()
-    expect(store.list[501]).toBeDefined()
-  })
-
-  it('returns early when there are no matches', async () => {
-    const store = useMessageStore()
-    store.init({})
-    mockFetchMessages.mockResolvedValue({ messages: [] })
-    store.fetchMT = vi.fn()
-
-    await store.searchMember('nobody', 9)
-
-    expect(store.fetchMT).not.toHaveBeenCalled()
-  })
-
-  it('logs and continues when an individual fetch fails', async () => {
-    const store = useMessageStore()
-    store.init({})
-    mockFetchMessages.mockResolvedValue({ messages: [502, 503] })
-    store.fetchMT = vi.fn().mockImplementation(({ id }) => {
-      if (id === 502) throw new Error('gone')
-      return { id }
-    })
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-
-    await store.searchMember('x', 9)
-
-    expect(store.list[502]).toBeUndefined()
-    expect(store.list[503]).toBeDefined()
-    logSpy.mockRestore()
   })
 })
 
@@ -1232,16 +976,16 @@ describe('message store - remaining getters', () => {
   it('inBounds returns the cached array for a matching key', () => {
     const store = useMessageStore()
     store.init({})
-    store.bounds['1:2:3:4:5'] = [{ id: 1 }]
+    store.bounds['1:2:3:4'] = [{ id: 1 }]
 
-    expect(store.inBounds(1, 2, 3, 4, 5)).toEqual([{ id: 1 }])
+    expect(store.inBounds(1, 2, 3, 4)).toEqual([{ id: 1 }])
   })
 
   it('inBounds returns an empty array when the key is not cached', () => {
     const store = useMessageStore()
     store.init({})
 
-    expect(store.inBounds(1, 2, 3, 4, 5)).toEqual([])
+    expect(store.inBounds(1, 2, 3, 4)).toEqual([])
   })
 
   it('all returns every cached message', () => {

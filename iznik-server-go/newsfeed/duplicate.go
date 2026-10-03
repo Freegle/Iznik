@@ -104,7 +104,7 @@ func findDuplicate(author uint64, text string) *DuplicateMatch {
 
 	// The store holds only OPEN messages, so a match is a post still standing —
 	// a member repeating a post they already took down is not a duplicate.
-	results := embedding.Global.Search(vec, duplicateCandidates, "", nil, nil, 0, 0, 0, 0)
+	results := embedding.Global.Search(vec, duplicateCandidates, "", nil, 0, 0, 0, 0)
 
 	var best *DuplicateMatch
 

@@ -10,9 +10,9 @@ class ReconcileReachMembersCommandTest extends TestCase
 {
     public function test_command_queues_members_and_reports_the_count(): void
     {
+        // createTestUser() defaults added to now(), which satisfies the
+        // "joined since yesterday" window the reconcile service queries.
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['added' => now()->subHours(2)]);
 
         $exit = Artisan::call('ripple:reconcile-reach-members');
         $output = Artisan::output(); // fetch() clears the buffer, so read it once
@@ -25,8 +25,6 @@ class ReconcileReachMembersCommandTest extends TestCase
     public function test_dry_run_queues_nobody(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['added' => now()->subHours(2)]);
 
         $exit = Artisan::call('ripple:reconcile-reach-members', ['--dry-run' => true]);
 

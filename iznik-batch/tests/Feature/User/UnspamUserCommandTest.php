@@ -9,17 +9,15 @@ class UnspamUserCommandTest extends TestCase
 {
     public function test_removes_user_from_spam_and_banned_lists(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['banned' => now()]);
         $email = DB::table('users_emails')->where('userid', $user->id)->value('email');
 
-        DB::table('users_banned')->insert(['userid' => $user->id, 'groupid' => $group->id]);
         DB::table('spam_users')->insert(['userid' => $user->id, 'byuserid' => $user->id, 'added' => now(), 'collection' => 'Spammer']);
 
         $this->artisan("user:unspam --email={$email}")
             ->assertExitCode(0);
 
-        $this->assertDatabaseMissing('users_banned', ['userid' => $user->id]);
+        $this->assertNull(DB::table('users')->where('id', $user->id)->value('banned'));
         $this->assertDatabaseMissing('spam_users', ['userid' => $user->id]);
     }
 

@@ -10,24 +10,26 @@ import (
 	"gorm.io/gorm"
 )
 
-// Experiment: micro-volunteering as the reply gate.
+// Micro-volunteering as the reply gate.
 //
-// Today a member can reply to as many posts as they like. The people who reply to
-// everything are the ones most likely to be hoarding, reselling or not people at all, and
-// today the only defence is a moderator noticing. REPLY_GATE_AFTER=N makes the (N+1)th
-// reply in a day wait until the member has answered a graded micro-volunteering task
-// correctly (see microvolunteering.HasRecentGradedPass). Random button-pressing does not
-// pass; a wrong answer keeps the gate shut. Nobody has to be there for it to work.
-//
-// Off unless switched on. This is a thought experiment, not the shipped behaviour.
+// A member can reply to as many posts as they like, but the people who reply to everything
+// are the ones most likely to be hoarding, reselling or not people at all. REPLY_GATE_AFTER=N
+// makes the (N+1)th reply in a day wait until the member has answered a graded
+// micro-volunteering task correctly (see microvolunteering.HasRecentGradedPass). Random
+// button-pressing does not pass; a wrong answer keeps the gate shut. Nobody has to be there
+// for it to work.
 
 // ReplyGateAfter is how many replies a member may send in a day before the gate applies.
-// 0 means the gate is off.
+// Unset, or anything that isn't a valid non-negative number, defaults to 5. An explicit 0
+// turns the gate off.
 func ReplyGateAfter() int {
 	v := strings.TrimSpace(os.Getenv("REPLY_GATE_AFTER"))
+	if v == "" {
+		return 5
+	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 0 {
-		return 0
+		return 5
 	}
 	return n
 }

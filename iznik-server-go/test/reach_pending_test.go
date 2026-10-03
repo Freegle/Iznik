@@ -57,9 +57,6 @@ func TestPendingReachGatesBrowseFeeds(t *testing.T) {
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 
-	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, viewerID, group, "Member")
-	CreateTestMembership(t, posterID, group, "Member")
 
 	msgID := CreateTestMessage(t, posterID, group, prefix+" offer", 51.5, -0.1)
 	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
@@ -104,8 +101,6 @@ func TestPendingReachNeverHidesYourOwnPost(t *testing.T) {
 	prefix := uniquePrefix("pendingreachown")
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
 
-	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, viewerID, group, "Member")
 
 	msgID := CreateTestMessage(t, viewerID, group, prefix+" my own offer", 51.5, -0.1)
 	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)

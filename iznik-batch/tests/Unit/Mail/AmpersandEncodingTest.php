@@ -279,19 +279,15 @@ class AmpersandEncodingTest extends TestCase
     public function test_unified_digest_preparePosts_decodes_subject(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
 
         // Create a message with an HTML-encoded subject (as stored in DB).
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Coffee &amp; Cake (London)',
         ]);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);

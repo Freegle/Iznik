@@ -124,7 +124,7 @@ describe('NavbarDesktop', () => {
 
     it('shows browse link', () => {
       const wrapper = createWrapper()
-      expect(wrapper.find('#menu-option-mygroups').exists()).toBe(true)
+      expect(wrapper.find('#menu-option-browse').exists()).toBe(true)
     })
 
     it('shows give link', () => {
@@ -264,7 +264,7 @@ describe('NavbarDesktop', () => {
   describe('icons', () => {
     it('shows eye icon for browse', () => {
       const wrapper = createWrapper()
-      const browseLink = wrapper.find('#menu-option-mygroups')
+      const browseLink = wrapper.find('#menu-option-browse')
       expect(browseLink.find('[data-icon="eye"]').exists()).toBe(true)
     })
 

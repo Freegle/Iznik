@@ -35,7 +35,6 @@ export const useComposeStore = defineStore('compose', {
     email: null,
     emailAt: null,
     postcode: null,
-    group: null,
     messages: [],
     attachmentBump: 1,
     _progress: 1,
@@ -157,7 +156,6 @@ export const useComposeStore = defineStore('compose', {
         textbody: message.description,
         availablenow: message.availablenow,
         attachments: attids,
-        groupid: this.group,
         email,
       }
 
@@ -270,7 +268,6 @@ export const useComposeStore = defineStore('compose', {
       textbody,
       attachments,
       availablenow,
-      groupid,
       accessinstructions = null
     ) {
       const data = {
@@ -280,7 +277,6 @@ export const useComposeStore = defineStore('compose', {
         item,
         textbody,
         attachments,
-        groupid,
         availablenow,
       }
       if (accessinstructions) {
@@ -297,25 +293,9 @@ export const useComposeStore = defineStore('compose', {
       this.emailAt = Date.now()
     },
     setPostcode(postcode) {
-      // Want to make sure we don't store too much data.
       console.log('Set postcode', postcode?.name)
-      if (postcode?.groupsnear) {
-        const pc = { ...postcode }
-
-        pc.groupsnear = []
-
-        for (const group of postcode.groupsnear) {
-          pc.groupsnear.push({
-            id: group.id,
-            nameshort: group.nameshort,
-            namedisplay: group.namedisplay,
-            settings: {
-              closed: group.settings?.closed,
-            },
-          })
-        }
-
-        this.postcode = pc
+      if (postcode) {
+        this.postcode = { ...postcode }
       }
     },
     add() {
@@ -553,13 +533,13 @@ export const useComposeStore = defineStore('compose', {
             const id = await this.createDraft(message, this.email)
             console.log('Created draft', id)
 
-            const { groupid, newuser, newpassword } = await this.submitDraft(
+            const { newuser, newpassword } = await this.submitDraft(
               id,
               this.email,
               submitOptions
             )
 
-            result = { id, groupid, newuser, newpassword }
+            result = { id, newuser, newpassword }
           } else {
             // This is one of our existing messages which we are reposting.  We need to convert it back to a draft,
             // edit it (to update it from our client data), and then submit.
@@ -619,17 +599,16 @@ export const useComposeStore = defineStore('compose', {
               message.description,
               attids,
               'availablenow' in message ? message.availablenow : 1,
-              this.group,
               message.accessinstructions || null
             )
 
-            const { groupid, newuser, newpassword } = await this.submitDraft(
+            const { newuser, newpassword } = await this.submitDraft(
               id,
               this.email,
               submitOptions
             )
 
-            result = { id, groupid, newuser, newpassword }
+            result = { id, newuser, newpassword }
           }
 
           console.log('Got result', result)
@@ -795,9 +774,6 @@ export const useComposeStore = defineStore('compose', {
     },
     postcodeValid: (state) => {
       return state.postcode?.name
-    },
-    noGroups: (state) => {
-      return !state.postcode?.groupsnear?.length
     },
   },
 })

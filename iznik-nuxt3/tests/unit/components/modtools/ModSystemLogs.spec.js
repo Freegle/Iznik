@@ -21,12 +21,11 @@ const mockSystemLogsStore = {
   email: null,
   ipAddress: null,
   timeRange: '24h',
-  entityIds: { userIds: [], groupIds: [] },
+  entityIds: { userIds: [] },
   init: vi.fn(),
   clear: vi.fn(),
   fetchSummaries: vi.fn(),
   setUserFilter: vi.fn(),
-  setGroupFilter: vi.fn(),
   setMsgFilter: vi.fn(),
   setTraceFilter: vi.fn(),
   setSessionFilter: vi.fn(),
@@ -52,23 +51,11 @@ vi.mock('~/stores/user', () => ({
   useUserStore: () => mockUserStore,
 }))
 
-// Mock the group store
-const mockGroupStore = {
-  list: {},
-  get: vi.fn((id) => mockGroupStore.list[id] || null),
-  fetch: vi.fn(),
-}
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
-}))
-
 describe('ModSystemLogs', () => {
   async function mountComponent(props = {}) {
     const wrapper = mount(ModSystemLogs, {
       props: {
         userid: null,
-        groupid: null,
         msgid: null,
         ...props,
       },
@@ -78,7 +65,7 @@ describe('ModSystemLogs', () => {
           ModSystemLogSearch: {
             template:
               '<div class="log-search" @search="$emit(\'search\')" @expand-all="$emit(\'expand-all\')" />',
-            props: ['userid', 'groupid', 'msgid'],
+            props: ['userid', 'msgid'],
           },
           ModSystemLogTreeNode: {
             template: '<div class="tree-node" />',
@@ -115,13 +102,12 @@ describe('ModSystemLogs', () => {
     mockSystemLogsStore.error = null
     mockSystemLogsStore.hasMore = true
     mockSystemLogsStore.summaries = []
-    mockSystemLogsStore.entityIds = { userIds: [], groupIds: [] }
+    mockSystemLogsStore.entityIds = { userIds: [] }
     mockSystemLogsStore.email = null
     mockSystemLogsStore.ipAddress = null
     mockSystemLogsStore.timeRange = '24h'
     mockSystemLogsStore.fetchSummaries.mockResolvedValue()
     mockUserStore.fetch.mockResolvedValue()
-    mockGroupStore.fetch.mockResolvedValue()
   })
 
   describe('rendering', () => {
@@ -261,12 +247,6 @@ describe('ModSystemLogs', () => {
       expect(wrapper.vm.emptyStateHint).toContain('user #123')
     })
 
-    it('shows group filter in hint', async () => {
-      const wrapper = await mountComponent()
-      wrapper.vm.localGroupid = 456
-      expect(wrapper.vm.emptyStateHint).toContain('group #456')
-    })
-
     it('shows message filter in hint', async () => {
       const wrapper = await mountComponent()
       wrapper.vm.localMsgid = 789
@@ -322,14 +302,6 @@ describe('ModSystemLogs', () => {
       expect(wrapper.emitted('update:userid')[0]).toEqual([123])
     })
 
-    it('updateGroupid updates local and store filter', async () => {
-      const wrapper = await mountComponent()
-      wrapper.vm.updateGroupid(456)
-      expect(wrapper.vm.localGroupid).toBe(456)
-      expect(mockSystemLogsStore.setGroupFilter).toHaveBeenCalledWith(456)
-      expect(wrapper.emitted('update:groupid')[0]).toEqual([456])
-    })
-
     it('updateMsgid updates local and store filter', async () => {
       const wrapper = await mountComponent()
       wrapper.vm.updateMsgid(789)
@@ -345,15 +317,6 @@ describe('ModSystemLogs', () => {
       expect(wrapper.vm.localUserid).toBeNull()
       expect(mockSystemLogsStore.setUserFilter).toHaveBeenCalledWith(null)
       expect(wrapper.emitted('update:userid')[0]).toEqual([null])
-    })
-
-    it('clearGroupFilter clears filter and fetches', async () => {
-      const wrapper = await mountComponent()
-      wrapper.vm.localGroupid = 456
-      await wrapper.vm.clearGroupFilter()
-      expect(wrapper.vm.localGroupid).toBeNull()
-      expect(mockSystemLogsStore.setGroupFilter).toHaveBeenCalledWith(null)
-      expect(wrapper.emitted('update:groupid')[0]).toEqual([null])
     })
 
     it('clearMsgFilter clears filter and fetches', async () => {
@@ -395,7 +358,6 @@ describe('ModSystemLogs', () => {
       // Set up entity IDs before mounting (so they're available during fetchLogs)
       mockSystemLogsStore.entityIds = {
         userIds: [1, 2, 3],
-        groupIds: [],
       }
       mockUserStore.list = { 1: { id: 1 } }
 
@@ -408,23 +370,6 @@ describe('ModSystemLogs', () => {
       expect(mockUserStore.fetch).toHaveBeenCalledWith(2)
       expect(mockUserStore.fetch).toHaveBeenCalledWith(3)
       expect(mockUserStore.fetch).not.toHaveBeenCalledWith(1)
-    })
-
-    it('batchFetchEntities fetches missing groups', async () => {
-      mockSystemLogsStore.entityIds = {
-        userIds: [],
-        groupIds: [10, 20],
-      }
-      mockGroupStore.list = { 10: { id: 10 } }
-
-      const wrapper = await mountComponent()
-      // Clear mocks from mount, then call again to test
-      vi.clearAllMocks()
-      mockGroupStore.list = { 10: { id: 10 } }
-      await wrapper.vm.batchFetchEntities()
-
-      expect(mockGroupStore.fetch).toHaveBeenCalledWith(20)
-      expect(mockGroupStore.fetch).not.toHaveBeenCalledWith(10)
     })
   })
 
@@ -519,14 +464,6 @@ describe('ModSystemLogs', () => {
 
       await wrapper.setProps({ userid: 123 })
       expect(wrapper.vm.localUserid).toBe(123)
-    })
-
-    it('watches groupid prop and syncs to local', async () => {
-      const wrapper = await mountComponent({ groupid: null })
-      expect(wrapper.vm.localGroupid).toBeNull()
-
-      await wrapper.setProps({ groupid: 456 })
-      expect(wrapper.vm.localGroupid).toBe(456)
     })
 
     it('watches msgid prop and syncs to local', async () => {

@@ -7,10 +7,7 @@ use App\Mail\Session\UnsubscribedNotice;
 use App\Models\ChatImage;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
-use App\Models\Group;
-use App\Models\Membership;
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\ItemService;
@@ -337,21 +334,13 @@ class IncomingMailService
                 $user = User::find($userEmail->userid);
                 if ($user) {
                     // Comprehensive email shutoff matching legacy setSimpleMail(SIMPLE_MAIL_NONE).
-                    // Turn off ALL email types, not just digests.
-
-                    // Turn off digests, events, volunteering on all memberships
-                    DB::table('memberships')
-                        ->where('userid', $user->id)
+                    // Turn off ALL email types, not just digests, directly on the user.
+                    DB::table('users')
+                        ->where('id', $user->id)
                         ->update([
                             'emailfrequency' => 0,
                             'eventsallowed' => 0,
                             'volunteeringallowed' => 0,
-                        ]);
-
-                    // Turn off relevant and newsletters on users table
-                    DB::table('users')
-                        ->where('id', $user->id)
-                        ->update([
                             'relevantallowed' => 0,
                             'newslettersallowed' => 0,
                         ]);
@@ -361,16 +350,16 @@ class IncomingMailService
                     // is already an array (or null). Calling json_decode on it would throw
                     // "Argument #1 ($json) must be of type string, array given".
                     $settings = $user->settings ?? [];
-                    if (!is_array($settings)) {
+                    if (! is_array($settings)) {
                         $settings = [];
                     }
-                    if (!isset($settings['notifications']) || !is_array($settings['notifications'])) {
+                    if (! isset($settings['notifications']) || ! is_array($settings['notifications'])) {
                         $settings['notifications'] = [];
                     }
-                    $settings['notifications']['email'] = FALSE;
-                    $settings['notifications']['emailmine'] = FALSE;
-                    $settings['notificationmails'] = FALSE;
-                    $settings['engagement'] = FALSE;
+                    $settings['notifications']['email'] = false;
+                    $settings['notifications']['emailmine'] = false;
+                    $settings['notificationmails'] = false;
+                    $settings['engagement'] = false;
 
                     DB::table('users')
                         ->where('id', $user->id)
@@ -495,7 +484,7 @@ class IncomingMailService
                 'envelope_to' => $email->envelopeTo,
             ]);
 
-            return $this->dropped("Invalid handover address format");
+            return $this->dropped('Invalid handover address format');
         }
 
         $trystId = (int) $matches[1];
@@ -518,7 +507,7 @@ class IncomingMailService
                 'tryst_id' => $trystId,
             ]);
 
-            return $this->dropped("Tryst response for non-existent tryst");
+            return $this->dropped('Tryst response for non-existent tryst');
         }
 
         // Determine response from email content
@@ -595,23 +584,32 @@ class IncomingMailService
     /**
      * Handle digest off command.
      *
-     * Updates the user's membership to turn off email digests (emailfrequency = 0).
+     * Sets the user's email frequency to never. The address carries a legacy
+     * group id after the user id; it is accepted but ignored, since email
+     * frequency is a single account-wide setting, not a per-community one.
      * Format: digestoff-{userid}-{groupid}@users.ilovefreegle.org
      */
     private function handleDigestOff(ParsedEmail $email): RoutingResult
     {
         $userId = $email->commandUserId;
-        $groupId = $email->commandGroupId;
 
         Log::info('Processing digest off command', [
             'user_id' => $userId,
-            'group_id' => $groupId,
         ]);
 
-        if (! $userId || ! $groupId) {
-            Log::warning('Invalid digest off command - missing user or group ID');
+        if (! $userId) {
+            Log::warning('Invalid digest off command - missing user ID');
 
-            return $this->dropped("Digest off command missing user or group ID");
+            return $this->dropped('Digest off command missing user ID');
+        }
+
+        $user = User::find($userId);
+        if ($user === null) {
+            Log::warning('User not found for digest off', [
+                'user_id' => $userId,
+            ]);
+
+            return $this->dropped('User not found for digest off');
         }
 
         // Update user's last access
@@ -619,75 +617,50 @@ class IncomingMailService
             ->where('id', $userId)
             ->update(['lastaccess' => now()]);
 
-        // Check if user is an approved member of the group
-        $membership = Membership::where('userid', $userId)
-            ->where('groupid', $groupId)
-            ->where('collection', 'Approved')
-            ->first();
-
-        if ($membership === null) {
-            Log::warning('User is not an approved member of group', [
-                'user_id' => $userId,
-                'group_id' => $groupId,
-            ]);
-
-            return $this->dropped("User not an approved member for digest off");
-        }
-
-        // Set email frequency to 0 (NEVER)
-        $oldFrequency = $membership->emailfrequency;
-        $membership->emailfrequency = 0;
-        $membership->save();
+        // Set email frequency to 0 (never)
+        $oldFrequency = $user->emailfrequency;
+        $user->emailfrequency = 0;
+        $user->save();
 
         // Log to logs table (matches legacy Digest::off())
-        $group = Group::find($groupId);
-        $groupName = $group->namefull ?? $group->nameshort ?? "Group #$groupId";
-
         DB::table('logs')->insert([
             'timestamp' => now(),
             'type' => 'User',
             'subtype' => 'MailOff',
             'user' => $userId,
-            'groupid' => $groupId,
         ]);
 
         // Send confirmation email (matches legacy Digest::off())
-        $user = User::find($userId);
-        if ($user) {
-            $preferredEmail = $this->getPreferredEmail($userId);
-            if ($preferredEmail) {
-                try {
-                    $userDomain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
-                    $noreplyAddr = 'noreply@' . $userDomain;
-                    $siteName = config('freegle.site_name', 'Freegle');
+        $preferredEmail = $this->getPreferredEmail($userId);
+        if ($preferredEmail) {
+            try {
+                $userDomain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+                $noreplyAddr = 'noreply@'.$userDomain;
 
-                    MailFacade::raw(
-                        "We've turned your emails off on $groupName.",
-                        function ($message) use ($preferredEmail, $user, $noreplyAddr, $siteName, $userId, $userDomain) {
-                            $message->to($preferredEmail, $user->fullname ?? $user->firstname ?? '')
-                                ->from($noreplyAddr, 'Do Not Reply')
-                                ->returnPath("bounce-$userId-" . time() . "@$userDomain")
-                                ->subject('Email Change Confirmation');
-                        }
-                    );
+                MailFacade::raw(
+                    "We've turned your emails off.",
+                    function ($message) use ($preferredEmail, $user, $noreplyAddr, $userId, $userDomain) {
+                        $message->to($preferredEmail, $user->fullname ?? $user->firstname ?? '')
+                            ->from($noreplyAddr, 'Do Not Reply')
+                            ->returnPath("bounce-$userId-".time()."@$userDomain")
+                            ->subject('Email Change Confirmation');
+                    }
+                );
 
-                    Log::info('Sent digest off confirmation email', [
-                        'user_id' => $userId,
-                        'email' => $preferredEmail,
-                    ]);
-                } catch (\Throwable $e) {
-                    Log::warning('Failed to send digest off confirmation', [
-                        'user_id' => $userId,
-                        'error' => $e->getMessage(),
-                    ]);
-                }
+                Log::info('Sent digest off confirmation email', [
+                    'user_id' => $userId,
+                    'email' => $preferredEmail,
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning('Failed to send digest off confirmation', [
+                    'user_id' => $userId,
+                    'error' => $e->getMessage(),
+                ]);
             }
         }
 
         Log::info('Turned off digest for user', [
             'user_id' => $userId,
-            'group_id' => $groupId,
-            'membership_id' => $membership->id,
             'old_emailfrequency' => $oldFrequency,
         ]);
 
@@ -697,28 +670,28 @@ class IncomingMailService
     /**
      * Handle events off command.
      *
-     * Updates the user's membership to turn off event emails (eventsallowed = 0).
-     * Format: eventsoff-{userid}-{groupid}@users.ilovefreegle.org
+     * Sets the user's eventsallowed flag to off. The address may carry a
+     * legacy group id after the user id; it is accepted but ignored, since
+     * events-allowed is a single account-wide setting, not a per-community one.
+     * Format: eventsoff-{userid}[-{groupid}]@users.ilovefreegle.org
      */
     private function handleEventsOff(ParsedEmail $email): RoutingResult
     {
         $localPart = explode('@', $email->envelopeTo)[0] ?? '';
 
-        // Parse eventsoff-{userid}-{groupid}
-        if (! preg_match('/^eventsoff-(\d+)-(\d+)$/', $localPart, $matches)) {
+        // Parse eventsoff-{userid} with an optional trailing legacy group id.
+        if (! preg_match('/^eventsoff-(\d+)(?:-\d+)?$/', $localPart, $matches)) {
             Log::warning('Invalid events off address format', [
                 'envelope_to' => $email->envelopeTo,
             ]);
 
-            return $this->dropped("Invalid events off address format");
+            return $this->dropped('Invalid events off address format');
         }
 
         $userId = (int) $matches[1];
-        $groupId = (int) $matches[2];
 
         Log::info('Processing events off command', [
             'user_id' => $userId,
-            'group_id' => $groupId,
         ]);
 
         // Update user's last access
@@ -726,30 +699,22 @@ class IncomingMailService
             ->where('id', $userId)
             ->update(['lastaccess' => now()]);
 
-        // Check if user is an approved member of the group
-        $membership = Membership::where('userid', $userId)
-            ->where('groupid', $groupId)
-            ->where('collection', 'Approved')
-            ->first();
-
-        if ($membership === null) {
-            Log::warning('User is not an approved member of group', [
+        $user = User::find($userId);
+        if ($user === null) {
+            Log::warning('User not found for events off', [
                 'user_id' => $userId,
-                'group_id' => $groupId,
             ]);
 
-            return $this->dropped("User not an approved member for events off");
+            return $this->dropped('User not found for events off');
         }
 
         // Set eventsallowed to 0
-        $oldEventsAllowed = $membership->eventsallowed;
-        $membership->eventsallowed = 0;
-        $membership->save();
+        $oldEventsAllowed = $user->eventsallowed;
+        $user->eventsallowed = 0;
+        $user->save();
 
         Log::info('Turned off events for user', [
             'user_id' => $userId,
-            'group_id' => $groupId,
-            'membership_id' => $membership->id,
             'old_eventsallowed' => $oldEventsAllowed,
         ]);
 
@@ -772,7 +737,7 @@ class IncomingMailService
                 'envelope_to' => $email->envelopeTo,
             ]);
 
-            return $this->dropped("Invalid newsletters off address format");
+            return $this->dropped('Invalid newsletters off address format');
         }
 
         $userId = (int) $matches[1];
@@ -793,7 +758,7 @@ class IncomingMailService
                 'user_id' => $userId,
             ]);
 
-            return $this->dropped("User not found for newsletters off");
+            return $this->dropped('User not found for newsletters off');
         }
 
         // Set newslettersallowed to 0
@@ -825,7 +790,7 @@ class IncomingMailService
                 'envelope_to' => $email->envelopeTo,
             ]);
 
-            return $this->dropped("Invalid relevant off address format");
+            return $this->dropped('Invalid relevant off address format');
         }
 
         $userId = (int) $matches[1];
@@ -846,7 +811,7 @@ class IncomingMailService
                 'user_id' => $userId,
             ]);
 
-            return $this->dropped("User not found for relevant off");
+            return $this->dropped('User not found for relevant off');
         }
 
         // Set relevantallowed to 0
@@ -865,28 +830,28 @@ class IncomingMailService
     /**
      * Handle volunteering off command.
      *
-     * Updates the user's membership to turn off volunteering emails (volunteeringallowed = 0).
-     * Format: volunteeringoff-{userid}-{groupid}@users.ilovefreegle.org
+     * Sets the user's volunteeringallowed flag to off. The address may carry
+     * a legacy group id after the user id; it is accepted but ignored, since
+     * volunteering-allowed is a single account-wide setting, not a per-community one.
+     * Format: volunteeringoff-{userid}[-{groupid}]@users.ilovefreegle.org
      */
     private function handleVolunteeringOff(ParsedEmail $email): RoutingResult
     {
         $localPart = explode('@', $email->envelopeTo)[0] ?? '';
 
-        // Parse volunteeringoff-{userid}-{groupid}
-        if (! preg_match('/^volunteeringoff-(\d+)-(\d+)$/', $localPart, $matches)) {
+        // Parse volunteeringoff-{userid} with an optional trailing legacy group id.
+        if (! preg_match('/^volunteeringoff-(\d+)(?:-\d+)?$/', $localPart, $matches)) {
             Log::warning('Invalid volunteering off address format', [
                 'envelope_to' => $email->envelopeTo,
             ]);
 
-            return $this->dropped("Invalid volunteering off address format");
+            return $this->dropped('Invalid volunteering off address format');
         }
 
         $userId = (int) $matches[1];
-        $groupId = (int) $matches[2];
 
         Log::info('Processing volunteering off command', [
             'user_id' => $userId,
-            'group_id' => $groupId,
         ]);
 
         // Update user's last access
@@ -894,31 +859,23 @@ class IncomingMailService
             ->where('id', $userId)
             ->update(['lastaccess' => now()]);
 
-        // Check if user is an approved member of the group
-        $membership = Membership::where('userid', $userId)
-            ->where('groupid', $groupId)
-            ->where('collection', 'Approved')
-            ->first();
-
-        if ($membership === null) {
-            Log::warning('User is not an approved member of group', [
+        $user = User::find($userId);
+        if ($user === null) {
+            Log::warning('User not found for volunteering off', [
                 'user_id' => $userId,
-                'group_id' => $groupId,
             ]);
 
-            return $this->dropped("User not an approved member for volunteering off");
+            return $this->dropped('User not found for volunteering off');
         }
 
         // Set volunteeringallowed to 0
-        $oldVolunteeringAllowed = $membership->volunteeringallowed;
-        $membership->volunteeringallowed = 0;
-        $membership->save();
+        $oldVolunteeringAllowed = $user->volunteeringallowed;
+        $user->volunteeringallowed = 0;
+        $user->save();
 
         Log::info('Turned off volunteering for user', [
             'user_id' => $userId,
-            'membership_id' => $membership->id,
             'old_volunteeringallowed' => $oldVolunteeringAllowed,
-            'group_id' => $groupId,
         ]);
 
         return RoutingResult::TO_SYSTEM;
@@ -940,7 +897,7 @@ class IncomingMailService
                 'envelope_to' => $email->envelopeTo,
             ]);
 
-            return $this->dropped("Invalid notification mails off address format");
+            return $this->dropped('Invalid notification mails off address format');
         }
 
         $userId = (int) $matches[1];
@@ -961,13 +918,13 @@ class IncomingMailService
                 'user_id' => $userId,
             ]);
 
-            return $this->dropped("User not found for notification mails off");
+            return $this->dropped('User not found for notification mails off');
         }
 
         // Get current settings. $user is an Eloquent User model with a
         // settings => array cast, so $user->settings is already an array (or null).
         $settings = $user->settings ?? [];
-        if (!is_array($settings)) {
+        if (! is_array($settings)) {
             $settings = [];
         }
 
@@ -1007,7 +964,7 @@ class IncomingMailService
                 'envelope_to' => $email->envelopeTo,
             ]);
 
-            return $this->dropped("Invalid one-click unsubscribe address format");
+            return $this->dropped('Invalid one-click unsubscribe address format');
         }
 
         $userId = (int) $matches[1];
@@ -1026,16 +983,16 @@ class IncomingMailService
                 'user_id' => $userId,
             ]);
 
-            return $this->dropped("User not found for one-click unsubscribe");
+            return $this->dropped('User not found for one-click unsubscribe');
         }
 
         // Prevent accidental unsubscription by moderators
-        if ($this->isUserModerator($userId)) {
+        if ($user->isModerator()) {
             Log::info('Ignoring one-click unsubscribe for moderator', [
                 'user_id' => $userId,
             ]);
 
-            return $this->dropped("Ignoring one-click unsubscribe for moderator");
+            return $this->dropped('Ignoring one-click unsubscribe for moderator');
         }
 
         // Validate the key to prevent spoof unsubscribes
@@ -1045,7 +1002,7 @@ class IncomingMailService
                 'user_id' => $userId,
             ]);
 
-            return $this->dropped("Invalid key for one-click unsubscribe");
+            return $this->dropped('Invalid key for one-click unsubscribe');
         }
 
         // An address we generated ourselves should always carry a known category, but a
@@ -1118,17 +1075,6 @@ class IncomingMailService
     }
 
     /**
-     * Check if user is a moderator on any group.
-     */
-    private function isUserModerator(int $userId): bool
-    {
-        return DB::table('memberships')
-            ->where('userid', $userId)
-            ->whereIn('role', ['Moderator', 'Owner'])
-            ->exists();
-    }
-
-    /**
      * Get the user's stored key for one-click unsubscribe validation.
      */
     private function getUserKey(int $userId): ?string
@@ -1144,36 +1090,37 @@ class IncomingMailService
     /**
      * Handle subscribe command.
      *
-     * Adds the user to the group. If the user doesn't exist, creates them.
-     * Format: {groupname}-subscribe@groups.ilovefreegle.org
+     * TrashNothing is the only sender left that addresses mail this way. It resends a
+     * Subscribe mail for every area its member is on, so this sets the member's email
+     * frequency to daily; it does not create any per-area membership, which no longer exists.
+     * Format: {areaname}-subscribe@groups.ilovefreegle.org
      */
     private function handleSubscribe(ParsedEmail $email): RoutingResult
     {
         $localPart = explode('@', $email->envelopeTo)[0] ?? '';
 
-        // Parse {groupname}-subscribe
+        // Parse {areaname}-subscribe
         if (! preg_match('/^(.+)-subscribe$/', $localPart, $matches)) {
             Log::warning('Invalid subscribe address format', [
                 'envelope_to' => $email->envelopeTo,
             ]);
 
-            return $this->dropped("Invalid subscribe address format");
+            return $this->dropped('Invalid subscribe address format');
         }
 
-        $groupName = $matches[1];
+        $areaName = $matches[1];
 
         Log::info('Processing subscribe command', [
-            'group' => $groupName,
+            'area' => $areaName,
         ]);
 
-        // Find the group
-        $group = Group::where('nameshort', $groupName)->first();
+        $group = $this->findGroup($areaName);
         if ($group === null) {
-            Log::warning('Subscribe to unknown group', [
-                'group' => $groupName,
+            Log::warning('Subscribe to unknown area', [
+                'area' => $areaName,
             ]);
 
-            return $this->dropped("Subscribe to unknown group");
+            return $this->dropped('Subscribe to unknown area');
         }
 
         // Find or create the user
@@ -1209,7 +1156,7 @@ class IncomingMailService
                     'email' => $envFrom,
                 ]);
 
-                return $this->dropped("User email exists but user not found for subscribe");
+                return $this->dropped('User email exists but user not found for subscribe');
             }
 
             // Update last access
@@ -1217,68 +1164,26 @@ class IncomingMailService
             $user->save();
         }
 
-        // A ban is per-group and blocks rejoining. TrashNothing re-sends a Subscribe mail
-        // for every group its member is on, so without this check a banned member is put
-        // back on the group the next time TN syncs, with nothing in the modlog to explain
-        // how they returned (Discourse #10086).
-        $banned = DB::table('users_banned')
-            ->where('userid', $user->id)
-            ->where('groupid', $group->id)
-            ->exists();
-
-        if ($banned) {
+        // A ban is site-wide now, not per-area. TrashNothing re-sends a Subscribe mail
+        // for every area its member is on, so without this check a banned member would
+        // get their email frequency turned back on the next time TN syncs (Discourse #10086).
+        if ($user->banned !== null) {
             Log::info('Subscribe from banned member - dropping', [
                 'user_id' => $user->id,
-                'group_id' => $group->id,
-                'group_name' => $groupName,
+                'area' => $areaName,
             ]);
 
-            return $this->dropped("Subscribe from banned member");
+            return $this->dropped('Subscribe from banned member');
         }
 
-        // Check if already a member
-        $existingMembership = Membership::where('userid', $user->id)
-            ->where('groupid', $group->id)
-            ->first();
+        $oldFrequency = $user->emailfrequency;
+        $user->emailfrequency = 24;
+        $user->save();
 
-        if ($existingMembership !== null) {
-            Log::info('User is already a member', [
-                'user_id' => $user->id,
-                'group_id' => $group->id,
-            ]);
-
-            return RoutingResult::TO_SYSTEM;
-        }
-
-        // Add membership
-        $membership = Membership::create([
-            'userid' => $user->id,
-            'groupid' => $group->id,
-            'role' => 'Member',
-            'collection' => 'Approved',
-            'added' => now(),
-            'emailfrequency' => 24, // Daily digest by default
-        ]);
-
-        // Record the join the way every other join path does, so moderators can see how
-        // the member arrived, and so the "seen on many groups" check in
-        // MembershipsProcessingService - which counts Group/Joined rows - takes it in.
-        DB::table('logs')->insert([
-            'timestamp' => now(),
-            'type' => 'Group',
-            'subtype' => 'Joined',
-            'user' => $user->id,
-            'byuser' => $user->id,
-            'groupid' => $group->id,
-            'text' => 'Subscribed',
-        ]);
-
-        Log::info('Added user to group', [
+        Log::info('Set daily email frequency for TrashNothing subscribe', [
             'user_id' => $user->id,
-            'group_id' => $group->id,
-            'group_name' => $groupName,
-            'membership_id' => $membership->id,
-            'created_new' => true,
+            'area' => $areaName,
+            'old_emailfrequency' => $oldFrequency,
         ]);
 
         return RoutingResult::TO_SYSTEM;
@@ -1287,37 +1192,37 @@ class IncomingMailService
     /**
      * Handle unsubscribe command.
      *
-     * Removes the user from the group. Moderators/owners are protected from
-     * accidental unsubscription.
-     * Format: {groupname}-unsubscribe@groups.ilovefreegle.org
+     * Sets the member's email frequency to never. National moderators are
+     * protected from accidental unsubscription, since a partner resync should
+     * not be able to silence someone doing moderation duty.
+     * Format: {areaname}-unsubscribe@groups.ilovefreegle.org
      */
     private function handleUnsubscribe(ParsedEmail $email): RoutingResult
     {
         $localPart = explode('@', $email->envelopeTo)[0] ?? '';
 
-        // Parse {groupname}-unsubscribe
+        // Parse {areaname}-unsubscribe
         if (! preg_match('/^(.+)-unsubscribe$/', $localPart, $matches)) {
             Log::warning('Invalid unsubscribe address format', [
                 'envelope_to' => $email->envelopeTo,
             ]);
 
-            return $this->dropped("Invalid unsubscribe address format");
+            return $this->dropped('Invalid unsubscribe address format');
         }
 
-        $groupName = $matches[1];
+        $areaName = $matches[1];
 
         Log::info('Processing unsubscribe command', [
-            'group' => $groupName,
+            'area' => $areaName,
         ]);
 
-        // Find the group
-        $group = Group::where('nameshort', $groupName)->first();
+        $group = $this->findGroup($areaName);
         if ($group === null) {
-            Log::warning('Unsubscribe from unknown group', [
-                'group' => $groupName,
+            Log::warning('Unsubscribe from unknown area', [
+                'area' => $areaName,
             ]);
 
-            return $this->dropped("Unsubscribe from unknown group");
+            return $this->dropped('Unsubscribe from unknown area');
         }
 
         // Find the user by envelope from
@@ -1329,7 +1234,7 @@ class IncomingMailService
                 'email' => $envFrom,
             ]);
 
-            return $this->dropped("Unsubscribe from unknown user");
+            return $this->dropped('Unsubscribe from unknown user');
         }
 
         $user = User::find($userEmail->userid);
@@ -1338,57 +1243,31 @@ class IncomingMailService
                 'email' => $envFrom,
             ]);
 
-            return $this->dropped("User email exists but user not found for unsubscribe");
+            return $this->dropped('User email exists but user not found for unsubscribe');
         }
 
         // Update last access
         $user->lastaccess = now();
         $user->save();
 
-        // Check if user is a mod or owner of this group - protect them
-        $membership = Membership::where('userid', $user->id)
-            ->where('groupid', $group->id)
-            ->first();
-
-        if ($membership === null) {
-            Log::info('User is not a member of group', [
+        if ($user->isModerator()) {
+            Log::info('Ignoring unsubscribe for moderator', [
                 'user_id' => $user->id,
-                'group_id' => $group->id,
+                'area' => $areaName,
+                'systemrole' => $user->systemrole,
             ]);
 
-            return $this->dropped("User not a member of group for unsubscribe");
+            return $this->dropped('Ignoring unsubscribe for moderator');
         }
 
-        if (in_array($membership->role, ['Moderator', 'Owner'])) {
-            Log::info('Ignoring unsubscribe for moderator/owner', [
-                'user_id' => $user->id,
-                'group_id' => $group->id,
-                'role' => $membership->role,
-            ]);
+        $oldFrequency = $user->emailfrequency;
+        $user->emailfrequency = 0;
+        $user->save();
 
-            return $this->dropped("Ignoring unsubscribe for moderator or owner");
-        }
-
-        // Log full membership for reversibility before deletion.
-        Log::info('Removing membership (saving state for rollback)', [
-            'membership_id' => $membership->id,
+        Log::info('Set never email frequency for TrashNothing unsubscribe', [
             'user_id' => $user->id,
-            'group_id' => $group->id,
-            'role' => $membership->role,
-            'collection' => $membership->collection,
-            'emailfrequency' => $membership->emailfrequency,
-            'eventsallowed' => $membership->eventsallowed,
-            'volunteeringallowed' => $membership->volunteeringallowed,
-            'ourPostingStatus' => $membership->ourPostingStatus,
-        ]);
-
-        // Remove membership
-        $membership->delete();
-
-        Log::info('Removed user from group', [
-            'user_id' => $user->id,
-            'group_id' => $group->id,
-            'group_name' => $groupName,
+            'area' => $areaName,
+            'old_emailfrequency' => $oldFrequency,
         ]);
 
         return RoutingResult::TO_SYSTEM;
@@ -1556,7 +1435,7 @@ class IncomingMailService
         }
 
         // Rate limit: max 1 auto-reply per 24h per sender
-        $cacheKey = 'digest_reply_autoreply:' . md5($senderAddress);
+        $cacheKey = 'digest_reply_autoreply:'.md5($senderAddress);
         if (Cache::has($cacheKey)) {
             Log::debug('Rate limiting digest reply auto-response', ['from' => $senderAddress]);
 
@@ -1622,7 +1501,7 @@ class IncomingMailService
                 'subject' => $email->subject,
             ]);
 
-            return $this->dropped("Auto-reply to replyto address");
+            return $this->dropped('Auto-reply to replyto address');
         }
 
         // Parse replyto-{msgid}-{fromid}
@@ -1632,7 +1511,7 @@ class IncomingMailService
                 'envelope_to' => $email->envelopeTo,
             ]);
 
-            return $this->dropped("Invalid replyto address format");
+            return $this->dropped('Invalid replyto address format');
         }
 
         $messageId = (int) $parts[1];
@@ -1644,7 +1523,7 @@ class IncomingMailService
                 'message_id' => $messageId,
             ]);
 
-            return $this->dropped("Reply to non-existent message");
+            return $this->dropped('Reply to non-existent message');
         }
 
         // Check if message is expired (>42 days old)
@@ -1655,36 +1534,7 @@ class IncomingMailService
                 'age_days' => $arrival->diffInDays(now()),
             ]);
 
-            return $this->dropped("Reply to expired message");
-        }
-
-        // Check if message is on a closed group
-        $messageGroups = DB::table('messages_groups')
-            ->where('msgid', $messageId)
-            ->pluck('groupid');
-
-        $closed = FALSE;
-        foreach ($messageGroups as $groupId) {
-            $group = Group::find($groupId);
-            if ($group !== null) {
-                $settings = is_array($group->settings) ? $group->settings : (json_decode($group->settings ?? '{}', TRUE) ?: []);
-                if (! empty($settings['closed'])) {
-                    $closed = TRUE;
-                    break;
-                }
-            }
-        }
-
-        if ($closed) {
-            Log::info('Reply to message on closed group', [
-                'message_id' => $messageId,
-                'group_id' => $groupId,
-            ]);
-
-            // #21: Send notification email to sender about closed group (matches legacy)
-            $this->sendClosedGroupEmail($email->fromAddress);
-
-            return RoutingResult::TO_SYSTEM;
+            return $this->dropped('Reply to expired message');
         }
 
         // Find the sender user
@@ -1694,7 +1544,7 @@ class IncomingMailService
                 'from' => $email->fromAddress,
             ]);
 
-            return $this->dropped("Reply from unknown user");
+            return $this->dropped('Reply from unknown user');
         }
 
         // Update user's last access
@@ -1712,7 +1562,7 @@ class IncomingMailService
                 'message_id' => $messageId,
             ]);
 
-            return $this->dropped("Message has no owner");
+            return $this->dropped('Message has no owner');
         }
 
         // Get or create User2User chat between the sender and message owner
@@ -1723,7 +1573,7 @@ class IncomingMailService
                 'to_user' => $messageOwner,
             ]);
 
-            return $this->dropped("Could not create chat for reply");
+            return $this->dropped('Could not create chat for reply');
         }
 
         // Create the chat message as TYPE_INTERESTED with refmsgid.
@@ -1874,7 +1724,7 @@ class IncomingMailService
         if ($this->isReadReceipt($email)) {
             Log::debug('Dropping misdirected read receipt in chat reply');
 
-            return $this->dropped("Misdirected read receipt in chat reply");
+            return $this->dropped('Misdirected read receipt in chat reply');
         }
 
         // Check for bounces FIRST - bounces to notify addresses happen when the original
@@ -1907,7 +1757,7 @@ class IncomingMailService
                 'chat_id' => $chatId,
             ]);
 
-            return $this->dropped("Reply to non-existent chat");
+            return $this->dropped('Reply to non-existent chat');
         }
 
         // Drop auto-replies (out-of-office, vacation responders etc.) - delivering
@@ -1927,7 +1777,7 @@ class IncomingMailService
                 'subject' => $email->subject,
             ]);
 
-            return $this->dropped("Auto-reply to chat notification");
+            return $this->dropped('Auto-reply to chat notification');
         }
 
         // Check if chat is stale and sender email is unfamiliar
@@ -1937,7 +1787,7 @@ class IncomingMailService
                 'age_days' => $chat->latestmessage?->diffInDays(now()),
             ]);
 
-            return $this->dropped("Reply to stale chat from unfamiliar sender");
+            return $this->dropped('Reply to stale chat from unfamiliar sender');
         }
 
         // Validate user is part of chat
@@ -1947,7 +1797,7 @@ class IncomingMailService
                 'user_id' => $userId,
             ]);
 
-            return $this->dropped("User not part of chat");
+            return $this->dropped('User not part of chat');
         }
 
         // Update user's last access
@@ -2075,7 +1925,7 @@ class IncomingMailService
 
         // #20: Prepend subject to body for unpaired direct messages
         if ($prependSubject !== null) {
-            $body = $prependSubject . "\r\n\r\n" . $body;
+            $body = $prependSubject."\r\n\r\n".$body;
         }
 
         // Detect digest-reply patterns before stripping so we can append the label after.
@@ -2085,7 +1935,7 @@ class IncomingMailService
         $isDigestReply = false;
         if (! $skipStripQuoted) {
             $groupDomain = preg_quote(config('freegle.mail.group_domain', 'groups.ilovefreegle.org'), '/');
-            if (preg_match('/^\s*On.*?-auto@' . $groupDomain . '>\s*wrote\s*:/ms', $body) ||
+            if (preg_match('/^\s*On.*?-auto@'.$groupDomain.'>\s*wrote\s*:/ms', $body) ||
                 preg_match('/-----Original Message-----/', $body)) {
                 $isDigestReply = true;
             }
@@ -2101,7 +1951,7 @@ class IncomingMailService
 
         // Append digest-reply label so moderators know to check the original email.
         if ($isDigestReply) {
-            $body = rtrim($body) . "\r\n\r\n(Probably replied to digest - check View original email)";
+            $body = rtrim($body)."\r\n\r\n(Probably replied to digest - check View original email)";
         }
 
         // Determine if this chat message needs review.
@@ -2218,7 +2068,7 @@ class IncomingMailService
             }
 
             // Ensure we have a message ID for the unique key constraint.
-            $messageId = $email->messageId ?? (microtime(TRUE).'@'.config('freegle.mail.user_domain', 'users.ilovefreegle.org'));
+            $messageId = $email->messageId ?? (microtime(true).'@'.config('freegle.mail.user_domain', 'users.ilovefreegle.org'));
 
             // Use insertOrIgnore: if the email was already stored by a
             // concurrent process (same Message-ID from a duplicate webhook /
@@ -2294,7 +2144,7 @@ class IncomingMailService
 
         try {
             // Re-parse the raw message to extract MIME attachment parts.
-            $message = \ZBateson\MailMimeParser\Message::from($email->rawMessage, FALSE);
+            $message = \ZBateson\MailMimeParser\Message::from($email->rawMessage, false);
             $attachments = $message->getAllAttachmentParts();
 
             if (empty($attachments)) {
@@ -2474,7 +2324,7 @@ class IncomingMailService
                 'group' => $email->targetGroupName,
             ]);
 
-            return $this->dropped("Volunteers message to unknown group");
+            return $this->dropped('Volunteers message to unknown group');
         }
 
         // Find sender user
@@ -2484,7 +2334,7 @@ class IncomingMailService
                 'from' => $email->fromAddress,
             ]);
 
-            return $this->dropped("Volunteers message from unknown user");
+            return $this->dropped('Volunteers message from unknown user');
         }
 
         // Drop messages from deleted users - their account no longer exists
@@ -2495,7 +2345,7 @@ class IncomingMailService
                 'deleted' => $user->deleted,
             ]);
 
-            return $this->dropped("Volunteers message from deleted user");
+            return $this->dropped('Volunteers message from deleted user');
         }
 
         // Update user's last access
@@ -2507,7 +2357,7 @@ class IncomingMailService
         if (! $email->isToVolunteers && $email->isAutoReply()) {
             Log::debug('Dropping auto-reply to auto address');
 
-            return $this->dropped("Auto-reply to auto address dropped");
+            return $this->dropped('Auto-reply to auto address dropped');
         }
 
         // Spam checks for volunteers messages: flag for review, never reject.
@@ -2547,15 +2397,15 @@ class IncomingMailService
         // Note: Known spammer check is not needed here because spammers are
         // dropped unconditionally before routing (matching legacy behavior).
 
-        // Get or create User2Mod chat between user and group moderators
-        $chat = $this->getOrCreateUser2ModChat($user->id, $group->id);
+        // Get or create User2Mod chat between user and the national moderator pool
+        $chat = $this->getOrCreateUser2ModChat($user->id);
         if ($chat === null) {
             Log::warning('Could not create User2Mod chat', [
                 'user_id' => $user->id,
                 'group_id' => $group->id,
             ]);
 
-            return $this->dropped("Could not create User2Mod chat");
+            return $this->dropped('Could not create User2Mod chat');
         }
 
         // TN "Reporting member/post" emails include a conversation transcript that
@@ -2603,7 +2453,7 @@ class IncomingMailService
                 'group' => $email->targetGroupName,
             ]);
 
-            return $this->dropped("Post to unknown group");
+            return $this->dropped('Post to unknown group');
         }
 
         // Find sender user
@@ -2613,28 +2463,13 @@ class IncomingMailService
                 'from' => $email->fromAddress,
             ]);
 
-            return $this->dropped("Post from unknown user");
+            return $this->dropped('Post from unknown user');
         }
 
         // Update user's last access
         DB::table('users')
             ->where('id', $user->id)
             ->update(['lastaccess' => now()]);
-
-        // Check membership
-        $membership = Membership::where('userid', $user->id)
-            ->where('groupid', $group->id)
-            ->where('collection', 'Approved')
-            ->first();
-
-        if ($membership === null) {
-            Log::info('Post from non-member - dropping', [
-                'user_id' => $user->id,
-                'group_id' => $group->id,
-            ]);
-
-            return $this->dropped("Post from non-member");
-        }
 
         // Check for TAKEN/RECEIVED subjects - swallow silently (mods don't need to review completion markers)
         if ($this->isTakenOrReceivedSubject($email->subject)) {
@@ -2674,19 +2509,17 @@ class IncomingMailService
                         'subtype' => 'ClassifiedSpam',
                         'msgid' => $messageId,
                         'text' => $spamReason,
-                        'groupid' => $group->id,
                     ]);
 
                     // #12: Record posting in messages_postings even for spam
                     DB::table('messages_postings')->insert([
                         'msgid' => $messageId,
-                        'groupid' => $group->id,
                         'repost' => 0,
                         'autorepost' => 0,
                         'date' => now(),
                     ]);
 
-                    // #15: Notify group moderators of new pending spam
+                    // #15: Notify moderators of new pending spam
                     $this->notifyGroupMods($group->id);
 
                     Log::info('Spam message created for moderator review', [
@@ -2700,36 +2533,16 @@ class IncomingMailService
             }
         }
 
-        // Check posting status (column is camelCase: ourPostingStatus)
-        // NULL defaults to MODERATED (goes to PENDING). Only explicit 'DEFAULT' or
-        // 'UNMODERATED' posting status means approved.
-        $postingStatus = $membership->ourPostingStatus;
-
-        // #9: Check Big Switch (overridemoderation) - forces ALL posts through moderation
-        $overrideModeration = $group->overridemoderation ?? 'None';
-        if ($overrideModeration === 'ModerateAll') {
-            $postingStatus = 'MODERATED';
-            Log::info('Big Switch active - forcing post to moderated', [
-                'group_id' => $group->id,
-            ]);
-        }
+        // Check posting status. NULL defaults to MODERATED (goes to PENDING). Only
+        // explicit 'DEFAULT' or 'UNMODERATED' posting status means approved.
+        $postingStatus = $user->postingstatus;
 
         // #10: Mod posts forced to PENDING - mods posting by email go to pending
         // so other mods can review (matches legacy behaviour)
-        if ($user->isModeratorOf($group->id)) {
+        if ($user->isModerator()) {
             $postingStatus = 'MODERATED';
             Log::info('Moderator post - forcing to pending', [
                 'user_id' => $user->id,
-                'group_id' => $group->id,
-            ]);
-        }
-
-        // #11: Check group 'moderated' setting - forces all posts to pending
-        $groupSettings = is_array($group->settings) ? $group->settings : (json_decode($group->settings ?? '{}', TRUE) ?: []);
-        if (! empty($groupSettings['moderated'])) {
-            $postingStatus = 'MODERATED';
-            Log::info('Group is moderated - forcing post to pending', [
-                'group_id' => $group->id,
             ]);
         }
 
@@ -2747,13 +2560,6 @@ class IncomingMailService
             $pendingReason = 'unmapped user';
             Log::info('Post from unmapped user - pending', [
                 'user_id' => $user->id,
-            ]);
-        }
-        // Check for worry words
-        elseif ($this->containsWorryWords($email)) {
-            $pendingReason = 'worry words';
-            Log::info('Post contains worry words - pending', [
-                'subject' => $email->subject,
             ]);
         }
         // Route based on posting status
@@ -2788,37 +2594,29 @@ class IncomingMailService
             // #12: Record posting in messages_postings (for repost logic)
             DB::table('messages_postings')->insert([
                 'msgid' => $messageId,
-                'groupid' => $group->id,
                 'repost' => 0,
                 'autorepost' => 0,
                 'date' => now(),
             ]);
 
-            // Update the collection based on routing result.
+            // Update the message's collection based on routing result. A message
+            // now carries one collection value, so this is a plain update by id,
+            // not a per-group row update.
             // Note: member posts are no longer Approved on arrival (see routing note
             // above). The APPROVED branch is retained for completeness / any future
             // caller; unmoderated members take the awaiting-content-check path below.
-            //
-            // Every update here is scoped to THIS group's row. A TrashNothing cross-post
-            // arrives as one email per group, minutes apart, and all of them attach to
-            // the same message; keyed on the message alone, routing the second email
-            // set the first group's copy back to Pending after the content check had
-            // already promoted it (Discourse 10142).
             if ($routingResult === RoutingResult::APPROVED) {
                 // Message is approved - update collection to Approved
-                MessageGroup::where('msgid', $messageId)
-                    ->where('groupid', $group->id)
-                    ->update([
-                        'collection' => MessageGroup::COLLECTION_APPROVED,
-                        'approvedat' => now(),
-                    ]);
+                Message::where('id', $messageId)->update([
+                    'collection' => Message::COLLECTION_APPROVED,
+                    'approvedat' => now(),
+                ]);
 
                 // #14: Add to spatial index so message appears in search results
-                $this->addToSpatialIndex($messageId, $group->id);
+                $this->addToSpatialIndex($messageId);
 
-                Log::info('Message approved and posted to group', [
+                Log::info('Message approved and posted', [
                     'message_id' => $messageId,
-                    'group_id' => $group->id,
                 ]);
             } elseif ($awaitingContentCheck) {
                 // Unmoderated member: start Pending and let the content-check job
@@ -2826,28 +2624,22 @@ class IncomingMailService
                 // notify mods or add to the spatial index here - that is the
                 // content-check job's responsibility, so clean posts create no mod
                 // work and flagged posts never go live unchecked.
-                MessageGroup::where('msgid', $messageId)
-                    ->where('groupid', $group->id)
-                    ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
+                Message::where('id', $messageId)->update(['collection' => Message::COLLECTION_PENDING]);
 
                 Log::info('Message pending content check (auto-approve candidate)', [
                     'message_id' => $messageId,
-                    'group_id' => $group->id,
                 ]);
             } else {
-                // Message is pending for a moderator reason (moderated user/group,
-                // worry words, unmapped user, Big Switch) - collection is already
-                // Incoming, update to Pending and notify mods now.
-                MessageGroup::where('msgid', $messageId)
-                    ->where('groupid', $group->id)
-                    ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
+                // Message is pending for a moderator reason (moderated user, worry
+                // words, unmapped user) - collection is already Incoming, update to
+                // Pending and notify mods now.
+                Message::where('id', $messageId)->update(['collection' => Message::COLLECTION_PENDING]);
 
-                // #15: Notify group moderators of new pending work
+                // #15: Notify moderators of new pending work
                 $this->notifyGroupMods($group->id);
 
                 Log::info('Message pending moderator review', [
                     'message_id' => $messageId,
-                    'group_id' => $group->id,
                     'reason' => $pendingReason ?? 'posting status',
                 ]);
             }
@@ -2857,22 +2649,22 @@ class IncomingMailService
     }
 
     /**
-     * Create a message record for a group post.
+     * Create a message record for a TrashNothing post.
      *
      * This stores the message in the database with appropriate collection status.
      * For spam messages, sets spamtype/spamreason and collection=Pending for moderator review.
      *
      * @param  ParsedEmail  $email  The parsed email
      * @param  User  $user  The sender user
-     * @param  Group  $group  The target group
+     * @param  object  $group  The resolved partner area (see findGroup())
      * @param  string|null  $spamType  Spam type if this is a spam message
      * @param  string|null  $spamReason  Spam reason if this is a spam message
-     * @return int|null  The created message ID, or null on failure
+     * @return int|null The created message ID, or null on failure
      */
     private function createGroupPostMessage(
         ParsedEmail $email,
         User $user,
-        Group $group,
+        object $group,
         ?string $spamType = null,
         ?string $spamReason = null
     ): ?int {
@@ -2881,26 +2673,31 @@ class IncomingMailService
             // Determine message type from subject using keyword matching
             $type = Message::determineType($email->subject);
 
-            // A TrashNothing item cross-posted to N groups arrives as N separate emails, one
-            // per group, all carrying the same X-Trash-Nothing-Post-Id. It is one item, so it
-            // is one message: the first email creates it, and each later one attaches its
-            // group to that message. That gives one messages row with N messages_groups rows,
-            // the same shape as a Freegle-native cross-post, which is what the feed, the
-            // badge counts and search all expect - they key on msgid.
+            // A TrashNothing item cross-posted to N areas arrives as N separate emails,
+            // one per area, all carrying the same X-Trash-Nothing-Post-Id. It is one
+            // item, so it is one message: the first email creates it. A message now
+            // has exactly one location and one moderation state (see Message model),
+            // so later emails for the same post id have nothing to attach - the item
+            // is already recorded and is left as-is.
             $tnPostId = $this->normaliseTnPostId($email->getTrashNothingPostId());
 
             if ($tnPostId !== null) {
                 $existingId = $this->findLiveTnMessage($tnPostId);
 
                 if ($existingId !== null) {
-                    return $this->attachGroupToTnMessage($existingId, $email, $user, $group, $type, $spamType);
+                    Log::info('TrashNothing post already recorded under a different area', [
+                        'message_id' => $existingId,
+                        'area' => $group->nameshort ?? $group->id,
+                    ]);
+
+                    return null;
                 }
             }
 
             // Generate a unique message ID if not present
-            $messageId = $email->messageId ?? (microtime(true) . '@' . config('freegle.mail.user_domain', 'users.ilovefreegle.org'));
+            $messageId = $email->messageId ?? (microtime(true).'@'.config('freegle.mail.user_domain', 'users.ilovefreegle.org'));
             // Append group ID to make message ID unique per group
-            $messageId = $messageId . '-' . $group->id;
+            $messageId = $messageId.'-'.$group->id;
 
             // Determine lat/lng - prefer TN coordinates header, then subject location, then user location
             $lat = null;
@@ -2919,7 +2716,7 @@ class IncomingMailService
 
             // 2. Try to extract location from subject (e.g., "OFFER: Sofa (Edinburgh)")
             if ($lat === null || $lng === null) {
-                $subjectLocation = $this->extractLocationFromSubject($email->subject, $group->id);
+                $subjectLocation = $this->extractLocationFromSubject($email->subject);
                 if ($subjectLocation) {
                     $lat = $subjectLocation['lat'];
                     $lng = $subjectLocation['lng'];
@@ -2954,6 +2751,11 @@ class IncomingMailService
             // Strip TN pic links from textbody
             $cleanedTextBody = $this->stripTnPicLinks($email->textBody);
 
+            // Spam messages go to Pending for moderator review.
+            $collection = $spamType !== null
+                ? Message::COLLECTION_PENDING
+                : Message::COLLECTION_INCOMING;
+
             // Create the message record
             $message = Message::create([
                 'date' => now(),
@@ -2982,6 +2784,7 @@ class IncomingMailService
                 'locationid' => $locationId,
                 'spamtype' => $spamType,
                 'spamreason' => $spamReason,
+                'collection' => $collection,
             ]);
 
             if (! $message || ! $message->id) {
@@ -3005,28 +2808,14 @@ class IncomingMailService
                         'messageid' => null,
                     ]);
 
-                    Log::info('TN cross-post lost create race; attaching to earlier message', [
+                    Log::info('TN cross-post lost create race; discarding duplicate message', [
                         'discarded' => $message->id,
                         'canonical' => $earlierId,
                     ]);
 
-                    return $this->attachGroupToTnMessage($earlierId, $email, $user, $group, $type, $spamType);
+                    return null;
                 }
             }
-
-            // Create the messages_groups entry
-            // Spam messages go to Pending for moderator review
-            $collection = $spamType !== null
-                ? MessageGroup::COLLECTION_PENDING
-                : MessageGroup::COLLECTION_INCOMING;
-
-            MessageGroup::create([
-                'msgid' => $message->id,
-                'groupid' => $group->id,
-                'msgtype' => $type,
-                'collection' => $collection,
-                'arrival' => now(),
-            ]);
 
             // Record the item from a well-formed "TYPE: item (location)" subject,
             // exactly as V1 Message::save() did. The messages_items link is what
@@ -3036,7 +2825,6 @@ class IncomingMailService
 
             // Add to message history for spam checking
             DB::table('messages_history')->insert([
-                'groupid' => $group->id,
                 'source' => Message::SOURCE_EMAIL ?? 'Email',
                 'fromuser' => $user->id,
                 'envelopefrom' => $email->envelopeFrom,
@@ -3055,7 +2843,6 @@ class IncomingMailService
                 'timestamp' => now(),
                 'type' => 'Message',
                 'subtype' => 'Received',
-                'groupid' => $group->id,
                 'user' => $user->id,
                 'msgid' => $message->id,
                 'text' => $messageId,
@@ -3074,8 +2861,8 @@ class IncomingMailService
         } catch (\Exception $e) {
             // Check for duplicate message ID (can happen if message is resent)
             if (str_contains($e->getMessage(), 'Duplicate entry')) {
-                // If we lost a race for the same TN post, attach this group to the winner
-                // rather than dropping it, and do not leave our half-made row as a copy.
+                // If we lost a race for the same TN post, the winner already holds the
+                // item; discard this half-made row as a copy rather than keep it.
                 if (isset($tnPostId) && $tnPostId !== null) {
                     $existingId = $this->findLiveTnMessage($tnPostId);
 
@@ -3088,7 +2875,11 @@ class IncomingMailService
                             ]);
                         }
 
-                        return $this->attachGroupToTnMessage($existingId, $email, $user, $group, $type, $spamType);
+                        Log::info('TrashNothing post already recorded; discarding duplicate', [
+                            'message_id' => $existingId,
+                        ]);
+
+                        return null;
                     }
                 }
 
@@ -3141,104 +2932,6 @@ class IncomingMailService
             ->value('id');
 
         return $id === null ? null : (int) $id;
-    }
-
-    /**
-     * Record a further group on a TrashNothing message we already hold.
-     *
-     * Only the per-GROUP side effects of createGroupPostMessage belong here: the
-     * messages_groups row, the spam-check history row and the receipt log. The
-     * per-MESSAGE work - the messages_items link, the TN image attachments - belongs to
-     * the message, not to each group on it, and repeating it would double-count the item
-     * in the weight stats and re-upload the photos.
-     */
-    private function attachGroupToTnMessage(
-        int $msgid,
-        ParsedEmail $email,
-        User $user,
-        Group $group,
-        string $type,
-        ?string $spamType = null
-    ): ?int {
-        try {
-            $collection = $spamType !== null
-                ? MessageGroup::COLLECTION_PENDING
-                : MessageGroup::COLLECTION_INCOMING;
-
-            // INSERT IGNORE: a redelivery of the same email for the same group must be a
-            // no-op, not an error. (msgid, groupid) is unique on messages_groups.
-            DB::statement(
-                'INSERT IGNORE INTO messages_groups (msgid, groupid, msgtype, collection, arrival) VALUES (?, ?, ?, ?, ?)',
-                [$msgid, $group->id, $type, $collection, now()]
-            );
-
-            $messageId = ($email->messageId ?? (microtime(true).'@'.config('freegle.mail.user_domain', 'users.ilovefreegle.org'))).'-'.$group->id;
-
-            // insertOrIgnore for the same reason as the row above: (msgid, groupid) is
-            // unique here too, so a second delivery of the same email for a group already
-            // on this message threw 1062 one line after the INSERT IGNORE that was meant
-            // to make exactly that case harmless. Skipping the rest is right - the first
-            // delivery did it - but arriving there by exception meant it was logged as an
-            // error every time, 8, 13 and 7 times on 2026-09-11, 09-12 and 09-13. A
-            // collision here can only mean the group is already recorded against this
-            // message, because the attach path runs only when the message exists and the
-            // creating email wrote its own group's history row.
-            $historyWritten = DB::table('messages_history')->insertOrIgnore([
-                'groupid' => $group->id,
-                'source' => Message::SOURCE_EMAIL ?? 'Email',
-                'fromuser' => $user->id,
-                'envelopefrom' => $email->envelopeFrom,
-                'envelopeto' => $email->envelopeTo,
-                'fromname' => $email->fromName,
-                'fromaddr' => $email->fromAddress,
-                'fromip' => $email->senderIp,
-                'subject' => $email->subject,
-                'prunedsubject' => $this->pruneSubject($email->subject),
-                'messageid' => $messageId,
-                'msgid' => $msgid,
-            ]);
-
-            if ($historyWritten === 0) {
-                // Already attached by an earlier delivery of this same email, which wrote
-                // the receipt log and routed the copy. Return null, as the failure path
-                // did: null tells the caller there is no fresh attach to follow up, and
-                // that follow-up must not run twice - messages_postings carries no unique
-                // key on (msgid, groupid), so a second pass would record the item as
-                // posted twice and feed the repost logic a phantom. The difference is
-                // that this is now a no-op saying so, not an exception logged as an error.
-                Log::info('TN cross-post group was already attached, nothing to do', [
-                    'msgid' => $msgid,
-                    'groupid' => $group->id,
-                ]);
-
-                return null;
-            }
-
-            DB::table('logs')->insert([
-                'timestamp' => now(),
-                'type' => 'Message',
-                'subtype' => 'Received',
-                'groupid' => $group->id,
-                'user' => $user->id,
-                'msgid' => $msgid,
-                'text' => $messageId,
-            ]);
-
-            Log::info('TN cross-post attached to existing message', [
-                'msgid' => $msgid,
-                'groupid' => $group->id,
-            ]);
-
-            return $msgid;
-        } catch (\Exception $e) {
-            Log::error('Failed to attach TN cross-post group to existing message', [
-                'msgid' => $msgid,
-                'groupid' => $group->id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return null;
-        }
     }
 
     /**
@@ -3336,99 +3029,6 @@ class IncomingMailService
     }
 
     /**
-     * Check if email contains worry words.
-     *
-     * Worry words are stored in the 'concern_keywords' database table (global
-     * scope) with categories:
-     * - substance_regulated: UK regulated substances
-     * - substance_reportable: UK reportable substances
-     * - substance_medicine: Medicines/supplements
-     * - review / scam: Just needs looking at
-     * - allowed: Exclusions (removed from text before checking)
-     *
-     * Reads concern_keywords rather than the legacy 'worrywords' table:
-     * worrywords was a one-time migration snapshot (see
-     * MigrateConcernKeywordsCommand) and is never written to again — every
-     * keyword/whitelist edit made via the current admin UI (ModSupportConcernKeywords)
-     * only reaches concern_keywords, so reading worrywords here meant a moderator
-     * whitelisting a phrase (e.g. 'Cashes Green', Discourse #9944) had no effect
-     * on posts arriving by email even after ac3f80c82 fixed the chat/post-content-check
-     * paths, which already read concern_keywords.
-     */
-    private function containsWorryWords(ParsedEmail $email): bool
-    {
-        $subject = $email->subject ?? '';
-        $body = $email->textBody ?? '';
-
-        // Get worry words from database
-        $worryWords = DB::table('concern_keywords')->where('scope', 'global')->get();
-
-        // Check for pound sign (£) as a special case
-        if (str_contains($subject, '£') || str_contains($body, '£')) {
-            Log::debug('Worry word found: £');
-
-            return true;
-        }
-
-        // First, remove any ALLOWED category phrases from the text
-        foreach ($worryWords as $worryWord) {
-            if ($worryWord->category === 'allowed') {
-                $pattern = '/\b'.preg_quote($worryWord->keyword, '/').'\b/i';
-                $subject = preg_replace($pattern, '', $subject);
-                $body = preg_replace($pattern, '', $body);
-            }
-        }
-
-        // Check for phrases (words containing spaces) with literal matching
-        foreach ($worryWords as $worryWord) {
-            if ($worryWord->category !== 'allowed' && str_contains($worryWord->keyword, ' ')) {
-                if (stripos($subject, $worryWord->keyword) !== false ||
-                    stripos($body, $worryWord->keyword) !== false) {
-                    Log::debug('Worry word phrase found', [
-                        'keyword' => $worryWord->keyword,
-                        'category' => $worryWord->category,
-                    ]);
-
-                    return true;
-                }
-            }
-        }
-
-        // Check individual words with exact matching (threshold = 1, so exact match only)
-        $subjectWords = preg_split('/\b/', $subject);
-        $bodyWords = preg_split('/\b/', $body);
-        $allWords = array_merge($subjectWords, $bodyWords);
-
-        foreach ($allWords as $word) {
-            $word = trim($word);
-            if (empty($word)) {
-                continue;
-            }
-
-            foreach ($worryWords as $worryWord) {
-                if ($worryWord->category !== 'allowed' && ! empty($worryWord->keyword)) {
-                    // Check length ratio (0.75 to 1.25)
-                    $ratio = strlen($word) / strlen($worryWord->keyword);
-                    if ($ratio >= 0.75 && $ratio <= 1.25) {
-                        // Exact match only (levenshtein distance < 1)
-                        if (levenshtein(strtolower($worryWord->keyword), strtolower($word)) < 1) {
-                            Log::debug('Worry word found', [
-                                'word' => $word,
-                                'keyword' => $worryWord->keyword,
-                                'category' => $worryWord->category,
-                            ]);
-
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
      * Handle direct mail to users.
      *
      * Direct mail is sent to {something}@users.ilovefreegle.org where {something}
@@ -3452,7 +3052,7 @@ class IncomingMailService
                 'to' => $email->envelopeTo,
             ]);
 
-            return $this->dropped("Direct mail to unknown user address");
+            return $this->dropped('Direct mail to unknown user address');
         }
 
         // Find the sender user
@@ -3462,7 +3062,7 @@ class IncomingMailService
                 'from' => $email->fromAddress,
             ]);
 
-            return $this->dropped("Direct mail from unknown user");
+            return $this->dropped('Direct mail from unknown user');
         }
 
         // Don't loop our own outbound mail back in as a chat. Members' preferred
@@ -3479,7 +3079,7 @@ class IncomingMailService
                 'subject' => $email->subject,
             ]);
 
-            return $this->dropped("Direct mail from system noreply address");
+            return $this->dropped('Direct mail from system noreply address');
         }
 
         // Don't create a chat between the same user
@@ -3488,7 +3088,7 @@ class IncomingMailService
                 'user_id' => $senderUser->id,
             ]);
 
-            return $this->dropped("Direct mail to self");
+            return $this->dropped('Direct mail to self');
         }
 
         // #6: Add unrecognised sender email to user profile (email forwarding scenario)
@@ -3502,7 +3102,7 @@ class IncomingMailService
                 'to_user' => $recipientUser->id,
             ]);
 
-            return $this->dropped("Could not create chat for direct mail");
+            return $this->dropped('Could not create chat for direct mail');
         }
 
         // Try to find the original message this email is replying to.
@@ -3596,12 +3196,9 @@ class IncomingMailService
 
         // Get the recipient's recent messages (last 90 days)
         $messages = DB::table('messages')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
-            ->join('groups', 'groups.id', '=', 'messages_groups.groupid')
-            ->where('messages.fromuser', $recipientUserId)
-            ->whereIn('groups.type', ['Freegle', 'Reuse'])
-            ->where('messages.arrival', '>', now()->subDays(90))
-            ->select('messages.id', 'messages.subject')
+            ->where('fromuser', $recipientUserId)
+            ->where('arrival', '>', now()->subDays(90))
+            ->select('id', 'subject')
             ->limit(1000)
             ->get();
 
@@ -3650,15 +3247,19 @@ class IncomingMailService
     }
 
     /**
-     * Find a group by name.
+     * Find a TrashNothing partner area by its short name.
+     *
+     * TrashNothing is the only remaining caller that addresses mail by community
+     * name; everyone else uses geography. The row it resolves to carries the
+     * original community id, so links minted before the area migration still work.
      */
-    private function findGroup(?string $name): ?Group
+    private function findGroup(?string $name): ?object
     {
         if (empty($name)) {
             return null;
         }
 
-        return Group::where('nameshort', $name)->first();
+        return DB::table('partner_areas')->where('nameshort', $name)->first();
     }
 
     /**
@@ -3843,11 +3444,11 @@ class IncomingMailService
     }
 
     /**
-     * Get or create a User2Mod chat for a user with a group's moderators.
+     * Get or create a User2Mod chat for a user with the national moderator pool.
      */
-    private function getOrCreateUser2ModChat(int $userId, int $groupId): ?ChatRoom
+    private function getOrCreateUser2ModChat(int $userId): ?ChatRoom
     {
-        return ChatRoom::getOrCreateUser2Mod($userId, $groupId);
+        return ChatRoom::getOrCreateUser2Mod($userId);
     }
 
     /**
@@ -3911,7 +3512,7 @@ class IncomingMailService
      */
     private function findClosestPostcodeId(float $lat, float $lng): ?int
     {
-        $ids = (new SpatialQueryService())->nearestIds('postcodes', $lat, $lng, 1);
+        $ids = (new SpatialQueryService)->nearestIds('postcodes', $lat, $lng, 1);
 
         return $ids[0] ?? null;
     }
@@ -3924,10 +3525,9 @@ class IncomingMailService
      * Parses subjects like "OFFER: Sofa (Edinburgh)" to extract the location name.
      *
      * @param  string  $subject  The email subject
-     * @param  int  $groupId  The group ID to search locations for
      * @return array|null Array with id, lat, lng or null if not found
      */
-    private function extractLocationFromSubject(string $subject, int $groupId): ?array
+    private function extractLocationFromSubject(string $subject): ?array
     {
         // Parse the subject: "TYPE: item (location)"
         [$type, $item, $locationName] = $this->parseSubject($subject);
@@ -4264,11 +3864,11 @@ class IncomingMailService
         $groupDomain = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
         $userDomain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
 
-        if (stripos($email, '-owner@yahoogroups.co') !== FALSE ||
-            stripos($email, '-volunteers@' . $groupDomain) !== FALSE ||
-            stripos($email, '-auto@' . $groupDomain) !== FALSE ||
-            stripos($email, 'replyto-') !== FALSE ||
-            stripos($email, 'notify-') !== FALSE) {
+        if (stripos($email, '-owner@yahoogroups.co') !== false ||
+            stripos($email, '-volunteers@'.$groupDomain) !== false ||
+            stripos($email, '-auto@'.$groupDomain) !== false ||
+            stripos($email, 'replyto-') !== false ||
+            stripos($email, 'notify-') !== false) {
             return;
         }
 
@@ -4326,88 +3926,46 @@ class IncomingMailService
     }
 
     /**
-     * Send notification email about closed group to the sender.
-     *
-     * Matches legacy MailRouter behaviour for replies to messages on closed groups.
-     */
-    private function sendClosedGroupEmail(?string $toAddress): void
-    {
-        if (empty($toAddress)) {
-            return;
-        }
-
-        try {
-            $userDomain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
-            $noreplyAddr = 'noreply@' . $userDomain;
-
-            MailFacade::raw(
-                "This Freegle community is currently closed.\r\n\r\nThis is an automated message - please do not reply.",
-                function ($message) use ($toAddress, $noreplyAddr) {
-                    $message->to($toAddress)
-                        ->from($noreplyAddr)
-                        ->subject('This community is currently closed');
-                }
-            );
-
-            Log::info('Sent closed group notification', ['to' => $toAddress]);
-        } catch (\Throwable $e) {
-            Log::warning('Failed to send closed group notification', [
-                'to' => $toAddress,
-                'error' => $e->getMessage(),
-            ]);
-        }
-    }
-
-    /**
      * Add a message to the spatial index for search results.
      *
      * Called when a message is approved. Matches legacy Message::addToSpatialIndex().
      */
-    private function addToSpatialIndex(int $messageId, int $groupId): void
+    private function addToSpatialIndex(int $messageId): void
     {
         // useWritePdo: this runs immediately after the message is created and its
-        // messages_groups row set to Approved (see routeToGroup). Under the read/write
-        // split a plain read could hit a lagging replica and return null, silently
-        // skipping the spatial-index entry until the reconciler cron catches up.
+        // collection set to Approved. Under the read/write split a plain read could
+        // hit a lagging replica and return null, silently skipping the spatial-index
+        // entry until the reconciler cron catches up.
         $message = Message::query()->useWritePdo()->find($messageId);
         if (! $message || (! $message->lat && ! $message->lng)) {
             return;
         }
 
         $srid = config('freegle.srid', 3857);
-
-        // Get arrival from messages_groups (same read-your-write reasoning as above).
-        $mg = DB::table('messages_groups')
-            ->useWritePdo()
-            ->where('msgid', $messageId)
-            ->where('groupid', $groupId)
-            ->first();
-
-        $arrival = $mg->arrival ?? now();
+        $arrival = $message->arrival ?? now();
         $msgType = $message->type;
 
         try {
-            $sql = "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
-                    VALUES (?, ST_GeomFromText('POINT({$message->lng} {$message->lat})', ?), ?, ?, ?)
+            // keep-raw: ST_GeomFromText() and INSERT ... ON DUPLICATE KEY UPDATE are
+            // not expressible through the query builder.
+            $sql = "INSERT INTO messages_spatial (msgid, point, msgtype, arrival)
+                    VALUES (?, ST_GeomFromText('POINT({$message->lng} {$message->lat})', ?), ?, ?)
                     ON DUPLICATE KEY UPDATE
                     point = ST_GeomFromText('POINT({$message->lng} {$message->lat})', ?),
-                    groupid = ?, msgtype = ?, arrival = ?";
+                    msgtype = ?, arrival = ?";
 
             DB::statement($sql, [
                 $messageId,
                 $srid,
-                $groupId,
                 $msgType,
                 $arrival,
                 $srid,
-                $groupId,
                 $msgType,
                 $arrival,
             ]);
 
             Log::debug('Added message to spatial index', [
                 'message_id' => $messageId,
-                'group_id' => $groupId,
             ]);
         } catch (\Exception $e) {
             Log::warning('Failed to add to spatial index', [
@@ -4449,7 +4007,7 @@ class IncomingMailService
     private function getSpamAssassinScore(ParsedEmail $email): ?float
     {
         try {
-            [$score, ] = $this->spamCheck->checkSpamAssassin(
+            [$score] = $this->spamCheck->checkSpamAssassin(
                 $email->rawMessage,
                 $email->subject ?? ''
             );
@@ -4475,6 +4033,7 @@ class IncomingMailService
 
         // Fall back to any email
         $email = UserEmail::where('userid', $userId)->first();
+
         return $email?->email;
     }
 

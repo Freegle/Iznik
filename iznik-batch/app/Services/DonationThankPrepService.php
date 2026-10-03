@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Mail\Donation\DonationThankPrepMail;
-use App\Models\Group;
 use App\Support\EmojiUtils;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -13,8 +12,7 @@ use Illuminate\Support\Facades\DB;
  * the person composing thank-you replies (currently Jacky). Each card
  * contains the data she'd otherwise gather by hand from Modtools, info@,
  * support@, giftaid@ and the Gift Aid register: donor identity, donation
- * history, GA status, group memberships, mod notes, recent member↔mod chat,
- * deep links.
+ * history, GA status, mod notes, recent member↔mod chat, deep links.
  *
  * Deliberately a *separate* path from {@see DonationSummaryService}, which
  * sends the simple V1-parity status table. The status mail tells the
@@ -50,17 +48,17 @@ class DonationThankPrepService
     private const SOURCE_LABELS = [
         'DonateWithPayPal' => 'PayPal',
         'PayPalGivingFund' => 'PayPal Giving Fund',
-        'Facebook'         => 'Facebook',
-        'eBay'             => 'eBay',
-        'BankTransfer'     => 'Bank transfer',
-        'Stripe'           => 'Stripe',
+        'Facebook' => 'Facebook',
+        'eBay' => 'eBay',
+        'BankTransfer' => 'Bank transfer',
+        'Stripe' => 'Stripe',
     ];
 
     /**
-     * @param  bool         $dryRun            Build the digest but don't send or advance the mark.
-     * @param  string|null  $recipientOverride Send to this address instead of thanks_addr (for ad-hoc resends).
-     * @param  bool         $todayOnly         Select today's donations and ignore/preserve the high-water mark
-     *                                         (for resends — does not advance the mark).
+     * @param  bool  $dryRun  Build the digest but don't send or advance the mark.
+     * @param  string|null  $recipientOverride  Send to this address instead of thanks_addr (for ad-hoc resends).
+     * @param  bool  $todayOnly  Select today's donations and ignore/preserve the high-water mark
+     *                           (for resends — does not advance the mark).
      * @return array{donations: int, examined: int, total: float, sent: bool, last_id: int}
      */
     public function sendDailyThankPrep(bool $dryRun = false, ?string $recipientOverride = null, bool $todayOnly = false): array
@@ -74,7 +72,7 @@ class DonationThankPrepService
             // Resend / ad-hoc mode: select today's donations and neither read
             // nor advance the high-water mark, so a normal cron run is
             // unaffected. Server time is UTC; donation timestamps are UTC.
-            $lastId    = null;
+            $lastId = null;
             $donations = DB::table('users_donations')
                 ->whereRaw('timestamp >= CURDATE()')
                 ->orderBy('id')
@@ -85,7 +83,7 @@ class DonationThankPrepService
             // historical backlog (~137k rows in prod as of deploy) isn't dumped
             // into the thanker's inbox. In a dry run we compute that mark but
             // must NOT persist it (a dry run has no side effects).
-            $lastId    = $this->getLastSentId($dryRun);
+            $lastId = $this->getLastSentId($dryRun);
             $donations = DB::table('users_donations')
                 ->where('id', '>', $lastId)
                 ->orderBy('id')
@@ -93,9 +91,9 @@ class DonationThankPrepService
         }
 
         $examined = $donations->count();
-        $total    = 0.0;
-        $cards    = [];
-        $maxId    = (int) ($lastId ?? 0);
+        $total = 0.0;
+        $cards = [];
+        $maxId = (int) ($lastId ?? 0);
         foreach ($donations as $donation) {
             // Always advance the high-water mark, even for donations we skip,
             // so a continuation or sub-threshold gift isn't re-examined every
@@ -109,7 +107,7 @@ class DonationThankPrepService
                 continue;
             }
 
-            $total  += (float) $donation->GrossAmount;
+            $total += (float) $donation->GrossAmount;
             $cards[] = $this->buildDonationCard($donation, $reason);
         }
 
@@ -118,13 +116,14 @@ class DonationThankPrepService
         // skipped rows don't return, but send no email. In --today mode we
         // never touch the mark.
         if (empty($cards)) {
-            if (!$todayOnly && !$dryRun && $maxId > (int) ($lastId ?? 0)) {
+            if (! $todayOnly && ! $dryRun && $maxId > (int) ($lastId ?? 0)) {
                 $this->setLastSentId($maxId);
             }
+
             return ['donations' => 0, 'examined' => $examined, 'total' => 0.0, 'sent' => false, 'last_id' => $maxId];
         }
 
-        if (!$dryRun) {
+        if (! $dryRun) {
             // One email PER donation (not a combined digest) so each donor is a
             // separate thread in the thanker's inbox, with the donor's name,
             // email and amount in the subject line. Spool through
@@ -149,17 +148,17 @@ class DonationThankPrepService
             // once delivery (some donors may be re-mailed), the same trade-off
             // the EmailSpoolerService callers already accept. --today mode
             // never touches the mark.
-            if (!$todayOnly) {
+            if (! $todayOnly) {
                 $this->setLastSentId($maxId);
             }
         }
 
         return [
             'donations' => count($cards),
-            'examined'  => $examined,
-            'total'     => $total,
-            'sent'      => !$dryRun,
-            'last_id'   => $maxId,
+            'examined' => $examined,
+            'total' => $total,
+            'sent' => ! $dryRun,
+            'last_id' => $maxId,
         ];
     }
 
@@ -200,18 +199,18 @@ class DonationThankPrepService
         // them" email the Go AddDonation handler used to send.
         if ($this->isExternalDonation($donation)) {
             return [
-                'key'  => 'external',
-                'text' => 'External donation of £' . number_format($amount, 2)
-                          . ' (bank transfer / manually recorded)',
+                'key' => 'external',
+                'text' => 'External donation of £'.number_format($amount, 2)
+                          .' (bank transfer / manually recorded)',
             ];
         }
 
         $threshold = (float) config('freegle.donations.manual_thanks', 20);
         if ($amount >= $threshold) {
             return [
-                'key'  => 'large-oneoff',
-                'text' => 'One-off donation of £' . number_format($amount, 2)
-                          . ' (£' . number_format($threshold, 0) . ' or more)',
+                'key' => 'large-oneoff',
+                'text' => 'One-off donation of £'.number_format($amount, 2)
+                          .' (£'.number_format($threshold, 0).' or more)',
             ];
         }
 
@@ -243,7 +242,7 @@ class DonationThankPrepService
             $query->where('Payer', (string) ($donation->Payer ?? ''));
         }
 
-        return !$query->exists();
+        return ! $query->exists();
     }
 
     private function isExcludedPayer(string $payer): bool
@@ -282,16 +281,17 @@ class DonationThankPrepService
         // run computes the same mark but must NOT persist it — otherwise a
         // `--dry-run` on a fresh deploy would silently set the high-water mark.
         $maxId = (int) (DB::table('users_donations')->max('id') ?? 0);
-        if (!$dryRun) {
+        if (! $dryRun) {
             $this->setLastSentId($maxId);
         }
+
         return $maxId;
     }
 
     private function setLastSentId(int $id): void
     {
         DB::statement(
-            "INSERT INTO config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?",
+            'INSERT INTO config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?',
             [self::CONFIG_KEY_LAST_ID, (string) $id, (string) $id]
         );
     }
@@ -312,34 +312,32 @@ class DonationThankPrepService
         $card = [
             // Why this donation is in the digest — shown on the card so the
             // thanker can see at a glance what kind of thank-you is due.
-            'thankReason'    => (string) $reason['text'],
+            'thankReason' => (string) $reason['text'],
             'thankReasonKey' => (string) $reason['key'],
             'donation' => [
-                'id'             => (int) $donation->id,
-                'amount'         => (float) $donation->GrossAmount,
-                'time'           => $localTime->format('H:i T'),
-                'date'           => $localTime->format('D j M Y'),
-                'source'         => self::SOURCE_LABELS[$donation->source] ?? (string) $donation->source,
-                'sourceKey'      => (string) $donation->source,
-                'payer'          => (string) ($donation->Payer ?? ''),
-                'payerName'      => (string) ($donation->PayerDisplayName ?: $donation->Payer ?: ''),
-                'recurring'      => $recurring,
-                'transaction'    => (string) ($donation->TransactionID ?? ''),
-                'thanked'        => $donation->thanked ? Carbon::parse($donation->thanked) : null,
+                'id' => (int) $donation->id,
+                'amount' => (float) $donation->GrossAmount,
+                'time' => $localTime->format('H:i T'),
+                'date' => $localTime->format('D j M Y'),
+                'source' => self::SOURCE_LABELS[$donation->source] ?? (string) $donation->source,
+                'sourceKey' => (string) $donation->source,
+                'payer' => (string) ($donation->Payer ?? ''),
+                'payerName' => (string) ($donation->PayerDisplayName ?: $donation->Payer ?: ''),
+                'recurring' => $recurring,
+                'transaction' => (string) ($donation->TransactionID ?? ''),
+                'thanked' => $donation->thanked ? Carbon::parse($donation->thanked) : null,
                 'giftaidConsent' => (int) $donation->giftaidconsent === 1,
                 'giftaidClaimed' => $donation->giftaidclaimed ? Carbon::parse($donation->giftaidclaimed) : null,
             ],
-            'user'            => null,
-            'aliases'         => [],
+            'user' => null,
+            'aliases' => [],
             'donationHistory' => [],
-            'giftaid'         => null,
-            'memberships'     => [],
-            'modNotes'        => [],
-            'modChats'        => [],
-            'birthdayHint'    => false,
-            'flags'           => [],
-            'candidates'      => [],
-            'links'           => $this->buildLinks($donation),
+            'giftaid' => null,
+            'modNotes' => [],
+            'modChats' => [],
+            'flags' => [],
+            'candidates' => [],
+            'links' => $this->buildLinks($donation),
         ];
 
         if ($donation->userid) {
@@ -362,25 +360,26 @@ class DonationThankPrepService
     private function enrichMatchedDonor(int $userId, object $donation, array $card, bool $recurring): array
     {
         $user = DB::table('users')->where('id', $userId)->first();
-        if (!$user) {
+        if (! $user) {
             $card['flags'][] = 'User row missing (deleted?)';
+
             return $card;
         }
 
-        $displayName = trim(($user->firstname ?? '') . ' ' . ($user->lastname ?? ''));
+        $displayName = trim(($user->firstname ?? '').' '.($user->lastname ?? ''));
         if ($displayName === '') {
             $displayName = (string) ($user->fullname ?? '');
         }
 
         $card['user'] = [
-            'id'          => (int) $user->id,
-            'firstname'   => (string) ($user->firstname ?? ''),
-            'lastname'    => (string) ($user->lastname ?? ''),
-            'fullname'    => (string) ($user->fullname ?? ''),
+            'id' => (int) $user->id,
+            'firstname' => (string) ($user->firstname ?? ''),
+            'lastname' => (string) ($user->lastname ?? ''),
+            'fullname' => (string) ($user->fullname ?? ''),
             'displayName' => $displayName ?: 'Unknown',
-            'added'       => $user->added ? Carbon::parse($user->added) : null,
-            'deleted'     => $user->deleted !== null,
-            'systemrole'  => (string) ($user->systemrole ?? 'User'),
+            'added' => $user->added ? Carbon::parse($user->added) : null,
+            'deleted' => $user->deleted !== null,
+            'systemrole' => (string) ($user->systemrole ?? 'User'),
         ];
 
         // Just the preferred external email. Drop Freegle-internal synthetic
@@ -401,10 +400,10 @@ class DonationThankPrepService
             ->orderByDesc('timestamp')
             ->limit(8)
             ->get(['GrossAmount', 'timestamp', 'source', 'thanked'])
-            ->map(fn($d) => [
-                'amount'  => (float) $d->GrossAmount,
-                'date'    => Carbon::parse($d->timestamp, 'UTC')->setTimezone('Europe/London')->format('j M Y'),
-                'source'  => self::SOURCE_LABELS[$d->source] ?? (string) $d->source,
+            ->map(fn ($d) => [
+                'amount' => (float) $d->GrossAmount,
+                'date' => Carbon::parse($d->timestamp, 'UTC')->setTimezone('Europe/London')->format('j M Y'),
+                'source' => self::SOURCE_LABELS[$d->source] ?? (string) $d->source,
                 'thanked' => $d->thanked ? Carbon::parse($d->thanked) : null,
             ])
             ->all();
@@ -412,31 +411,15 @@ class DonationThankPrepService
         $giftaid = DB::table('giftaid')->where('userid', $userId)->first();
         if ($giftaid) {
             $card['giftaid'] = [
-                'period'            => (string) $giftaid->period,
-                'declined'          => $giftaid->period === 'Declined',
-                'reviewed'          => $giftaid->reviewed ? Carbon::parse($giftaid->reviewed) : null,
-                'postcode'          => (string) ($giftaid->postcode ?? ''),
+                'period' => (string) $giftaid->period,
+                'declined' => $giftaid->period === 'Declined',
+                'reviewed' => $giftaid->reviewed ? Carbon::parse($giftaid->reviewed) : null,
+                'postcode' => (string) ($giftaid->postcode ?? ''),
                 'housenameornumber' => (string) ($giftaid->housenameornumber ?? ''),
-                'homeaddress'       => (string) ($giftaid->homeaddress ?? ''),
-                'updated'           => $giftaid->updated ? Carbon::parse($giftaid->updated) : null,
+                'homeaddress' => (string) ($giftaid->homeaddress ?? ''),
+                'updated' => $giftaid->updated ? Carbon::parse($giftaid->updated) : null,
             ];
         }
-
-        $card['memberships'] = DB::table('memberships')
-            ->join('groups', 'groups.id', '=', 'memberships.groupid')
-            ->where('memberships.userid', $userId)
-            ->where('memberships.collection', 'Approved')
-            ->where('groups.type', Group::TYPE_FREEGLE)
-            ->orderBy('memberships.added')
-            ->limit(10)
-            ->get(['groups.id as groupid', 'groups.nameshort', 'groups.namefull', 'memberships.role', 'memberships.added'])
-            ->map(fn($m) => [
-                'groupid'     => (int) $m->groupid,
-                'name'        => (string) ($m->namefull ?: $m->nameshort),
-                'role'        => (string) $m->role,
-                'memberSince' => $m->added ? Carbon::parse($m->added)->format('M Y') : '',
-            ])
-            ->all();
 
         $card['modNotes'] = DB::table('users_comments')
             ->where('userid', $userId)
@@ -445,15 +428,14 @@ class DonationThankPrepService
             ->get(['id', 'date', 'byuserid', 'user1', 'user2', 'flag'])
             ->map(function ($c) {
                 return [
-                    'date'    => Carbon::parse($c->date)->format('j M Y'),
-                    'flag'    => (int) $c->flag,
+                    'date' => Carbon::parse($c->date)->format('j M Y'),
+                    'flag' => (int) $c->flag,
                     'snippet' => $this->cleanSnippet((string) ($c->user2 ?? $c->user1 ?? ''), 160),
                 ];
             })
             ->all();
 
-        $card['modChats']     = $this->fetchRecentModChats($userId);
-        $card['birthdayHint'] = $this->donorHasBirthdayHint($userId, $donation, $recurring);
+        $card['modChats'] = $this->fetchRecentModChats($userId);
 
         return $card;
     }
@@ -482,10 +464,10 @@ class DonationThankPrepService
             ->get(['date', 'message', 'userid', 'chatid'])
             ->map(function ($m) use ($userId) {
                 return [
-                    'date'       => Carbon::parse($m->date)->setTimezone('Europe/London')->format('j M Y'),
+                    'date' => Carbon::parse($m->date)->setTimezone('Europe/London')->format('j M Y'),
                     'fromMember' => (int) $m->userid === $userId,
-                    'chatid'     => (int) $m->chatid,
-                    'snippet'    => $this->cleanSnippet((string) $m->message, 140),
+                    'chatid' => (int) $m->chatid,
+                    'snippet' => $this->cleanSnippet((string) $m->message, 140),
                 ];
             })
             ->all();
@@ -507,53 +489,16 @@ class DonationThankPrepService
         $clean = html_entity_decode(strip_tags($clean), ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $clean = trim((string) preg_replace('/\s+/', ' ', $clean));
         if (mb_strlen($clean, 'UTF-8') > $maxChars) {
-            $clean = mb_substr($clean, 0, $maxChars - 1, 'UTF-8') . '…';
+            $clean = mb_substr($clean, 0, $maxChars - 1, 'UTF-8').'…';
         }
+
         return $clean;
-    }
-
-    private function donorHasBirthdayHint(int $userId, object $donation, bool $recurring): bool
-    {
-        $skipBirthdayCheck = false;
-        if ($recurring) {
-            $lastMonth = DB::table('users_donations')
-                ->where('userid', $userId)
-                ->where('GrossAmount', $donation->GrossAmount)
-                ->whereIn('TransactionType', self::RECURRING_TYPES)
-                ->whereRaw('DATE(timestamp) >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)')
-                ->whereRaw('DATE(timestamp) < CURDATE()')
-                ->count();
-            $skipBirthdayCheck = $lastMonth > 0;
-        }
-        if ($skipBirthdayCheck) {
-            return false;
-        }
-        return $this->donorHasBirthdayGroup($userId);
-    }
-
-    private function donorHasBirthdayGroup(int $userId): bool
-    {
-        $today      = date('m-d');
-        $yesterday  = date('m-d', strtotime('-1 day'));
-        $twoDaysAgo = date('m-d', strtotime('-2 days'));
-
-        $count = DB::table('groups')
-            ->join('memberships', 'groups.id', '=', 'memberships.groupid')
-            ->where('memberships.userid', $userId)
-            ->where('groups.type', Group::TYPE_FREEGLE)
-            ->where('groups.publish', 1)
-            ->where('groups.onmap', 1)
-            ->whereRaw("DATE_FORMAT(groups.founded, '%m-%d') IN (?, ?, ?)", [$today, $yesterday, $twoDaysAgo])
-            ->whereRaw("YEAR(NOW()) - YEAR(groups.founded) > 0")
-            ->count();
-
-        return $count > 0;
     }
 
     private function buildLinks(object $donation): array
     {
         $modBase = rtrim((string) config('freegle.sites.mod', 'https://modtools.org'), '/');
-        $userId  = $donation->userid ? (int) $donation->userid : null;
+        $userId = $donation->userid ? (int) $donation->userid : null;
 
         $links = [
             // Real Modtools GA moderator page. Doesn't take a ?search= query
@@ -580,17 +525,17 @@ class DonationThankPrepService
      */
     private function gatherCandidates(object $donation): array
     {
-        $payer      = (string) ($donation->Payer ?? '');
+        $payer = (string) ($donation->Payer ?? '');
         $candidates = [];
-        $seen       = [];
+        $seen = [];
 
         // 1. Same email local-part on any provider — people reuse the prefix
         //    across gmail/btinternet/etc. The leading-anchored LIKE uses the
         //    email index, so this stays cheap.
         $at = strpos($payer, '@');
         if ($at > 2) {
-            $local      = substr($payer, 0, $at);
-            $likePrefix = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $local) . '@%';
+            $local = substr($payer, 0, $at);
+            $likePrefix = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $local).'@%';
 
             $rows = DB::table('users_emails')
                 ->join('users', 'users.id', '=', 'users_emails.userid')
@@ -640,7 +585,7 @@ class DonationThankPrepService
 
     private function candidateRow(object $r, string $reason): array
     {
-        $display = trim(((string) ($r->firstname ?? '')) . ' ' . ((string) ($r->lastname ?? '')));
+        $display = trim(((string) ($r->firstname ?? '')).' '.((string) ($r->lastname ?? '')));
         if ($display === '') {
             $display = (string) ($r->fullname ?? '');
         }
@@ -648,10 +593,10 @@ class DonationThankPrepService
 
         return [
             'userid' => (int) $r->userid,
-            'name'   => $display !== '' ? $display : 'Unknown',
-            'email'  => isset($r->email) ? $r->email : null,
+            'name' => $display !== '' ? $display : 'Unknown',
+            'email' => isset($r->email) ? $r->email : null,
             'reason' => $reason,
-            'link'   => "{$modBase}/support/" . (int) $r->userid,
+            'link' => "{$modBase}/support/".(int) $r->userid,
         ];
     }
 }

@@ -1,15 +1,11 @@
 package location
 
 import (
-	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"log"
-	"math"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
@@ -17,13 +13,11 @@ import (
 	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
-	geo "github.com/kellydunn/golang-geo"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 const TYPE_POSTCODE = "Postcode"
-const NEARBY = 50 // In miles.
 
 type AreaInfo struct {
 	ID   uint64  `json:"id"`
@@ -33,16 +27,15 @@ type AreaInfo struct {
 }
 
 type Location struct {
-	ID         uint64         `json:"id"`
-	Name       string         `json:"name"`
-	Type       string         `json:"type"`
-	Lat        float32        `json:"lat"`
-	Lng        float32        `json:"lng"`
-	Areaid     uint64         `json:"areaid"`
-	Areaname   string         `json:"areaname"`
-	Area       *AreaInfo      `json:"area,omitempty" gorm:"-"`
-	GroupsNear []ClosestGroup `json:"groupsnear" gorm:"-"`
-	Dist       float32        `json:"dist" gorm:"-"`
+	ID       uint64    `json:"id"`
+	Name     string    `json:"name"`
+	Type     string    `json:"type"`
+	Lat      float32   `json:"lat"`
+	Lng      float32   `json:"lng"`
+	Areaid   uint64    `json:"areaid"`
+	Areaname string    `json:"areaname"`
+	Area     *AreaInfo `json:"area,omitempty" gorm:"-"`
+	Dist     float32   `json:"dist" gorm:"-"`
 }
 
 // ClosestPostcode returns the nearest full postcode to a point via the spatial
@@ -74,178 +67,6 @@ func ClosestPostcode(lat float32, lng float32) Location {
 	return loc
 }
 
-type ClosestGroup struct {
-	ID          uint64          `json:"id"`
-	Nameshort   string          `json:"nameshort"`
-	Namefull    string          `json:"namefull"`
-	Namedisplay string          `json:"namedisplay"`
-	Ontn        bool            `json:"ontn"`
-	Dist        float32         `json:"dist"`
-	Settings    json.RawMessage `json:"settings"` // This is JSON stored in the DB as a string.
-}
-
-func ClosestSingleGroup(lat float64, lng float64, radius float64) *ClosestGroup {
-	groups := ClosestGroups(lat, lng, radius, 1)
-
-	if len(groups) > 0 {
-		return &groups[0]
-	} else {
-		return nil
-	}
-}
-
-func ClosestGroups(lat float64, lng float64, radius float64, limit int) []ClosestGroup {
-	// To make this efficient we want to use the spatial index on polyindex.  But our groups are not evenly
-	// distributed, so if we search immediately upto $radius, which is the maximum we need to cover, then we
-	// will often have to scan many more groups than we need in order to determine the closest groups
-	// (via the LIMIT clause), and this may be slow even with a spatial index.
-	//
-	// For example, searching in London will find ~120 groups within 50 miles, of which we are only interested
-	// in 10, and the query will take ~0.03s.  If we search within 4 miles, that will typically find what we
-	// need and the query takes ~0.00s.
-	//
-	// So we step up, using a bounding box that covers the point and radius and searching based on the lat/lng
-	// centre of the group.  That's much faster.  But (infuriatingly) there are some groups which are so large that
-	// the centre of the group is further away than the centre of lots of other groups, and that means that
-	// we don't find the correct group.  So to deal with such groups we have an alt lat/lng which we can set to
-	// be somewhere else, effectively giving the group two "centres".  This is a fudge which clearly wouldn't
-	// cope with arbitrary geographies or hyperdimensional quintuple manifolds or whatever, but works ok for our
-	// little old UK reuse network.
-	//
-	// Because this is Go we can fire off these requests in parallel and just stop when we get enough results.
-	// This reduces latency significantly, even though it's a bit mean to the database server.
-	db := database.DBConn
-
-	// If this point lies inside one or more group polygons, those are the correct groups —
-	// polygon containment is authoritative and beats any centre-distance heuristic.  This
-	// matches the V1 PHP groupsNear() behaviour and fixes bug #9518, where a group with a
-	// close centre but non-containing polygon was returned instead of the large group whose
-	// polygon actually contains the point.  The radius-stepping search below filters on the
-	// group centre distance (HAVING hav < currradius), so a containing group whose centre is
-	// far away would otherwise be dropped entirely.
-	containing := []ClosestGroup{}
-	db.Table("groups").
-		Select("id, nameshort, namefull, ontn, settings, 0 AS dist, "+
-			"haversine(lat, lng, ?, ?) AS hav, "+
-			"CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2",
-			lat, lng, lat, lng).
-		Where("ST_Contains(polyindex, ST_SRID(POINT(?, ?), ?)) AND publish = 1 AND listable = 1", lng, lat, utils.SRID).
-		Order("hav ASC, external ASC").
-		Limit(limit).
-		Scan(&containing)
-
-	if len(containing) > 0 {
-		for i, r := range containing {
-			if len(r.Namefull) > 0 {
-				containing[i].Namedisplay = r.Namefull
-			} else {
-				containing[i].Namedisplay = r.Nameshort
-			}
-		}
-		return containing
-	}
-
-	var currradius = math.Round(float64(radius)/16.0 + 0.5)
-	results := []ClosestGroup{}
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-
-	// Every band's query must complete before we can trust `results`: a group's
-	// "hav" (distance to its registered centre) gates which band can see it at
-	// all, independent of "dist" (distance to its actual polygon boundary), which
-	// is what determines "nearest" for ranking. A large or awkwardly-shaped group
-	// can have a polygon boundary very close to the point while its registered
-	// centre is comparatively far away, so it is only discoverable via a wider
-	// (and slower) band. Stopping as soon as any one band alone had accumulated
-	// `limit` candidates - as this used to do - could return before a still-running
-	// wider band completed, silently dropping a genuinely nearer group in favour of
-	// worse-but-faster-to-find ones (Discourse #9905).
-	for {
-		wg.Add(1)
-
-		go func(currradius float64) {
-			defer wg.Done()
-
-			batch := []ClosestGroup{}
-			var nelat, nelng, swlat, swlng float64
-			p := geo.NewPoint(lat, lng)
-			ne := p.PointAtDistanceAndBearing(currradius, 45)
-			nelat = ne.Lat()
-			nelng = ne.Lng()
-			sw := p.PointAtDistanceAndBearing(currradius, 225)
-			swlat = sw.Lat()
-			swlng = sw.Lng()
-
-			// No .Group() call: clause/group_by.go's GroupBy.Build() writes
-			// nothing for an empty Columns list and Clause.Build() skips the
-			// "GROUP BY " name prefix when MergeClause left it "" (which it
-			// does for zero columns), so .Having() alone renders a bare
-			// "HAVING (...)" with no "GROUP BY" before it - matching this
-			// golden, which has none.
-			db.Table("groups").
-				Select("id, nameshort, namefull, ontn, settings, "+
-					"ST_distance(ST_SRID(POINT(?, ?), ?), polyindex) * 111195 * 0.000621371 AS dist, "+
-					"haversine(lat, lng, ?, ?) AS hav, CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2",
-					lng, lat, utils.SRID, lat, lng, lat, lng).
-				Where("MBRIntersects(polyindex, ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?)) "+
-					"AND publish = 1 AND listable = 1",
-					swlng, swlat, swlng, nelat, nelng, nelat, nelng, swlat, swlng, swlat, utils.SRID).
-				Having("(hav IS NOT NULL AND hav < ? OR hav2 IS NOT NULL AND hav2 < ?)", currradius, currradius).
-				Order("dist ASC, hav ASC, external ASC").
-				Limit(limit).
-				Scan(&batch)
-
-			if len(batch) > 0 {
-				for i, r := range batch {
-					if len(r.Namefull) > 0 {
-						batch[i].Namedisplay = r.Namefull
-					} else {
-						batch[i].Namedisplay = r.Nameshort
-					}
-				}
-
-				mu.Lock()
-				results = append(results, batch...)
-				mu.Unlock()
-			}
-		}(currradius)
-
-		currradius = currradius * 2
-
-		if currradius >= radius {
-			break
-		}
-	}
-
-	wg.Wait()
-
-	// Sort results by distance, ascending.
-	if len(results) > 1 {
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].Dist < results[j].Dist
-		})
-	}
-
-	// Remove duplicates by id
-	seen := make(map[uint64]struct{}, len(results))
-	j := 0
-	for _, v := range results {
-		if _, ok := seen[v.ID]; ok {
-			continue
-		}
-		seen[v.ID] = struct{}{}
-		results[j] = v
-		j++
-	}
-
-	// Limit results to the first `limit` items.
-	if len(results) > limit {
-		results = results[:limit]
-	}
-
-	return results
-}
-
 func FetchSingle(id uint64) *Location {
 	if id == 0 {
 		return nil
@@ -271,8 +92,6 @@ func FetchSingle(id uint64) *Location {
 }
 
 func GetLocation(c *fiber.Ctx) error {
-	groupsnear := c.QueryBool("groupsnear", true)
-
 	if c.Params("id") != "" {
 		// Looking for a specific location.
 		id, err := strconv.ParseUint(c.Params("id"), 10, 64)
@@ -282,10 +101,6 @@ func GetLocation(c *fiber.Ctx) error {
 
 			if loc == nil {
 				return fiber.NewError(fiber.StatusNotFound, "Location not found")
-			}
-
-			if groupsnear && loc.ID > 0 {
-				loc.GroupsNear = ClosestGroups(float64(loc.Lat), float64(loc.Lng), NEARBY, 10)
 			}
 
 			return c.JSON(loc)
@@ -300,9 +115,6 @@ func LatLng(c *fiber.Ctx) error {
 	lng, _ := strconv.ParseFloat(c.Query("lng"), 32)
 
 	loc := ClosestPostcode(float32(lat), float32(lng))
-	if loc.ID > 0 {
-		loc.GroupsNear = ClosestGroups(float64(loc.Lat), float64(loc.Lng), NEARBY, 10)
-	}
 
 	return c.JSON(loc)
 }
@@ -375,18 +187,14 @@ func SearchLocations(c *fiber.Ctx) error {
 	dodgyFlag := c.QueryBool("dodgy", false)
 	areasFlag := c.QueryBool("areas", true)
 	limitStr := c.Query("limit", "10")
-	groupsnear := c.QueryBool("groupsnear", true)
 	pconly := c.QueryBool("pconly", true)
 
 	if latStr != "" && lngStr != "" {
-		// Find closest postcode and nearby groups.
+		// Find closest postcode.
 		lat, _ := strconv.ParseFloat(latStr, 32)
 		lng, _ := strconv.ParseFloat(lngStr, 32)
 
 		loc := ClosestPostcode(float32(lat), float32(lng))
-		if loc.ID > 0 && groupsnear {
-			loc.GroupsNear = ClosestGroups(float64(loc.Lat), float64(loc.Lng), NEARBY, 10)
-		}
 
 		return c.JSON(fiber.Map{
 			"ret":      0,
@@ -433,18 +241,6 @@ func SearchLocations(c *fiber.Ctx) error {
 					Lng:  l.AreaLng,
 				}
 			}
-		}
-
-		if groupsnear {
-			var wg sync.WaitGroup
-			wg.Add(len(locations))
-			for i := range locations {
-				go func(i int) {
-					locations[i].GroupsNear = ClosestGroups(float64(locations[i].Lat), float64(locations[i].Lng), NEARBY, 10)
-					wg.Done()
-				}(i)
-			}
-			wg.Wait()
 		}
 
 		return c.JSON(fiber.Map{
@@ -586,19 +382,6 @@ func Typeahead(c *fiber.Ctx) error {
 				}
 			}
 		}
-
-		// Fetch the groups near each postcode, in parallel
-		var wg sync.WaitGroup
-		wg.Add(len(locations))
-
-		for i := range locations {
-			go func(i int) {
-				locations[i].GroupsNear = ClosestGroups(float64(locations[i].Lat), float64(locations[i].Lng), NEARBY, 10)
-				wg.Done()
-			}(i)
-		}
-
-		wg.Wait()
 
 		return c.JSON(locations)
 	}
@@ -807,7 +590,7 @@ func UpdateLocation(c *fiber.Ctx) error {
 	if req.Polygon != nil && *req.Polygon != "" {
 		// Validate geometry first.
 		var valid bool
-		// Same bare-scalar-SELECT technique as group.go's validateGeometry
+		// Bare-scalar-SELECT technique
 		// (site 6d0982e798b5): Statement.BuildClauses={"SELECT"} suppresses
 		// GORM's automatic FROM. SRID is folded into the Select() string via
 		// fmt.Sprintf, matching the shipped gorm.Expr(fmt.Sprintf(...)) idiom
@@ -936,13 +719,12 @@ func UpdateLocation(c *fiber.Ctx) error {
 
 type ExcludeLocationRequest struct {
 	ID        uint64 `json:"id"`
-	GroupID   uint64 `json:"groupid"`
 	Action    string `json:"action"`
 	Byname    bool   `json:"byname"`
 	MessageID uint64 `json:"messageid"`
 }
 
-// ExcludeLocation handles POST /locations with action=Exclude - exclude a location from a group (group mod only).
+// ExcludeLocation handles POST /locations with action=Exclude - exclude a location nationally (system moderator only).
 func ExcludeLocation(c *fiber.Ctx) error {
 	myid := auth.WhoAmI(c)
 	if myid == 0 {
@@ -958,12 +740,12 @@ func ExcludeLocation(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid action")
 	}
 
-	if req.ID == 0 || req.GroupID == 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "id and groupid are required")
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "id is required")
 	}
 
-	if !auth.IsModOfGroup(myid, req.GroupID) {
-		return fiber.NewError(fiber.StatusForbidden, "Must be a moderator or owner of the group")
+	if !auth.IsSystemMod(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Must be a moderator")
 	}
 
 	db := database.DBConn
@@ -973,7 +755,7 @@ func ExcludeLocation(c *fiber.Ctx) error {
 	// identical twin below (59411a155371): a half-converted pair renumbers
 	// the survivor's site ID, so gate (h) refuses the split state.
 	db.Table("locations_excluded").Clauses(clause.Insert{Modifier: "IGNORE"}).
-		Create(map[string]interface{}{"locationid": req.ID, "groupid": req.GroupID, "userid": myid})
+		Create(map[string]interface{}{"locationid": req.ID, "userid": myid})
 
 	queueExcludeRemap(req.ID)
 
@@ -988,7 +770,7 @@ func ExcludeLocation(c *fiber.Ctx) error {
 				// Twin of
 				// 666504e10980 above.
 				db.Table("locations_excluded").Clauses(clause.Insert{Modifier: "IGNORE"}).
-					Create(map[string]interface{}{"locationid": otherID, "groupid": req.GroupID, "userid": myid})
+					Create(map[string]interface{}{"locationid": otherID, "userid": myid})
 				queueExcludeRemap(otherID)
 			}
 		}

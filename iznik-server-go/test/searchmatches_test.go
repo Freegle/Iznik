@@ -27,12 +27,11 @@ func TestSearchMatchesHoldTheEmailThreshold(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("searchmatch")
 
-	groupID := CreateTestGroup(t, prefix)
 	poster := CreateTestUser(t, prefix+"_poster", "User")
 	strong := CreateTestUser(t, prefix+"_strong", "User")
 	weak := CreateTestUser(t, prefix+"_weak", "User")
 
-	msgID := CreateTestMessage(t, poster, groupID, "OFFER: Pine bookcase", 51.5, -0.1)
+	msgID := CreateTestMessage(t, poster, "OFFER: Pine bookcase", 51.5, -0.1)
 
 	// The post's own vector, served from the in-memory index.
 	base := makeTestVec(0.5)
@@ -95,9 +94,8 @@ func TestSearchMatchesHoldTheEmailThreshold(t *testing.T) {
 // something looser.
 func TestSearchMatchesWithoutAnEmbeddingReturnNothing(t *testing.T) {
 	prefix := uniquePrefix("searchnoembed")
-	groupID := CreateTestGroup(t, prefix)
 	poster := CreateTestUser(t, prefix+"_poster", "User")
-	msgID := CreateTestMessage(t, poster, groupID, "OFFER: No vector here", 51.5, -0.1)
+	msgID := CreateTestMessage(t, poster, "OFFER: No vector here", 51.5, -0.1)
 
 	embedding.Global.SetEntries(nil)
 

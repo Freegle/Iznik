@@ -42,8 +42,7 @@ class MaxReachServiceTest extends TestCase
     private function seedRipplingPost(bool $withSchedule = true): int
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $schedule = json_encode([
             ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 200, 'wkt' => self::TICK1],
@@ -66,8 +65,7 @@ class MaxReachServiceTest extends TestCase
     public function test_post_with_no_reach_row_is_not_within_max_reach(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
 
         $this->assertFalse($this->service()->isWithinMaxReach((int) $message->id, 51.5, -0.1));
     }

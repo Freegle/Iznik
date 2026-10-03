@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import {
   deduplicateMessages,
   findDuplicates,
-  distinctGroupIds,
   dedupKey,
 } from '~/composables/useMessageDedup'
 
@@ -11,14 +10,6 @@ function storeOf(details) {
   const map = {}
   for (const d of details) map[d.id] = d
   return (id) => map[id]
-}
-
-// isOnMyGroup predicate mirroring MessageList's, for a given set of member group ids.
-function memberOf(groupIds) {
-  const set = new Set(groupIds)
-  return (message) =>
-    !!message?.groups &&
-    message.groups.some((g) => set.has(parseInt(g.groupid)))
 }
 
 describe('deduplicateMessages', () => {
@@ -57,54 +48,13 @@ describe('deduplicateMessages', () => {
     expect(out).toHaveLength(1)
   })
 
-  it('prefers the duplicate on a group the viewer belongs to (Discourse 9733/9729)', () => {
+  it('keeps the first copy seen when items duplicate each other', () => {
     const items = [{ id: 1 }, { id: 2 }]
     const getMessage = storeOf([
-      {
-        id: 1,
-        fromuser: 5,
-        type: 'Offer',
-        subject: 'OFFER: Sofa',
-        groups: [{ groupid: 20 }],
-      },
-      {
-        id: 2,
-        fromuser: 5,
-        type: 'Offer',
-        subject: 'OFFER: Sofa',
-        groups: [{ groupid: 10 }],
-      },
+      { id: 1, fromuser: 5, type: 'Offer', subject: 'OFFER: Sofa' },
+      { id: 2, fromuser: 5, type: 'Offer', subject: 'OFFER: Sofa' },
     ])
-    const out = deduplicateMessages(items, {
-      getMessage,
-      isOnMyGroup: memberOf([10]),
-    })
-    // Keeps id 2 (member group 10), not id 1 (non-member group 20).
-    expect(out.map((m) => m.id)).toEqual([2])
-  })
-
-  it('does not displace the kept copy when neither is on a member group', () => {
-    const items = [{ id: 1 }, { id: 2 }]
-    const getMessage = storeOf([
-      {
-        id: 1,
-        fromuser: 5,
-        type: 'Offer',
-        subject: 'OFFER: Sofa',
-        groups: [{ groupid: 20 }],
-      },
-      {
-        id: 2,
-        fromuser: 5,
-        type: 'Offer',
-        subject: 'OFFER: Sofa',
-        groups: [{ groupid: 30 }],
-      },
-    ])
-    const out = deduplicateMessages(items, {
-      getMessage,
-      isOnMyGroup: memberOf([10]),
-    })
+    const out = deduplicateMessages(items, { getMessage })
     expect(out.map((m) => m.id)).toEqual([1])
   })
 
@@ -118,33 +68,6 @@ describe('deduplicateMessages', () => {
     // 3 is a duplicate of 1 but is the firstSeenMessage -> it replaces 1.
     const out = deduplicateMessages(items, { getMessage, firstSeenMessage: 3 })
     expect(out.map((m) => m.id)).toEqual([2, 3])
-  })
-
-  it('never displaces firstSeenMessage even for a member-group duplicate', () => {
-    const items = [{ id: 1 }, { id: 2 }]
-    const getMessage = storeOf([
-      {
-        id: 1,
-        fromuser: 5,
-        type: 'Offer',
-        subject: 'OFFER: Sofa',
-        groups: [{ groupid: 20 }],
-      },
-      {
-        id: 2,
-        fromuser: 5,
-        type: 'Offer',
-        subject: 'OFFER: Sofa',
-        groups: [{ groupid: 10 }],
-      },
-    ])
-    const out = deduplicateMessages(items, {
-      getMessage,
-      firstSeenMessage: 1,
-      isOnMyGroup: memberOf([10]),
-    })
-    // 1 is firstSeenMessage so it is kept even though 2 is on the member group.
-    expect(out.map((m) => m.id)).toEqual([1])
   })
 
   it('drops the excluded id entirely', () => {
@@ -219,28 +142,10 @@ describe('findDuplicates', () => {
   })
 })
 
-describe('distinctGroupIds', () => {
-  it('returns distinct groupids in first-appearance order', () => {
-    const msgs = [
-      { groupid: 3 },
-      { groupid: 1 },
-      { groupid: 3 },
-      { groupid: 2 },
-      { groupid: 1 },
-    ]
-    expect(distinctGroupIds(msgs)).toEqual([3, 1, 2])
-  })
-
-  it('handles empty/undefined input', () => {
-    expect(distinctGroupIds([])).toEqual([])
-    expect(distinctGroupIds(undefined)).toEqual([])
-  })
-})
-
 describe('dedupKey', () => {
-  it('collapses the same poster crossposts of one item across groups', () => {
+  it('collapses reposts of one item under the same trailing location', () => {
     // Same poster, same item, different trailing "(location)" -> one key, so the browse
-    // feed shows one card and MessageList can mark every copy seen together.
+    // feed shows one card for every repost.
     const a = { fromuser: 7, type: 'Offer', subject: 'OFFER: Sofa (Leeds LS1)' }
     const b = { fromuser: 7, type: 'Offer', subject: 'OFFER: Sofa (Leeds LS2)' }
     expect(dedupKey(a)).toBe(dedupKey(b))

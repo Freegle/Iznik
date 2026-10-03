@@ -2,9 +2,6 @@
 
 namespace Tests\Feature\Chat;
 
-use App\Mail\Chat\ChatReviewPendingMail;
-use App\Mail\Chat\ChatReviewSummaryMail;
-use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
@@ -29,13 +26,13 @@ class ReviewPendingCommandTest extends TestCase
 
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $room  = $this->createTestChatRoom($user1, $user2);
+        $room = $this->createTestChatRoom($user1, $user2);
 
         // Message stuck for 8 days (> AUTO_REJECT_DAYS)
         $this->createTestChatMessage($room, $user1, [
-            'date'           => now()->subDays(8)->toDateTimeString(),
+            'date' => now()->subDays(8)->toDateTimeString(),
             'reviewrequired' => 1,
-            'reviewedby'     => null,
+            'reviewedby' => null,
             'reviewrejected' => 0,
         ]);
 
@@ -56,13 +53,13 @@ class ReviewPendingCommandTest extends TestCase
 
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $room  = $this->createTestChatRoom($user1, $user2);
+        $room = $this->createTestChatRoom($user1, $user2);
 
         // Message only 1 day old
         $this->createTestChatMessage($room, $user1, [
-            'date'           => now()->subDay()->toDateTimeString(),
+            'date' => now()->subDay()->toDateTimeString(),
             'reviewrequired' => 1,
-            'reviewedby'     => null,
+            'reviewedby' => null,
             'reviewrejected' => 0,
         ]);
 
@@ -71,47 +68,18 @@ class ReviewPendingCommandTest extends TestCase
             ->assertExitCode(0);
     }
 
-    public function test_notifies_mods_when_messages_pending_48h(): void
-    {
-        Mail::fake();
-
-        $mod    = $this->createTestUser();
-        $member = $this->createTestUser();
-        $group  = $this->createTestGroup();
-
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
-        $this->createMembership($member, $group, ['role' => Membership::ROLE_MEMBER]);
-
-        $room = $this->createTestChatRoom($member, $mod);
-
-        // Message pending review for 3 days
-        $this->createTestChatMessage($room, $member, [
-            'date'           => now()->subDays(3)->toDateTimeString(),
-            'reviewrequired' => 1,
-            'reviewedby'     => null,
-            'reviewrejected' => 0,
-        ]);
-
-        $this->artisan('chats:review-pending')
-            ->expectsOutputToContain('Notified mods for 1 group(s)')
-            ->assertExitCode(0);
-
-        Mail::assertSent(ChatReviewPendingMail::class);
-        Mail::assertSent(ChatReviewSummaryMail::class);
-    }
-
     public function test_skips_already_reviewed_messages(): void
     {
         Mail::fake();
 
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $room  = $this->createTestChatRoom($user1, $user2);
+        $room = $this->createTestChatRoom($user1, $user2);
 
         $this->createTestChatMessage($room, $user1, [
-            'date'           => now()->subDays(3)->toDateTimeString(),
+            'date' => now()->subDays(3)->toDateTimeString(),
             'reviewrequired' => 1,
-            'reviewedby'     => $user2->id,
+            'reviewedby' => $user2->id,
             'reviewrejected' => 0,
         ]);
 
@@ -128,12 +96,12 @@ class ReviewPendingCommandTest extends TestCase
 
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $room  = $this->createTestChatRoom($user1, $user2);
+        $room = $this->createTestChatRoom($user1, $user2);
 
         $this->createTestChatMessage($room, $user1, [
-            'date'           => now()->subDays(3)->toDateTimeString(),
+            'date' => now()->subDays(3)->toDateTimeString(),
             'reviewrequired' => 1,
-            'reviewedby'     => null,
+            'reviewedby' => null,
             'reviewrejected' => 1,
         ]);
 
@@ -150,12 +118,12 @@ class ReviewPendingCommandTest extends TestCase
 
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
-        $room  = $this->createTestChatRoom($user1, $user2);
+        $room = $this->createTestChatRoom($user1, $user2);
 
         $msg = $this->createTestChatMessage($room, $user1, [
-            'date'           => now()->subDays(8)->toDateTimeString(),
+            'date' => now()->subDays(8)->toDateTimeString(),
             'reviewrequired' => 1,
-            'reviewedby'     => null,
+            'reviewedby' => null,
             'reviewrejected' => 0,
         ]);
 
@@ -166,9 +134,9 @@ class ReviewPendingCommandTest extends TestCase
 
         // Should not have been updated
         $this->assertDatabaseHas('chat_messages', [
-            'id'             => $msg->id,
+            'id' => $msg->id,
             'reviewrejected' => 0,
-            'reviewedby'     => null,
+            'reviewedby' => null,
         ]);
 
         Mail::assertNothingSent();

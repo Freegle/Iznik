@@ -3,6 +3,11 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import MicrovolunteeringPage from '~/modtools/pages/members/microvolunteering/[[id]].vue'
 
+// Self-moderating rework: this page used to be per-community (ModGroupSelect
+// + groupid gating the fetch). Moderators are national now, so the top
+// micro-volunteers list is fetched unconditionally on mount - there is no
+// community to choose.
+
 // Mock dayjs
 vi.mock('dayjs', () => {
   const mockDayjs = (date) => ({
@@ -24,6 +29,16 @@ vi.mock('~/stores/microvolunteering', () => ({
   useMicroVolunteeringStore: () => mockMicroVolunteeringStore,
 }))
 
+// Mock user store
+const mockUserStore = {
+  byId: vi.fn(),
+  fetch: vi.fn().mockResolvedValue({}),
+}
+
+vi.mock('~/stores/user', () => ({
+  useUserStore: () => mockUserStore,
+}))
+
 describe('members/microvolunteering/[[id]].vue page', () => {
   function mountComponent() {
     return mount(MicrovolunteeringPage, {
@@ -39,10 +54,6 @@ describe('members/microvolunteering/[[id]].vue page', () => {
           ModHelpMicrovolunteering: {
             template: '<div class="mod-help-microvolunteering" />',
           },
-          ModGroupSelect: {
-            template: '<div class="mod-group-select" />',
-            props: ['modelValue', 'modonly', 'all', 'remember', 'disabled'],
-          },
           ModMicrovolunteeringDetailsButton: {
             template: '<div class="mod-microvol-details" />',
             props: ['user', 'items'],
@@ -50,6 +61,10 @@ describe('members/microvolunteering/[[id]].vue page', () => {
           NoticeMessage: {
             template: '<div class="notice-message"><slot /></div>',
             props: ['variant'],
+          },
+          Spinner: {
+            template: '<div class="spinner-border" />',
+            props: ['size'],
           },
           'b-img': {
             template: '<img />',
@@ -94,30 +109,52 @@ describe('members/microvolunteering/[[id]].vue page', () => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
     mockMicroVolunteeringStore.list = {}
+    mockMicroVolunteeringStore.fetch.mockResolvedValue({})
   })
 
   describe('rendering', () => {
-    it('shows please choose community message when no groupid', async () => {
-      const wrapper = mountComponent()
-      wrapper.vm.groupid = 0
-      wrapper.vm.busy = false
-      await wrapper.vm.$nextTick()
-      expect(wrapper.text()).toContain('Please choose a community')
-    })
-
     it('shows loader when busy', async () => {
       const wrapper = mountComponent()
       wrapper.vm.busy = true
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.spinner-border').exists()).toBe(true)
     })
+
+    it('shows no-activity message when nothing found and not busy', async () => {
+      const wrapper = mountComponent()
+      await flushPromises()
+      wrapper.vm.busy = false
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('No micro-volunteering activity found')
+    })
+
+    it('links a member row to the national member page (no groupid)', async () => {
+      mockMicroVolunteeringStore.list = {
+        1: { id: 1, timestamp: '2024-01-15T10:00:00Z', userid: 456 },
+      }
+      const wrapper = mountComponent()
+      await flushPromises()
+      wrapper.vm.busy = false
+      await wrapper.vm.$nextTick()
+      const link = wrapper.find('a[href="/members/approved/456"]')
+      expect(link.exists()).toBe(true)
+    })
   })
 
   describe('initial state', () => {
-    it('clears store and fetches on mount', async () => {
+    it('clears store and fetches unconditionally on mount', async () => {
       mountComponent()
       await flushPromises()
       expect(mockMicroVolunteeringStore.clear).toHaveBeenCalled()
+      expect(mockMicroVolunteeringStore.fetch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          list: true,
+          limit: 10000,
+        })
+      )
+      // No groupid in the fetch payload - moderators are national now.
+      const call = mockMicroVolunteeringStore.fetch.mock.calls[0][0]
+      expect(call).not.toHaveProperty('groupid')
     })
   })
 
@@ -175,42 +212,22 @@ describe('members/microvolunteering/[[id]].vue page', () => {
     })
   })
 
-  describe('watchers', () => {
-    it('clears store and fetches when groupid changes', async () => {
-      const wrapper = mountComponent()
-      await flushPromises()
-      vi.clearAllMocks()
-
-      wrapper.vm.groupid = 123
-      await wrapper.vm.$nextTick()
-
-      expect(mockMicroVolunteeringStore.clear).toHaveBeenCalled()
-    })
-  })
-
   describe('methods', () => {
-    describe('fetch', () => {
-      it('fetches data when groupid is set', async () => {
+    describe('fetchData', () => {
+      it('fetches nationally with no groupid param', async () => {
         const wrapper = mountComponent()
-        wrapper.vm.groupid = 123
-        await wrapper.vm.fetch()
+        vi.clearAllMocks()
+        mockMicroVolunteeringStore.fetch.mockResolvedValue({})
+        await wrapper.vm.fetchData()
 
         expect(mockMicroVolunteeringStore.fetch).toHaveBeenCalledWith(
           expect.objectContaining({
             list: true,
-            groupid: 123,
             limit: 10000,
           })
         )
-      })
-
-      it('does not fetch when groupid is 0', async () => {
-        const wrapper = mountComponent()
-        wrapper.vm.groupid = 0
-        vi.clearAllMocks()
-        await wrapper.vm.fetch()
-
-        expect(mockMicroVolunteeringStore.fetch).not.toHaveBeenCalled()
+        const call = mockMicroVolunteeringStore.fetch.mock.calls[0][0]
+        expect(call).not.toHaveProperty('groupid')
       })
     })
 

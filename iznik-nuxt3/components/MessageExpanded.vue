@@ -273,7 +273,7 @@
                   </button>
                   <client-only>
                     <button
-                      v-if="loggedIn && message.groups?.length"
+                      v-if="loggedIn"
                       class="action-button action-button--report"
                       title="Report this post"
                       @click.stop="showReport"
@@ -377,28 +377,6 @@
                   @click.stop.prevent
                 />
                 <v-icon icon="chevron-right" class="poster-chevron" />
-              </div>
-              <div
-                v-if="messageGroups.length && !groupless"
-                class="posted-on-groups"
-              >
-                On:
-                <ShowMore :items="messageGroups" :limit="3" inline>
-                  <template #item="{ item }"
-                    ><v-icon
-                      v-if="item.isHome"
-                      icon="home"
-                      class="me-1 text-muted"
-                      title="Home community (where this was originally posted)"
-                    /><NuxtLink
-                      no-prefetch
-                      :to="'/explore/' + item.nameshort"
-                      class="posted-on-group-link"
-                      @click.stop
-                      >{{ item.namedisplay }}</NuxtLink
-                    ></template
-                  >
-                </ShowMore>
               </div>
             </client-only>
           </div>
@@ -666,12 +644,9 @@ import {
 import { useRoute } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 import { useMobileStore } from '~/stores/mobile'
-import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
-import { useGroupless } from '~/composables/useGroupless'
 import { postAgeBadge } from '~/composables/usePostAgeBadge'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
-import { homeGroupFirst, isHomeGroup } from '~/composables/rippleStatus'
 import { reachNoticeSentence } from '~/composables/reachArrival'
 import { action } from '~/composables/useClientLog'
 import MessageTextBody from '~/components/MessageTextBody'
@@ -724,10 +699,7 @@ const emit = defineEmits(['zoom', 'close', 'replied'])
 
 const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
-const groupStore = useGroupStore()
 const { me, loggedIn } = useMe()
-// Experiment: no community identity on the member site.
-const groupless = useGroupless()
 
 // Use shared composable for common message display logic
 const {
@@ -773,27 +745,10 @@ function thumbnailAlt(index) {
     : name
 }
 
-// All the communities this post is on (it can be on several once it has rippled
-// out or been cross-posted). Resolve each to the group record for its display
-// name + explore link; drop any not yet in the group store.
-const messageGroups = computed(() => {
-  const raw = message.value?.groups
-  if (!raw?.length) return []
-  // List the home/origin group first: the list is truncated (ShowMore), so otherwise
-  // the home group could be hidden behind "more". Flag it so the template can show a
-  // home icon next to it.
-  return homeGroupFirst(raw)
-    .map((g) => {
-      const grp = groupStore.get(g.groupid)
-      return grp ? { ...grp, isHome: isHomeGroup(g, raw) } : null
-    })
-    .filter(Boolean)
-})
-
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 
 // Reply-eligibility (#2): the API returns replyeligible === false when the post hasn't rippled
-// out to the viewer's area yet (or they're banned from every group it's on). We no longer block
+// out to the viewer's area yet (or they're banned). We no longer block
 // replying — the reply is accepted and HELD server-side, then delivered when the post ripples to
 // them. reachBlocked now just drives an informational notice above the Reply button / composer
 // ("we'll pass it on when it reaches you"). Never set for the poster's own post; inert (false)
@@ -2142,24 +2097,6 @@ onUnmounted(() => {
   @media (max-width: 320px) {
     flex-direction: column;
     align-items: stretch;
-  }
-}
-
-/* "On: <communities>" line under the poster box - greyed, with clickable group links. */
-.posted-on-groups {
-  margin-top: 0.5rem;
-  padding: 0 1rem;
-  font-size: 0.85rem;
-  color: #6c757d;
-}
-
-.posted-on-group-link {
-  color: #6c757d;
-  text-decoration: underline;
-
-  &:hover {
-    color: #495057;
-    text-decoration: underline;
   }
 }
 

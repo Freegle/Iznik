@@ -45,6 +45,16 @@ const (
 	// TaskUserForget immediately wipes a user's personal data (GDPR erasure).
 	// Queued by admin/support DELETE /user; processed by iznik-batch UserManagementService::forgetUser().
 	TaskUserForget = "user_forget"
+
+	// TaskTellPoster tells a message's poster, by chat, that a moderator restored
+	// or took down their post (data: msgid, action "Restore"|"TakeDown", reason).
+	// Queued only when the state actually changed, by the PATCH /message
+	// Restore/TakeDown handlers in message/message.go, which write the same rows
+	// as the batch's own App\Services\TakedownService - iznik-batch sends the
+	// ChatMessage via ChatRoom::getOrCreateUser2Mod, the same path TakedownService
+	// itself uses, so a mod-initiated and a batch-initiated takedown/restore read
+	// identically to the poster.
+	TaskTellPoster = "tell_poster"
 )
 
 // QueueTask inserts a task into the background_tasks table for async processing by iznik-batch.

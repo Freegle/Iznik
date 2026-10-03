@@ -349,7 +349,7 @@
         <div class="individual-link">
           <p>
             Not a charity?
-            <nuxt-link no-prefetch to="/explore">
+            <nuxt-link no-prefetch to="/">
               Sign up as an individual
             </nuxt-link>
           </p>

@@ -26,39 +26,14 @@
             />
           </div>
 
-          <!-- No groups warning -->
-          <NoticeMessage
-            v-if="postcodeValid && noGroups"
-            variant="info"
-            class="mt-3"
-          >
-            We're really sorry, but there are no communities near there. If
-            you'd like to start one, please
-            <ExternalLink href="mailto:newgroups@ilovefreegle.org">
-              get in touch!
-            </ExternalLink>
-          </NoticeMessage>
-
-          <!-- Community selection -->
-          <div v-else-if="postcodeValid" class="community-section">
-            <div class="community-card">
-              <div class="community-header">
-                <v-icon icon="map-marker-alt" class="community-icon" />
-                <span class="community-label">Your local community</span>
-              </div>
-              <ComposeGroup class="community-select" />
-              <p class="community-hint">
-                This is the Freegle community for your area, chosen from your
-                location. If there isn't enough interest, we'll automatically
-                show it further away.
-              </p>
-            </div>
-            <PostPersonalInfoWarning :group="group" :text="postText" />
+          <!-- Personal info warning -->
+          <div v-if="postcodeValid" class="community-section">
+            <PostPersonalInfoWarning :text="postText" />
           </div>
         </div>
 
         <!-- Navigation button -->
-        <div v-if="postcodeValid && !closed" class="next-section">
+        <div v-if="postcodeValid" class="next-section">
           <div class="next-container">
             <b-button
               variant="primary"
@@ -78,12 +53,9 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useHead, useRuntimeConfig } from '#imports'
-import NoticeMessage from '~/components/NoticeMessage.vue'
-import ExternalLink from '~/components/ExternalLink.vue'
 import GlobalMessage from '~/components/GlobalMessage.vue'
 import PostCode from '~/components/PostCode.vue'
 import WizardProgressCompact from '~/components/WizardProgressCompact.vue'
-import ComposeGroup from '~/components/ComposeGroup.vue'
 import PostPersonalInfoWarning from '~/components/PostPersonalInfoWarning.vue'
 import { setup, postcodeSelect, postcodeClear } from '~/composables/useCompose'
 import { buildHead } from '~/composables/useBuildHead'
@@ -101,8 +73,7 @@ useHead(
   )
 )
 
-const { initialPostcode, postcodeValid, noGroups, closed, group } =
-  await setup('Wanted')
+const { initialPostcode, postcodeValid } = await setup('Wanted')
 
 const composeStore = useComposeStore()
 const postText = computed(() => {
@@ -172,55 +143,6 @@ const postText = computed(() => {
 
 .community-section {
   margin-top: 1.5rem;
-}
-
-.community-card {
-  background: var(--color-gray-50);
-  border: 1px solid $color-gray-3;
-  padding: 1.25rem;
-  text-align: center;
-}
-
-.community-header {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
-.community-icon {
-  color: $color-green-background;
-  font-size: 1.25rem;
-}
-
-.community-label {
-  font-weight: 600;
-  color: var(--color-gray-700);
-  font-size: 0.9rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.community-select {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 0.75rem;
-
-  :deep(select) {
-    font-size: 1.1rem;
-    font-weight: 500;
-    padding: 0.75rem 1rem;
-    border: 2px solid $color-green-background;
-    color: $color-green-background;
-    max-width: 100%;
-  }
-}
-
-.community-hint {
-  font-size: 0.8rem;
-  color: $color-gray--base;
-  margin-bottom: 0;
 }
 
 .next-section {

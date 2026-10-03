@@ -14,23 +14,20 @@ const (
 	TypeVolunteerOpportunity = "VolunteerOpportunity"
 )
 
-// CreateNewsfeedEntry creates a newsfeed entry for side effects like addGroup.
+// CreateNewsfeedEntry creates a newsfeed entry for side effects like adding a
+// community event or volunteering opportunity.
 //
-// When a community event or volunteering opportunity is added to a group, a
-// newsfeed entry is created so nearby users see it. Position is derived from
-// the user's lat/lng, falling back to the group's lat/lng.
+// Position is derived from the user's lat/lng.
 //
 // Behaviour:
 // - Checks spam/suppression status (sets hidden=NOW() for suppressed/spammer users)
 // - Duplicate protection (skips if last entry by user has same type)
-// - Sets location display name from the group
-func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *uint64, volunteeringid *uint64) (uint64, error) {
+func CreateNewsfeedEntry(nfType string, userid uint64, eventid *uint64, volunteeringid *uint64) (uint64, error) {
 	db := database.DBConn
 
-	// Get position: try user location first, fall back to group.
+	// Get position from the user's location.
 	var lat, lng *float64
 
-	// Try user location first (via lastlocation FK to locations table).
 	if userid > 0 {
 		type UserLoc struct {
 			Lat *float64
@@ -47,18 +44,6 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 			Scan(&ul)
 		lat = ul.Lat
 		lng = ul.Lng
-	}
-
-	// Fall back to group location.
-	if lat == nil && groupid > 0 {
-		type GroupLoc struct {
-			Lat *float64
-			Lng *float64
-		}
-		var gl GroupLoc
-		db.Table("groups").Select("lat, lng").Where("id = ?", groupid).Scan(&gl)
-		lat = gl.Lat
-		lng = gl.Lng
 	}
 
 	if lat == nil || lng == nil {
@@ -94,16 +79,6 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 		}
 	}
 
-	// Set location display name from the group.
-	var location *string
-	if groupid > 0 {
-		var groupName string
-		db.Table("groups").Select("nameshort").Where("id = ?", groupid).Scan(&groupName)
-		if groupName != "" {
-			location = &groupName
-		}
-	}
-
 	// Same zero-precision-change
 	// conversion as newsfeed.go's createRefer/createPost (10bcbd6a6404,
 	// f961504c334d): the WKT text is built exactly as before via
@@ -115,11 +90,9 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 	row := map[string]interface{}{
 		"type":           nfType,
 		"userid":         userid,
-		"groupid":        groupid,
 		"eventid":        eventid,
 		"volunteeringid": volunteeringid,
 		"position":       gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", *lng, *lat), utils.SRID),
-		"location":       location,
 		"hidden":         gorm.Expr(hidden),
 		"deleted":        gorm.Expr("NULL"),
 		"reviewrequired": gorm.Expr("0"),

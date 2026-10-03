@@ -10,7 +10,6 @@
         <NoticeMessage v-if="!messages.length" variant="info" class="mb-2">
           There are no posts to show.
         </NoticeMessage>
-        <ModGroupSelect v-model="groupid" modonly class="mb-2" />
         <b-row
           v-for="message in messages"
           :key="message.id"
@@ -45,11 +44,10 @@
               {{ message.subject }}
             </div>
             <div class="text-muted">
-              on {{ message.groupname
-              }}<span v-if="message.outcome">, now {{ message.outcome }}</span
+              <span v-if="message.outcome">Now {{ message.outcome }}</span
               ><span v-else-if="message.collection === 'Rejected'"
-                >, rejected</span
-              ><span v-else>, still open</span>
+                >Rejected</span
+              ><span v-else>Still open</span>
               <span v-if="message.collection === 'Pending'" class="text-danger">
                 Pending</span
               >
@@ -66,8 +64,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
-import { useGroupStore } from '~/stores/group'
+import { computed, watch } from 'vue'
 import { useUserStore } from '~/stores/user'
 import { useOurModal } from '~/composables/useOurModal'
 
@@ -83,7 +80,6 @@ const props = defineProps({
   },
 })
 
-const groupStore = useGroupStore()
 const userStore = useUserStore()
 const { modal, hide } = useOurModal()
 
@@ -99,8 +95,6 @@ watch(
   { immediate: true }
 )
 
-const groupid = ref(null)
-
 const messages = computed(() => {
   let ret = []
 
@@ -109,24 +103,8 @@ const messages = computed(() => {
       return !props.type || props.type === message.type
     })
 
-    ret.forEach((message) => {
-      const group = groupStore.get(message.groupid)
-      if (group) {
-        message.groupname = group.namedisplay
-      } else {
-        message.groupname = '#' + message.groupid
-        groupStore.fetch(message.groupid)
-      }
-    })
-
     ret.sort((a, b) => {
       return new Date(b.arrival).getTime() - new Date(a.arrival).getTime()
-    })
-  }
-
-  if (groupid.value !== null && groupid.value !== 0) {
-    ret = ret.filter((message) => {
-      return message.groupid === groupid.value
     })
   }
 
@@ -134,7 +112,6 @@ const messages = computed(() => {
 })
 
 function show() {
-  groupid.value = null
   modal.value.show()
 }
 

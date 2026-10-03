@@ -24,8 +24,6 @@
             You've already donated to Freegle (on {{ donated }}). Thank you.
           </p>
           <DonationAskStripe
-            :groupid="groupId"
-            :groupname="groupName"
             :target="target"
             :raised="raised"
             :target-met="targetMet"
@@ -45,7 +43,6 @@ import { storeToRefs } from 'pinia'
 import { useOurModal } from '~/composables/useOurModal'
 import DonationAskStripe from '~/components/DonationAskStripe.vue'
 import { useDonationAskModal } from '~/composables/useDonationAskModal'
-import { useGroupStore } from '~/stores/group'
 import { useDonationStore } from '~/stores/donations'
 import Api from '~/api'
 import { useAuthStore } from '~/stores/auth'
@@ -53,7 +50,6 @@ import { dateshort } from '~/composables/useTimeFormat'
 import { action } from '~/composables/useClientLog'
 import RateAppAsk from '~/components/RateAppAsk.vue'
 
-const groupStore = useGroupStore()
 const donationStore = useDonationStore()
 const authStore = useAuthStore()
 
@@ -69,7 +65,7 @@ const { modal, hide: rawHide } = useOurModal()
 const exposed = {}
 defineExpose(exposed)
 
-const { variant, groupId, show } = await useDonationAskModal()
+const { variant, show } = await useDonationAskModal()
 
 function logOpen() {
   openedAt.value = Date.now()
@@ -77,7 +73,6 @@ function logOpen() {
 
   action('donation_modal_open', {
     variant: variant.value,
-    groupId: groupId.value,
   })
 
   engagedTimer = setTimeout(() => {
@@ -85,7 +80,6 @@ function logOpen() {
       engagedLogged.value = true
       action('donation_modal_engaged', {
         variant: variant.value,
-        groupId: groupId.value,
         elapsed_ms: Date.now() - openedAt.value,
       })
     }
@@ -98,7 +92,6 @@ function hide() {
   if (!thankyou.value) {
     action('donation_modal_dismissed', {
       variant: variant.value,
-      groupId: groupId.value,
       time_open_ms: timeOpen,
       engaged: engagedLogged.value,
     })
@@ -113,18 +106,10 @@ function hide() {
   rawHide()
 }
 
-const groupName = computed(() => {
-  if (groupId.value && !targetMet.value) {
-    return groupStore?.get(groupId.value)?.namedisplay
-  } else {
-    return 'Freegle'
-  }
-})
-
 const { raised, target } = storeToRefs(donationStore)
 
 const targetMet = computed(() => {
-  return groupId.value && raised.value > target.value
+  return raised.value > target.value
 })
 
 const suggestedDonationDefault = computed(() => {
@@ -155,7 +140,6 @@ show()
 Object.assign(exposed, {
   suggestedDonationDefault,
   score,
-  groupName,
   targetMet,
   donated,
   hide,

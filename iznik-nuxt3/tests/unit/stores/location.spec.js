@@ -5,7 +5,6 @@ const mockFetch = vi.fn()
 const mockTypeahead = vi.fn()
 const mockLatlng = vi.fn()
 const mockFetchv2 = vi.fn()
-const mockDel = vi.fn()
 const mockAdd = vi.fn()
 const mockUpdate = vi.fn()
 const mockConvertKML = vi.fn()
@@ -17,7 +16,6 @@ vi.mock('~/api', () => ({
       typeahead: mockTypeahead,
       latlng: mockLatlng,
       fetchv2: mockFetchv2,
-      del: mockDel,
       add: mockAdd,
       update: mockUpdate,
       convertKML: mockConvertKML,
@@ -117,26 +115,13 @@ describe('location store', () => {
     })
   })
 
-  describe('delete', () => {
-    it('deletes location and removes from list', async () => {
-      const store = useLocationStore()
-      store.init({ public: {} })
-      store.list[1] = { id: 1, name: 'Test' }
-      mockDel.mockResolvedValue({})
-
-      await store.delete({ id: 1, groupid: 5 })
-      expect(mockDel).toHaveBeenCalledWith(1, 5)
-      expect(store.list[1]).toBeUndefined()
-    })
-  })
-
   describe('add', () => {
     it('adds location and returns id', async () => {
       const store = useLocationStore()
       store.init({ public: {} })
       mockAdd.mockResolvedValue({ id: 42 })
 
-      const id = await store.add({ name: 'New', groupid: 5 })
+      const id = await store.add({ name: 'New' })
       expect(id).toBe(42)
     })
   })

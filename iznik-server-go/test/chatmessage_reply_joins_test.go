@@ -24,10 +24,8 @@ func TestCreateChatMessage_ReplyJoinsGroup(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("replyjoin")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reply-joins test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: reply-joins test item", 51.5, -0.1)
 
 	// A brand-new user who is NOT a member of the group replies to the post.
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
@@ -38,7 +36,7 @@ func TestCreateChatMessage_ReplyJoinsGroup(t *testing.T) {
 	// chat_rooms has a UNIQUE key on (user1, user2, chattype), so we create ONE room and post the
 	// reply into it - both the first join and the idempotency re-reply below. (Calling a helper that
 	// creates a fresh room for the second reply would hit a duplicate-key 1062 on the same pair.)
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 	_, token := CreateTestSession(t, replierID)
 	post := func() int {
 		var payload chat.ChatMessage
@@ -92,10 +90,8 @@ func TestCreateChatMessage_ReplyRespectsBan(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("replybanned")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reply-banned test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: reply-banned test item", 51.5, -0.1)
 
 	bannedID := CreateTestUser(t, prefix+"_banned", "User")
 	db.Exec("INSERT INTO users_banned (userid, groupid, byuser, date) VALUES (?, ?, ?, NOW())",
@@ -118,10 +114,8 @@ func TestCreateChatMessage_ReportDoesNotJoinGroup(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("reportnojoin")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: report-no-join test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: report-no-join test item", 51.5, -0.1)
 
 	reporterID := CreateTestUser(t, prefix+"_reporter", "User")
 	chatID := CreateTestChatRoom(t, reporterID, nil, &groupID, "User2Mod")
@@ -150,25 +144,21 @@ func TestCreateChatMessage_ReplyDoesNotJoinWhenAlreadySharingAGroup(t *testing.T
 	db := database.DBConn
 	prefix := uniquePrefix("replynojoin")
 
-	homeGroup := CreateTestGroup(t, prefix+"_home")
-	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
 	// The post's other group must sort FIRST, so the old code would have picked it.
 	if rippledGroup > homeGroup {
 		homeGroup, rippledGroup = rippledGroup, homeGroup
 	}
 
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, homeGroup, "Member")
-	msgID := CreateTestMessage(t, posterID, homeGroup, "OFFER: already-a-member test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: already-a-member test item", 51.5, -0.1)
 	// The post also sits on the lower-numbered group, as a rippled-in copy would.
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, rippled_in) VALUES (?, ?, 'Approved', NOW(), 1)",
 		msgID, rippledGroup)
 
 	// The replier is already a member of the group the post is native to.
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, replierID, homeGroup, "Member")
 
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 	_, token := CreateTestSession(t, replierID)
 	var payload chat.ChatMessage
 	payload.Message = "I'd like this please"
@@ -198,8 +188,6 @@ func TestCreateChatMessage_ReplyJoinsNearestGroup(t *testing.T) {
 	prefix := uniquePrefix("replynearest")
 
 	// Two groups the post will sit on: one far from the replier, one on their doorstep.
-	farGroup := CreateTestGroup(t, prefix+"_far")
-	nearGroup := CreateTestGroup(t, prefix+"_near")
 	// Make the FAR group sort first, so lowest-id would have picked the wrong one.
 	if nearGroup < farGroup {
 		farGroup, nearGroup = nearGroup, farGroup
@@ -208,8 +196,7 @@ func TestCreateChatMessage_ReplyJoinsNearestGroup(t *testing.T) {
 	db.Exec("UPDATE `groups` SET lat = 51.5, lng = -0.1, polyindex = ST_GeomFromText('POINT(-0.1 51.5)', ?) WHERE id = ?", utils.SRID, nearGroup)
 
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, farGroup, "Member")
-	msgID := CreateTestMessage(t, posterID, farGroup, "OFFER: nearest-group test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: nearest-group test item", 51.5, -0.1)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, rippled_in) VALUES (?, ?, 'Approved', NOW(), 1)",
 		msgID, nearGroup)
 
@@ -222,7 +209,7 @@ func TestCreateChatMessage_ReplyJoinsNearestGroup(t *testing.T) {
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", replierID)
 
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 	_, token := CreateTestSession(t, replierID)
 	var payload chat.ChatMessage
 	payload.Message = "I'd like this please"

@@ -93,7 +93,6 @@ func searchFindsAsTop(t *testing.T, store *embedding.Store, vec [embedding.Embed
 
 func TestStoreRefreshAddsNewEmbedding(t *testing.T) {
 	prefix := uniquePrefix("storerefreshadd")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "Member")
 
 	vec1 := unitVec(0.3)
@@ -116,7 +115,6 @@ func TestStoreRefreshAddsNewEmbedding(t *testing.T) {
 
 func TestStoreRefreshRemovesClosedMessage(t *testing.T) {
 	prefix := uniquePrefix("storerefreshremove")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "Member")
 
 	vec1 := unitVec(0.7)
@@ -142,7 +140,6 @@ func TestStoreRefreshRemovesClosedMessage(t *testing.T) {
 
 func TestStoreRefreshNoChange(t *testing.T) {
 	prefix := uniquePrefix("storerefreshnochange")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "Member")
 
 	vec1 := unitVec(1.2)
@@ -169,7 +166,6 @@ func TestStoreRefreshNoChange(t *testing.T) {
 // the (unimplemented) detection would work.
 func TestStoreRefreshPicksUpRegeneratedEmbedding(t *testing.T) {
 	prefix := uniquePrefix("storerefreshregenerate")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "Member")
 
 	vecOld := unitVec(2.0)
@@ -207,7 +203,6 @@ func TestStoreRefreshPicksUpRegeneratedEmbedding(t *testing.T) {
 
 func TestStoreRefreshFallsBackToLoadWhenEmpty(t *testing.T) {
 	prefix := uniquePrefix("storerefreshempty")
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "Member")
 
 	vec1 := unitVec(3.3)

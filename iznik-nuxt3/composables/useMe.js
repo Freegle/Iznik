@@ -1,7 +1,5 @@
 import { computed } from 'vue'
-import Wkt from 'wicket'
 import { useAuthStore } from '~/stores/auth'
-import { useGroupStore } from '~/stores/group'
 import { useTeamStore } from '~/stores/team'
 
 let fetchingPromise = null
@@ -126,65 +124,6 @@ export function useMe() {
 
   const loggedIn = computed(() => me.value !== null)
 
-  const myGroupIds = computed(() => {
-    let ret = []
-
-    if (me.value) {
-      ret = authStore.groups.map((g) => {
-        // Memberships have an id of the membership whereas we want the groups to have the id of the group.
-        return g.groupid
-      })
-    }
-
-    return ret
-  })
-
-  const myGroups = computed(() => {
-    let ret = []
-
-    if (me.value) {
-      const groupStore = useGroupStore()
-
-      ret = authStore.groups.map((g) => {
-        // Merge membership-specific data with cached group details.
-        const groupData = groupStore.get(g.groupid) || {}
-        const merged = {
-          id: g.groupid,
-          role: g.role,
-          emailfrequency: g.emailfrequency,
-          eventsallowed: g.eventsallowed,
-          volunteeringallowed: g.volunteeringallowed,
-          microvolunteeringallowed: g.microvolunteeringallowed,
-          configid: g.configid,
-          added: g.added,
-          // Group-level fields from the cached group store.
-          namedisplay: groupData.namedisplay || groupData.nameshort || '',
-          nameshort: groupData.nameshort || '',
-          type: groupData.type || '',
-          region: groupData.region || '',
-          bbox: groupData.bbox || null,
-          lat: groupData.lat || null,
-          lng: groupData.lng || null,
-          settings: groupData.settings || null,
-          profile: groupData.profile || null,
-          tagline: groupData.tagline || null,
-        }
-        return merged
-      })
-
-      // Sort by namedisplay case insensitive
-      ret.sort((a, b) => {
-        const aName = (a.namedisplay || '').toLowerCase()
-        const bName = (b.namedisplay || '').toLowerCase()
-        return aName < bName ? -1 : aName > bName ? 1 : 0
-      })
-    }
-
-    return ret
-  })
-
-  const anyGroups = computed(() => myGroups.value.length > 0)
-
   const myLocation = computed(() => me.value?.settings?.mylocation?.name)
 
   const mod = computed(() => {
@@ -251,60 +190,6 @@ export function useMe() {
     )
   })
 
-  const myGroupsBoundingBox = computed(() => {
-    let swlat = null
-    let swlng = null
-    let nelat = null
-    let nelng = null
-
-    myGroups.value.forEach((g) => {
-      if (g.bbox) {
-        const wkt = new Wkt.Wkt()
-        try {
-          wkt.read(g.bbox)
-          const obj = wkt.toObject()
-          const thisbounds = obj.getBounds()
-          const sw = thisbounds.getSouthWest()
-          const ne = thisbounds.getNorthEast()
-
-          const bounds = new window.L.LatLngBounds([
-            [sw.lat, sw.lng],
-            [ne.lat, ne.lng],
-          ]).pad(0.1)
-
-          const gswlat = bounds.getSouthWest().lat
-          const gswlng = bounds.getSouthWest().lng
-          const gnelat = bounds.getNorthEast().lat
-          const gnelng = bounds.getNorthEast().lng
-
-          swlat = swlat === null ? gswlat : Math.min(swlat, gswlat)
-          swlng = swlng === null ? gswlng : Math.min(swlng, gswlng)
-          nelat = nelat === null ? gnelat : Math.max(nelat, gnelat)
-          nelng = nelng === null ? gnelng : Math.max(nelng, gnelng)
-        } catch (e) {
-          console.log('WKT error', g.id, g.bbox, g, e)
-        }
-      }
-    })
-
-    return [
-      [swlat, swlng],
-      [nelat, nelng],
-    ]
-  })
-
-  function oneOfMyGroups(groupid) {
-    return myGroups.value.find((g) => {
-      return g.id === groupid
-    })
-  }
-
-  function myGroup(groupid) {
-    return groupid
-      ? myGroups.value.find((g) => parseInt(g.id) === groupid)
-      : null
-  }
-
   return {
     fetchMe,
     loginStateKnown,
@@ -313,11 +198,9 @@ export function useMe() {
     realMe,
     myid,
     loggedIn,
-    myGroupIds,
-    myGroups,
-    anyGroups,
     myLocation,
     mod,
+    isModerator: mod,
     support,
     admin,
     supportOrAdmin,
@@ -326,8 +209,5 @@ export function useMe() {
     donor,
     recentDonor,
     amMicroVolunteering,
-    myGroupsBoundingBox,
-    oneOfMyGroups,
-    myGroup,
   }
 }

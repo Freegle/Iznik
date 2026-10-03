@@ -31,7 +31,6 @@ func TestFeedVisibleSinceIsOldestGroupArrival(t *testing.T) {
 	posterID := CreateTestUser(t, prefix+"_p", "User")
 	db := database.DBConn
 
-	group := CreateTestGroup(t, prefix+"_member")
 	db.Exec("INSERT INTO memberships (userid, groupid) VALUES (?, ?)", userID, group)
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings, '{}'), '$.browseView', 'mygroups') WHERE id = ?", userID)
 	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userID, group)
@@ -82,8 +81,6 @@ func TestFeedVisibleSinceTakesEarliestOfSeveralGroups(t *testing.T) {
 	posterID := CreateTestUser(t, prefix+"_p", "User")
 	db := database.DBConn
 
-	origin := CreateTestGroup(t, prefix+"_origin")
-	rippled := CreateTestGroup(t, prefix+"_rippled")
 	db.Exec("INSERT INTO memberships (userid, groupid) VALUES (?, ?)", userID, rippled)
 	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userID, rippled)
 
@@ -126,7 +123,6 @@ func TestMessageVisibleSinceOnFullMessage(t *testing.T) {
 	posterID := CreateTestUser(t, prefix+"_p", "User")
 	db := database.DBConn
 
-	group := CreateTestGroup(t, prefix)
 	msg := CreateTestMessage(t, posterID, group, prefix+" fullmessage", 55.9533, -3.1883)
 	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msg)
 	defer db.Exec("DELETE FROM messages WHERE id = ?", msg)

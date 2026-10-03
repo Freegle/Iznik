@@ -16,7 +16,6 @@ import (
 // still allowed.
 func TestChatRosterUpdateRequiresParticipantOrMod(t *testing.T) {
 	prefix := uniquePrefix("RosterGate")
-	groupID := CreateTestGroup(t, prefix)
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 
 	// A User2Mod chat: user1 is the member corresponding with the group's mods.

@@ -74,8 +74,7 @@ class RippleReplyServiceTest extends TestCase
     private function seedReachedPostWith(string $poly, float $lat, float $lng): int
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
         DB::statement(
             "INSERT INTO rippling_reach
                (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,

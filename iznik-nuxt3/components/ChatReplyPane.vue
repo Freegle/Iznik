@@ -99,16 +99,6 @@
           <ChatMessageCard :id="messageId" class="reply-card__post" />
         </div>
 
-        <!-- Rippled-in explainer, aligned under the post card: it reached the
-             viewer's area on a later day than it was first posted, so make that
-             gap explicit rather than leaving the "posted N days ago" read feel
-             wrong. Only rendered when rippleDates is set (see rippledInAreaDates):
-             hidden for non-rippled posts and same-day ripples. -->
-        <p v-if="rippleDates" class="reply-card__ripple">
-          Posted {{ fmt(rippleDates.firstPosted) }}, available in your area from
-          {{ fmt(rippleDates.availableFrom) }}
-        </p>
-
         <!-- Delivery notice -->
         <NoticeMessage
           v-if="message?.deliverypossible"
@@ -245,11 +235,6 @@
             </div>
           </VeeForm>
 
-          <p v-if="me && !alreadyAMember" class="composer-hint">
-            You're not yet a member of this community; we'll join you. Change
-            emails or leave communities from <em>Settings</em>.
-          </p>
-
           <NewFreegler v-if="!me" class="composer-hint" />
         </div>
 
@@ -342,7 +327,6 @@ import {
   onMounted,
   onUnmounted,
 } from 'vue'
-import dayjs from 'dayjs'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
 import { useMiscStore } from '~/stores/misc'
@@ -368,7 +352,6 @@ import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import SupporterInfo from '~/components/SupporterInfo'
 import { timeago } from '~/composables/useTimeFormat'
-import { rippledInAreaDates } from '~/composables/rippleStatus'
 import { reachNoticeSentence } from '~/composables/reachArrival'
 import {
   FAR_AWAY,
@@ -411,7 +394,7 @@ const route = useRoute()
 const miscStore = useMiscStore()
 const authStore = useAuthStore()
 const forceLogin = computed(() => authStore.forceLogin)
-const { me, myGroups } = useMe()
+const { me } = useMe()
 
 // Initialize state machine
 const stateMachine = useReplyStateMachine(props.messageId, {
@@ -522,18 +505,6 @@ const replytime = computed(() => {
   return `${val} ${unit}${val === 1 ? '' : 's'}`
 })
 
-// Cross-day rippled-in dates for the note under the post card (null when not applicable).
-const rippleDates = computed(() =>
-  rippledInAreaDates(message.value?.groups, myGroups.value)
-)
-
-function fmt(val) {
-  const d = dayjs(val)
-  return d.year() === dayjs().year()
-    ? d.format('D MMM')
-    : d.format('D MMM YYYY')
-}
-
 // crowMiles feeds the far-away WARNING threshold (logic, deliberately kept
 // crow-flies and blur-stable); milesaway is the DISPLAY value and prefers
 // road distance from the reach engine.
@@ -568,24 +539,6 @@ const milesaway = computed(() => {
 // The tooltip must describe the number actually shown: road when the engine
 // answered, crow-flies otherwise.
 const milesIsRoad = computed(() => roadDist.value?.miles != null)
-
-const alreadyAMember = computed(() => {
-  let found = false
-
-  if (message.value?.groups) {
-    for (const messageGroup of message.value.groups) {
-      Object.keys(myGroups.value).forEach((key) => {
-        const group = myGroups.value[key]
-
-        if (messageGroup.groupid === group.id) {
-          found = true
-        }
-      })
-    }
-  }
-
-  return found
-})
 
 const replyToUser = computed(() => {
   return message.value?.fromuser
@@ -903,16 +856,6 @@ $reply-border: #cdcdcd;
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
   cursor: default;
-}
-
-/* Caption under the card, sharing the body's left edge. Kept to a single line
-   (the body is wider than the card, so it doesn't wrap once "First" is dropped). */
-.reply-card__ripple {
-  margin: 0 0 12px;
-  text-align: left;
-  white-space: nowrap;
-  font-size: 0.72rem;
-  color: $color-gray--dark;
 }
 
 .reply-card__notice {

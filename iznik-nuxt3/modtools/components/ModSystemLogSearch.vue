@@ -57,7 +57,7 @@
       </b-col>
 
       <!-- Post filter with envelope icon -->
-      <b-col cols="6" md="2">
+      <b-col cols="6" md="3">
         <div class="filter-group">
           <div class="filter-group-header">
             <v-icon icon="envelope" class="filter-group-icon" />
@@ -67,27 +67,6 @@
             <b-input-group-text>#</b-input-group-text>
             <b-form-input
               v-model="msgIdInput"
-              type="text"
-              inputmode="numeric"
-              pattern="[0-9]*"
-              placeholder="ID"
-              @keyup.enter="doSearch"
-            />
-          </b-input-group>
-        </div>
-      </b-col>
-
-      <!-- Group filter with users icon -->
-      <b-col cols="6" md="2">
-        <div class="filter-group">
-          <div class="filter-group-header">
-            <v-icon icon="users" class="filter-group-icon" />
-            <span class="filter-group-label">Group</span>
-          </div>
-          <b-input-group size="sm" class="id-input">
-            <b-input-group-text>#</b-input-group-text>
-            <b-form-input
-              v-model="groupIdInput"
               type="text"
               inputmode="numeric"
               pattern="[0-9]*"
@@ -154,10 +133,6 @@ const props = defineProps({
     type: [Number, String],
     default: null,
   },
-  groupid: {
-    type: [Number, String],
-    default: null,
-  },
   msgid: {
     type: [Number, String],
     default: null,
@@ -168,10 +143,8 @@ const emit = defineEmits([
   'search',
   'refresh',
   'clear-user',
-  'clear-group',
   'clear-msg',
   'update:userid',
-  'update:groupid',
   'update:msgid',
   'expand-all',
 ])
@@ -181,7 +154,6 @@ const userStore = useUserStore()
 
 const userIdInput = ref('')
 const msgIdInput = ref('')
-const groupIdInput = ref('')
 const ipInput = ref('')
 const emailInput = ref('')
 const lookingUpEmail = ref(false)
@@ -229,14 +201,6 @@ watch(
 )
 
 watch(
-  () => props.groupid,
-  (val) => {
-    groupIdInput.value = val || ''
-  },
-  { immediate: true }
-)
-
-watch(
   () => props.msgid,
   (val) => {
     msgIdInput.value = val || ''
@@ -262,11 +226,6 @@ async function doSearch() {
     emit('update:msgid', parseInt(msgIdInput.value, 10))
   } else {
     emit('update:msgid', null)
-  }
-  if (groupIdInput.value) {
-    emit('update:groupid', parseInt(groupIdInput.value, 10))
-  } else {
-    emit('update:groupid', null)
   }
   if (ipInput.value) {
     systemLogsStore.setIpFilter(ipInput.value.trim())

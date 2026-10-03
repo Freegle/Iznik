@@ -7,14 +7,14 @@ use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 /**
- * The four pile-prone commands share App\Traits\SingleInstanceLock because
+ * Three pile-prone commands share App\Traits\SingleInstanceLock because
  * withoutOverlapping() cannot stop runInBackground() jobs overlapping (the
  * mutex is freed when the foreground tick forks). On 2026-08-27 that hole let
  * embeddings:generate stack 11 deep and firstreply:maxreach 7 deep, swapping
  * the host to a standstill. These tests prove each command skips cleanly while
  * another run holds its lock, and that a finished run leaves the lock free.
  * The skip path never spawns an embedder or touches the routing server, so it
- * is safe to exercise for all four.
+ * is safe to exercise for all three.
  */
 class SingleInstanceLockTest extends TestCase
 {
@@ -25,7 +25,6 @@ class SingleInstanceLockTest extends TestCase
     {
         return [
             'firstreply:maxreach' => ['firstreply:maxreach', 'firstreply:maxreach:run', []],
-            'ripple:proximity-notes' => ['ripple:proximity-notes', 'ripple:proximity-notes:run', []],
             'embeddings:generate' => ['embeddings:generate', 'embeddings:generate:run', ['--limit' => 1]],
             'embeddings:searches' => ['embeddings:searches', 'embeddings:searches:run', ['--limit' => 1]],
         ];
@@ -53,25 +52,6 @@ class SingleInstanceLockTest extends TestCase
         }
     }
 
-    /**
-     * ripple:proximity-notes gates on config BEFORE taking the lock, so a
-     * disabled run must not block on - or consume - the lock at all.
-     */
-    public function test_proximity_notes_config_gate_precedes_the_lock(): void
-    {
-        config(['freegle.ripple.proximity_notes' => false]);
-
-        $held = Cache::lock('ripple:proximity-notes:run', 30);
-        $this->assertTrue($held->get(), 'precondition: hold the lock');
-
-        try {
-            $this->artisan('ripple:proximity-notes')
-                ->doesntExpectOutputToContain('Another run is in progress')
-                ->assertExitCode(0);
-        } finally {
-            $held->release();
-        }
-    }
 
     /**
      * A normal run releases its lock on the way out, so the next scheduled run

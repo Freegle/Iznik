@@ -32,10 +32,8 @@ func TestBrowseScopedSearchNearby(t *testing.T) {
 
 	prefix := uniquePrefix("browsesearchnearby")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, posterID, group, "Member")
-	inReach := CreateTestMessage(t, posterID, group, "Zorbnak Sofa reach covers viewer (browsesearchnearby)", 51.5, -0.1)
-	outOfReach := CreateTestMessage(t, posterID, group, "Zorbnak Sofa reach excludes viewer (browsesearchnearby)", 51.5, -0.1)
+	inReach := CreateTestMessage(t, posterID, "Zorbnak Sofa reach covers viewer (browsesearchnearby)", 51.5, -0.1)
+	outOfReach := CreateTestMessage(t, posterID, "Zorbnak Sofa reach excludes viewer (browsesearchnearby)", 51.5, -0.1)
 	// The browse feed only searches open posts (messages_spatial.successful = 0); the
 	// helper inserts them as successful = 1, so mark them open like the reach feed test does.
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", inReach, outOfReach)

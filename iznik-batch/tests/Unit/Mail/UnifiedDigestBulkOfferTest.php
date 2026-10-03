@@ -38,12 +38,8 @@ class UnifiedDigestBulkOfferTest extends TestCase
     public function test_bulk_offer_catalogue_rendered_in_html_and_text(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Office Clearance (Brighton)',
             'textbody' => 'Charity clearance — collection from Brighton.',
         ]);
@@ -54,7 +50,7 @@ class UnifiedDigestBulkOfferTest extends TestCase
         ]);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
@@ -88,12 +84,8 @@ class UnifiedDigestBulkOfferTest extends TestCase
         // Recipient must be on an AMP-supporting provider (Gmail) — the AMP part is
         // only rendered for those recipients now (see UnifiedDigest::ampForRecipient).
         $user = $this->createTestUser(['email_preferred' => 'bulkoffer@gmail.com']);
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Office Clearance (Brighton)',
             'textbody' => 'Charity clearance — collection from Brighton.',
         ]);
@@ -103,7 +95,7 @@ class UnifiedDigestBulkOfferTest extends TestCase
         ]);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
@@ -120,12 +112,8 @@ class UnifiedDigestBulkOfferTest extends TestCase
         // A spreadsheet-supplied photo link (photourl) is shown when the item has
         // no uploaded attachment yet, so the digest is never imageless.
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Office Clearance (Brighton)',
         ]);
 
@@ -141,7 +129,7 @@ class UnifiedDigestBulkOfferTest extends TestCase
         ]);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
@@ -155,17 +143,13 @@ class UnifiedDigestBulkOfferTest extends TestCase
     public function test_ordinary_post_has_no_catalogue(): void
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
         $poster = $this->createTestUser();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group, [
+        $message = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Single sofa (London)',
         ]);
 
         $posts = collect([
-            ['message' => $message, 'postedToGroups' => [$group->id]],
+            ['message' => $message],
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);

@@ -1,22 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ref } from 'vue'
 import OurGoogleDa from '~/components/OurGoogleDa.vue'
 
 const mockMiscStore = {
   visible: true,
 }
 
-const mockMyGroups = ref([{ nameshort: 'TestGroup', added: '2024-01-01' }])
-
 vi.mock('~/stores/misc', () => ({
   useMiscStore: () => mockMiscStore,
-}))
-
-vi.mock('~/composables/useMe', () => ({
-  useMe: () => ({
-    myGroups: mockMyGroups,
-  }),
 }))
 
 describe('OurGoogleDa', () => {
@@ -24,7 +15,6 @@ describe('OurGoogleDa', () => {
     vi.clearAllMocks()
     vi.useFakeTimers()
     mockMiscStore.visible = true
-    mockMyGroups.value = [{ nameshort: 'TestGroup', added: '2024-01-01' }]
 
     window.adsbygoogle = {
       loaded: true,
@@ -48,7 +38,8 @@ describe('OurGoogleDa', () => {
       global: {
         stubs: {
           Adsbygoogle: {
-            template: '<div class="adsbygoogle" :data-ad-slot="adSlot" />',
+            template:
+              '<div class="adsbygoogle" :data-ad-slot="adSlot" :data-page-url="pageUrl" />',
             props: ['style', 'pageUrl', 'adSlot'],
             methods: {
               updateAd: vi.fn(),
@@ -169,31 +160,12 @@ describe('OurGoogleDa', () => {
   })
 
   describe('page URL computation', () => {
-    it('uses user group for page URL when available', async () => {
-      mockMyGroups.value = [{ nameshort: 'MyLocalGroup', added: '2024-01-01' }]
+    it('always uses the single national browse URL', async () => {
       const wrapper = createWrapper({ renderAd: true })
       await flushPromises()
-      // pageUrl computed should return URL with user's group
-      expect(wrapper.exists()).toBe(true)
-    })
-
-    it('falls back to Croydon when no groups', async () => {
-      mockMyGroups.value = []
-      const wrapper = createWrapper({ renderAd: true })
-      await flushPromises()
-      // pageUrl should fall back to Croydon-Freegle
-      expect(wrapper.exists()).toBe(true)
-    })
-
-    it('uses most recently added group', async () => {
-      mockMyGroups.value = [
-        { nameshort: 'OldGroup', added: '2023-01-01' },
-        { nameshort: 'NewGroup', added: '2024-06-01' },
-      ]
-      const wrapper = createWrapper({ renderAd: true })
-      await flushPromises()
-      // Should use NewGroup as it was added most recently
-      expect(wrapper.exists()).toBe(true)
+      expect(wrapper.find('.adsbygoogle').attributes('data-page-url')).toBe(
+        'https://www.ilovefreegle.org/browse'
+      )
     })
   })
 

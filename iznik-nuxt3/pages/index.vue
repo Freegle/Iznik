@@ -32,17 +32,6 @@
                 <span>Ask</span>
               </NuxtLink>
             </div>
-            <p class="browse-label">
-              <v-icon icon="map-marker-alt" class="browse-icon" />
-              Just browsing? See what's near you.
-            </p>
-            <PlaceAutocomplete
-              class="browse-input"
-              input-id="placeautocomplete-mobile"
-              labeltext=""
-              labeltext-sr="Enter your location"
-              @selected="explorePlace($event)"
-            />
             <p class="photo-credit">
               Photos of real freeglers by
               <ExternalLink href="https://www.alexbamford.com/"
@@ -108,7 +97,6 @@ import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
 import { useMobileStore } from '@/stores/mobile'
 import { useMessageStore } from '~/stores/message'
-import { useGroupStore } from '~/stores/group'
 import FreeglerPhotoGrid from '~/components/FreeglerPhotoGrid.vue'
 import ProxyImage from '~/components/ProxyImage.vue'
 import {
@@ -124,7 +112,6 @@ import {
 } from '#imports'
 import Api from '~/api'
 
-import PlaceAutocomplete from '~/components/PlaceAutocomplete.vue'
 import ExternalLink from '~/components/ExternalLink.vue'
 
 // Setup
@@ -135,7 +122,6 @@ const router = useRouter()
 const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
 const messageStore = useMessageStore()
-const groupStore = useGroupStore()
 const userWatch = ref(null)
 const type = ref('landing')
 
@@ -153,14 +139,12 @@ const head = buildHead(
 
 useHead(head)
 
-// The landing data cascade: group list → message inbounds → message details.
+// The landing data cascade: message inbounds → message details.
 // On the web this is an SSR prefetch so the landing page arrives fully
 // rendered. In the app build (ssr: false) these used to be top-level awaits,
-// blocking the app's first paint on three sequential API round trips - even
+// blocking the app's first paint on sequential API round trips - even
 // for logged-in users, who are redirected to /browse and never see this data.
 async function fetchLandingData() {
-  await groupStore.fetch()
-
   try {
     const list = await messageStore.fetchInBounds(
       49.45,
@@ -247,20 +231,6 @@ async function clicked(button) {
     uid: 'landing-button',
     variant: type.value + '-' + button,
   })
-}
-
-async function explorePlace(place) {
-  await api.bandit.chosen({
-    uid: 'landing',
-    variant: type.value,
-  })
-
-  await api.bandit.chosen({
-    uid: 'landing-button',
-    variant: type.value + '-place',
-  })
-
-  router.push('/explore/place/' + JSON.stringify(place))
 }
 
 // Lifecycle hooks
@@ -415,68 +385,6 @@ onBeforeUnmount(() => {
   justify-content: center;
   position: relative;
   top: -1px;
-}
-
-.browse-label {
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--color-gray-600);
-  margin: 0.75rem 0 0.4rem 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.3rem;
-}
-
-.browse-icon {
-  color: $color-success;
-  font-size: 0.85rem;
-}
-
-.browse-input {
-  :deep(label) {
-    display: none !important;
-  }
-
-  :deep(.autocomplete-wrap) {
-    border: 1px solid $color-gray--light !important;
-    border-radius: var(--radius-md, 0.5rem);
-  }
-
-  :deep(.autocomplete-wrap-focus) {
-    border-color: $color-success !important;
-    box-shadow: 0 0 0 2px rgba($color-success, 0.15);
-  }
-
-  :deep(.form-control) {
-    border: none !important;
-    padding: 0.6rem 0.75rem;
-    font-size: 0.9rem;
-    background: rgba(255, 255, 255, 0.9);
-    text-align: center;
-
-    &::placeholder {
-      color: $color-gray--normal;
-      text-align: center;
-    }
-
-    &:focus {
-      background: $color-white;
-      box-shadow: none;
-    }
-  }
-
-  :deep(.input-group-text),
-  :deep(.btn),
-  :deep(.autocomplete-clear) {
-    display: none !important;
-  }
-
-  @include media-breakpoint-up(md) {
-    max-width: 400px;
-    margin-left: auto;
-    margin-right: auto;
-  }
 }
 
 .photo-credit {

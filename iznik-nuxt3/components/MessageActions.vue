@@ -3,7 +3,7 @@
     <div class="flex-grow-1">
       <client-only>
         <b-button
-          v-if="loggedIn && message.groups && message.groups.length"
+          v-if="loggedIn && message.collection && message.collection !== 'Draft'"
           variant="link"
           class="grey p-0 me-4"
           size="sm"

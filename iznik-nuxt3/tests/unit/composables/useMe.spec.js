@@ -2,12 +2,8 @@
  * Tests for ~/composables/useMe.js
  *
  * Coverage: fetchMe, loginStateKnown, jwt, me, realMe, myid, loggedIn,
- *           myGroupIds, myGroups, anyGroups, myLocation, mod, support, admin,
- *           supportOrAdmin, chitChatMod, supporter, donor, recentDonor,
- *           amMicroVolunteering, oneOfMyGroups, myGroup.
- *
- * myGroupsBoundingBox is omitted — it requires window.L (Leaflet) and Wicket
- * WKT parsing which are not available in happy-dom.
+ *           myLocation, mod, isModerator, support, admin, supportOrAdmin,
+ *           chitChatMod, supporter, donor, recentDonor, amMicroVolunteering.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -31,34 +27,9 @@ vi.mock('~/stores/auth', () => ({
   useAuthStore: () => mockAuthState,
 }))
 
-let mockGroupGet = vi.fn()
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({
-    get: mockGroupGet,
-  }),
-}))
-
 let mockTeamState = { list: {} }
 vi.mock('~/stores/team', () => ({
   useTeamStore: () => mockTeamState,
-}))
-
-// Wicket / WKT — stub so that myGroupsBoundingBox can run without errors
-// (we still don't test its geometry math, just that it doesn't throw).
-vi.mock('wicket', () => ({
-  default: {
-    Wkt: class {
-      read() {}
-      toObject() {
-        return {
-          getBounds: () => ({
-            getSouthWest: () => ({ lat: 0, lng: 0 }),
-            getNorthEast: () => ({ lat: 1, lng: 1 }),
-          }),
-        }
-      }
-    },
-  },
 }))
 
 // ============================================================
@@ -82,22 +53,6 @@ function makeUser(overrides = {}) {
   }
 }
 
-/**
- * Build a minimal membership entry for authStore.groups.
- */
-function makeMembership(groupid, role = 'Member', extra = {}) {
-  return {
-    groupid,
-    role,
-    emailfrequency: 0,
-    eventsallowed: false,
-    volunteeringallowed: false,
-    microvolunteeringallowed: false,
-    configid: null,
-    ...extra,
-  }
-}
-
 // ============================================================
 // SETUP
 // ============================================================
@@ -106,13 +61,11 @@ beforeEach(() => {
   vi.useFakeTimers()
 
   mockFetchUser.mockReset()
-  mockGroupGet = vi.fn()
   mockTeamState = { list: {}, getTeam: vi.fn() }
 
-  // Default: logged-out, empty groups
+  // Default: logged-out
   mockAuthState = {
     user: null,
-    groups: [],
     auth: { jwt: null, persistent: null },
     loginStateKnown: false,
     fetchUser: mockFetchUser,
@@ -206,119 +159,6 @@ describe('useMe — me / realMe / myid / loggedIn', () => {
     })
     const { realMe } = useMe()
     expect(realMe.value).toBeNull()
-  })
-})
-
-describe('useMe — myGroupIds', () => {
-  it('is empty when not logged in', () => {
-    const { myGroupIds } = useMe()
-    expect(myGroupIds.value).toEqual([])
-  })
-
-  it('is empty when logged in but has no groups', () => {
-    mockAuthState.user = makeUser()
-    mockAuthState.groups = []
-    const { myGroupIds } = useMe()
-    expect(myGroupIds.value).toEqual([])
-  })
-
-  it('maps membership groupid for each group', () => {
-    mockAuthState.user = makeUser()
-    mockAuthState.groups = [makeMembership(10), makeMembership(20)]
-    mockGroupGet.mockReturnValue(null)
-    const { myGroupIds } = useMe()
-    expect(myGroupIds.value).toEqual([10, 20])
-  })
-})
-
-describe('useMe — myGroups', () => {
-  it('is empty when not logged in', () => {
-    const { myGroups } = useMe()
-    expect(myGroups.value).toEqual([])
-  })
-
-  it('merges membership and group store data', () => {
-    mockAuthState.user = makeUser()
-    mockAuthState.groups = [
-      makeMembership(10, 'Member', { added: '2026-07-09T10:01:21Z' }),
-    ]
-    mockGroupGet.mockImplementation((id) =>
-      id === 10
-        ? { nameshort: 'FreegleA', namedisplay: 'Freegle A', type: 'Reuse' }
-        : null
-    )
-
-    const { myGroups } = useMe()
-    const groups = myGroups.value
-
-    expect(groups).toHaveLength(1)
-    expect(groups[0].id).toBe(10)
-    expect(groups[0].role).toBe('Member')
-    // The join date rides along: the feed folds a community header up after the first week.
-    expect(groups[0].added).toBe('2026-07-09T10:01:21Z')
-    expect(groups[0].namedisplay).toBe('Freegle A')
-    expect(groups[0].nameshort).toBe('FreegleA')
-    expect(groups[0].type).toBe('Reuse')
-  })
-
-  it('falls back to empty strings when group store has no data', () => {
-    mockAuthState.user = makeUser()
-    mockAuthState.groups = [makeMembership(99)]
-    mockGroupGet.mockReturnValue(null)
-
-    const { myGroups } = useMe()
-    const group = myGroups.value[0]
-
-    expect(group.namedisplay).toBe('')
-    expect(group.nameshort).toBe('')
-    expect(group.type).toBe('')
-  })
-
-  it('sorts groups alphabetically by namedisplay (case-insensitive)', () => {
-    mockAuthState.user = makeUser()
-    mockAuthState.groups = [
-      makeMembership(3),
-      makeMembership(1),
-      makeMembership(2),
-    ]
-    mockGroupGet.mockImplementation((id) => {
-      const names = { 1: 'Alpha', 2: 'Charlie', 3: 'Beta' }
-      return { namedisplay: names[id], nameshort: names[id], type: '' }
-    })
-
-    const { myGroups } = useMe()
-    const names = myGroups.value.map((g) => g.namedisplay)
-    expect(names).toEqual(['Alpha', 'Beta', 'Charlie'])
-  })
-
-  it('sorts case-insensitively (upper before lower without normalisation would fail)', () => {
-    mockAuthState.user = makeUser()
-    mockAuthState.groups = [makeMembership(1), makeMembership(2)]
-    mockGroupGet.mockImplementation((id) => {
-      const names = { 1: 'zebra', 2: 'Apple' }
-      return { namedisplay: names[id], nameshort: names[id], type: '' }
-    })
-
-    const { myGroups } = useMe()
-    const names = myGroups.value.map((g) => g.namedisplay)
-    expect(names).toEqual(['Apple', 'zebra'])
-  })
-})
-
-describe('useMe — anyGroups', () => {
-  it('is false when user has no groups', () => {
-    mockAuthState.user = makeUser()
-    mockAuthState.groups = []
-    const { anyGroups } = useMe()
-    expect(anyGroups.value).toBe(false)
-  })
-
-  it('is true when user has at least one group', () => {
-    mockAuthState.user = makeUser()
-    mockAuthState.groups = [makeMembership(1)]
-    mockGroupGet.mockReturnValue(null)
-    const { anyGroups } = useMe()
-    expect(anyGroups.value).toBe(true)
   })
 })
 
@@ -560,70 +400,6 @@ describe('useMe — amMicroVolunteering', () => {
   })
 })
 
-describe('useMe — oneOfMyGroups', () => {
-  beforeEach(() => {
-    mockAuthState.user = makeUser()
-    mockAuthState.groups = [makeMembership(10), makeMembership(20)]
-    mockGroupGet.mockReturnValue(null)
-  })
-
-  it('returns the group object when the user is a member', () => {
-    const { oneOfMyGroups } = useMe()
-    const result = oneOfMyGroups(10)
-    expect(result).toBeDefined()
-    expect(result.id).toBe(10)
-  })
-
-  it('returns undefined when the user is not a member of the group', () => {
-    const { oneOfMyGroups } = useMe()
-    expect(oneOfMyGroups(99)).toBeUndefined()
-  })
-
-  it('returns undefined when user has no groups', () => {
-    mockAuthState.groups = []
-    const { oneOfMyGroups } = useMe()
-    expect(oneOfMyGroups(10)).toBeUndefined()
-  })
-})
-
-describe('useMe — myGroup', () => {
-  beforeEach(() => {
-    mockAuthState.user = makeUser()
-    mockAuthState.groups = [makeMembership(10), makeMembership(20)]
-    mockGroupGet.mockReturnValue(null)
-  })
-
-  it('returns the group when groupid matches (as integer comparison)', () => {
-    const { myGroup } = useMe()
-    const result = myGroup(10)
-    expect(result).toBeDefined()
-    expect(result.id).toBe(10)
-  })
-
-  it('returns undefined when not a member of that group', () => {
-    const { myGroup } = useMe()
-    expect(myGroup(99)).toBeUndefined()
-  })
-
-  it('returns null when groupid is falsy (null)', () => {
-    const { myGroup } = useMe()
-    expect(myGroup(null)).toBeNull()
-  })
-
-  it('returns null when groupid is 0 (falsy)', () => {
-    const { myGroup } = useMe()
-    expect(myGroup(0)).toBeNull()
-  })
-
-  it('coerces string groupid via parseInt for comparison', () => {
-    // The implementation does parseInt(g.id), so string IDs should match
-    const { myGroup } = useMe()
-    const result = myGroup(20)
-    expect(result).toBeDefined()
-    expect(result.id).toBe(20)
-  })
-})
-
 describe('fetchMe', () => {
   it('fetches user when hitServer=true and no fetch in progress', async () => {
     mockFetchUser.mockResolvedValue({ id: 1 })
@@ -705,106 +481,6 @@ describe('fetchMe', () => {
   })
 })
 
-describe('useMe — myGroupsBoundingBox', () => {
-  it('returns [[null,null],[null,null]] when no groups have bbox', () => {
-    mockAuthState.user = makeUser()
-    mockAuthState.groups = [makeMembership(1)]
-    mockGroupGet.mockReturnValue({ namedisplay: 'A', nameshort: 'A', type: '' })
-    // group has no bbox field
-
-    const { myGroupsBoundingBox } = useMe()
-    expect(myGroupsBoundingBox.value).toEqual([
-      [null, null],
-      [null, null],
-    ])
-  })
-
-  it('returns [[null,null],[null,null]] when user has no groups', () => {
-    mockAuthState.user = makeUser()
-    mockAuthState.groups = []
-
-    const { myGroupsBoundingBox } = useMe()
-    expect(myGroupsBoundingBox.value).toEqual([
-      [null, null],
-      [null, null],
-    ])
-  })
-
-  it('logs WKT error and continues when WKT parse fails (invalid bbox)', async () => {
-    // Force the Wkt mock to throw so we exercise lines 253-254
-    const Wkt = await import('wicket')
-    const originalWkt = Wkt.default.Wkt
-    Wkt.default.Wkt = class {
-      read() {
-        throw new Error('bad WKT')
-      }
-    }
-
-    mockAuthState.user = makeUser()
-    mockAuthState.groups = [makeMembership(1)]
-    mockGroupGet.mockReturnValue({
-      namedisplay: 'Test',
-      nameshort: 'Test',
-      type: '',
-      bbox: 'INVALID_WKT',
-    })
-
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-    const { myGroupsBoundingBox } = useMe()
-    const bbox = myGroupsBoundingBox.value
-
-    // Error is swallowed; returns null bounds
-    expect(bbox).toEqual([
-      [null, null],
-      [null, null],
-    ])
-    expect(consoleSpy).toHaveBeenCalledWith(
-      'WKT error',
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      expect.any(Error)
-    )
-
-    consoleSpy.mockRestore()
-    Wkt.default.Wkt = originalWkt
-  })
-
-  it('computes bounding box when groups have bbox and window.L is available', () => {
-    // Mock window.L (Leaflet) for this test
-    const mockBounds = {
-      getSouthWest: () => ({ lat: 51.0, lng: -1.5 }),
-      getNorthEast: () => ({ lat: 52.0, lng: -0.5 }),
-    }
-    globalThis.window = globalThis.window || {}
-    globalThis.window.L = {
-      LatLngBounds: function () {
-        return { ...mockBounds, pad: () => mockBounds }
-      },
-    }
-
-    mockAuthState.user = makeUser()
-    mockAuthState.groups = [makeMembership(1)]
-    mockGroupGet.mockReturnValue({
-      namedisplay: 'Test',
-      nameshort: 'Test',
-      type: '',
-      bbox: 'POLYGON((0 0,1 0,1 1,0 1,0 0))',
-    })
-
-    const { myGroupsBoundingBox } = useMe()
-    const bbox = myGroupsBoundingBox.value
-
-    // Should return a 2x2 array with the computed bounding box
-    expect(bbox).toHaveLength(2)
-    expect(bbox[0]).toHaveLength(2) // SW
-    expect(bbox[1]).toHaveLength(2) // NE
-
-    // Cleanup
-    delete globalThis.window.L
-  })
-})
-
 describe('fetchMe — concurrent hitServer=false with pending promise', () => {
   it('waits for an in-progress fetch when user is null and hitServer=false', async () => {
     // Lines 35-37: hitServer=false, no user, but fetchingPromise already exists
@@ -836,7 +512,6 @@ describe('fetchMe — concurrent hitServer=false with pending promise', () => {
 describe('useMe — return shape', () => {
   it('exposes all expected properties', () => {
     mockAuthState.user = makeUser()
-    mockAuthState.groups = []
 
     const api = useMe()
 
@@ -847,9 +522,6 @@ describe('useMe — return shape', () => {
     expect(api.realMe).toBeDefined()
     expect(api.myid).toBeDefined()
     expect(api.loggedIn).toBeDefined()
-    expect(api.myGroupIds).toBeDefined()
-    expect(api.myGroups).toBeDefined()
-    expect(api.anyGroups).toBeDefined()
     expect(api.myLocation).toBeDefined()
     expect(api.mod).toBeDefined()
     expect(api.support).toBeDefined()
@@ -860,8 +532,6 @@ describe('useMe — return shape', () => {
     expect(api.donor).toBeDefined()
     expect(api.recentDonor).toBeDefined()
     expect(api.amMicroVolunteering).toBeDefined()
-    expect(api.myGroupsBoundingBox).toBeDefined()
-    expect(typeof api.oneOfMyGroups).toBe('function')
-    expect(typeof api.myGroup).toBe('function')
+    expect(api.isModerator).toBeDefined()
   })
 })

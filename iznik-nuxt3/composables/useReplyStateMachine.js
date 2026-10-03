@@ -40,11 +40,6 @@
  *                                           │
  *                                           ▼
  *                                   ┌───────────────┐
- *                                   │ JOINING_GROUP │
- *                                   └───────┬───────┘
- *                                           │
- *                                           ▼
- *                                   ┌───────────────┐
  *                                   │ CREATING_CHAT │
  *                                   └───────┬───────┘
  *                                           │
@@ -99,7 +94,6 @@
  *   COMPOSING      - User is typing reply
  *   VALIDATING     - Form validation in progress
  *   AUTHENTICATING - Waiting for login/registration
- *   JOINING_GROUP  - Joining the message's group
  *   CREATING_CHAT  - Creating chat room
  *   SENDING        - Sending message (unused currently, reserved)
  *   SHOWING_WELCOME - New user welcome modal visible
@@ -110,13 +104,10 @@
 import { ref, computed, getCurrentInstance, watch, onScopeDispose } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '~/stores/auth'
-import { useMessageStore } from '~/stores/message'
-import { useGroupStore } from '~/stores/group'
 import { useReplyStore } from '~/stores/reply'
 import { useMe } from '~/composables/useMe'
 import { useReplyToPost } from '~/composables/useReplyToPost'
 import { action } from '~/composables/useClientLog'
-import { milesAway } from '~/composables/useDistance'
 
 // State enum
 export const ReplyState = {
@@ -124,7 +115,6 @@ export const ReplyState = {
   COMPOSING: 'COMPOSING',
   VALIDATING: 'VALIDATING',
   AUTHENTICATING: 'AUTHENTICATING',
-  JOINING_GROUP: 'JOINING_GROUP',
   CREATING_CHAT: 'CREATING_CHAT',
   SENDING: 'SENDING',
   SHOWING_WELCOME: 'SHOWING_WELCOME',
@@ -139,17 +129,12 @@ const RESUMABLE_STATES = [
   ReplyState.COMPOSING,
   ReplyState.VALIDATING,
   ReplyState.AUTHENTICATING,
-  ReplyState.JOINING_GROUP,
   ReplyState.CREATING_CHAT,
   ReplyState.SENDING,
 ]
 
 // States that require user to be logged in
-const REQUIRES_AUTH_STATES = [
-  ReplyState.JOINING_GROUP,
-  ReplyState.CREATING_CHAT,
-  ReplyState.SENDING,
-]
+const REQUIRES_AUTH_STATES = [ReplyState.CREATING_CHAT, ReplyState.SENDING]
 
 // Event enum for clearer logging
 export const ReplyEvent = {
@@ -161,8 +146,6 @@ export const ReplyEvent = {
   LOGIN_SUCCESS: 'LOGIN_SUCCESS',
   LOGIN_REQUIRED: 'LOGIN_REQUIRED',
   LOGIN_CANCELLED: 'LOGIN_CANCELLED',
-  GROUP_JOINED: 'GROUP_JOINED',
-  ALREADY_MEMBER: 'ALREADY_MEMBER',
   CHAT_CREATED: 'CHAT_CREATED',
   MESSAGE_SENT: 'MESSAGE_SENT',
   WELCOME_CLOSED: 'WELCOME_CLOSED',
@@ -230,55 +213,6 @@ function logError(message, err, state, messageId = null) {
   })
 }
 
-// When a reply-triggered auto-join has no group in common with the replier, pick
-// the group CLOSEST to the replier - not the post's origin/home group, and not
-// whichever group happens to be first or last in msg.groups (API ordering is
-// arbitrary, and messages_groups doesn't carry lat/lng so we look each candidate
-// up via the group store). Distance is to the group's centre point, which is
-// simple and available client-side; nearest-polygon-edge would be more accurate
-// for large/oddly-shaped areas but is a possible future refinement, not built here.
-//
-// If we don't know the replier's own location, there's nothing to compare
-// distances against - fall back to the previous (arbitrary) behaviour of the
-// last group in the list, rather than inventing a cleverer rule.
-async function closestGroupToReplier(
-  messageGroups,
-  replierLat,
-  replierLng,
-  groupStore
-) {
-  const fallbackId = messageGroups[messageGroups.length - 1]?.groupid ?? null
-
-  // A single-group post has a forced answer regardless of distance - skip the
-  // location check and the group-store fetch entirely rather than doing a
-  // pointless lookup on the critical path of the most common reply case.
-  if (messageGroups.length <= 1) {
-    return fallbackId
-  }
-
-  if (!replierLat && !replierLng) {
-    return fallbackId
-  }
-
-  const groups = await Promise.all(
-    messageGroups.map((messageGroup) => groupStore.fetch(messageGroup.groupid))
-  )
-
-  let closestId = null
-  let closestMiles = null
-  for (const group of groups) {
-    if (!group) continue
-    const miles = milesAway(replierLat, replierLng, group.lat, group.lng)
-    if (miles === null) continue
-    if (closestMiles === null || miles < closestMiles) {
-      closestId = group.id
-      closestMiles = miles
-    }
-  }
-
-  return closestId ?? fallbackId
-}
-
 export function useReplyStateMachine(messageId, options = {}) {
   // When stayOnPage is set, completing the reply creates and sends the chat but
   // does NOT navigate to it — used when replying from a list page (browse /
@@ -286,10 +220,8 @@ export function useReplyStateMachine(messageId, options = {}) {
   const { stayOnPage = false } = options
   const instance = getCurrentInstance()
   const authStore = useAuthStore()
-  const messageStore = useMessageStore()
-  const groupStore = useGroupStore()
   const replyStore = useReplyStore()
-  const { me, myid, myGroups, fetchMe } = useMe()
+  const { me, myid, fetchMe } = useMe()
   const { forceLogin, loggedInEver } = storeToRefs(authStore)
 
   // Core state
@@ -330,7 +262,6 @@ export function useReplyStateMachine(messageId, options = {}) {
     return [
       ReplyState.VALIDATING,
       ReplyState.AUTHENTICATING,
-      ReplyState.JOINING_GROUP,
       ReplyState.CREATING_CHAT,
       ReplyState.SENDING,
     ].includes(state.value)
@@ -904,11 +835,11 @@ export function useReplyStateMachine(messageId, options = {}) {
       })
       await handleAuthentication(callback)
     } else {
-      log('Already logged in, proceeding to join group check')
-      transitionTo(ReplyState.JOINING_GROUP, {
+      log('Already logged in, proceeding to chat creation')
+      transitionTo(ReplyState.CREATING_CHAT, {
         event: ReplyEvent.VALIDATION_PASSED,
       })
-      await handleJoinGroup(callback)
+      await handleCreateChat(callback)
     }
   }
 
@@ -942,10 +873,10 @@ export function useReplyStateMachine(messageId, options = {}) {
 
         // Transition BEFORE fetchMe to prevent race condition:
         // fetchMe triggers the `me` watcher which calls onLoginSuccess(),
-        // which also transitions to JOINING_GROUP and calls handleJoinGroup().
+        // which also transitions to CREATING_CHAT and calls handleCreateChat().
         // By transitioning first, onLoginSuccess()'s guard
         // (state === AUTHENTICATING) fails, preventing double execution.
-        transitionTo(ReplyState.JOINING_GROUP, {
+        transitionTo(ReplyState.CREATING_CHAT, {
           event: ReplyEvent.REGISTRATION_SUCCESS,
           isNewUser: true,
         })
@@ -953,7 +884,7 @@ export function useReplyStateMachine(messageId, options = {}) {
         await fetchMe(true)
         log('Fetched new user data', { myid: myid.value })
 
-        await handleJoinGroup(callback)
+        await handleCreateChat(callback)
       } else {
         // User exists, need to log in
         log('User exists, forcing login')
@@ -999,10 +930,10 @@ export function useReplyStateMachine(messageId, options = {}) {
     if (state.value === ReplyState.AUTHENTICATING && replyText.value) {
       log('Resuming after login from AUTHENTICATING')
       try {
-        transitionTo(ReplyState.JOINING_GROUP, {
+        transitionTo(ReplyState.CREATING_CHAT, {
           event: ReplyEvent.LOGIN_SUCCESS,
         })
-        await handleJoinGroup()
+        await handleCreateChat()
       } catch (e) {
         logError(
           'onLoginSuccess failed during resume',
@@ -1026,91 +957,6 @@ export function useReplyStateMachine(messageId, options = {}) {
     }
 
     log('Login occurred but not in a resumable state or no reply')
-  }
-
-  // Check group membership and join if needed
-  async function handleJoinGroup(callback) {
-    log('handleJoinGroup() starting', { messageId, myid: myid.value })
-
-    // Double-check we're still logged in
-    if (!myid.value) {
-      log('No user ID available - auth may have expired')
-      handleAuthError()
-      callback?.()
-      return
-    }
-
-    try {
-      // Fetch message to get group info
-      const msg = await messageStore.fetch(messageId, true)
-      log('Message fetched:', { id: msg?.id, groups: msg?.groups?.length })
-
-      if (!msg?.groups || msg.groups.length === 0) {
-        logError('No groups on message', null, state.value, messageId)
-        transitionTo(ReplyState.ERROR, { event: ReplyEvent.ERROR_OCCURRED })
-        error.value = 'Message has no groups'
-        callback?.()
-        return
-      }
-
-      // Check if already a member of any group the message is on - if so, we
-      // never join anything (see closestGroupToReplier for the "which group"
-      // decision when there's no overlap).
-      let isMember = false
-
-      for (const messageGroup of msg.groups) {
-        for (const key of Object.keys(myGroups.value || {})) {
-          const group = myGroups.value[key]
-          if (messageGroup.groupid === group.id) {
-            isMember = true
-            break
-          }
-        }
-        if (isMember) break
-      }
-
-      const groupToJoin = isMember
-        ? null
-        : await closestGroupToReplier(
-            msg.groups,
-            me.value?.lat,
-            me.value?.lng,
-            groupStore
-          )
-
-      log('Group membership check:', { isMember, groupToJoin })
-
-      if (!isMember && groupToJoin) {
-        log('Joining group:', groupToJoin)
-        await authStore.joinGroup(myid.value, groupToJoin, false)
-        log('Group joined successfully')
-      }
-
-      transitionTo(ReplyState.CREATING_CHAT, {
-        event: isMember ? ReplyEvent.ALREADY_MEMBER : ReplyEvent.GROUP_JOINED,
-      })
-
-      await handleCreateChat(callback)
-    } catch (e) {
-      logError('Failed to join group', e, state.value, messageId)
-
-      // A reach-gate rejection is not a failure to fix by retrying or re-logging in:
-      // surface the graceful "closest first" message and keep the typed reply.
-      if (isNotInReachError(e)) {
-        handleNotInReach(callback)
-        return
-      }
-
-      if (isAuthError(e)) {
-        handleAuthError()
-        callback?.()
-        return
-      }
-
-      transitionTo(ReplyState.ERROR, { event: ReplyEvent.ERROR_OCCURRED })
-      error.value = 'Failed to join group: ' + e.message
-      callback?.()
-    }
   }
 
   // Create the chat

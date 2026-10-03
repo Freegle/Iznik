@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Models\Membership;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
 
@@ -74,10 +73,10 @@ class UnsubscribeService
      * @var array<string,string>
      */
     public const DESCRIPTIONS = [
-        self::TYPE_DIGEST => 'emails about new posts in your communities',
-        self::TYPE_EVENTS => 'emails about community events',
+        self::TYPE_DIGEST => 'emails about new posts near you',
+        self::TYPE_EVENTS => 'emails about local events',
         self::TYPE_VOLUNTEERING => 'emails about volunteer opportunities',
-        self::TYPE_NEWSLETTER => 'newsletters and community news',
+        self::TYPE_NEWSLETTER => 'newsletters and local news',
         self::TYPE_RELEVANT => 'emails suggesting posts that match what you are looking for',
         self::TYPE_CHAT => 'emails telling you about new chat messages',
         self::TYPE_NOTIFICATIONS => 'emails about replies and notifications',
@@ -144,9 +143,9 @@ class UnsubscribeService
     private function applyOne(User $user, string $type): bool
     {
         return match ($type) {
-            self::TYPE_DIGEST => $this->membershipsOff($user, 'emailfrequency', 0),
-            self::TYPE_EVENTS => $this->membershipsOff($user, 'eventsallowed', 0),
-            self::TYPE_VOLUNTEERING => $this->membershipsOff($user, 'volunteeringallowed', 0),
+            self::TYPE_DIGEST => $this->userColumnSet($user, 'emailfrequency', 0),
+            self::TYPE_EVENTS => $this->userColumnOff($user, 'eventsallowed'),
+            self::TYPE_VOLUNTEERING => $this->userColumnOff($user, 'volunteeringallowed'),
             self::TYPE_NEWSLETTER => $this->userColumnOff($user, 'newslettersallowed'),
             self::TYPE_RELEVANT => $this->userColumnOff($user, 'relevantallowed'),
             self::TYPE_CHAT => $this->settingOff($user, ['notifications', 'email']),
@@ -157,18 +156,18 @@ class UnsubscribeService
     }
 
     /**
-     * Digests, events and volunteering are per-membership settings. An unsubscribe from
-     * a mail that spans communities (the unified digest does) has to cover all of them,
-     * otherwise the member keeps getting the same email from their other groups and
-     * reasonably concludes unsubscribe is broken.
+     * Set a user column to a specific value, e.g. emailfrequency to 0 (never).
      */
-    private function membershipsOff(User $user, string $column, int $value): bool
+    private function userColumnSet(User $user, string $column, int $value): bool
     {
-        $affected = Membership::where('userid', $user->id)
-            ->where($column, '!=', $value)
-            ->update([$column => $value]);
+        if ((int) ($user->$column ?? $value) === $value) {
+            return false;
+        }
 
-        return $affected > 0;
+        $user->$column = $value;
+        $user->save();
+
+        return true;
     }
 
     private function userColumnOff(User $user, string $column): bool
@@ -250,13 +249,13 @@ class UnsubscribeService
 
         $on = [];
 
-        if (Membership::where('userid', $user->id)->where('emailfrequency', '!=', 0)->exists()) {
+        if ((int) ($user->emailfrequency ?? 24) !== 0) {
             $on[] = self::TYPE_DIGEST;
         }
-        if (Membership::where('userid', $user->id)->where('eventsallowed', '!=', 0)->exists()) {
+        if ((int) ($user->eventsallowed ?? 1) !== 0) {
             $on[] = self::TYPE_EVENTS;
         }
-        if (Membership::where('userid', $user->id)->where('volunteeringallowed', '!=', 0)->exists()) {
+        if ((int) ($user->volunteeringallowed ?? 1) !== 0) {
             $on[] = self::TYPE_VOLUNTEERING;
         }
         if ((int) ($user->newslettersallowed ?? 1) !== 0) {

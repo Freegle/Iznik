@@ -23,7 +23,6 @@ func TestMicrovolunteering_CoinFlipZeroFallsBackToMessage(t *testing.T) {
 	t.Cleanup(func() { microvolunteering.CoinFlip = orig })
 
 	prefix := uniquePrefix("mv_cf0")
-	groupID := CreateTestGroup(t, prefix)
 	// Leave microvolunteeringoptions NULL — the SQL filter uses
 	// `(microvolunteeringoptions IS NULL OR JSON_EXTRACT(...) = 1)` and the
 	// JSON boolean `true` does NOT compare-equal to integer 1 in MySQL, so
@@ -31,12 +30,11 @@ func TestMicrovolunteering_CoinFlipZeroFallsBackToMessage(t *testing.T) {
 	db.Exec("UPDATE `groups` SET microvolunteering = 1 WHERE id = ?", groupID)
 
 	reviewerID := CreateTestUser(t, prefix+"_rev", "User")
-	CreateTestMembership(t, reviewerID, groupID, "Member")
 	_, token := CreateTestSession(t, reviewerID)
 	blockInviteChallenge(t, reviewerID)
 
 	senderID := CreateTestUser(t, prefix+"_snd", "User")
-	msgID := CreateTestMessage(t, senderID, groupID, "coinflip zero "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, senderID, "coinflip zero "+prefix, 55.9533, -3.1883)
 
 	// Neutralise any AI images left in the shared test DB by other tests so
 	// getAIImageReviewChallenge returns nil for this reviewer — that forces
@@ -81,12 +79,10 @@ func TestMicrovolunteering_CoinFlipOneFallsBackToAIImage(t *testing.T) {
 	t.Cleanup(func() { microvolunteering.CoinFlip = orig })
 
 	prefix := uniquePrefix("mv_cf1")
-	groupID := CreateTestGroup(t, prefix)
 	// Intentionally leave microvolunteering disabled on the group so
 	// getApprovedMessageChallenge returns nil (the SQL filter requires
 	// microvolunteering = 1).
 	reviewerID := CreateTestUser(t, prefix+"_rev", "User")
-	CreateTestMembership(t, reviewerID, groupID, "Member")
 	_, token := CreateTestSession(t, reviewerID)
 	blockInviteChallenge(t, reviewerID)
 

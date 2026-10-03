@@ -243,7 +243,6 @@ describe('useNavbar() — computed properties and actions', () => {
       ['/chitchat', false],
       ['/myposts', false],
       ['/', false],
-      ['/explore/place/london', false],
       ['/message/123', true],
       ['/settings', true],
     ])('for path %s -> %s', async (path, expected) => {

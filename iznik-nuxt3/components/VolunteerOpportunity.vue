@@ -143,7 +143,6 @@ import { ref, computed, defineAsyncComponent } from 'vue'
 import NoticeMessage from './NoticeMessage'
 import { useVolunteeringStore } from '~/stores/volunteering'
 import { useUserStore } from '~/stores/user'
-import { useGroupStore } from '~/stores/group'
 import { useAuthStore } from '~/stores/auth'
 import ReadMore from '~/components/ReadMore'
 import { twem } from '~/composables/useTwem'
@@ -168,11 +167,6 @@ const props = defineProps({
     type: Number,
     required: true,
   },
-  filterGroup: {
-    type: Number,
-    required: false,
-    default: null,
-  },
   titleTag: {
     type: String,
     required: false,
@@ -182,7 +176,6 @@ const props = defineProps({
 
 const volunteeringStore = useVolunteeringStore()
 const userStore = useUserStore()
-const groupStore = useGroupStore()
 const authStore = useAuthStore()
 const myid = computed(() => authStore.user?.id)
 
@@ -202,29 +195,13 @@ if (props.id) {
   if (v && v.userid) {
     // MT
     await userStore.fetch(v.userid)
-
-    v.groups?.forEach(async (id) => {
-      await groupStore.fetch(id)
-    })
   }
 }
 
 // Computed properties
 const volunteering = computed(() => {
   if (props.item) return props.item // MT
-  const v = volunteeringStore?.byId(props.id)
-
-  if (v) {
-    if (!props.filterGroup) {
-      return v
-    }
-
-    if (v.groups.includes(props.filterGroup)) {
-      return v
-    }
-  }
-
-  return null
+  return volunteeringStore?.byId(props.id)
 })
 
 const user = computed(() => {

@@ -23,10 +23,6 @@
           message to be held for review, because people will then just find ways
           around that.
         </p>
-        <label for="groupid">
-          We'll add 'Group X Volunteer' to the end of the note.
-        </label>
-        <ModGroupSelect id="groupid" v-model="groupid" modonly class="mb-2" />
         <label for="note"> Your note: </label>
         <b-form-textarea
           id="note"
@@ -36,11 +32,7 @@
       </template>
       <template #footer>
         <b-button variant="white" @click="hide"> Close </b-button>
-        <b-button
-          variant="primary"
-          :disabled="!note || groupid <= 0"
-          @click="addit"
-        >
+        <b-button variant="primary" :disabled="!note" @click="addit">
           Add Mod Message
         </b-button>
       </template>
@@ -53,7 +45,6 @@ import { ref, computed } from 'vue'
 import { useChatStore } from '~/stores/chat'
 import { useOurModal } from '~/composables/useOurModal'
 import { untwem } from '~/composables/useTwem'
-import { useMe } from '~/composables/useMe'
 
 const props = defineProps({
   chatid: {
@@ -66,11 +57,9 @@ const emit = defineEmits(['hidden'])
 
 const chatStore = useChatStore()
 const { modal, hide } = useOurModal()
-const { myGroup } = useMe()
 
 const chat = ref(null)
 const note = ref(null)
-const groupid = ref(null)
 
 const user1 = computed(() => {
   return chat.value ? chat.value.user1 : null
@@ -93,11 +82,7 @@ async function addit() {
   // Encode up any emojis.
   let msg = untwem(note.value)
 
-  const group = myGroup(groupid.value)
-
-  msg += `\n\n${group.namedisplay} Volunteer`
-
-  console.log('addit', msg)
+  msg += `\n\nFreegle Volunteer`
 
   await chatStore.send(props.chatid, msg, null, null, null, true)
 

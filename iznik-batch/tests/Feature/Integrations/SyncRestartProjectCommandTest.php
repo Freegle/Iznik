@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\Integrations;
 
-use App\Models\Group;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -17,39 +16,29 @@ class SyncRestartProjectCommandTest extends TestCase
         Cache::flush();
     }
 
-    // Use Leeds coords rather than London defaults to avoid conflicts with other
-    // tests that create groups at createTestGroup()'s default lat=51.5074, lng=-0.1278.
+    // Coordinates for the mocked Restart API location response.
     private const TEST_LAT = 53.8008;
-    private const TEST_LNG = -1.5491;
 
-    private function makeGroup(array $override = []): Group
-    {
-        return $this->createTestGroup(array_merge([
-            'lat'      => self::TEST_LAT,
-            'lng'      => self::TEST_LNG,
-            'publish'  => 1,
-            'listable' => 1,
-        ], $override));
-    }
+    private const TEST_LNG = -1.5491;
 
     private function restartGroupData(float $lat = self::TEST_LAT, float $lng = self::TEST_LNG): array
     {
         return [
             'location' => ['country_code' => 'GB', 'lat' => $lat, 'lng' => $lng],
-            'name'     => 'Leeds Restart Group',
-            'website'  => 'https://restarters.net/group/1',
-            'email'    => 'leeds@restart.org',
+            'name' => 'Leeds Restart Group',
+            'website' => 'https://restarters.net/group/1',
+            'email' => 'leeds@restart.org',
         ];
     }
 
     private function restartEvent(int $id, string $title = 'Fix-it session'): array
     {
         return [
-            'id'       => $id,
-            'title'    => $title,
+            'id' => $id,
+            'title' => $title,
             'approved' => true,
-            'start'    => now()->addDays(7)->format('Y-m-d H:i:s'),
-            'end'      => now()->addDays(7)->addHours(3)->format('Y-m-d H:i:s'),
+            'start' => now()->addDays(7)->format('Y-m-d H:i:s'),
+            'end' => now()->addDays(7)->addHours(3)->format('Y-m-d H:i:s'),
             'location' => 'London Community Centre, WC2H 7NA',
         ];
     }
@@ -57,10 +46,10 @@ class SyncRestartProjectCommandTest extends TestCase
     private function restartEventData(int $id): array
     {
         return [
-            'id'          => $id,
+            'id' => $id,
             'description' => '<p>Come along and get your items repaired!</p>',
-            'link'        => "https://restarters.net/event/$id",
-            'group'       => ['name' => 'London Restart Group', 'image' => null],
+            'link' => "https://restarters.net/event/$id",
+            'group' => ['name' => 'London Restart Group', 'image' => null],
         ];
     }
 
@@ -130,6 +119,7 @@ class SyncRestartProjectCommandTest extends TestCase
             if (str_contains($request->url(), '/groups/names')) {
                 return Http::response(['data' => [['id' => 1, 'name' => 'London [INACTIVE]']]], 200);
             }
+
             return Http::response(null, 404);
         });
 
@@ -142,7 +132,7 @@ class SyncRestartProjectCommandTest extends TestCase
     {
         $this->fakeApi(2, [
             'location' => ['country_code' => 'FR', 'lat' => 48.8566, 'lng' => 2.3522],
-            'name'     => 'Paris Restart',
+            'name' => 'Paris Restart',
         ]);
 
         $this->artisan('integrations:sync-restartproject')
@@ -152,29 +142,24 @@ class SyncRestartProjectCommandTest extends TestCase
         $this->assertEquals(0, DB::table('communityevents')->count());
     }
 
-    public function test_creates_new_event_for_nearby_gb_group(): void
+    public function test_creates_new_event_for_gb_group(): void
     {
-        $freegleGroup = $this->makeGroup();
-        $event        = $this->restartEvent(101);
+        $event = $this->restartEvent(101);
 
         Http::fake([
-            '*api/v2/groups/names*'     => Http::response(['data' => [['id' => 10, 'name' => 'Leeds Restart']]], 200),
-            '*api/v2/events/101*'       => Http::response(['data' => $this->restartEventData(101)], 200),
+            '*api/v2/groups/names*' => Http::response(['data' => [['id' => 10, 'name' => 'Leeds Restart']]], 200),
+            '*api/v2/events/101*' => Http::response(['data' => $this->restartEventData(101)], 200),
             '*api/v2/groups/10/events*' => Http::response(['data' => [$event]], 200),
-            '*api/v2/groups/10*'        => Http::response(['data' => $this->restartGroupData()], 200),
+            '*api/v2/groups/10*' => Http::response(['data' => $this->restartGroupData()], 200),
         ]);
-
-        // Verify group is findable
-        $nearby = \App\Models\Location::groupsNear(self::TEST_LAT, self::TEST_LNG, 15);
-        $this->assertContains($freegleGroup->id, $nearby, 'Group must be findable by haversine');
 
         // Call service directly to isolate from artisan/PendingCommand
         $service = app(\App\Services\RestartProjectService::class);
-        $result  = $service->sync(false);
+        $result = $service->sync(false);
 
         $recorded = Http::recorded();
-        $urls = array_map(fn($pair) => $pair[0]->url(), iterator_to_array($recorded));
-        $this->assertEquals(1, $result['added'], 'Service returned wrong count. Recorded URLs: ' . json_encode($urls));
+        $urls = array_map(fn ($pair) => $pair[0]->url(), iterator_to_array($recorded));
+        $this->assertEquals(1, $result['added'], 'Service returned wrong count. Recorded URLs: '.json_encode($urls));
         $this->assertEquals(1, DB::table('communityevents')->where('externalid', 'Restart-101')->count());
         $this->assertEquals(1,
             DB::table('communityevents_dates')
@@ -182,20 +167,10 @@ class SyncRestartProjectCommandTest extends TestCase
                 ->where('communityevents.externalid', 'Restart-101')
                 ->count()
         );
-
-        $this->assertEquals(
-            1,
-            DB::table('communityevents_groups')
-                ->join('communityevents', 'communityevents.id', '=', 'communityevents_groups.eventid')
-                ->where('communityevents.externalid', 'Restart-101')
-                ->where('communityevents_groups.groupid', $freegleGroup->id)
-                ->count()
-        );
     }
 
     public function test_prefixes_repair_cafe_to_title(): void
     {
-        $this->makeGroup();
         $event = $this->restartEvent(102, 'Saturday Session');
 
         $this->fakeApi(11, $this->restartGroupData(), [$event], [102 => $this->restartEventData(102)]);
@@ -210,7 +185,6 @@ class SyncRestartProjectCommandTest extends TestCase
 
     public function test_does_not_prefix_repair_cafe_when_already_in_title(): void
     {
-        $this->makeGroup();
         $event = $this->restartEvent(103, 'Repair Cafe Hackney');
 
         $this->fakeApi(12, $this->restartGroupData(), [$event], [103 => $this->restartEventData(103)]);
@@ -225,20 +199,19 @@ class SyncRestartProjectCommandTest extends TestCase
 
     public function test_updates_existing_event(): void
     {
-        $this->makeGroup();
 
         DB::table('communityevents')->insert([
-            'externalid'  => 'Restart-200',
-            'title'       => 'Old Title',
-            'location'    => 'Old Location',
+            'externalid' => 'Restart-200',
+            'title' => 'Old Title',
+            'location' => 'Old Location',
             'description' => 'Old desc',
-            'pending'     => 0,
+            'pending' => 0,
         ]);
         $existingId = (int) DB::getPdo()->lastInsertId();
         DB::table('communityevents_dates')->insert([
             'eventid' => $existingId,
-            'start'   => now()->addDays(5)->format('Y-m-d H:i:s'),
-            'end'     => now()->addDays(5)->addHours(2)->format('Y-m-d H:i:s'),
+            'start' => now()->addDays(5)->format('Y-m-d H:i:s'),
+            'end' => now()->addDays(5)->addHours(2)->format('Y-m-d H:i:s'),
         ]);
 
         $event = $this->restartEvent(200, 'New Title');
@@ -255,7 +228,6 @@ class SyncRestartProjectCommandTest extends TestCase
 
     public function test_dry_run_does_not_create_event(): void
     {
-        $this->makeGroup();
         $event = $this->restartEvent(301);
 
         $this->fakeApi(30, $this->restartGroupData(), [$event], [301 => $this->restartEventData(301)]);
@@ -270,18 +242,18 @@ class SyncRestartProjectCommandTest extends TestCase
     public function test_marks_event_deleted_when_not_in_feed(): void
     {
         DB::table('communityevents')->insert([
-            'externalid'  => 'Restart-999',
-            'title'       => 'Old Event',
-            'location'    => 'Somewhere',
+            'externalid' => 'Restart-999',
+            'title' => 'Old Event',
+            'location' => 'Somewhere',
             'description' => null,
-            'pending'     => 0,
-            'deleted'     => 0,
+            'pending' => 0,
+            'deleted' => 0,
         ]);
         $existingId = (int) DB::getPdo()->lastInsertId();
         DB::table('communityevents_dates')->insert([
             'eventid' => $existingId,
-            'start'   => now()->addDays(3)->format('Y-m-d H:i:s'),
-            'end'     => now()->addDays(3)->addHours(2)->format('Y-m-d H:i:s'),
+            'start' => now()->addDays(3)->format('Y-m-d H:i:s'),
+            'end' => now()->addDays(3)->addHours(2)->format('Y-m-d H:i:s'),
         ]);
 
         $this->fakeEmpty();
@@ -291,17 +263,6 @@ class SyncRestartProjectCommandTest extends TestCase
             ->assertExitCode(0);
 
         $this->assertEquals(1, DB::table('communityevents')->where('externalid', 'Restart-999')->value('deleted'));
-    }
-
-    public function test_skips_group_with_communityevents_disabled(): void
-    {
-        $this->makeGroup(['settings' => json_encode(['communityevents' => 0])]);
-
-        $this->fakeApi(40, $this->restartGroupData());
-
-        $this->artisan('integrations:sync-restartproject')
-            ->expectsOutputToContain('Processed 0 new event(s)')
-            ->assertExitCode(0);
     }
 
     /**
@@ -350,9 +311,8 @@ class SyncRestartProjectCommandTest extends TestCase
 
     public function test_second_listing_of_the_same_occurrence_does_not_create_a_second_event(): void
     {
-        $this->makeGroup();
 
-        $first  = $this->restartEvent(22020, 'Hackney Fixing Factory - Community Repair');
+        $first = $this->restartEvent(22020, 'Hackney Fixing Factory - Community Repair');
         $second = $this->duplicateListing(22021, $first);
 
         $this->fakeApi(50, $this->restartGroupData(), [$first, $second], [
@@ -370,16 +330,15 @@ class SyncRestartProjectCommandTest extends TestCase
 
     public function test_a_later_republish_of_the_same_occurrence_does_not_create_a_second_event(): void
     {
-        $this->makeGroup();
 
         $original = $this->restartEvent(20905, 'Curborough Community Centre');
-        $feed     = [$original];
-        $details  = [20905 => $this->restartEventData(20905)];
+        $feed = [$original];
+        $details = [20905 => $this->restartEventData(20905)];
         $this->fakeApiFeed(51, $this->restartGroupData(), $feed, $details);
         app(\App\Services\RestartProjectService::class)->sync(false);
 
         // Upstream re-publishes the same session under a new id, keeping the old one.
-        $feed    = [$original, $this->duplicateListing(21268, $original)];
+        $feed = [$original, $this->duplicateListing(21268, $original)];
         $details = [
             20905 => $this->restartEventData(20905),
             21268 => $this->restartEventData(21268),
@@ -388,44 +347,42 @@ class SyncRestartProjectCommandTest extends TestCase
 
         $rows = DB::table('communityevents')->where('externalid', 'LIKE', 'Restart-%')
             ->where('deleted', 0)->pluck('externalid')->all();
-        $this->assertEquals(0, $result['added'], json_encode($result) . ' ' . json_encode($rows));
-        $this->assertEquals(1, $result['duplicates'], json_encode($result) . ' ' . json_encode($rows));
+        $this->assertEquals(0, $result['added'], json_encode($result).' '.json_encode($rows));
+        $this->assertEquals(1, $result['duplicates'], json_encode($result).' '.json_encode($rows));
         $this->assertCount(1, $rows, json_encode($rows));
     }
 
     public function test_keeps_the_event_when_upstream_drops_the_id_we_first_imported(): void
     {
-        $this->makeGroup();
 
         $original = $this->restartEvent(20907, "St Joseph's RC Church");
-        $feed     = [$original];
-        $details  = [20907 => $this->restartEventData(20907)];
+        $feed = [$original];
+        $details = [20907 => $this->restartEventData(20907)];
         $this->fakeApiFeed(52, $this->restartGroupData(), $feed, $details);
         app(\App\Services\RestartProjectService::class)->sync(false);
 
         // Only the replacement listing remains upstream. The row we hold carries the
         // old id, so without marking it seen the cleanup pass would delete it and the
         // moderators would get a fresh copy to approve all over again.
-        $feed    = [$this->duplicateListing(21267, $original)];
+        $feed = [$this->duplicateListing(21267, $original)];
         $details = [21267 => $this->restartEventData(21267)];
-        $result  = app(\App\Services\RestartProjectService::class)->sync(false);
+        $result = app(\App\Services\RestartProjectService::class)->sync(false);
 
         $rows = DB::table('communityevents')->where('externalid', 'LIKE', 'Restart-%')
             ->pluck('externalid')->all();
-        $this->assertEquals(0, $result['deleted'], json_encode($result) . ' ' . json_encode($rows));
-        $this->assertEquals(1, $result['duplicates'], json_encode($result) . ' ' . json_encode($rows));
+        $this->assertEquals(0, $result['deleted'], json_encode($result).' '.json_encode($rows));
+        $this->assertEquals(1, $result['duplicates'], json_encode($result).' '.json_encode($rows));
         $this->assertEquals(0, DB::table('communityevents')->where('externalid', 'Restart-20907')->value('deleted'));
     }
 
     public function test_a_different_session_at_the_same_venue_still_creates_its_own_event(): void
     {
-        $this->makeGroup();
 
         $week1 = $this->restartEvent(21109, 'Hackney Fixing Factory - Community Repair');
         $week2 = array_merge($week1, [
-            'id'    => 21110,
+            'id' => 21110,
             'start' => now()->addDays(14)->format('Y-m-d H:i:s'),
-            'end'   => now()->addDays(14)->addHours(3)->format('Y-m-d H:i:s'),
+            'end' => now()->addDays(14)->addHours(3)->format('Y-m-d H:i:s'),
         ]);
 
         $this->fakeApi(53, $this->restartGroupData(), [$week1, $week2], [
@@ -443,9 +400,8 @@ class SyncRestartProjectCommandTest extends TestCase
 
     public function test_the_command_reports_listings_it_skipped(): void
     {
-        $this->makeGroup();
 
-        $first  = $this->restartEvent(23001, 'Barking Fixing Factory');
+        $first = $this->restartEvent(23001, 'Barking Fixing Factory');
         $second = $this->duplicateListing(23002, $first);
 
         $this->fakeApi(55, $this->restartGroupData(), [$first, $second], [
@@ -461,7 +417,6 @@ class SyncRestartProjectCommandTest extends TestCase
 
     public function test_an_unreadable_start_is_never_treated_as_a_duplicate(): void
     {
-        $this->makeGroup();
 
         // Over a thousand date rows in this table hold a zero date. If an unparseable
         // start collapsed to one moment, every event at a venue would merge into the
@@ -470,8 +425,8 @@ class SyncRestartProjectCommandTest extends TestCase
         $eid = $events->createEvent(null, 'Repair Cafe: Ghost Session', 'Nowhere', null, null, null, null, 'd', 'Restart-40001');
         DB::table('communityevents_dates')->insert([
             'eventid' => $eid,
-            'start'   => '0000-00-00 00:00:00',
-            'end'     => '0000-00-00 00:00:00',
+            'start' => '0000-00-00 00:00:00',
+            'end' => '0000-00-00 00:00:00',
         ]);
 
         $this->assertNull($events->findSameOccurrence('Restart-', 'Repair Cafe: Ghost Session', 'Nowhere', 'not a date'));
@@ -479,23 +434,22 @@ class SyncRestartProjectCommandTest extends TestCase
 
     public function test_does_not_merge_into_an_event_a_moderator_created_by_hand(): void
     {
-        $this->makeGroup();
         $event = $this->restartEvent(21499, 'Barking Fixing Factory');
 
         // Same occurrence, but entered manually so it has no externalid. Attaching our
         // import to it would put someone else's event under the cleanup pass's control.
         DB::table('communityevents')->insert([
-            'externalid'  => null,
-            'title'       => 'Repair Cafe: Barking Fixing Factory',
-            'location'    => $event['location'],
+            'externalid' => null,
+            'title' => 'Repair Cafe: Barking Fixing Factory',
+            'location' => $event['location'],
             'description' => 'Typed in by a mod',
-            'pending'     => 0,
+            'pending' => 0,
         ]);
         $manualId = (int) DB::getPdo()->lastInsertId();
         DB::table('communityevents_dates')->insert([
             'eventid' => $manualId,
-            'start'   => $event['start'],
-            'end'     => $event['end'],
+            'start' => $event['start'],
+            'end' => $event['end'],
         ]);
 
         $this->fakeApi(54, $this->restartGroupData(), [$event], [21499 => $this->restartEventData(21499)]);

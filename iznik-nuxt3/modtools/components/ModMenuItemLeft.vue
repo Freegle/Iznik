@@ -17,7 +17,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from '#imports'
 import { useAuthStore } from '@/stores/auth'
-import { useModMe } from '~/composables/useModMe'
+import { useModMe } from '~/modtools/composables/useModMe'
 
 const props = defineProps({
   link: {

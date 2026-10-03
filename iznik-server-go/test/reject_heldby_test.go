@@ -30,11 +30,9 @@ func TestRejectClearsHeldby(t *testing.T) {
 	prefix := uniquePrefix("RejectClearsHeld")
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -81,13 +79,9 @@ func TestRejectHeldCopyLeavesOtherGroupUnheld(t *testing.T) {
 	prefix := uniquePrefix("RejectHeldOtherGroup")
 	db := database.DBConn
 
-	groupA := CreateTestGroup(t, prefix+"_a")
-	groupB := CreateTestGroup(t, prefix+"_b")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	modA := CreateTestUser(t, prefix+"_moda", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modA, groupA, "Moderator")
+	PromoteTestUserToModerator(t, modA)
 	_, modAToken := CreateTestSession(t, modA)
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
@@ -139,11 +133,9 @@ func TestRejectWorksOnSpamCollection(t *testing.T) {
 	prefix := uniquePrefix("RejectSpamColl")
 	db := database.DBConn
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)

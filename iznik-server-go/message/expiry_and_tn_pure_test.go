@@ -48,19 +48,27 @@ func TestRippleEnabled(t *testing.T) {
 	}
 }
 
-func TestComputeExpiresat_NoGroups(t *testing.T) {
-	if got := computeExpiresat(nil, utils.OFFER, nil); got != nil {
-		t.Errorf("computeExpiresat(nil groups) = %v, want nil", got)
+func TestComputeExpiresat_ZeroArrival(t *testing.T) {
+	if got := computeExpiresat(utils.OFFER, time.Time{}); got != nil {
+		t.Errorf("computeExpiresat(zero arrival) = %v, want nil", got)
 	}
-	if got := computeExpiresat(nil, utils.OFFER, []MessageGroup{}); got != nil {
-		t.Errorf("computeExpiresat(empty groups) = %v, want nil", got)
+}
+
+func TestComputeExpiresat_ReturnsExpiryAfterArrival(t *testing.T) {
+	arrival := time.Now()
+	got := computeExpiresat(utils.OFFER, arrival)
+	if got == nil {
+		t.Fatal("computeExpiresat(OFFER, now) = nil, want a non-nil expiry")
+	}
+	if !got.After(arrival) {
+		t.Errorf("computeExpiresat(OFFER, now) = %v, want after arrival %v", got, arrival)
 	}
 }
 
 func allCompleteSummaries() []MessageSummary {
 	return []MessageSummary{
-		{ID: 1, Groupid: 100, Hasoutcome: true, Type: utils.OFFER, Arrival: time.Now().Add(-200 * 24 * time.Hour)},
-		{ID: 2, Groupid: 200, Hasoutcome: true, Type: utils.WANTED, Arrival: time.Now().Add(-5 * 24 * time.Hour)},
+		{ID: 1, Hasoutcome: true, Type: utils.OFFER, Arrival: time.Now().Add(-200 * 24 * time.Hour)},
+		{ID: 2, Hasoutcome: true, Type: utils.WANTED, Arrival: time.Now().Add(-5 * 24 * time.Hour)},
 	}
 }
 

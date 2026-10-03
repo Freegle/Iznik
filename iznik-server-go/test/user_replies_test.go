@@ -19,18 +19,14 @@ func TestUserReplies_RippledPostAppearsOnce(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("replyRipple")
 
-	originGroup := CreateTestGroup(t, prefix+"origin")
-	rippleGroup1 := CreateTestGroup(t, prefix+"rip1")
-	rippleGroup2 := CreateTestGroup(t, prefix+"rip2")
 
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, modID, originGroup, "Moderator")
-	CreateTestMembership(t, replierID, originGroup, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
-	msgID := CreateTestMessage(t, posterID, originGroup, "Rippled sofa "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, posterID, "Rippled sofa "+prefix, 55.9533, -3.1883)
 
 	// The ripple lands the post on two more groups, hours apart - exactly what production
 	// showed for #121545340 (origin 08:36, then 08:53, 20:38, 08:52 the next day).
@@ -82,15 +78,13 @@ func TestUserReplies_MultipleOutcomesAppearOnceAndShowLatest(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("replyOutcome")
 
-	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, replierID, groupID, "Member")
+	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
-	msgID := CreateTestMessage(t, posterID, groupID, "Twice outcomed table "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, posterID, "Twice outcomed table "+prefix, 55.9533, -3.1883)
 
 	db.Exec("INSERT INTO messages_outcomes (msgid, userid, outcome, timestamp) "+
 		"VALUES (?, ?, 'Withdrawn', DATE_SUB(NOW(), INTERVAL 2 HOUR))", msgID, posterID)

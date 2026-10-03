@@ -56,22 +56,21 @@ func TestNearbyReachFeedDegradedPath(t *testing.T) {
 
 	prefix := uniquePrefix("sandwich")
 	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
-	group := CreateTestGroup(t, prefix)
 
 	// Grid covers the viewer, but outer_bound is far away: the narrow (driven
 	// from outer_bound) must never surface it. Adversarial - a writer-derived
 	// outer is always a superset - but it is what proves the narrow ran.
-	narrowReject := CreateTestMessage(t, posterID, group, "OFFER: narrow reject (sandwich)", 51.5, -0.1)
+	narrowReject := CreateTestMessage(t, posterID, "OFFER: narrow reject (sandwich)", 51.5, -0.1)
 	// Outer covers the viewer but the grid does NOT: the probe must refine
 	// the superset away.
-	probedOut := CreateTestMessage(t, posterID, group, "OFFER: probed out (sandwich)", 51.5, -0.1)
+	probedOut := CreateTestMessage(t, posterID, "OFFER: probed out (sandwich)", 51.5, -0.1)
 	// Outer covers and the grid covers: shown.
-	shown := CreateTestMessage(t, posterID, group, "OFFER: shown (sandwich)", 51.5, -0.1)
+	shown := CreateTestMessage(t, posterID, "OFFER: shown (sandwich)", 51.5, -0.1)
 	// Envelope fallback rung (what insertReachCells writes by default).
-	envelope := CreateTestMessage(t, posterID, group, "OFFER: envelope fallback (sandwich)", 51.5, -0.1)
+	envelope := CreateTestMessage(t, posterID, "OFFER: envelope fallback (sandwich)", 51.5, -0.1)
 	// POINT sentinel (completion pruning): pruned by the narrow itself, even
 	// though the grid covers the viewer and the spatial row is open.
-	degraded := CreateTestMessage(t, posterID, group, "OFFER: degraded (sandwich)", 51.5, -0.1)
+	degraded := CreateTestMessage(t, posterID, "OFFER: degraded (sandwich)", 51.5, -0.1)
 
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?, ?, ?, ?)",
 		narrowReject, probedOut, shown, envelope, degraded)
@@ -124,10 +123,9 @@ func TestNearbyCountDegradedPath(t *testing.T) {
 
 	prefix := uniquePrefix("sandwichcnt")
 	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
-	group := CreateTestGroup(t, prefix)
 
-	narrowReject := CreateTestMessage(t, posterID, group, "OFFER: count narrow reject (sandwichcnt)", 51.5, -0.1)
-	counted := CreateTestMessage(t, posterID, group, "OFFER: count probed in (sandwichcnt)", 51.5, -0.1)
+	narrowReject := CreateTestMessage(t, posterID, "OFFER: count narrow reject (sandwichcnt)", 51.5, -0.1)
+	counted := CreateTestMessage(t, posterID, "OFFER: count probed in (sandwichcnt)", 51.5, -0.1)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", narrowReject, counted)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", narrowReject, counted)
 
@@ -177,8 +175,7 @@ func TestClipReachForRejectedGroupNullsInnerBound(t *testing.T) {
 
 	prefix := uniquePrefix("clipbounds")
 	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
-	group := CreateTestGroup(t, prefix)
-	mid := CreateTestMessage(t, posterID, group, "OFFER: clip bounds (clipbounds)", 51.5, -0.1)
+	mid := CreateTestMessage(t, posterID, "OFFER: clip bounds (clipbounds)", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
 
 	// Rejecting group's area = the EASTERN half of the reach.

@@ -35,7 +35,6 @@ func TestReachQueue_JoiningAGroupQueuesTheMember(t *testing.T) {
 	prefix := uniquePrefix("rq_join")
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	_, token := CreateTestSession(t, userID)
-	groupID := CreateTestGroup(t, prefix)
 	clearQueue(userID)
 	defer clearQueue(userID)
 
@@ -55,8 +54,6 @@ func TestReachQueue_SwitchingToImmediateQueuesTheMember(t *testing.T) {
 	prefix := uniquePrefix("rq_freq")
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	_, token := CreateTestSession(t, userID)
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
 	clearQueue(userID)
 	defer clearQueue(userID)
 
@@ -148,7 +145,6 @@ func TestReachQueue_RecentlyActiveMemberIsNotQueued(t *testing.T) {
 
 func TestReachQueue_RegisteringWithAGroupQueuesTheNewMember(t *testing.T) {
 	prefix := uniquePrefix("rq_reg")
-	groupID := CreateTestGroup(t, prefix)
 
 	payload, _ := json.Marshal(map[string]interface{}{
 		"email":       fmt.Sprintf("%s@test.com", prefix),

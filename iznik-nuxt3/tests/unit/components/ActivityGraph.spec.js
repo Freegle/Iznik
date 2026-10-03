@@ -115,12 +115,6 @@ describe('ActivityGraph', () => {
       await flushPromises()
       expect(wrapper.find('h3').text()).toContain('Activity')
     })
-
-    it('shows group name when provided', async () => {
-      const wrapper = createWrapper({ groupName: 'Test Group' })
-      await flushPromises()
-      expect(wrapper.text()).toContain('on Test Group')
-    })
   })
 
   describe('graph type descriptions', () => {
@@ -214,13 +208,15 @@ describe('ActivityGraph', () => {
       expect(mockApi.dashboard.fetch).toHaveBeenCalled()
     })
 
-    it('passes correct parameters to fetch', async () => {
-      createWrapper({ groupid: 123, systemwide: false })
+    it('passes national (non-per-community) parameters to fetch', async () => {
+      createWrapper()
       await flushPromises()
       expect(mockApi.dashboard.fetch).toHaveBeenCalledWith(
         expect.objectContaining({
-          group: 123,
-          systemwide: false,
+          allgroups: false,
+          group: null,
+          systemwide: true,
+          suppliedgroup: null,
         })
       )
     })
@@ -244,16 +240,6 @@ describe('ActivityGraph', () => {
       await flushPromises()
       expect(mockApi.dashboard.fetch).toHaveBeenCalledTimes(2)
     })
-
-    it('refetches when groupid changes', async () => {
-      const wrapper = createWrapper({ groupid: 1 })
-      await flushPromises()
-      expect(mockApi.dashboard.fetch).toHaveBeenCalledTimes(1)
-
-      await wrapper.setProps({ groupid: 2 })
-      await flushPromises()
-      expect(mockApi.dashboard.fetch).toHaveBeenCalledTimes(2)
-    })
   })
 
   describe('no data state', () => {
@@ -270,7 +256,7 @@ describe('ActivityGraph', () => {
 
   describe('chart type', () => {
     it('uses LineChart for ActiveUsers', async () => {
-      const wrapper = createWrapper({ activeusers: true, groupid: 123 })
+      const wrapper = createWrapper({ activeusers: true })
       await flushPromises()
 
       // Find the graph type select (second select) and change to ActiveUsers
@@ -284,7 +270,7 @@ describe('ActivityGraph', () => {
     })
 
     it('uses LineChart for ApprovedMemberCount', async () => {
-      const wrapper = createWrapper({ approvedmembers: true, groupid: 123 })
+      const wrapper = createWrapper({ approvedmembers: true })
       await flushPromises()
 
       // Find the graph type select (second select) and change to ApprovedMemberCount
@@ -369,31 +355,20 @@ describe('ActivityGraph', () => {
   })
 
   describe('ActiveUsers and ApprovedMemberCount visibility', () => {
-    it('shows ActiveUsers option for individual group', async () => {
-      const wrapper = createWrapper({ activeusers: true, groupid: 123 })
+    it('shows ActiveUsers option when activeusers prop is true', async () => {
+      const wrapper = createWrapper({ activeusers: true })
       await flushPromises()
       expect(wrapper.text()).toContain('Active Freeglers')
     })
 
-    it('shows ApprovedMemberCount option for individual group', async () => {
-      const wrapper = createWrapper({ approvedmembers: true, groupid: 123 })
+    it('shows ApprovedMemberCount option when approvedmembers prop is true', async () => {
+      const wrapper = createWrapper({ approvedmembers: true })
       await flushPromises()
       expect(wrapper.text()).toContain('Freeglers')
     })
 
-    it('shows options for systemwide (-2)', async () => {
-      const wrapper = createWrapper({
-        activeusers: true,
-        approvedmembers: true,
-        groupid: -2,
-      })
-      await flushPromises()
-      expect(wrapper.text()).toContain('Active Freeglers')
-      expect(wrapper.text()).toContain('Freeglers')
-    })
-
-    it('does not show ActiveUsers without groupid', async () => {
-      const wrapper = createWrapper({ activeusers: true, groupid: null })
+    it('does not show ActiveUsers when activeusers prop is false', async () => {
+      const wrapper = createWrapper()
       await flushPromises()
       expect(wrapper.text()).not.toContain('Active Freeglers')
     })

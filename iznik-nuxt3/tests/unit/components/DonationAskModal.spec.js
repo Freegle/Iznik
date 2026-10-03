@@ -3,21 +3,15 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense } from 'vue'
 import DonationAskModal from '~/components/DonationAskModal.vue'
 
-const { mockVariant, mockGroupId, mockShow, mockRaised, mockTarget } =
-  vi.hoisted(() => {
-    const { ref } = require('vue')
-    return {
-      mockVariant: ref('default'),
-      mockGroupId: ref(123),
-      mockShow: vi.fn(),
-      mockRaised: ref(500),
-      mockTarget: ref(1000),
-    }
-  })
-
-const mockGroupStore = {
-  get: vi.fn().mockReturnValue({ namedisplay: 'Test Group' }),
-}
+const { mockVariant, mockShow, mockRaised, mockTarget } = vi.hoisted(() => {
+  const { ref } = require('vue')
+  return {
+    mockVariant: ref('default'),
+    mockShow: vi.fn(),
+    mockRaised: ref(500),
+    mockTarget: ref(1000),
+  }
+})
 
 const mockDonationStore = {
   raised: mockRaised,
@@ -33,10 +27,6 @@ const mockApi = {
     chosen: vi.fn(),
   },
 }
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
-}))
 
 vi.mock('~/stores/donations', () => ({
   useDonationStore: () => mockDonationStore,
@@ -75,7 +65,6 @@ vi.mock('~/composables/useDonationAskModal', () => ({
   useDonationAskModal: () =>
     Promise.resolve({
       variant: mockVariant,
-      groupId: mockGroupId,
       show: mockShow,
     }),
 }))
@@ -97,7 +86,6 @@ describe('DonationAskModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockVariant.value = 'default'
-    mockGroupId.value = 123
     mockRaised.value = 500
     mockTarget.value = 1000
     mockAuthStore.user = { donated: null, engagementlevel: null }
@@ -126,8 +114,6 @@ describe('DonationAskModal', () => {
           DonationAskStripe: {
             template: '<div class="donation-ask-stripe" />',
             props: [
-              'groupid',
-              'groupname',
               'target',
               'raised',
               'targetMet',
@@ -192,32 +178,7 @@ describe('DonationAskModal', () => {
   })
 
   describe('computed properties', () => {
-    it('gets groupName from store when target not met', async () => {
-      mockGroupId.value = 123
-      mockRaised.value = 500
-      mockTarget.value = 1000
-      await createWrapper()
-      expect(mockGroupStore.get).toHaveBeenCalledWith(123)
-    })
-
-    it('returns Freegle when target is met', async () => {
-      mockGroupId.value = 123
-      mockRaised.value = 1500
-      mockTarget.value = 1000
-      const wrapper = await createWrapper()
-      const component = wrapper.findComponent(DonationAskModal)
-      expect(component.vm.groupName).toBe('Freegle')
-    })
-
-    it('returns Freegle when no groupId', async () => {
-      mockGroupId.value = null
-      const wrapper = await createWrapper()
-      const component = wrapper.findComponent(DonationAskModal)
-      expect(component.vm.groupName).toBe('Freegle')
-    })
-
     it('computes targetMet correctly when raised > target', async () => {
-      mockGroupId.value = 123
       mockRaised.value = 1500
       mockTarget.value = 1000
       const wrapper = await createWrapper()
@@ -226,7 +187,6 @@ describe('DonationAskModal', () => {
     })
 
     it('computes targetMet as false when raised < target', async () => {
-      mockGroupId.value = 123
       mockRaised.value = 500
       mockTarget.value = 1000
       const wrapper = await createWrapper()
@@ -326,7 +286,6 @@ describe('DonationAskModal', () => {
   describe('funnel instrumentation', () => {
     it('logs donation_modal_open when modal show event fires', async () => {
       mockVariant.value = 'minimal-friction-5'
-      mockGroupId.value = 42
       const wrapper = await createWrapper()
 
       const modal = wrapper.find('.b-modal')
@@ -334,14 +293,12 @@ describe('DonationAskModal', () => {
 
       expect(mockAction).toHaveBeenCalledWith('donation_modal_open', {
         variant: 'minimal-friction-5',
-        groupId: 42,
       })
     })
 
     it('logs donation_modal_engaged after 2 seconds', async () => {
       vi.useFakeTimers()
       mockVariant.value = 'stripe'
-      mockGroupId.value = 10
       const wrapper = await createWrapper()
 
       const modal = wrapper.find('.b-modal')
@@ -356,7 +313,6 @@ describe('DonationAskModal', () => {
 
       expect(mockAction).toHaveBeenCalledWith('donation_modal_engaged', {
         variant: 'stripe',
-        groupId: 10,
         elapsed_ms: expect.any(Number),
       })
 
@@ -378,7 +334,6 @@ describe('DonationAskModal', () => {
 
       expect(mockAction).toHaveBeenCalledWith('donation_modal_dismissed', {
         variant: 'minimal-friction-5',
-        groupId: expect.any(Number),
         time_open_ms: expect.any(Number),
         engaged: false,
       })

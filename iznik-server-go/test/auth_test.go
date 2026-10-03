@@ -29,8 +29,9 @@ func TestAuth(t *testing.T) {
 	// Should match the user we tried to log in as
 	assert.Equal(t, user.ID, userID)
 
-	// Should see memberships
-	assert.Greater(t, len(user.Memberships), 0)
+	// National model: no per-community memberships list to check. Systemrole
+	// and email frequency are the site-wide attributes that replace it.
+	assert.NotEmpty(t, user.Systemrole)
 }
 
 func TestPersistent(t *testing.T) {

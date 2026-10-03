@@ -310,57 +310,6 @@
                   }}
                 </div>
               </div>
-              <h2>Memberships</h2>
-              <p>
-                Which communities you are a member of. You can change your
-                settings or leave groups from
-                <!-- eslint-disable-next-line-->
-                <nuxt-link to="/settings">Settings</nuxt-link>
-                .
-              </p>
-              <ShowMore :items="status.data.memberships">
-                <template #item="s">
-                  <b-row>
-                    <b-col cols="4">
-                      {{ s.item.namedisplay }}
-                    </b-col>
-                    <b-col cols="4">
-                      <span v-if="s.item.mysettings?.emailfrequency === -1"
-                        >Immediately</span
-                      >
-                      <span v-else-if="s.item.mysettings?.emailfrequency === 0"
-                        >Never</span
-                      >
-                      <span
-                        v-else-if="s.item.mysettings?.emailfrequency != null"
-                      >
-                        {{ periodPlural(s.item.mysettings.emailfrequency) }}
-                      </span>
-                    </b-col>
-                    <b-col cols="4">
-                      Community Event mails
-                      <span v-if="s.item.mysettings?.eventsallowed">On</span>
-                      <span v-else>Off</span>
-                      <br />
-                      Volunteering mails
-                      <span v-if="s.item.mysettings?.volunteeringallowed"
-                        >On</span
-                      >
-                      <span v-else>Off</span>
-                    </b-col>
-                  </b-row>
-                </template>
-              </ShowMore>
-              <h2>Memberships History</h2>
-              <p>When you joined or rejoined communities.</p>
-              <ShowMore v-slot="s" :items="status.data.membershipshistory">
-                <b-row>
-                  <b-col>
-                    {{ s.item.namedisplay }}
-                  </b-col>
-                  <b-col> joined {{ dateonly(s.item.added) }}</b-col>
-                </b-row>
-              </ShowMore>
               <h2>Searches</h2>
               <p>Here's what you've searched for:</p>
               <ShowMore v-slot="s" :items="status.data.searches">
@@ -797,7 +746,6 @@
   </div>
 </template>
 <script setup>
-import pluralize from 'pluralize'
 import ShowMore from '~/components/ShowMore'
 import { useAuthStore } from '~/stores/auth'
 import {
@@ -846,10 +794,6 @@ const downloadlink = computed(() => {
     authStore?.auth?.jwt
   )
 })
-
-function periodPlural(val) {
-  return pluralize('hour', val, true)
-}
 
 async function checkStatus() {
   console.log('Check status')

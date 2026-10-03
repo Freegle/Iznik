@@ -5,7 +5,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
@@ -101,7 +100,6 @@ func TestBuildSSOResponseContainsAllFields(t *testing.T) {
 		AvatarURL: "https://example.com/a.jpg",
 		Admin:     true,
 		Email:     "alice@example.com",
-		GroupList: "Freegle London,Freegle Brighton",
 		IsMod:     true,
 	}
 	out := buildSSOResponse("nonce-value", s)
@@ -114,34 +112,24 @@ func TestBuildSSOResponseContainsAllFields(t *testing.T) {
 	assert.Equal(t, "Alice", vals.Get("name"))
 	assert.Equal(t, "https://example.com/a.jpg", vals.Get("avatar_url"))
 	assert.Equal(t, "true", vals.Get("admin"))
-	// Bio combines email + group list in the shape the PHP SSO expected.
+	// Bio is a fixed moderator statement — no longer a group enumeration.
 	bio := vals.Get("bio")
 	assert.Contains(t, bio, "alice@example.com")
-	assert.Contains(t, bio, "is a mod on Freegle London,Freegle Brighton")
+	assert.Contains(t, bio, "is a Freegle moderator")
 }
 
 func TestBuildSSOResponseNonAdmin(t *testing.T) {
 	// Non-admin users get admin=false (literal string, not omitted).
-	s := &ssoSession{UserID: 1, Name: "Bob", Email: "b@x", GroupList: "G1"}
+	s := &ssoSession{UserID: 1, Name: "Bob", Email: "b@x"}
 	out := buildSSOResponse("n", s)
 	vals, _ := url.ParseQuery(out)
 	assert.Equal(t, "false", vals.Get("admin"))
 }
 
-func TestBuildSSOResponseEmptyGroupList(t *testing.T) {
-	// If the user has no groups, the bio still renders — just with nothing after "mod on".
-	s := &ssoSession{UserID: 7, Name: "Cleo", Email: "c@x", GroupList: ""}
-	out := buildSSOResponse("n", s)
-	vals, _ := url.ParseQuery(out)
-	bio := vals.Get("bio")
-	assert.Contains(t, bio, "c@x")
-	assert.True(t, strings.HasSuffix(bio, "is a mod on "))
-}
-
 func TestBuildSSOResponseRoundTripsViaHMAC(t *testing.T) {
 	// End-to-end: build a response, sign it, validate the signature.
 	secret := "test-secret"
-	s := &ssoSession{UserID: 99, Name: "Dan", Email: "d@x", GroupList: "G"}
+	s := &ssoSession{UserID: 99, Name: "Dan", Email: "d@x"}
 	payload := buildSSOResponse("nonce", s)
 	encoded := base64.StdEncoding.EncodeToString([]byte(payload))
 	sig := computeHMAC(encoded, secret)

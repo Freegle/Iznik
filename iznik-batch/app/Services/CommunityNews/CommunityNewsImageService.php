@@ -28,8 +28,7 @@ class CommunityNewsImageService
     public function __construct(
         private NewsfeedLinkPreviewService $previews,
         private TusService $tus,
-    ) {
-    }
+    ) {}
 
     /**
      * The og:image of the item's source page, re-hosted via TUS.
@@ -39,30 +38,30 @@ class CommunityNewsImageService
     public function uploadItemImage(CommunityNewsItem $item): ?array
     {
         $url = trim((string) $item->url);
-        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+        if ($url === '' || ! preg_match('#^https?://#i', $url)) {
             return null;
         }
 
         try {
             $this->previews->getOrCreate($url);
             $imageUrl = DB::table('link_previews')->where('url', $url)->value('image');
-            if (!$imageUrl || !preg_match('#^https?://#i', $imageUrl)) {
+            if (! $imageUrl || ! preg_match('#^https?://#i', $imageUrl)) {
                 return null;
             }
 
             $resp = Http::timeout(15)->withHeaders(['User-Agent' => 'Freegle-CommunityNews'])->get($imageUrl);
-            if (!$resp->successful()) {
+            if (! $resp->successful()) {
                 return null;
             }
 
             $mime = strtolower(explode(';', $resp->header('Content-Type') ?? '')[0]);
             $data = $resp->body();
-            if (!str_starts_with($mime, 'image/') || $data === '' || strlen($data) > self::MAX_BYTES) {
+            if (! str_starts_with($mime, 'image/') || $data === '' || strlen($data) > self::MAX_BYTES) {
                 return null;
             }
 
             $uploaded = $this->tus->upload($data, $mime);
-            if (!$uploaded) {
+            if (! $uploaded) {
                 return null;
             }
 
@@ -88,9 +87,9 @@ class CommunityNewsImageService
         }
 
         $fileId = substr($externaluid, $p + strlen('freegletusd-'));
-        $source = config('freegle.tus_uploader', 'https://uploads.ilovefreegle.org:8080') . '/' . $fileId;
+        $source = config('freegle.tus_uploader', 'https://uploads.ilovefreegle.org:8080').'/'.$fileId;
         $delivery = config('freegle.delivery.base_url');
 
-        return $delivery ? $delivery . '?url=' . urlencode($source) . '&w=' . $width : $source;
+        return $delivery ? $delivery.'?url='.urlencode($source).'&w='.$width : $source;
     }
 }

@@ -334,13 +334,10 @@ func TestMicroVolunteeringResponseCheckMessage(t *testing.T) {
 	prefix := uniquePrefix("mv_checkmsg")
 	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
 
 	// Create a message from a different user
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
-	CreateTestMembership(t, senderID, groupID, "Member")
-	msgID := CreateTestMessage(t, senderID, groupID, "Test MV Check "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, senderID, "Test MV Check "+prefix, 55.9533, -3.1883)
 
 	body := fmt.Sprintf(`{"msgid":%d,"response":"Approve","comments":"Looks good"}`, msgID)
 	req := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+token,
@@ -372,9 +369,7 @@ func TestMicroVolunteeringResponseCheckMessageNotEligible(t *testing.T) {
 
 	// The message lives on a group the voter does NOT belong to.
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, senderID, groupID, "Member")
-	msgID := CreateTestMessage(t, senderID, groupID, "Test MV NotEligible "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, senderID, "Test MV NotEligible "+prefix, 55.9533, -3.1883)
 
 	// Outsider: logged in, but no membership of the group.
 	outsiderID := CreateTestUser(t, prefix+"_outsider", "User")
@@ -398,9 +393,7 @@ func TestMicroVolunteeringResponseCheckMessageOwnMessageDenied(t *testing.T) {
 	prefix := uniquePrefix("mv_ownmsg")
 	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
-	msgID := CreateTestMessage(t, userID, groupID, "Test MV Own "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, userID, "Test MV Own "+prefix, 55.9533, -3.1883)
 
 	body := fmt.Sprintf(`{"msgid":%d,"response":"Reject","comments":"self","msgcategory":"ShouldntBeHere"}`, msgID)
 	req := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+token, strings.NewReader(body))
@@ -418,9 +411,7 @@ func TestMicroVolunteeringResponsePhotoRotateNotEligible(t *testing.T) {
 
 	// Photo on a message in a group the voter does NOT belong to.
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, senderID, groupID, "Member")
-	msgID := CreateTestMessage(t, senderID, groupID, "Test MV Photo NE "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, senderID, "Test MV Photo NE "+prefix, 55.9533, -3.1883)
 	photoID := CreateTestAttachment(t, msgID)
 
 	outsiderID := CreateTestUser(t, prefix+"_outsider", "User")
@@ -445,9 +436,7 @@ func TestMicroVolunteeringResponsePhotoRotateOwnPhotoAllowed(t *testing.T) {
 	prefix := uniquePrefix("mv_photo_own")
 	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
-	msgID := CreateTestMessage(t, userID, groupID, "Test MV Photo Own "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, userID, "Test MV Photo Own "+prefix, 55.9533, -3.1883)
 	photoID := CreateTestAttachment(t, msgID)
 
 	body := fmt.Sprintf(`{"photoid":%d,"response":"Approve","deg":90}`, photoID)
@@ -492,13 +481,10 @@ func TestMicroVolunteeringResponsePhotoRotate(t *testing.T) {
 	prefix := uniquePrefix("mv_photo")
 	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
 
 	// Create a message with an attachment
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
-	CreateTestMembership(t, senderID, groupID, "Member")
-	msgID := CreateTestMessage(t, senderID, groupID, "Test Photo "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, senderID, "Test Photo "+prefix, 55.9533, -3.1883)
 	photoID := CreateTestAttachment(t, msgID)
 
 	body := fmt.Sprintf(`{"photoid":%d,"response":"Approve","deg":90}`, photoID)
@@ -579,8 +565,7 @@ func TestModFeedbackAsMod(t *testing.T) {
 
 	// Create a mod user with system role that passes IsSystemMod.
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a microaction to provide feedback on.
@@ -629,16 +614,12 @@ func TestMicroVolunteeringRejectQuorumSendsForReview(t *testing.T) {
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
 	reviewer1ID := CreateTestUser(t, prefix+"_rev1", "User")
 	reviewer2ID := CreateTestUser(t, prefix+"_rev2", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, senderID, groupID, "Member")
-	CreateTestMembership(t, reviewer1ID, groupID, "Member")
-	CreateTestMembership(t, reviewer2ID, groupID, "Member")
 
 	// Enable microvolunteering on the group.
 	db.Exec("UPDATE `groups` SET microvolunteering = 1 WHERE id = ?", groupID)
 
 	// Create an approved message.
-	msgID := CreateTestMessage(t, senderID, groupID, "Test Quorum "+prefix, 55.9533, -3.1883)
+	msgID := CreateTestMessage(t, senderID, "Test Quorum "+prefix, 55.9533, -3.1883)
 
 	// Verify starting state is Approved.
 	var startCollection string
@@ -692,13 +673,11 @@ func TestListMicroActions(t *testing.T) {
 	// for groups the mod moderates.
 	prefix := uniquePrefix("MicroList")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
 
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a microaction by the member.
@@ -726,9 +705,8 @@ func TestListMicroActions(t *testing.T) {
 	assert.True(t, found, "Mod should see microaction for member in their group")
 
 	// A mod on a different group should NOT see it.
-	otherGroupID := CreateTestGroup(t, prefix+"_other")
 	otherModID := CreateTestUser(t, prefix+"_othermod", "Moderator")
-	CreateTestMembership(t, otherModID, otherGroupID, "Moderator")
+	PromoteTestUserToModerator(t, otherModID)
 	_, otherModToken := CreateTestSession(t, otherModID)
 
 	req2 := httptest.NewRequest("GET", fmt.Sprintf("/api/microvolunteering?list=true&jwt=%s", otherModToken), nil)
@@ -761,9 +739,7 @@ func TestGetMicrovolunteering_EEELabel_RestrictsToClassifiedItems(t *testing.T) 
 	db := database.DBConn
 	prefix := uniquePrefix("mv_eee_classified")
 
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
 	// Suppress Invite challenge so EEELabel can win the dispatch.

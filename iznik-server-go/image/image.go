@@ -31,7 +31,6 @@ type imageTypeConfig struct {
 
 var typeConfigs = map[string]imageTypeConfig{
 	"Message":        {Table: "messages_attachments", IDColumn: "msgid", TrustStoredContentType: false},
-	"Group":          {Table: "groups_images", IDColumn: "groupid", TrustStoredContentType: true},
 	"Newsletter":     {Table: "newsletters_images", IDColumn: "articleid", TrustStoredContentType: true},
 	"CommunityEvent": {Table: "communityevents_images", IDColumn: "eventid", TrustStoredContentType: true},
 	"Volunteering":   {Table: "volunteering_images", IDColumn: "opportunityid", TrustStoredContentType: true},
@@ -60,7 +59,6 @@ type PostRequest struct {
 	ImgType        string `json:"imgtype"`
 	Type           string `json:"type"` // Alternative field name for imgtype
 	MsgID          uint64 `json:"msgid"`
-	GroupID        uint64 `json:"groupid"`
 	CommunityEvent any    `json:"communityevent"` // Can be uint64 (parent ID) or bool (type flag)
 	Volunteering   any    `json:"volunteering"`   // Can be uint64 (parent ID) or bool (type flag)
 	ChatMessage    uint64 `json:"chatmessage"`
@@ -103,8 +101,6 @@ func (req *PostRequest) resolveParentID() uint64 {
 	switch req.resolveType() {
 	case "Message":
 		return req.MsgID
-	case "Group":
-		return req.GroupID
 	case "Newsletter":
 		return req.Newsletter
 	case "CommunityEvent":
@@ -165,7 +161,7 @@ func Post(c *fiber.Ctx) error {
 // ownsImageParent reports whether myid may attach or modify an image on the given parent
 // entity. A system-role moderator may act on any content; otherwise the caller must own the
 // specific parent. This is what stops anyone attaching or rotating images on another user's
-// existing posts, groups, events, avatars, etc.
+// existing posts, events, avatars, etc.
 func ownsImageParent(myid uint64, imgType string, parentID uint64) bool {
 	if myid == 0 || parentID == 0 {
 		return false
@@ -191,7 +187,7 @@ func ownsImageParent(myid uint64, imgType string, parentID uint64) bool {
 	case "Newsfeed":
 		ownerCol, table = "userid", "newsfeed"
 	default:
-		// Group, Newsletter, Noticeboard: mod-managed content. Non-mods have no ownership
+		// Newsletter, Noticeboard: mod-managed content. Non-mods have no ownership
 		// claim (system mods are already allowed above), so deny.
 		return false
 	}
@@ -233,7 +229,7 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 	// to own that entity (or be a system moderator). Anonymous unlinked uploads (parentID == 0)
 	// stay open: the pre-signup give/post flow uploads images first and links them to the freshly
 	// created draft on submit, so a legitimate upload has no parent yet. Without this, anyone could
-	// attach an arbitrary image to another user's live post, group, event, avatar, etc.
+	// attach an arbitrary image to another user's live post, event, avatar, etc.
 	if parentID != 0 {
 		myid := auth.WhoAmI(c)
 		if myid == 0 {
@@ -333,7 +329,7 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 
 	// SECURITY: rotating mutates an existing image row. Resolve the row's parent entity and
 	// require the caller to own it (or be a system moderator); otherwise anyone could rotate
-	// (deface) any user's avatar, post photo, group image, etc. by iterating image ids.
+	// (deface) any user's avatar, post photo, event image, etc. by iterating image ids.
 	myid := auth.WhoAmI(c)
 	if myid == 0 {
 		return fiber.NewError(fiber.StatusUnauthorized, "Authentication required to rotate an image")

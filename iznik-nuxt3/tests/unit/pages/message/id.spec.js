@@ -111,7 +111,7 @@ const LIVE = {
   type: 'Offer',
   subject: 'OFFER: Dining chairs (Moulton NN3)',
   textbody: 'Four solid oak dining chairs. Good condition.',
-  groups: [{ collection: 'Approved' }],
+  collection: 'Approved',
   attachments: [],
 }
 
@@ -269,10 +269,7 @@ describe('pages/message/[id].vue', () => {
       ['received', { ...LIVE, outcomes: [{ outcome: 'Received' }] }],
       ['withdrawn', { ...LIVE, outcomes: [{ outcome: 'Withdrawn' }] }],
       ['deleted', { ...LIVE, deleted: '2026-07-01' }],
-      [
-        'rejected everywhere',
-        { ...LIVE, groups: [{ collection: 'Rejected' }] },
-      ],
+      ['rejected everywhere', { ...LIVE, collection: 'Rejected' }],
     ]
 
     for (const [label, message] of gone) {

@@ -1,9 +1,6 @@
 <template>
   <div>
-    <b-button v-if="groupid && !banned" variant="white" @click="remove">
-      <v-icon icon="times" /> Remove
-    </b-button>
-    <b-button v-if="groupid && !banned" variant="white" @click="ban">
+    <b-button v-if="!banned" variant="white" @click="ban">
       <v-icon icon="trash-alt" /> Ban
     </b-button>
     <b-button v-if="!spam" variant="white" @click="spamReport">
@@ -12,32 +9,18 @@
     <b-button v-if="supportOrAdmin" variant="white" @click="spamSafelist">
       <v-icon icon="check" /> Safelist
     </b-button>
-    <b-button v-if="groupid" variant="white" @click="addAComment">
+    <b-button variant="white" @click="addAComment">
       <v-icon icon="tag" /> Add note
     </b-button>
-    <ConfirmModal
-      v-if="removeConfirm && groupname"
-      ref="removeConfirmRef"
-      :title="'Remove ' + displayname + ' from ' + groupname + '?'"
-      @confirm="removeConfirmed"
-    />
-    <ConfirmModal
-      v-if="removeConfirm && !groupname"
-      ref="removeConfirmRef"
-      title="Please select a group first."
-    />
     <ModBanMemberConfirmModal
       v-if="banConfirm"
       ref="banConfirmRef"
       :userid="userid"
-      :groupid="groupid"
       @confirm="banConfirmed"
     />
     <ModCommentAddModal
       v-if="showAddCommentModal"
       :userid="userid"
-      :groupid="groupid"
-      :groupname="groupname"
       @added="commentadded"
       @hidden="showAddCommentModal = false"
     />
@@ -51,9 +34,8 @@
 </template>
 <script setup>
 import { ref, computed } from 'vue'
-import { useGroupStore } from '~/stores/group'
 import { useUserStore } from '~/stores/user'
-import { useMemberStore } from '~/stores/member'
+import { useMemberStore } from '~/modtools/stores/member'
 import { useSpammerStore } from '~/modtools/stores/spammer'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/modtools/composables/useModMe'
@@ -62,11 +44,6 @@ const props = defineProps({
   userid: {
     type: Number,
     required: true,
-  },
-  groupid: {
-    type: Number,
-    required: false,
-    default: null,
   },
   banned: {
     type: Boolean,
@@ -84,7 +61,6 @@ const emit = defineEmits(['commentadded'])
 
 const { $api } = useNuxtApp()
 const { checkWork } = useModMe()
-const groupStore = useGroupStore()
 const memberStore = useMemberStore()
 const userStore = useUserStore()
 const spammerStore = useSpammerStore()
@@ -92,44 +68,18 @@ const { me, supportOrAdmin } = useMe()
 
 const spam = computed(() => spammerStore.byId(props.spammerid))
 
-const removeConfirmRef = ref(null)
 const banConfirmRef = ref(null)
 const spamConfirmRef = ref(null)
 
-const removeConfirm = ref(false)
 const banConfirm = ref(false)
 const showAddCommentModal = ref(false)
 const user = ref(null)
 const showSpamModal = ref(false)
 const safelist = ref(false)
 
-const displayname = computed(() => {
-  return user.value ? user.value.displayname : null
-})
-
-const group = computed(() => groupStore.get(props.groupid))
-
-const groupname = computed(() => {
-  return group.value ? group.value.nameshort : null
-})
-
 async function fetchUser() {
   await userStore.fetch(props.userid, true)
   user.value = userStore.byId(props.userid)
-}
-
-async function remove() {
-  if (!user.value) {
-    await fetchUser()
-  }
-
-  removeConfirm.value = true
-  removeConfirmRef.value?.show()
-}
-
-function removeConfirmed() {
-  memberStore.remove(props.userid, props.groupid)
-  checkWork(true)
 }
 
 async function ban() {
@@ -137,26 +87,15 @@ async function ban() {
     await fetchUser()
   }
 
-  if (!group.value) {
-    await groupStore.fetch(props.groupid)
-  }
-
   banConfirm.value = true
   banConfirmRef.value?.show()
 }
 
 async function banConfirmed(reason) {
-  memberStore.ban(props.userid, props.groupid)
+  await memberStore.ban(props.userid, reason)
   await $api.comment.add({
     userid: props.userid,
-    groupid: props.groupid,
-    user1:
-      'Banned on ' +
-      group.value.nameshort +
-      ' by ' +
-      me.value.displayname +
-      ' reason: ' +
-      reason,
+    user1: 'Banned by ' + me.value.displayname + ' reason: ' + reason,
     flag: true,
   })
   checkWork(true)

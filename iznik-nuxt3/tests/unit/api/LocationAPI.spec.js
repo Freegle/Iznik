@@ -131,22 +131,6 @@ describe('LocationAPI', () => {
     })
   })
 
-  describe('del', () => {
-    it('excludes the location rather than deleting it, by id not by name', async () => {
-      mockFetch.mockResolvedValue([200, {}])
-
-      await createApi().del(999, 42)
-
-      const body = calledBody()
-      // 'Exclude' removes the location from a group's coverage; a different action
-      // value here would be a destructive change to a shared locations table.
-      expect(body.action).toBe('Exclude')
-      expect(body.byname).toBe(false)
-      expect(body.id).toBe(999)
-      expect(body.groupid).toBe(42)
-    })
-  })
-
   describe('convertKML', () => {
     it('sends the KML with the ConvertKML action', async () => {
       mockFetch.mockResolvedValue([200, {}])

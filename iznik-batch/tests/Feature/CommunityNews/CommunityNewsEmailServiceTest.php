@@ -44,22 +44,25 @@ class CommunityNewsEmailServiceTest extends TestCase
     }
 
     /**
-     * Give a group a square catchment polygon (polyindex) centred on its lat/lng.
-     * Group::boot() only sets a POINT, which can never ST_Contains a member.
+     * Give an authority a square catchment polygon (half-width $delta degrees)
+     * centred on (lat, lng), and return its id. Mirrors the fixture pattern in
+     * CommunityNewsAreaServiceTest::authority(), with a configurable delta to
+     * match this file's varied catchment sizes.
      */
-    private function catchment($group, float $delta = 0.05): void
+    private function authority(int $id, string $name, float $lat, float $lng, float $delta = 0.05): int
     {
         $srid = (int) config('freegle.srid', 3857);
-        $lat = (float) $group->lat;
-        $lng = (float) $group->lng;
         $w = $lng - $delta;
         $e = $lng + $delta;
         $s = $lat - $delta;
         $n = $lat + $delta;
-        DB::statement(
-            'UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?',
-            ["POLYGON(($w $s, $e $s, $e $n, $w $n, $w $s))", $srid, $group->id]
+
+        DB::insert(
+            'INSERT INTO authorities (id, name, polygon) VALUES (?, ?, ST_GeomFromText(?, ?))',
+            [$id, $name, "POLYGON(($w $s, $e $s, $e $n, $w $n, $w $s))", $srid]
         );
+
+        return $id;
     }
 
     /** Put the member somewhere via the settings.mylocation route. */
@@ -75,9 +78,10 @@ class CommunityNewsEmailServiceTest extends TestCase
     {
         config(['freegle.mail.enabled_types' => '']); // disabled
 
+        $authorityId = $this->authority(920001, 'Testville', 51.5, -0.12);
         $area = CommunityNewsArea::create([
-            'anchorgroupid' => 1, 'name' => 'Testville', 'intro' => 'Hi',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [1], 'groupcount' => 1,
+            'authorityid' => $authorityId, 'name' => 'Testville', 'intro' => 'Hi',
+            'lat' => 51.5, 'lng' => -0.12,
         ]);
         CommunityNewsItem::create([
             'areaid' => $area->id, 'title' => 'T', 'snippet' => 'B',
@@ -90,35 +94,27 @@ class CommunityNewsEmailServiceTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    public function test_sends_to_deduplicated_opted_in_members_only(): void
+    public function test_sends_to_opted_in_deliverable_members_only(): void
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
 
-        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
-        $g2 = $this->createTestGroup(['lat' => 51.51, 'lng' => -0.11, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
-        $this->catchment($g1);
-        $this->catchment($g2);
+        $authorityId = $this->authority(920002, 'Testville', 51.50, -0.12);
 
-        // In BOTH area groups (and living in both catchments) -> exactly one mail (dedup).
+        // Lives inside the authority (via settings.mylocation) -> mailed.
         $u1 = $this->createTestUser(['email_preferred' => 'u1@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->locate($u1, 51.505, -0.115);
-        $this->createMembership($u1, $g1);
-        $this->createMembership($u1, $g2);
 
         // Opted out of newsletters -> no mail.
         $u2 = $this->createTestUser(['email_preferred' => 'u2@test.com', 'newslettersallowed' => 0, 'bouncing' => 0]);
         $this->locate($u2, 51.50, -0.12);
-        $this->createMembership($u2, $g1);
 
         // Bouncing -> no mail.
         $u3 = $this->createTestUser(['email_preferred' => 'u3@test.com', 'newslettersallowed' => 1, 'bouncing' => 1]);
         $this->locate($u3, 51.50, -0.12);
-        $this->createMembership($u3, $g1);
 
         // Normal member living in the catchment -> one mail.
         $u4 = $this->createTestUser(['email_preferred' => 'u4@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->locate($u4, 51.49, -0.13);
-        $this->createMembership($u4, $g1);
 
         // Dormant for over the digest inactivity threshold (182.5 days) -> no
         // mail. The 2026-08-15 send went to every member however inactive
@@ -127,7 +123,6 @@ class CommunityNewsEmailServiceTest extends TestCase
         $u5->lastaccess = now()->subDays(200);
         $u5->save();
         $this->locate($u5, 51.50, -0.12);
-        $this->createMembership($u5, $g1);
 
         // Dormant but inside the threshold -> still mailed (the boundary's
         // other side).
@@ -135,7 +130,6 @@ class CommunityNewsEmailServiceTest extends TestCase
         $u6->lastaccess = now()->subDays(100);
         $u6->save();
         $this->locate($u6, 51.50, -0.12);
-        $this->createMembership($u6, $g1);
 
         // Asked for no email whatsoever (simplemail None) -> no mail. The
         // hand-rolled activity check this gate replaced only looked at
@@ -148,18 +142,16 @@ class CommunityNewsEmailServiceTest extends TestCase
             'settings' => ['simplemail' => User::SIMPLE_MAIL_NONE],
         ]);
         $this->locate($u7, 51.50, -0.12);
-        $this->createMembership($u7, $g1);
 
         // On holiday -> no mail, as for every other mail we send.
         $u8 = $this->createTestUser(['email_preferred' => 'u8@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $u8->onholidaytill = now()->addDays(7);
         $u8->save();
         $this->locate($u8, 51.50, -0.12);
-        $this->createMembership($u8, $g1);
 
         $area = CommunityNewsArea::create([
-            'anchorgroupid' => min($g1->id, $g2->id), 'name' => 'Testville', 'intro' => 'A few nice things.',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id, $g2->id], 'groupcount' => 2,
+            'authorityid' => $authorityId, 'name' => 'Testville', 'intro' => 'A few nice things.',
+            'lat' => 51.5, 'lng' => -0.12,
         ]);
         CommunityNewsItem::create([
             'areaid' => $area->id, 'title' => 'Repair Café', 'snippet' => 'Fix stuff.',
@@ -171,7 +163,7 @@ class CommunityNewsEmailServiceTest extends TestCase
         $sent = Mail::sent(CommunityNewsMail::class);
         $this->assertSame(3, $result['sent']);
         $this->assertCount(3, $sent);
-        $this->assertCount(1, $sent->filter(fn ($m) => $m->userId === $u1->id)); // deduped
+        $this->assertTrue($sent->contains(fn ($m) => $m->userId === $u1->id));
         $this->assertTrue($sent->contains(fn ($m) => $m->userId === $u4->id));
         $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u2->id)); // opted out
         $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u3->id)); // bouncing
@@ -195,8 +187,7 @@ class CommunityNewsEmailServiceTest extends TestCase
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
 
-        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
-        $this->catchment($g1);
+        $authorityId = $this->authority(920003, 'Testville', 51.50, -0.12);
 
         $held = $this->createTestUser([
             'email_preferred' => 'held@suppressed-example.com',
@@ -204,7 +195,6 @@ class CommunityNewsEmailServiceTest extends TestCase
             'bouncing' => 0,
         ]);
         $this->locate($held, 51.50, -0.12);
-        $this->createMembership($held, $g1);
 
         DB::table('mail_suppressions')->insert([
             'scope' => 'domain',
@@ -219,8 +209,8 @@ class CommunityNewsEmailServiceTest extends TestCase
         app(\App\Services\Mail\MailSuppressionService::class)->flushCache();
 
         $area = CommunityNewsArea::create([
-            'anchorgroupid' => $g1->id, 'name' => 'Testville', 'intro' => 'A few nice things.',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id], 'groupcount' => 1,
+            'authorityid' => $authorityId, 'name' => 'Testville', 'intro' => 'A few nice things.',
+            'lat' => 51.5, 'lng' => -0.12,
         ]);
         CommunityNewsItem::create([
             'areaid' => $area->id, 'title' => 'Repair Café', 'snippet' => 'Fix stuff.',
@@ -237,30 +227,28 @@ class CommunityNewsEmailServiceTest extends TestCase
         ]);
     }
 
-    public function test_only_mails_members_their_home_group_covers(): void
+    /**
+     * Coverage is purely a member's location against the area's authority
+     * polygon now — there is no membership row to fall back on, so a member
+     * with no resolvable location, or one who lives well outside the
+     * authority, simply never matches.
+     */
+    public function test_only_mails_members_whose_location_falls_within_the_areas_authority(): void
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
 
-        // Two area groups with separate catchments a safe distance apart.
-        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
-        $g2 = $this->createTestGroup(['lat' => 51.70, 'lng' => -0.40, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
-        $this->catchment($g1);
-        $this->catchment($g2);
+        $authorityId = $this->authority(920004, 'Testville', 51.50, -0.12);
 
-        // Lives inside g1's catchment (via settings.mylocation) -> mailed.
+        // Lives inside the authority (via settings.mylocation) -> mailed.
         $inside = $this->createTestUser(['email_preferred' => 'inside@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->locate($inside, 51.51, -0.13);
-        $this->createMembership($inside, $g1);
 
-        // Member of g1 but lives far outside its catchment -> NOT mailed,
-        // even though the membership row exists (the far-flung-join case).
+        // Lives far outside the authority's catchment -> NOT mailed.
         $outside = $this->createTestUser(['email_preferred' => 'outside@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->locate($outside, 55.95, -3.19); // Edinburgh
-        $this->createMembership($outside, $g1);
 
-        // No location at all -> cannot verify a home group -> NOT mailed.
+        // No location at all -> cannot be matched to any authority -> NOT mailed.
         $nowhere = $this->createTestUser(['email_preferred' => 'nowhere@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
-        $this->createMembership($nowhere, $g1);
 
         // No mylocation but users.lastlocation resolves inside -> mailed
         // (the "mylocation else lastlocation" fallback).
@@ -268,18 +256,10 @@ class CommunityNewsEmailServiceTest extends TestCase
             'name' => 'SW1A 1AA', 'type' => 'Postcode', 'lat' => 51.49, 'lng' => -0.11,
         ]);
         $lastloc = $this->createTestUser(['email_preferred' => 'lastloc@test.com', 'newslettersallowed' => 1, 'bouncing' => 0, 'lastlocation' => $lastlocId]);
-        $this->createMembership($lastloc, $g1);
-
-        // Lives inside g1's catchment but is only a member of g2: g2 is the
-        // group they'd be mailed for, and it does not cover them -> NOT mailed.
-        // Membership and coverage must be of the SAME group (their home group).
-        $wrongGroup = $this->createTestUser(['email_preferred' => 'wronggroup@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
-        $this->locate($wrongGroup, 51.50, -0.12);
-        $this->createMembership($wrongGroup, $g2);
 
         $area = CommunityNewsArea::create([
-            'anchorgroupid' => min($g1->id, $g2->id), 'name' => 'Testville', 'intro' => 'Hi',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id, $g2->id], 'groupcount' => 2,
+            'authorityid' => $authorityId, 'name' => 'Testville', 'intro' => 'Hi',
+            'lat' => 51.5, 'lng' => -0.12,
         ]);
         CommunityNewsItem::create([
             'areaid' => $area->id, 'title' => 'T', 'snippet' => 'B',
@@ -294,7 +274,6 @@ class CommunityNewsEmailServiceTest extends TestCase
         $this->assertContains($lastloc->id, $ids);
         $this->assertNotContains($outside->id, $ids);
         $this->assertNotContains($nowhere->id, $ids);
-        $this->assertNotContains($wrongGroup->id, $ids);
         $this->assertCount(2, $sent);
     }
 
@@ -303,13 +282,13 @@ class CommunityNewsEmailServiceTest extends TestCase
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
         config(['freegle.communitynews.email_min_days' => 7]);
 
-        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $authorityId = $this->authority(920005, 'Testville', 51.50, -0.12);
         $u1 = $this->createTestUser(['email_preferred' => 'u1@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
-        $this->createMembership($u1, $g1);
+        $this->locate($u1, 51.50, -0.12);
 
         $area = CommunityNewsArea::create([
-            'anchorgroupid' => $g1->id, 'name' => 'Testville', 'intro' => 'Hi',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id], 'groupcount' => 1,
+            'authorityid' => $authorityId, 'name' => 'Testville', 'intro' => 'Hi',
+            'lat' => 51.5, 'lng' => -0.12,
             'lastemailed' => now()->subDay(), // emailed yesterday
         ]);
         CommunityNewsItem::create([
@@ -323,54 +302,15 @@ class CommunityNewsEmailServiceTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    public function test_group_newsletter_toggle_defaults_off(): void
-    {
-        config(['freegle.mail.enabled_types' => 'CommunityNews']);
-
-        // The ModTools "Send newsletters to members?" toggle gates the email
-        // and DEFAULTS OFF for Community News: only g3 (explicitly on) mails.
-        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 0]]);
-        $g2 = $this->createTestGroup(['lat' => 51.51, 'lng' => -0.11, 'settings' => ['communitynews' => 1]]);
-        $g3 = $this->createTestGroup(['lat' => 51.52, 'lng' => -0.10, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
-        $this->catchment($g1, 0.004);
-        $this->catchment($g2, 0.004);
-        $this->catchment($g3, 0.004);
-
-        $u1 = $this->createTestUser(['email_preferred' => 'off@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
-        $this->locate($u1, 51.50, -0.12);
-        $this->createMembership($u1, $g1);
-        $u2 = $this->createTestUser(['email_preferred' => 'unset@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
-        $this->locate($u2, 51.51, -0.11);
-        $this->createMembership($u2, $g2);
-        $u3 = $this->createTestUser(['email_preferred' => 'on@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
-        $this->locate($u3, 51.52, -0.10);
-        $this->createMembership($u3, $g3);
-
-        $area = CommunityNewsArea::create([
-            'anchorgroupid' => min($g1->id, $g2->id, $g3->id), 'name' => 'Testville', 'intro' => 'Hi',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id, $g2->id, $g3->id], 'groupcount' => 3,
-        ]);
-        CommunityNewsItem::create([
-            'areaid' => $area->id, 'title' => 'T', 'snippet' => 'B',
-            'url' => 'https://x.org', 'researched_at' => now(),
-        ]);
-
-        $this->svc()->sendWeekly();
-
-        $sent = Mail::sent(CommunityNewsMail::class);
-        $this->assertCount(1, $sent);
-        $this->assertSame($u3->id, $sent->first()->userId);
-    }
-
     public function test_pick_story_uses_flags_window_and_ai(): void
     {
-        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1]]);
+        $authorityId = $this->authority(920006, 'Testville', 51.50, -0.12);
         $author = $this->createTestUser(['email_preferred' => 'story@test.com', 'fullname' => 'Storyteller Sam']);
-        $this->createMembership($author, $g1);
+        $this->locate($author, 51.50, -0.12);
 
         $area = CommunityNewsArea::create([
-            'anchorgroupid' => $g1->id, 'name' => 'Testville', 'intro' => 'Hi',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id], 'groupcount' => 1,
+            'authorityid' => $authorityId, 'name' => 'Testville', 'intro' => 'Hi',
+            'lat' => 51.5, 'lng' => -0.12,
         ]);
 
         $mk = function (array $attrs) use ($author) {
@@ -395,29 +335,27 @@ class CommunityNewsEmailServiceTest extends TestCase
 
         // AI picks candidate 1.
         $this->geminiPicks(1);
-        $story = $this->svc()->pickStory([$g1->id], $area);
+        $story = $this->svc()->pickStory($area);
         $this->assertNotNull($story);
         $this->assertSame('A lovely give', $story['headline']);
         $this->assertSame('Storyteller Sam', $story['name']);
 
         // AI unconvinced (null) -> no story rather than an unvetted one.
         $this->geminiPicks(null);
-        $this->assertNull($this->svc()->pickStory([$g1->id], $area));
+        $this->assertNull($this->svc()->pickStory($area));
     }
 
     public function test_email_includes_story_when_picked(): void
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
 
-        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
-        $this->catchment($g1);
+        $authorityId = $this->authority(920007, 'Testville', 51.50, -0.12);
         $u1 = $this->createTestUser(['email_preferred' => 'u1@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->locate($u1, 51.50, -0.12);
-        $this->createMembership($u1, $g1);
 
         $area = CommunityNewsArea::create([
-            'anchorgroupid' => $g1->id, 'name' => 'Testville', 'intro' => 'Hi',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id], 'groupcount' => 1,
+            'authorityid' => $authorityId, 'name' => 'Testville', 'intro' => 'Hi',
+            'lat' => 51.5, 'lng' => -0.12,
         ]);
         CommunityNewsItem::create([
             'areaid' => $area->id, 'title' => 'T', 'snippet' => 'B',
@@ -447,15 +385,13 @@ class CommunityNewsEmailServiceTest extends TestCase
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
 
-        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
-        $this->catchment($g);
+        $authorityId = $this->authority(920008, 'Testville', 51.50, -0.12);
         $u = $this->createTestUser(['email_preferred' => 'past@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->locate($u, 51.50, -0.12);
-        $this->createMembership($u, $g);
 
         $area = CommunityNewsArea::create([
-            'anchorgroupid' => $g->id, 'name' => 'Testville', 'intro' => 'A few nice things.',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+            'authorityid' => $authorityId, 'name' => 'Testville', 'intro' => 'A few nice things.',
+            'lat' => 51.5, 'lng' => -0.12,
         ]);
 
         // Over and done with - must not go out.
@@ -492,28 +428,26 @@ class CommunityNewsEmailServiceTest extends TestCase
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
 
-        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
-        $this->catchment($g);
+        $authorityId = $this->authority(920009, 'Testville', 51.50, -0.12);
         $u = $this->createTestUser(['email_preferred' => 'textdate@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->locate($u, 51.50, -0.12);
-        $this->createMembership($u, $g);
 
         $area = CommunityNewsArea::create([
-            'anchorgroupid' => $g->id, 'name' => 'Testville', 'intro' => 'A few nice things.',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+            'authorityid' => $authorityId, 'name' => 'Testville', 'intro' => 'A few nice things.',
+            'lat' => 51.5, 'lng' => -0.12,
         ]);
 
         // No event_date, but the blurb names a day six days gone - must not go out.
         CommunityNewsItem::create([
             'areaid' => $area->id, 'title' => 'Food festival',
-            'snippet' => 'On Saturday ' . now()->subDays(6)->format('j F Y') . ', the square fills with stalls.',
+            'snippet' => 'On Saturday '.now()->subDays(6)->format('j F Y').', the square fills with stalls.',
             'url' => 'https://example.org/foodfest', 'source' => 'Council',
             'researched_at' => now()->subDays(3),
         ]);
         // No event_date, blurb names a day still to come - must go out.
         CommunityNewsItem::create([
             'areaid' => $area->id, 'title' => 'Family fun day',
-            'snippet' => 'On Saturday ' . now()->addDays(8)->format('j F Y') . ', the park hosts games and music.',
+            'snippet' => 'On Saturday '.now()->addDays(8)->format('j F Y').', the park hosts games and music.',
             'url' => 'https://example.org/funday', 'source' => 'Parks',
             'researched_at' => now()->subDays(3),
         ]);
@@ -533,15 +467,13 @@ class CommunityNewsEmailServiceTest extends TestCase
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
 
-        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
-        $this->catchment($g);
+        $authorityId = $this->authority(920010, 'Testville', 51.50, -0.12);
         $u = $this->createTestUser(['email_preferred' => 'today@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->locate($u, 51.50, -0.12);
-        $this->createMembership($u, $g);
 
         $area = CommunityNewsArea::create([
-            'anchorgroupid' => $g->id, 'name' => 'Testville', 'intro' => 'A few nice things.',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+            'authorityid' => $authorityId, 'name' => 'Testville', 'intro' => 'A few nice things.',
+            'lat' => 51.5, 'lng' => -0.12,
         ]);
         CommunityNewsItem::create([
             'areaid' => $area->id, 'title' => 'Coffee morning today', 'snippet' => 'Come along.',
@@ -564,15 +496,13 @@ class CommunityNewsEmailServiceTest extends TestCase
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
 
-        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
-        $this->catchment($g);
+        $authorityId = $this->authority(920011, 'Testville', 51.50, -0.12);
         $u = $this->createTestUser(['email_preferred' => 'undated@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->locate($u, 51.50, -0.12);
-        $this->createMembership($u, $g);
 
         $area = CommunityNewsArea::create([
-            'anchorgroupid' => $g->id, 'name' => 'Testville', 'intro' => 'A few nice things.',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+            'authorityid' => $authorityId, 'name' => 'Testville', 'intro' => 'A few nice things.',
+            'lat' => 51.5, 'lng' => -0.12,
         ]);
         CommunityNewsItem::create([
             'areaid' => $area->id, 'title' => 'New cycle path opens', 'snippet' => 'Ride it.',
@@ -597,16 +527,14 @@ class CommunityNewsEmailServiceTest extends TestCase
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
 
-        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
-        $this->catchment($g);
+        $authorityId = $this->authority(920012, 'Testville', 51.50, -0.12);
         $u = $this->createTestUser(['email_preferred' => 'welsh@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->locate($u, 51.50, -0.12);
-        $this->createMembership($u, $g);
 
         $area = CommunityNewsArea::create([
-            'anchorgroupid' => $g->id, 'name' => 'Testville',
+            'authorityid' => $authorityId, 'name' => 'Testville',
             'intro' => 'Shwmae, Testville! The balloons are inflating.',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+            'lat' => 51.5, 'lng' => -0.12,
         ]);
         CommunityNewsItem::create([
             'areaid' => $area->id, 'title' => 'T', 'snippet' => 'B',
@@ -625,16 +553,14 @@ class CommunityNewsEmailServiceTest extends TestCase
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
 
-        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
-        $this->catchment($g);
+        $authorityId = $this->authority(920013, 'Testville', 51.50, -0.12);
         $u = $this->createTestUser(['email_preferred' => 'croeso@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->locate($u, 51.50, -0.12);
-        $this->createMembership($u, $g);
 
         $area = CommunityNewsArea::create([
-            'anchorgroupid' => $g->id, 'name' => 'Testville',
+            'authorityid' => $authorityId, 'name' => 'Testville',
             'intro' => 'Croeso i mid August',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+            'lat' => 51.5, 'lng' => -0.12,
         ]);
         CommunityNewsItem::create([
             'areaid' => $area->id, 'title' => 'T', 'snippet' => 'B',

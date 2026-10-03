@@ -15,13 +15,8 @@ Getting started on Freegle - tip {{ $day }} of {{ $totalDays }}: {!! $heading !!
 @endif
 {!! $ctaLabel !!}: {!! $ctaUrl !!}
 
-@if(!empty($volunteerName))Happy freegling,
-{!! $volunteerName !!}
-Your local Freegle volunteer{{ !empty($volunteerGroup) ? ', ' . $volunteerGroup : '' }}
-@else
 Happy freegling,
 The Freegle team
-@endif
 
 —
 This email was sent to {!! $email !!}.

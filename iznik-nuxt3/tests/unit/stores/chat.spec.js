@@ -24,8 +24,6 @@ const mockAllSeen = vi.fn().mockResolvedValue()
 const mockRsvp = vi.fn().mockResolvedValue()
 const mockFetchReviewChatsMT = vi.fn().mockResolvedValue({ chatmessages: [] })
 const mockAnswerPrompt = vi.fn().mockResolvedValue({ ok: true })
-const mockCommonGroups = vi.fn().mockResolvedValue([])
-const mockReportNoGroup = vi.fn().mockResolvedValue()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -49,8 +47,6 @@ vi.mock('~/api', () => ({
       fetchReviewChatsMT: mockFetchReviewChatsMT,
       rsvp: mockRsvp,
       answerPrompt: mockAnswerPrompt,
-      commonGroups: mockCommonGroups,
-      reportNoGroup: mockReportNoGroup,
     },
   }),
 }))
@@ -63,14 +59,6 @@ const mockUseAuthStore = vi.fn(() => ({
 }))
 vi.mock('~/stores/auth', () => ({
   useAuthStore: (...args) => mockUseAuthStore(...args),
-}))
-
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({
-    fetch: vi.fn().mockResolvedValue(),
-    get: vi.fn().mockReturnValue({ id: 1, nameshort: 'TestGroup' }),
-    list: {},
-  }),
 }))
 
 vi.mock('~/stores/message', () => ({
@@ -515,17 +503,17 @@ describe('chat store', () => {
       expect(mockFetchChat).toHaveBeenCalledWith(42, false)
     })
 
-    it('openChatToMods uses User2Mod chattype', async () => {
+    it('openChatToMods opens the Freegle room with no arguments', async () => {
       const store = useChatStore()
       store.config = {}
       mockOpenChat.mockResolvedValue({ id: 50 })
       mockFetchChat.mockResolvedValue({ id: 50 })
 
-      const id = await store.openChatToMods(10, 20)
+      const id = await store.openChatToMods()
 
       expect(id).toBe(50)
       expect(mockOpenChat).toHaveBeenCalledWith(
-        { chattype: 'User2Mod', groupid: 10, userid: 20 },
+        { chattype: 'User2Mod' },
         expect.any(Function)
       )
     })
@@ -888,20 +876,7 @@ describe('chat store', () => {
     })
   })
 
-  describe('commonGroups', () => {
-    it('returns the common groups from the API', async () => {
-      const store = useChatStore()
-      store.config = {}
-      mockCommonGroups.mockResolvedValueOnce([{ id: 1 }])
-
-      const groups = await store.commonGroups(5)
-
-      expect(mockCommonGroups).toHaveBeenCalledWith(5)
-      expect(groups).toEqual([{ id: 1 }])
-    })
-  })
-
-  describe('report / reportNoGroup', () => {
+  describe('report', () => {
     it('report sends a report reason and refetches messages', async () => {
       const store = useChatStore()
       store.config = {}
@@ -916,15 +891,6 @@ describe('chat store', () => {
         refchatid: 6,
       })
       expect(fetchSpy).toHaveBeenCalledWith(5)
-    })
-
-    it('reportNoGroup reports without refetching messages', async () => {
-      const store = useChatStore()
-      store.config = {}
-
-      await store.reportNoGroup(5, 'Spam', 'comment')
-
-      expect(mockReportNoGroup).toHaveBeenCalledWith(5, 'Spam', 'comment')
     })
   })
 
@@ -967,11 +933,11 @@ describe('chat store', () => {
       mockOpenChat.mockResolvedValue({ id: 30 })
       mockFetchChat.mockResolvedValue({ id: 30 })
 
-      const id = await store.openChatToUser({ groupid: 1, userid: 2 })
+      const id = await store.openChatToUser({ userid: 2 })
 
       expect(id).toBe(30)
       expect(mockOpenChat).toHaveBeenCalledWith(
-        { chattype: 'User2User', groupid: 1, userid: 2 },
+        { chattype: 'User2User', userid: 2 },
         expect.any(Function)
       )
     })
@@ -984,7 +950,6 @@ describe('chat store', () => {
 
       const id = await store.openChatToUser({
         chattype: 'Mod2Mod',
-        groupid: 1,
         userid: 2,
         updateRoster: true,
       })
@@ -993,7 +958,6 @@ describe('chat store', () => {
       expect(mockOpenChat).toHaveBeenCalledWith(
         {
           chattype: 'Mod2Mod',
-          groupid: 1,
           userid: 2,
           updateRoster: true,
         },

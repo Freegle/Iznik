@@ -3,14 +3,10 @@
 namespace App\Services;
 
 use App\Mail\Chat\SpamWarningMail;
-use App\Models\ChatMessage;
-use App\Models\Group;
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 
 /**
  * Processes chat spam:
@@ -79,19 +75,19 @@ class ChatSpamService
             $spammerName = $spammer ? ($spammer->displayname ?? $spammer->fullname ?? 'Unknown') : 'Unknown';
 
             // Find a subject and reply-to from any related message in this chat
-            [$replyTo, $replyName, $subject] = $this->findReplyDetails($room->id, $innocent);
+            [$replyTo, $replyName, $subject] = $this->findReplyDetails($room->id);
 
             try {
-                if (!$dryRun) {
+                if (! $dryRun) {
                     $mail = new SpamWarningMail($innocent, $spammerName, $subject, $replyTo, $replyName);
                     app(\App\Services\EmailSpoolerService::class)->spool($mail, $innocent->email_preferred);
 
                     DB::update('UPDATE chat_rooms SET flaggedspam = 1 WHERE id = ?', [$room->id]);
 
                     Log::info('Chat spam warning sent', [
-                        'chat_id'    => $room->id,
-                        'innocent'   => $innocentId,
-                        'spammer'    => $room->spammer_id,
+                        'chat_id' => $room->id,
+                        'innocent' => $innocentId,
+                        'spammer' => $room->spammer_id,
                     ]);
                 }
 
@@ -99,7 +95,7 @@ class ChatSpamService
             } catch (\Throwable $e) {
                 Log::error('Failed to send chat spam warning', [
                     'chat_id' => $room->id,
-                    'error'   => $e->getMessage(),
+                    'error' => $e->getMessage(),
                 ]);
             }
         }
@@ -140,10 +136,9 @@ class ChatSpamService
         foreach ($users as $user) {
             $user = (object) $user;
 
-            $isModerator = DB::table('memberships')
-                ->where('userid', $user->userid)
-                ->whereIn('role', ['Moderator', 'Owner'])
-                ->exists();
+            $isModerator = User::whereIn('systemrole', [
+                User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN,
+            ])->where('id', $user->userid)->exists();
 
             if ($isModerator) {
                 continue;
@@ -171,18 +166,18 @@ class ChatSpamService
                 continue;
             }
 
-            if (!$dryRun) {
+            if (! $dryRun) {
                 DB::update(
-                    "UPDATE chat_messages
+                    'UPDATE chat_messages
                      SET reviewrequired = 0, processingrequired = 0, processingsuccessful = 0,
                          reviewrejected = 1, reviewedby = NULL
-                     WHERE userid = ? AND reviewrequired = 1 AND reviewedby IS NULL",
+                     WHERE userid = ? AND reviewrequired = 1 AND reviewedby IS NULL',
                     [$user->userid]
                 );
 
                 Log::info('Auto-marked chat messages as spam', [
-                    'userid'  => $user->userid,
-                    'count'   => $pending,
+                    'userid' => $user->userid,
+                    'count' => $pending,
                     'rejects' => $user->count,
                 ]);
             }
@@ -194,24 +189,21 @@ class ChatSpamService
     }
 
     /**
-     * Find a suitable reply-to address and message subject for the spam warning email.
+     * Find a reply-to address, display name and subject for the spam warning email.
      *
-     * Tries to find the group that the chat was about via refmsgids, falling back to the
-     * innocent user's first group membership.
+     * There is one national site, so the reply-to is always the support address; this
+     * just also tries to find the item the chat was about, so the warning can quote it.
      *
      * @return array{0: string, 1: string, 2: string|null} [replyTo, replyName, subject]
      */
-    private function findReplyDetails(int $chatId, User $innocent): array
+    private function findReplyDetails(int $chatId): array
     {
-        $support = config('freegle.mail.support', 'support@ilovefreegle.org');
-        $siteName = config('freegle.branding.name', 'Freegle');
-        $groupDomain = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
-
-        $replyTo = $support;
-        $replyName = $siteName;
+        $replyTo = config('freegle.mail.support_addr', 'support@ilovefreegle.org');
+        $replyName = config('freegle.branding.name', 'Freegle');
         $subject = null;
 
-        // Look for a related message in this chat via refmsgid
+        // Look for a related message in this chat via refmsgid, purely so the warning
+        // email can quote the item it was about.
         $refMsg = DB::table('chat_messages')
             ->where('chatid', $chatId)
             ->whereNotNull('refmsgid')
@@ -219,38 +211,7 @@ class ChatSpamService
             ->value('refmsgid');
 
         if ($refMsg) {
-            $msg = Message::find($refMsg);
-            if ($msg) {
-                $subject = $msg->subject;
-                // messages_groups has no `id` column (PK is composite (msgid, groupid)).
-                // Use `arrival` to pick the most recent attachment if multiple exist.
-                $groupId = MessageGroup::where('msgid', $msg->id)
-                    ->orderByDesc('arrival')
-                    ->value('groupid');
-
-                if ($groupId) {
-                    $group = Group::find($groupId);
-                    if ($group) {
-                        $replyTo = $group->nameshort.'-volunteers@'.$groupDomain;
-                        $replyName = ($group->namefull ?? $group->nameshort ?? $siteName).' Volunteers';
-                    }
-                }
-            }
-        }
-
-        if ($replyTo === $support) {
-            // Fall back to first group the innocent user is a member of
-            $groupId = DB::table('memberships')
-                ->where('userid', $innocent->id)
-                ->value('groupid');
-
-            if ($groupId) {
-                $group = Group::find($groupId);
-                if ($group) {
-                    $replyTo = $group->nameshort.'-volunteers@'.$groupDomain;
-                    $replyName = ($group->namefull ?? $group->nameshort ?? $siteName).' Volunteers';
-                }
-            }
+            $subject = Message::find($refMsg)?->subject;
         }
 
         return [$replyTo, $replyName, $subject];

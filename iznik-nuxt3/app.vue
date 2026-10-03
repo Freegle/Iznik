@@ -113,7 +113,6 @@
 import { useNavbarVisibility } from './composables/useNavbarVisibility'
 import { useNoticeboardStore } from './stores/noticeboard'
 import { useAuthStore } from './stores/auth'
-import { useGroupStore } from './stores/group'
 import { useMessageStore } from './stores/message'
 import { useUserStore } from './stores/user'
 import { useNearbyStore } from './stores/nearby'
@@ -202,7 +201,6 @@ const navbarFallbackImage = (() => {
 })()
 
 const miscStore = useMiscStore()
-const groupStore = useGroupStore()
 const messageStore = useMessageStore()
 const authStore = useAuthStore()
 const userStore = useUserStore()
@@ -234,7 +232,6 @@ const locationStore = useLocationStore()
 const shortlinkStore = useShortlinkStore()
 
 miscStore.init(runtimeConfig)
-groupStore.init(runtimeConfig)
 messageStore.init(runtimeConfig)
 authStore.init(runtimeConfig)
 userStore.init(runtimeConfig)

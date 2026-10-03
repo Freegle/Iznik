@@ -23,8 +23,7 @@ class ReleaseRepliesCommandTest extends TestCase
     private function seedHeldInsideReach(): array
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
         DB::statement(
             "INSERT INTO rippling_reach
                (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
@@ -60,8 +59,7 @@ class ReleaseRepliesCommandTest extends TestCase
     private function seedHeldNoReach(): array
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
         $u1 = $this->createTestUser();
         $u2 = $this->createTestUser();
         $room = $this->createTestChatRoom($u1, $u2);
@@ -161,8 +159,7 @@ class ReleaseRepliesCommandTest extends TestCase
     private function seedHeldOutsideReach(): array
     {
         $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $message = $this->createTestMessage($user, $group);
+        $message = $this->createTestMessage($user);
         DB::statement(
             "INSERT INTO rippling_reach
                (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,

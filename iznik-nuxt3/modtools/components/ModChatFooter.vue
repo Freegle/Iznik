@@ -408,7 +408,6 @@
     <ModCommentAddModal
       v-if="showAddCommentModal && chat.user1"
       :userid="chat.user1"
-      :groupid="chat.groupid || chat.group?.id || 0"
       @hidden="showAddCommentModal = false"
     />
   </div>

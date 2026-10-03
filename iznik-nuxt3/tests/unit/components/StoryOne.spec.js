@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense } from 'vue'
 import StoryOne from '~/components/StoryOne.vue'
 
-const { mockStory, mockUser, mockUserLocation, mockGroup } = vi.hoisted(() => {
+const { mockStory, mockUser, mockUserLocation } = vi.hoisted(() => {
   return {
     mockStory: {
       id: 1,
@@ -25,11 +25,6 @@ const { mockStory, mockUser, mockUserLocation, mockGroup } = vi.hoisted(() => {
       display: 'London',
       groupname: 'Freegle London',
     },
-    mockGroup: {
-      id: 200,
-      namedisplay: 'Freegle Manchester',
-      nameshort: 'Manchester',
-    },
   }
 })
 
@@ -48,10 +43,6 @@ const mockAuthStore = {
   user: { id: 1 },
 }
 
-const mockGroupStore = {
-  fetch: vi.fn().mockResolvedValue(mockGroup),
-}
-
 vi.mock('~/stores/stories', () => ({
   useStoryStore: () => mockStoryStore,
 }))
@@ -64,10 +55,6 @@ vi.mock('~/stores/auth', () => ({
   useAuthStore: () => mockAuthStore,
 }))
 
-vi.mock('~/stores/group', () => ({
-  useGroupStore: () => mockGroupStore,
-}))
-
 vi.mock('~/composables/useTimeFormat', () => ({
   timeago: vi.fn().mockReturnValue('2 days ago'),
 }))
@@ -78,7 +65,6 @@ describe('StoryOne', () => {
     mockStoryStore.fetch.mockResolvedValue(mockStory)
     mockUserStore.fetch.mockResolvedValue(mockUser)
     mockUserStore.fetchPublicLocation.mockResolvedValue(mockUserLocation)
-    mockGroupStore.fetch.mockResolvedValue(mockGroup)
     mockAuthStore.user = { id: 1 }
   })
 
@@ -188,23 +174,6 @@ describe('StoryOne', () => {
     it('shows story ID link', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('#1')
-    })
-  })
-
-  describe('group display', () => {
-    it('shows group name when groupId provided', async () => {
-      const wrapper = await createWrapper({ groupId: 200 })
-      expect(wrapper.text()).toContain('Freegle Manchester')
-    })
-
-    it('fetches group when groupId provided', async () => {
-      await createWrapper({ groupId: 200 })
-      expect(mockGroupStore.fetch).toHaveBeenCalledWith(200)
-    })
-
-    it('does not fetch group when groupId not provided', async () => {
-      await createWrapper()
-      expect(mockGroupStore.fetch).not.toHaveBeenCalled()
     })
   })
 

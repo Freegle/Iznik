@@ -61,9 +61,7 @@ class RecoverDroppedMergedUserMailCommandTest extends TestCase
     {
         $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
         $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
 
         // Create a deleted user to simulate the merged-away user
         $deletedUser = User::create(['fullname' => 'Deleted Merged User', 'added' => now()]);
@@ -114,9 +112,7 @@ class RecoverDroppedMergedUserMailCommandTest extends TestCase
     {
         $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
         $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
 
         $deletedUser = User::create(['fullname' => 'Deleted Merged User', 'added' => now()]);
         $fakeOldUid = $deletedUser->id;
@@ -168,9 +164,7 @@ class RecoverDroppedMergedUserMailCommandTest extends TestCase
     {
         $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
         $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
 
         $deletedUser = User::create(['fullname' => 'Deleted Merged User', 'added' => now()]);
         $fakeOldUid = $deletedUser->id;
@@ -213,9 +207,7 @@ class RecoverDroppedMergedUserMailCommandTest extends TestCase
     {
         $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
         $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $message = $this->createTestMessage($poster, $group);
+        $message = $this->createTestMessage($poster);
 
         $deletedUser = User::create(['fullname' => 'Deleted Merged User', 'added' => now()]);
         $fakeOldUid = $deletedUser->id;

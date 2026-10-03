@@ -46,7 +46,6 @@ import (
 	"github.com/freegle/iznik-server-go/electricals"
 	"github.com/freegle/iznik-server-go/emailtracking"
 	"github.com/freegle/iznik-server-go/export"
-	"github.com/freegle/iznik-server-go/group"
 	"github.com/freegle/iznik-server-go/housekeeper"
 	"github.com/freegle/iznik-server-go/image"
 	"github.com/freegle/iznik-server-go/isochrone"
@@ -54,7 +53,7 @@ import (
 	"github.com/freegle/iznik-server-go/job"
 	"github.com/freegle/iznik-server-go/location"
 	"github.com/freegle/iznik-server-go/logs"
-	"github.com/freegle/iznik-server-go/membership"
+	"github.com/freegle/iznik-server-go/member"
 	"github.com/freegle/iznik-server-go/merge"
 	"github.com/freegle/iznik-server-go/message"
 
@@ -64,6 +63,7 @@ import (
 	"github.com/freegle/iznik-server-go/newsfeed"
 	"github.com/freegle/iznik-server-go/noticeboard"
 	"github.com/freegle/iznik-server-go/notification"
+	"github.com/freegle/iznik-server-go/partner"
 	"github.com/freegle/iznik-server-go/partnerships"
 	"github.com/freegle/iznik-server-go/recommendations"
 	"github.com/freegle/iznik-server-go/rippling"
@@ -224,6 +224,14 @@ func SetupRoutes(app *fiber.App) {
 		rg.Patch("/modtools/admin", admin.PatchAdmin)
 		rg.Delete("/modtools/admin", admin.DeleteAdmin)
 
+		// Members (national - replaces per-group pending/spam member lists)
+		rg.Get("/modtools/members", member.ListMembers)
+		rg.Get("/modtools/members/:id", member.GetMember)
+		rg.Post("/modtools/members/:id/ban", member.BanMember)
+		rg.Delete("/modtools/members/:id/ban", member.UnbanMember)
+		rg.Patch("/modtools/members/:id", member.PatchMember)
+		rg.Post("/modtools/members/:id/flag/clear", member.ClearFlag)
+
 		// AI Image regeneration (support/admin only)
 		rg.Get("/admin/ai-images/review", aiimage.ListReview)
 		rg.Get("/admin/ai-images/count", aiimage.Count)
@@ -321,15 +329,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {array} chat.ChatMessage
 		rg.Get("/chat/:id/message", chat.GetChatMessages)
-
-		// @Router /chat/{id}/commongroups [get]
-		// @Summary Groups in common between the two chat participants
-		// @Tags chat
-		// @Produce json
-		// @Param id path integer true "Chat ID"
-		// @Security BearerAuth
-		// @Success 200 {array} chat.CommonGroup
-		rg.Get("/chat/:id/commongroups", chat.GetCommonGroups)
 
 		// Create Chat Message
 		// @Router /chat/{id}/message [post]
@@ -501,16 +500,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {array} communityevent.CommunityEvent
 		rg.Get("/communityevent", communityevent.List)
 
-		// Group Community Events
-		// @Router /communityevent/group/{id} [get]
-		// @Summary List community events for group
-		// @Description Returns all community events for a specific group
-		// @Tags communityevent
-		// @Produce json
-		// @Param id path integer true "Group ID"
-		// @Success 200 {array} communityevent.CommunityEvent
-		rg.Get("/communityevent/group/:id", communityevent.ListGroup)
-
 		// Single Community Event
 		// @Router /communityevent/{id} [get]
 		// @Summary Get community event by ID
@@ -592,43 +581,6 @@ func SetupRoutes(app *fiber.App) {
 		adminConfig := rg.Group("/config/admin")
 		adminConfig.Use(config.RequireSupportOrAdminMiddleware())
 
-		// @Router /config/admin/concern_keywords [get]
-		// @Summary List concern keywords
-		// @Tags config
-		// @Produce json
-		// @Security BearerAuth
-		// @Param scope query string false "Filter by scope (global/group)"
-		// @Param group_id query string false "Filter by group ID (when scope=group)"
-		// @Success 200 {array} config.ConcernKeyword
-		// @Failure 401 {object} fiber.Error "Authentication required"
-		// @Failure 403 {object} fiber.Error "Support or Admin role required"
-		adminConfig.Get("/concern_keywords", config.ListConcernKeywords)
-
-		// @Router /config/admin/concern_keywords [post]
-		// @Summary Create a concern keyword
-		// @Tags config
-		// @Accept json
-		// @Produce json
-		// @Security BearerAuth
-		// @Param body body config.CreateConcernKeywordRequest true "Concern keyword to create"
-		// @Success 200 {object} config.ConcernKeyword
-		// @Failure 400 {object} fiber.Error "Invalid request"
-		// @Failure 401 {object} fiber.Error "Authentication required"
-		// @Failure 403 {object} fiber.Error "Support or Admin role required"
-		adminConfig.Post("/concern_keywords", config.CreateConcernKeyword)
-
-		// @Router /config/admin/concern_keywords/{id} [delete]
-		// @Summary Delete a concern keyword
-		// @Tags config
-		// @Produce json
-		// @Security BearerAuth
-		// @Param id path int true "Concern keyword ID"
-		// @Success 200 {object} map[string]bool
-		// @Failure 401 {object} fiber.Error "Authentication required"
-		// @Failure 403 {object} fiber.Error "Support or Admin role required"
-		// @Failure 404 {object} fiber.Error "Concern keyword not found"
-		adminConfig.Delete("/concern_keywords/:id", config.DeleteConcernKeyword)
-
 		// Admin Config Patch
 		// @Router /config/admin [patch]
 		// @Summary Update admin config keys
@@ -637,68 +589,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Security BearerAuth
 		adminConfig.Patch("", deprecation.Marker("PATCH /config/admin", "2026-08-01"), config.PatchAdminConfig)
-
-		// Groups
-		// @Router /group [get]
-		// @Summary List groups
-		// @Description Returns all groups
-		// @Tags group
-		// @Produce json
-		// @Success 200 {array} group.Group
-		rg.Get("/group", group.ListGroups)
-
-		// Per-group work counts for moderators.
-		rg.Get("/group/work", group.GetGroupWork)
-
-		// Single Group
-		// @Router /group/{id} [get]
-		// @Summary Get group by ID
-		// @Description Returns a single group by ID
-		// @Tags group
-		// @Produce json
-		// @Param id path integer true "Group ID"
-		// @Success 200 {object} group.Group
-		// @Failure 404 {object} fiber.Error "Group not found"
-		rg.Get("/group/:id", group.GetGroup)
-
-		// Create Group
-		// @Router /group [post]
-		// @Summary Create a new group
-		// @Tags group
-		// @Accept json
-		// @Produce json
-		// @Security BearerAuth
-		// @Success 200 {object} fiber.Map
-		rg.Post("/group", group.CreateGroup)
-
-		// Group Messages
-		// @Router /group/{id}/message [get]
-		// @Summary Get messages for group
-		// @Description Returns messages for a specific group
-		// @Tags group,message
-		// @Produce json
-		// @Param id path integer true "Group ID"
-		// @Success 200 {array} message.Message
-		rg.Get("/group/:id/message", group.GetGroupMessages)
-
-		// Group Message Summaries
-		// @Router /group/{id}/message/summary [get]
-		// @Summary Get id + subject for a group's live posts
-		// @Description Backs the server-rendered, crawlable post list on the community page
-		// @Tags group,message
-		// @Produce json
-		// @Param id path integer true "Group ID"
-		// @Success 200 {array} group.GroupMessageSummary
-		rg.Get("/group/:id/message/summary", group.GetGroupMessageSummaries)
-
-		// Group PATCH
-		// @Router /group [patch]
-		// @Summary Update group settings
-		// @Description Update group fields. Requires mod/owner role or admin/support.
-		// @Tags group
-		// @Accept json
-		// @Produce json
-		rg.Patch("/group", group.PatchGroup)
 
 		// Noticeboard GET (list)
 		// @Router /noticeboard [get]
@@ -904,12 +794,15 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/locations/kml", location.ConvertKML)
 		rg.Post("/locations", location.ExcludeLocation)
 
-		// Message List (moderation queue + public listing)
-		// @Router /messages [get]
-		// @Summary List messages with moderation queue support
+		// ModTools message listing: published (live) or takendown, national.
+		// @Router /modtools/messages [get]
+		// @Summary List published or taken-down messages for moderators
 		// @Tags message
-		rg.Get("/messages", deprecation.Marker("GET /messages", "2026-08-01"), message.ListMessages)
 		rg.Get("/modtools/messages", message.ListMessagesMT)
+
+		// Completed freegle outcomes (national, for the ModTools home page)
+		rg.Get("/modtools/outcomes", message.ListOutcomes)
+		rg.Patch("/modtools/outcomes/:id", message.ReviewOutcome)
 
 		// Message Sitemap
 		// @Router /message/sitemap [get]
@@ -941,17 +834,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Param nelng query number true "Northeast longitude"
 		// @Success 200 {array} message.Message
 		rg.Get("/message/inbounds", message.Bounds)
-
-		// Messages by Group
-		// @Router /message/mygroups/{id} [get]
-		// @Summary Get messages by group
-		// @Description Returns messages for user's groups, optionally filtered by group ID
-		// @Tags message,group
-		// @Produce json
-		// @Param id path integer false "Group ID (optional)"
-		// @Security BearerAuth
-		// @Success 200 {array} message.Message
-		rg.Get("/message/mygroups/:id?", message.Groups)
 
 		// Message Search
 		// @Router /message/search/{term} [get]
@@ -1299,16 +1181,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 404 {object} fiber.Error "Story not found"
 		rg.Get("/story/:id", story.Single)
 
-		// Group Stories
-		// @Router /story/group/{id} [get]
-		// @Summary Get stories for group
-		// @Description Returns stories for a specific group
-		// @Tags story,group
-		// @Produce json
-		// @Param id path integer true "Group ID"
-		// @Success 200 {array} story.Story
-		rg.Get("/story/group/:id", story.Group)
-
 		// Story Write Operations
 		// @Router /story [put]
 		// @Summary Create a story
@@ -1423,8 +1295,6 @@ func SetupRoutes(app *fiber.App) {
 		rg.Get("/partnership/:id", partnerships.Single)
 		rg.Patch("/partnership/:id", partnerships.Update)
 		rg.Delete("/partnership/:id", partnerships.Delete)
-		rg.Get("/partnership/:id/group", partnerships.Groups)
-		rg.Patch("/partnership/:id/group", partnerships.PatchGroups)
 		rg.Put("/partnership/:id/year", partnerships.PutYears)
 		rg.Post("/partnership/:id/payment", partnerships.CreatePayment)
 		rg.Patch("/partnership/:id/payment/:paymentid", partnerships.UpdatePayment)
@@ -1457,16 +1327,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Success 200 {array} volunteering.Volunteering
 		rg.Get("/volunteering", volunteering.List)
-
-		// Group Volunteering Opportunities
-		// @Router /volunteering/group/{id} [get]
-		// @Summary List volunteering opportunities for group
-		// @Description Returns volunteering opportunities for a specific group
-		// @Tags volunteering,group
-		// @Produce json
-		// @Param id path integer true "Group ID"
-		// @Success 200 {array} volunteering.Volunteering
-		rg.Get("/volunteering/group/:id", volunteering.ListGroup)
 
 		// Single Volunteering Opportunity
 		// @Router /volunteering/{id} [get]
@@ -1808,16 +1668,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {array} object
 		rg.Get("/user/:id/newsfeed", user.GetUserNewsfeed)
 
-		// @Router /user/{id}/applied [get]
-		// @Summary Get recent group applications for a user
-		// @Description Returns groups the user applied to in the last 31 days. Mod-only.
-		// @Tags user-support
-		// @Produce json
-		// @Param id path integer true "User ID"
-		// @Security BearerAuth
-		// @Success 200 {array} object
-		rg.Get("/user/:id/applied", user.GetUserApplied)
-
 		// @Router /user/{id}/replies [get]
 		// @Summary Get messages a user replied to
 		// @Description Returns messages the user expressed interest in. Mod-only.
@@ -1828,17 +1678,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {array} object
 		rg.Get("/user/:id/replies", user.GetUserReplies)
-
-		// @Router /user/{id}/membershiphistory [get]
-		// @Summary Get full membership history for a user
-		// @Description Returns all membership changes (joins/leaves) for the user. Mod-only.
-		// @Tags user-support
-		// @Produce json
-		// @Param id path integer true "User ID"
-		// @Param limit query integer false "Max records (default 100, max 500)"
-		// @Security BearerAuth
-		// @Success 200 {array} object
-		rg.Get("/user/:id/membershiphistory", user.GetUserMembershipHistory)
 
 		// @Router /user/{id}/logins [get]
 		// @Summary Get login history for a user
@@ -1903,44 +1742,17 @@ func SetupRoutes(app *fiber.App) {
 
 		// Memberships
 		// @Router /memberships [put]
-		// @Summary Subscribe user to group
-		// @Description Adds a user to a group. Supports JWT auth (self-join or mod-add-member) and partner key auth (TN integration).
+		// @Summary Join via TrashNothing partner
+		// @Description Gives a TrashNothing member a Freegle account and, if they have no location yet, one from their TrashNothing area's centroid. Partner key auth only.
 		// @Tags membership
 		// @Accept json
 		// @Produce json
-		// @Param partner query string false "Partner API key (alternative to JWT auth)"
-		// @Param tnuserid query integer false "Trash Nothing user ID (partner auth only)"
-		// @Param email query string false "User email address (partner auth only)"
-		// @Param groupid query integer false "Group ID (partner auth only; JWT auth uses body)"
-		// @Security BearerAuth
-		// @Success 200 {object} fiber.Map "Returns ret, status, addedto, and fduserid (partner auth)"
-		rg.Put("/memberships", membership.PutMemberships)
-
-		// @Router /memberships [delete]
-		// @Summary Unsubscribe user from group
-		// @Description Removes a user from a group. Supports JWT auth and partner key auth (TN integration).
-		// @Tags membership
-		// @Accept json
-		// @Produce json
-		// @Param partner query string false "Partner API key (alternative to JWT auth)"
-		// @Param tnuserid query integer false "Trash Nothing user ID (partner auth only)"
-		// @Param email query string false "User email address (partner auth only)"
-		// @Param groupid query integer false "Group ID (partner auth only; JWT auth uses body)"
-		// @Security BearerAuth
-		// @Success 200 {object} fiber.Map "Returns ret, status, and fduserid (partner auth)"
-		rg.Delete("/memberships", membership.DeleteMemberships)
-
-		// @Router /memberships [patch]
-		// @Summary Update membership settings
-		// @Description Updates email frequency, events allowed, volunteering allowed
-		// @Tags membership
-		// @Accept json
-		// @Produce json
-		// @Security BearerAuth
-		// @Success 200 {object} fiber.Map
-		rg.Patch("/memberships", membership.PatchMemberships)
-		rg.Get("/memberships", membership.GetMemberships)
-		rg.Post("/memberships", membership.PostMemberships)
+		// @Param partner query string true "Partner API key"
+		// @Param tnuserid query integer false "Trash Nothing user ID"
+		// @Param email query string false "User email address"
+		// @Param groupid query integer false "Trash Nothing area ID, resolved against partner_areas"
+		// @Success 200 {object} fiber.Map "Returns ret, status, and fduserid"
+		rg.Put("/memberships", partner.PutMember)
 
 		// Merge
 		rg.Get("/merge", merge.GetMerge)

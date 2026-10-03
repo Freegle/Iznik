@@ -17,16 +17,8 @@ import { computed } from 'vue'
 import { useDonationStore } from '~/stores/donations'
 import VueThermometer from '~/components/VueThermometer'
 
-const props = defineProps({
-  groupid: {
-    type: Number,
-    required: false,
-    default: null,
-  },
-})
-
 const donationStore = useDonationStore()
-await donationStore.fetch(props.groupid)
+await donationStore.fetch()
 
 const target = donationStore.target
 const raised = donationStore.raised

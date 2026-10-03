@@ -7,7 +7,6 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\User;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Mail;
 
 class SendTestChatNotificationCommand extends Command
 {

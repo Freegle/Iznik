@@ -10,7 +10,7 @@ import (
 )
 
 // The cell-set calls that client_pure_test.go does not reach: VectorizeCells,
-// GroupsIntersectingCells, ReachContaining and ReachOverflowContaining.
+// ReachContaining and ReachOverflowContaining.
 // (RasterizeWKT's cell-set validation is already covered there; this file
 // deliberately does not duplicate it, and adds only its transport failures.)
 //
@@ -167,66 +167,6 @@ func TestVectorizeCellsFailuresAreErrors(t *testing.T) {
 			}
 			if wkt != "" || geojson != "" {
 				t.Errorf("got wkt=%q geojson=%q alongside the error, want both empty", wkt, geojson)
-			}
-		})
-	}
-}
-
-func TestGroupsIntersectingCellsParsesTheRelations(t *testing.T) {
-	path := serveBytes(t, http.StatusOK, []byte(`{"groups":[{"id":7,"within":true},{"id":9,"within":false}]}`))
-
-	got, err := GroupsIntersectingCells(validCellSet)
-	if err != nil {
-		t.Fatalf("GroupsIntersectingCells returned %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("got %d relations, want 2", len(got))
-	}
-	// `within` decides whether a reach is clipped away entirely rather than
-	// trimmed, so getting the flag onto the right group matters.
-	if got[0].ID != 7 || !got[0].Within {
-		t.Errorf("first relation = %+v, want id 7 within=true", got[0])
-	}
-	if got[1].ID != 9 || got[1].Within {
-		t.Errorf("second relation = %+v, want id 9 within=false", got[1])
-	}
-	if *path != "/v1/groups/intersecting" {
-		t.Errorf("posted to %q, want /v1/groups/intersecting", *path)
-	}
-}
-
-// 503 is distinguished from other non-200s because the caller's correct
-// response differs: the dataset is still building, so wait rather than treat
-// "no groups" as the answer.
-func TestGroupsIntersectingCellsReportsDatasetNotReady(t *testing.T) {
-	serveBytes(t, http.StatusServiceUnavailable, nil)
-
-	got, err := GroupsIntersectingCells(validCellSet)
-	if err == nil {
-		t.Fatal("a 503 was treated as success, which reads as 'no group overlaps'")
-	}
-	if !strings.Contains(err.Error(), "not ready") {
-		t.Errorf("error = %q, want it to say the dataset is not ready", err)
-	}
-	if got != nil {
-		t.Errorf("got %v alongside the error, want nil", got)
-	}
-}
-
-func TestGroupsIntersectingCellsFailuresAreErrors(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		status int
-		body   string
-	}{
-		{"server error", http.StatusInternalServerError, ""},
-		{"unparseable body", http.StatusOK, "not json"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			serveBytes(t, tc.status, []byte(tc.body))
-
-			if _, err := GroupsIntersectingCells(validCellSet); err == nil {
-				t.Fatal("failure was reported as success")
 			}
 		})
 	}

@@ -27,7 +27,6 @@ func TestNearbyFeed_OwnPostFlaggedMine(t *testing.T) {
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("ownmine")
-	group := CreateTestGroup(t, prefix)
 	otherID := CreateTestUser(t, prefix+"_other", "Other")
 
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
@@ -35,10 +34,10 @@ func TestNearbyFeed_OwnPostFlaggedMine(t *testing.T) {
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 
 	// 'rival': another member's post, in reach of the viewer -> appears via the reach arm, NOT mine.
-	rival := CreateTestMessage(t, otherID, group, "OFFER: someone else, in reach (ownmine)", 51.5, -0.1)
+	rival := CreateTestMessage(t, otherID, "OFFER: someone else, in reach (ownmine)", 51.5, -0.1)
 	// 'own': the viewer's OWN post, placed far away with NO reach row covering the viewer, so it can
 	// only reach the feed via the own-posts arm — proving own posts show regardless of reach.
-	own := CreateTestMessage(t, viewerID, group, "OFFER: my own post, out of reach (ownmine)", 53.0, 2.0)
+	own := CreateTestMessage(t, viewerID, "OFFER: my own post, out of reach (ownmine)", 53.0, 2.0)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", rival, own)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", rival, own)
 

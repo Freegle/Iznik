@@ -54,7 +54,6 @@ describe('compose store', () => {
       const store = useComposeStore()
       expect(store.email).toBeNull()
       expect(store.postcode).toBeNull()
-      expect(store.group).toBeNull()
       expect(store.messages).toEqual([])
       expect(store.attachmentBump).toBe(1)
       expect(store._progress).toBe(1)
@@ -83,39 +82,20 @@ describe('compose store', () => {
   })
 
   describe('setPostcode', () => {
-    it('strips groupsnear to minimal fields', () => {
+    it('stores a copy of the given postcode', () => {
       const store = useComposeStore()
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 
-      store.setPostcode({
-        id: 1,
-        name: 'SW1A 1AA',
-        groupsnear: [
-          {
-            id: 10,
-            nameshort: 'Westminster',
-            namedisplay: 'Westminster Freegle',
-            settings: { closed: false, someOther: true },
-            extraField: 'removed',
-          },
-        ],
-      })
+      store.setPostcode({ id: 1, name: 'SW1A 1AA' })
 
-      expect(store.postcode.name).toBe('SW1A 1AA')
-      expect(store.postcode.groupsnear[0]).toEqual({
-        id: 10,
-        nameshort: 'Westminster',
-        namedisplay: 'Westminster Freegle',
-        settings: { closed: false },
-      })
-      expect(store.postcode.groupsnear[0].extraField).toBeUndefined()
+      expect(store.postcode).toEqual({ id: 1, name: 'SW1A 1AA' })
       logSpy.mockRestore()
     })
 
-    it('does nothing when postcode has no groupsnear', () => {
+    it('does nothing when passed a falsy postcode', () => {
       const store = useComposeStore()
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      store.setPostcode({ id: 1, name: 'SW1A' })
+      store.setPostcode(null)
       expect(store.postcode).toBeNull()
       logSpy.mockRestore()
     })
@@ -126,7 +106,6 @@ describe('compose store', () => {
       const store = useComposeStore()
       store.init({ public: {} })
       store.postcode = { id: 5 }
-      store.group = 10
       mockMessagePut.mockResolvedValueOnce({ id: 999 })
 
       const id = await store.createDraft(
@@ -599,7 +578,6 @@ describe('compose store', () => {
       const store = useComposeStore()
       store.init({ public: {} })
       store.postcode = { id: 123 }
-      store.group = 10
       mockMessagePut.mockResolvedValue({ id: 99 })
 
       const id = await store.createDraft(
@@ -621,7 +599,6 @@ describe('compose store', () => {
           messagetype: 'Offer',
           item: 'Sofa',
           attachments: [5, 6],
-          groupid: 10,
           email: 'test@example.com',
         })
       )
@@ -672,7 +649,7 @@ describe('compose store', () => {
       const store = useComposeStore()
       store.init({ public: {} })
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      mockJoinAndPost.mockResolvedValue({ ok: true })
 
       const result = await store.submitDraft(99, 'test@a.com', {
         deadline: '2026-05-01',
@@ -684,7 +661,7 @@ describe('compose store', () => {
         expect.objectContaining({ deadline: '2026-05-01' })
       )
       expect(mockMessageFetch).toHaveBeenCalledWith(99, true)
-      expect(result).toEqual({ groupid: 10 })
+      expect(result).toEqual({ ok: true })
       logSpy.mockRestore()
     })
   })
@@ -695,16 +672,10 @@ describe('compose store', () => {
       store.init({ public: {} })
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
       mockMessagePut.mockResolvedValue({ id: 77 })
-      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      mockJoinAndPost.mockResolvedValue({ ok: true })
 
       store.setEmail('test@a.com')
-      store.setPostcode({
-        id: 5,
-        name: 'SW1A 1AA',
-        groupsnear: [
-          { id: 10, nameshort: 'Westminster', namedisplay: 'Westminster' },
-        ],
-      })
+      store.setPostcode({ id: 5, name: 'SW1A 1AA' })
       const id = store.add()
       store.setType({ id, type: 'Offer' })
       store.setItem({ id, item: 'Table' })
@@ -750,7 +721,7 @@ describe('compose store', () => {
       mockMessagePatch.mockResolvedValue({})
 
       const initialProgress = store._progress
-      await store.updateIt(1, 100, 'Offer', 'Sofa', 'Good', [5], 1, 10)
+      await store.updateIt(1, 100, 'Offer', 'Sofa', 'Good', [5], 1)
 
       expect(mockMessagePatch).toHaveBeenCalledWith({
         id: 1,
@@ -759,7 +730,6 @@ describe('compose store', () => {
         item: 'Sofa',
         textbody: 'Good',
         attachments: [5],
-        groupid: 10,
         availablenow: 1,
       })
       expect(store._progress).toBe(initialProgress + 1)
@@ -947,25 +917,6 @@ describe('compose store', () => {
     })
   })
 
-  describe('noGroups getter', () => {
-    it('returns true when no groupsnear', () => {
-      const store = useComposeStore()
-      store.postcode = { name: 'AB1' }
-      expect(store.noGroups).toBe(true)
-    })
-
-    it('returns false when groups exist', () => {
-      const store = useComposeStore()
-      store.postcode = { name: 'AB1', groupsnear: [{ id: 1 }] }
-      expect(store.noGroups).toBe(false)
-    })
-
-    it('returns true when no postcode', () => {
-      const store = useComposeStore()
-      expect(store.noGroups).toBe(true)
-    })
-  })
-
   describe('AI image suppressed when user uploads own photo', () => {
     it('excludes AI-generated image from submission when user has uploaded their own real photo', async () => {
       const store = useComposeStore()
@@ -1008,7 +959,6 @@ describe('compose store', () => {
       store.init({ public: {} })
       store.postcode = { id: 123 }
       store.email = 'test@example.com'
-      store.group = 10
 
       store.messages = [
         {
@@ -1031,7 +981,7 @@ describe('compose store', () => {
 
       mockMessageUpdate.mockResolvedValue({})
       mockMessagePatch.mockResolvedValue({})
-      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      mockJoinAndPost.mockResolvedValue({ ok: true })
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 
       await store.submit({ type: 'Offer' })
@@ -1055,7 +1005,6 @@ describe('compose store', () => {
       store.init({ public: {} })
       store.postcode = { id: 123 }
       store.email = 'test@example.com'
-      store.group = 10
 
       store.messages = [
         {
@@ -1078,7 +1027,7 @@ describe('compose store', () => {
       mockImagePost.mockResolvedValue({ id: 88 })
       mockMessageUpdate.mockResolvedValue({})
       mockMessagePatch.mockResolvedValue({})
-      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      mockJoinAndPost.mockResolvedValue({ ok: true })
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 
       await store.submit({ type: 'Offer' })
@@ -1105,7 +1054,6 @@ describe('compose store', () => {
       const store = useComposeStore()
       store.init({ public: {} })
       store.postcode = { id: 123 }
-      store.group = 10
       mockMessagePut.mockResolvedValue({ id: 99 })
 
       await store.createDraft(

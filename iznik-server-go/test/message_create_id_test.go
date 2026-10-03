@@ -25,7 +25,6 @@ import (
 func TestCreateMessageReturnsItsOwnNewId(t *testing.T) {
 	prefix := uniquePrefix("create-ownid")
 	db := database.DBConn
-	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
 

@@ -35,13 +35,8 @@ func visibleSinceFixture(t *testing.T, prefix string, word string) (viewerToken 
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 
-	origin := CreateTestGroup(t, prefix+"_origin")
-	rippled := CreateTestGroup(t, prefix+"_rippled")
-	gone := CreateTestGroup(t, prefix+"_gone")
-	CreateTestMembership(t, viewerID, origin, "Member")
-	CreateTestMembership(t, posterID, origin, "Member")
 
-	msgID = CreateTestMessage(t, posterID, origin, "OFFER: "+word+" gadget", 51.5, -0.1)
+	msgID = CreateTestMessage(t, posterID, "OFFER: "+word+" gadget", 51.5, -0.1)
 
 	db.Exec("UPDATE messages SET arrival = DATE_SUB(NOW(), INTERVAL 30 DAY) WHERE id = ?", msgID)
 	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 3 DAY) WHERE msgid = ? AND groupid = ?", msgID, origin)

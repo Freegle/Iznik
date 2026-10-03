@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -149,7 +148,7 @@ func TestParseTimeRange_StartBeforeEnd(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildLogQLQuery_BaseAlwaysHasFreegle(t *testing.T) {
-	q := buildLogQLQuery("", "", "", "", "", "", "", "", "", "", "", "")
+	q := buildLogQLQuery("", "", "", "", "", "", "", "", "", "", "")
 	assert.Contains(t, q, `app="freegle"`)
 	// No JSON-field filter means no `| json`: the parse decompresses and
 	// parses every line the selector matches (minutes against a production
@@ -161,7 +160,7 @@ func TestBuildLogQLQuery_BaseAlwaysHasFreegle(t *testing.T) {
 // When a JSON-field filter needs the parse, the `|=` substring prefilter must
 // come BEFORE `| json`, so only candidate lines pay for the parser.
 func TestBuildLogQLQuery_PrefilterComesBeforeParse(t *testing.T) {
-	q := buildLogQLQuery("", "", "", "", "", "", "", "", "trace-123", "", "", "")
+	q := buildLogQLQuery("", "", "", "", "", "", "", "trace-123", "", "", "")
 	assert.Contains(t, q, "| json")
 	assert.Contains(t, q, `| trace_id = "trace-123"`)
 	filterAt := strings.Index(q, `|= "trace-123"`)
@@ -173,111 +172,105 @@ func TestBuildLogQLQuery_PrefilterComesBeforeParse(t *testing.T) {
 // The email filter is regex-only (no JSON-field stage), so it needs the
 // lowercased |= prefilter but no `| json`.
 func TestBuildLogQLQuery_EmailPrefiltersWithoutParse(t *testing.T) {
-	q := buildLogQLQuery("", "", "", "", "", "", "", "", "", "", "", "Upper@Example.COM")
+	q := buildLogQLQuery("", "", "", "", "", "", "", "", "", "", "Upper@Example.COM")
 	assert.Contains(t, q, `|= "upper@example.com"`)
 	assert.Contains(t, q, `(?i)`)
 	assert.NotContains(t, q, "| json")
 }
 
 func TestBuildLogQLQuery_SingleSource(t *testing.T) {
-	q := buildLogQLQuery("api", "", "", "", "", "", "", "", "", "", "", "")
+	q := buildLogQLQuery("api", "", "", "", "", "", "", "", "", "", "")
 	assert.Contains(t, q, `source="api"`)
 	assert.NotContains(t, q, `source=~`)
 }
 
 func TestBuildLogQLQuery_MultipleSources(t *testing.T) {
-	q := buildLogQLQuery("api,client", "", "", "", "", "", "", "", "", "", "", "")
+	q := buildLogQLQuery("api,client", "", "", "", "", "", "", "", "", "", "")
 	assert.Contains(t, q, `source=~"api|client"`)
 }
 
 func TestBuildLogQLQuery_SingleType(t *testing.T) {
-	q := buildLogQLQuery("", "Message", "", "", "", "", "", "", "", "", "", "")
+	q := buildLogQLQuery("", "Message", "", "", "", "", "", "", "", "", "")
 	assert.Contains(t, q, `type="Message"`)
 }
 
 func TestBuildLogQLQuery_MultipleTypes(t *testing.T) {
-	q := buildLogQLQuery("", "Message,User", "", "", "", "", "", "", "", "", "", "")
+	q := buildLogQLQuery("", "Message,User", "", "", "", "", "", "", "", "", "")
 	assert.Contains(t, q, `type=~"Message|User"`)
 }
 
 func TestBuildLogQLQuery_SingleSubtype(t *testing.T) {
-	q := buildLogQLQuery("", "", "Approved", "", "", "", "", "", "", "", "", "")
+	q := buildLogQLQuery("", "", "Approved", "", "", "", "", "", "", "", "")
 	assert.Contains(t, q, `subtype="Approved"`)
 }
 
 func TestBuildLogQLQuery_MultipleSubtypes(t *testing.T) {
-	q := buildLogQLQuery("", "", "Approved,Rejected", "", "", "", "", "", "", "", "", "")
+	q := buildLogQLQuery("", "", "Approved,Rejected", "", "", "", "", "", "", "", "")
 	assert.Contains(t, q, `subtype=~"Approved|Rejected"`)
 }
 
 func TestBuildLogQLQuery_Level(t *testing.T) {
-	q := buildLogQLQuery("", "", "", "error", "", "", "", "", "", "", "", "")
+	q := buildLogQLQuery("", "", "", "error", "", "", "", "", "", "", "")
 	assert.Contains(t, q, `level="error"`)
 }
 
 func TestBuildLogQLQuery_MultipleLevels(t *testing.T) {
-	q := buildLogQLQuery("", "", "", "error,warn", "", "", "", "", "", "", "", "")
+	q := buildLogQLQuery("", "", "", "error,warn", "", "", "", "", "", "", "")
 	assert.Contains(t, q, `level=~"error|warn"`)
 }
 
-func TestBuildLogQLQuery_GroupID(t *testing.T) {
-	q := buildLogQLQuery("", "", "", "", "", "", "42", "", "", "", "", "")
-	assert.Contains(t, q, `groupid="42"`)
-}
-
 func TestBuildLogQLQuery_UserID(t *testing.T) {
-	q := buildLogQLQuery("", "", "", "", "", "123", "", "", "", "", "", "")
+	q := buildLogQLQuery("", "", "", "", "", "123", "", "", "", "", "")
 	assert.Contains(t, q, `user_id="123"`)
 }
 
 func TestBuildLogQLQuery_MsgID(t *testing.T) {
-	q := buildLogQLQuery("", "", "", "", "", "", "", "999", "", "", "", "")
+	q := buildLogQLQuery("", "", "", "", "", "", "999", "", "", "", "")
 	assert.Contains(t, q, `msgid = 999 or msg_id = 999`)
 }
 
 func TestBuildLogQLQuery_TraceID(t *testing.T) {
-	q := buildLogQLQuery("", "", "", "", "", "", "", "", "abc123", "", "", "")
+	q := buildLogQLQuery("", "", "", "", "", "", "", "abc123", "", "", "")
 	assert.Contains(t, q, `trace_id = "abc123"`)
 }
 
 func TestBuildLogQLQuery_SessionID(t *testing.T) {
-	q := buildLogQLQuery("", "", "", "", "", "", "", "", "", "sess456", "", "")
+	q := buildLogQLQuery("", "", "", "", "", "", "", "", "sess456", "", "")
 	assert.Contains(t, q, `session_id = "sess456"`)
 }
 
 func TestBuildLogQLQuery_IPAddress(t *testing.T) {
-	q := buildLogQLQuery("", "", "", "", "", "", "", "", "", "", "10.0.0.1", "")
+	q := buildLogQLQuery("", "", "", "", "", "", "", "", "", "10.0.0.1", "")
 	assert.Contains(t, q, `ip = "10.0.0.1"`)
 	assert.Contains(t, q, `ip_address = "10.0.0.1"`)
 	assert.Contains(t, q, `client_ip = "10.0.0.1"`)
 }
 
 func TestBuildLogQLQuery_Email(t *testing.T) {
-	q := buildLogQLQuery("", "", "", "", "", "", "", "", "", "", "", "test@example.com")
+	q := buildLogQLQuery("", "", "", "", "", "", "", "", "", "", "test@example.com")
 	// Email is passed through escapeRegex and added as a regex filter
 	assert.Contains(t, q, `|~ "(?i)`)
 	assert.Contains(t, q, `example`)
 }
 
 func TestBuildLogQLQuery_Search(t *testing.T) {
-	q := buildLogQLQuery("", "", "", "", "hello world", "", "", "", "", "", "", "")
+	q := buildLogQLQuery("", "", "", "", "hello world", "", "", "", "", "", "")
 	assert.Contains(t, q, `|~ "(?i)hello world"`)
 }
 
 func TestBuildLogQLQuery_SearchSpecialChars(t *testing.T) {
 	// Special regex chars in search must be escaped
-	q := buildLogQLQuery("", "", "", "", "test.com", "", "", "", "", "", "", "")
+	q := buildLogQLQuery("", "", "", "", "test.com", "", "", "", "", "", "")
 	assert.Contains(t, q, `test\.com`)
 }
 
 func TestBuildLogQLQuery_AllFilters(t *testing.T) {
-	q := buildLogQLQuery("api", "Message", "Approved", "info", "hello", "1", "5", "10", "trace1", "sess1", "1.2.3.4", "a@b.com")
+	q := buildLogQLQuery("api", "Message", "Approved", "info", "hello", "1", "10", "trace1", "sess1", "1.2.3.4", "a@b.com")
 	assert.Contains(t, q, `app="freegle"`)
 	assert.Contains(t, q, `source="api"`)
 	assert.Contains(t, q, `type="Message"`)
 	assert.Contains(t, q, `subtype="Approved"`)
 	assert.Contains(t, q, `level="info"`)
-	assert.Contains(t, q, `groupid="5"`)
 	assert.Contains(t, q, `user_id="1"`)
 	assert.Contains(t, q, `| json`)
 }
@@ -340,20 +333,6 @@ func TestParseLogEntry_ByUserAlternateKey(t *testing.T) {
 	entry := parseLogEntry(0, `{"byuser": 77}`, labels, 0)
 	assert.NotNil(t, entry.ByUserID)
 	assert.Equal(t, uint64(77), *entry.ByUserID)
-}
-
-func TestParseLogEntry_GroupID(t *testing.T) {
-	labels := map[string]string{"source": "api"}
-	entry := parseLogEntry(0, `{"group_id": 5}`, labels, 0)
-	assert.NotNil(t, entry.GroupID)
-	assert.Equal(t, uint64(5), *entry.GroupID)
-}
-
-func TestParseLogEntry_GroupIDAlternateKey(t *testing.T) {
-	labels := map[string]string{"source": "api"}
-	entry := parseLogEntry(0, `{"groupid": 12}`, labels, 0)
-	assert.NotNil(t, entry.GroupID)
-	assert.Equal(t, uint64(12), *entry.GroupID)
 }
 
 func TestParseLogEntry_MessageID(t *testing.T) {
@@ -702,20 +681,6 @@ func TestBuildSingleTraceSummary_SingleLog(t *testing.T) {
 	assert.Equal(t, 1, summary.ChildCount)
 	assert.Equal(t, "2026-01-01T10:00:00Z", summary.FirstTimestamp)
 	assert.Equal(t, "2026-01-01T10:00:00Z", summary.LastTimestamp)
-}
-
-// ---------------------------------------------------------------------------
-// canViewGroupLogs — Support/Admin branches only. Those return before touching
-// database.DBConn, which is nil in this package's tests; the moderates-the-group
-// branch is covered by the DB-backed suite in test/.
-// ---------------------------------------------------------------------------
-
-func TestCanViewGroupLogs_SupportSeesAnyGroup(t *testing.T) {
-	assert.True(t, canViewGroupLogs(0, 12345, utils.SYSTEMROLE_SUPPORT))
-}
-
-func TestCanViewGroupLogs_AdminSeesAnyGroup(t *testing.T) {
-	assert.True(t, canViewGroupLogs(0, 12345, utils.SYSTEMROLE_ADMIN))
 }
 
 // ---------------------------------------------------------------------------

@@ -49,15 +49,12 @@ func TestCreateChatMessage_ReachBlockedReplyHeld(t *testing.T) {
 		INDEX (msgid), INDEX (chatid), INDEX (status)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
 	// GetLatLng reads settings.mylocation first — put the replier at (51.5, -0.1).
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, replierID)
 
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reach reply test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: reach reply test item", 51.5, -0.1)
 
 	// Reach exists but does NOT cover the replier (far to the east). lat/lng are NOT NULL.
 	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound) VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText("+
@@ -65,7 +62,7 @@ func TestCreateChatMessage_ReachBlockedReplyHeld(t *testing.T) {
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 	defer db.Exec("DELETE FROM rippling_held_replies WHERE msgid = ?", msgID)
 
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 	_, token := CreateTestSession(t, replierID)
 
 	post := func() int {
@@ -133,14 +130,12 @@ func TestCreateChatMessage_ReportToModsNotReachGated(t *testing.T) {
 		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	reporterID := CreateTestUser(t, prefix+"_reporter", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
 	// Reporter is at (51.5, -0.1) and — like Neville in #9852 — is NOT a member of the post's group.
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, reporterID)
 
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reach report test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: reach report test item", 51.5, -0.1)
 
 	// Reach exists but does NOT cover the reporter (far to the east) — this is exactly the polygon
 	// that 403s a User2User reply in the test above.
@@ -199,7 +194,7 @@ func fetchAttribution(t *testing.T, msgID, uid uint64) (attributionRow, bool) {
 // postInterestedReply posts an Interested User2User reply to msgID as replierID, optionally
 // carrying the client-reported surface, and returns the HTTP status.
 func postInterestedReply(t *testing.T, replierID, posterID, msgID uint64, replysource string) int {
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 	_, token := CreateTestSession(t, replierID)
 	var payload chat.ChatMessage
 	payload.Message = "I'd like this please"
@@ -222,15 +217,12 @@ func TestCreateChatMessage_RecordsReplyAttribution(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("replyattr")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reply attribution test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: reply attribution test item", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
 
 	// Established member: approved membership added an hour ago -> home.
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
 	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 1 HOUR, collection = 'Approved' WHERE userid = ? AND groupid = ?", memberID, groupID)
 	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, memberID, posterID, msgID, ""))
 	row, ok := fetchAttribution(t, msgID, memberID)
@@ -278,11 +270,8 @@ func TestCreateChatMessage_AttributionLadder(t *testing.T) {
 		notified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (msgid, userid), KEY rrn_userid (userid))`)
 
-	originGroup := CreateTestGroup(t, prefix+"_origin")
-	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, originGroup, "Member")
-	msgID := CreateTestMessage(t, posterID, originGroup, "OFFER: attribution ladder test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: attribution ladder test item", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
 	defer db.Exec("DELETE FROM rippling_reach_notified WHERE msgid = ?", msgID)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
@@ -331,7 +320,6 @@ func TestCreateChatMessage_AttributionLadder(t *testing.T) {
 	//    outranks the location rungs).
 	rippleMemberID := CreateTestUser(t, prefix+"_rgmember", "User")
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":0.5}}' WHERE id = ?`, rippleMemberID)
-	CreateTestMembership(t, rippleMemberID, rippledGroup, "Member")
 	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 1 HOUR, collection = 'Approved' WHERE userid = ? AND groupid = ?",
 		rippleMemberID, rippledGroup)
 	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, rippleMemberID, posterID, msgID, ""))
@@ -402,17 +390,14 @@ func TestCreateChatMessage_RippleJoinedMemberIsNotHome(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("ripplejoin")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
 	// A post that never rippled anywhere: proves the ripple-join rung stands on the membership's
 	// own provenance and needs no ripple on THIS post.
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: ripple-join attribution test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: ripple-join attribution test item", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
 
 	// Ripple-created membership: long-established, but rippling put them there.
 	joinedID := CreateTestUser(t, prefix+"_ripplejoined", "User")
-	CreateTestMembership(t, joinedID, groupID, "Member")
 	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 1 "+
 		"WHERE userid = ? AND groupid = ?", joinedID, groupID)
 
@@ -433,7 +418,6 @@ func TestCreateChatMessage_RippleJoinedMemberIsNotHome(t *testing.T) {
 	// Only the provenance of the membership differs, so this pins the fix to memberships.rippled
 	// rather than to anything about the post or the group.
 	ordinaryID := CreateTestUser(t, prefix+"_ordinary", "User")
-	CreateTestMembership(t, ordinaryID, groupID, "Member")
 	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 0 "+
 		"WHERE userid = ? AND groupid = ?", ordinaryID, groupID)
 
@@ -451,12 +435,9 @@ func TestCreateChatMessage_RippleJoinedMemberIsNotHome(t *testing.T) {
 	// A member holding BOTH kinds of membership of origin groups of one post is home: the
 	// ordinary one alone would have shown them the post, so rippling gets no credit. (Cross-posts
 	// are the real-world case - one origin group joined normally, another via a ripple.)
-	secondGroupID := CreateTestGroup(t, prefix+"_second")
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
 		"VALUES (?, ?, NOW(), 'Approved', 0, 0)", msgID, secondGroupID)
 	bothID := CreateTestUser(t, prefix+"_both", "User")
-	CreateTestMembership(t, bothID, groupID, "Member")
-	CreateTestMembership(t, bothID, secondGroupID, "Member")
 	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 1 "+
 		"WHERE userid = ? AND groupid = ?", bothID, groupID)
 	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 0 "+
@@ -507,14 +488,11 @@ func TestCreateChatMessage_ReachUndecidedReplyPassesThrough(t *testing.T) {
 		INDEX (msgid), INDEX (chatid), INDEX (status)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, replierID)
 
-	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reach undecided test item", 51.5, -0.1)
+	msgID := CreateTestMessage(t, posterID, "OFFER: reach undecided test item", 51.5, -0.1)
 
 	// The same row the hold test uses: a reach that does not cover the replier.
 	// What differs is only that nothing can be asked about it.
@@ -531,7 +509,7 @@ func TestCreateChatMessage_ReachUndecidedReplyPassesThrough(t *testing.T) {
 	db.Exec("DELETE FROM rippling_event_metrics WHERE event = 'reply_undecided_passthrough' AND day = CURDATE()")
 	defer db.Exec("DELETE FROM rippling_event_metrics WHERE event = 'reply_undecided_passthrough' AND day = CURDATE()")
 
-	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 	_, token := CreateTestSession(t, replierID)
 
 	var payload chat.ChatMessage

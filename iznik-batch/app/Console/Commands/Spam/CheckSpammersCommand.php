@@ -11,7 +11,7 @@ class CheckSpammersCommand extends Command
     protected $signature = 'users:remove-spammers
                             {--dry-run : Show counts without making changes}';
 
-    protected $description = 'Remove spam members from groups and clean up their content (V1: check_spammers.php)';
+    protected $description = 'Ban spam members and clean up their content (V1: check_spammers.php)';
 
     public function handle(SpamCleanupService $service): int
     {
@@ -26,7 +26,7 @@ class CheckSpammersCommand extends Command
         $verb = $dryRun ? 'would' : 'did';
         $this->info(
             "users:remove-spammers {$verb}: " .
-            "memberships={$stats['memberships']} messages={$stats['messages']} " .
+            "banned={$stats['banned']} messages={$stats['messages']} " .
             "chat_messages={$stats['chat_messages']} newsfeed={$stats['newsfeed']} " .
             "notifications={$stats['notifications']} expected={$stats['expected']} " .
             "sessions={$stats['sessions']}"

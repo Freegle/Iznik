@@ -25,11 +25,9 @@ func TestPatchMessage_RemovingAIAttachmentWritesDeclinedRow(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("aiDeclined")
 
-	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
 	_, ownerToken := CreateTestSession(t, ownerID)
-	msgID := CreateTestMessage(t, ownerID, groupID, "WANTED: Chicken mesh "+prefix, 55.0, -1.0)
+	msgID := CreateTestMessage(t, ownerID, "WANTED: Chicken mesh "+prefix, 55.0, -1.0)
 
 	// Simulate the batch service having attached an AI illustration.
 	aiUID := "freegletusd-ai-" + prefix

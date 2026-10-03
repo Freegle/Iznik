@@ -33,7 +33,6 @@
     <ModCommentAddModal
       v-if="showAddCommentModal"
       :userid="userid"
-      :groupid="groupid || null"
       @added="updateComments"
       @hidden="showAddCommentModal = false"
     />

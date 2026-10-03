@@ -23,11 +23,9 @@ import (
 func TestReleaseLogAppearsInMessagesLog(t *testing.T) {
 	prefix := uniquePrefix("RelMsgAudit")
 
-	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)

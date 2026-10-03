@@ -489,8 +489,7 @@ func TestNewsfeedHidePermissionDenied(t *testing.T) {
 	prefix := uniquePrefix("nfwr_hdeny")
 	// Regular Moderator should NOT be able to hide - requires Admin/Support or ChitChat team
 	userID := CreateTestUser(t, prefix, "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, userID)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test hide deny "+prefix)
 
@@ -755,8 +754,7 @@ func TestConvertToStory(t *testing.T) {
 	prefix := uniquePrefix("nf_c2s")
 	// Create a moderator user
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a newsfeed entry by another user
@@ -815,7 +813,6 @@ func TestCreateNewsfeedEntryForCommunityEvent(t *testing.T) {
 
 	// Create a test user and group with known locations.
 	userID := CreateTestUser(t, prefix+"_user", "User")
-	groupID := CreateTestGroup(t, prefix+"_group")
 
 	// Set group location and name.
 	db.Exec("UPDATE `groups` SET lat = 52.2, lng = -0.1, nameshort = ? WHERE id = ?", prefix+"_group", groupID)
@@ -879,7 +876,6 @@ func TestCreateNewsfeedEntryForVolunteering(t *testing.T) {
 
 	// Create a test user and group with known locations.
 	userID := CreateTestUser(t, prefix+"_user", "User")
-	groupID := CreateTestGroup(t, prefix+"_group")
 
 	// Set group location.
 	db.Exec("UPDATE `groups` SET lat = 53.5, lng = -1.5 WHERE id = ?", groupID)
@@ -934,7 +930,6 @@ func TestCreateNewsfeedEntryNoLocation(t *testing.T) {
 
 	// Create user and group with NO location.
 	userID := CreateTestUser(t, prefix+"_user", "User")
-	groupID := CreateTestGroup(t, prefix+"_group")
 
 	// Ensure no location is set.
 	db.Exec("UPDATE `groups` SET lat = NULL, lng = NULL WHERE id = ?", groupID)
@@ -969,7 +964,6 @@ func TestCreateNewsfeedEntrySuppressedUser(t *testing.T) {
 	db := database.DBConn
 
 	userID := CreateTestUser(t, prefix+"_user", "User")
-	groupID := CreateTestGroup(t, prefix+"_group")
 	db.Exec("UPDATE `groups` SET lat = 51.5, lng = -0.1 WHERE id = ?", groupID)
 
 	// Mark user as suppressed.
@@ -1012,7 +1006,6 @@ func TestCreateNewsfeedEntrySpammerUser(t *testing.T) {
 	db := database.DBConn
 
 	userID := CreateTestUser(t, prefix+"_user", "User")
-	groupID := CreateTestGroup(t, prefix+"_group")
 	db.Exec("UPDATE `groups` SET lat = 51.5, lng = -0.1 WHERE id = ?", groupID)
 
 	// Add user to spam list.
@@ -1056,7 +1049,6 @@ func TestCreateNewsfeedEntryDuplicateProtection(t *testing.T) {
 	db := database.DBConn
 
 	userID := CreateTestUser(t, prefix+"_user", "User")
-	groupID := CreateTestGroup(t, prefix+"_group")
 	db.Exec("UPDATE `groups` SET lat = 51.5, lng = -0.1 WHERE id = ?", groupID)
 
 	// Clear any existing newsfeed entries.

@@ -20,19 +20,17 @@ type ConvertInfoResult struct {
 	Canpost      bool   `json:"canpost"`
 	Reason       string `json:"reason,omitempty"`
 	Locationname string `json:"locationname,omitempty"`
-	Groupid      uint64 `json:"groupid,omitempty"`
-	Groupname    string `json:"groupname,omitempty"`
-	// Moderated: the post will wait in the group's Pending queue for a human
+	// Moderated: the post will wait in the Pending queue for a human
 	// moderator rather than appear straight away. The modal warns the
 	// converting moderator - a converted post they then cannot find looks
 	// like the convert failed (Discourse #6999).
 	Moderated bool `json:"moderated"`
 }
 
-// ConvertInfo tells a ChitChat moderator which postcode and community a
-// convert-to-post would use. The answer comes from the same resolver the post
-// itself uses (message.ResolveOnBehalfPosting), so what the modal promises and
-// what gets posted cannot disagree.
+// ConvertInfo tells a ChitChat moderator which postcode a convert-to-post
+// would use. The answer comes from the same resolver the post itself uses
+// (message.ResolveOnBehalfPosting), so what the modal promises and what gets
+// posted cannot disagree.
 //
 // Mod-only: it exposes where another member lives.
 func ConvertInfo(c *fiber.Ctx) error {
@@ -65,8 +63,6 @@ func ConvertInfo(c *fiber.Ctx) error {
 	return c.JSON(ConvertInfoResult{
 		Canpost:      true,
 		Locationname: posting.Locationname,
-		Groupid:      posting.Groupid,
-		Groupname:    posting.Groupname,
 		Moderated:    posting.Moderated,
 	})
 }
