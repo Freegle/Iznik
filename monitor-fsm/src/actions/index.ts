@@ -4159,6 +4159,26 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       // Always check DB for open bugs regardless of phase.
       // Note: 'investigating' means Edward has posted a fix — FSM should not duplicate that work.
       const db = getDb()
+
+      // A task's deferral (working as designed, already fixed, external, needs a human)
+      // lived only in context.bugsFixed. A later VERIFY tick replaced that list with its
+      // own batch, so the reports came back to the queue within the same iteration
+      // (10042/3, 10044/11, 10085/9 re-dispatched an hour after being deferred), and in
+      // every iteration after, because the row still said open. Write it down, as the
+      // DIAGNOSE loop-breaker in driver.ts already does. A timeout or a failed delegate
+      // is a reason to try again, and a blocked review is counted by pr_rejections, so
+      // those stay open.
+      const RETRYABLE = /timed out|re-run|delegate failed|review blocked/i
+      const markDeferred = db.prepare(
+        "UPDATE discourse_bug SET state = 'deferred', reason = ?, last_seen_at = datetime('now') " +
+        "WHERE topic = ? AND post = ? AND state = 'open'"
+      )
+      for (const b of bugsFixed) {
+        const reason = String(b?.reason ?? '').trim()
+        if (b?.outcome !== 'deferred' || !reason || RETRYABLE.test(reason)) continue
+        if (typeof b.topic === 'undefined' || typeof b.post === 'undefined') continue
+        markDeferred.run(`deferred by fix task: ${reason}`.slice(0, 500), Number(b.topic), Number(b.post))
+      }
       const dbOpenBugs = (db.prepare(`
         SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle,
                pr_rejections AS prRejections, symptom_tags AS symptomTagsJson, first_seen_at
