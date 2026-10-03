@@ -32,7 +32,7 @@ import { modelForAdversarialReview } from '../policy.js'
 import { groundingActions } from '../grounding.js'
 import { proseProblems } from '../prose.js'
 import { assessReportSpecifics, detailRequestBody, CONTEXT_QUESTION } from '../specifics.js'
-import { assessPrEvidence, readEvidence, reviewGroundingSection } from '../evidence.js'
+import { assessPrEvidence, liveEvidenceSection, readEvidence, reviewGroundingSection } from '../evidence.js'
 
 const exec = promisify(execFile)
 
@@ -1297,6 +1297,48 @@ export const prGateDeps = {
 }
 
 /**
+ * A PR a reviewer closed may be reopened by a retry, but not silently. #1664 was closed for
+ * lack of evidence and came back with no word about what had changed. If the latest event
+ * is a reopen and nobody has commented since, say what was added after the close and point
+ * at the evidence, so the reviewer can judge the new attempt against the reason it was closed.
+ */
+async function explainReopen(prNumber: number, repo: string, body: string): Promise<boolean> {
+  const json = async (path: string) => {
+    const r = await prGateDeps.gh(['api', `repos/${repo}/${path}`])
+    if (r.code !== 0) return []
+    try { return JSON.parse(r.stdout) as any[] } catch { return [] }
+  }
+  const events = await json(`issues/${prNumber}/events`)
+  const closedAt = events.filter(e => e.event === 'closed').map(e => e.created_at).sort().pop()
+  const reopenedAt = events.filter(e => e.event === 'reopened').map(e => e.created_at).sort().pop()
+  if (!closedAt || !reopenedAt || reopenedAt < closedAt) return false
+
+  const comments = await json(`issues/${prNumber}/comments`)
+  if (comments.some(c => String(c.created_at) > reopenedAt)) return false
+
+  const commits = await json(`pulls/${prNumber}/commits`)
+  const added = commits
+    .filter(c => String(c?.commit?.committer?.date ?? '') > closedAt)
+    .map(c => String(c.commit.message ?? '').split('\n')[0].trim())
+    .filter(Boolean)
+  const live = liveEvidenceSection(body)
+  const text = [
+    'Reopened by the monitor\'s retry after this PR was closed.',
+    '',
+    added.length
+      ? 'What changed since it was closed:\n' + added.map(h => `- ${h}`).join('\n')
+      : 'No commits were added after it was closed, so the reason it was closed still applies.',
+    '',
+    live ? `Evidence: ${live}` : 'There is no Live evidence section on this PR.',
+    '',
+    'The reason it was closed still stands until a reviewer agrees these changes answer it.',
+  ].join('\n')
+  const r = await prGateDeps.gh(['pr', 'comment', String(prNumber), '--repo', repo, '--body', text])
+  if (r.code !== 0) outWarn(`create_pr: could not explain the reopen of #${prNumber}: ${r.stderr.slice(0, 200)}`)
+  return r.code === 0
+}
+
+/**
  * Refuse a Discourse bug-fix PR that has no production reads in its local evidence
  * record, or whose description holds a member's details. See evidence.ts. The PR is closed, the
  * report is held as needs-detail, and the reporter is asked for what would let the
@@ -2335,6 +2377,7 @@ print(json.dumps(out))
         if (gate.refused) {
           return { verified: false, refused: true, problems: gate.problems, files, frontendOnly }
         }
+        await explainReopen(prNumber, repo, viewData.body ?? '')
         const db = getDb()
         upsertDiscourseBug(db, {
           topic, post,
