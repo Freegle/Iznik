@@ -419,6 +419,32 @@ describe('StripeDonate', () => {
       expect(component.vm.error).toBeTruthy()
     })
 
+    it('ignores a repeat confirm while a payment is in flight', async () => {
+      await createWrapper({ price: 10 })
+
+      const confirmCallback = mockExpressCheckoutElement.on.mock.calls.find(
+        (call) => call[0] === 'confirm'
+      )[1]
+
+      mockElements.submit.mockResolvedValue({})
+      let release
+      mockStripeInstanceSpy.confirmPayment.mockReturnValue(
+        new Promise((resolve) => {
+          release = () => resolve({})
+        })
+      )
+      const before = mockElements.submit.mock.calls.length
+
+      const first = confirmCallback({ expressPaymentType: 'paypal' })
+      await flushPromises()
+      await confirmCallback({ expressPaymentType: 'paypal' })
+      await flushPromises()
+
+      expect(mockElements.submit.mock.calls.length - before).toBe(1)
+      release()
+      await first
+    })
+
     it('shows a message, not the wallet fallback, when submit fails', async () => {
       const wrapper = await createWrapper({ price: 10 })
 

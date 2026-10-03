@@ -320,7 +320,10 @@ onMounted(async () => {
     expressCheckoutElement.on('loaderstart', (event) => {
       console.log('Express checkout loadStart', event)
     })
-    expressCheckoutElement.on('confirm', async (event) => {
+    // A wallet that fires 'confirm' again while a payment is in flight must not
+    // start a second PaymentIntent for the same donation.
+    let confirming = false
+    const handleConfirm = async (event) => {
       action('donation_payment_started', {
         amount: props.price,
         method: event.expressPaymentType,
@@ -428,6 +431,17 @@ onMounted(async () => {
         } else {
           emit('success')
         }
+      }
+    }
+    expressCheckoutElement.on('confirm', async (event) => {
+      if (confirming) {
+        return
+      }
+      confirming = true
+      try {
+        await handleConfirm(event)
+      } finally {
+        confirming = false
       }
     })
   }
