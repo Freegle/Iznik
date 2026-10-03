@@ -1,0 +1,11 @@
+#include <linux/socket.h>
+#include <linux/in.h>
+tracepoint:syscalls:sys_enter_connect
+{
+  $sa = (struct sockaddr_in *)args->uservaddr;
+  if ($sa->sin_family == 2) {
+    printf("C %llu %d %llu %s %s:%d\n", nsecs / 1000000, pid, cgroup, comm, ntop(2, $sa->sin_addr.s_addr), (($sa->sin_port & 0xff) << 8) | ($sa->sin_port >> 8));
+  } else {
+    printf("C %llu %d %llu %s fam%d\n", nsecs / 1000000, pid, cgroup, comm, $sa->sin_family);
+  }
+}

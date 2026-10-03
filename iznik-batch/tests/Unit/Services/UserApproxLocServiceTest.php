@@ -106,6 +106,22 @@ class UserApproxLocServiceTest extends TestCase
         $this->assertEquals($expectedLng, (float) $row->lng);
     }
 
+    /** TN is the master for a TN member's location; their mylocation is stale V1 data. */
+    public function test_lastlocation_wins_for_a_trash_nothing_member(): void
+    {
+        $user = $this->activeMember(['tnuserid' => random_int(900000000, 999999999)]);
+        $locationId = $this->makeLocation(53.4084, -2.9916);
+        DB::table('users')->where('id', $user->id)->update(['lastlocation' => $locationId]);
+        $this->setMyLocation($user, ['id' => 2, 'name' => 'Elsewhere', 'lat' => 51.5010, 'lng' => -0.1416]);
+
+        $this->service->updateLocations();
+
+        [$expectedLat, $expectedLng] = $this->blurred(53.4084, -2.9916);
+        $row = $this->row($user);
+        $this->assertEquals($expectedLat, (float) $row->lat);
+        $this->assertEquals($expectedLng, (float) $row->lng);
+    }
+
     public function test_mylocation_with_only_one_coordinate_falls_through_to_lastlocation(): void
     {
         $user = $this->activeMember();

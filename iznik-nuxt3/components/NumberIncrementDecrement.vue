@@ -13,9 +13,11 @@
       inline
       center
       :step="1"
+      rounded
       :min="min"
       :max="max"
       :size="size"
+      :attrs="wholeNumberOnly"
       :class="'inputsize-' + size"
       @update:model-value="update"
     />
@@ -69,6 +71,36 @@ const emit = defineEmits(['update:modelValue'])
 
 const $id = (type) => {
   return uid(type)
+}
+
+// Every use is a count of items, and the API rejects a decimal with a 400
+// (SR-UZFMH). Refuse anything but digits as it is typed, pasted or dropped,
+// rather than accepting it and changing it afterwards. Android keyboards report
+// keydown as "Unidentified", so beforeinput is what catches typing on a phone.
+const DIGITS = /^\d*$/
+
+function refuseNonDigits(event, text) {
+  if (text && !DIGITS.test(text.trim())) {
+    event.preventDefault()
+  }
+}
+
+const wholeNumberOnly = {
+  inputmode: 'numeric',
+  onBeforeinput: (event) =>
+    refuseNonDigits(event, event.data || event.dataTransfer?.getData('text')),
+  onKeydown: (event) => {
+    // Single characters only: Backspace, arrows, Tab and the like are named
+    // keys, and Ctrl/Cmd shortcuts must keep working.
+    if (
+      event.key?.length === 1 &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey
+    ) {
+      refuseNonDigits(event, event.key)
+    }
+  },
 }
 
 const update = (newVal, oldVal) => {

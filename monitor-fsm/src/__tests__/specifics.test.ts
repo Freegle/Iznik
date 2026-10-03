@@ -43,6 +43,47 @@ describe('assessReportSpecifics', () => {
     expect(r.missing).toEqual([])
   })
 
+// A moderator describing a morning's work counts the problems instead of naming
+  // them. Every one is a particular thing nobody can look up, and this phrasing went
+  // past the article patterns into a fix with nothing to hold on to: topic 10063,
+  // PR #1574, closed.
+  it('asks for detail when a report counts things without naming them', () => {
+    const r = assessReportSpecifics({
+      text: 'Today in the rippled posts I have found a couple of posts duplicated within hours, one person indicating offers of cash required, several giving full home address or telephone numbers.',
+    })
+    expect(r.isVague).toBe(true)
+    expect(r.missing.length).toBeGreaterThan(0)
+  })
+
+  it.each([
+    'I found a couple of posts duplicated within hours',
+    'several members are posting their phone numbers',
+    'many posts are coming through unchecked',
+    'a few groups have the same problem',
+    '3 messages went out twice',
+  ])('treats a counted report as needing detail: %s', (text) => {
+    expect(assessReportSpecifics({ text }).isVague).toBe(true)
+  })
+
+  // The line this must not cross. A report about behaviour anyone can go and
+  // reproduce needs no instance, so counting words alone must not trigger it.
+  it.each([
+    'Chat notification emails are going out twice.',
+    'The Give button does nothing on iOS.',
+    'Search results are ordered by distance rather than date.',
+  ])('leaves a reproducible report alone: %s', (text) => {
+    expect(assessReportSpecifics({ text }).isVague).toBe(false)
+  })
+
+  it('judges the reporter words but still finds an id in the anchor text', () => {
+    const r = assessReportSpecifics({
+      text: 'A member says her post vanished.',
+      anchorText: 'A member says her post vanished. Triage found user 1234567.',
+    })
+    expect(r.anchors).toContain('id')
+    expect(r.isVague).toBe(false)
+  })
+
   it('does not treat a year as an identifier', () => {
     const r = assessReportSpecifics({ text: 'A member told me in 2026 that a group lost her post.' })
     expect(r.isVague).toBe(true)
@@ -63,6 +104,38 @@ describe('assessReportSpecifics', () => {
       text: 'Someone on a group says a post looks wrong and the button is missing from the page.',
     })
     expect(r.missing.length).toBeLessThanOrEqual(3)
+  })
+
+  // Topic 10200/1 named no member, chat or device, and the reporter asked what would
+  // help - yet it went straight to a fix (PR #1658, closed as a guess). Number words,
+  // plurals and "one of the members" all slipped past the patterns above.
+  it('asks for detail on a report that counts people in words and names none (10200/1)', () => {
+    const r = assessReportSpecifics({
+      text: 'We’ve now had two members in the last couple of days who appear to have a problem seeing messages which contain an address with a house number and post code. For some users, this seems to result in them not seeing the message. Is this a known problem? What sort of information would be useful to investigate further? P.S. one of the members just wrote back saying that they did eventually receive all the messages in one big batch.',
+    })
+    expect(r.isVague).toBe(true)
+    expect(r.missing.join(' ')).toMatch(/member/)
+  })
+
+  it.each([
+    'Two members say their posts have vanished.',
+    'For some users the chat will not load.',
+    'One of the members says the map is blank.',
+    'Three groups have stopped getting digests.',
+  ])('treats an unnamed instance as needing detail: %s', (text) => {
+    expect(assessReportSpecifics({ text }).isVague).toBe(true)
+  })
+
+  it('asks for detail when the reporter asks what information would help', () => {
+    const r = assessReportSpecifics({
+      text: 'Messages are not arriving for people. What information would help you look into it?',
+    })
+    expect(r.isVague).toBe(true)
+    expect(r.missing.join(' ')).toMatch(/when|app|browser/)
+  })
+
+  it('still leaves a reproducible report with a number word alone', () => {
+    expect(assessReportSpecifics({ text: 'The two buttons overlap on the iOS app.' }).isVague).toBe(false)
   })
 
   it('reports which anchors it found', () => {

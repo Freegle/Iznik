@@ -7,16 +7,17 @@
           <div class="d-flex justify-content-around">
             <ProxyImage
               preload
-              src="/NRD/Banner.png?a=1"
+              src="/NRD/Banner2026.png?a=1"
               alt="National Reuse Day banner"
               class-name="image mt-2 w-100"
             />
           </div>
           <div class="d-flex justify-content-around w-100">
-            <div class="ratio ratio-16x9">
+            <div class="ratio short mt-2">
               <iframe
                 class="embed-responsive-item w-100"
-                src="https://www.youtube.com/embed/1SxLokz9F88?si=fcTHW2u75l9qMr6d"
+                src="https://www.youtube.com/embed/jyrAq57nqPM"
+                title="Freegle A-Z"
                 allowfullscreen
               />
             </div>
@@ -34,7 +35,7 @@
               title="Resources"
               image="/NRD/resources.png"
               description="Free communications assets, images and press release."
-              url="https://drive.google.com/drive/folders/1TuJV6LOVv_1x3UMmUBhhkCsc48uhDwA4?usp=share_link"
+              url="https://drive.google.com/drive/folders/1jxRM76QwE9VOqUJH5IvAza3detOAjKbr?usp=share_link"
               colour="blue"
             />
             <NationalReuseDayBox
@@ -52,10 +53,9 @@
               colour="gold"
             />
             <NationalReuseDayBox
-              title="#ReuseHeroes"
-              image="/NRD/ReuseHeroes.png"
-              description="Find out about Freegle's Reuse Heroes."
-              url="https://www.canva.com/design/DAG0jRT27LA/ZImvRlocTQiuEuaSICtL5w/view?utm_content=DAG0jRT27LA&utm_campaign=designshare&utm_medium=link&utm_source=viewer"
+              title="#ReuseEveryday"
+              image="/NRD/ReuseEveryday.png"
+              description="Easy ways to #ReuseEveryday."
               colour="orange"
             />
             <NationalReuseDayBox
@@ -70,22 +70,20 @@
             <b-card class="cardwidth">
               <p>
                 National Reuse Day is an annual celebration of the simple yet
-                powerful act of ‘Reuse’ - in all its forms. There are so many
-                easy ways for all of us to reuse household items and pass things
-                on when we no longer need them. Whether you opt to re-home items
-                of furniture; take clothes you no longer wear to a charity shop
-                or simply remember to take your reusable bags with you when you
-                shop - it’s all reuse and it’s all good!
+                powerful act of ‘Reuse’ - in all its forms. National Reuse Day
+                is celebrated each year on the third Friday in October.
               </p>
               <p>
-                National Reuse Day is celebrated each year on the third Friday
-                in October. This year, Reuse Day will focus on the UK’s
-                incredible network of ‘Reuse Heroes’. Reuse Heroes are
-                individuals, organisations and projects - in communities up and
-                down the UK - which help people to waste less and reuse more.
+                This year, Reuse Day will focus on encouraging people to choose
+                to #ReuseEveryday. There are so many easy ways for all of us to
+                reuse household items and pass things on when we no longer need
+                them. Whether you opt to re-home items of furniture; take
+                clothes you no longer wear to a charity shop or simply remember
+                to take your reusable bags with you when you shop - it’s all
+                reuse and it’s all good!
               </p>
               <p class="mt-2">
-                For more information about National Reuse Day contact us here:
+                For more information about #NationalReuseDay contact us here:
                 <SupportLink
                   email="partnerships@ilovefreegle.org"
                   text="partnerships@ilovefreegle.org"
@@ -121,7 +119,7 @@ definePageMeta({
 const head = buildHead(
   route,
   runtimeConfig,
-  'National Reuse Day 2025',
+  'National Reuse Day 2026',
   'Celebrate reuse and get involved',
   runtimeConfig.public.USER_SITE + '/councils/NationalReuseDay.png',
   {
@@ -179,6 +177,11 @@ onMounted(() => {
     grid-template-rows: 1fr 1fr;
     grid-row-gap: 20px;
   }
+}
+
+.short {
+  --bs-aspect-ratio: calc(16 / 9 * 100%);
+  max-width: 340px;
 }
 
 .cardwidth {

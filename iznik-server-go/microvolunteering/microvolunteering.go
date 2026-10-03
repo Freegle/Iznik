@@ -38,7 +38,6 @@ type EEELabelChallenge struct {
 type Challenge struct {
 	Type     string             `json:"type"`
 	Msgid    *uint64            `json:"msgid,omitempty"`
-	Terms    []SearchTerm       `json:"terms,omitempty"`
 	Photos   []Photo            `json:"photos,omitempty"`
 	URL      *string            `json:"url,omitempty"`
 	AIImage  *AIImageChallenge  `json:"aiimage,omitempty"`
@@ -46,12 +45,6 @@ type Challenge struct {
 	// Graded is set when the task's answer is already settled by other members and the
 	// member's answer will be marked (see graded.go). Used by the reply gate.
 	Graded bool `json:"graded,omitempty"`
-}
-
-// SearchTerm represents a search term for matching
-type SearchTerm struct {
-	ID   uint64 `json:"id"`
-	Term string `json:"term"`
 }
 
 // Photo represents a photo for rotation challenge
@@ -63,7 +56,6 @@ type Photo struct {
 // Challenge types
 const (
 	ChallengeCheckMessage  = "CheckMessage"
-	ChallengeSearchTerm    = "SearchTerm"
 	ChallengePhotoRotate   = "PhotoRotate"
 	ChallengeSurvey        = "Survey2"
 	ChallengeInvite        = "Invite"
@@ -251,41 +243,8 @@ func GetChallenge(c *fiber.Ctx) error {
 		}
 	}
 
-	// Try search term challenge. Nationally there is no opt-in to check: every member is
-	// offered word-matching.
-	if contains(challengeTypes, ChallengeSearchTerm) {
-		// Get 10 random popular items
-		type ItemTerm struct {
-			ID   uint64 `json:"id"`
-			Term string `json:"term"`
-		}
-		var terms []ItemTerm
-
-		// Derived-table trick: GORM's
-		// Table() passes its name argument through verbatim (no quoting) once it
-		// contains a space, so a parenthesized subquery can be given as the
-		// "table name".
-		db.Table("(SELECT id, name FROM items WHERE LENGTH(name) > 2 ORDER BY popularity DESC LIMIT 300) t").
-			Select("DISTINCT id, name AS term").
-			Order("RAND()").
-			Limit(10).
-			Scan(&terms)
-
-		if len(terms) > 0 {
-			var searchTerms []SearchTerm
-			for _, t := range terms {
-				searchTerms = append(searchTerms, SearchTerm{
-					ID:   t.ID,
-					Term: t.Term,
-				})
-			}
-
-			return c.JSON(Challenge{
-				Type:  ChallengeSearchTerm,
-				Terms: searchTerms,
-			})
-		}
-	}
+	// (Retired) The SearchTerm challenge built a keyword-similarity dataset for the
+	// retired keyword search index.
 
 	// If no challenge found, return empty object
 	return c.JSON(fiber.Map{})
@@ -552,8 +511,6 @@ type PostResponseRequest struct {
 	MsgCategory    *string `json:"msgcategory,omitempty"`
 	Response       *string `json:"response,omitempty"`
 	Comments       *string `json:"comments,omitempty"`
-	Searchterm1    uint64  `json:"searchterm1"`
-	Searchterm2    uint64  `json:"searchterm2"`
 	Photoid        uint64  `json:"photoid"`
 	Invite         bool    `json:"invite"`
 	Deg            int     `json:"deg"`
@@ -646,26 +603,6 @@ func PostResponse(c *fiber.Ctx) error {
 				return c.JSON(fiber.Map{"ret": 0, "status": "Success", "graded": *graded})
 			}
 		}
-
-		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
-
-	} else if req.Searchterm1 > 0 && req.Searchterm2 > 0 {
-		// Response to a SearchTerm challenge.
-		// The result column is enum('Approve','Reject') NOT NULL with no default.
-		// Set to 'Approve' since search term responses don't map to approve/reject.
-		db.Table("microactions").Clauses(clause.OnConflict{
-			DoUpdates: clause.Assignments(map[string]interface{}{
-				"userid": gorm.Expr("userid"), "version": Version,
-			}),
-		}).Create(map[string]interface{}{
-			"actiontype":     ChallengeSearchTerm,
-			"userid":         myid,
-			"item1":          req.Searchterm1,
-			"item2":          req.Searchterm2,
-			"version":        Version,
-			"result":         gorm.Expr("'Approve'"),
-			"score_negative": gorm.Expr("0"),
-		})
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 

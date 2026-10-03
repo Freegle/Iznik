@@ -315,16 +315,57 @@ class User extends Model implements Auditable
 
         $name = self::removeTNGroup($name);
 
+        if (!NameSanitiser::isSuspicious($name)) {
+            return $name;
+        }
+
         return NameSanitiser::sanitize($name, $this->isNameExempt());
     }
 
     /**
      * A user is exempt from the display-name sanitiser when they are a
-     * platform mod/support/admin.
+     * platform mod/support/admin, or one of
+     * Freegle's own mailboxes.
      */
     public function isNameExempt(): bool
     {
-        return $this->isModerator();
+        if (in_array($this->systemrole, ['Moderator', 'Support', 'Admin'], TRUE)) {
+            return TRUE;
+        }
+        return $this->isModerator() || $this->isOfficialFreegleUser();
+    }
+
+    /**
+     * Freegle's own mailboxes (support@, mentors@, ...), from the mail config.
+     * iznik-server-go/user/namevalidation.go keeps the same list.
+     *
+     * @return string[]
+     */
+    public static function officialAddresses(): array
+    {
+        $mail = config('freegle.mail');
+        $addrs = [];
+        foreach ([
+            'noreply_addr', 'geek_alerts_addr', 'geeks_addr', 'support_addr',
+            'chitchat_support_addr', 'spam_addr', 'partnerships_addr', 'info_addr',
+            'fundraising_addr', 'thanks_addr', 'mentors_addr', 'centralmods_addr',
+            'treasurer_addr',
+        ] as $key) {
+            $addrs[] = $mail[$key] ?? NULL;
+        }
+        $addrs[] = config('freegle.communitynews.system_user_email');
+        $addrs[] = config('freegle.firstreply.chat.system_user_email');
+
+        return array_values(array_unique(array_filter($addrs)));
+    }
+
+    /**
+     * Whether this user holds one of Freegle's own mailbox addresses. Those
+     * users are genuine Freegle, so "Freegle Support" is not impersonation.
+     */
+    public function isOfficialFreegleUser(): bool
+    {
+        return $this->emails()->whereIn('email', self::officialAddresses())->exists();
     }
 
     /**
@@ -478,7 +519,7 @@ class User extends Model implements Auditable
                         'email' => $email,
                         'preferred' => $primary,
                         'canon' => $canon,
-                        'backwards' => strrev(strtolower($email)),
+                        'backwards' => strrev($canon),
                     ]);
                     $rc = $newEmail->id;
                 } else {
@@ -801,6 +842,34 @@ class User extends Model implements Auditable
      *
      * @return array [lat, lng] or [null, null] if not available
      */
+    /**
+     * The point a member chose in their settings (settings.mylocation), as [lat, lng], or
+     * null when there is none. Callers fall back to lastlocation.
+     *
+     * Always null for a Trash Nothing member (tnuserid set): TN is the master for their
+     * location and tn:sync keeps lastlocation in step with it, while their mylocation is
+     * stale V1 data from before the account was linked to TN.
+     *
+     * @return array{0: float, 1: float}|null
+     */
+    public static function chosenLatLng(mixed $settings, mixed $tnuserid): ?array
+    {
+        if ($tnuserid !== null) {
+            return null;
+        }
+
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true);
+        }
+
+        $myloc = is_array($settings) ? ($settings['mylocation'] ?? null) : null;
+        if (!is_array($myloc) || !isset($myloc['lat'], $myloc['lng'])) {
+            return null;
+        }
+
+        return [(float) $myloc['lat'], (float) $myloc['lng']];
+    }
+
     public function getLatLng(): array
     {
         $location = $this->lastLocation;

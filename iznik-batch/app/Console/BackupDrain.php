@@ -154,6 +154,13 @@ class BackupDrain
     private const KEEPS_RUNNING = ['scheduler-heartbeat', 'monitor:scheduled-outcomes'];
 
     /**
+     * How long after the window a backlog is still put down to the drain, at most. The
+     * every-minute jobs work off what accumulated in a minute or two; this leaves room for
+     * a slow morning without excusing a genuinely stuck worker for long.
+     */
+    private const CATCH_UP_MINUTES = 15;
+
+    /**
      * Is this event left alone by the drain?
      *
      * The backup's own commands are never held off. The window exists FOR the backup, so
@@ -192,18 +199,19 @@ class BackupDrain
     }
 
     /**
-     * Was batch work held off at any point in the last $minutes, including right now?
+     * Could the drain explain a backlog older than $maxAgeMinutes right now?
      *
-     * For checks that measure how long work has been waiting: a backlog that is $minutes
-     * old is a stuck worker on any other night, and the drain working as intended on this
-     * one. Answers true from the start of the window until $minutes after it closes.
+     * For checks that measure how long work has been waiting. The hold explains a stale
+     * row only if it has lasted longer than the check's maximum age: a row already older
+     * than that when the window opened was stuck before the drain touched anything. So a
+     * ten-minute check is excused from ten minutes into the window, but a 24-hour check
+     * is never excused by a 45-minute hold. After the window the excuse lasts while the
+     * workers catch up, which takes a minute or two (20 September 2026: the last task
+     * created inside the window was processed at 04:35:03), capped by the check's own
+     * maximum age.
      */
-    public static function heldOffWithin(int $minutes, ?CarbonInterface $at = null): bool
+    public static function explainsBacklog(int $maxAgeMinutes, ?CarbonInterface $at = null): bool
     {
-        if (self::active($at)) {
-            return true;
-        }
-
         $config = config('freegle.backup.drain', []);
 
         if (! ($config['enabled'] ?? false)) {
@@ -211,7 +219,7 @@ class BackupDrain
         }
 
         $length = (int) ($config['minutes'] ?? 0);
-        if ($length <= 0) {
+        if ($length <= 0 || $maxAgeMinutes <= 0) {
             return false;
         }
 
@@ -223,11 +231,17 @@ class BackupDrain
             return false;
         }
 
-        $since = $now->copy()->subMinutes(max(0, $minutes));
+        $catchUp = min($maxAgeMinutes, self::CATCH_UP_MINUTES);
 
         foreach ([$start, $start->copy()->subDay()] as $from) {
+            if ($from->greaterThan($now)) {
+                continue;
+            }
+
             $end = $from->copy()->addMinutes($length);
-            if ($end->greaterThan($since) && $from->lessThanOrEqualTo($now)) {
+            $heldFor = $from->diffInMinutes($now->lessThan($end) ? $now : $end);
+
+            if ($heldFor > $maxAgeMinutes && $now->lessThan($end->copy()->addMinutes($catchUp))) {
                 return true;
             }
         }

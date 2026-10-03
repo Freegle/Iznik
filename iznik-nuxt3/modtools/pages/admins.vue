@@ -146,6 +146,20 @@
                     placeholder="(Optional) Link for a big button"
                   />
                 </b-form-group>
+                <b-form-group
+                  label="Send after (optional):"
+                  label-for="sendafter"
+                  label-class="mb-0"
+                  description="Leave empty to send as soon as it is approved. Otherwise it is held until this time."
+                  class="mb-3"
+                >
+                  <b-form-input
+                    id="sendafter"
+                    v-model="sendafter"
+                    type="datetime-local"
+                    style="max-width: 250px"
+                  />
+                </b-form-group>
               </div>
             </VeeForm>
             <b-button
@@ -199,6 +213,7 @@ import { defineRule, Form as VeeForm, Field, ErrorMessage } from 'vee-validate'
 import { required, email, min, max } from '@vee-validate/rules'
 import { useAdminsStore } from '~/stores/admins'
 import { useAuthStore } from '@/stores/auth'
+import { inputToSendAfter } from '~/modtools/composables/useAdminSendAfter'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/modtools/composables/useModMe'
 
@@ -221,6 +236,7 @@ const subject = ref(null)
 const body = ref(null)
 const ctatext = ref(null)
 const ctalink = ref(null)
+const sendafter = ref('')
 const creating = ref(false)
 const created = ref(false)
 const essential = ref(true)
@@ -292,6 +308,12 @@ async function create() {
       ctatext: ctatext.value,
       ctalink: ctalink.value,
       essential: essential.value,
+    }
+
+    const sendAfterIso = inputToSendAfter(sendafter.value)
+
+    if (sendAfterIso) {
+      params.sendafter = sendAfterIso
     }
   }
 

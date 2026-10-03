@@ -229,6 +229,12 @@ type Message struct {
 	Unseen             bool                `json:"unseen"`
 	Availablenow       uint                `json:"availablenow"`
 	Availableinitially uint                `json:"availableinitially"`
+	// Partgone is true once somebody has been recorded as having taken some of a
+	// multi-item post. It is a fact about takers, not arithmetic on the two counts
+	// above: an ordinary poster is no longer asked how many each person took, so
+	// availablenow stops tracking reality the moment the first person is recorded.
+	// Bulk offers still count items out one by one and use the numbers instead.
+	Partgone           bool                `json:"partgone" gorm:"-"`
 	MessageAttachments []MessageAttachment `gorm:"-" json:"attachments"`
 	MessageOutcomes    []MessageOutcome    `gorm:"-" json:"outcomes"`
 	MessagePromises    []MessagePromise    `gorm:"-" json:"promises"`
@@ -370,19 +376,6 @@ func computeExpiresat(msgType string, arrival time.Time) *time.Time {
 func rippleEnabled() bool {
 	v := os.Getenv("RIPPLE_ENABLED")
 	return v == "true" || v == "1"
-}
-
-// defaultSearchMode returns the searchmode used when the caller doesn't specify
-// one. Vector-hybrid is the default for every caller (public site, ModTools,
-// apps). VECTOR_SEARCH_DEFAULT=keyword is the no-deploy rollback lever that
-// reverts the whole site to the legacy keyword cascade. Both this env var and
-// the ?searchmode param are scheduled for removal once the keyword machinery is
-// retired.
-func defaultSearchMode() string {
-	if os.Getenv("VECTOR_SEARCH_DEFAULT") == "keyword" {
-		return "keyword"
-	}
-	return "vector"
 }
 
 // addRoadMetrics fills Roadmins/Roadmiles from the viewer's home for a batch
@@ -834,6 +827,12 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				canSeeInterest := message.Fromuser == myid || isMod
 				message.BulkItems = LoadBulkItems(db, message.ID, myid, canSeeInterest, message.MessageAttachments)
 				message.Bulkcount = len(message.BulkItems)
+
+				// Part gone: somebody has taken some. Read from the takers rather than
+				// from availablenow, which an ordinary post no longer maintains.
+				var takers int64
+				db.Table("messages_by").Where("msgid = ?", message.ID).Count(&takers)
+				message.Partgone = takers > 0
 				if message.Bulkcount > 0 {
 					message.Bulkslots = LoadBulkSlots(db, message.ID)
 					// Access instructions are private — only the offerer/mod sees them.
@@ -1564,118 +1563,36 @@ func Search(c *fiber.Ctx) error {
 		return rs
 	}
 
-	searchmode := c.Query("searchmode", defaultSearchMode())
-
-	// We've seen problems with crashes inside Gorm.  Best I can tell, it looks like a Gorm bug exposed when an
-	// array is resized.  So as a workaround we create slices with capacity, then filter out the empty ones at
-	// the end.
 	var res []SearchResult
-	var res2 []SearchResult
 
 	if len(term) > 0 {
 		if term == "" {
 			return fiber.NewError(fiber.StatusBadRequest, "No search term")
 		}
 
-		// Hybrid search: vector + keyword run in parallel, merged so that exact
-		// lexical matches always appear even when the embedding model misses them
-		// (e.g. short titles, UK retail terms like "white goods").
-		if searchmode == "vector" && embedding.Global.Count() > 0 {
-			expandedWords := ExpandQuery(term)
-
-			var vectorResults []SearchResult
-			var vectorStats VectorStats
-			var vectorErr error
-			var keyExact, keyStarts []SearchResult
-
-			var hybridWg sync.WaitGroup
-			hybridWg.Add(2)
-
-			go func() {
-				defer hybridWg.Done()
-				vectorResults, vectorStats, vectorErr = VectorSearch(term, SEARCH_LIMIT, universeSet, msgtype,
-					float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-			}()
-
-			go func() {
-				defer hybridWg.Done()
-				if len(expandedWords) > 0 {
-					keyExact = GetWordsExact(db, expandedWords, SEARCH_LIMIT, groupids, universeIDs, msgtype,
-						float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-					keyStarts = GetWordsStarts(db, expandedWords, SEARCH_LIMIT, groupids, universeIDs, msgtype,
-						float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-				}
-			}()
-
-			hybridWg.Wait()
-
-			fallbackTaken := vectorErr != nil
-			logVectorSearch(term, msgtype, myid, searchmode, len(vectorResults), fallbackTaken, vectorStats)
-
+		// Pure vector search. VectorSearch combines semantic (cosine) ranking with
+		// an in-memory lexical guarantee - a post whose subject literally contains
+		// the query words is always returned, even below the cosine threshold - so
+		// it fully replaces the retired keyword index and its typo/soundex cascade.
+		// The store is loaded synchronously at startup; if it somehow has no
+		// entries we return nothing rather than fall back to an index that no
+		// longer exists. Results are already blurred and deduplicated by
+		// VectorSearch. Search is spatial-reach based (bbox filters).
+		if embedding.Global.Count() > 0 {
+			vectorResults, vectorStats, vectorErr := VectorSearch(term, SEARCH_LIMIT, universeSet, msgtype,
+				float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+			logVectorSearch(term, msgtype, myid, len(vectorResults), vectorErr != nil, vectorStats)
 			if vectorErr != nil {
 				fmt.Printf("Vector search failed: %v\n", vectorErr)
-			}
-
-			// Merge: vector results first (semantic ranking), then keyword-only
-			// results the embedding missed (exact-match guarantee).
-			merged := mergeHybrid(vectorResults, append(keyExact, keyStarts...))
-
-			if len(merged) > 0 {
-				wg.Wait()
-				return c.JSON(applyOriginOnly(applyBrowseFilters(merged)))
-			}
-			// Both vector and keyword exact/starts returned nothing; fall through to
-			// typo and soundex cascade.
-		}
-
-		if len(res) == 0 {
-			words := GetWords(term)
-
-			var wg sync.WaitGroup
-			wg.Add(2)
-
-			go func() {
-				defer wg.Done()
-				res = GetWordsExact(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-			}()
-
-			go func() {
-				defer wg.Done()
-				// Add in prefix matches, which helps with plurals.
-				res2 = GetWordsStarts(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-			}()
-
-			wg.Wait()
-
-			res = append(res, res2...)
-
-			if len(res) == 0 {
-				res = GetWordsTypo(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-			}
-
-			if len(res) == 0 {
-				res = GetWordsSounds(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-			}
-
-			// Blur: one batched routing call, then cache hits.
-			blurCoords2 := make([][2]float64, 0, len(res))
-			for _, r := range res {
-				blurCoords2 = append(blurCoords2, [2]float64{float64(r.Lat), float64(r.Lng)})
-			}
-			roadblur.RoadBlurPrewarm(blurCoords2, utils.BLUR_USER)
-			for ix, r := range res {
-				res[ix].Lat, res[ix].Lng = roadblur.RoadBlur(r.Lat, r.Lng, utils.BLUR_USER)
+			} else {
+				res = vectorResults
 			}
 		}
 	}
 
-	// Return results where Msgid is not 0, deduplicated by msgid. The keyword path
-	// merges an exact-match pass with a starts-with pass (res2); any exact match is
-	// also a starts-with match, so without this dedup essentially every match would be
-	// returned twice. A message cross-posted to several of the searched groups likewise
-	// yields one spatial row per group and must collapse to a single result. We keep the
-	// first occurrence (exact matches are appended first, so they win). This mirrors the
-	// dedup mergeHybrid already applies on the vector path.
+	// Return results where Msgid is not 0, deduplicated by msgid as a safety net.
+	// VectorSearch already dedups, but keep this so any future change can't leak a
+	// duplicate; we keep the first (highest-ranked) occurrence.
 	filtered := []SearchResult{}
 	seen := make(map[uint64]bool, len(res))
 
@@ -1689,106 +1606,6 @@ func Search(c *fiber.Ctx) error {
 	wg.Wait()
 
 	return c.JSON(applyOriginOnly(applyBrowseFilters(filtered)))
-}
-
-// Activity represents a recent activity in groups
-// swagger:model Activity
-type Activity struct {
-	ID      uint64          `json:"id"`
-	Message ActivityMessage `json:"message"`
-	Group   ActivityGroup   `json:"group"`
-}
-
-// ActivityMessage represents a message in an activity
-// swagger:model ActivityMessage
-type ActivityMessage struct {
-	ID      uint64    `json:"id"`
-	Subject string    `json:"subject"`
-	Arrival time.Time `json:"arrival"`
-	Delta   int64     `json:"delta"`
-}
-
-// ActivityGroup represents a group in an activity
-// swagger:model ActivityGroup
-type ActivityGroup struct {
-	ID          uint64  `json:"id"`
-	Nameshort   string  `json:"nameshort"`
-	Namefull    string  `json:"-"`
-	Namedisplay string  `json:"namedisplay"`
-	Lat         float32 `json:"lat"`
-	Lng         float32 `json:"lng"`
-}
-
-type ActivityQuery struct {
-	Id        uint64
-	Subject   string
-	Arrival   time.Time
-	Delta     int64
-	Groupid   uint64
-	Nameshort string
-	Namefull  string
-	Lat       float32
-	Lng       float32
-}
-
-func GetRecentActivity(c *fiber.Ctx) error {
-	var activity []ActivityQuery
-
-	db := database.DBConn
-
-	start := time.Now().Add(-time.Hour * 24).Format("2006-01-02 15:04:05")
-
-	db.Table("messages").
-		Select("messages.id, messages_groups.arrival, messages_groups.groupid, messages.subject, "+
-			"groups.nameshort, groups.namefull, groups.lat, groups.lng").
-		Joins("INNER JOIN messages_groups ON messages.id = messages_groups.msgid").
-		Joins("INNER JOIN `groups` ON messages_groups.groupid = groups.id").
-		Joins("INNER JOIN users ON messages.fromuser = users.id").
-		Where("messages_groups.arrival > ? AND collection = ?", start, utils.COLLECTION_APPROVED).
-		Order("messages_groups.arrival ASC").
-		Limit(100).
-		Scan(&activity)
-
-	last := int64(0)
-
-	var ret []Activity
-
-	for _, r := range activity {
-		namedisplay := r.Nameshort
-
-		if len(r.Namefull) > 0 {
-			namedisplay = r.Namefull
-		}
-
-		arrival := r.Arrival.Unix()
-		delta := int64(0)
-
-		if last != 0 {
-			delta = arrival - last
-		}
-
-		last = arrival
-
-		ret = append(ret, Activity{
-			ID: r.Id,
-			Message: ActivityMessage{
-				ID:      r.Id,
-				Subject: r.Subject,
-				Arrival: r.Arrival,
-				Delta:   delta,
-			},
-			Group: ActivityGroup{
-				ID:          r.Groupid,
-				Lat:         r.Lat,
-				Lng:         r.Lng,
-				Nameshort:   r.Nameshort,
-				Namefull:    r.Namefull,
-				Namedisplay: namedisplay,
-			},
-		})
-	}
-
-	return c.JSON(ret)
 }
 
 // =============================================================================
@@ -1947,20 +1764,12 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 	}
 }
 
-// invalidateMessageSearchIndexes drops the keyword-index (messages_index) and/or vector
-// embedding (messages_embeddings) rows for a message whose subject/body has just changed.
-// Both are populated ONCE for messages "missing" from those tables
-// (MessageSearchService.indexUnindexedMessages / GenerateEmbeddingsCommand) and are never
-// refreshed on edit, so a search for a term the edit introduced would never match.
-// Deleting the stale rows lets those background jobs re-index and re-embed from the new
-// text. Discourse 9954: a Wanted edited to add "Moulinex" was unfindable by that word.
-//
-// The two stores are driven by different fields, so they take independent invalidation
-// flags: messages_index is derived from the message SUBJECT only (indexString is only ever
-// called with subject text), while messages_embeddings is derived from subject+textbody. A
-// body-only edit must not drop the keyword index - those rows still accurately reflect the
-// unchanged subject, and dropping them would make the message unsearchable by keyword for
-// no reason until the next background run.
+// invalidateMessageEmbedding drops the vector embedding (messages_embeddings) row for a
+// message whose subject or body has just changed. It is populated ONCE for messages
+// "missing" from that table (GenerateEmbeddingsCommand) and never refreshed on edit, so a
+// search for a term the edit introduced would never match. Deleting the stale row lets the
+// background job re-embed from the new text. Discourse 9954: a Wanted edited to add
+// "Moulinex" was unfindable by that word.
 //
 // Deleting the messages_embeddings row is necessary but not sufficient for vector search:
 // apiv2 serves vector search entirely from an in-process store (embedding.Global) that
@@ -1968,14 +1777,9 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 // ticks would leave the STALE embedding in memory (see Store.Refresh's "Known limitation").
 // We therefore also Evict the msgid from that store so the next Refresh reloads the
 // regenerated blob.
-func invalidateMessageSearchIndexes(db *gorm.DB, msgid uint64, subjectChanged bool, textChanged bool) {
-	if subjectChanged {
-		db.Table("messages_index").Where("msgid = ?", msgid).Delete(nil)
-	}
-	if subjectChanged || textChanged {
-		db.Table("messages_embeddings").Where("msgid = ?", msgid).Delete(nil)
-		embedding.Global.Evict(msgid)
-	}
+func invalidateMessageEmbedding(db *gorm.DB, msgid uint64) {
+	db.Table("messages_embeddings").Where("msgid = ?", msgid).Delete(nil)
+	embedding.Global.Evict(msgid)
 }
 
 // handlePartnerConsent records partner consent on a message.
@@ -2463,7 +2267,10 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, []uint64, error) {
 	// The sync's job is to STOP divergence, not tolerate it: merge the twins
 	// (falls back to the split candidates if the merge fails).
 	candidates = user.HealTNDivergence(db, candidates)
-	return candidates[0], candidates, nil
+	// The member may hold further accounts carrying a DIFFERENT per-group alias
+	// (see user.FindTNSiblings). Added after the heal, so they widen owner
+	// arbitration without being merged.
+	return candidates[0], user.WithTNSiblings(db, candidates, email), nil
 }
 
 // actAsOwnerCandidate returns the message owner's id when the owner is one of
@@ -2941,12 +2748,12 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 			})
 	}
 
-	// The subject/body drive the search indexes (messages_index keyword search and
-	// messages_embeddings vector search), which are each populated once for "missing"
-	// messages and never refreshed on edit. Drop the stale rows for ANY editor (owner or
-	// mod) so the background indexer/embedder rebuild from the new text. Discourse 9954.
+	// The subject/body drive the vector search embedding (messages_embeddings), which is
+	// populated once for "missing" messages and never refreshed on edit. Drop the stale row
+	// for ANY editor (owner or mod) so the background embedder rebuilds from the new text.
+	// Discourse 9954.
 	if subjectChanged || textChanged {
-		invalidateMessageSearchIndexes(db, req.ID, subjectChanged, textChanged)
+		invalidateMessageEmbedding(db, req.ID)
 	}
 
 	if subjectChanged || textChanged || typeChanged || locationChanged || itemsChanged || imagesChanged {
@@ -3536,7 +3343,9 @@ type OnBehalfPosting struct {
 // postcode their own posts carry. Deliberately not derived from lastlocation or
 // a nearest-postcode lookup: those say where they last were, not where they say
 // they are, so they would stamp a postcode on a member's post that the member
-// never picked. If they have not set one, we refuse rather than guess.
+// never picked. If they have not set one, we refuse rather than guess. A Trash
+// Nothing member's mylocation is stale V1 data (TN is the master for their
+// location), so it does not count as chosen.
 //
 // The error text is shown to the moderator, so it says what to do about it.
 func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
@@ -3550,7 +3359,7 @@ func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
 	db.Table("users").
 		Select("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.id')) AS locationid, "+
 			"JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.name')) AS locationname").
-		Where("id = ?", author).Scan(&chosen)
+		Where("id = ? AND tnuserid IS NULL", author).Scan(&chosen)
 
 	if chosen.Locationid == 0 || chosen.Locationname == "" {
 		return nil, errors.New("That member hasn't set their location, so we can't post for them - ask them to set it first")
@@ -4018,6 +3827,9 @@ func PostMessage(c *fiber.Ctx) error {
 			// candidates for per-message arbitration if the merge fails).
 			partnerCandidates = user.HealTNDivergence(db, partnerCandidates)
 			myid = partnerCandidates[0]
+			// Same as resolvePartnerAuth: the member's other accounts join the
+			// candidate set for owner arbitration only, never for merging.
+			partnerCandidates = user.WithTNSiblings(db, partnerCandidates, email)
 		}
 	}
 
@@ -4131,18 +3943,23 @@ func heldByAnotherMod(myid uint64, req PostMessageRequest) (uint64, string) {
 	return holder, holderName
 }
 
+// heldByAnotherResponse is the 409 body ModTools reads to show who holds the post.
+func heldByAnotherResponse(c *fiber.Ctx, holder uint64, holderName string) error {
+	return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+		"ret":        1,
+		"status":     "Held by another moderator",
+		"heldby":     holder,
+		"heldbyname": holderName,
+	})
+}
+
 // dispatchPostMessageAction routes a POST /message action to the correct handler.
 func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Enforced centrally rather than per-handler so a new moderation action
 	// cannot silently skip the check by forgetting to call it.
 	if moderationActionsBlockedByHold[req.Action] {
 		if holder, holderName := heldByAnotherMod(myid, req); holder != 0 {
-			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-				"ret":        1,
-				"status":     "Held by another moderator",
-				"heldby":     holder,
-				"heldbyname": holderName,
-			})
+			return heldByAnotherResponse(c, holder, holderName)
 		}
 	}
 
@@ -4540,8 +4357,15 @@ func handleAddBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to modify this message")
 	}
 
-	count := 1
-	if req.Count != nil {
+	// A request with no count is an ordinary post saying "this person took some".
+	// Nobody is asked how many any more, so there is no number to apply: record the
+	// taker and leave availablenow alone. Inventing one (the old default of 1) made
+	// the remaining count drift away from reality one taker at a time, invisibly,
+	// because the badge stopped showing it. Bulk offers always send a count and are
+	// unaffected.
+	counted := req.Count != nil
+	count := 0
+	if counted {
 		count = *req.Count
 	}
 
@@ -4566,19 +4390,26 @@ func handleAddBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	existingCount := existing.Count
 
 	if existingID > 0 {
-		// Restore old count before updating.
-		// Identical golden to
-		// 228b6b678e0c (handleRemoveBy); converted together per gate (h).
-		db.Table("messages").Where("id = ?", req.ID).
-			Update("availablenow", gorm.Expr("LEAST(availableinitially, availablenow + ?)", existingCount))
-		db.Table("messages_by").Where("id = ?", existingID).Update("count", count)
+		if counted {
+			// Restore old count before updating.
+			// Identical golden to
+			// 228b6b678e0c (handleRemoveBy); converted together per gate (h).
+			db.Table("messages").Where("id = ?", req.ID).
+				Update("availablenow", gorm.Expr("LEAST(availableinitially, availablenow + ?)", existingCount))
+			db.Table("messages_by").Where("id = ?", existingID).Update("count", count)
+		}
+		// Uncounted and already recorded: nothing to say. Leaving any earlier count
+		// alone matters for posts that were part-taken under the old flow, where the
+		// number was entered deliberately and rewriting it to 0 would lose it.
 	} else {
 		db.Table("messages_by").Create(map[string]interface{}{"userid": userid, "msgid": req.ID, "count": count})
 	}
 
-	// Reduce available count.
-	db.Table("messages").Where("id = ?", req.ID).
-		Update("availablenow", gorm.Expr("GREATEST(LEAST(availableinitially, availablenow - ?), 0)", count))
+	if counted {
+		// Reduce available count.
+		db.Table("messages").Where("id = ?", req.ID).
+			Update("availablenow", gorm.Expr("GREATEST(LEAST(availableinitially, availablenow - ?), 0)", count))
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

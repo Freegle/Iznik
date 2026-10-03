@@ -306,3 +306,68 @@ func TestPostAdminCreateWithSendAfter(t *testing.T) {
 	// Cleanup.
 	db.Exec("DELETE FROM admins WHERE id = ?", id)
 }
+
+// Guidance for local moderators lives in admins.modguidance, separate from subject and text.
+
+func adminGuidanceRow(t *testing.T, id uint64) (string, string, *string) {
+	db := database.DBConn
+	var row struct {
+		Subject     string
+		Text        string
+		Modguidance *string
+	}
+	db.Raw("SELECT subject, text, modguidance FROM admins WHERE id = ?", id).Scan(&row)
+	return row.Subject, row.Text, row.Modguidance
+}
+
+func TestCreateSystemWideAdminStoresGuidanceSeparately(t *testing.T) {
+	prefix := uniquePrefix("adm_guid_new")
+	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	_, token := CreateTestSession(t, supportID)
+
+	guidance := "GUIDANCE-" + prefix + " add your own sign-off"
+	body := fmt.Sprintf(`{"subject":"Sys %s","text":"Body for members","modguidance":%q}`, prefix, guidance)
+	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+token, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	id := uint64(result["id"].(float64))
+	assert.Greater(t, id, uint64(0))
+
+	subject, text, stored := adminGuidanceRow(t, id)
+	assert.NotNil(t, stored)
+	assert.Equal(t, guidance, *stored)
+	assert.Equal(t, "Body for members", text, "guidance must not be folded into the body")
+	assert.Equal(t, "Sys "+prefix, subject)
+	assert.NotContains(t, text, "GUIDANCE-")
+	assert.NotContains(t, subject, "GUIDANCE-")
+
+	database.DBConn.Exec("DELETE FROM admins WHERE id = ?", id)
+}
+
+// V1 parity: Admin::getPublic returned parentid, heldat, activeonly, sendafter and createdby as
+// a user object. ModAdmin needs parentid for its "copy of a suggested ADMIN" notice and
+// createdby.displayname for "Created by".
+
+func patchAdmin(t *testing.T, token string, body string) int {
+	req := httptest.NewRequest("PATCH", "/api/modtools/admin?jwt="+token, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	return resp.StatusCode
+}
+
+func deleteAdminStatus(t *testing.T, token string, id uint64) int {
+	req := httptest.NewRequest("DELETE", "/api/modtools/admin?jwt="+token, bytes.NewBufferString(fmt.Sprintf(`{"id":%d}`, id)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	return resp.StatusCode
+}
+
+func adminExists(id uint64) bool {
+	var n int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM admins WHERE id = ?", id).Scan(&n)
+	return n == 1
+}

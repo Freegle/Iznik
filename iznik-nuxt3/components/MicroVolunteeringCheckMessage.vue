@@ -6,6 +6,12 @@
         volunteers. But thanks for looking!
       </NoticeMessage>
     </div>
+    <div v-else-if="noLongerNeeded">
+      <NoticeMessage variant="info" class="no-longer-needed">
+        Thanks for looking. This post doesn't need checking any more: it has
+        been sorted, or it is no longer on your communities.
+      </NoticeMessage>
+    </div>
     <div v-else>
       <p class="instruction-text">
         This is someone else's post. Does it look ok to you?
@@ -211,6 +217,9 @@ const comments = ref(null)
 const msgcategory = ref(null)
 const showMessagePhotosModal = ref(false)
 const found = ref(false)
+// The server refused the vote, because the post is no longer available to check
+// since it was offered.
+const refused = ref(false)
 
 // Initialize
 await messageStore.fetch(props.id, true)
@@ -219,6 +228,28 @@ found.value = !!messageStore.byId(props.id)
 const message = computed(() => {
   return messageStore?.byId(props.id)
 })
+
+// A post that has been taken, received or withdrawn cannot be voted on: the server
+// refuses the vote (SR-DYS36). Say so rather than asking.
+const noLongerNeeded = computed(() => {
+  if (refused.value) return true
+  if (!message.value) return false
+  return !!message.value.outcomes?.length
+})
+
+// A 403 means the post is no longer ours to check; anything else is a real error.
+// Returns { result } when the vote was recorded, null when it was refused.
+async function recordResponse(params) {
+  try {
+    return { result: await microVolunteeringStore.respond(params) }
+  } catch (e) {
+    if (e?.response?.status === 403) {
+      refused.value = true
+      return null
+    }
+    throw e
+  }
+}
 
 // Computed properties for display
 const strippedSubject = computed(() => {
@@ -269,7 +300,7 @@ function notRight(callback) {
 
 async function sendComments(callback) {
   // Record the result with comments.
-  const result = await microVolunteeringStore.respond({
+  const recorded = await recordResponse({
     msgid: props.id,
     response: 'Reject',
     comments: comments.value,
@@ -282,12 +313,12 @@ async function sendComments(callback) {
 
   // The mark (true/false) when the post was already settled by other members, else
   // undefined. Only the reply gate cares.
-  emit('next', result?.graded)
+  if (recorded) emit('next', recorded.result?.graded)
 }
 
 async function approve(callback) {
   // Approved - that's it.
-  const result = await microVolunteeringStore.respond({
+  const recorded = await recordResponse({
     msgid: props.id,
     response: 'Approve',
   })
@@ -296,7 +327,7 @@ async function approve(callback) {
     callback()
   }
 
-  emit('next', result?.graded)
+  if (recorded) emit('next', recorded.result?.graded)
 }
 
 // After recording a response the server has already marked the "post to check"

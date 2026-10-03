@@ -106,6 +106,10 @@ type User struct {
 	Reviewreason         *string    `json:"reviewreason,omitempty"`
 	Reviewedat           *time.Time `json:"reviewedat,omitempty"`
 	Modconfigid          *uint64    `json:"modconfigid,omitempty"`
+
+	// Set when the name, photo and about-me were withheld (see hideTNIdentityFromAnonymous),
+	// so a client that cached this copy before logging in knows to fetch it again.
+	Redacted bool `json:"redacted,omitempty" gorm:"-"`
 }
 
 type UserGiftAid struct {
@@ -185,6 +189,24 @@ func hideSensitiveFields(user *User, myid uint64) {
 	}
 }
 
+// hideTNIdentityFromAnonymous withholds a Trash Nothing member's name, photo and about-me
+// from someone who is not logged in. Trash Nothing asked for this: its members never log in
+// to Freegle, and their details should only be visible to other members. tnuserid must be
+// read before hideSensitiveFields, which clears it for most viewers.
+func hideTNIdentityFromAnonymous(user *User, myid uint64, tnuserid *uint64) {
+	if myid != 0 || tnuserid == nil {
+		return
+	}
+
+	user.Firstname = nil
+	user.Lastname = nil
+	user.Fullname = nil
+	user.Displayname = "A freegler"
+	user.Profile = UserProfile{}
+	user.Aboutme = Aboutme{}
+	user.Redacted = true
+}
+
 func GetUserByEmail(c *fiber.Ctx) error {
 	email := c.Params("email")
 
@@ -255,6 +277,18 @@ func GetUser(c *fiber.Ctx) error {
 			hideSensitiveFields(&user, myid)
 			enrichUserForModtools(&user, id, myid, modtools)
 
+			isPartner := false
+			partnerKey := c.Query("partner")
+			if partnerKey != "" {
+				if _, _, _, err := ValidatePartnerKey(database.DBConn, partnerKey); err == nil {
+					isPartner = true
+				}
+			}
+
+			if !isPartner {
+				hideTNIdentityFromAnonymous(&user, myid, tnuserid)
+			}
+
 			// Mod-or-above callers (Moderator/Support/Admin systemrole) get
 			// tnuserid/ljuserid restored even when not a mod of a shared group
 			// with the target. authMiddleware sets c.Locals("userRole") only
@@ -273,12 +307,10 @@ func GetUser(c *fiber.Ctx) error {
 			// GetOrCreateInternalEmail ensures a correctly-formatted address exists
 			// even for users whose only stored internal email has the wrong user ID
 			// (e.g. after a merge), and creates one if none exists at all.
-			if partnerKey := c.Query("partner"); partnerKey != "" {
-				if _, _, _, err := ValidatePartnerKey(database.DBConn, partnerKey); err == nil {
-					user.Email = GetOrCreateInternalEmail(database.DBConn, id)
-					user.Tnuserid = tnuserid
-					user.Ljuserid = ljuserid
-				}
+			if isPartner {
+				user.Email = GetOrCreateInternalEmail(database.DBConn, id)
+				user.Tnuserid = tnuserid
+				user.Ljuserid = ljuserid
 			}
 
 			return c.JSON(user)
@@ -620,6 +652,11 @@ func GetUserById(id uint64, myid uint64) User {
 				// are a national pool (users.systemrole), so this is a pure
 				// systemrole check with no membership lookup.
 				isExempt := IsExemptBySystemrole(user.Systemrole)
+				if !isExempt && isSuspiciousName(user.Displayname) {
+					// Only now worth the lookup: Freegle's own mailboxes keep names
+					// like "Freegle Support".
+					isExempt = IsOfficialFreegleUser(db, id)
+				}
 				user.Displayname = SanitizeDisplayName(user.Displayname, isExempt)
 			} else {
 				// Censor name for deleted user when viewed by non-mod.
@@ -802,7 +839,9 @@ func GetUsersByIds(ids []string, myid uint64, modtools bool) []User {
 			}
 
 			user := GetUserById(id, myid)
+			tnuserid := user.Tnuserid
 			hideSensitiveFields(&user, myid)
+			hideTNIdentityFromAnonymous(&user, myid, tnuserid)
 
 			if user.ID == id {
 				mu.Lock()
@@ -870,7 +909,8 @@ func GetLatLng(id uint64) utils.LatLng {
 	var ul, ulmsg userLoc
 
 	// We look for the location in the following descending order:
-	// - mylocation in settings, which we need to decode
+	// - mylocation in settings, which we need to decode - except for a Trash Nothing
+	//   member, whose location TN is the master for and whose mylocation is stale V1 data
 	// - lastlocation in user
 	// - last message posted, which has its own location
 	//
@@ -879,8 +919,8 @@ func GetLatLng(id uint64) utils.LatLng {
 	// If it doesn't give us what we need them , then fetch the others in parallel.
 	db.Table("users").
 		Select("users.id, locations.lat AS lastlat, locations.lng as lastlng, "+
-			"CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lat') AS DECIMAL(10,6)) AS mylat,"+
-			"CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lng') AS DECIMAL(10,6)) as mylng").
+			"CASE WHEN users.tnuserid IS NULL THEN CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lat') AS DECIMAL(10,6)) END AS mylat,"+
+			"CASE WHEN users.tnuserid IS NULL THEN CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lng') AS DECIMAL(10,6)) END as mylng").
 		Joins("LEFT JOIN locations ON locations.id = users.lastlocation").
 		Joins("LEFT JOIN spam_users ON spam_users.userid = users.id").
 		Where("users.id = ?", id).
@@ -1232,8 +1272,9 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 	if modtools {
 		if privatePos.Lat != 0 || privatePos.Lng != 0 {
 			var locNamePtr *string
+			// Not for a Trash Nothing member: their mylocation is stale V1 data.
 			db.Table("users").Select("JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.name'))").
-				Where("id = ? AND settings IS NOT NULL", id).Scan(&locNamePtr)
+				Where("id = ? AND settings IS NOT NULL AND tnuserid IS NULL", id).Scan(&locNamePtr)
 
 			locName := ""
 			if locNamePtr != nil && *locNamePtr != "null" {
@@ -2383,8 +2424,16 @@ func LimboUser(c *fiber.Ctx) error {
 		})
 	}
 
+	// Signal the auth middleware to skip the post-handler session check —
+	// matching handleForget (session/session.go) which does the same.
+	c.Locals("skipPostAuthCheck", true)
+
 	// Soft, recoverable limbo (shared with the Unsubscribe action).
 	softLimboUser(db, targetID, myid)
+
+	// Destroy the session so the user is logged out immediately — matching
+	// handleForget which does the same DELETE FROM sessions after soft-delete.
+	db.Exec("DELETE FROM sessions WHERE userid = ?", targetID)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2587,13 +2636,32 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 
 	// ── SECTION A: emails, memberships ──────────────────────────────────────────
 
-	// Email merge: move id1's emails to id2.
-	// If id2 already has a preferred email, demote id1's preferred before moving.
+	// Email merge: move id1's emails to id2. id2's own dominant email must
+	// survive the merge (UI: "the second user's preferred email will be the
+	// preferred email of the merged user"), so id1's preferred flag is always
+	// demoted first. If id2 had no preferred=1 row of its own - e.g. it was
+	// never (re)set - promote id2's best candidate so id1's email cannot
+	// become dominant merely by inheriting an unset flag.
+	if err := tx.Table("users_emails").Where("userid = ? AND preferred = 1", id1).Update("preferred", gorm.Expr("0")).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to demote id1 preferred email")
+	}
 	var id2HasPreferred int64
 	tx.Table("users_emails").Where("userid = ? AND preferred = 1", id2).Count(&id2HasPreferred)
-	if id2HasPreferred > 0 {
-		if err := tx.Table("users_emails").Where("userid = ? AND preferred = 1", id1).Update("preferred", gorm.Expr("0")).Error; err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "Failed to demote id1 preferred email")
+	if id2HasPreferred == 0 {
+		var bestEmailID uint64
+		tx.Table("users_emails").Select("id").Where("userid = ?", id2).
+			Order("preferred DESC, id ASC").Limit(1).Scan(&bestEmailID)
+		if bestEmailID == 0 {
+			// id2 has no email of its own (only reachable via merge-by-id).
+			// Fall back to id1's best so the merged account isn't left with
+			// zero preferred emails.
+			tx.Table("users_emails").Select("id").Where("userid = ?", id1).
+				Order("preferred DESC, id ASC").Limit(1).Scan(&bestEmailID)
+		}
+		if bestEmailID > 0 {
+			if err := tx.Table("users_emails").Where("id = ?", bestEmailID).Update("preferred", gorm.Expr("1")).Error; err != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, "Failed to promote preferred email")
+			}
 		}
 	}
 	if err := tx.Table("users_emails").Where("userid = ?", id1).Update("userid", id2).Error; err != nil {

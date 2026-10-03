@@ -666,7 +666,7 @@ class EeeClassificationService
             arsort($freq);
             $top     = (int) array_key_first($freq);
             $catMode = $top;
-            $catName = EeeVisionService::WEEE_CATEGORIES[$top] ?? null;
+            $catName = EeeVisionService::WEEE_STREAMS[$top] ?? null;
             $catConf = $freq[strval($top)] / count($categories);
         }
 

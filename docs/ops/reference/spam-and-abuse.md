@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-20
+last_reviewed: 2026-10-02
 owner: Freegle ops
 covers:
   - conf/rspamd
@@ -128,8 +128,11 @@ report is enough on its own; if the judge disagrees, it takes three.
   a spammer. That second half matters: the damage from chat spam is done at the moment it
   is read, so telling the recipient is part of the fix.
 - **`SpamCleanupService`** - once an account is confirmed as a spammer, removes the trail:
-  memberships, messages, chat messages, newsfeed items, notifications and sessions. Every
-  method supports `--dry-run`; use it first.
+  memberships, messages, chat messages, newsfeed items, notifications and sessions. It also
+  rejects messages sent *to* the spammer that are still waiting in Chat Review, and drops any
+  hold on them: there is nobody worth delivering them to, and once the spammer leaves their
+  groups the message can move out of the queue of the moderator who held it. Every method
+  supports `--dry-run`; use it first.
 
 ## Human moderation
 

@@ -277,7 +277,7 @@ class MessageSpatialServiceTest extends TestCase
     /**
      * Seed an approved message present in messages_spatial with a rippling_reach row +
      * derived sandwich bounds; returns the message id. Shared by the completed/reopened
-     * bounds-pruning tests (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md).
+     * bounds-pruning tests (docs/developers/reference/rippling-algorithm.md section 11).
      */
     private function seedSpatialWithReachAndBounds(): int
     {
@@ -325,7 +325,7 @@ class MessageSpatialServiceTest extends TestCase
         // are degraded (degenerate outer, no inner) so reach queries stop matching it
         // cheaply — but the stored reach grid must stay untouched: the digest's "came and
         // went" section, held replies to taken posts and un-completion all still read it
-        // (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md: pruning rippling_reach itself
+        // (docs/developers/reference/rippling-algorithm.md section 11: pruning rippling_reach itself
         // was verified UNSAFE).
         $msgid = $this->seedSpatialWithReachAndBounds();
         DB::table('messages_outcomes')->insert([

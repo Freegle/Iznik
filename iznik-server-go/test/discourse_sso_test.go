@@ -113,7 +113,42 @@ func TestDiscourseSSO_MissingCookie(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 302, resp.StatusCode)
 
-	location := resp.Header.Get("Location")
-	assert.Contains(t, location, "modtools.org/discourse",
-		"Should redirect to modtools login when no cookie")
+	assert.Equal(t, "https://modtools.org/discourse", resp.Header.Get("Location"),
+		"No cookie is the one case the ModTools page retries, so it must get the bare page URL")
+}
+
+// ssoCookieFor builds the Iznik-Discourse-SSO cookie value for a session row,
+// the way the ModTools page does from the persistent token.
+func ssoCookieFor(t *testing.T, sessionID uint64) string {
+	t.Helper()
+	var series, token string
+	database.DBConn.Raw("SELECT series, token FROM sessions WHERE id = ?", sessionID).Row().Scan(&series, &token)
+	cookieData, _ := json.Marshal(map[string]interface{}{"id": sessionID, "series": series, "token": token})
+	return url.QueryEscape(string(cookieData))
+}
+
+// ssoRequestWithCookie sends a correctly signed SSO challenge carrying the cookie.
+func ssoRequestWithCookie(t *testing.T, cookie string) string {
+	t.Helper()
+	ssoPayload, sig := makeDiscourseSSO("test_nonce", testDiscourseSecret)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/discourse_sso?sso=%s&sig=%s",
+		url.QueryEscape(ssoPayload), url.QueryEscape(sig)), nil)
+	req.Header.Set("Cookie", "Iznik-Discourse-SSO="+cookie)
+
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 302, resp.StatusCode)
+	return resp.Header.Get("Location")
+}
+
+// A cookie whose session row no longer exists (logged out elsewhere, token
+// rotated) must not be retried: the page would set the same dead cookie and
+// come straight back. The moderator is told to log in again.
+func TestDiscourseSSO_DeadSession_ShowsSessionError(t *testing.T) {
+	os.Setenv("DISCOURSE_SECRET", testDiscourseSecret)
+	defer os.Unsetenv("DISCOURSE_SECRET")
+
+	cookieData, _ := json.Marshal(map[string]interface{}{"id": 999999999, "series": "1", "token": "no-such-token"})
+	location := ssoRequestWithCookie(t, url.QueryEscape(string(cookieData)))
+	assert.Equal(t, "https://modtools.org/discourse?ssoerror=session", location)
 }

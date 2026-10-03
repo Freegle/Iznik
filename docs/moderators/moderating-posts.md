@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-20
+last_reviewed: 2026-10-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/**
@@ -13,6 +13,8 @@ covers:
   - iznik-nuxt3/tests/e2e/test-modtools-pending-messages.spec.js
   - iznik-nuxt3/tests/e2e/test-modtools-edits.spec.js
   - iznik-server-go/test/modtools_edits_rippled_in_test.go
+  - iznik-server-go/test/modmessaging_test.go
+  - iznik-server-go/test/modtools_searchmemb_test.go
   - iznik-batch/tests/Unit/Services/Ripple/**
 ---
 
@@ -161,6 +163,34 @@ Once resolved, the post shows up in **Taken down** with the reason, or stays liv
 nothing for you to do. A moderator can also take a post down directly, or restore one,
 from **Just published** or **Taken down** - your action is not a vote and does not need a
 quorum.
+
+## Posts from Trash Nothing that nobody chose
+
+Some posts arrive from Trash Nothing without the person choosing a Freegle community at
+all - we match them to a community from where they are. Those posts carry a warning saying
+so, worded for where the post has got to: on one waiting in **Pending** it says approve or
+delete is the whole of it, and on one already **live** it says what happens if members
+report it. They behave differently from an ordinary post, because the person behind them
+didn't choose your community and never agreed to hear from you:
+
+- You can **approve** or **delete** them as normal, and hold and release them.
+- You **cannot edit** them, send a **Blank Reply**, or use any **standard message** - those
+  buttons aren't shown, because there is nobody to send them to.
+- **Reject** still works, and simply takes the post off your community without sending
+  anything.
+
+If a member **reports** one of these posts, the report does **not** come to you - there is
+no community that could act on it. Two different people reporting the same post takes it
+off Freegle automatically instead. It is a soft delete, so Support can still see it and put
+it back.
+
+The same applies to the person on the **members page**: they show a warning saying they are
+a Trash Nothing user who didn't choose the community, and the Chat, Mail and standard-message
+buttons are not offered. If they later post to a community they've chosen, all of this goes
+away by itself and they become an ordinary member.
+
+Ordinary freeglers are unaffected - they can still reply to the post, and the reply reaches
+the poster on Trash Nothing as usual.
 
 ## Next steps
 

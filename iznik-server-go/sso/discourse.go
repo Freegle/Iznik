@@ -12,6 +12,7 @@ import (
 	"os"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -23,6 +24,38 @@ type ssoSession struct {
 	Admin     bool
 	Email     string
 	IsMod     bool
+}
+
+// modtoolsDiscoursePage is the ModTools page that copies the browser's
+// persistent token into the Iznik-Discourse-SSO cookie and retries this
+// endpoint with the same sso/sig (Netlify preserves the query string).
+const modtoolsDiscoursePage = "https://modtools.org/discourse"
+
+// ssoFailure says why a request that DID carry a cookie could not be turned
+// into a Discourse login. It reaches the ModTools page as ?ssoerror=<value>,
+// and the page shows the moderator a message instead of retrying: the same
+// cookie would get the same answer, so a retry can only loop.
+type ssoFailure string
+
+const (
+	// ssoFailureSession: the cookie could not be parsed, or no live session
+	// row matches its id and token (logged out elsewhere, token rotated).
+	ssoFailureSession ssoFailure = "session"
+	// ssoFailureNotMod: the session is live but the account is not a
+	// moderator - its system role is not mod-level.
+	ssoFailureNotMod ssoFailure = "notmod"
+)
+
+// ssoErrorURL is where a refused cookie-bearing request is sent.
+func ssoErrorURL(f ssoFailure) string {
+	return modtoolsDiscoursePage + "?ssoerror=" + string(f)
+}
+
+// isModSystemrole reports whether a users.systemrole value is mod-level.
+func isModSystemrole(systemrole string) bool {
+	return systemrole == utils.SYSTEMROLE_ADMIN ||
+		systemrole == utils.SYSTEMROLE_SUPPORT ||
+		systemrole == utils.SYSTEMROLE_MODERATOR
 }
 
 // DiscourseSSO handles the Discourse SSO login flow.
@@ -68,8 +101,10 @@ func DiscourseSSO(c *fiber.Ctx) error {
 	// Look up user from the Iznik-Discourse-SSO cookie.
 	cookieValue := c.Cookies("Iznik-Discourse-SSO")
 	if cookieValue == "" {
-		log.Printf("[DiscourseSSO] No cookie, redirecting to login")
-		return c.Redirect("https://modtools.org/discourse", fiber.StatusFound)
+		// The only case the ModTools page should retry: it sets the cookie
+		// and comes straight back with the same nonce.
+		log.Printf("[DiscourseSSO] No cookie, redirecting to ModTools to set one")
+		return c.Redirect(modtoolsDiscoursePage, fiber.StatusFound)
 	}
 
 	// Cookie value may be URL-encoded (browsers sometimes encode JSON cookies).
@@ -77,10 +112,10 @@ func DiscourseSSO(c *fiber.Ctx) error {
 		cookieValue = decoded
 	}
 
-	session, err := validateDiscourseSession(cookieValue)
+	session, failure, err := validateDiscourseSession(cookieValue)
 	if err != nil {
-		log.Printf("[DiscourseSSO] Session validation failed: %v", err)
-		return c.Redirect("https://modtools.org/discourse", fiber.StatusFound)
+		log.Printf("[DiscourseSSO] Refused (%s): %v", failure, err)
+		return c.Redirect(ssoErrorURL(failure), fiber.StatusFound)
 	}
 
 	// Build the SSO response.
@@ -95,16 +130,6 @@ func DiscourseSSO(c *fiber.Ctx) error {
 	return c.Redirect(redirectURL, fiber.StatusFound)
 }
 
-// validateDiscourseSession validates the cookie against the sessions table.
-// The user must be a Freegle moderator.
-//
-// Authentication uses id+token only. The series field is intentionally ignored:
-// PR #679 (2026-06-09) changed the session emitter to output series as a JSON
-// number (uint64) rather than a string, which caused json.Unmarshal to error
-// when trying to decode a number into a string field — producing an infinite
-// ModTools ⇄ Discourse redirect loop for all moderators. Authenticating by
-// id+token alone (matching the approach in auth/auth.go WhoAmI) fixes the loop
-// and is sufficient because token is a cryptographically random secret.
 // parseSSOCookie extracts the session id and token from the Iznik-Discourse-SSO
 // cookie. Series is deliberately ignored: PR #679 changed it from a JSON string
 // to a JSON number, so a struct field of either type would break on the other —
@@ -124,32 +149,43 @@ func parseSSOCookie(cookieValue string) (id uint64, token string, err error) {
 	return cookie.ID, cookie.Token, nil
 }
 
-func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
-	db := database.DBConn
-
+// validateDiscourseSession turns the Iznik-Discourse-SSO cookie into the
+// moderator it belongs to. On refusal it also returns which ssoFailure class
+// applies, so the caller can send the moderator to a page that explains it.
+//
+// Authentication uses id+token only. The series field is intentionally ignored:
+// PR #679 (2026-06-09) changed the session emitter to output series as a JSON
+// number (uint64) rather than a string, which caused json.Unmarshal to error
+// when trying to decode a number into a string field - producing an infinite
+// ModTools <-> Discourse redirect loop for all moderators. Authenticating by
+// id+token alone (matching the approach in auth/auth.go WhoAmI) is sufficient
+// because token is a cryptographically random secret.
+func validateDiscourseSession(cookieValue string) (*ssoSession, ssoFailure, error) {
 	cookieID, cookieToken, err := parseSSOCookie(cookieValue)
 	if err != nil {
-		return nil, err
+		return nil, ssoFailureSession, err
 	}
 
-	// Look up session — user must have a moderator/admin/support systemrole.
-	type SessionRow struct {
-		UserID uint64 `gorm:"column:userid"`
-	}
+	db := database.DBConn
 
-	var sessions []SessionRow
-	db.Table("sessions").
-		Select("sessions.userid").
+	// Find the session with no role filter, so that "no such session" and
+	// "not a moderator" are told apart - the moderator needs a different
+	// message for each.
+	var userID uint64
+	var systemrole string
+	row := db.Table("sessions").
+		Select("sessions.userid, users.systemrole").
 		Joins("INNER JOIN users ON sessions.userid = users.id").
-		Where("users.systemrole IN ('Admin', 'Support', 'Moderator') AND sessions.id = ? AND sessions.token = ?",
-			cookieID, cookieToken).
-		Scan(&sessions)
-
-	if len(sessions) == 0 {
-		return nil, fmt.Errorf("no valid moderator session found")
+		Where("sessions.id = ? AND sessions.token = ?", cookieID, cookieToken).
+		Row()
+	if err := row.Scan(&userID, &systemrole); err != nil || userID == 0 {
+		return nil, ssoFailureSession, fmt.Errorf("no live session for cookie id %d", cookieID)
 	}
 
-	userID := sessions[0].UserID
+	// Moderators are a national pool: a mod-level system role is the whole gate.
+	if !isModSystemrole(systemrole) {
+		return nil, ssoFailureNotMod, fmt.Errorf("user %d has system role %s", userID, systemrole)
+	}
 
 	// Get user details.
 	var fullname string
@@ -161,18 +197,15 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 	var profileURL string
 	db.Table("users_images").Select("url").Where("userid = ?", userID).Order("id DESC").Limit(1).Scan(&profileURL)
 
-	var systemrole string
-	db.Table("users").Select("systemrole").Where("id = ?", userID).Scan(&systemrole)
-	isAdmin := systemrole == "Admin"
 
 	return &ssoSession{
 		UserID:    userID,
 		Name:      fullname,
 		AvatarURL: profileURL,
-		Admin:     isAdmin,
+		Admin:     systemrole == utils.SYSTEMROLE_ADMIN,
 		Email:     email,
 		IsMod:     true,
-	}, nil
+	}, "", nil
 }
 
 // validateHMAC checks that the HMAC-SHA256 of the payload matches the signature.

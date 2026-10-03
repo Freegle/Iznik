@@ -4,6 +4,7 @@ namespace Tests\Unit\Services;
 
 use App\Models\Message;
 use App\Services\ContentCheckService;
+use App\Services\ContentEmbeddingService;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;

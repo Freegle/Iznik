@@ -1,6 +1,5 @@
 ---
-last_reviewed: 2026-09-20
-owner: Freegle dev team
+last_reviewed: 2026-10-02
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -722,6 +721,16 @@ were never any copies: retraction is now just "the post is no longer live".
   pair on sight - the sentinel below a member's own cap cannot be a choice, because only the
   top stop means "no limit" and only at the ceiling does it store the sentinel.
 
+  The hint's place names no longer come from `towns` at all. They come from the `places`
+  gazetteer (GeoNames, places of 3,000+ people), because with `towns` a Wellingborough member
+  at the 5-minute stop read "Max 1-2 miles by road. Close to Northampton": Wellingborough,
+  Kettering and Rushden are not curated towns, so the nearest one was 12 miles away. The
+  examples are the biggest places in the outer half of the reach, so they move outwards as the
+  slider widens. When nothing is in reach, the nearest place comes back with its
+  road distance (`closer_miles`, from the drive-metrics lookup, omitted rather than replaced by a straight line when routing cannot say), shown as "Nearest town: X, N miles by road". The reach itself is one
+  figure, "Up to about N miles by road", the median frontier. `towns` still anchors Community
+  News areas, which is now its only reader.
+
   *It decays.* Nothing else writes the key, so a member who joins after a run has no band
   limit, ever - and a member who moves, or an area that grows denser, drifts away from the band
   they are held to. The full pass runs NIGHTLY (02:40) and closes both: it gives new joiners a
@@ -818,7 +827,7 @@ were never any copies: retraction is now just "the post is no longer live".
   (Discourse 9933).
 
   The containment test itself is served through **sandwich bounds**
-  (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): the exact polygons are grid-fill
+  (section 11): the exact polygons are grid-fill
   isochrones averaging ~11k vertices / 178 KB, so the hot queries first consult two small
   derived polygons stored as SAME-ROW columns on `rippling_reach` — `outer_bound` (a
   verified superset, NOT NULL and spatially indexed: outside it = definitely out) and
@@ -1095,6 +1104,8 @@ about travel time, so the reach wins wherever we have it.
   `max_minutes`) - how long an out-of-reach reply waits (§7a). Off reverts to release on
   coverage or backstop alone.
 - `reply_saturation_stop` (5), `hazard_hours`, `rippled_in_pending_hours` (0).
+- `repost_keeps_reach_days` (`RIPPLE_REPOST_KEEPS_REACH_DAYS`, 7) - how recently a post must
+  have been live for a member's repost to resume its reach rather than restart it (§5). 0 disables.
 - `RIPPLE_HIDE_PENDING` (apiv2 env, on by default) - hide a post that has no
   `rippling_reach` row yet for its first ten minutes. Set to `0` to show every post at once.
 
@@ -1615,21 +1626,83 @@ cause (slow SQL) is invisible from the console. Two rules follow, both learned t
 The component loads the three surfaces independently: a failure or delay in one fills in its own
 panels late (or reports its own error there) rather than blanking the tab.
 
-### 10a. "Was this replier already a member?" - RETIRED
+### 10a. "Was this replier already a member?" - and why ripple-created joins don't count
 
-Older versions of the effectiveness figures on this tab turned on one test: was the replier an
-**established member of an origin group** of the post? If yes, the reply was scored `home` -
-they'd have seen it anyway, rippling got no credit. If no, rippling reached them.
+Almost every effectiveness figure on the tab turns on one test: was the replier an **established
+member of an origin group** of the post? If yes the reply is `home` - they'd have seen it anyway,
+rippling gets no credit. If no, rippling reached them. That single test drives the rippled-reply
+and rippled-taker shares, the reply→take comparison, and the **rescue floor** (posts taken with no
+home-group reply at all - the takes that would otherwise have gone nowhere).
 
-That test - `rippling.EstablishedOriginMemberExists`, and the `ripple_group` / `ripple_join`
-attribution ladder built on it - read `messages_groups.rippled_in`, `memberships.rippled` and
-group-join timing. All three no longer exist: there is no membership to be established in, and no
-origin group to belong to. The distinction this section drew (home vs ripple-created vs genuine
-rippled reach) cannot be reconstructed from anything rippling now stores, because rippling no
-longer creates joins or per-community copies for it to read.
+The test has three qualifiers, all load-bearing, and it lives in one place -
+`rippling.EstablishedOriginMemberExists` in `rippling/attribution.go`:
 
-This section stays as the design record for the interim it served, including the fix it needed
-(a join made only to reply is not evidence of pre-existing local interest, and a join rippling
-made as a side-effect of an earlier post is not evidence either). Whatever now measures "did
-rippling make a difference to this reply?" has to be built on `rippling_reach` and reply timing
-alone - see whoever currently owns `rippling/attribution.go` for the live answer.
+- **origin groups only** (`messages_groups.rippled_in = 0`) - being in a group the post *rippled
+  into* is not being local to it,
+- **joined before the post arrived** - the reply flow joins people to groups in order to reply, so
+  a join made seconds ago is not evidence of anything,
+- **not a ripple-created join** (`memberships.rippled = 0`) - rippling auto-joins a poster to every
+  group their post rippled into (§5), so a frequent poster accumulates memberships of distant
+  groups purely as a side-effect of rippling. When one of those groups later hosts a post of its
+  own, that member is only there to see it *because* of an earlier ripple.
+
+The third qualifier was missing until August 2026, and it mattered: on production 92k memberships
+carry `rippled = 1`, and ~7% of all replies scored `home` were backed by nothing else. Rippling's
+own knock-on reach was being counted in the column that means "rippling had nothing to do with
+this", so every effectiveness figure on the tab read low.
+
+Those replies now have their own attribution channel, `ripple_join`, one rung below `ripple_group`
+in the ladder (`rippling.DeriveAttribution`) - both are membership-level exposure that exists
+because of a ripple. It carries no "did this post ripple?" guard, unlike `ripple_reach`: the ripple
+that earns the credit already happened, to a different post, and left the membership behind as its
+record. The evidence bit is frozen per reply in `rippling_reply_attribution.was_ripple_join`, and
+`ripple:backfill-reply-attribution` reconstructs it for older rows - re-reading a frozen
+`was_home_member` bit as `ripple_join` where the surviving membership shows that provenance, while
+leaving rows whose membership has since decayed away on their original answer.
+
+## 11. Sandwich bounds: the measured facts behind the design
+
+Section 7 describes how `outer_bound` and `inner_bound` serve the containment test. These are the
+measurements (prod db3, July 2026) that fixed its shape. They are why the obvious alternatives are
+not used.
+
+**Dead ends, do not retry:**
+
+- **A bounding-box or lat/lng prefilter.** The spatial R-tree already is one, and is used. No stored
+  box beats the polygon's own MBR.
+- **Lossless vertex reduction.** `ST_Simplify` at tolerances from 1e-10 to 1e-5 removes no
+  vertices: every vertex of a grid-fill isochrone is a change of direction.
+- **Lossy `ST_Simplify` as the stored reach.** Unsafe. At 0.005 degrees it bridges the Thames at
+  Gravesend and gains the north bank. The tolerance is in degrees because the coordinates are
+  lng/lat labelled SRID 3857, and the Thames there is 0.007-0.012 degrees wide. Simplification may
+  only ever produce a bound, never the answer.
+- **Asking the routing server per request.** Correct at barriers, but 1.8 s at 30 minutes and 14.7 s
+  at 60, against 0.26 s for the whole SQL query.
+
+**MySQL executor facts that dictate the query shape:**
+
+1. `AND` conjuncts run cheap-first, and a BLOB is fetched lazily per stage, so a failing cheap
+   conjunct means the polygon is never read.
+2. Inside a single `OR`, `CASE` or `IF`, any reference to the polygon column fetches it for every
+   evaluated row (2.10 s against 2.3 ms over 8,129 rows). Laziness does not cross expression items.
+3. A correlated `EXISTS (... polygon ...)` inside an `OR` is lazy. It is the only safe place for the
+   exact polygon.
+4. `MBRContains(bound, point)` drives the R-tree from the index alone.
+
+**Rules for anything that writes a reach:**
+
+- Any shrink of the polygon (both `ST_Difference` clip paths) must shrink or NULL `inner_bound` in
+  the same statement. A stale inner bound accepts viewers in an area just clipped out, which is the
+  same class of error as a Thames leak. A stale outer bound is only loose, which is safe.
+- The wholly-within DELETE after a rejected-group clip stays keyed on the exact polygon, not
+  `outer_bound`: `ST_Within(outer, G)` is stricter and would stop the secondary clip firing.
+- Verify at write time that `ST_Contains(outer, polygon) = 1` and `ST_Contains(polygon, inner) = 1`.
+  Anything else, including an error on invalid geometry, falls back to the envelope as outer and
+  NULL as inner, which is always correct.
+
+**Do not prune `rippling_reach` rows for completed posts,** either by deleting them or by
+degenerating the polygon. A deleted row is recreated by `initialiseNew`'s anti-join on the next
+expand, churning and corrupting `created_at`. A degenerate polygon hides "came and went" posts in the
+digest, holds every reply to a taken rippled post, and leaves a post that is reopened (which happens
+automatically) invisible with no repair path. Completed posts are pruned instead by driving browse
+from the `outer_bound` index, whose arms all filter `successful = 0`.

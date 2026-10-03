@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"strconv"
 	"time"
 
@@ -13,7 +14,10 @@ import (
 
 type Admin struct {
 	ID            uint64     `json:"id"`
-	Createdby     *uint64    `json:"createdby"`
+	Createdby     *uint64    `json:"-"`
+	// CreatedbyUser is what the API returns as "createdby": the creator's id and name, as V1's
+	// Admin::getPublic did. ModAdmin reads createdby.displayname and createdby.id.
+	CreatedbyUser *AdminUser `json:"createdby" gorm:"-"`
 	Subject       *string    `json:"subject"`
 	Text          *string    `json:"text"`
 	CTA_Text      *string    `json:"ctatext"`
@@ -21,10 +25,73 @@ type Admin struct {
 	Created       *time.Time `json:"created"`
 	Complete      *time.Time `json:"complete"`
 	Heldby        *uint64    `json:"heldby"`
+	Heldat        *time.Time `json:"heldat"`
+	Parentid      *uint64    `json:"parentid"`
+	Activeonly    bool       `json:"activeonly"`
+	Sendafter     *time.Time `json:"sendafter"`
 	Pending       bool       `json:"pending"`
 	Essential     bool       `json:"essential"`
 	Template      *string    `json:"template"`
 	Editprotected bool       `json:"editprotected"`
+}
+
+// AdminUser is the creator of an admin, as V1 returned it.
+type AdminUser struct {
+	ID          uint64 `json:"id"`
+	Displayname string `json:"displayname"`
+}
+
+// adminColumns are the admins columns returned to moderators. V1's Admin publicatts.
+const adminColumns = "id, createdby, subject, text, ctatext, ctalink, created, complete, heldby, heldat, " +
+	"pending, parentid, activeonly, sendafter, essential, template, editprotected"
+
+// addCreators fills in createdby as {id, displayname}.
+func addCreators(db *gorm.DB, admins []Admin) {
+	ids := []uint64{}
+	for _, a := range admins {
+		if a.Createdby != nil {
+			ids = append(ids, *a.Createdby)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	type nameRow struct {
+		ID          uint64
+		Displayname string
+	}
+	var rows []nameRow
+	db.Table("users").
+		Select("id, COALESCE(NULLIF(fullname, ''), TRIM(CONCAT_WS(' ', firstname, lastname))) AS displayname").
+		Where("id IN (?)", ids).Scan(&rows)
+	names := map[uint64]string{}
+	for _, r := range rows {
+		names[r.ID] = r.Displayname
+	}
+
+	for i := range admins {
+		if admins[i].Createdby != nil {
+			if n, ok := names[*admins[i].Createdby]; ok {
+				admins[i].CreatedbyUser = &AdminUser{ID: *admins[i].Createdby, Displayname: n}
+			}
+		}
+	}
+}
+
+// normaliseSendAfter accepts ISO 8601 (e.g. "2006-01-02T15:04:05Z", or a browser datetime-local value)
+// and converts it to the MySQL DATETIME format ("2006-01-02 15:04:05") which strict mode requires.
+// Nil or empty means no send-after time, which is stored as NULL.
+func normaliseSendAfter(in *string) interface{} {
+	if in == nil || *in == "" {
+		return nil
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, *in); err == nil {
+			return t.UTC().Format("2006-01-02 15:04:05")
+		}
+	}
+	return *in
 }
 
 // GetAdmin handles GET /admin/:id - get a single admin by ID.
@@ -52,11 +119,15 @@ func GetAdmin(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var admin Admin
-	db.Table("admins").Select("id, createdby, subject, text, ctatext, ctalink, created, complete, heldby, pending, essential, template, editprotected").Where("id = ?", id).Scan(&admin)
+	db.Table("admins").Select(adminColumns).Where("id = ?", id).Scan(&admin)
 
 	if admin.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Admin not found")
 	}
+
+	one := []Admin{admin}
+	addCreators(db, one)
+	admin = one[0]
 
 	return c.JSON(admin)
 }
@@ -88,7 +159,8 @@ func ListAdmins(c *fiber.Ctx) error {
 	// (Discourse 9816). The frontend partitions pending vs previous client-side by the
 	// `pending` flag.
 	tx := db.Table("admins a").Select("a.id, a.createdby, a.subject, a.text, a.ctatext, " +
-		"a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected")
+		"a.ctalink, a.created, a.complete, a.heldby, a.heldat, a.pending, a.parentid, a.activeonly, " +
+		"a.sendafter, a.essential, a.template, a.editprotected")
 
 	if pendingParam == "true" {
 		tx = tx.Where("a.pending = 1")
@@ -102,6 +174,8 @@ func ListAdmins(c *fiber.Ctx) error {
 	if admins == nil {
 		admins = make([]Admin, 0)
 	}
+
+	addCreators(db, admins)
 
 	return c.JSON(admins)
 }
@@ -155,7 +229,9 @@ func PostAdmin(c *fiber.Ctx) error {
 			return heldByAnotherResponse(c, holder, name)
 		}
 
-		db.Table("admins").Where("id = ?", req.ID).Update("heldby", myid)
+		// V1 recorded when the hold was taken as well as who took it; ModAdmin shows it.
+		db.Table("admins").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"heldby": myid, "heldat": gorm.Expr("NOW()")})
 		return c.JSON(fiber.Map{"success": true})
 
 	case "Release":
@@ -182,21 +258,7 @@ func PostAdmin(c *fiber.Ctx) error {
 			template = *req.Template
 		}
 
-		// Normalise sendafter: accept ISO 8601 (e.g. "2006-01-02T15:04:05Z") and
-		// convert to MySQL DATETIME format ("2006-01-02 15:04:05") which strict mode requires.
-		var sendAfter interface{}
-		if req.SendAfter != nil && *req.SendAfter != "" {
-			for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05"} {
-				if t, err := time.Parse(layout, *req.SendAfter); err == nil {
-					s := t.UTC().Format("2006-01-02 15:04:05")
-					sendAfter = s
-					break
-				}
-			}
-			if sendAfter == nil {
-				sendAfter = *req.SendAfter
-			}
-		}
+		sendAfter := normaliseSendAfter(req.SendAfter)
 
 		// Table()+map Create reads the generated id back from the same
 		// sql.Result the INSERT returned, under the map key "@id" - see
@@ -238,6 +300,8 @@ type PatchAdminRequest struct {
 	Essential     *bool   `json:"essential,omitempty"`
 	Template      *string `json:"template,omitempty"`
 	Editprotected *bool   `json:"editprotected,omitempty"`
+	// Sendafter is held raw so an explicit null or "" (clear it) can be told from absent.
+	Sendafter json.RawMessage `json:"sendafter,omitempty"`
 }
 
 // PatchAdmin handles PATCH /admin - update an admin.
@@ -299,6 +363,23 @@ func PatchAdmin(c *fiber.Ctx) error {
 		return heldByAnotherResponse(c, holder, name)
 	}
 
+	// Validate sendafter before changing anything. V1 allowed it to be set by PATCH; null or ""
+	// clears it.
+	var sendafterVal interface{}
+	sendafterSet := len(req.Sendafter) > 0
+	if sendafterSet {
+		var sa *string
+		if err := json.Unmarshal(req.Sendafter, &sa); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid sendafter")
+		}
+		sendafterVal = normaliseSendAfter(sa)
+		if str, ok := sendafterVal.(string); ok {
+			if _, err := time.Parse("2006-01-02 15:04:05", str); err != nil {
+				return fiber.NewError(fiber.StatusBadRequest, "Invalid sendafter")
+			}
+		}
+	}
+
 	if req.Subject != nil {
 		db.Table("admins").Where("id = ?", req.ID).Update("subject", *req.Subject)
 	}
@@ -333,6 +414,9 @@ func PatchAdmin(c *fiber.Ctx) error {
 	}
 	if req.Editprotected != nil {
 		db.Table("admins").Where("id = ?", req.ID).Update("editprotected", *req.Editprotected)
+	}
+	if sendafterSet {
+		db.Table("admins").Where("id = ?", req.ID).Update("sendafter", sendafterVal)
 	}
 
 	// Track who edited and when.

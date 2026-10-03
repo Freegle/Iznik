@@ -1,10 +1,6 @@
 package tryst
 
 import (
-	"encoding/base64"
-	"encoding/json"
-	"net/url"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -62,139 +58,54 @@ func TestCanSee_SameUserBothSlots(t *testing.T) {
 	assert.True(t, canSee(7, tryst))
 }
 
-// ── calendarLink ────────────────────────────────────────────────────────────
+// ── calendarLink early-return guards ───────────────────────────────────────
+// calendarLink requires a live DB for full behaviour; those cases are covered
+// by the integration tests in test/tryst_test.go. Only the pre-DB early exits
+// (nil/empty/unparseable arrangedfor) are exercised here, since they return
+// before touching the db parameter.
 
 func TestCalendarLink_NilReturnsEmpty(t *testing.T) {
-	assert.Equal(t, "", calendarLink(nil))
+	assert.Equal(t, "", calendarLink(nil, 0, 0, 0, nil))
 }
 
 func TestCalendarLink_EmptyStringReturnsEmpty(t *testing.T) {
-	assert.Equal(t, "", calendarLink(strPtr("")))
+	assert.Equal(t, "", calendarLink(nil, 0, 0, 0, strPtr("")))
 }
 
 func TestCalendarLink_InvalidFormatReturnsEmpty(t *testing.T) {
-	assert.Equal(t, "", calendarLink(strPtr("not-a-date")))
+	assert.Equal(t, "", calendarLink(nil, 0, 0, 0, strPtr("not-a-date")))
 }
 
 func TestCalendarLink_PartialDateReturnsEmpty(t *testing.T) {
-	assert.Equal(t, "", calendarLink(strPtr("2024-06-15")))
+	assert.Equal(t, "", calendarLink(nil, 0, 0, 0, strPtr("2024-06-15")))
 }
 
-// decodeCalendarLinkData parses the `data` query param out of a calendarLink()
-// result the same way AddToCalendar.vue's download() does: extract, base64url
-// decode, then JSON unmarshal.
-func decodeCalendarLinkData(t *testing.T, link string) map[string]string {
-	t.Helper()
-
-	u, err := url.Parse(link)
-	assert.NoError(t, err)
-
-	encoded := u.Query().Get("data")
-	assert.NotEmpty(t, encoded)
-
-	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
-	assert.NoError(t, err)
-
-	var eventData map[string]string
-	assert.NoError(t, json.Unmarshal(decoded, &eventData))
-
-	return eventData
+// Restored parse-variant coverage (the old calendarLink URL-format tests were
+// replaced when the link moved to the V1 /calendar?data= form; the parse
+// fallbacks still exist and stay covered here).
+func TestParseArrangedFor_MySQLDatetime(t *testing.T) {
+	tm, ok := parseArrangedFor("2026-07-06 14:30:00")
+	if !ok || tm.Hour() != 14 || tm.Minute() != 30 {
+		t.Fatalf("MySQL datetime parse failed: %v %v", tm, ok)
+	}
 }
 
-func TestCalendarLink_MySQLDatetimeFormat(t *testing.T) {
-	link := calendarLink(strPtr("2024-06-15 10:30:00"))
-	eventData := decodeCalendarLinkData(t, link)
-	assert.Equal(t, "2024-06-15", eventData["startDate"])
-	assert.Equal(t, "10:30", eventData["startTime"])
-	assert.Equal(t, "11:30", eventData["endTime"]) // end = start + 1h
+func TestParseArrangedFor_RFC3339(t *testing.T) {
+	tm, ok := parseArrangedFor("2026-07-06T14:30:00Z")
+	if !ok || tm.Hour() != 14 {
+		t.Fatalf("RFC3339 parse failed: %v %v", tm, ok)
+	}
 }
 
-func TestCalendarLink_RFC3339Format(t *testing.T) {
-	link := calendarLink(strPtr("2024-06-15T10:30:00Z"))
-	eventData := decodeCalendarLinkData(t, link)
-	assert.Equal(t, "10:30", eventData["startTime"])
-	assert.Equal(t, "11:30", eventData["endTime"])
+func TestParseArrangedFor_RFC3339WithOffset(t *testing.T) {
+	tm, ok := parseArrangedFor("2026-07-06T14:30:00+01:00")
+	if !ok || tm.UTC().Hour() != 13 {
+		t.Fatalf("RFC3339 offset parse failed: %v %v", tm, ok)
+	}
 }
 
-func TestCalendarLink_RFC3339WithOffset(t *testing.T) {
-	// +01:00 offset → stored as UTC 09:30, end UTC 10:30.
-	link := calendarLink(strPtr("2024-06-15T10:30:00+01:00"))
-	eventData := decodeCalendarLinkData(t, link)
-	assert.Equal(t, "09:30", eventData["startTime"])
-	assert.Equal(t, "10:30", eventData["endTime"])
-}
-
-func TestCalendarLink_ContainsFreegleTitle(t *testing.T) {
-	link := calendarLink(strPtr("2024-01-01 00:00:00"))
-	eventData := decodeCalendarLinkData(t, link)
-	assert.Contains(t, eventData["name"], "Freegle")
-}
-
-func TestCalendarLink_ContainsDetails(t *testing.T) {
-	link := calendarLink(strPtr("2024-01-01 00:00:00"))
-	eventData := decodeCalendarLinkData(t, link)
-	assert.Contains(t, eventData["description"], "handover")
-}
-
-func TestCalendarLink_IncludesTimeZone(t *testing.T) {
-	link := calendarLink(strPtr("2024-01-01 00:00:00"))
-	eventData := decodeCalendarLinkData(t, link)
-	assert.NotEmpty(t, eventData["timeZone"])
-}
-
-func TestCalendarLink_MidnightRollsOverToNextDay(t *testing.T) {
-	// Start at 23:30, end should be 00:30 the following day.
-	link := calendarLink(strPtr("2024-06-30 23:30:00"))
-	eventData := decodeCalendarLinkData(t, link)
-	assert.Equal(t, "2024-06-30", eventData["startDate"])
-	assert.Equal(t, "23:30", eventData["startTime"])
-	assert.Equal(t, "00:30", eventData["endTime"])
-}
-
-func TestCalendarLink_URLPointsToCalendarPage(t *testing.T) {
-	link := calendarLink(strPtr("2024-01-01 12:00:00"))
-	u, err := url.Parse(link)
-	assert.NoError(t, err)
-	assert.Equal(t, "/calendar", u.Path)
-	assert.True(t, strings.HasPrefix(link, "https://"))
-}
-
-func TestCalendarLink_NonEmptyForValidInput(t *testing.T) {
-	link := calendarLink(strPtr("2024-05-03 14:00:00"))
-	assert.NotEmpty(t, link)
-}
-
-func TestCalendarLink_NewYearMidnight(t *testing.T) {
-	// Edge: 2023-12-31 23:00:00 UTC → end 2024-01-01 00:00:00 UTC.
-	link := calendarLink(strPtr("2023-12-31 23:00:00"))
-	eventData := decodeCalendarLinkData(t, link)
-	assert.Equal(t, "2023-12-31", eventData["startDate"])
-	assert.Equal(t, "23:00", eventData["startTime"])
-	assert.Equal(t, "00:00", eventData["endTime"])
-}
-
-func TestCalendarLink_LeapDay(t *testing.T) {
-	// Leap day should parse fine.
-	link := calendarLink(strPtr("2024-02-29 08:00:00"))
-	eventData := decodeCalendarLinkData(t, link)
-	assert.Equal(t, "2024-02-29", eventData["startDate"])
-	assert.Equal(t, "08:00", eventData["startTime"])
-	assert.Equal(t, "09:00", eventData["endTime"])
-}
-
-// TestCalendarLink_DataParamMatchesFrontendContract reproduces topic 9927 post 1:
-// the in-app "Add to Calendar" button greys out and does nothing when tapped.
-// AddToCalendar.vue's download() does the equivalent of decodeCalendarLinkData()
-// above, and bails out silently (console.error only) if there is no `data` param
-// or the fields it needs are missing. This test performs that same parse against
-// the real calendarLink() output.
-func TestCalendarLink_DataParamMatchesFrontendContract(t *testing.T) {
-	link := calendarLink(strPtr("2024-06-15 10:30:00"))
-	eventData := decodeCalendarLinkData(t, link)
-
-	assert.Equal(t, "2024-06-15", eventData["startDate"])
-	assert.Equal(t, "10:30", eventData["startTime"])
-	assert.Equal(t, "11:30", eventData["endTime"])
-	assert.NotEmpty(t, eventData["timeZone"])
-	assert.NotEmpty(t, eventData["name"])
+func TestParseArrangedFor_Garbage(t *testing.T) {
+	if _, ok := parseArrangedFor("not a date"); ok {
+		t.Fatal("garbage input should not parse")
+	}
 }

@@ -34,6 +34,18 @@ class ContentEmbeddingServiceTest extends TestCase
         $this->assertFalse($result);
     }
 
+    public function test_safeguarding_has_no_prototype_so_is_never_suppressed(): void
+    {
+        // A post that may show where somebody escaping abuse lives must reach a moderator
+        // even if it reads like an innocent offer to a refuge. The embedding check only
+        // suppresses categories with prototype sentences, so safeguarding must not get any.
+        $prototypes = (new \ReflectionClassConstant(ContentEmbeddingService::class, 'PROTOTYPES'))->getValue();
+        $this->assertArrayNotHasKey('safeguarding', $prototypes);
+
+        Http::fake(['*' => Http::response(['embeddings' => [array_fill(0, 256, 0.1)]], 200)]);
+        $this->assertFalse($this->service->isInnocentContext('Offering a sofa to the local refuge', 'safeguarding'));
+    }
+
     public function test_returns_false_when_sidecar_unavailable(): void
     {
         Http::fake(['*' => Http::response([], 500)]);

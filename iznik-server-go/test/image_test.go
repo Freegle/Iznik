@@ -337,6 +337,62 @@ func TestRotateImageWithBooleanFlag(t *testing.T) {
 	assert.Equal(t, fiber.StatusOK, rotateResp.StatusCode)
 }
 
+// createUnattachedImage uploads a Message image with no parent, as the give flow does
+// before the post exists. An empty token uploads anonymously, as before signup.
+func createUnattachedImage(t *testing.T, token, uid string) uint64 {
+	t.Helper()
+	url := "/api/image"
+	if token != "" {
+		url += "?jwt=" + token
+	}
+	req := httptest.NewRequest("POST", url, strings.NewReader(fmt.Sprintf(`{"externaluid":"%s","imgtype":"Message"}`, uid)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	return uint64(result["id"].(float64))
+}
+
+func rotateImage(t *testing.T, token string, id uint64) int {
+	t.Helper()
+	url := "/api/image"
+	if token != "" {
+		url += "?jwt=" + token
+	}
+	req := httptest.NewRequest("POST", url, strings.NewReader(fmt.Sprintf(`{"id":%d,"rotate":90,"type":"Message"}`, id)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+
+	return resp.StatusCode
+}
+
+func TestRotateUnattachedImageWhilePosting(t *testing.T) {
+	// A photo rotated while a post is being written is not attached to any message yet, so
+	// there is no owner to check. Rotating it must work, as uploading it does, or the
+	// rotation is silently lost when the post is made.
+	prefix := uniquePrefix("RotateUnattached")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+	imageID := createUnattachedImage(t, token, "freegletusd-rotate-unattached-"+prefix)
+
+	assert.Equal(t, fiber.StatusOK, rotateImage(t, token, imageID))
+
+	var mods string
+	database.DBConn.Raw("SELECT externalmods FROM messages_attachments WHERE id = ?", imageID).Scan(&mods)
+	assert.JSONEq(t, `{"rotate":90}`, mods)
+}
+
+func TestRotateUnattachedImageBeforeSignup(t *testing.T) {
+	// The give flow lets someone add photos before they have an account.
+	prefix := uniquePrefix("RotateUnattachedAnon")
+	imageID := createUnattachedImage(t, "", "freegletusd-rotate-anon-"+prefix)
+
+	assert.Equal(t, fiber.StatusOK, rotateImage(t, "", imageID))
+}
+
 func TestRotateImageNoAuth(t *testing.T) {
 	// SECURITY: rotating an image now requires authentication and ownership - an anonymous
 	// caller may not rotate (deface) an existing image.

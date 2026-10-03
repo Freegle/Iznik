@@ -275,6 +275,25 @@ class TitleCanonicalService
     // ---- brand detection ----
 
     /** @return array{brand: ?string, is_ikea: ?bool, debranded: ?string} */
+    /**
+     * Patterns for brand product names the catalogue deliberately does NOT strip.
+     *
+     * "iPad", "Kindle" and "Wii" name the brand but are also the whole item, so removing
+     * them would leave nothing to count, which is why `strip` is false for these rows.
+     * A caller that can tell there is something left after removal - a "bravia tv" is
+     * still a tv - can use these to finish debranding. Read-only: the canonicaliser's
+     * own behaviour is unchanged, so `golden-titles.json` still holds.
+     *
+     * @return string[]
+     */
+    public function productNamePatterns(): array
+    {
+        return array_values(array_map(
+            fn($b) => $b['pattern'],
+            array_filter($this->brands, fn($b) => ! $b['strip'])
+        ));
+    }
+
     public function detectBrand(?string $text): array
     {
         if ($text === null) {

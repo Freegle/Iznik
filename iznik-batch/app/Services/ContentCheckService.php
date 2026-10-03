@@ -340,10 +340,13 @@ class ContentCheckService
                     try {
                         $reasons = $this->checkMessage((int) $row->msgid);
 
-                        // A moderator is holding this copy: record what the check found so
-                        // they get the reasons, but never promote or block it - that would
-                        // take the post out from under them (9816/9815).
-                        if ($row->heldby !== null) {
+                        // A moderator is holding this copy, or sent the post back to pending
+                        // for its moderators to decide: record what the check found so they
+                        // get the reasons, but never promote or block it - that would take the
+                        // post out from under them (9816/9815, 122011064).
+                        if ($row->heldby !== null
+                            || (int) ($row->needs_moderator ?? 0) === 1
+                            || (int) ($row->locked_by_home ?? 0) === 1) {
                             $this->recordCheckOnly($row, $reasons, $dryRun, $stats, 'held');
                             continue;
                         }

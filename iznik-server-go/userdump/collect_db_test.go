@@ -104,9 +104,12 @@ func TestBuildDBSpecs_ChatMessagesAreWindowed(t *testing.T) {
 	assert.Equal(t, "id IN (?,?,?)", rooms.where)
 	assert.Equal(t, allChats, rooms.args)
 
+	// The roster is the member's own rows everywhere plus everyone's rows in
+	// the active rooms - not every member of every old mod chat.
 	roster := findSpec(specs, "chat_roster")
 	assert.NotNil(t, roster)
-	assert.Equal(t, "chatid IN (?,?,?)", roster.where)
+	assert.Equal(t, "userid = ? OR chatid IN (?)", roster.where)
+	assert.Equal(t, []interface{}{int64(42), int64(3)}, roster.args)
 
 	// Held records are keyed on the member only: chat_messages_held has no
 	// chatid column (its msgid references chat_messages.id), so the previous
@@ -124,6 +127,9 @@ func TestBuildDBSpecs_NoRecentChatsMeansNoMessageSpec(t *testing.T) {
 
 	assert.Nil(t, findSpec(specs, "chat_messages"))
 	assert.NotNil(t, findSpec(specs, "chat_rooms"), "membership is still collected")
+	roster := findSpec(specs, "chat_roster")
+	assert.NotNil(t, roster)
+	assert.Equal(t, "userid = ?", roster.where, "the member's own roster rows, no IN ()")
 }
 
 // A member with no chats at all still gets their own held messages.

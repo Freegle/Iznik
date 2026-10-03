@@ -64,3 +64,30 @@ Support or Admin. A screen that appears to filter by community is a bug, not a s
 
 - `.claude/rules/rippling.md` - the reach is the only spread mechanism.
 - `docs/moderators/` - what moderators are told these screens do.
+
+## The roster date is not when anything happened
+
+`chat_roster.date` is rewritten to now by **every** roster call: mark-as-read, Away or Offline
+presence, and Closed all bump it, not just the status change you are looking for. A Blocked row
+dated today may have been blocked months ago and merely opened today. Counting "blocks made
+today" from it overstated a day by a third.
+
+The moment a member pressed Block is in the API request log, not the table:
+`{api_version="v2"} |= "/apiv2/chatrooms" |= "\"status\":\"Blocked\""` in Loki, one per distinct
+member and room. The same applies to any "when did they do X" question answered from a roster
+watermark: `lastmsgseen` and friends move forward on ordinary viewing.
+
+## The sender's address is not in the database
+
+`chat_roster.lastip` is written only by the roster-status call (`chatroom.go`, the Blocked /
+Online / mark-as-read path). A member, or a script, that only sends messages never touches it,
+so for those senders every roster row is NULL, `logs_events` has nothing, and
+`messages.fromip` only covers posts. A "which addresses did these accounts use" query returns
+an empty set with no error.
+
+The record is the apiv2 request log in Loki: `{app="freegle",source="api"}`, JSON fields `ip`,
+`user_id`, `endpoint`, `session_id` and `request_id`. The `api_headers` stream, kept seven
+days, has the request headers under `request_headers` and joins on `request_id`. Pull with
+`query_range`, `direction=forward`, at most 5000 lines per call; a line filter over the whole
+retention is slow and a paged pull across the busy hours will time out silently, so bound each
+call to a day or an hour.

@@ -515,47 +515,11 @@ func CreateTestMessage(t *testing.T, userID uint64, subject string, lat float64,
 		"VALUES (?, ST_GeomFromText(?, %d), 1, DATE_SUB(NOW(), INTERVAL 15 MINUTE), 'Offer')", utils.SRID),
 		messageID, fmt.Sprintf("POINT(%f %f)", lng, lat))
 
-	// Index words for search - extract words from subject and add to search index
-	indexMessageWords(t, db, messageID, subject)
+	// (Retired) The keyword search index (words / messages_index) is no longer
+	// maintained; search is served from vector embeddings. Tests that exercise
+	// search seed the in-memory embedding store directly.
 
 	return messageID
-}
-
-// indexMessageWords adds words from the subject to the search index
-func indexMessageWords(t *testing.T, db *gorm.DB, messageID uint64, subject string) {
-	// Split subject into words and filter short/common words
-	words := strings.Fields(strings.ToLower(subject))
-
-	for _, word := range words {
-		// Skip short words and common stop words
-		if len(word) < 3 {
-			continue
-		}
-
-		// Truncate to max 10 chars (words table limit)
-		if len(word) > 10 {
-			word = word[:10]
-		}
-
-		// Insert word if not exists
-		firstThree := word
-		if len(firstThree) > 3 {
-			firstThree = firstThree[:3]
-		}
-
-		db.Exec("INSERT IGNORE INTO words (word, firstthree, soundex, popularity) VALUES (?, ?, SOUNDEX(?), 1)",
-			word, firstThree, word)
-
-		// Get the word ID
-		var wordID uint64
-		db.Raw("SELECT id FROM words WHERE word = ?", word).Scan(&wordID)
-
-		if wordID > 0 {
-			// Add to messages_index
-			db.Exec("INSERT IGNORE INTO messages_index (msgid, wordid, arrival) VALUES (?, ?, UNIX_TIMESTAMP())",
-				messageID, wordID)
-		}
-	}
 }
 
 // CreateTestNewsfeed creates a newsfeed entry for a user

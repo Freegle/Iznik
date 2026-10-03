@@ -9,35 +9,52 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
 /**
- * Chases council sponsorships that are coming up for renewal.
+ * Chases council sponsorships that are coming up for renewal, and those that have run out
+ * without being renewed.
  *
  * A council's budget round takes months, so the team needs telling well before the
- * sponsorship lapses - three months by default. Each partnership is chased once per window
- * (recorded in partnerships_reminders), so running this daily does not nag.
+ * sponsorship lapses - three months by default. That is the point to ask about next year.
+ * With --ended, it chases deals that finished in the last --days days with nothing agreed to
+ * follow them: by then the council should have renewed and paid. Each partnership is chased
+ * once per window (recorded in partnerships_reminders), so running this daily does not nag,
+ * and a deal already followed by a later one with the same council is left alone.
  *
  *   php artisan partnerships:reminders
  *   php artisan partnerships:reminders --days=30 --type=1month
+ *   php artisan partnerships:reminders --ended --days=30 --type=ended
  */
 class SponsorshipRemindersCommand extends Command
 {
     protected $signature = 'partnerships:reminders
-                            {--days=92 : How many days ahead of expiry to warn}
+                            {--days=92 : How many days ahead of expiry to warn (with --ended, how far back to look)}
                             {--type=3months : Reminder window name, recorded so each deal is chased once}
+                            {--ended : Chase deals that have already ended instead of those about to}
                             {--dry-run : Report what would be sent without sending it}';
 
-    protected $description = 'Email the Partnerships team about sponsorships nearing their end date';
+    protected $description = 'Email the Partnerships team about sponsorships nearing or past their end date';
+
+    private const COMMITTED = ['Confirmed', 'Paid', 'Overdue'];
 
     public function handle(): int
     {
         $days = max(1, (int) $this->option('days'));
         $type = (string) $this->option('type');
+        $ended = (bool) $this->option('ended');
         $dryRun = (bool) $this->option('dry-run');
 
         $today = Carbon::today();
-        $cutoff = $today->copy()->addDays($days);
 
-        // Only agreed, visible deals are worth chasing: an unagreed one is still being
-        // negotiated, and a hidden one has already been retired by hand.
+        if ($ended) {
+            $windowStart = $today->copy()->subDays($days);
+            $windowEnd = $today->copy()->subDay();
+        } else {
+            $windowStart = $today;
+            $windowEnd = $today->copy()->addDays($days);
+        }
+
+        // Only committed deals are worth chasing: a quote or an agreement in principle is
+        // still being negotiated. Hidden deals count too - a council that asked not to be
+        // named still needs asking about next year.
         $due = DB::table('partnerships')
             ->join('authorities', 'authorities.id', '=', 'partnerships.authorityid')
             ->leftJoin('partnerships_reminders', function ($join) use ($type) {
@@ -45,17 +62,20 @@ class SponsorshipRemindersCommand extends Command
                     ->where('partnerships_reminders.type', '=', $type);
             })
             ->whereNull('partnerships_reminders.id')
-            ->where('partnerships.agreed', 1)
-            ->where('partnerships.visible', 1)
-            ->whereDate('partnerships.enddate', '>=', $today->toDateString())
-            ->whereDate('partnerships.enddate', '<=', $cutoff->toDateString())
+            ->whereIn('partnerships.status', self::COMMITTED)
+            ->whereDate('partnerships.enddate', '>=', $windowStart->toDateString())
+            ->whereDate('partnerships.enddate', '<=', $windowEnd->toDateString())
+            // Already renewed: a later deal with the same council exists.
+            ->whereNotExists(function ($query) {
+                $query->from('partnerships AS later')
+                    ->whereColumn('later.authorityid', 'partnerships.authorityid')
+                    ->whereColumn('later.enddate', '>', 'partnerships.enddate');
+            })
             ->select([
                 'partnerships.id',
                 'partnerships.name',
                 'partnerships.enddate',
                 'partnerships.amount',
-                'partnerships.contactname',
-                'partnerships.contactemail',
                 'authorities.name as authorityname',
             ])
             ->orderBy('partnerships.enddate')
@@ -77,14 +97,16 @@ class SponsorshipRemindersCommand extends Command
 
             $groupCount = (int) DB::table('partnerships_groups')
                 ->where('partnershipid', $partnership->id)
+                ->where('source', '!=', 'Removed')
                 ->count();
 
             $this->info(sprintf(
-                '%s (%s) ends %s - %d days left, %d %s covered.',
+                '%s (%s) %s %s - %d days, %d %s covered.',
                 $partnership->name,
                 $partnership->authorityname,
+                $ended ? 'ended' : 'ends',
                 $endDate->format('j M Y'),
-                $daysLeft,
+                abs($daysLeft),
                 $groupCount,
                 $groupCount === 1 ? 'community' : 'communities'
             ));
@@ -102,9 +124,9 @@ class SponsorshipRemindersCommand extends Command
                 daysLeft: $daysLeft,
                 amount: (float) $partnership->amount,
                 groupCount: $groupCount,
-                contactName: $partnership->contactname,
-                contactEmail: $partnership->contactemail,
+                contacts: $this->contacts((int) $partnership->id),
                 modToolsUrl: $modSite . '/partnerships?id=' . $partnership->id,
+                ended: $ended,
             ));
 
             // Written after the send, so a send that blows up is retried on the next run
@@ -123,6 +145,27 @@ class SponsorshipRemindersCommand extends Command
         ));
 
         return Command::SUCCESS;
+    }
+
+    /**
+     * Everyone at the council we deal with, with their role in words.
+     *
+     * @return array<int, array{name: ?string, email: ?string, role: string}>
+     */
+    private function contacts(int $partnershipId): array
+    {
+        $roles = ['Waste' => 'waste team', 'Finance' => 'finance', 'Other' => 'other'];
+
+        return DB::table('partnerships_contacts')
+            ->where('partnershipid', $partnershipId)
+            ->orderBy('id')
+            ->get(['name', 'email', 'role'])
+            ->map(fn ($c) => [
+                'name' => $c->name,
+                'email' => $c->email,
+                'role' => $roles[$c->role] ?? $c->role,
+            ])
+            ->all();
     }
 
     /**

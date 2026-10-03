@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 ---
 
@@ -73,7 +73,7 @@ These are the patterns that come back. For each, the action and its risk level.
 | 6 | **A stale duplicate of a migrated service** | After a service moves hosts, the old copy may still be running and serving nobody | Prove the live instance is elsewhere (access-log recency on both), then retire the old containers and data | Medium - it is member/community content; archive first |
 | 7 | **Database table growth** | Every table replicates to every node, so a GB saved multiplies by the node count | Identify high-growth tables (ripple reach geometry, per-message view/like counters, email open-tracking, bounces, the app `logs` table). Prune by age, one row at a time. Reclaiming file space needs a separate gated rebuild | Medium/high - Galera rules apply |
 | 8 | **Oversized or wrong-class storage volumes** | The upload store and per-host data disks | Right-size, and pick the cheapest class that fits the access pattern (see Step 3) | Medium |
-| 9 | **The upload store (tusd)** | Large and always growing | Candidate to move to object storage; also purge incomplete/abandoned uploads (uploads that were created but never received their bytes) | Medium |
+| 9 | **The upload store (tusd)** | Large and always growing | Moving to object storage - [runbook](images-to-object-storage.md). New uploads already go there and abandoned uploads are purged by the pusher; the saving lands when the legacy copy is verified and the file storage volume is deleted | Medium |
 
 ## Step 3 - Storage cost model
 
@@ -94,9 +94,10 @@ Consequences:
   the volume.
 - **Object storage is much cheaper per GB above the base bundle** and has no per-request
   fee. For a large, growing store like uploads, moving from file to object storage is
-  usually a clear win, and the gap widens as the store grows. `tusd` has a native S3
-  backend, so it can write to object storage directly. An object-storage lifecycle rule
-  to abort incomplete multipart uploads also cleans up abandoned uploads automatically.
+  usually a clear win, and the gap widens as the store grows. tusd's own S3 backend
+  was rejected because it changes the shape of every upload id; instead tusd writes to
+  a local spool and a scheduled job moves completed uploads to the bucket, which also
+  purges abandoned ones ([runbook](images-to-object-storage.md)).
 - **Block/boot volumes bill on provisioned size and cannot shrink in place.** To make a
   host's disk smaller you reprovision it with a smaller disk. Do that only after the
   cleanup, and size for steady-state use plus headroom (for a mail host, allow for log

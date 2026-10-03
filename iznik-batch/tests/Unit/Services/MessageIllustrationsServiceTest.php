@@ -74,6 +74,82 @@ class MessageIllustrationsServiceTest extends TestCase
         return $message;
     }
 
+    /**
+     * A post waiting for a moderator, as production has it: a Pending membership and NO row in
+     * messages_spatial, because the spatial index job drops everything that is not approved.
+     */
+    private function createPendingMessage(string $subject, ?int $minutesAgo = 10): object
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => $subject,
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now()->subMinutes($minutesAgo),
+            'arrival' => now()->subMinutes($minutesAgo),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+        ]);
+
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now()->subMinutes($minutesAgo),
+        ]);
+
+        return $message;
+    }
+
+    public function test_a_post_waiting_for_a_moderator_gets_an_illustration(): void
+    {
+        // Discourse 9630/97. The candidate query lists Pending in its collection filter but
+        // joins messages_spatial, which holds approved posts only, so the join silently won and
+        // a waiting post was never a candidate. The reporter withdrew his test posts before a
+        // moderator reached them, so they never got a picture at all.
+        $message = $this->createPendingMessage('OFFER: Medicine Cabinet (TestTown)');
+
+        DB::table('ai_images')->insert([
+            'name' => 'Medicine Cabinet',
+            'externaluid' => 'freegletusd-cabinet',
+            'imagehash' => 'hashcab',
+        ]);
+
+        $this->makeService()->processIllustrations();
+
+        $attachment = DB::table('messages_attachments')->where('msgid', $message->id)->first();
+        $this->assertNotNull($attachment, 'A post waiting for a moderator should get a picture');
+        $this->assertEquals('freegletusd-cabinet', $attachment->externaluid);
+        $this->assertTrue(json_decode($attachment->externalmods, true)['ai']);
+    }
+
+    public function test_a_withdrawn_post_waiting_for_a_moderator_gets_nothing(): void
+    {
+        // Pending posts are now candidates without the spatial index, and that index was what
+        // used to keep deleted posts out. Nothing should be generated for a post the member has
+        // already withdrawn.
+        $message = $this->createPendingMessage('OFFER: Kennel (TestTown)');
+        DB::table('messages')->where('id', $message->id)->update(['deleted' => now()]);
+
+        DB::table('ai_images')->insert([
+            'name' => 'Kennel',
+            'externaluid' => 'freegletusd-kennel',
+            'imagehash' => 'hashken',
+        ]);
+
+        $this->makeService()->processIllustrations();
+
+        $this->assertEquals(
+            0,
+            DB::table('messages_attachments')->where('msgid', $message->id)->count(),
+            'A withdrawn post should not be given a picture'
+        );
+    }
+
     public function test_processes_message_using_cached_illustration(): void
     {
         $message = $this->createMessageInSpatial('OFFER: Vintage Lamp (TestTown)');
@@ -371,100 +447,75 @@ class MessageIllustrationsServiceTest extends TestCase
         );
     }
 
-    public function test_does_not_move_past_a_post_still_waiting_for_a_moderator(): void
+    public function test_a_waiting_post_is_a_candidate_however_far_the_saved_position_has_moved(): void
     {
-        // Discourse 9630/97. A post is only a candidate once it is approved, because the query
-        // needs a row in the spatial index. The saved position moves on arrival time whatever
-        // happens, so a post sitting in a moderation queue while the sweep goes past its
-        // arrival is never looked at again, and gets no picture even after it is approved.
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
+        // The guarantee that replaces the moderator hold PR #1556 added. That hold dragged the
+        // saved position back to the oldest waiting post every run, which made the approved
+        // branch re-read up to three days of posts a minute. It is not needed once a waiting
+        // post is a candidate on its own terms, so the pending branch is not watermarked at
+        // all and this is the test that says so.
+        $waiting = $this->createPendingMessage('OFFER: Medicine Cabinet (TestTown)', 20);
 
-        $waiting = Message::create([
-            'type' => Message::TYPE_OFFER,
-            'fromuser' => $user->id,
-            'subject' => 'OFFER: Medicine Cabinet (TestTown)',
-            'textbody' => 'Test',
-            'source' => 'Platform',
-            'date' => now()->subMinutes(20),
-            'arrival' => now()->subMinutes(20),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
-        ]);
-        MessageGroup::create([
-            'msgid' => $waiting->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now()->subMinutes(20),
-        ]);
-
-        // A later post, already approved, which this run does illustrate.
-        $this->createMessageInSpatial('OFFER: Toaster (TestTown)');
         DB::table('ai_images')->insert([
-            'name' => 'Toaster',
-            'externaluid' => 'freegletusd-toaster',
-            'imagehash' => 'hash001',
+            'name' => 'Medicine Cabinet',
+            'externaluid' => 'freegletusd-cabinet',
+            'imagehash' => 'hashcab',
+        ]);
+
+        // The saved position is already well past this post's arrival, which is exactly the
+        // state that used to strand it for good.
+        DB::table('config')->updateOrInsert(
+            ['key' => 'illustrations_last_arrival'],
+            ['value' => now()->addMinutes(5)->format('Y-m-d H:i:s')]
+        );
+
+        $this->makeService()->processIllustrations();
+
+        $this->assertEquals(
+            1,
+            DB::table('messages_attachments')->where('msgid', $waiting->id)->count(),
+            'A waiting post must still be picked up when the saved position is past it'
+        );
+    }
+
+    public function test_leaves_a_post_abandoned_in_a_queue_for_days(): void
+    {
+        // Bounded, so a post nobody is ever going to moderate does not draw a generation call
+        // for ever. If it is approved later it comes back through the approved branch at its
+        // new arrival time.
+        $stale = $this->createPendingMessage('OFFER: Forgotten Thing (TestTown)');
+        DB::table('messages')->where('id', $stale->id)->update(['arrival' => now()->subDays(10)]);
+        DB::table('messages_groups')->where('msgid', $stale->id)->update(['arrival' => now()->subDays(10)]);
+
+        DB::table('ai_images')->insert([
+            'name' => 'Forgotten Thing',
+            'externaluid' => 'freegletusd-forgotten',
+            'imagehash' => 'hashfor',
         ]);
 
         $this->makeService()->processIllustrations();
 
-        $saved = DB::table('config')->where('key', 'illustrations_last_arrival')->value('value');
-        $this->assertNotNull($saved);
-        $this->assertLessThanOrEqual(
-            now()->subMinutes(20)->format('Y-m-d H:i:s'),
-            substr($saved, 0, 19),
-            'The saved position must not move past a post that is still waiting to be approved'
+        $this->assertEquals(
+            0,
+            DB::table('messages_attachments')->where('msgid', $stale->id)->count(),
+            'A post left in a queue for ten days should not be illustrated while it waits'
         );
     }
 
-    public function test_gives_up_on_a_post_left_in_a_queue_for_days(): void
+    private function captureCleanupQueries(callable $fn): array
     {
-        // The hold above is bounded: a post abandoned in a moderation queue must not stop the
-        // job moving on for ever.
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
+        $seen = [];
+        DB::listen(function ($query) use (&$seen) {
+            if (stripos($query->sql, 'ma_ai') !== false) {
+                $seen[] = ['sql' => $query->sql, 'bindings' => $query->bindings];
+            }
+        });
 
-        $stale = Message::create([
-            'type' => Message::TYPE_OFFER,
-            'fromuser' => $user->id,
-            'subject' => 'OFFER: Forgotten Thing (TestTown)',
-            'textbody' => 'Test',
-            'source' => 'Platform',
-            'date' => now()->subDays(10),
-            'arrival' => now()->subDays(10),
-            'lat' => $group->lat,
-            'lng' => $group->lng,
-        ]);
-        MessageGroup::create([
-            'msgid' => $stale->id,
-            'groupid' => $group->id,
-            'collection' => MessageGroup::COLLECTION_PENDING,
-            'arrival' => now()->subDays(10),
-        ]);
+        $fn();
 
-        $this->createMessageInSpatial('OFFER: Toaster (TestTown)');
-        DB::table('ai_images')->insert([
-            'name' => 'Toaster',
-            'externaluid' => 'freegletusd-toaster',
-            'imagehash' => 'hash001',
-        ]);
-
-        $this->makeService()->processIllustrations();
-
-        $saved = DB::table('config')->where('key', 'illustrations_last_arrival')->value('value');
-        $this->assertGreaterThan(
-            now()->subDays(9)->format('Y-m-d H:i:s'),
-            substr($saved, 0, 19),
-            'A post left in a queue for ten days should not hold the job at its arrival'
-        );
+        return $seen;
     }
 
-    /**
-     * Build a message with the given attachments. Returns [messageId, attachmentIds].
-     *
-     * @param  array<int, array{ai: bool, uid: string}>  $attachments
-     * @return array{0: int, 1: array<string, int>}
-     */
     private function messageWithAttachments(array $attachments): array
     {
         $user = $this->createTestUser();
@@ -494,35 +545,6 @@ class MessageIllustrationsServiceTest extends TestCase
         return [$message->id, $ids];
     }
 
-    /**
-     * Record the cleanup query's SQL.
-     *
-     * @return array<int, array{sql: string, bindings: array}>
-     */
-    private function captureCleanupQueries(callable $fn): array
-    {
-        $seen = [];
-        DB::listen(function ($query) use (&$seen) {
-            if (stripos($query->sql, 'ma_ai') !== false) {
-                $seen[] = ['sql' => $query->sql, 'bindings' => $query->bindings];
-            }
-        });
-
-        $fn();
-
-        return $seen;
-    }
-
-    /**
-     * The cleanup runs every minute and its current form drives a full scan of
-     * messages_attachments (39.6M rows in production) to return, in the steady state, nothing.
-     * It must be bounded by an id watermark.
-     *
-     * Both sides have to be bounded, not just the photo side. An illustration can be written
-     * after the member's own photo - the generator races the upload - and a watermark on the
-     * photo alone would leave that pair permanently invisible, because the photo's id is
-     * already below the mark by the time the illustration arrives.
-     */
     public function test_cleanup_is_bounded_by_a_watermark_on_both_sides(): void
     {
         $this->messageWithAttachments([

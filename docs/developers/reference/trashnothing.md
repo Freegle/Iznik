@@ -1,13 +1,23 @@
 ---
-last_reviewed: 2026-09-20
+last_reviewed: 2026-10-02
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
   - iznik-batch/app/Console/Commands/TrashNothing/**
+  - iznik-batch/app/Services/TrashNothing/Verify/**
   - iznik-batch/app/Models/UserDeletion.php
   - iznik-batch/app/Services/Mail/Incoming/IncomingMailService.php
   - iznik-batch/app/Console/Commands/Dedup/**
   - iznik-batch/app/Services/UnifiedDigestService.php
+  - iznik-batch/app/Services/TrashNothing/Ingestion/**
+  - iznik-batch/app/Services/TrashNothing/Sync/**
+  - iznik-server-go/modmessaging/**
+  - iznik-nuxt3/modtools/components/ModMessageTnNotice.vue
+  # cross-stack behaviour tests (change when the behaviour changes)
+  - iznik-server-go/test/modmessaging_test.go
+  - iznik-server-go/user/partner.go
+  - iznik-server-go/test/user_tn_location_test.go
+  - iznik-server-go/test/user_tn_privacy_test.go
 ---
 
 # TrashNothing Integration Documentation
@@ -70,6 +80,52 @@ username, so `bibiana-g%` also matches `bibiana-gomes-g4840@...`, a different me
 Both passes decide on an exact username from `tnUsernameFromAddress()`. Merging two
 members into one account deletes one of them and re-points their mail, so the exact test
 is what stands between a longer username and being absorbed by its own prefix.
+
+### Finding the addresses: not via the backwards column
+
+Both passes have to narrow to Trash Nothing addresses first. That narrowing is done on the
+address, `email LIKE '%@user.trashnothing.com'`, and deliberately **not** on the `backwards`
+index, because `backwards` holds three different things for one address:
+
+| Written from | `i9-g4707@user.trashnothing.com` becomes | Production rows |
+|---|---|---|
+| the address | `moc.gnihtonhsart.resu@7074g-9i` | 450,846 |
+| `canon` (suffix and domain dots stripped) | `mocgnihtonhsartresu@9i` | 1,752,575 |
+| nothing | `NULL` | 13,772 |
+
+The canon form is the column's definition: V1's `User::addEmail` writes `strrev(canonMail($email))`
+at both its insert sites, so the address-shaped rows are the deviation, not the target.
+
+Filtering on one prefix reads a fifth of the table, and nothing reaches the NULLs. That is what
+happened between 2026-05-14 and 2026-09: the check reported "roughly zero duplicates a day",
+which read like success, while for each split member it could see only one of the two accounts
+and so grouped each alone. 96 duplicate pairs accumulated, and the first symptom to surface was
+a partner API `403 "Not your message"` when TN acted on a post owned by the account it could
+not see.
+
+The index was never earning its incompleteness: EXPLAIN shows the optimiser choosing a full scan
+for either filter, because every prefix matches far too much of the table. Measured on
+production over 4.2M rows, `backwards` takes 3.3s and finds 94 of the 96, the address takes 5.1s
+and finds all 96. The per-tick pass pays neither, since its `id >` range narrows on the primary
+key first.
+
+### Reviewing the backlog before merging it
+
+Widening that filter exposes ~96 pairs of live member accounts at once, and `User::merge`
+deletes one of each, so merging them is gated:
+
+```bash
+php artisan tn:sync --report-duplicates
+```
+
+is read-only. It always uses the wider filter, lists each candidate pair with its
+`tnuserid` and message count, flags pairs whose accounts carry **two different tnuserids**
+(a member who re-registered on TN, or a username released and retaken by somebody else -
+only a person can tell which), moves no cursor and merges nothing.
+
+The sync itself keeps the old, narrow filter until
+`FREEGLE_TN_MERGE_LEGACY_DUPLICATES=true`. Until then its behaviour is exactly what it was,
+so duplicates created from now on are still merged and the reviewed backlog waits.
 
 **Key functions**:
 - `User::isTN()` - Check if user is from TN
@@ -146,6 +202,26 @@ Syncs:
 - Username changes
 - Location updates
 - Account removal notifications
+
+**TN is the master for a TN member's location.** A change row's `location` sets
+`users.lastlocation` to the nearest postcode. `settings.mylocation` is read before
+`lastlocation` for other members, but on TN accounts it is V1-era data from before the
+account was linked to TN, so every reader ignores it when `tnuserid` is set:
+
+- Go: `user.GetLatLng`, `GetPublicLocationForUser`, the ModTools location name,
+  `ResolveOnBehalfPosting` and the visualise map. The session's own location is left
+  alone, as TN members do not log in.
+- Batch: `User::chosenLatLng()` for code holding a user, and `AND <alias>.tnuserid IS NULL`
+  in the SQL "mylocation else lastlocation" expressions (digests, Community News,
+  first-reply match mail, the approximate-location map).
+
+The sync also removes the setting when TN sends a location, so the stale data goes as
+members are active. For the same reason a TN post (either path) only writes `lastlocation` when it is
+empty: the post's coordinates are where the item is, not where the member is.
+
+Each change row carries the member's *current* state, not the state at that row's
+`date`, so re-reading old rows from the feed cannot show what a past sync received;
+the batch log's `TN-SYNC-TRACE [LOCATION]` lines are the record of that.
 
 ### Changes Feed (TN pulls from Freegle)
 
@@ -247,6 +323,15 @@ TN users appear largely the same as native users:
 - Profile image loaded from TN if available
 - Ratings and reply time synced from TN
 - Messages appear with normal formatting
+
+**Logged-out visitors do not see a TN member's name, photo or about-me.** Trash Nothing
+asked for this. `GET /user/:id` and the batch `GET /user/:id1,:id2` return
+`displayname` "A freegler", no name fields, an empty `profile` and `aboutme`, and
+`redacted: true` when the caller is not logged in and the user has a `tnuserid`
+(`hideTNIdentityFromAnonymous` in `iznik-server-go/user/user.go`). A call with a valid
+partner key is not redacted. Pages are rendered on the server logged out, so the user
+store (`iznik-nuxt3/stores/user.js`) refetches a cached `redacted` user once someone is
+logged in.
 
 ### Differences Members May Notice
 
@@ -497,9 +582,14 @@ The following one-off maintenance scripts existed in the legacy V1 PHP implement
 
 ### 7. Duplicate User Detection
 
-**Current State**: Email canonicalization helps, but duplicate TN users can still occur.
+**Current State**: Creation is handled - `EnsurePartnerIdentifiers` attaches a member's new
+per-group alias to the account they already have, which stopped new duplicates on
+2026-08-11. What remains is the backlog created before that, which merges once
+`FREEGLE_TN_MERGE_LEGACY_DUPLICATES` is set (see "Reviewing the backlog before merging it").
 
-**Improvement**: More aggressive de-duplication when TN user ID is known, automatic merging when same TN user creates multiple Freegle accounts.
+**Improvement**: Retire the flag once the backlog is cleared. The Go partner path meanwhile
+acts as whichever of a member's accounts owns the post rather than refusing the action, so a
+duplicate that slips through is no longer member-visible.
 
 ### 8. Error Handling for TN API Failures
 

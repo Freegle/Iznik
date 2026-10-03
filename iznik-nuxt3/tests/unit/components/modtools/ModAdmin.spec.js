@@ -216,6 +216,7 @@ describe('ModAdmin', () => {
         id: 1,
         subject: 'Test Admin',
         text: 'Test body',
+        sendafter: null,
         pending: true,
       })
     })
@@ -267,6 +268,87 @@ describe('ModAdmin', () => {
     it('does not fetch holder when admin has no heldby', () => {
       mountComponent({}, { heldby: null })
       expect(mockUserStore.fetch).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('guidance for local moderators', () => {
+    const guidance = 'Add your own names at the end and drop paragraph two.'
+
+    it('shows guidance clearly marked as not sent to members', async () => {
+      const wrapper = mountComponent({ open: true }, { modguidance: guidance })
+      await wrapper.vm.$nextTick()
+      const box = wrapper.find('.modguidance')
+      expect(box.exists()).toBe(true)
+      expect(box.text()).toContain(guidance)
+      expect(box.text()).toContain('NOT')
+      expect(box.text()).toContain('sent to members')
+    })
+
+    it('shows no guidance block when there is none', () => {
+      const wrapper = mountComponent({ open: true }, { modguidance: null })
+      expect(wrapper.find('.modguidance').exists()).toBe(false)
+    })
+
+    it('keeps guidance out of the body textarea', async () => {
+      const wrapper = mountComponent({ open: true }, { modguidance: guidance })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('textarea').element.value).toBe('Test body')
+    })
+
+    it('saving does not fold guidance into the text or send it', async () => {
+      const wrapper = mountComponent({}, { modguidance: guidance })
+      await wrapper.vm.save()
+
+      const params = mockAdminsStore.edit.mock.calls[0][0]
+      expect(params.text).toBe('Test body')
+      expect(JSON.stringify(params)).not.toContain(guidance)
+    })
+  })
+
+  describe('copy of a suggested ADMIN', () => {
+    it('shows the suggested-ADMIN notice and label when the admin has a parent', async () => {
+      const wrapper = mountComponent({ open: true }, { parentid: 7 })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('This is a copy of a suggested ADMIN')
+      expect(wrapper.text()).toContain('Suggested ADMIN')
+    })
+
+    it('shows no suggested-ADMIN notice without a parent, and names the creator', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { parentid: null, createdby: { id: 5, displayname: 'Pat Mod' } }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).not.toContain('copy of a suggested ADMIN')
+      expect(wrapper.text()).toContain('Pat Mod')
+    })
+  })
+
+  describe('send after', () => {
+    it('shows the stored time and saves an edited one as ISO', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { sendafter: '2030-05-06T07:08:00Z' }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.sendafter).toMatch(/^2030-05-0[56]T\d\d:\d\d$/)
+
+      wrapper.vm.sendafter = '2031-02-03T04:05'
+      await wrapper.vm.save()
+
+      const params = mockAdminsStore.edit.mock.calls[0][0]
+      expect(params.sendafter).toBe(new Date('2031-02-03T04:05').toISOString())
+    })
+
+    it('clears the send-after time when the field is emptied', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { sendafter: '2030-05-06T07:08:00Z' }
+      )
+      wrapper.vm.sendafter = ''
+      await wrapper.vm.save()
+
+      expect(mockAdminsStore.edit.mock.calls[0][0].sendafter).toBeNull()
     })
   })
 })

@@ -14,6 +14,7 @@ import (
 	"html"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -28,6 +29,7 @@ type Volunteering struct {
 	Pending        bool               `json:"pending"`
 	Heldby         *uint64            `json:"heldby"`
 	Title          string             `json:"title"`
+	Online         bool               `json:"online"`
 	Location       string             `json:"location"`
 	Contactname    string             `json:"contactname"`
 	Contactphone   string             `json:"contactphone"`
@@ -36,15 +38,16 @@ type Volunteering struct {
 	Description    string             `json:"description"`
 	Timecommitment string             `json:"timecommitment"`
 	Added          time.Time          `json:"added"`
+	// Renewed is when the owner last confirmed the opportunity is still active. The
+	// client needs it to know whether a confirmation is due, so that it only asks when
+	// the batch renewal clock says so rather than on every visit.
+	Renewed        *time.Time         `json:"renewed"`
 	Image          *VolunteeringImage `json:"image" gorm:"-"`
 	Dates          []VolunteeringDate `json:"dates" gorm:"-"`
 	Expired        bool               `json:"expired"`
 	Canmodify      bool               `json:"canmodify" gorm:"-"`
+	Url            string             `json:"url" gorm:"-"`
 
-	// Renewed is when the owner last confirmed the opportunity is still active. The
-	// client needs it to know whether a confirmation is due, so that it only asks when
-	// the batch renewal clock says so rather than on every visit.
-	Renewed *time.Time `json:"renewed"`
 }
 
 // listLimit caps how many opportunities a member's list returns. National ops are taken
@@ -191,6 +194,20 @@ func Single(c *fiber.Ctx) error {
 			volunteering.Contactname = html.UnescapeString(volunteering.Contactname)
 			volunteering.Contacturl = html.UnescapeString(volunteering.Contacturl)
 			volunteering.Timecommitment = html.UnescapeString(volunteering.Timecommitment)
+
+			// Set the canonical URL for this opportunity. Mirrors V1 getPublic():
+			// $atts['url'] = 'https://' . USER_SITE . '/volunteering/' . $atts['id']
+			userSite := os.Getenv("USER_SITE")
+			if userSite == "" {
+				userSite = "www.ilovefreegle.org"
+			}
+			volunteering.Url = "https://" + userSite + "/volunteering/" + strconv.FormatUint(volunteering.ID, 10)
+
+			// Normalise contacturl: if non-empty and has no scheme, prepend https://.
+			// Mirrors V1: if (strlen($atts['contacturl']) && strpos($atts['contacturl'], 'http') === FALSE)
+			if len(volunteering.Contacturl) > 0 && !strings.Contains(volunteering.Contacturl, "http") {
+				volunteering.Contacturl = "https://" + volunteering.Contacturl
+			}
 
 			myid := user.WhoAmI(c)
 			if myid > 0 {

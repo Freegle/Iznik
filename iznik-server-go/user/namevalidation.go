@@ -1,11 +1,13 @@
 package user
 
 import (
+	"os"
 	"regexp"
 	"strings"
 	"unicode"
 
 	"github.com/freegle/iznik-server-go/utils"
+	"gorm.io/gorm"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -267,6 +269,49 @@ func isSuspiciousName(raw string) bool {
 		return true
 	}
 	return false
+}
+
+// officialAddressEnv lists Freegle's own mailboxes (support@, mentors@, ...)
+// and the env vars that configure them, with the same defaults as the mail
+// section of iznik-batch/config/freegle.php. Keep the two lists in step.
+var officialAddressEnv = []struct{ name, fallback string }{
+	{"FREEGLE_NOREPLY_ADDR", "noreply@ilovefreegle.org"},
+	{"FREEGLE_GEEK_ALERTS_ADDR", "geek-alerts@ilovefreegle.org"},
+	{"FREEGLE_GEEKS_ADDR", "geeks@ilovefreegle.org"},
+	{"FREEGLE_SUPPORT_ADDR", "support@ilovefreegle.org"},
+	{"FREEGLE_CHITCHAT_SUPPORT_ADDR", "support@ilovefreegle.org"},
+	{"FREEGLE_SPAM_ADDR", "support@ilovefreegle.org"},
+	{"FREEGLE_PARTNERSHIPS_ADDR", "partnerships@ilovefreegle.org"},
+	{"FREEGLE_INFO_ADDR", "info@ilovefreegle.org"},
+	{"FREEGLE_FUNDRAISING_ADDR", "info@ilovefreegle.org"},
+	{"FREEGLE_THANKS_ADDR", "info@ilovefreegle.org"},
+	{"FREEGLE_MENTORS_ADDR", "mentors@ilovefreegle.org"},
+	{"FREEGLE_CENTRALMODS_ADDR", "volunteersupport@ilovefreegle.org"},
+	{"FREEGLE_TREASURER_ADDR", "treasurer@ilovefreegle.org"},
+	{"COMMUNITY_NEWS_SYSTEM_USER_EMAIL", "noreply@ilovefreegle.org"},
+	{"FIRSTREPLY_SYSTEM_USER_EMAIL", "freegle@ilovefreegle.org"},
+}
+
+// OfficialAddresses returns Freegle's own mailbox addresses.
+func OfficialAddresses() []string {
+	addrs := make([]string, 0, len(officialAddressEnv))
+	for _, e := range officialAddressEnv {
+		addr := os.Getenv(e.name)
+		if addr == "" {
+			addr = e.fallback
+		}
+		addrs = append(addrs, addr)
+	}
+	return addrs
+}
+
+// IsOfficialFreegleUser reports whether a user holds one of Freegle's own
+// mailbox addresses. Those users are genuine Freegle, so a name like
+// "Freegle Support" is not impersonation.
+func IsOfficialFreegleUser(db *gorm.DB, userid uint64) bool {
+	var count int64
+	db.Table("users_emails").Where("userid = ? AND email IN ?", userid, OfficialAddresses()).Count(&count)
+	return count > 0
 }
 
 // IsExemptBySystemrole is a convenience for call sites that already have the

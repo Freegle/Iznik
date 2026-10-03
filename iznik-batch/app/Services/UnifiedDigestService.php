@@ -570,11 +570,11 @@ class UnifiedDigestService
             // containment and by any overflow ring - so a member cannot be admitted on one
             // resolution and then measured from another.
             $latExpr = "CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                                 AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                                 AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
                             THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
                             ELSE l.lat END";
             $lngExpr = "CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                                 AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                                 AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
                             THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
                             ELSE l.lng END";
             $point = "ST_SRID(POINT($lngExpr, $latExpr), ?)";
@@ -797,11 +797,11 @@ class UnifiedDigestService
                 ->whereIn('u.id', $userIds)
                 ->selectRaw("u.id AS id,
                     CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                              AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                              AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
                          THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
                          ELSE l.lat END AS resolved_lat,
                     CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                              AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                              AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
                          THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
                          ELSE l.lng END AS resolved_lng")
                 ->get() as $row) {
@@ -1733,18 +1733,15 @@ class UnifiedDigestService
      * Resolve a member's point as settings.mylocation (both coords) else their lastlocation —
      * the same order the immediate-mail recipient query uses, so the digest, the push and the
      * immediate path all agree on where a member is. Returns [lat, lng] or null if unknown.
+     * A TN member's mylocation is ignored (User::chosenLatLng).
      *
      * @return array{0:float,1:float}|null
      */
     private function resolveUserLatLng(User $user): ?array
     {
-        $settings = $user->settings;
-        if (is_string($settings)) {
-            $settings = json_decode($settings, true) ?: [];
-        }
-        $myloc = is_array($settings) ? ($settings['mylocation'] ?? null) : null;
-        if (is_array($myloc) && isset($myloc['lat'], $myloc['lng']) && $myloc['lat'] !== null && $myloc['lng'] !== null) {
-            return [(float) $myloc['lat'], (float) $myloc['lng']];
+        $chosen = User::chosenLatLng($user->settings, $user->tnuserid);
+        if ($chosen) {
+            return $chosen;
         }
 
         if ($user->lastlocation) {

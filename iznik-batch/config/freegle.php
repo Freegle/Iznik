@@ -21,13 +21,6 @@ return [
     // track UK wall-clock pin to this zone so Laravel resolves BST/GMT.
     'timezone' => env('FREEGLE_TIMEZONE', 'Europe/London'),
 
-    'digest' => [
-        // Score multiplier for a daily-digest post the recipient has already had a
-        // chance to see (an in-app view, or an opened/clicked digest that contained
-        // it). Below 1 sinks seen posts beneath fresh ones without hard-dropping them.
-        'seen_penalty' => (float) env('FREEGLE_DIGEST_SEEN_PENALTY', 0.15),
-    ],
-
     'api' => [
         'base_url' => env('FREEGLE_API_BASE_URL', 'https://api.ilovefreegle.org'),
         'v2_url' => env('FREEGLE_API_V2_URL', 'https://api.ilovefreegle.org/apiv2'),
@@ -391,9 +384,30 @@ return [
     ],
 
     'trashnothing' => [
+        // Two TrashNothing APIs, two keys. api_key is the PARTNER key for the
+        // /fd/api endpoints (ratings, user-changes; sent as ?key=). The posts
+        // sync reads the PUBLIC developer API (trashnothing.com/api/v1.4, sent
+        // as ?api_key=), which accepts only a key issued at
+        // trashnothing.com/app/developer: the partner key gets "Invalid api_key
+        // parameter", and the partner endpoints reject a developer key in turn.
+        // public_api_key falls back to api_key only so a dev environment with a
+        // single key still runs; production needs both set.
         'api_key' => env('FREEGLE_TN_API_KEY', ''),
+        'public_api_key' => env('FREEGLE_TN_PUBLIC_API_KEY', env('FREEGLE_TN_API_KEY', '')),
         'api_base_url' => env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
         'sync_date_file' => env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
+        // Minimum gap between ANY two Trash Nothing API requests, in
+        // microseconds. TN allows 2 requests/second and rate-limits per API
+        // key, so this is enforced once for the whole run by
+        // TrashNothingRateLimiter rather than per endpoint. Set to 0 to
+        // disable (the test suite does, via phpunit.xml — Http::fake() never
+        // reaches TN, and 750ms per faked request would add minutes).
+        'min_request_interval_us' => (int) env('FREEGLE_TN_MIN_REQUEST_INTERVAL_US', 750000),
+
+        // Merge the duplicate TN accounts the old address filter could not see. Off
+        // until the backlog has been reviewed with "tn:sync --report-duplicates": it is
+        // ~96 pairs of live members and merging a pair deletes one of them.
+        'merge_legacy_duplicates' => env('FREEGLE_TN_MERGE_LEGACY_DUPLICATES', false),
     ],
 
     // Discourse forum REST API (V1 discourse_not_signed_up.php).
@@ -511,6 +525,17 @@ return [
         // The scheduled `mail:digest:unified --mode=daily` is inert until this
         // is set; an explicit `--user=` bypasses the gate for manual sampling.
         'daily_allowlist' => env('FREEGLE_DIGEST_DAILY_ALLOWLIST', ''),
+
+        // Score multiplier for a daily-digest post the recipient has already had a
+        // chance to see (an in-app view, or an opened/clicked digest that contained
+        // it). Below 1 sinks seen posts beneath fresh ones without hard-dropping them.
+        //
+        // Lived in a SECOND 'digest' key earlier in this file until 2026-08-14. PHP
+        // keeps only the last duplicate, so that block was discarded wholesale and
+        // FREEGLE_DIGEST_SEEN_PENALTY did nothing at all — UnifiedDigestService only
+        // behaved because config()'s own default (the same 0.15) covered the gap.
+        // Keep every digest setting in this one array.
+        'seen_penalty' => (float) env('FREEGLE_DIGEST_SEEN_PENALTY', 0.15),
     ],
 
     // Firebase Cloud Messaging for push notifications
@@ -563,6 +588,30 @@ return [
     // GEOIP_MMDB_PATH can point at a system-managed/fresher database.
     'geoip' => [
         'mmdb_path' => env('GEOIP_MMDB_PATH', base_path('resources/geoip/GeoLite2-Country.mmdb')),
+    ],
+
+    // The image object store. Uploads keep going through tusd; what changes is
+    // where a finished upload is kept. Off by default: the schedule only runs
+    // the pusher and the migrator when this is on, and it is turned on in
+    // production once images:object-store-check has passed against the real
+    // bucket (docs/ops/runbooks/images-to-object-storage.md).
+    'image_store' => [
+        'enabled' => (bool) env('IMAGE_STORE_ENABLED', false),
+        // A completed upload is pushed only after it has been unchanged this
+        // long, so a client that is still reading its own upload back through
+        // the delivery cache never sees a gap.
+        'push_grace_seconds' => (int) env('IMAGE_STORE_PUSH_GRACE_SECONDS', 60),
+        'push_limit' => (int) env('IMAGE_STORE_PUSH_LIMIT', 500),
+        // An upload that never reaches its declared length is deleted after this.
+        'abandon_hours' => (int) env('IMAGE_STORE_ABANDON_HOURS', 24),
+        // The legacy copy runs in short scheduled slices. Off until the edge
+        // has the read chain in place; then on until verify reports nothing missing.
+        'migrate_enabled' => (bool) env('IMAGE_STORE_MIGRATE_ENABLED', false),
+        'migrate_time_budget' => (int) env('IMAGE_STORE_MIGRATE_TIME_BUDGET', 240),
+        'migrate_chunk' => (int) env('IMAGE_STORE_MIGRATE_CHUNK', 500),
+        // Upload bandwidth cap for the copy, MB/s. 1.1 TB at 10 MB/s is about 30
+        // hours of transfer spread over however many slices it takes.
+        'migrate_max_mbps' => (float) env('IMAGE_STORE_MIGRATE_MAX_MBPS', 10),
     ],
 
     // TUS uploader for AI-generated images
@@ -932,6 +981,10 @@ return [
         // rippling) and per tick (a post that becomes saturated stops fanning out). 0 disables.
         // 5 = the figure from the Discourse rippling thread.
         'reply_saturation_stop' => (int) env('RIPPLE_REPLY_SATURATION_STOP', 5),
+        // A member's own repost drops the reach row; its replacement starts from when the post
+        // first went live, not from the re-approval, provided the post had been live within this
+        // many days before the repost. After a longer gap the reach starts afresh. 0 disables.
+        'repost_keeps_reach_days' => (int) env('RIPPLE_REPOST_KEEPS_REACH_DAYS', 7),
         // Hours a rippled-in (messages_groups.rippled_in=1) post, already Approved on its
         // origin group, waits before it is approved onto the rippled-in group (it was already
         // vetted on origin). Default 0 = approve AT ripple-in time, so it never even flickers
@@ -1492,6 +1545,7 @@ return [
         // Number of such stale-pending tasks tolerated before breaching.
         'background_tasks_backlog_threshold' => (int) env('FREEGLE_MONITORING_BG_TASKS_BACKLOG', 0),
 
+
         // spam:refresh-mobile-cidrs — alert if the monthly UK-mobile CIDR
         // refresh hasn't written a row within this many days.
         'mobile_cidrs_max_age_days' => (int) env('FREEGLE_MONITORING_MOBILE_CIDRS_MAX_AGE_DAYS', 40),
@@ -1524,6 +1578,19 @@ return [
         // data:update-cpi (monthly) — alert if its config timestamp is older
         // than this many days.
         'cpi_max_age_days' => (int) env('FREEGLE_MONITORING_CPI_MAX_AGE_DAYS', 40),
+    ],
+
+    // CookieYes watchdog (cookieyes:check): talks to CookieYes's MCP server over
+    // OAuth. The login itself is stored in the `config` table by
+    // cookieyes:authorize, not here. See docs/developers/reference/cookieyes-watchdog.md.
+    'cookieyes' => [
+        // Off stops the weekly schedule, for a deployment with no CookieYes account.
+        'enabled' => (bool) env('COOKIEYES_ENABLED', true),
+        'base_url' => env('COOKIEYES_BASE_URL', 'https://app.cookieyes.com'),
+        // Trigger a new scan once the latest is this old.
+        'rescan_after_days' => (int) env('COOKIEYES_RESCAN_AFTER_DAYS', 30),
+        // Fail the check once the latest scan is this old.
+        'stale_after_days' => (int) env('COOKIEYES_STALE_AFTER_DAYS', 45),
     ],
 
     'lovejunk' => [

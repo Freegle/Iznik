@@ -185,7 +185,7 @@ describe('message store - searchMT()', () => {
     mockMiscStore.modtools = true
   })
 
-  it('calls V2 search API with vector searchmode', async () => {
+  it('calls the V2 search API for a ModTools search', async () => {
     useAuthStore.mockReturnValue({ user: { id: 1 } })
     mockSearch.mockResolvedValue([
       { id: 101, msgid: 101, matchedon: { type: 'Vector', word: 'sofa' } },
@@ -201,13 +201,11 @@ describe('message store - searchMT()', () => {
 
     const ids = await store.searchMT({
       term: 'sofa',
-      searchmode: 'vector',
     })
 
     expect(mockSearch).toHaveBeenCalledWith({
       search: 'sofa',
       messagetype: 'All',
-      searchmode: 'vector',
     })
     expect(store.fetchMT).toHaveBeenCalledTimes(2)
     expect(store.list[101]).toBeDefined()
@@ -232,7 +230,6 @@ describe('message store - searchMT()', () => {
 
     const ids = await store.searchMT({
       term: 'sofa',
-      searchmode: 'vector',
     })
 
     // Order should match API response order (score-ranked)
@@ -248,7 +245,6 @@ describe('message store - searchMT()', () => {
 
     const ids = await store.searchMT({
       term: 'nonexistent',
-      searchmode: 'vector',
     })
 
     expect(mockSearch).toHaveBeenCalled()
@@ -265,7 +261,6 @@ describe('message store - searchMT()', () => {
 
     const ids = await store.searchMT({
       term: 'nonexistent',
-      searchmode: 'vector',
     })
 
     expect(store.fetchMT).not.toHaveBeenCalled()
@@ -279,13 +274,11 @@ describe('message store - searchMT()', () => {
     const store = useMessageStore()
     await store.searchMT({
       term: 'chair',
-      searchmode: 'vector',
     })
 
     expect(mockSearch).toHaveBeenCalledWith({
       search: 'chair',
       messagetype: 'All',
-      searchmode: 'vector',
     })
   })
 
@@ -303,7 +296,6 @@ describe('message store - searchMT()', () => {
 
     const ids = await store.searchMT({
       term: 'chair',
-      searchmode: 'vector',
     })
 
     // First result failed but second should still be in list
@@ -312,7 +304,7 @@ describe('message store - searchMT()', () => {
     expect(ids).toEqual([202])
   })
 
-  it('always uses vector search even when no searchmode is passed (keyword path retired)', async () => {
+  it('always uses vector search (the keyword path is retired)', async () => {
     useAuthStore.mockReturnValue({ user: { id: 1 } })
     mockSearch.mockResolvedValue([
       { id: 301, msgid: 301 },
@@ -330,12 +322,11 @@ describe('message store - searchMT()', () => {
       term: 'bike',
     })
 
-    // The V2 vector endpoint is used regardless of searchmode; the old keyword
+    // The V2 vector endpoint is the only search path; the old keyword
     // fetchMessages(subaction:'searchall') path has been removed.
     expect(mockSearch).toHaveBeenCalledWith({
       search: 'bike',
       messagetype: 'All',
-      searchmode: 'vector',
     })
     expect(mockFetchMessages).not.toHaveBeenCalled()
     expect(store.fetchMT).toHaveBeenCalledTimes(2)

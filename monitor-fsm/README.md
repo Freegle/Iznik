@@ -21,6 +21,40 @@ tunnels are down and a data-dependent diagnosis cannot be grounded):
 
 Both degrade gracefully to `{available: false}` when a tunnel is down.
 
+The parallel fix agents are separate processes, so they reach the same reads through
+`node dist/ground.js db "<SELECT>" "<purpose>" --bug T/P` and `node dist/ground.js loki '<LogQL>' --bug T/P`.
+
+### No production reads, no PR - and no evidence in the PR
+
+Asking for grounding in a prompt was not enough: PRs #1654, #1657, #1658 and #1659 each had a test
+written from their own hypothesis and nothing from production.
+
+Production results are full of members' details, and the repository is public, so the evidence
+never goes in the PR. `ground.js` records every read made with `--bug T/P`, with its full result,
+in a **local evidence record** (`/tmp/freegle-monitor/evidence/T-P.jsonl`, or
+`MONITOR_FSM_EVIDENCE_DIR`) that is never committed or published. The agent adds
+`ground.js note T/P "<what it showed>"` to the same record. The PR's `## Live evidence` section is
+the one line `ground.js evidence-line T/P` prints: how many production reads were made, and that the
+results are held locally. A human auditing a diagnosis reads the record.
+
+`create_pr` checks every Discourse bug-fix PR against the record (`src/evidence.ts`, code, not a
+model) and refuses it unless:
+
+- the record holds at least one production read that returned something (the `local-dev` Loki and
+  failed reads do not count), and a note;
+- the Live evidence section is exactly the evidence line, with no queries or results;
+- the description holds no member detail: nothing shaped like an email, full postcode, phone number
+  or IP, and **nothing identifying taken from the record** - a name, email, user or message id, or
+  something a member wrote, in any result column or log field that holds one. A name has no shape a
+  pattern can see; a name the agent read and then repeated is caught this way.
+
+A refused PR is closed (its description blanked first if it held personal details), the report is
+held as `needs-detail`, and the reporter is asked for what would let the next attempt look it up.
+Fix agents run `ground.js check-pr <file> T/P` before opening, so a refusal is rare. An agent that
+cannot ground its diagnosis because the report names nothing emits `OUTCOME=needs-detail` and
+opens no PR. Fixes for Sentry errors and CI failures are not checked this way: they have no
+Discourse report.
+
 ## How it works
 
 ### The engine
@@ -116,6 +150,14 @@ a model. A report is held when it names **nothing** that can be looked up:
 | a link to ilovefreegle.org | the text |
 | a screenshot or attachment | triage, which sees the post before the HTML is stripped |
 | the name of a group | triage, which is told never to guess one |
+
+Unnamed instances count as vague however they are phrased: "a member", "some users", "one of the
+members", "two members" (number words as well as digits). A reporter asking what information would
+help is held too, and asked when it happened and on what device.
+
+Reports already in the backlog were classified before this check existed, and carry only triage's
+paraphrase, which tidies vagueness away. Before dispatching a batch, `work_router_decide` fetches
+the reporter's own words for each candidate and holds any that name nothing.
 
 The ask is only ever about what the report itself points at vaguely, so a general report ("chat
 notification emails are going out twice") is not held and not asked about. At most three things are

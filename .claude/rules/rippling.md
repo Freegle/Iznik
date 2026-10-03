@@ -3,6 +3,8 @@ paths:
   - "iznik-batch/app/Services/Ripple/**"
   - "iznik-batch/app/Console/Commands/Ripple/**"
   - "iznik-server-go/rippling/**"
+  - "iznik-batch/app/Services/ContentCheckService.php"
+  - "iznik-batch/app/Services/AutoApproveService.php"
 ---
 
 # Traps when working on rippling

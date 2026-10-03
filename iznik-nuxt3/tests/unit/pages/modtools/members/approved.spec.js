@@ -178,6 +178,41 @@ describe('members/approved/[[term]].vue page', () => {
       expect(mockSearch.value).toBe('smith')
     })
 
+    it('strips a leading hash from the term', async () => {
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      mockRouterPush.mockClear()
+
+      wrapper.vm.startsearch('#smith')
+
+      expect(mockSearch.value).toBe('smith')
+      expect(mockRouterPush).toHaveBeenCalledWith('/members/approved/smith')
+    })
+
+    it('encodes a term containing URL punctuation', async () => {
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      mockRouterPush.mockClear()
+
+      wrapper.vm.startsearch('Derek/Bill Roberts')
+
+      expect(mockSearch.value).toBe('Derek/Bill Roberts')
+      expect(mockRouterPush).toHaveBeenCalledWith(
+        '/members/approved/Derek%2FBill%20Roberts'
+      )
+    })
+
+    it('keeps searching when the term is only a hash', async () => {
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      mockRouterPush.mockClear()
+
+      wrapper.vm.startsearch('#')
+
+      expect(mockSearch.value).toBe('')
+      expect(mockRouterPush).toHaveBeenCalledWith('/members/approved/')
+    })
+
     it('navigates to the bare page for an empty search', async () => {
       mockRouteParams.value = { term: 'smith' }
       const wrapper = mountComponent()

@@ -22,7 +22,7 @@ first - it puts this page in order as a first day, first week and first month.
 
 ## The shape of the job
 
-Freegle is a small estate - a load balancer, three database nodes, one Docker host, one
+Freegle is a small estate - a load balancer, two database nodes and an arbitrator, one Docker host, one
 outbound mail relay - carrying a service used by a few million people. There is no
 24/7 rota and no paging. That has two consequences you should hold on to:
 
@@ -86,7 +86,7 @@ Two monit traps from that page, repeated here because they bite:
 |---|---|---|
 | Restore drill | Switch the Yesterday environment to an older day and confirm the site comes up | Proves the whole chain, not just last night's link |
 | Mail reputation review | Deferral rates by provider on the relay; feedback-loop report counts | See the measured detail in [`ops/hosts/SERVICES.md`](../../../ops/hosts/SERVICES.md) - this is where the evidence for "volume, not complaints" lives |
-| Index hygiene | [database-index-hygiene.md](database-index-hygiene.md) | Read counters must be **summed across all three nodes**; one node alone makes almost every index look unused |
+| Index hygiene | [database-index-hygiene.md](database-index-hygiene.md) | Read counters must be **summed across both data nodes**; one node alone makes almost every index look unused |
 | Host config drift | `diff` each file in `/etc/monit/conf.d/` on the machine against its copy in [`ops/hosts/`](../../../ops/hosts/), in both directions | Anything that exists on only one machine is one rebuild away from being lost. A check present on the host but absent from the repo is the common direction, because adding a check is the moment nobody thinks about git |
 
 ## What alerts you, and what does not

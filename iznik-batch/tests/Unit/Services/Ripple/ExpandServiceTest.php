@@ -602,6 +602,75 @@ class ExpandServiceTest extends TestCase
         $this->assertNull($row->next_expansion_at);
     }
 
+    private function logMessageEvent(int $msgid, string $subtype, Carbon $at): void
+    {
+        DB::table('logs')->insert([
+            'timestamp' => $at,
+            'type' => 'Message',
+            'subtype' => $subtype,
+            'msgid' => $msgid,
+        ]);
+    }
+
+    public function test_repost_of_a_live_post_keeps_its_original_reach_start(): void
+    {
+        // A member's own repost turns the post back into a draft, which drops every copy and,
+        // a minute later, the reach row. Re-approval re-initialises it; the reach should carry
+        // on from when the post was first approved rather than start again at tick 1, or
+        // people it had already reached are told "not yet" (Discourse 9808/827).
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(10)); // re-approved 10 minutes ago
+        $firstApproved = now()->subHours(20);
+        $this->logMessageEvent($msgid, 'Approved', $firstApproved);
+        $this->logMessageEvent($msgid, 'Autoreposted', now()->subHours(2));
+        $this->logMessageEvent($msgid, 'Repost', now()->subMinutes(20));
+        $this->logMessageEvent($msgid, 'Approved', now()->subMinutes(10));
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row);
+        $this->assertSame(3, (int) $row->tick, '20h since first approval is past the final 6h step');
+        $this->assertSame('done', $row->status);
+        $this->assertSame($firstApproved->format('Y-m-d H:i:s'), Carbon::parse($row->arrival)->format('Y-m-d H:i:s'));
+    }
+
+    public function test_repost_on_an_unmoderated_community_keeps_its_original_reach_start(): void
+    {
+        // A community that does not moderate logs no approval, only the post being received.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(10));
+        $firstReceived = now()->subHours(20);
+        $this->logMessageEvent($msgid, 'Received', $firstReceived);
+        $this->logMessageEvent($msgid, 'Repost', now()->subMinutes(10));
+        $this->logMessageEvent($msgid, 'Received', now()->subMinutes(10));
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row);
+        $this->assertSame(3, (int) $row->tick);
+        $this->assertSame($firstReceived->format('Y-m-d H:i:s'), Carbon::parse($row->arrival)->format('Y-m-d H:i:s'));
+    }
+
+    public function test_repost_after_a_long_gap_starts_reach_afresh(): void
+    {
+        // Reposted weeks after it was last live: the people nearby have not seen it for a
+        // long time, so it spreads from the start again like a new post.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(10));
+        $this->logMessageEvent($msgid, 'Approved', now()->subDays(30));
+        $this->logMessageEvent($msgid, 'Repost', now()->subMinutes(20));
+        $this->logMessageEvent($msgid, 'Approved', now()->subMinutes(10));
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row);
+        $this->assertSame(1, (int) $row->tick);
+        $this->assertSame('expanding', $row->status);
+    }
+
     public function test_advances_due_reach_to_current_tick(): void
     {
         $msgid = $this->seedSpatialPost(now()->subHours(7));
@@ -1000,51 +1069,6 @@ class ExpandServiceTest extends TestCase
 
         $this->assertSame(1, $stats['initialized']); // counted
         $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $msgid)->count()); // but not written
-    }
-
-    /**
-     * A TrashNothing item cross-posted to several groups is a single message, so it ripples
-     * normally. Copies of one item that predate that are still in the database, and each
-     * would ripple on its own account - the same item reaching people once per copy. A
-     * message sharing its post id with another live message therefore sits out until
-     * tn:merge-crossposts has collapsed the set.
-     */
-    public function test_a_tn_message_with_a_live_duplicate_does_not_ripple_into_new_groups(): void
-    {
-        $this->fakeRouting(3);
-        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
-
-        $tnPostId = 'tn-dup-'.uniqid();
-        DB::table('messages')->where('id', $msgid)->update(['tnpostid' => $tnPostId]);
-
-        // A second live message carrying the same post id: an unmerged copy of the item.
-        $copy = DB::table('messages')->insertGetId([
-            'date' => now(),
-            'arrival' => now(),
-            'source' => 'Email',
-            'subject' => 'OFFER: Singular Ripple Fixture (London)',
-            'tnpostid' => $tnPostId,
-            'type' => 'Offer',
-        ]);
-
-        $groupB = $this->createTestGroup();
-        DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
-            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
-        );
-
-        $this->service()->process(false, 500);
-
-        $this->assertNull(
-            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
-            'a message sharing its TN post id with a live copy must not ripple into new groups'
-        );
-
-        // The converse - that a TN post with no live copy DOES ripple into exactly this
-        // group, from an identical fixture - is asserted by
-        // test_a_tn_post_with_no_live_duplicate_ripples_like_any_other. The pair is what
-        // shows the check fires only while a copy exists, and stops mattering once the set
-        // has been collapsed.
     }
 
     public function test_ripples_post_into_groups_whose_area_the_reach_covers(): void
@@ -1530,7 +1554,7 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
-     * Negative memoization (Phase 0, plans/routing-performance-step-change.md): a definitive
+     * Negative memoization: a definitive
      * "not quicker" answer writes a rippling_proximity_checked marker, so the row is never
      * re-queried. Previously these rows were recomputed on every 5-minute run for the whole
      * 8-day candidate window (the 2026-07-06 group-21521 Sentry storm's standing tax).
@@ -1953,40 +1977,6 @@ class ExpandServiceTest extends TestCase
         $this->assertNotNull(
             DB::table('rippling_reach')->where('msgid', $msgid)->first(),
             'a post on a community that still ripples is untouched by another community opting out'
-        );
-    }
-
-    /**
-     * A TN post (tnpostid IS NOT NULL AND tnpostid != '') must never be rippled into
-     * new groups. TN still cross-posts the same item to multiple Freegle groups itself,
-     * so rippling in would duplicate the post across even more groups.
-     */
-    /**
-     * A TrashNothing item is one message like any other, so it ripples like any other. Only a
-     * message sharing its post id with another live one sits out - see
-     * test_a_tn_message_with_a_live_duplicate_does_not_ripple_into_new_groups.
-     */
-    public function test_a_tn_post_with_no_live_duplicate_ripples_like_any_other(): void
-    {
-        $this->fakeRouting(3);
-        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
-
-        // Mark the message as a TN post. Nothing else carries this post id.
-        DB::table('messages')->where('id', $msgid)->update(['tnpostid' => 'TN12345']);
-
-        // Group whose area intersects the fake reach.
-        $groupB = $this->createTestGroup();
-        DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
-            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
-        );
-
-        $stats = $this->service()->process(false, 500);
-
-        $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'a TN post with no live duplicate ripples');
-        $this->assertNotNull(
-            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
-            'a TN post with no live duplicate is rippled into a group its reach covers'
         );
     }
 
@@ -3246,7 +3236,7 @@ class ExpandServiceTest extends TestCase
      *   'approved' - origin row still live Approved (control)
      * Returns [msgid, groupB, posterId].
      */
-    private function seedRippledCopyWithOrigin(string $originState, float $lat = 51.5, float $lng = -0.1): array
+    private function seedRippledCopyWithOrigin(string $originState, float $lat = 51.5, float $lng = -0.1, string $reachStatus = 'expanding'): array
     {
         $user = $this->createTestUser();
         $origin = $this->createTestGroup();
@@ -3260,7 +3250,7 @@ class ExpandServiceTest extends TestCase
                 'msgid' => $message->id, 'groupid' => $origin->id,
                 'collection' => $originState === 'pending'
                     ? MessageGroup::COLLECTION_PENDING
-                    : MessageGroup::COLLECTION_APPROVED,
+                    : ($originState === 'rejected' ? MessageGroup::COLLECTION_REJECTED : MessageGroup::COLLECTION_APPROVED),
                 'arrival' => now()->subHours(2),
             ]);
         }
@@ -3284,8 +3274,8 @@ class ExpandServiceTest extends TestCase
             "INSERT INTO rippling_reach
                (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, $lat, $lng, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(2)]
+             VALUES (?, ?, ?, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, ?, NOW(), NOW())",
+            [$message->id, $lat, $lng, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(2), $reachStatus]
         );
 
         return [(int) $message->id, (int) $groupB->id, (int) $user->id];
@@ -3847,7 +3837,7 @@ class ExpandServiceTest extends TestCase
 
     /**
      * Every reach write must leave a verified sandwich-bounds row behind
-     * (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): outer_bound ⊇ reach and
+     * (docs/developers/reference/rippling-algorithm.md section 11): outer_bound ⊇ reach and
      * inner_bound ⊆ reach (or NULL), derived from the FINAL stored grid.
      *
      * The check runs against the grid's bounding box (its header, no network):

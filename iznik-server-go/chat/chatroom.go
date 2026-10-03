@@ -3,6 +3,7 @@ package chat
 import (
 	"encoding/json"
 	"fmt"
+	stdlog "log"
 	"os"
 	"regexp"
 	"strconv"
@@ -1317,6 +1318,8 @@ func getSnippet(msgtype string, chatmsg string, refmsgtype string) string {
 		ret = "Promise cancelled"
 	case utils.CHAT_MESSAGE_IMAGE:
 		ret = "Image"
+	case utils.CHAT_MESSAGE_INTERESTED:
+		ret = reportSnippet(chatmsg)
 	default:
 		{
 			// We don't want to land in the middle of an encoded emoji otherwise it will display
@@ -1327,6 +1330,43 @@ func getSnippet(msgtype string, chatmsg string, refmsgtype string) string {
 				ret = ret[:100]
 			}
 		}
+	}
+
+	return ret
+}
+
+// reportAdditionalDetailsMarker precedes a reporter's own comment in the
+// boilerplate MessageReportModal.vue's report() builds. It's a fixed literal
+// from our own client code, not user input, so matching against it is safe.
+const reportAdditionalDetailsMarker = "Additional details: \""
+
+// reportSnippet surfaces a reporter's own comment ahead of the report
+// boilerplate that precedes it (subject line, message URL, reason), which is
+// otherwise long enough on its own to push the comment past the snippet's
+// truncation and leave mods seeing only the report, never why it was made
+// (Discourse #10182/68810). CHAT_MESSAGE_INTERESTED also covers plain
+// "Interested" replies, which carry no such boilerplate, so those fall
+// through to the same truncation the default case uses.
+func reportSnippet(chatmsg string) string {
+	if idx := strings.Index(chatmsg, reportAdditionalDetailsMarker); idx != -1 {
+		details := chatmsg[idx+len(reportAdditionalDetailsMarker):]
+		details = strings.TrimSuffix(strings.TrimSpace(details), "\"")
+
+		if details != "" {
+			ret := splitEmoji(details)
+
+			if len(ret) > 100 {
+				ret = ret[:100]
+			}
+
+			return "Reported: " + ret
+		}
+	}
+
+	ret := splitEmoji(chatmsg)
+
+	if len(ret) > 100 {
+		ret = ret[:100]
 	}
 
 	return ret
@@ -1587,15 +1627,25 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64)
 	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
 	}
-	if room.User1 != myid && room.User2 != myid {
-		return fiber.NewError(fiber.StatusForbidden, "Not a member of this chat")
+
+	// Anyone who may see the chat may refer it: its participants, the moderators of its
+	// community, and moderators reviewing a chat between their members. The button lives
+	// in ModTools on a member-to-mods chat, where the moderator is never a participant -
+	// a participants-only check refused every moderator with a 403 (Discourse 10199).
+	if !canSeeChatRoom(myid, room.User1, room.User2) {
+		return fiber.NewError(fiber.StatusForbidden, "You can't see this chat")
 	}
 
-	// Queue sending a support referral email.
-	db.Table("background_tasks").Create(map[string]interface{}{
+	// Queue sending a support referral email. The batch sends it; if the queue write
+	// fails the moderator must hear about it rather than be told it worked.
+	result := db.Table("background_tasks").Create(map[string]interface{}{
 		"task_type": "refer_to_support",
 		"data":      gorm.Expr("JSON_OBJECT('chatid', ?, 'userid', ?)", chatid, myid),
 	})
+	if result.Error != nil {
+		stdlog.Printf("[ReferToSupport] queue write failed for chat %d by %d: %v", chatid, myid, result.Error)
+		return fiber.NewError(fiber.StatusInternalServerError, "Couldn't refer this chat, please try again")
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

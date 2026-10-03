@@ -31,13 +31,39 @@ const LINK = /\bilovefreegle\.org\/\S+/i
 const UPLOAD = /!\[|upload:\/\//
 
 // A reference to one particular thing, with no way of telling which one.
-const VAGUE_MEMBER = /\b(?:a|one|another|some|this|that) (?:member|user|freegler|person)\b|\bsomeone\b|\bsomebody\b|\bone of (?:my|our) (?:members|users)\b/i
-const VAGUE_GROUP = /\b(?:a|one|another|some|this|that) (?:group|community)\b|\bone of (?:my|our) groups\b|\bthe group\b/i
+// Plurals count too: "for some users" is as unfindable as "a user" (topic 10200/1).
+const VAGUE_MEMBER = /\b(?:a|one|another|some|this|that|these|those) (?:members?|users?|freeglers?|people|persons?)\b|\bsomeone\b|\bsomebody\b|\bone of (?:my|our|the) (?:members|users|freeglers)\b/i
+const VAGUE_GROUP = /\b(?:a|one|another|some|this|that|these|those) (?:groups?|communit(?:y|ies))\b|\bone of (?:my|our|the) groups\b|\bthe group\b/i
 const VAGUE_POST = /\b(?:a|one|another|some|this|that|her|his|their) (?:post|message|ad|listing|offer|wanted|item)\b/i
+
+// "I saw some of them, but not which ones."
+//
+// The patterns above only catch a single thing referred to by an article: "a post",
+// "one member". A moderator describing a morning's work counts them instead - "a
+// couple of posts duplicated within hours, one person asking for cash, several
+// giving full addresses" - and every one of those is a particular thing nobody can
+// look up. That phrasing went straight past the article patterns and into a fix
+// that had nothing to hold on to (topic 10063, PR #1574, closed).
+//
+// A count is only a signal when the report is about things of the kind we can be
+// pointed at, so both halves have to appear. "Chat notification emails are going
+// out twice" counts nothing and names no such thing, and must stay untouched.
+// The "of" is optional on purpose: "a few groups" counts just as much as "a few
+// of the groups", and requiring it let the first phrasing through.
+// Numbers written as words count the same as digits: "two members" (topic 10200/1).
+const COUNTED = /\b(?:a (?:couple|few|handful|number)(?: of)?|several|multiple|numerous|many|lots of|loads of|\d+|two|three|four|five|six|seven|eight|nine|ten|a dozen)\b/i
+const INSTANCE_NOUN = /\b(?:posts?|messages?|members?|users?|freeglers?|people|persons?|groups?|communities|ads?|listings?|offers?|items?|chats?|replies)\b/i
 // The report describes what somebody saw, so a picture of it would settle a lot.
 const VISUAL = /\b(?:looks?|looking|showing|shows|displayed?|appears?|blank|greyed|grayed|missing|button|screen|page|layout)\b/i
 
+// The reporter asking what would help is them saying they have not given it yet.
+const ASKS_WHAT_HELPS = /\bwhat (?:sort of |kind of )?(?:info(?:rmation)?|details?) (?:would|do you|could|might|should)\b|\bwhat (?:else )?(?:would|do) you need\b/i
+
+/** What to ask when a report names nothing else worth asking about. */
+export const CONTEXT_QUESTION = 'when it happened, and whether they were using the app or the website (and which phone or browser)'
+
 const ASK = {
+  context: CONTEXT_QUESTION,
   member: 'which member this was, with their email address or a link to their profile',
   group: 'which group this was on',
   post: 'a link to the post or message',
@@ -52,17 +78,25 @@ const ASK = {
  * something a regular expression can recognise.
  */
 export function assessReportSpecifics(input: {
+  /** What the reporter wrote. Vagueness is judged on this and nothing else. */
   text: string
+  /**
+   * Where to look for things that can be looked up, when that is wider than the
+   * reporter's own words: a triage summary may carry an id it pulled out of the
+   * thread. Defaults to the text.
+   */
+  anchorText?: string
   hasScreenshot?: boolean
   groupName?: string | null
   userRef?: string | null
 }): ReportSpecifics {
   const text = input.text ?? ''
+  const anchorText = input.anchorText ?? text
   const anchors: Anchor[] = []
-  if (ID.test(text) || (input.userRef ?? '').trim()) anchors.push('id')
-  if (EMAIL.test(text)) anchors.push('email')
-  if (LINK.test(text)) anchors.push('link')
-  if (input.hasScreenshot || UPLOAD.test(text)) anchors.push('screenshot')
+  if (ID.test(anchorText) || (input.userRef ?? '').trim()) anchors.push('id')
+  if (EMAIL.test(anchorText)) anchors.push('email')
+  if (LINK.test(anchorText)) anchors.push('link')
+  if (input.hasScreenshot || UPLOAD.test(anchorText)) anchors.push('screenshot')
   if ((input.groupName ?? '').trim()) anchors.push('group')
 
   const missing: string[] = []
@@ -70,6 +104,15 @@ export function assessReportSpecifics(input: {
   if (VAGUE_MEMBER.test(text) && !identified) missing.push(ASK.member)
   if (VAGUE_GROUP.test(text) && !anchors.includes('group') && !anchors.includes('link')) missing.push(ASK.group)
   if (VAGUE_POST.test(text) && !identified) missing.push(ASK.post)
+
+  // Counted, but not identified. Ask for whichever of the two the report leaned on,
+  // so the question matches what they were describing.
+  if (COUNTED.test(text) && INSTANCE_NOUN.test(text)) {
+    const aboutPeople = /\b(?:members?|users?|freeglers?|people|persons?)\b/i.test(text)
+    if (aboutPeople && !identified && !missing.includes(ASK.member)) missing.push(ASK.member)
+    if (!identified && !missing.includes(ASK.post)) missing.push(ASK.post)
+  }
+  if (ASKS_WHAT_HELPS.test(text) && !identified) missing.push(ASK.context)
   if (VISUAL.test(text) && !anchors.includes('screenshot') && missing.length > 0) missing.push(ASK.screenshot)
 
   const capped = missing.slice(0, 3)

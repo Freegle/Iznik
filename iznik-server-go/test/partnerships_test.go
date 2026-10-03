@@ -37,25 +37,6 @@ func createPartnershipAuthority(t *testing.T, prefix string) uint64 {
 	return id
 }
 
-// createPartnershipGroup makes a published, on-map Freegle group with a real catchment
-// polygon sitting inside the test authority, so the overlap calculation returns it.
-func createPartnershipGroup(t *testing.T, prefix string) uint64 {
-	db := database.DBConn
-	name := "TestPGroup_" + prefix
-
-	result := db.Exec(fmt.Sprintf("INSERT INTO `groups` (nameshort, namefull, type, onhere, publish, onmap, "+
-		"polyindex, lat, lng) VALUES (?, ?, 'Freegle', 1, 1, 1, "+
-		"ST_GeomFromText('POLYGON((-3.9 55.1, -3.1 55.1, -3.1 56.9, -3.9 56.9, -3.9 55.1))', %d), 55.9533, -3.1883)",
-		utils.SRID), name, "Test Partnership Group "+prefix)
-	require.NoError(t, result.Error)
-
-	var id uint64
-	db.Raw("SELECT id FROM `groups` WHERE nameshort = ? ORDER BY id DESC LIMIT 1", name).Scan(&id)
-	require.NotZero(t, id)
-
-	return id
-}
-
 // partnershipsUser makes a user on the Partnerships team, which is the audience for the page.
 func partnershipsUser(t *testing.T, prefix string) (uint64, string) {
 	db := database.DBConn
@@ -99,7 +80,7 @@ func createPartnership(t *testing.T, token string, authorityID uint64, body stri
 func defaultBody(authorityID uint64) string {
 	return fmt.Sprintf(`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2027-03-31",`+
 		`"amount":6000,"tagline":"Reuse in your area","description":"Your council supports Freegle",`+
-		`"linkurl":"https://example.gov.uk/reuse","agreed":true}`, authorityID)
+		`"linkurl":"https://example.gov.uk/reuse","status":"Confirmed"}`, authorityID)
 }
 
 // A refusal has to withhold the data as well as set the status. Checking only the status
@@ -208,7 +189,7 @@ func TestPartnershipCreateDefaultsNameToAuthority(t *testing.T) {
 	assert.Equal(t, "2026-04-01", p["startdate"], "dates come back as plain YYYY-MM-DD")
 	assert.Equal(t, "2027-03-31", p["enddate"])
 	assert.Equal(t, float64(6000), p["amount"])
-	assert.Equal(t, true, p["agreed"])
+	assert.Equal(t, "Confirmed", p["status"])
 	assert.Equal(t, "Reuse in your area", p["tagline"])
 }
 
@@ -246,105 +227,176 @@ func TestPartnershipCreateRejectsMissingDates(t *testing.T) {
 	assert.Equal(t, 400, resp.StatusCode)
 }
 
-func TestPartnershipDetectsCoveredGroups(t *testing.T) {
-	prefix := uniquePrefix("PartnershipGroups")
-	_, token := partnershipsUser(t, prefix)
-	authorityID := createPartnershipAuthority(t, prefix)
-	groupID := createPartnershipGroup(t, prefix)
-
-	id := createPartnership(t, token, authorityID, defaultBody(authorityID))
-
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/partnership/%d/group?jwt=%s", id, token), nil)
+// getPartnership fetches one partnership's full detail.
+func getPartnership(t *testing.T, token string, id uint64) map[string]interface{} {
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/partnership/%d?jwt=%s", id, token), nil)
 	resp, _ := getApp().Test(req)
-	assert.Equal(t, 200, resp.StatusCode)
+	require.Equal(t, 200, resp.StatusCode)
 
 	var result map[string]interface{}
 	json2.Unmarshal(rsp(resp), &result)
 
-	groups := result["groups"].([]interface{})
-	found := false
-	for _, g := range groups {
-		if uint64(g.(map[string]interface{})["groupid"].(float64)) == groupID {
-			found = true
+	return result
+}
+
+// findGroup picks one group out of a partnership's detail, or nil.
+func findGroup(detail map[string]interface{}, groupID uint64) map[string]interface{} {
+	for _, g := range detail["groups"].([]interface{}) {
+		gm := g.(map[string]interface{})
+		if uint64(gm["groupid"].(float64)) == groupID {
+			return gm
 		}
 	}
-	assert.True(t, found, "the group inside the council boundary is covered by the deal")
+
+	return nil
 }
 
-func TestPartnershipWritesSponsorshipRows(t *testing.T) {
-	prefix := uniquePrefix("PartnershipSponsor")
+func sponsorshipCount(groupID uint64) int64 {
+	var n int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM groups_sponsorship WHERE groupid = ?", groupID).Scan(&n)
+
+	return n
+}
+
+// A community that only touches the boundary is covered, with the small share of it that is
+// inside - the same as the authority stats page, which counts that share of its figures.
+// Southend against Essex County is the real case; leaving it out is a decision for the team.
+func TestPartnershipCoversACommunityThatTouchesTheBoundaryWithItsShare(t *testing.T) {
+	prefix := uniquePrefix("PartnershipGraze")
 	_, token := partnershipsUser(t, prefix)
 	authorityID := createPartnershipAuthority(t, prefix)
-	groupID := createPartnershipGroup(t, prefix)
-
-	createPartnership(t, token, authorityID, defaultBody(authorityID))
 
 	db := database.DBConn
-	var sponsor struct {
-		Name    string
-		Tagline *string
-		Linkurl *string
-		Visible bool
-		Amount  int
-	}
-	db.Raw("SELECT name, tagline, linkurl, visible, amount FROM groups_sponsorship WHERE groupid = ? "+
-		"ORDER BY id DESC LIMIT 1", groupID).Scan(&sponsor)
-
-	assert.Equal(t, "TestAuthority_"+prefix, sponsor.Name)
-	require.NotNil(t, sponsor.Tagline)
-	assert.Equal(t, "Reuse in your area", *sponsor.Tagline)
-	require.NotNil(t, sponsor.Linkurl)
-	assert.Equal(t, "https://example.gov.uk/reuse", *sponsor.Linkurl)
-	assert.True(t, sponsor.Visible, "an agreed, visible deal shows on the member site")
-	assert.Equal(t, 6000, sponsor.Amount)
-}
-
-func TestPartnershipNotAgreedIsHiddenFromMembers(t *testing.T) {
-	prefix := uniquePrefix("PartnershipUnagreed")
-	_, token := partnershipsUser(t, prefix)
-	authorityID := createPartnershipAuthority(t, prefix)
-	groupID := createPartnershipGroup(t, prefix)
-
-	body := fmt.Sprintf(`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2027-03-31","amount":100,"agreed":false}`,
-		authorityID)
-	createPartnership(t, token, authorityID, body)
-
-	db := database.DBConn
-	var visible bool
-	db.Raw("SELECT visible FROM groups_sponsorship WHERE groupid = ? ORDER BY id DESC LIMIT 1", groupID).Scan(&visible)
-
-	assert.False(t, visible, "a deal that is not agreed yet must not be advertised")
-}
-
-func TestPartnershipUpdateChangesSponsorship(t *testing.T) {
-	prefix := uniquePrefix("PartnershipEdit")
-	_, token := partnershipsUser(t, prefix)
-	authorityID := createPartnershipAuthority(t, prefix)
-	groupID := createPartnershipGroup(t, prefix)
+	// Mostly east of the authority's -3 edge: 0.02 of its 1.0 width is inside, and it covers
+	// a sliver of the authority.
+	name := "TestPGroupGraze_" + prefix
+	db.Exec(fmt.Sprintf("INSERT INTO `groups` (nameshort, namefull, type, onhere, publish, onmap, "+
+		"polyindex, lat, lng) VALUES (?, ?, 'Freegle', 1, 1, 1, "+
+		"ST_GeomFromText('POLYGON((-3.02 55.5, -2.02 55.5, -2.02 55.6, -3.02 55.6, -3.02 55.5))', %d), 55.55, -2.5)",
+		utils.SRID), name, name)
+	var grazeID uint64
+	db.Raw("SELECT id FROM `groups` WHERE nameshort = ?", name).Scan(&grazeID)
+	require.NotZero(t, grazeID)
 
 	id := createPartnership(t, token, authorityID, defaultBody(authorityID))
 
-	body := `{"tagline":"New tagline","description":"New description","linkurl":"https://example.gov.uk/new"}`
-	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/partnership/%d?jwt=%s", id, token), strings.NewReader(body))
+	g := findGroup(getPartnership(t, token, id), grazeID)
+	require.NotNil(t, g)
+	assert.Equal(t, "Boundary", g["source"])
+	assert.InDelta(t, 0.02, g["overlap"].(float64), 0.005)
+}
+
+func TestPartnershipRejectsUnknownStatus(t *testing.T) {
+	prefix := uniquePrefix("PartnershipBadStatus")
+	_, token := partnershipsUser(t, prefix)
+	authorityID := createPartnershipAuthority(t, prefix)
+
+	for _, body := range []string{
+		fmt.Sprintf(`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2027-03-31","status":"Agreed"}`, authorityID),
+		fmt.Sprintf(`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2027-03-31","renewal":"Maybe"}`, authorityID),
+		fmt.Sprintf(`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2027-03-31","contacts":[{"name":"A","role":"Boss"}]}`, authorityID),
+	} {
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/partnership?jwt=%s", token), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 400, resp.StatusCode, body)
+	}
+}
+
+func TestPartnershipRenewalAndBulkDiscount(t *testing.T) {
+	prefix := uniquePrefix("PartnershipRenewal")
+	_, token := partnershipsUser(t, prefix)
+	authorityID := createPartnershipAuthority(t, prefix)
+
+	id := createPartnership(t, token, authorityID, fmt.Sprintf(
+		`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2027-03-31","amount":2700,"fullprice":3000,"renewal":"Unsure"}`,
+		authorityID))
+
+	p := getPartnership(t, token, id)["partnership"].(map[string]interface{})
+	assert.Equal(t, "Unsure", p["renewal"])
+	assert.Equal(t, float64(3000), p["fullprice"])
+	assert.Equal(t, "Quoted", p["status"], "a new deal starts as a quote")
+
+	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/partnership/%d?jwt=%s", id, token),
+		strings.NewReader(`{"renewal":"","fullprice":0}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
-	assert.Equal(t, 200, resp.StatusCode)
+	require.Equal(t, 200, resp.StatusCode)
+
+	p = getPartnership(t, token, id)["partnership"].(map[string]interface{})
+	assert.Nil(t, p["renewal"], "an empty renewal clears the traffic light")
+	assert.Nil(t, p["fullprice"], "zero means there was no bulk discount")
+}
+
+func TestPartnershipUploadedLogoBecomesADeliveryURL(t *testing.T) {
+	prefix := uniquePrefix("PartnershipLogo")
+	_, token := partnershipsUser(t, prefix)
+	authorityID := createPartnershipAuthority(t, prefix)
 
 	db := database.DBConn
-	var sponsor struct {
-		Tagline     *string
-		Description *string
-		Linkurl     *string
-	}
-	db.Raw("SELECT tagline, description, linkurl FROM groups_sponsorship WHERE groupid = ? "+
-		"ORDER BY id DESC LIMIT 1", groupID).Scan(&sponsor)
+	uid := "freegletusd-" + prefix
+	db.Exec("INSERT INTO groups_images (externaluid, contenttype) VALUES (?, 'image/jpeg')", uid)
+	var imageID uint64
+	db.Raw("SELECT id FROM groups_images WHERE externaluid = ?", uid).Scan(&imageID)
+	require.NotZero(t, imageID)
+	t.Cleanup(func() { db.Exec("DELETE FROM groups_images WHERE id = ?", imageID) })
 
-	require.NotNil(t, sponsor.Tagline)
-	assert.Equal(t, "New tagline", *sponsor.Tagline)
-	require.NotNil(t, sponsor.Description)
-	assert.Equal(t, "New description", *sponsor.Description)
-	require.NotNil(t, sponsor.Linkurl)
-	assert.Equal(t, "https://example.gov.uk/new", *sponsor.Linkurl)
+	id := createPartnership(t, token, authorityID, fmt.Sprintf(
+		`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2027-03-31","imageid":%d}`, authorityID, imageID))
+
+	p := getPartnership(t, token, id)["partnership"].(map[string]interface{})
+	require.NotNil(t, p["imageurl"])
+	assert.Contains(t, p["imageurl"], "?url=")
+	assert.Contains(t, p["imageurl"], prefix, "the delivery URL points at the uploaded file")
+	assert.NotContains(t, p["imageurl"], "freegletusd-")
+}
+
+func TestPartnershipHistoryListsEveryDealWithTheCouncil(t *testing.T) {
+	prefix := uniquePrefix("PartnershipHistory")
+	_, token := partnershipsUser(t, prefix)
+	authorityID := createPartnershipAuthority(t, prefix)
+
+	older := createPartnership(t, token, authorityID, fmt.Sprintf(
+		`{"authorityid":%d,"startdate":"2022-04-01","enddate":"2023-03-31","amount":500,"status":"Paid"}`, authorityID))
+	newer := createPartnership(t, token, authorityID, fmt.Sprintf(
+		`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2027-03-31","amount":900,"status":"Confirmed"}`, authorityID))
+
+	history := getPartnership(t, token, newer)["history"].([]interface{})
+	require.Len(t, history, 2)
+	assert.Equal(t, float64(newer), history[0].(map[string]interface{})["id"], "newest first")
+	assert.Equal(t, float64(older), history[1].(map[string]interface{})["id"])
+	assert.Equal(t, "Paid", history[1].(map[string]interface{})["status"])
+}
+
+func TestPartnershipSummaryFollowsThePipeline(t *testing.T) {
+	prefix := uniquePrefix("PartnershipStages")
+	_, token := partnershipsUser(t, prefix)
+	authorityID := createPartnershipAuthority(t, prefix)
+
+	summary := func() map[string]interface{} {
+		req := httptest.NewRequest("GET", fmt.Sprintf("/api/partnership/summary?jwt=%s", token), nil)
+		resp, _ := getApp().Test(req)
+
+		var result map[string]interface{}
+		json2.Unmarshal(rsp(resp), &result)
+
+		return result["summary"].(map[string]interface{})
+	}
+
+	before := summary()
+
+	for _, status := range []string{"Quoted", "InPrinciple", "Overdue"} {
+		createPartnership(t, token, authorityID, fmt.Sprintf(
+			`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2027-03-31","amount":100,"status":"%s"}`,
+			authorityID, status))
+	}
+
+	after := summary()
+	for _, key := range []string{"quoted", "inprinciple", "committed", "overdue"} {
+		assert.InDelta(t, 100, after[key].(float64)-before[key].(float64), 0.001, key)
+	}
+	assert.InDelta(t, 100, after["tocome"].(float64)-before["tocome"].(float64), 0.001,
+		"committed money not yet received is still to come")
 }
 
 func TestPartnershipUpdateCanClearTagline(t *testing.T) {
@@ -376,107 +428,6 @@ func TestPartnershipUpdateOfUnknownIdIs404(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 404, resp.StatusCode)
-}
-
-func TestPartnershipDeleteRemovesSponsorship(t *testing.T) {
-	prefix := uniquePrefix("PartnershipDelete")
-	_, token := partnershipsUser(t, prefix)
-	authorityID := createPartnershipAuthority(t, prefix)
-	groupID := createPartnershipGroup(t, prefix)
-
-	id := createPartnership(t, token, authorityID, defaultBody(authorityID))
-
-	db := database.DBConn
-	var before int64
-	db.Raw("SELECT COUNT(*) FROM groups_sponsorship WHERE groupid = ?", groupID).Scan(&before)
-	require.Equal(t, int64(1), before)
-
-	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/partnership/%d?jwt=%s", id, token), nil)
-	resp, _ := getApp().Test(req)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var after int64
-	db.Raw("SELECT COUNT(*) FROM groups_sponsorship WHERE groupid = ?", groupID).Scan(&after)
-	assert.Equal(t, int64(0), after, "deleting the deal takes the sponsor off the member site")
-
-	var partnerships int64
-	db.Raw("SELECT COUNT(*) FROM partnerships WHERE id = ?", id).Scan(&partnerships)
-	assert.Equal(t, int64(0), partnerships)
-}
-
-func TestPartnershipRemoveGroupDropsItsSponsorship(t *testing.T) {
-	prefix := uniquePrefix("PartnershipDropGroup")
-	_, token := partnershipsUser(t, prefix)
-	authorityID := createPartnershipAuthority(t, prefix)
-	groupID := createPartnershipGroup(t, prefix)
-
-	id := createPartnership(t, token, authorityID, defaultBody(authorityID))
-
-	body := fmt.Sprintf(`{"action":"Remove","groupid":%d}`, groupID)
-	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/partnership/%d/group?jwt=%s", id, token),
-		strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(req)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	db := database.DBConn
-	var sponsorships int64
-	db.Raw("SELECT COUNT(*) FROM groups_sponsorship WHERE groupid = ?", groupID).Scan(&sponsorships)
-	assert.Equal(t, int64(0), sponsorships)
-
-	var links int64
-	db.Raw("SELECT COUNT(*) FROM partnerships_groups WHERE partnershipid = ? AND groupid = ?", id, groupID).Scan(&links)
-	assert.Equal(t, int64(0), links)
-}
-
-func TestPartnershipAddGroupCreatesSponsorship(t *testing.T) {
-	prefix := uniquePrefix("PartnershipAddGroup")
-	_, token := partnershipsUser(t, prefix)
-	authorityID := createPartnershipAuthority(t, prefix)
-
-	id := createPartnership(t, token, authorityID, defaultBody(authorityID))
-
-	// A group nowhere near the council - added by hand because the deal covers it anyway.
-
-	body := fmt.Sprintf(`{"action":"Add","groupid":%d}`, outsideGroup)
-	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/partnership/%d/group?jwt=%s", id, token),
-		strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(req)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	db := database.DBConn
-	var sponsorships int64
-	db.Raw("SELECT COUNT(*) FROM groups_sponsorship WHERE groupid = ?", outsideGroup).Scan(&sponsorships)
-	assert.Equal(t, int64(1), sponsorships)
-}
-
-func TestPartnershipGroupActionNeedsGroupid(t *testing.T) {
-	prefix := uniquePrefix("PartnershipGroupBad")
-	_, token := partnershipsUser(t, prefix)
-	authorityID := createPartnershipAuthority(t, prefix)
-
-	id := createPartnership(t, token, authorityID, defaultBody(authorityID))
-
-	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/partnership/%d/group?jwt=%s", id, token),
-		strings.NewReader(`{"action":"Add"}`))
-	req.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(req)
-	assert.Equal(t, 400, resp.StatusCode)
-}
-
-func TestPartnershipGroupUnknownAction(t *testing.T) {
-	prefix := uniquePrefix("PartnershipGroupAct")
-	_, token := partnershipsUser(t, prefix)
-	authorityID := createPartnershipAuthority(t, prefix)
-
-	id := createPartnership(t, token, authorityID, defaultBody(authorityID))
-
-	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/partnership/%d/group?jwt=%s", id, token),
-		strings.NewReader(`{"action":"Wibble"}`))
-	req.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(req)
-	assert.Equal(t, 400, resp.StatusCode)
 }
 
 func TestPartnershipPaymentsAndTotals(t *testing.T) {
@@ -605,7 +556,7 @@ func TestPartnershipProRatesAcrossFinancialYears(t *testing.T) {
 	authorityID := createPartnershipAuthority(t, prefix)
 
 	// A three-year deal, so the money should show across three financial years.
-	body := fmt.Sprintf(`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2029-03-31","amount":9000,"agreed":true}`,
+	body := fmt.Sprintf(`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2029-03-31","amount":9000,"status":"Confirmed"}`,
 		authorityID)
 	id := createPartnership(t, token, authorityID, body)
 
@@ -628,7 +579,7 @@ func TestPartnershipExplicitYearsBeatProRata(t *testing.T) {
 	_, token := partnershipsUser(t, prefix)
 	authorityID := createPartnershipAuthority(t, prefix)
 
-	body := fmt.Sprintf(`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2028-03-31","amount":9000,"agreed":true}`,
+	body := fmt.Sprintf(`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2028-03-31","amount":9000,"status":"Confirmed"}`,
 		authorityID)
 	id := createPartnership(t, token, authorityID, body)
 
@@ -658,7 +609,7 @@ func TestPartnershipEmptyYearsRestoresProRata(t *testing.T) {
 	_, token := partnershipsUser(t, prefix)
 	authorityID := createPartnershipAuthority(t, prefix)
 
-	body := fmt.Sprintf(`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2028-03-31","amount":9000,"agreed":true}`,
+	body := fmt.Sprintf(`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2028-03-31","amount":9000,"status":"Confirmed"}`,
 		authorityID)
 	id := createPartnership(t, token, authorityID, body)
 
@@ -707,9 +658,9 @@ func TestPartnershipSummaryTotals(t *testing.T) {
 	json2.Unmarshal(rsp(resp), &result)
 
 	summary := result["summary"].(map[string]interface{})
-	assert.GreaterOrEqual(t, summary["total"].(float64), float64(6000))
+	assert.GreaterOrEqual(t, summary["committed"].(float64), float64(6000))
 	assert.GreaterOrEqual(t, summary["invoiced"].(float64), float64(2000))
-	assert.GreaterOrEqual(t, summary["paid"].(float64), float64(2000))
+	assert.GreaterOrEqual(t, summary["received"].(float64), float64(2000))
 	assert.Contains(t, summary, "years")
 
 	// The financial year the deal sits in must appear in the graph data.
@@ -718,20 +669,20 @@ func TestPartnershipSummaryTotals(t *testing.T) {
 	for _, y := range years {
 		if y.(map[string]interface{})["financialyear"].(float64) == 2026 {
 			found = true
-			assert.Contains(t, y.(map[string]interface{}), "agreed")
-			assert.Contains(t, y.(map[string]interface{}), "pipeline")
+			assert.Contains(t, y.(map[string]interface{}), "committed")
+			assert.Contains(t, y.(map[string]interface{}), "inprinciple")
 		}
 	}
 	assert.True(t, found, "2026/27 income shows in the per-year breakdown")
 }
 
-func TestPartnershipSummarySeparatesAgreedFromPipeline(t *testing.T) {
+func TestPartnershipSummarySeparatesInPrincipleFromCommitted(t *testing.T) {
 	prefix := uniquePrefix("PartnershipPipeline")
 	_, token := partnershipsUser(t, prefix)
 	authorityID := createPartnershipAuthority(t, prefix)
 
-	// Deliberately not agreed: hoped-for money must not be counted as income.
-	body := fmt.Sprintf(`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2027-03-31","amount":5000,"agreed":false}`,
+	// Only agreed in principle: hoped-for money must not be counted as income.
+	body := fmt.Sprintf(`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2027-03-31","amount":5000,"status":"InPrinciple"}`,
 		authorityID)
 	createPartnership(t, token, authorityID, body)
 
@@ -745,7 +696,7 @@ func TestPartnershipSummarySeparatesAgreedFromPipeline(t *testing.T) {
 	for _, y := range summary["years"].([]interface{}) {
 		year := y.(map[string]interface{})
 		if year["financialyear"].(float64) == 2026 {
-			assert.GreaterOrEqual(t, year["pipeline"].(float64), float64(5000))
+			assert.GreaterOrEqual(t, year["inprinciple"].(float64), float64(5000))
 		}
 	}
 }
@@ -757,7 +708,7 @@ func TestPartnershipExpiringFlag(t *testing.T) {
 
 	// Ends in a month, so it should be flagged as running out.
 	soon := time.Now().AddDate(0, 1, 0).Format("2006-01-02")
-	body := fmt.Sprintf(`{"authorityid":%d,"startdate":"2020-04-01","enddate":"%s","amount":1000,"agreed":true}`,
+	body := fmt.Sprintf(`{"authorityid":%d,"startdate":"2020-04-01","enddate":"%s","amount":1000,"status":"Confirmed"}`,
 		authorityID, soon)
 	id := createPartnership(t, token, authorityID, body)
 
@@ -777,7 +728,7 @@ func TestPartnershipExpiredFlag(t *testing.T) {
 	_, token := partnershipsUser(t, prefix)
 	authorityID := createPartnershipAuthority(t, prefix)
 
-	body := fmt.Sprintf(`{"authorityid":%d,"startdate":"2019-04-01","enddate":"2020-03-31","amount":1000,"agreed":true}`,
+	body := fmt.Sprintf(`{"authorityid":%d,"startdate":"2019-04-01","enddate":"2020-03-31","amount":1000,"status":"Confirmed"}`,
 		authorityID)
 	id := createPartnership(t, token, authorityID, body)
 

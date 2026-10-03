@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Queue;
 
+use App\Console\Commands\Queue\ProcessBackgroundTasksCommand;
 use App\Mail\Chat\ChatSpamReportMail;
 use App\Mail\Chat\ReferToSupportMail;
 use App\Mail\Donation\DonateExternalMail;
@@ -12,6 +13,8 @@ use App\Mail\Session\MergeOfferMail;
 use App\Mail\Session\UnsubscribeConfirmMail;
 use App\Mail\Session\VerifyEmailMail;
 use App\Mail\Message\ModStdMessageMail;
+use App\Services\BlockedKeywordBackfillService;
+use App\Services\ContentCheckService;
 use App\Services\PushNotificationService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -3049,5 +3052,4 @@ class ProcessBackgroundTasksCommandTest extends TestCase
 
         Mail::assertSent(ModStdMessageMail::class);
     }
-
 }

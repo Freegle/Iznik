@@ -83,9 +83,12 @@ onMounted(() => {
 })
 
 function startsearch(searchTerm) {
-  searchTerm = (searchTerm || '').trim()
+  // A member's id is shown after a "#" in the members list, so moderators type it back
+  // with one. In a URL the "#" starts a fragment and the term never arrives, so the
+  // search silently did nothing; strip it, and encode the rest (names can hold "/").
+  searchTerm = (searchTerm || '').trim().replace(/^#+\s*/, '')
   const newpath = searchTerm
-    ? '/members/approved/' + searchTerm
+    ? '/members/approved/' + encodeURIComponent(searchTerm)
     : '/members/approved/'
 
   if (newpath !== router.currentRoute.value.path) {

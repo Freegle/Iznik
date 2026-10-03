@@ -3,13 +3,15 @@ package test
 import (
 	json2 "encoding/json"
 	"fmt"
-	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/message"
-	"github.com/stretchr/testify/assert"
 	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/embedding"
+	"github.com/freegle/iznik-server-go/message"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestGetWords(t *testing.T) {

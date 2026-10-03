@@ -1,14 +1,16 @@
 ---
-last_reviewed: 2026-09-18
+last_reviewed: 2026-09-23
 covers:
   - iznik-batch/app/Services/EeeClassificationService.php
   - iznik-batch/app/Services/EeeComponentService.php
   - iznik-batch/app/Services/EeeProductionStore.php
+  - iznik-batch/app/Services/EeeVisionService.php
   - iznik-batch/app/Services/ElectricalsStatsService.php
   - iznik-batch/app/Services/Electricals/ItemClusterService.php
   - iznik-batch/app/Services/Desirability/TitleCanonicalService.php
   - iznik-batch/resources/desirability/**
   - iznik-batch/app/Console/Commands/Eee/EeeClassifyNewCommand.php
+  - iznik-batch/app/Console/Commands/Eee/EeeClassifyTextsCommand.php
   - iznik-batch/app/Console/Commands/ElectricalsStatsCommand.php
   - iznik-server-go/electricals/**
   - iznik-nuxt3/pages/electricals.vue
@@ -38,6 +40,32 @@ says which limb decided each row.
 `is_eee` is tri-state. NULL means "not decided" - the model saw nothing, or the
 components could not be resolved - and every statistic excludes NULL rather than
 counting it as "not electrical".
+
+## Which stream an item is in
+
+`weee_category` holds one of the seven streams a UK collection facility reports in, from
+the gov.uk "WEEE evidence and national protocols guidance": 1-7 for A large domestic
+appliances, B cooling, C display, D lamps, E solar panels, F vapes, G small mixed WEEE.
+Each stream is a fixed set of the UK's 15 reporting categories (A = 1, B = 12, C = 11,
+D = 13, E = 14, F = 15, G = 2 to 10), so partners reporting either way can convert
+without looking at the item. It replaced the EU's six categories at prompt version
+2.0.0; those split by size, which neither the UK categories nor the streams do, so they
+could not be converted. Rows at an earlier `prompt_version` hold the EU six.
+
+The stream comes from the text call, not the photo. What goes in each stream is spelled
+out in `EeeVisionService::STREAM_GUIDE`, and the lines that needed spelling out were
+found by review: microwaves are A at any size, a set-top box is G not C, a table lamp is
+G and only a bulb or tube is D.
+
+## Text-only classification
+
+`eee:classify-texts` classifies listings from title and description alone, fifty to a
+request, for history and for posts without a photo. `--google-batch` sends the whole
+file to Gemini's batch service at half price; the job name is kept beside the output so
+an interrupted run waits on the job it has already paid for. Creating a batch job is not
+idempotent, so a timeout there must be checked against Gemini's job list before retrying.
+On 400 reviewed posts it matched a human reviewer on electrical-or-not 99.2% of the time
+and on the stream 99.2%, with 17 posts too ambiguous to label excluded.
 
 ## Pipeline
 

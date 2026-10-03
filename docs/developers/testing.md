@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-17
+last_reviewed: 2026-09-20
 owner: Freegle dev team
 covers:
   - docs/developers/reference/coding-standards.md
@@ -62,6 +62,10 @@ The test database is built from committed fixtures via the setup scripts (schema
 from Laravel migrations - see [APIs and data](apis-and-data.md)). After adding a
 migration, rerun the test-database setup so the test schema matches. The seeded data is
 FreeglePlayground around Edinburgh (postcode EH3 6SS).
+
+Locally the database is in memory by default (`PERCONA_STORAGE=ram`), so it is empty
+after percona restarts, including after the idle-stack sweeper stops a worktree. Rerun
+`scripts/setup-test-database.sh`; it takes about 30 seconds.
 
 ## CI
 

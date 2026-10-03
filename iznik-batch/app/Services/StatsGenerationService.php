@@ -263,6 +263,9 @@ class StatsGenerationService
             ->where('date', '>=', $date)
             ->where('date', '<', $next)
             ->where('type', ChatMessage::TYPE_INTERESTED)
+            // A rejected reply (moderator reject, or dropped by a block keyword) was never
+            // delivered and is not a reply.
+            ->where('reviewrejected', 0)
             ->whereNotExists(function ($q) {
                 $q->select(DB::raw(1))
                     ->from('messages_bulk_items')
@@ -286,6 +289,9 @@ class StatsGenerationService
             ->where('date', '>=', $date)
             ->where('date', '<', $next)
             ->where('type', ChatMessage::TYPE_INTERESTED)
+            // A rejected reply (moderator reject, or dropped by a block keyword) was never
+            // delivered and is not a reply.
+            ->where('reviewrejected', 0)
             ->whereExists(function ($q) {
                 $q->select(DB::raw(1))
                     ->from('messages_bulk_items')

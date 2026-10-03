@@ -5,6 +5,7 @@ import (
 	json2 "encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"

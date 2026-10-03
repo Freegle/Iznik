@@ -71,6 +71,44 @@ Schedule::command('mail:welcome:send --limit=100 --spool')
     ->sendOutputTo(cronLog('mail:welcome:send'))
     ->runInBackground();
 
+// =============================================================================
+// IMAGE OBJECT STORE (docs/ops/runbooks/images-to-object-storage.md)
+// =============================================================================
+// tusd writes uploads to a local spool; this moves each completed one to the
+// bucket. Inert until IMAGE_STORE_ENABLED, which waits for
+// images:object-store-check to pass against the real bucket. withoutOverlapping
+// because a slow bucket must queue the next minute's pass, not double it.
+Schedule::command('images:push-spool')
+    ->everyMinute()
+    ->withoutOverlapping(10)
+    ->when(fn () => (bool) config('freegle.image_store.enabled', false))
+    ->sendOutputTo(cronLog('images:push-spool'))
+    ->runInBackground();
+
+// The one-off copy of the legacy NFS store, in slices: each stops on its time
+// budget and the next carries on from the cursor. On only between the cutover
+// and a clean --verify. The backup drain's skip() applies to it like every
+// other event, so it merely pauses for the window.
+Schedule::command('images:migrate-legacy')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->when(fn () => (bool) config('freegle.image_store.enabled', false)
+        && (bool) config('freegle.image_store.migrate_enabled', false))
+    ->sendOutputTo(cronLog('images:migrate-legacy'))
+    ->runInBackground();
+
+// Proves the bucket is still writable and, above all, still PUBLICLY readable:
+// the read chain in frontend-nginx falls through to the legacy share on any
+// bucket error, so a bucket that stops answering (public read switched off, key
+// revoked, service disabled) shows up only as every image that exists solely
+// in the bucket going missing. --report raises ObjectStoreUnavailable in Sentry.
+Schedule::command('images:object-store-check --report')
+    ->everyTenMinutes()
+    ->withoutOverlapping(10)
+    ->when(fn () => (bool) config('freegle.image_store.enabled', false))
+    ->sendOutputTo(cronLog('images:object-store-check'))
+    ->runInBackground();
+
 // Record the deployed Laravel commit so /api/version reports the live build
 // (the monitor-fsm "verified-live" reply gate compares it against merged PRs).
 // Lightweight (just a config upsert) — safe to run frequently; deploy:watch is
@@ -445,6 +483,17 @@ Schedule::command('charity:notify-signups')
     ->hourly()
     ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('charity:notify-signups'))
+    ->runInBackground();
+
+// CookieYes watchdog — banner live, GDPR on, every cookie categorised, scan recent;
+// starts a scan when the last is a month old. Result in housekeeper_tasks (the ModTools
+// housekeeping badge), failures emailed to geeks. Needs a one-off `cookieyes:authorize`
+// per environment; until then every run fails and says so.
+Schedule::command('cookieyes:check')
+    ->weeklyOn(1, '10:30')
+    ->when(fn () => config('freegle.cookieyes.enabled', true))
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('cookieyes:check'))
     ->runInBackground();
 
 // Moderator work notifications — tells mods about pending messages, events, etc.
@@ -1214,14 +1263,6 @@ Schedule::command('users:update-approx-locs')
     ->sendOutputTo(cronLog('users:update-approx-locs'))
     ->runInBackground();
 
-// Remove search index entries for messages older than 30 days.
-// V1: cron/message_deindex.php (daily at 01:00)
-Schedule::command('messages:deindex')
-    ->dailyAt('01:00')
-    ->withoutOverlapping(360)
-    ->sendOutputTo(cronLog('messages:deindex'))
-    ->runInBackground();
-
 // Score microvolunteering actions and promote accurate users to Moderate trust.
 // V1: cron/microactions_score.php (daily at 23:00)
 // Note: Laravel uses correct SUM() aggregation in promote() — V1 had a longstanding aggregation
@@ -1366,13 +1407,15 @@ Schedule::command('integrations:sync-whatjobs')
 // Early-morning sync ahead of the 07:00 UK daily digest. The every-3h UTC
 // schedule above starts at 09:00 UTC, so the morning digest would otherwise
 // ship jobs last synced ~21:00 the night before (9-10h stale -> closed
-// postings -> clicks don't convert to billable). Run at 05:00 UK so the sync
-// (and the post-swap KNN rebuild it triggers) completes before the digest.
-// Pinned to the local zone so it tracks BST/GMT with the digest; shares the
-// command mutex with the run above via withoutOverlapping.
+// postings -> clicks don't convert to billable). Runs at 04:40 UTC, on the
+// same clock as the backup drain window (03:50-04:35 UTC), so it starts just
+// after batch work resumes in both BST and GMT: 05:40 or 04:40 London, and
+// the run takes about 15 minutes, well before the digest. It used to be pinned
+// to 05:00 London, which is 04:00 UTC in summer, inside the window, and the
+// drain skipped it. Shares the command mutex with the run above via
+// withoutOverlapping.
 Schedule::command('integrations:sync-whatjobs')
-    ->timezone(config('freegle.timezone'))
-    ->dailyAt('05:00')
+    ->dailyAt('04:40')
     ->withoutOverlapping(240)
     ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
     ->runInBackground();
@@ -1581,13 +1624,37 @@ Schedule::command('embeddings:searches')
 
 // =============================================================================
 // NOT YET ENABLED - pending review / sign-off
-// Index unindexed messages for search.
-// V1: cron/message_unindexed.php (every 30 min)
-Schedule::command('messages:update-index')
-    ->everyThirtyMinutes()
-    ->withoutOverlapping(60)
-    ->sendOutputTo(cronLog('messages:update-index'))
-    ->runInBackground();
+// Remove confirmed spammers from groups.
+// V1: cron/check_spammers.php
+// Schedule::command('users:remove-spammers')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('users:remove-spammers'))
+//     ->runInBackground();
+
+// Process chat spam messages.
+// V1: cron/chat_spam.php
+// Schedule::command('chats:process-spam')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('chats:process-spam'))
+//     ->runInBackground();
+
+// Send mod notifications.
+// V1: cron/mod_notifs.php
+// Schedule::command('mail:mod-notifs')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('mail:mod-notifs'))
+//     ->runInBackground();
+
+// Update GiftAid donations.
+// V1: cron/donations_giftaid.php
+// Schedule::command('donations:update-giftaid')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('donations:update-giftaid'))
+//     ->runInBackground();
 
 // Volunteering opportunity maintenance — daily. Asks owners of dateless
 // opportunities approaching expiry whether they are still active (renewal
@@ -1815,6 +1882,14 @@ Schedule::command('partnerships:reminders')
     ->dailyAt('08:00')
     ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('partnerships:reminders'))
+    ->runInBackground();
+
+// And chase the ones that ended without a renewal, when the council should have paid for the
+// next year.
+Schedule::command('partnerships:reminders --ended --days=30 --type=ended')
+    ->dailyAt('08:05')
+    ->withoutOverlapping(30)
+    ->sendOutputTo(cronLog('partnerships:reminders-ended'))
     ->runInBackground();
 
 // Nightly physical database backup. OFF unless BACKUP_DB_ENABLED is set; until then the

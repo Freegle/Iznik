@@ -320,9 +320,10 @@ const visibleCollectionGroups = computed(() => {
 @import 'assets/css/navbar.scss';
 
 .my-posts-list {
-  /* Room for the fixed bottom navigation bar, which slides back over the end
-     of the list when scrolling stops (Discourse 9808/805). */
-  padding: 0 0 $page-bottom-padding;
+  /* The room for the fixed bottom navigation bar is on the page body in
+     myposts.vue, not here: the searches panel renders after this list and
+     was left under the bar when the padding sat on the list. */
+  padding: 0;
 }
 
 .loading-state {

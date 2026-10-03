@@ -378,48 +378,6 @@ func TestV2ChatmessagesModeration(t *testing.T) {
 }
 
 
-// setupWiderReviewData creates two groups, a mod on group1 with widerchatreview=1,
-// and a chat message requiring review between members on group2 (also widerchatreview=1).
-// The mod is NOT on group2. Returns mod token and IDs needed for assertions.
-func setupWiderReviewData(t *testing.T) (modToken string, modID, group1ID, group2ID, chatMsgID uint64) {
-	t.Helper()
-	db := database.DBConn
-	prefix := uniquePrefix(t.Name())
-
-	// Group 1: mod's group with widerchatreview enabled.
-	group1ID = CreateTestGroup(t, prefix+"_g1")
-	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.widerchatreview', 1) WHERE id = ?", group1ID)
-
-	// Group 2: separate group with widerchatreview enabled.
-	group2ID = CreateTestGroup(t, prefix+"_g2")
-	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.widerchatreview', 1) WHERE id = ?", group2ID)
-
-	// Active moderator on group1 only.
-	modID = CreateTestUser(t, prefix+"_mod", "Moderator")
-	PromoteTestUserToModerator(t, modID)
-	// Ensure active=1 in membership settings.
-	db.Exec("UPDATE memberships SET settings = '{\"active\":1}' WHERE userid = ? AND groupid = ?", modID, group1ID)
-
-	// Two members on group2 (not mod's group).
-	user1ID := CreateTestUser(t, prefix+"_user1", "User")
-	user2ID := CreateTestUser(t, prefix+"_user2", "User")
-
-	// Another mod on group2 (required for chat moderation).
-	mod2ID := CreateTestUser(t, prefix+"_mod2", "Moderator")
-	PromoteTestUserToModerator(t, mod2ID)
-
-	// Create User2User chat between user1 and user2.
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
-
-	// Create a message requiring review (not user-reported).
-	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingsuccessful) "+
-		"VALUES (?, ?, 'Wider review test message', NOW(), 1, 1)", chatID, user1ID)
-	db.Raw("SELECT id FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1", chatID).Scan(&chatMsgID)
-
-	_, modToken = CreateTestSession(t, modID)
-	return
-}
-
 func TestWiderReviewEligibility(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("WiderElig")

@@ -260,7 +260,7 @@ func TestValidateDiscourseSession_EarlyExits(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := validateDiscourseSession(tc.cookie)
+			_, _, err := validateDiscourseSession(tc.cookie)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), tc.errFrag)
 		})
