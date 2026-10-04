@@ -50,6 +50,17 @@ class CommunityNewsAreaServiceTest extends TestCase
         return (int) DB::table('towns')->insertGetId(['name' => $name, 'lat' => $lat, 'lng' => $lng]);
     }
 
+    private function place(string $name, float $lat, float $lng, int $population): int
+    {
+        return (int) DB::table('places')->insertGetId([
+            'name' => $name,
+            'lat' => $lat,
+            'lng' => $lng,
+            'population' => $population,
+            'position' => DB::raw('ST_SRID(POINT(' . $lng . ', ' . $lat . '), 3857)'),
+        ]);
+    }
+
     private function nation(string $name, string $wkt, string $code = 'CUN'): int
     {
         return (int) DB::table('authorities')->insertGetId([
@@ -107,6 +118,91 @@ class CommunityNewsAreaServiceTest extends TestCase
         $this->svc()->rebuildAreas();
 
         $this->assertSame('Shrewsburylike', $this->areasContaining([$oswestry->id])->first()->name);
+    }
+
+    // An area is named after the town closest to its communities. The curated towns list is
+    // short, so for many communities "closest" was a town miles away: Oswestry Freegle was
+    // filed under Wrecsam (12.7 miles, another nation) because the list has no Oswestry. The
+    // places gazetteer has it. Remote coordinates throughout - see areasContaining().
+    public function test_closest_place_anchors_when_no_curated_town_is_near(): void
+    {
+        $this->town('Wrecsamlike ' . uniqid(), 46.10, -50.0);          // ~13 miles north
+        $this->place('Oswestrylike ' . uniqid(), 45.912, -50.0, 18743); // ~0.2 miles
+
+        $g = $this->createTestGroup(['lat' => 45.91, 'lng' => -50.0, 'settings' => ['communitynews' => 1]]);
+
+        config(['freegle.communitynews.area_cluster_miles' => 20]);
+        $this->svc()->rebuildAreas();
+
+        $area = CommunityNewsArea::where('anchorgroupid', $g->id)->first();
+        $this->assertNotNull($area);
+        $this->assertStringStartsWith('Oswestrylike', $area->name);
+    }
+
+    // A city's recorded centre sits among its neighbourhoods, each in the gazetteer. A curated
+    // town close by is the deliberate choice and wins (Birmingham, not Aston).
+    public function test_curated_town_within_reach_beats_a_closer_neighbourhood(): void
+    {
+        $this->town('Citylike ' . uniqid(), 46.513, -51.0);            // ~0.9 miles
+        $this->place('Neighbourhoodlike ' . uniqid(), 46.508, -51.0, 60000); // ~0.6 miles
+
+        $g = $this->createTestGroup(['lat' => 46.50, 'lng' => -51.0, 'settings' => ['communitynews' => 1]]);
+
+        config(['freegle.communitynews.area_cluster_miles' => 20]);
+        $this->svc()->rebuildAreas();
+
+        $this->assertStringStartsWith('Citylike', CommunityNewsArea::where('anchorgroupid', $g->id)->first()->name);
+    }
+
+    // With no curated town near, a sizeable place beats a closer hamlet, so the area is named
+    // after the town people know (Dundee, not a village across the water).
+    public function test_sizeable_place_beats_a_closer_small_one(): void
+    {
+        $this->place('Hamletlike ' . uniqid(), 47.505, -52.0, 1500);   // ~0.3 miles
+        $this->place('Townlike ' . uniqid(), 47.54, -52.0, 45000);     // ~2.8 miles
+
+        $g = $this->createTestGroup(['lat' => 47.50, 'lng' => -52.0, 'settings' => ['communitynews' => 1]]);
+
+        config(['freegle.communitynews.area_cluster_miles' => 20]);
+        $this->svc()->rebuildAreas();
+
+        $this->assertStringStartsWith('Townlike', CommunityNewsArea::where('anchorgroupid', $g->id)->first()->name);
+    }
+
+    // Communities whose closest place is the same one share an area.
+    public function test_communities_sharing_a_closest_place_share_an_area(): void
+    {
+        $this->place('Sharedlike ' . uniqid(), 48.50, -53.0, 30000);
+
+        $a = $this->createTestGroup(['lat' => 48.49, 'lng' => -53.0, 'settings' => ['communitynews' => 1]]);
+        $b = $this->createTestGroup(['lat' => 48.51, 'lng' => -53.0, 'settings' => ['communitynews' => 1]]);
+
+        config(['freegle.communitynews.area_cluster_miles' => 20]);
+        $this->svc()->rebuildAreas();
+
+        $areas = $this->areasContaining([$a->id, $b->id]);
+        $this->assertSame(1, $areas->count());
+        $this->assertSame(2, $areas->first()->groupcount);
+        $this->assertStringStartsWith('Sharedlike', $areas->first()->name);
+    }
+
+    // A place that is also a curated town is one candidate, not two, so communities either
+    // side of it cannot be split into twin areas of the same name.
+    public function test_a_place_that_is_a_curated_town_is_not_a_second_anchor(): void
+    {
+        $name = 'Twinlike ' . uniqid();
+        $this->town($name, 49.50, -54.0);
+        $this->place($name, 49.501, -54.0, 30000);
+
+        // 2.5 miles from the town, so it takes the town; 4 miles away, so it would take the
+        // place - the twin - if the place were still listed.
+        $a = $this->createTestGroup(['lat' => 49.464, 'lng' => -54.0, 'settings' => ['communitynews' => 1]]);
+        $b = $this->createTestGroup(['lat' => 49.558, 'lng' => -54.0, 'settings' => ['communitynews' => 1]]);
+
+        config(['freegle.communitynews.area_cluster_miles' => 20]);
+        $this->svc()->rebuildAreas();
+
+        $this->assertSame(1, $this->areasContaining([$a->id, $b->id])->count());
     }
 
     public function test_groups_assign_to_nearest_town(): void

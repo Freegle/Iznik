@@ -11,20 +11,21 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Groups the communitynews-enabled Freegle groups into "areas" anchored on the
- * `towns` table.
+ * Groups the communitynews-enabled Freegle groups into "areas", each anchored on
+ * a town.
  *
  * The research call searches around the area's NAME, and local news supply is
  * organised by named place (a paper's patch, a council's what's-on) — so the
  * area unit must be a real, searchable town, not a distance blob. Each enabled
- * group joins its nearest town within `area_cluster_miles`; the town's name and
- * centre become the area's. Distance clustering (union-find) was tried first
- * but chains transitively: with every group enabled, mainland England collapses
- * into one 400-group component spanning 300+ miles. Town anchoring can't chain,
- * so it still works when all groups are active (~240 areas). A group with no
- * town within the cap — and every group, when the towns table is empty (dev) —
- * stands alone as its own area, named from the group. A town in a different
- * nation from the group (Wrexham for Oswestry) is never eligible.
+ * group is anchored on the town closest to it (anchorFor), chosen from the
+ * curated `towns` and the `places` gazetteer; groups that share an anchor form
+ * one area, and the town's name and centre become the area's. Distance
+ * clustering (union-find) was tried first but chains transitively: with every
+ * group enabled, mainland England collapses into one 400-group component
+ * spanning 300+ miles. Anchoring on a town can't chain. A group with no town
+ * within `area_cluster_miles` — and every group, when both lists are empty
+ * (dev) — stands alone as its own area, named from the group. A town in a
+ * different nation from the group is never eligible.
  *
  * Areas are keyed by `anchorgroupid` (the lowest enabled groupid on the town)
  * so a re-run upserts the same row and keeps its cadence timers.
@@ -117,40 +118,18 @@ class CommunityNewsAreaService
             })
             ->values();
 
-        $towns = DB::table('towns')
-            ->whereNotNull('lat')
-            ->whereNotNull('lng')
-            ->get(['id', 'name', 'lat', 'lng']);
+        $candidates = $this->anchorCandidates();
 
-        // Assign each group to its nearest town within the cap; the rest stand
-        // alone. O(groups × towns) haversines — trivial at this scale.
+        // Each group is anchored on the town closest to it (anchorFor); groups that share
+        // an anchor form one area. Groups with no candidate within the cap stand alone.
         $byTown = [];
         $standalone = [];
-        $townNations = [];
+        $nations = [];
         foreach ($groups as $g) {
-            $best = null;
-            $bestDist = INF;
-            $groupNation = $this->nationAt((float) $g->lat, (float) $g->lng);
-            foreach ($towns as $t) {
-                // Never anchor across a national border: Oswestry (England)
-                // must not be credited to Wrexham (Wales) 12.7 miles away.
-                // Unknown nation on either side (rough outlines, no polygon)
-                // leaves the town eligible, as before.
-                if ($groupNation !== null) {
-                    $townNation = $townNations[$t->id] ??= ($this->nationAt((float) $t->lat, (float) $t->lng) ?? '');
-                    if ($townNation !== '' && $townNation !== $groupNation) {
-                        continue;
-                    }
-                }
-                $d = $this->haversineMiles((float) $g->lat, (float) $g->lng, (float) $t->lat, (float) $t->lng);
-                if ($d < $bestDist) {
-                    $bestDist = $d;
-                    $best = $t;
-                }
-            }
-            if ($best !== null && $bestDist <= $capMiles) {
-                $byTown[$best->id]['town'] = $best;
-                $byTown[$best->id]['groups'][] = $g;
+            $best = $this->anchorFor($g, $candidates, $capMiles, $nations);
+            if ($best !== null) {
+                $byTown[$best->key]['town'] = $best;
+                $byTown[$best->key]['groups'][] = $g;
             } else {
                 $standalone[] = $g;
             }
@@ -222,6 +201,115 @@ class CommunityNewsAreaService
         }
 
         return $areas;
+    }
+
+    /**
+     * Every place an area can be anchored on: the curated towns, and the places gazetteer
+     * (GeoNames, 1,000+ people). The curated list is short - it has no Oswestry, so Oswestry
+     * Freegle's closest town was Wrecsam, 12.7 miles away in Wales. A place that is also a
+     * curated town (same name, within 3 miles) is left out, so the two cannot split one area.
+     *
+     * @return array<int, object{key: string, name: string, lat: float, lng: float, population: int, curated: bool}>
+     */
+    protected function anchorCandidates(): array
+    {
+        $towns = DB::table('towns')
+            ->whereNotNull('lat')
+            ->whereNotNull('lng')
+            ->get(['id', 'name', 'lat', 'lng'])
+            ->map(fn ($t) => (object) [
+                'key' => 't' . $t->id, 'name' => $t->name,
+                'lat' => (float) $t->lat, 'lng' => (float) $t->lng,
+                'population' => 0, 'curated' => true,
+            ])
+            ->all();
+
+        if (!Schema::hasTable('places')) {
+            return $towns;
+        }
+
+        $places = [];
+        foreach (DB::table('places')->get(['id', 'name', 'lat', 'lng', 'population']) as $p) {
+            foreach ($towns as $t) {
+                if (strcasecmp($t->name, $p->name) === 0
+                    && $this->haversineMiles($t->lat, $t->lng, (float) $p->lat, (float) $p->lng) < 3) {
+                    continue 2;
+                }
+            }
+            $places[] = (object) [
+                'key' => 'p' . $p->id, 'name' => $p->name,
+                'lat' => (float) $p->lat, 'lng' => (float) $p->lng,
+                'population' => (int) $p->population, 'curated' => false,
+            ];
+        }
+
+        return array_merge($towns, $places);
+    }
+
+    /**
+     * The town a group is anchored on: the closest one, where a town means one people would
+     * name. A group's recorded point is rarely its town centre, so plain nearest-place picks
+     * neighbourhoods and villages (Birmingham became Aston, Dundee a village across the
+     * Tay). In order:
+     *
+     *   1. a curated town within anchor_town_miles - these were chosen by hand;
+     *   2. else the closest place of anchor_place_min_population or more, within
+     *      anchor_place_miles;
+     *   3. else the closest candidate of any size within the cap.
+     *
+     * Never across a national border: a candidate in another nation is skipped at every
+     * step (unknown nation on either side leaves it eligible). Nations are looked up only
+     * for the candidate about to be chosen, and cached by key.
+     *
+     * @param  array<string, string>  $nations  cache of candidate key => nation ('' unknown)
+     */
+    protected function anchorFor(object $g, array $candidates, float $capMiles, array &$nations): ?object
+    {
+        $lat = (float) $g->lat;
+        $lng = (float) $g->lng;
+        $groupNation = null;
+        $groupNationKnown = false;
+
+        $byDistance = [];
+        foreach ($candidates as $c) {
+            $d = $this->haversineMiles($lat, $lng, $c->lat, $c->lng);
+            if ($d <= $capMiles) {
+                $byDistance[] = [$d, $c];
+            }
+        }
+        usort($byDistance, fn ($a, $b) => $a[0] <=> $b[0]);
+
+        $sameNation = function (object $c) use ($lat, $lng, &$groupNation, &$groupNationKnown, &$nations): bool {
+            if (!$groupNationKnown) {
+                $groupNation = $this->nationAt($lat, $lng);
+                $groupNationKnown = true;
+            }
+            if ($groupNation === null) {
+                return true;
+            }
+            $nations[$c->key] ??= ($this->nationAt($c->lat, $c->lng) ?? '');
+
+            return $nations[$c->key] === '' || $nations[$c->key] === $groupNation;
+        };
+
+        $townMiles = (float) config('freegle.communitynews.anchor_town_miles', 3);
+        $minPopulation = (int) config('freegle.communitynews.anchor_place_min_population', 10000);
+        $placeMiles = (float) config('freegle.communitynews.anchor_place_miles', 6);
+
+        $steps = [
+            fn ($d, $c) => $c->curated && $d <= $townMiles,
+            fn ($d, $c) => !$c->curated && $c->population >= $minPopulation && $d <= $placeMiles,
+            fn ($d, $c) => true,
+        ];
+        foreach ($steps as $eligible) {
+            foreach ($byDistance as [$d, $c]) {
+                if ($eligible($d, $c) && $sameNation($c)) {
+                    return $c;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
