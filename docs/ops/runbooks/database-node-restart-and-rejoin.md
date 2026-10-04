@@ -210,7 +210,12 @@ mysql -e "SHOW STATUS LIKE 'wsrep_local_cached_downto'; SHOW STATUS LIKE 'wsrep_
 run the second command twice a few minutes apart. Healthy: no page files, or a handful that
 come and go, and `wsrep_local_cached_downto` moving. Frozen: the same `cached_downto` at every
 reading while `last_committed` climbs, and a new page file every 10 to 20 minutes. The error
-log shows each one as "Created page ... gcache.page.NNNNNN". Nothing in the log says why.
+log shows each one as "Created page ... gcache.page.NNNNNN" and never "Deleted page". The
+sharpest sign is in the process: one thread of `mysqld` named `galera_recv-0` with hours of CPU
+(`for t in /proc/0 0pgrep -o -x mysqld)/task/*; do echo "0 0cat /comm) 0 0awk '{print (+)/100}' /stat)"; done | sort -k2 -rn | head`)
+and one such thread per page file behind it with none. That is the page-removal thread spinning
+on a buffer it cannot discard, with every later removal thread waiting on it; it also costs the
+node a full core for as long as it runs.
 
 **Cure.** There is no runtime fix. Stop the node cleanly, move `galera.cache` and the oldest
 `gcache.page.*` file aside for the bug report (the leaked buffer is in them) and delete the rest,
