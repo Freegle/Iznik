@@ -697,7 +697,8 @@ function pollUntilZero() {
     const count = await messageStore.fetchCount(
       me.value?.settings?.browseView,
       me.value?.settings?.browseMaxDistance,
-      false
+      false,
+      me.value?.settings?.browseType
     )
     pollCount++
 

@@ -327,7 +327,8 @@ export function useNavbar() {
         await messageStore.fetchCount(
           me?.settings?.browseView,
           me?.settings?.browseMaxDistance,
-          false
+          false,
+          me?.settings?.browseType
         )
 
         if (!myid.value) {
