@@ -190,10 +190,11 @@ directories have been removed.
 
 ## The write-set cache after the node has served an SST
 
-A node that has just been the donor for an SST can stop purging its write-set cache. The ring
-buffer fills at the write rate and from then on every write-set goes into a 128 MB
-`gcache.page.NNNNNN` file in the data directory that is never deleted, whatever
-`gcache.keep_pages_count` says. The node keeps serving and stays Synced; the only symptom is
+A node can stop reusing its write-set cache: one buffer in the ring that is never released pins
+the ring tail, so every later write-set goes into a 128 MB `gcache.page.NNNNNN` file in the data
+directory, and because Galera only ever deletes the oldest page, and only once nothing in it is
+live, no page is deleted either, whatever `gcache.keep_pages_count` says. It has been seen on the
+write node after an SST and an arbitrator eviction in the same evening. The node keeps serving and stays Synced; the only symptom is
 its disk filling at the cluster's write rate, about 12 GB a day, while the other data node's
 disk is flat. The current Percona version (8.0.46) does this even though its release notes
 list PXC-4495, the known form of the bug, as fixed; report a fresh case to Percona with the
@@ -211,8 +212,9 @@ come and go, and `wsrep_local_cached_downto` moving. Frozen: the same `cached_do
 reading while `last_committed` climbs, and a new page file every 10 to 20 minutes. The error
 log shows each one as "Created page ... gcache.page.NNNNNN". Nothing in the log says why.
 
-**Cure.** There is no runtime fix. Stop the node cleanly, delete `galera.cache` and
-`gcache.page.*` from the data directory, and start it; it rebuilds an empty cache and rejoins
+**Cure.** There is no runtime fix. Stop the node cleanly, move `galera.cache` and the oldest
+`gcache.page.*` file aside for the bug report (the leaked buffer is in them) and delete the rest,
+then start it; it rebuilds an empty cache and rejoins
 by IST as long as the other data node's cache still covers the stop (2 GB is about 3.5 hours).
 Deleting those two things is the one case where removing files from the data directory is
 right; leave everything else. The application funnels writes to one node, so if that node is
