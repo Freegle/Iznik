@@ -53,6 +53,14 @@ telling the member different things, by construction.
 
 If you change one, change both, or confirm in the code which readers you have actually touched.
 
+## The Offer/Wanted filter is client-side, so the badge has to apply it itself
+
+The feed returns both types and the Browse page filters them in the browser. The count is the
+one reader that cannot do that, so `Count` narrows by `ms.msgtype` (`onlyType` in
+`isochrone/message.go`), from `?type=` or else `settings.browseType`. Any new count path must
+call it, and anything cached by question (`browsecount`) must key on the type, or a member who
+switches filter is handed the other filter's number.
+
 ## Stacking: what is above what
 
 - **Bootstrap modals set their z-index inline**, so a class intended to lift them above the ad
