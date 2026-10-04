@@ -328,7 +328,8 @@ export function useNavbar() {
           me?.settings?.browseView,
           me?.settings?.browseMaxDistance,
           false,
-          me?.settings?.browseType
+          me?.settings?.browseType,
+          me?.settings?.browseGroup
         )
 
         if (!myid.value) {

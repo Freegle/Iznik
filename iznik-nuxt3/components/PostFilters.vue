@@ -218,7 +218,8 @@ function refetchCount() {
       me.value.settings?.browseView,
       me.value.settings?.browseMaxDistance,
       false,
-      me.value.settings?.browseType
+      me.value.settings?.browseType,
+      me.value.settings?.browseGroup
     )
   }
 }
@@ -289,6 +290,12 @@ watch(group, async (newVal) => {
 
   if (newVal > 0) {
     emit('update:selectedGroup', newVal)
+
+    // The badge counts only this community now. Restoring a saved choice on load is not a
+    // change, and the count that arrived with the page already used it.
+    if (changed) {
+      refetchCount()
+    }
   } else {
     emit('update:selectedGroup', 0)
 
