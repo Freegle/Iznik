@@ -490,7 +490,8 @@ async function handleScroll() {
     await messageStore.fetchCount(
       me.value.settings?.browseView,
       me.value.settings?.browseMaxDistance,
-      false
+      false,
+      me.value.settings?.browseType
     )
     updatingCount.value = false
   }

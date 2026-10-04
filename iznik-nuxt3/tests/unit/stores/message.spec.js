@@ -514,7 +514,11 @@ describe('message store - markSeen()', () => {
     useAuthStore.mockReturnValue({
       user: {
         id: 1,
-        settings: { browseView: 'mygroups', browseMaxDistance: 10 },
+        settings: {
+          browseView: 'mygroups',
+          browseMaxDistance: 10,
+          browseType: 'Wanted',
+        },
       },
     })
     const store = useMessageStore()
@@ -523,10 +527,11 @@ describe('message store - markSeen()', () => {
 
     await store.markSeen([1])
 
-    // fetchCount -> api.message.count(browseView, maxDistance, log): the badge must be
-    // recomputed for the member's actual view, else a mygroups/slider member sees a
-    // different view's number and it never drops to zero.
-    expect(mockCount).toHaveBeenCalledWith('mygroups', 10, true)
+    // fetchCount -> api.message.count(browseView, maxDistance, log, browseType): the badge
+    // must be recomputed for the member's actual view, else a mygroups/slider member sees a
+    // different view's number and it never drops to zero. Likewise the Offer/Wanted filter:
+    // the feed shows one type, so the badge must count that type.
+    expect(mockCount).toHaveBeenCalledWith('mygroups', 10, true, 'Wanted')
   })
 })
 

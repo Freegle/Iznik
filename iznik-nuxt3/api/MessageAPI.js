@@ -339,7 +339,7 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
-  async count(browseView, maxDistance, log) {
+  async count(browseView, maxDistance, log, browseType) {
     const params = {
       browseView,
     }
@@ -349,6 +349,13 @@ export default class MessageAPI extends BaseAPI {
     // unfiltered count rather than doing extra work for a limit that doesn't apply.
     if (maxDistance != null && maxDistance < BROWSE_DISTANCE_UNLIMITED) {
       params.maxDistance = maxDistance
+    }
+
+    // The feed filters to Offers or Wanteds client-side, so the badge must count the same
+    // type. Sent explicitly (including 'All') because the saved setting the server falls
+    // back on may not have landed yet right after the member changes the filter.
+    if (browseType) {
+      params.type = browseType
     }
 
     return await this.$getv2('/message/count', params, log)
