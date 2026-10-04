@@ -126,9 +126,10 @@ and before the morning digest, outside the WhatJobs syncs, and tell whoever is o
    queued, so wait for the pid to change), then set `DB_HOST_READ_IP` and recreate batch-prod.
    For the write node, the same with `MYSQL_HOST` and `DB_HOST_IP`. Recreating batch-prod while
    `ripple:expand` is running leaves its lock held; clear it afterwards or the job skips until
-   the lock expires. The cheap alternative is to skip this step: reads (or writes) then fail for
-   the few minutes the database is down and resume by themselves. For the write node that is a
-   two to three minute write outage; for the read node every read fails, so do not skip it there.
+   the lock expires. This step is not optional: nothing fails over by itself (the Go API falls back from the
+   read replica to the write host only, the batch has one write host, the load balancer carries no
+   MySQL backend), so skipping it means every write, or every read, fails for as long as the
+   database is down.
 3. Drain the API on the node: `monit unmonitor iznik-server-go`, then
    `killall -SIGQUIT iznik-server-go`. The load balancer's health check marks the node down
    within seconds and sticky clients move. On the active node this sends all API traffic to the
@@ -223,8 +224,8 @@ then start it; it rebuilds an empty cache and rejoins
 by IST as long as the other data node's cache still covers the stop (2 GB is about 3.5 hours).
 Deleting those two things is the one case where removing files from the data directory is
 right; leave everything else. The application funnels writes to one node, so if that node is
-the one being restarted, writes fail until it is back unless they are moved first. The cycling
-recipe above gives the order for the services on the node and for moving writes.
+the one being restarted, move writes to the other node first. The cycling recipe above gives the
+order for the services on the node and for moving writes; it is the only acceptable way.
 
 **Keeping it rare.** The leak needs an SST, so the measures that avoid SSTs avoid it: the
 16 GB cache in the hosting plan, clean stops, and never wiping a data directory to make a
