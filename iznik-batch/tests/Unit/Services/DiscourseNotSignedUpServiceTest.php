@@ -121,6 +121,7 @@ class DiscourseNotSignedUpServiceTest extends TestCase
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
         $this->createMembership($mod, $group, ['role' => 'Owner']);
+        DB::table('users_emails')->where('userid', $mod->id)->update(['preferred' => 0]);
         DB::table('users_emails')->insert([
             'userid' => $mod->id,
             'email' => 'someone@user.trashnothing.com',
@@ -134,7 +135,64 @@ class DiscourseNotSignedUpServiceTest extends TestCase
 
         $result = (new DiscourseNotSignedUpService($client))->run();
 
-        $this->assertSame(1, $result['tnpreferred']);
+        $this->assertSame(1, $result['tnmods']);
         $this->assertSame(0, $result['notrepresented']);
+    }
+
+    /**
+     * A TrashNothing account is never on Discourse and may not have been seen for
+     * years, so it must be found from the memberships, not from the Discourse users.
+     */
+    public function test_flags_tn_account_with_mod_role_not_on_discourse(): void
+    {
+        $group = $this->createTestGroup();
+        $owner = $this->createTestUser();
+        $this->createMembership($owner, $group, ['role' => 'Owner']);
+
+        $tn = $this->createTestUser();
+        DB::table('users')->where('id', $tn->id)->update([
+            'tnuserid' => 900000000 + $tn->id,
+            'lastaccess' => Carbon::now()->subYears(3),
+        ]);
+        $this->createMembership($tn, $group, ['role' => 'Moderator']);
+
+        $client = $this->mockClient(
+            [['id' => 200, 'username' => 'owner']],
+            fn ($id, $u) => ['single_sign_on_record' => ['external_id' => $owner->id]],
+        );
+
+        Mail::fake();
+        Carbon::setTestNow(Carbon::parse('2026-06-13 12:00:00')); // Saturday: report is sent.
+
+        $result = (new DiscourseNotSignedUpService($client))->run();
+
+        $this->assertSame(1, $result['tnmods']);
+        Mail::assertSent(DiscourseReportMail::class, function ($m) use ($tn, $group) {
+            return str_contains($m->body, 'TN ACCOUNT HAS MOD ROLE: '.$tn->id)
+                && str_contains($m->body, $group->nameshort.' (Moderator)');
+        });
+    }
+
+    public function test_non_preferred_tn_email_is_not_a_tn_account(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $mod = $this->createTestUser();
+        $this->createMembership($mod, $group, ['role' => 'Owner']);
+        DB::table('users_emails')->insert([
+            'userid' => $mod->id,
+            'email' => 'alsouses@user.trashnothing.com',
+            'preferred' => 0,
+        ]);
+
+        $client = $this->mockClient(
+            [['id' => 200, 'username' => 'themod']],
+            fn ($id, $u) => ['single_sign_on_record' => ['external_id' => $mod->id]],
+        );
+
+        $result = (new DiscourseNotSignedUpService($client))->run();
+
+        $this->assertSame(0, $result['tnmods']);
     }
 }
