@@ -217,7 +217,8 @@ function refetchCount() {
     messageStore.fetchCount(
       me.value.settings?.browseView,
       me.value.settings?.browseMaxDistance,
-      false
+      false,
+      me.value.settings?.browseType
     )
   }
 }
@@ -336,6 +337,9 @@ watch(type, async (newVal) => {
   }
 
   emit('update:selectedType', newVal)
+
+  // The badge counts only the chosen type, so it has changed.
+  refetchCount()
 })
 
 // Sort

@@ -55,11 +55,12 @@ export const useMessageStore = defineStore('message', {
       // ModTools context
       this.context = null
     },
-    async fetchCount(browseView, maxDistance, log = true) {
+    async fetchCount(browseView, maxDistance, log = true, browseType) {
       const ret = await api(this.config).message.count(
         browseView,
         maxDistance,
-        log
+        log,
+        browseType
       )
       this.count = ret?.count || 0
       return this.count
@@ -625,7 +626,12 @@ export const useMessageStore = defineStore('message', {
       // the badge repaint with a different view's number right after marking seen, i.e. it
       // didn't drop to zero. Mirror nearbyStore.fetchMessages and read the settings here.
       const settings = useAuthStore().user?.settings
-      await this.fetchCount(settings?.browseView, settings?.browseMaxDistance)
+      await this.fetchCount(
+        settings?.browseView,
+        settings?.browseMaxDistance,
+        true,
+        settings?.browseType
+      )
     },
     // Mark the hidden crosspost/repost copies of an already-shown post as seen. The browse
     // feed collapses a poster's duplicate copies to one card (useMessageDedup), but the server

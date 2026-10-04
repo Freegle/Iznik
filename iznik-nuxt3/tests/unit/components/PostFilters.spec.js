@@ -706,6 +706,20 @@ describe('PostFilters', () => {
       })
       expect(wrapper.emitted('update:selectedType')[0]).toEqual(['Wanted'])
     })
+
+    it('refetches the badge count for the new type after a type change', async () => {
+      const wrapper = createWrapper({ forceShowFilters: true })
+      mockMessageStore.fetchCount.mockClear()
+      const typeSelect = wrapper.findAll('.b-form-select')[0]
+      await typeSelect.setValue('Wanted')
+      await flushPromises()
+      expect(mockMessageStore.fetchCount).toHaveBeenCalledWith(
+        mockMe.value.settings.browseView,
+        mockMe.value.settings.browseMaxDistance,
+        false,
+        'Wanted'
+      )
+    })
   })
 
   // "Show posts from" used to forget a single community on reload: only the two whole-feed
