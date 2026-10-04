@@ -13,6 +13,8 @@
 // but with a container that starts, serves /health and says so, and the next sync half an hour
 // later picks it up.
 
+const path = require('path')
+
 const CODEBASE_REPO = process.env.CODEBASE_REPO || 'https://github.com/Freegle/Iznik.git'
 
 /**
@@ -27,11 +29,14 @@ const CODEBASE_REPO = process.env.CODEBASE_REPO || 'https://github.com/Freegle/I
  * @param {string} opts.dir - the checkout path.
  * @param {string} [opts.repo] - clone URL.
  * @param {function} opts.run - runs a shell command; (cmd, opts) => void, throws on failure.
- * @param {function} opts.exists - path predicate; (path) => boolean.
+ * @param {function} opts.exists - path predicate; (path) => boolean. Asked about `dir/.git`.
  * @returns {{present:boolean, action:string, error:(string|null)}} what happened, for /health.
  */
 function syncCodebase({ dir, repo = CODEBASE_REPO, run, exists }) {
-  const cloned = exists(dir)
+  // The image pre-creates `dir` (Dockerfile mkdir), so the directory existing says nothing; a
+  // checkout is one with a .git inside. Testing the directory made every sync a `git pull` in an
+  // empty folder, which failed, so the clone never happened and the agent had no code to search.
+  const cloned = exists(path.join(dir, '.git'))
 
   try {
     if (cloned) {
