@@ -642,7 +642,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				db.Table("messages_attachments ma").
 					Select("ma.id, ma.msgid, bia.bulkitemid, ma.archived, "+
 						"CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid, "+
-						"ma.externalmods").
+						"ai.id IS NOT NULL AS masked, ma.externalmods").
 					Joins("LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating', 'suppressed')").
 					Joins("LEFT JOIN messages_bulk_item_attachments bia ON bia.attachmentid = ma.id").
 					Where("ma.msgid = ?", id).
@@ -858,6 +858,9 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 						message.MessageAttachments[i].Externalmods = a.Externalmods
 						message.MessageAttachments[i].Path = misc.GetImageDeliveryUrl(a.Externaluid, string(a.Externalmods))
 						message.MessageAttachments[i].Paththumb = misc.GetImageDeliveryUrl(a.Externaluid, string(a.Externalmods))
+					} else if a.Masked {
+						// Masked AI picture: leave the paths empty so the frontend shows the placeholder.
+						continue
 					} else if a.Archived > 0 {
 						message.MessageAttachments[i].Path = "https://" + archiveDomain + "/img_" + strconv.FormatUint(a.ID, 10) + ".jpg"
 						message.MessageAttachments[i].Paththumb = "https://" + archiveDomain + "/timg_" + strconv.FormatUint(a.ID, 10) + ".jpg"
