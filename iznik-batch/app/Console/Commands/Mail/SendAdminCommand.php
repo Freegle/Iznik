@@ -176,6 +176,24 @@ class SendAdminCommand extends Command
     }
 
     /**
+     * Fill in the template variables, matching V1's constructMessage(). The MJML part is markup,
+     * so the values going into it are HTML-escaped: a member's name must not become a tag.
+     */
+    public static function personalise(array $admin, ?string $groupName, ?string $modsEmail, User $user): array
+    {
+        $names = ['$groupname', '$owneremail', '$membername', '$memberid'];
+        $values = [$groupName ?? '', $modsEmail ?? '', $user->fullname ?? '', (string) $user->id];
+
+        $admin['text'] = str_replace($names, $values, $admin['text']);
+
+        if (!empty($admin['mjml'])) {
+            $admin['mjml'] = str_replace($names, array_map('e', $values), $admin['mjml']);
+        }
+
+        return $admin;
+    }
+
+    /**
      * Get local volunteers (active moderators who haven't opted out via
      * "Show me as a volunteer") for a group.
      *
@@ -290,6 +308,13 @@ class SendAdminCommand extends Command
 
         $activeThreshold = now()->subDays(User::USER_INACTIVE_DAYS);
         $adminArr = (array) $admin;
+
+        // A designed version that will not build is dropped once here, so members get the plain
+        // text without every one of their copies failing to compile first.
+        if (!empty($adminArr['mjml']) && !AdminMail::mjmlBuilds($adminArr['mjml'])) {
+            Log::warning("Admin {$admin->id}: MJML part does not build, sending the plain text only.");
+            $adminArr['mjml'] = NULL;
+        }
 
         $interrupted = FALSE;
 
@@ -448,13 +473,7 @@ class SendAdminCommand extends Command
             }
 
             try {
-                // Substitute template variables in admin text, matching V1's constructMessage().
-                $substitutedAdmin = $adminArr;
-                $substitutedAdmin['text'] = str_replace(
-                    ['$groupname', '$owneremail', '$membername', '$memberid'],
-                    [$groupName ?? '', $modsEmail ?? '', $user->fullname ?? '', (string) $user->id],
-                    $substitutedAdmin['text']
-                );
+                $substitutedAdmin = self::personalise($adminArr, $groupName, $modsEmail, $user);
 
                 $mailable = new AdminMail($user, $substitutedAdmin, $groupName, $modsEmail, $groupShort, $volunteers);
 

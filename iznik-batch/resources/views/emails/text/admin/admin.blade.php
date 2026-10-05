@@ -1,3 +1,7 @@
+@if(!empty($mjmlFailure))
+TEST ONLY: the MJML version could not be built, so members would get this plain text instead. The error was: {!! $mjmlFailure !!}
+
+@endif
 {!! $adminSubject !!}
 
 {!! $adminText !!}

@@ -114,6 +114,7 @@ class CopyAdminsCommand extends Command
                     // Guidance for local mods travels with the copy so they see it when reviewing.
                     // It is its own column and is never merged into subject or text.
                     'modguidance' => $admin->modguidance,
+                    'mjml' => $admin->mjml,
                 ]);
 
                 $copied++;
