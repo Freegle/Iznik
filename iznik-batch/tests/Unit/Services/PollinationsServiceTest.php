@@ -5,23 +5,21 @@ namespace Tests\Unit\Services;
 use App\Services\PollinationsService;
 use App\Services\TusService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use PHPUnit\Framework\Attributes\DataProvider;
 use ReflectionClass;
 use Tests\TestCase;
 
 /**
- * Covers PollinationsService's pure prompt/URL builders, the file-backed
+ * Covers PollinationsService's prompt builders, the Cloudflare image request (Http::fake), the file-backed
  * failure/hash caches (via the real cache file paths — reflected out of the
  * private constants so tests stay in sync if they ever change), the GD
  * duotone filter, and uploadImageAndCache()'s three branches (duotone
  * failure / TUS failure / success) via TusService::fake().
  *
- * fetchBatch()'s network body and checkForPeople()'s OpenAI call are not
- * covered beyond their early-return guards: both talk to the outside world
- * via file_get_contents()/curl directly (no injectable HTTP client), so
- * exercising their request/response branches would mean hitting real
- * external services — out of scope for a unit test.
+ * checkForPeople()'s OpenAI call is not covered beyond its early-return guard: it uses curl
+ * directly, so exercising it would mean hitting the real service.
  */
 class PollinationsServiceTest extends TestCase
 {
@@ -134,30 +132,103 @@ class PollinationsServiceTest extends TestCase
         $this->assertStringContainsString('Square format.', $prompt);
     }
 
-    public function test_build_image_url_encodes_prompt_and_dimensions(): void
-    {
-        $url = $this->service->buildImageUrl('a red & blue chair', 640, 480);
+    // =========================================================================
+    // generateImage — Cloudflare Workers AI (Flux Schnell), faked with Http::fake
+    // =========================================================================
 
-        $this->assertStringStartsWith('https://image.pollinations.ai/prompt/', $url);
-        $this->assertStringContainsString(rawurlencode('a red & blue chair'), $url);
-        $this->assertStringContainsString('width=640', $url);
-        $this->assertStringContainsString('height=480', $url);
-        $this->assertStringContainsString('nologo=true&model=flux', $url);
-        $this->assertMatchesRegularExpression('/seed=\d+/', $url);
+    private function configureCloudflare(): void
+    {
+        config([
+            'freegle.cloudflare_ai.account_id' => 'acct123',
+            'freegle.cloudflare_ai.token' => 'tok456',
+            'freegle.cloudflare_ai.base' => 'https://cf.test',
+        ]);
     }
 
-    public function test_build_image_url_varies_seed_between_calls(): void
+    public function test_generate_image_returns_decoded_bytes_and_sends_flux_schnell_request(): void
     {
-        // Not a strict guarantee (rand() could coincide), but with a 1..999999
-        // range across two calls a collision is astronomically unlikely and
-        // this is what actually distinguishes otherwise-identical requests.
-        $url1 = $this->service->buildImageUrl('same prompt', 100, 100);
-        $url2 = $this->service->buildImageUrl('same prompt', 100, 100);
+        $this->configureCloudflare();
+        Http::fake([
+            'cf.test/*' => Http::response(['success' => true, 'result' => ['image' => base64_encode('PNGBYTES')]], 200),
+        ]);
 
-        preg_match('/seed=(\d+)/', $url1, $m1);
-        preg_match('/seed=(\d+)/', $url2, $m2);
+        $data = $this->service->generateImage('a red chair', 'Red chair');
 
-        $this->assertNotSame($m1[1], $m2[1]);
+        $this->assertSame('PNGBYTES', $data);
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+
+            return $request->url() === 'https://cf.test/client/v4/accounts/acct123/ai/run/@cf/black-forest-labs/flux-1-schnell'
+                && $request->hasHeader('Authorization', 'Bearer tok456')
+                && $body['prompt'] === 'a red chair'
+                && $body['steps'] === 8
+                && ! array_key_exists('width', $body)
+                && ! array_key_exists('height', $body);
+        });
+    }
+
+    public function test_generate_image_returns_false_when_rate_limited(): void
+    {
+        $this->configureCloudflare();
+        Http::fake(['cf.test/*' => Http::response('slow down', 429)]);
+
+        $this->assertFalse($this->service->generateImage('p', 'Item'));
+    }
+
+    public function test_generate_image_returns_null_when_prompt_refused(): void
+    {
+        $this->configureCloudflare();
+        Http::fake([
+            'cf.test/*' => Http::response(['success' => false, 'errors' => [['code' => 8007, 'message' => 'Input prompt contains NSFW content']]], 400),
+        ]);
+
+        $this->assertNull($this->service->generateImage('p', 'Item'));
+    }
+
+    public function test_generate_image_returns_null_when_envelope_has_no_image(): void
+    {
+        $this->configureCloudflare();
+        Http::fake(['cf.test/*' => Http::response(['success' => true, 'result' => []], 200)]);
+
+        $this->assertNull($this->service->generateImage('p', 'Item'));
+    }
+
+    public function test_generate_image_returns_null_without_sending_when_not_configured(): void
+    {
+        config(['freegle.cloudflare_ai.account_id' => null, 'freegle.cloudflare_ai.token' => null]);
+        Http::fake();
+
+        $this->assertNull($this->service->generateImage('p', 'Item'));
+        Http::assertNothingSent();
+    }
+
+    public function test_fetch_batch_stops_the_batch_when_rate_limited(): void
+    {
+        $this->configureCloudflare();
+        Http::fake(['cf.test/*' => Http::response('slow down', 429)]);
+
+        $result = $this->service->fetchBatch([
+            ['name' => 'Chair', 'prompt' => 'a chair'],
+            ['name' => 'Table', 'prompt' => 'a table'],
+        ]);
+
+        $this->assertFalse($result);
+        Http::assertSentCount(1);
+    }
+
+    public function test_fetch_batch_marks_a_refused_item_failed_and_carries_on(): void
+    {
+        $this->configureCloudflare();
+        Http::fake(['cf.test/*' => Http::response(['success' => false, 'errors' => [['code' => 8007]]], 400)]);
+
+        $result = $this->service->fetchBatch([
+            ['name' => 'Chair', 'prompt' => 'a chair'],
+            ['name' => 'Table', 'prompt' => 'a table'],
+        ]);
+
+        $this->assertSame([], $result['results']);
+        $this->assertSame(['Chair' => true, 'Table' => true], $result['failed']);
+        Http::assertSentCount(2);
     }
 
     // =========================================================================
