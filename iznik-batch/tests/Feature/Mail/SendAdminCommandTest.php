@@ -32,6 +32,56 @@ class SendAdminCommandTest extends TestCase
     }
 
     /**
+     * Test: the MJML part goes out with the member placeholders filled in, escaped as markup,
+     * while the text part gets them as typed.
+     */
+    public function test_mjml_admin_sends_with_escaped_member_details(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['lastaccess' => now(), 'fullname' => 'Alex <i>Member</i>']);
+        $this->createMembership($user, $group);
+
+        $adminId = $this->createAdmin($group, [
+            'text' => 'Dear $membername',
+            'mjml' => '<mj-section><mj-column><mj-text>Dear $membername</mj-text></mj-column></mj-section>',
+        ]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, function (AdminMail $mail) {
+            return $mail->adminText === 'Dear Alex <i>Member</i>'
+                && str_contains($mail->adminMjml, 'Dear Alex &lt;i&gt;Member&lt;/i&gt;');
+        });
+    }
+
+    /**
+     * Test: an MJML part that will not build is dropped once, and members get the plain text.
+     */
+    public function test_broken_mjml_admin_sends_the_plain_text(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $this->createMembership($user, $group);
+
+        $adminId = $this->createAdmin($group, [
+            'text' => 'Plain news',
+            'mjml' => '<mj-section><mj-column><mj-text>Broken</mj-column></mj-section>',
+        ]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, function (AdminMail $mail) {
+            return $mail->adminMjml === null && $mail->adminText === 'Plain news';
+        });
+    }
+
+    /**
      * Test: Approved admin sends to group members.
      * Mirrors V1 testBasic.
      */

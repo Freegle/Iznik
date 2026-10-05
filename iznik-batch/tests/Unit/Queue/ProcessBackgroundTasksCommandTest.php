@@ -3,6 +3,7 @@
 namespace Tests\Unit\Queue;
 
 use App\Console\Commands\Queue\ProcessBackgroundTasksCommand;
+use App\Mail\Admin\AdminMail;
 use App\Mail\Chat\ChatSpamReportMail;
 use App\Mail\Chat\ReferToSupportMail;
 use App\Mail\Donation\DonateExternalMail;
@@ -132,6 +133,72 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertGreaterThanOrEqual(1, $task->attempts);
         $this->assertNull($task->processed_at);
         $this->assertStringContainsString('message_id', $task->error_message);
+    }
+
+    public function test_processes_email_admin_test_task(): void
+    {
+        Mail::fake();
+
+        $mod = $this->createTestUser(['fullname' => 'Sam <b>Mod</b>']);
+        $group = $this->createTestGroup();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_admin_test',
+            'data' => json_encode([
+                'user_id' => $mod->id,
+                'email' => 'tester@example.com',
+                'groupid' => $group->id,
+                'subject' => 'Spring news',
+                'text' => 'Hello $membername',
+                'mjml' => '<mj-section><mj-column><mj-text>Hi $membername</mj-text></mj-column></mj-section>',
+                'ctatext' => '',
+                'ctalink' => '',
+                'essential' => true,
+                'template' => '',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, function (AdminMail $mail) use ($group) {
+            return $mail->hasTo('tester@example.com')
+                && $mail->testRecipient === 'tester@example.com'
+                && $mail->adminText === 'Hello Sam <b>Mod</b>'
+                // Filled into markup, the name is escaped rather than becoming a tag.
+                && str_contains($mail->adminMjml, 'Hi Sam &lt;b&gt;Mod&lt;/b&gt;')
+                && $mail->groupName === ($group->namefull ?: $group->nameshort);
+        });
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+        $this->assertNull($task->failed_at);
+    }
+
+    public function test_email_admin_test_requires_an_address(): void
+    {
+        Mail::fake();
+        $mod = $this->createTestUser();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_admin_test',
+            'data' => json_encode(['user_id' => $mod->id, 'subject' => 'S', 'text' => 'T']),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertNotSent(AdminMail::class);
+        $this->assertStringContainsString('requires email', DB::table('background_tasks')->first()->error_message);
     }
 
     public function test_processes_email_chitchat_report_task(): void

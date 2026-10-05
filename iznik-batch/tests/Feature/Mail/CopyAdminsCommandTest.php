@@ -244,6 +244,31 @@ class CopyAdminsCommandTest extends TestCase
     }
 
     /**
+     * Test: The MJML part travels with each per-group copy.
+     */
+    public function test_mjml_is_copied(): void
+    {
+        $group = $this->createTestGroup();
+        $mjml = '<mj-section><mj-column><mj-text>Designed</mj-text></mj-column></mj-section>';
+
+        $suggestedId = DB::table('admins')->insertGetId([
+            'groupid' => null,
+            'subject' => 'S',
+            'text' => 'B',
+            'mjml' => $mjml,
+            'pending' => 0,
+            'essential' => true,
+            'activeonly' => false,
+            'created' => now(),
+        ]);
+
+        $this->artisan('mail:admin:copy')->assertSuccessful();
+
+        $copy = DB::table('admins')->where('parentid', $suggestedId)->where('groupid', $group->id)->first();
+        $this->assertSame($mjml, $copy->mjml);
+    }
+
+    /**
      * Test: A suggested admin with no guidance gives copies with none.
      */
     public function test_no_guidance_gives_null_on_copies(): void

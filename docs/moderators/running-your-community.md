@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-02
+last_reviewed: 2026-10-05
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/settings/**
@@ -11,6 +11,9 @@ covers:
   - iznik-nuxt3/modtools/components/ModAdmin.vue
   - iznik-server-go/admin/admin.go
   - iznik-batch/app/Console/Commands/Mail/CopyAdminsCommand.php
+  - iznik-server-go/admin/content.go
+  - iznik-batch/app/Services/AdminMjmlSanitiser.php
+  - iznik-nuxt3/modtools/composables/useAdminContent.js
   - iznik-nuxt3/modtools/pages/logs.vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-modtools-settings-modconfig.spec.js
@@ -101,6 +104,20 @@ The Create tab and each pending copy also have an optional **Send after** date a
 approved ADMIN is held until then. Leave it empty to send as soon as it is approved. The email's
 subject line starts "ADMIN:" for an Essential message and "NEWSLETTER:" for a Newsletter one, and
 a prefix typed into the subject is not doubled.
+
+The message body is **plain text**, and it is required. HTML typed into it is refused, though
+placeholders in angle brackets such as `<your names here>` are fine. If you know
+[MJML](https://mjml.io), you can also tick the box to add a **designed version**. Paste only the
+`<mj-section>` elements from inside `<mj-body>`. Freegle adds its own header, footer and
+unsubscribe links. Members whose email shows formatted mail get the designed version and
+everyone else gets the plain text, so both must say the same. Before it is sent, scripts, forms,
+embedded frames, event handlers and links that are not http, https, mailto or tel are removed.
+A pending copy that has a designed version shows it for editing under the text.
+
+**You must send a test before you can create an ADMIN.** Give one email address (it starts as
+your own) and press *Send test*. The test is built exactly as a member of that community would
+get it, with "TEST:" in front of the subject. Any change to the message after the test needs a
+new test, and each test allows one ADMIN to be created.
 
 ## Logs and maps
 
