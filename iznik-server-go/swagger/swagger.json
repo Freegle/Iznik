@@ -6915,6 +6915,121 @@
     }
    }
   },
+  "/supportai/runs": {
+   "get": {
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "description": "Returns runs of the AI Support Helper most recent first, without transcripts. Page back with before=\u003cid\u003e; filter with rating=up|down|unrated. Support/Admin only.",
+    "tags": [
+     "supportai"
+    ],
+    "summary": "List AI Support Helper runs",
+    "operationId": "listSupportAIRuns",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   },
+   "post": {
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "description": "Stores one question put to the helper with its answer, transcript, usage and subscription quota before and after. The asking volunteer is taken from the JWT. Support/Admin only.",
+    "tags": [
+     "supportai"
+    ],
+    "summary": "Record an AI Support Helper run",
+    "operationId": "recordSupportAIRun",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   },
+   "patch": {
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "description": "Sets a thumbs up (1) or down (-1) with an optional comment, or clears the rating (0). Support/Admin only.",
+    "tags": [
+     "supportai"
+    ],
+    "summary": "Rate an AI Support Helper run",
+    "operationId": "rateSupportAIRun",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "404": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   }
+  },
+  "/supportai/runs/{id}": {
+   "get": {
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "description": "Returns one run in full, transcript included. Support/Admin only.",
+    "tags": [
+     "supportai"
+    ],
+    "summary": "Get an AI Support Helper run",
+    "operationId": "getSupportAIRun",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "404": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   }
+  },
   "/team": {
    "get": {
     "description": "Returns team information",

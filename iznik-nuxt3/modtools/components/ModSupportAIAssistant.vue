@@ -379,6 +379,10 @@
                 {{ formatTokenCounts(msg.usage) }}
               </span>
             </div>
+            <ModSupportAIRating
+              v-if="msg.role === 'assistant' && msg.runId"
+              :run-id="msg.runId"
+            />
           </div>
 
           <!-- Processing transcript -->
@@ -863,6 +867,7 @@ async function submitQuery() {
       content: result.analysis,
       costUsd: result.costUsd,
       usage: result.usage,
+      runId: result.runId,
     })
     scrollToBottom()
   } catch (error) {
@@ -1014,6 +1019,8 @@ async function queryLogsForUser(userQuery) {
       analysis: resultData.analysis || 'No analysis available.',
       costUsd: resultData.costUsd,
       usage: resultData.usage,
+      // The recorded run, so the volunteer can rate the answer.
+      runId: resultData.runId || null,
     }
   } catch (error) {
     if (error.message.includes('fetch')) {

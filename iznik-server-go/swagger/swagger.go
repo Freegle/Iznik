@@ -4253,6 +4253,67 @@ type housekeeperTasksResponse struct {
 //	401: errorResponse
 //	403: errorResponse
 
+// swagger:route GET /supportai/runs supportai listSupportAIRuns
+// List AI Support Helper runs
+//
+// Returns runs of the AI Support Helper most recent first, without transcripts. Page back with before=<id>; filter with rating=up|down|unrated. Support/Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /supportai/runs supportai recordSupportAIRun
+// Record an AI Support Helper run
+//
+// Stores one question put to the helper with its answer, transcript, usage and subscription quota before and after. The asking volunteer is taken from the JWT. Support/Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route PATCH /supportai/runs supportai rateSupportAIRun
+// Rate an AI Support Helper run
+//
+// Sets a thumbs up (1) or down (-1) with an optional comment, or clears the rating (0). Support/Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route GET /supportai/runs/{id} supportai getSupportAIRun
+// Get an AI Support Helper run
+//
+// Returns one run in full, transcript included. Support/Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
 // swagger:route POST /donations/bulk donations bulkUploadDonations
 // Bulk upload donations
 //

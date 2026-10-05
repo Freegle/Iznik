@@ -217,7 +217,9 @@ function refetchCount() {
     messageStore.fetchCount(
       me.value.settings?.browseView,
       me.value.settings?.browseMaxDistance,
-      false
+      false,
+      me.value.settings?.browseType,
+      me.value.settings?.browseGroup
     )
   }
 }
@@ -288,6 +290,12 @@ watch(group, async (newVal) => {
 
   if (newVal > 0) {
     emit('update:selectedGroup', newVal)
+
+    // The badge counts only this community now. Restoring a saved choice on load is not a
+    // change, and the count that arrived with the page already used it.
+    if (changed) {
+      refetchCount()
+    }
   } else {
     emit('update:selectedGroup', 0)
 
@@ -336,6 +344,9 @@ watch(type, async (newVal) => {
   }
 
   emit('update:selectedType', newVal)
+
+  // The badge counts only the chosen type, so it has changed.
+  refetchCount()
 })
 
 // Sort

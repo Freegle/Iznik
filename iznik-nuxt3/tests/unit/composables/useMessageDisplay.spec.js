@@ -292,8 +292,19 @@ describe('useMessageDisplay', () => {
   describe('gotAttachments / attachmentCount', () => {
     it.each([
       [[], false, 0],
-      [[{ id: 1 }], true, 1],
-      [[{ id: 1 }, { id: 2 }, { id: 3 }], true, 3],
+      [[{ id: 1, path: '/a.jpg' }], true, 1],
+      [[{ id: 1, ouruid: 'freegletusd-1' }], true, 1],
+      [
+        [
+          { id: 1, path: '/a.jpg' },
+          { id: 2, path: '/b.jpg' },
+          { id: 3, path: '/c.jpg' },
+        ],
+        true,
+        3,
+      ],
+      // A suppressed/rejected AI picture has no ouruid and no path: nothing to show.
+      [[{ id: 1, path: '', paththumb: '', ouruid: '' }], false, 1],
     ])(
       'attachments %j → gotAttachments=%s, count=%d',
       (attachments, gotAtt, count) => {

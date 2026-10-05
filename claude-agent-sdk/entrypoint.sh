@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e
 
+# Started as root: take the audit volume (it keeps the owner of whichever uid
+# created it) and re-run this script as claude. Nothing else runs as root.
+if [ "$(id -u)" = "0" ]; then
+  chown -R claude:claude /app/audit
+  exec setpriv --reuid=claude --regid=claude --init-groups "$0" "$@"
+fi
+
 echo "=== AI Support Helper Container Starting ==="
 echo "Running as user: $(whoami)"
 

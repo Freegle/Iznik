@@ -431,7 +431,7 @@ var cronJobs = []CronJob{
 	{Command: "notifications:exhort", Name: "Exhort Active Users", Description: "On-site notification nudge (default \"Tell us your Freegle story!\") to recently-active established users; 90-day per-user cooldown", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Engagement", Active: true},
 	{Command: "locations:update-postcodes", Name: "Postcode Refresh", Description: "Downloads the Doogal UK postcode dataset and adds new postcodes / refreshes moved lat/lng in the locations table", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "Locations", Active: true},
 	{Command: "donations:paypal-download", Name: "PayPal Download (fallback)", Description: "Fallback: scans the last 30 days of PayPal NVP TransactionSearch results and upserts donations the IPN missed", Schedule: "Every 4 hours (:30)", IntervalMinutes: 240, Category: "Data", Active: true},
-	{Command: "discourse:not-signed-up", Name: "Discourse Coverage Check", Description: "Reports Freegle groups with no active mod on Discourse, active mods not signed up, and mods with TrashNothing preferred emails", Schedule: "Daily at 3:23am", IntervalMinutes: 1440, Category: "Discourse", Active: true},
+	{Command: "discourse:not-signed-up", Name: "Discourse Coverage Check", Description: "Reports Freegle groups with no active mod on Discourse, active mods not signed up, and TrashNothing accounts holding a mod role", Schedule: "Daily at 3:23am", IntervalMinutes: 1440, Category: "Discourse", Active: true},
 
 	// Reconciliation 2026-07-21: tracked scheduler commands that had no registry
 	// entry (so they never appeared on the dashboard). IntervalMinutes >= each

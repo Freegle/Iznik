@@ -52,6 +52,7 @@ import ShortlinksAPI from './ShortlinksAPI.js'
 import SpammersAPI from './SpammersAPI.js'
 import StatusAPI from './StatusAPI.js'
 import StoriesAPI from './StoriesAPI.js'
+import SupportAIAPI from './SupportAIAPI.js'
 import SystemLogsAPI from './SystemLogsAPI.js'
 import TeamAPI from './TeamAPI.js'
 import TownAPI from './TownAPI.js'
@@ -108,6 +109,7 @@ export default (config) => {
     spammers: new SpammersAPI(options),
     status: new StatusAPI(options),
     stories: new StoriesAPI(options),
+    supportai: new SupportAIAPI(options),
     systemlogs: new SystemLogsAPI(options),
     team: new TeamAPI(options),
     town: new TownAPI(options),

@@ -77,6 +77,25 @@ func isModOfGroup(myid uint64, groupid uint64) bool {
 	return role == utils.ROLE_MODERATOR || role == utils.ROLE_OWNER
 }
 
+// isTrashNothingAccount reports whether the user is a TrashNothing member: stamped with a
+// tnuserid, or with a TrashNothing address as their preferred email. A non-preferred
+// TrashNothing address does not count, since volunteers may also use TrashNothing.
+func isTrashNothingAccount(userid uint64) bool {
+	db := database.DBConn
+
+	var stamped int64
+	db.Table("users").Where("id = ? AND tnuserid IS NOT NULL", userid).Count(&stamped)
+	if stamped > 0 {
+		return true
+	}
+
+	var tnPreferred int64
+	db.Table("users_emails").
+		Where("userid = ? AND preferred = 1 AND email LIKE ?", userid, "%@user.trashnothing.com").
+		Count(&tnPreferred)
+	return tnPreferred > 0
+}
+
 // PostMembershipsRequest is the body for POST /memberships (moderator actions).
 type PostMembershipsRequest struct {
 	Userid    uint64  `json:"userid"`
@@ -1922,6 +1941,12 @@ func PatchMemberships(c *fiber.Ctx) error {
 		if targetRole == utils.ROLE_MODERATOR || targetRole == utils.ROLE_OWNER {
 			if callerRole != utils.ROLE_OWNER {
 				return fiber.NewError(fiber.StatusForbidden, "Only owners can promote to moderator or owner")
+			}
+
+			// A TrashNothing account belongs to a partner's member, not a volunteer,
+			// and cannot be merged with a Freegle account, so it never moderates.
+			if isTrashNothingAccount(userid) {
+				return fiber.NewError(fiber.StatusBadRequest, "A TrashNothing account cannot be a moderator or owner")
 			}
 		}
 

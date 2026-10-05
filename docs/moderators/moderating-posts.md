@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-02
+last_reviewed: 2026-10-03
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -45,7 +45,9 @@ For each post you can:
   time. Release it when you are done. The lock is enforced: while you hold a post, another
   moderator who tries to approve, reject, delete or spam it is told you are holding it and
   the action does not happen. If they need to act anyway - say you are away - they can
-  **Release** it first, which is always allowed.
+  **Release** it first, which is always allowed. A hold applies only to the copy on the community you are
+  moderating, and only while that copy is still pending: holding a rippled post does not
+  lock its copies on other communities, and an approved copy is never shown as held.
 
   A hold applies to **your community's copy of the post, not the post everywhere**. A post
   that has rippled out to neighbouring communities has a separate copy on each, and each

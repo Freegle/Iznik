@@ -339,7 +339,7 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
-  async count(browseView, maxDistance, log) {
+  async count(browseView, maxDistance, log, browseType, browseGroup) {
     const params = {
       browseView,
     }
@@ -350,6 +350,17 @@ export default class MessageAPI extends BaseAPI {
     if (maxDistance != null && maxDistance < BROWSE_DISTANCE_UNLIMITED) {
       params.maxDistance = maxDistance
     }
+
+    // The feed filters to Offers or Wanteds client-side, so the badge must count the same
+    // type. Sent explicitly (including 'All') because the saved setting the server falls
+    // back on may not have landed yet right after the member changes the filter.
+    if (browseType) {
+      params.type = browseType
+    }
+
+    // Likewise "Show posts from" naming one community. Always sent, 0 meaning no community,
+    // so an explicit choice of "all" beats a stale saved one.
+    params.groupid = parseInt(browseGroup) > 0 ? parseInt(browseGroup) : 0
 
     return await this.$getv2('/message/count', params, log)
   }
