@@ -19,7 +19,6 @@ import (
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/driving"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/group"
@@ -30,6 +29,7 @@ import (
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/modmessaging"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/spatial"
@@ -3122,10 +3122,6 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-// homeSentBackReason is the reason and log text a receiving community sees when a moderator
-// of the post's home community sends it back.
-const homeSentBackReason = "A moderator of the home community moved this post back to pending for review. It can't be approved here until they approve it."
-
 // actingOnHomeGroup reports whether any group a moderator is acting on is one the post was
 // posted to directly (HomeGroups), as opposed to one it merely rippled into.
 func actingOnHomeGroup(db *gorm.DB, msgid uint64, acting []uint64) bool {
@@ -3176,17 +3172,17 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// log from SendForReviewAllGroups, so its moderators can see why the post is back in
 	// their queue and who did it (Discourse 10102).
 	//
-	// When the acting moderator moderates the post's HOME community, the receiving
-	// communities are told it was the home community and their copies are locked: they
-	// cannot approve until the home copy is approved again (Discourse 9808/835). A Back to
-	// pending from a receiving community's own moderator, or by a members' report quorum,
-	// locks nothing: those copies stay independent.
+	// When the acting moderator moderates the post's HOME community, the post is withdrawn
+	// from every community it rippled into and never ripples again (Discourse 9808/849): the
+	// home community has taken the decision, so the receiving communities' moderators are not
+	// given a copy each to decide again. A Back to pending from a receiving community's own
+	// moderator, or by a members' report quorum, withdraws nothing: those copies stay
+	// independent and come back to Pending for their own moderators.
 	fromHome := actingOnHomeGroup(db, req.ID, authorizedGroups)
-	rippledReason := ""
 	if fromHome {
-		rippledReason = homeSentBackReason
+		withdrawRippledCopiesAndBlock(db, req.ID, myid)
 	}
-	flipped := microvolunteering.SendForReviewAllGroupsWithRippledReason(db, req.ID, "A moderator moved this post back to pending for review.", rippledReason, &myid, authorizedGroups)
+	flipped := microvolunteering.SendForReviewAllGroupsWithRippledReason(db, req.ID, "A moderator moved this post back to pending for review.", "", &myid, authorizedGroups)
 
 	// Every copy pulled back, and the copy this moderator acted on, now waits for a
 	// moderator of its own group: needs_moderator stops the content check and auto-approve
@@ -3194,12 +3190,6 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	db.Table("messages_groups").
 		Where("msgid = ? AND groupid IN ? AND collection = ?", req.ID, append(flipped, authorizedGroups...), utils.COLLECTION_PENDING).
 		Update("needs_moderator", 1)
-
-	if fromHome {
-		db.Table("messages_groups").
-			Where("msgid = ? AND rippled_in = 1 AND deleted = 0 AND collection = ?", req.ID, utils.COLLECTION_PENDING).
-			Updates(map[string]interface{}{"locked_by_home": 1, "needs_moderator": 1})
-	}
 
 	// Freeze the ripple once the origin is Pending: the copies persist for per-group
 	// moderation and a later re-approval brings a copy back without re-rippling or
@@ -6580,4 +6570,55 @@ func isAIAttachment(mods json.RawMessage) bool {
 	default:
 		return false
 	}
+}
+
+// rippleBlockedReason is the rippling_blocked.reason for a home send-back.
+const rippleBlockedReason = "home sent back to pending"
+
+// withdrawnByHomeLogText is the log text a receiving community sees when a home send-back
+// withdraws the post from it.
+const withdrawnByHomeLogText = "Withdrawn: the home community moved this post back to pending, so it will not ripple here again."
+
+// withdrawRippledCopiesAndBlock takes a post out of every community it rippled into, the way
+// the ripple engine retracts a copy (ExpandService::retractRippledCopyInGroup): soft-delete the
+// copy, log Message/Deleted to that community, and remove the poster's ripple-join membership
+// when they have no other live post there. No Group/Left is written: a Left after a rippled
+// join reads as the poster opting out of that community for good.
+//
+// It then records the post in rippling_blocked, which the ripple engine reads before starting a
+// reach, so a re-approval, a repost or an expiry and repost never ripples it out again. The
+// reach row itself is frozen by FreezeReachIfOriginPending once the home copy is Pending.
+func withdrawRippledCopiesAndBlock(db *gorm.DB, msgid, myid uint64) {
+	var fromuser uint64
+	db.Table("messages").Select("fromuser").Where("id = ?", msgid).Scan(&fromuser)
+
+	var rippled []uint64
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND rippled_in = 1 AND deleted = 0", msgid).
+		Scan(&rippled)
+
+	for _, gid := range rippled {
+		res := db.Table("messages_groups").
+			Where("msgid = ? AND groupid = ? AND rippled_in = 1 AND deleted = 0", msgid, gid).
+			Update("deleted", 1)
+		if res.RowsAffected < 1 {
+			continue
+		}
+		logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, gid, fromuser, myid, msgid, 0, withdrawnByHomeLogText)
+
+		if fromuser == 0 {
+			continue
+		}
+		var otherPosts int64
+		db.Table("messages_groups mg").
+			Joins("JOIN messages m ON m.id = mg.msgid").
+			Where("m.fromuser = ? AND mg.groupid = ? AND mg.deleted = 0", fromuser, gid).
+			Count(&otherPosts)
+		if otherPosts == 0 {
+			// Only a ripple-join (rippled = 1) is removed; an organic membership never is.
+			db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND rippled = 1", fromuser, gid)
+		}
+	}
+
+	db.Exec("INSERT IGNORE INTO rippling_blocked (msgid, byuser, reason) VALUES (?, ?, ?)", msgid, myid, rippleBlockedReason)
 }
