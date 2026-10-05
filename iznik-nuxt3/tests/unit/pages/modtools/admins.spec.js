@@ -154,7 +154,7 @@ describe('admins.vue page', () => {
           },
           'b-form-input': {
             template:
-              '<input class="form-input" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+              '<input class="form-input" :id="id" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
             props: ['modelValue', 'id'],
           },
           'b-form-textarea': {
@@ -582,6 +582,34 @@ describe('admins.vue page', () => {
       wrapper.vm.ctatext = 'Click'
       await wrapper.vm.sendTest()
       expect(wrapper.vm.testError).toContain('both its text and its link')
+    })
+
+    it('drops the big button when there is an MJML version', async () => {
+      const wrapper = filled()
+      wrapper.vm.ctatext = 'Click'
+      wrapper.vm.ctalink = 'https://example.com'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('#ctatext').exists()).toBe(true)
+
+      wrapper.vm.useMjml = true
+      wrapper.vm.mjml = mjml
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('#ctatext').exists()).toBe(false)
+      expect(wrapper.find('#ctalink').exists()).toBe(false)
+
+      await wrapper.vm.sendTest()
+      const params = mockAdminsStore.test.mock.calls[0][0]
+      expect(params.ctatext).toBeNull()
+      expect(params.ctalink).toBeNull()
+    })
+
+    it('does not need both parts of a button when using MJML', async () => {
+      const wrapper = filled()
+      wrapper.vm.ctatext = 'Click'
+      wrapper.vm.useMjml = true
+      wrapper.vm.mjml = mjml
+      await wrapper.vm.sendTest()
+      expect(wrapper.vm.testError).toBeNull()
     })
 
     it('copyAdmin brings the MJML part with it', () => {

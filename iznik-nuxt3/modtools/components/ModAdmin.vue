@@ -192,30 +192,33 @@
               style="max-width: 250px"
             />
           </b-form-group>
-          <b-form-group
-            label="Call To Action text:"
-            label-for="ctatext"
-            label-class="mb-0"
-          >
-            <b-form-input
-              id="ctatext"
-              v-model="admin.ctatext"
-              class="mb-3"
-              placeholder="(Option) Text for a big button"
-            />
-          </b-form-group>
-          <b-form-group
-            label="Call To Action link:"
-            label-for="ctalink"
-            label-class="mb-0"
-          >
-            <b-form-input
-              id="ctalink"
-              v-model="admin.ctalink"
-              class="mb-3"
-              placeholder="(Optional) Link for a big button"
-            />
-          </b-form-group>
+          <!-- A designed (MJML) version carries its own buttons. -->
+          <template v-if="!admin.mjml">
+            <b-form-group
+              label="Call To Action text:"
+              label-for="ctatext"
+              label-class="mb-0"
+            >
+              <b-form-input
+                id="ctatext"
+                v-model="admin.ctatext"
+                class="mb-3"
+                placeholder="(Option) Text for a big button"
+              />
+            </b-form-group>
+            <b-form-group
+              label="Call To Action link:"
+              label-for="ctalink"
+              label-class="mb-0"
+            >
+              <b-form-input
+                id="ctalink"
+                v-model="admin.ctalink"
+                class="mb-3"
+                placeholder="(Optional) Link for a big button"
+              />
+            </b-form-group>
+          </template>
         </template>
       </b-card-body>
       <b-card-footer v-if="expanded && admin.pending">
@@ -355,7 +358,7 @@ async function save() {
   saveError.value =
     textProblem(admin.value.text) ||
     mjmlProblem(admin.value.mjml) ||
-    (!admin.value.ctatext !== !admin.value.ctalink
+    (!admin.value.mjml && !admin.value.ctatext !== !admin.value.ctalink
       ? 'A big button needs both its text and its link.'
       : null)
   if (saveError.value) {

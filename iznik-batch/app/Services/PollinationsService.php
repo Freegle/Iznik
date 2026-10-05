@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class PollinationsService
@@ -143,9 +144,12 @@ class PollinationsService
     }
 
     /**
-     * Fetch a batch of images from pollinations.ai.
+     * Generate a batch of images with Cloudflare Workers AI (Flux Schnell), the same model and
+     * request the Go API uses (iznik-server-go/aiimage). Pollinations' anonymous tier refused
+     * 40-45% of requests with HTTP 402, so posts went without a picture.
      *
-     * @param  array  $items  Each: ['name'=>string, 'prompt'=>string, 'width'=>int, 'height'=>int, 'msgid'=>?int]
+     * @param  array  $items  Each: ['name'=>string, 'prompt'=>string, 'msgid'=>?int]. Flux Schnell
+     *                        always returns 1024x1024; any width/height in the item is ignored.
      * @param  int  $timeout  HTTP timeout in seconds
      * @return array{results: array, failed: array}|false False on rate-limit; otherwise results+failed arrays.
      */
@@ -161,43 +165,14 @@ class PollinationsService
 
         foreach ($items as $item) {
             $name = $item['name'];
-            $prompt = $item['prompt'];
-            $width = $item['width'] ?? 640;
-            $height = $item['height'] ?? 480;
 
-            $url = $this->buildImageUrl($prompt, $width, $height);
+            Log::debug("PollinationsService: generating image for '{$name}' (Cloudflare)");
+            $data = $this->generateImage($item['prompt'], $name, $timeout);
 
-            $ctx = stream_context_create([
-                'http' => [
-                    'timeout' => $timeout,
-                    'method' => 'GET',
-                    'header' => 'User-Agent: Freegle/1.0',
-                    'ignore_errors' => true,
-                ],
-            ]);
-
-            Log::debug("PollinationsService: fetching image for '{$name}'");
-            $data = @file_get_contents($url, false, $ctx);
-
-            if (isset($http_response_header)) {
-                foreach ($http_response_header as $header) {
-                    if (preg_match('/^HTTP\/\d+\.?\d*\s+429/', $header)) {
-                        Log::warning("PollinationsService: rate limited (HTTP 429) for '{$name}'");
-                        return false;
-                    }
-                    if (preg_match('/^HTTP\/\d+\.?\d*\s+(\d+)/', $header, $m)) {
-                        $code = (int) $m[1];
-                        if ($code >= 400) {
-                            Log::warning("PollinationsService: HTTP {$code} for '{$name}'");
-                            $failed[$name] = true;
-                            continue 2;
-                        }
-                    }
-                }
+            if ($data === false) {
+                return false;
             }
-
-            if (! $data || strlen($data) === 0) {
-                Log::warning("PollinationsService: no data for '{$name}'");
+            if ($data === null) {
                 $failed[$name] = true;
                 continue;
             }
@@ -255,13 +230,63 @@ class PollinationsService
         return ['results' => $results, 'failed' => $failed];
     }
 
-    public function buildImageUrl(string $prompt, int $width, int $height): string
+    /**
+     * One Flux Schnell image from Cloudflare Workers AI.
+     *
+     * Flux Schnell's input schema is closed: it takes only prompt, steps (max 8) and seed, and
+     * rejects width/height. The response is a JSON envelope with a base64 image.
+     *
+     * @return string|false|null Image bytes; false when rate limited (stop the batch); null when
+     *                           this item failed (content refused, error, or not configured).
+     */
+    public function generateImage(string $prompt, string $name, int $timeout = 120): string|false|null
     {
-        return 'https://image.pollinations.ai/prompt/' .
-               rawurlencode($prompt) .
-               '?width=' . $width .
-               '&height=' . $height .
-               '&nologo=true&model=flux&seed=' . rand(1, 999999);
+        $account = config('freegle.cloudflare_ai.account_id');
+        $token = config('freegle.cloudflare_ai.token');
+        if (! $account || ! $token) {
+            Log::error('PollinationsService: CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_AI_TOKEN must be set');
+
+            return null;
+        }
+
+        $url = rtrim(config('freegle.cloudflare_ai.base', 'https://api.cloudflare.com'), '/') .
+            "/client/v4/accounts/{$account}/ai/run/@cf/black-forest-labs/flux-1-schnell";
+
+        try {
+            $response = Http::withToken($token)
+                ->timeout($timeout)
+                ->post($url, ['prompt' => $prompt, 'steps' => 8, 'seed' => random_int(1, 999999)]);
+        } catch (\Throwable $e) {
+            Log::warning("PollinationsService: Cloudflare request failed for '{$name}': " . $e->getMessage());
+
+            return null;
+        }
+
+        if ($response->status() === 429) {
+            Log::warning("PollinationsService: rate limited (HTTP 429) for '{$name}'");
+
+            return false;
+        }
+
+        if (! $response->successful()) {
+            // Cloudflare's content filter refuses some item names outright (code 8007, "NSFW").
+            // That needs a different description, so it is a per-item failure, not an outage.
+            Log::warning("PollinationsService: HTTP {$response->status()} for '{$name}': " .
+                substr($response->body(), 0, 200));
+
+            return null;
+        }
+
+        $image = $response->json('result.image');
+        if (! is_string($image) || $image === '') {
+            Log::warning("PollinationsService: no image in Cloudflare response for '{$name}'");
+
+            return null;
+        }
+
+        $data = base64_decode($image, true);
+
+        return $data === false || $data === '' ? null : $data;
     }
 
     /**

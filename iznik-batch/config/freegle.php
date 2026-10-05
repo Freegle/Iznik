@@ -675,6 +675,14 @@ return [
     ],
 
     // TUS uploader for AI-generated images
+    // Cloudflare Workers AI, which draws the post and job illustrations (Flux Schnell). The same
+    // account and token the Go API uses for its on-demand images.
+    'cloudflare_ai' => [
+        'account_id' => env('CLOUDFLARE_ACCOUNT_ID'),
+        'token' => env('CLOUDFLARE_AI_TOKEN'),
+        'base' => env('CLOUDFLARE_API_BASE', 'https://api.cloudflare.com'),
+    ],
+
     'tus_uploader' => env('TUS_UPLOADER', 'https://uploads.ilovefreegle.org:8080'),
 
     /*
