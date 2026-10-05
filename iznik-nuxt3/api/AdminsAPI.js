@@ -7,8 +7,23 @@ export default class AdminsAPI extends BaseAPI {
   }
 
   async add(data) {
-    const { id } = await this.$postv2('/modtools/admin', data)
+    const { id } = await this.$postv2(
+      '/modtools/admin',
+      data,
+      (res) => res?.error !== 400
+    )
     return id
+  }
+
+  // Sends a test of the ADMIN to one address and returns the token that lets it be created.
+  // A 400 is the moderator's content or address being refused, which the page shows them.
+  async test(data) {
+    const { testtoken } = await this.$postv2(
+      '/modtools/admin',
+      { ...data, action: 'Test' },
+      (res) => res?.error !== 400
+    )
+    return testtoken
   }
 
   async patch(data) {

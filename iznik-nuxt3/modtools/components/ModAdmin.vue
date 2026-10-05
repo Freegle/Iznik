@@ -88,8 +88,8 @@
           </h4>
           <p class="small mb-1">
             This is advice from Support on how you might adapt this ADMIN for
-            your community. It is not part of the message and will not be in
-            the email.
+            your community. It is not part of the message and will not be in the
+            email.
           </p>
           <p class="modguidance-text mb-0">{{ admin.modguidance }}</p>
         </NoticeMessage>
@@ -158,6 +158,27 @@
             />
           </b-form-group>
           <b-form-group
+            v-if="admin.mjml !== null && admin.mjml !== undefined"
+            label="Designed (MJML) version of ADMIN:"
+            label-for="mjml"
+            label-class="mb-0"
+          >
+            <NoticeMessage variant="warning" class="mb-2">
+              Members whose email shows formatted mail see this version, not the
+              plain text above. If you change the text, make the same change
+              here, or remove this version by emptying the box. Only edit it if
+              you know
+              <ExternalLink :href="MJML_SITE">MJML</ExternalLink>.
+            </NoticeMessage>
+            <b-form-textarea
+              id="mjml"
+              v-model="admin.mjml"
+              class="mb-3 font-monospace"
+              spellcheck="false"
+              rows="12"
+            />
+          </b-form-group>
+          <b-form-group
             label="Send after (optional):"
             label-for="sendafter"
             label-class="mb-0"
@@ -198,6 +219,7 @@
         </template>
       </b-card-body>
       <b-card-footer v-if="expanded && admin.pending">
+        <p v-if="saveError" class="text-danger fw-bold">{{ saveError }}</p>
         <b-button v-if="!admin.heldby" variant="warning" @click="deleteIt">
           <v-icon icon="trash-alt" /> Delete
         </b-button>
@@ -246,6 +268,12 @@ import {
   sendAfterToInput,
   inputToSendAfter,
 } from '~/modtools/composables/useAdminSendAfter'
+import {
+  textProblem,
+  mjmlProblem,
+  apiMessage,
+  MJML_SITE,
+} from '~/modtools/composables/useAdminContent'
 
 const props = defineProps({
   id: {
@@ -270,6 +298,7 @@ const { heldError, guardHold } = useHeldNotice()
 const expanded = ref(false)
 const saving = ref(false)
 const saved = ref(false)
+const saveError = ref(null)
 const showConfirmModal = ref(false)
 
 const admin = computed(() => adminsStore.get(props.id))
@@ -321,24 +350,49 @@ function deleteConfirmed() {
   checkWork(true)
 }
 
+// Returns whether the changes were saved.
 async function save() {
+  saveError.value =
+    textProblem(admin.value.text) ||
+    mjmlProblem(admin.value.mjml) ||
+    (!admin.value.ctatext !== !admin.value.ctalink
+      ? 'A big button needs both its text and its link.'
+      : null)
+  if (saveError.value) {
+    return false
+  }
+
+  const params = {
+    id: admin.value.id,
+    subject: admin.value.subject,
+    text: admin.value.text,
+    ctatext: admin.value.ctatext ?? '',
+    ctalink: admin.value.ctalink ?? '',
+    sendafter: admin.value.sendafter ?? null,
+    pending: true,
+  }
+  if (admin.value.mjml !== null && admin.value.mjml !== undefined) {
+    params.mjml = admin.value.mjml
+  }
+
   saving.value = true
+  try {
+    await guardHold(() => adminsStore.edit(params))
+    if (heldError.value) {
+      return false
+    }
+  } catch (e) {
+    saveError.value = apiMessage(e, "Couldn't save - please try again.")
+    return false
+  } finally {
+    saving.value = false
+  }
 
-  await guardHold(() =>
-    adminsStore.edit({
-      id: admin.value.id,
-      subject: admin.value.subject,
-      text: admin.value.text,
-      sendafter: admin.value.sendafter ?? null,
-      pending: true,
-    })
-  )
-
-  saving.value = false
   saved.value = true
   setTimeout(() => {
     saved.value = false
   }, 2000)
+  return true
 }
 
 function hold() {
@@ -352,8 +406,8 @@ function release() {
 }
 
 async function approve() {
-  if (!admin.value.editprotected && !admin.value.template) {
-    await save()
+  if (!admin.value.editprotected && !admin.value.template && !(await save())) {
+    return
   }
 
   await guardHold(() => adminsStore.approve({ id: admin.value.id }))

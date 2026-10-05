@@ -233,6 +233,8 @@ describe('ModAdmin', () => {
         id: 1,
         subject: 'Test Admin',
         text: 'Test body',
+        ctatext: '',
+        ctalink: '',
         sendafter: null,
         pending: true,
       })
@@ -366,6 +368,79 @@ describe('ModAdmin', () => {
       await wrapper.vm.save()
 
       expect(mockAdminsStore.edit.mock.calls[0][0].sendafter).toBeNull()
+    })
+  })
+  describe('MJML part', () => {
+    const mjml =
+      '<mj-section><mj-column><mj-text>Designed</mj-text></mj-column></mj-section>'
+
+    it('shows no MJML box for a text-only ADMIN, and does not send one', async () => {
+      const wrapper = mountComponent({ open: true })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('textarea#body').exists()).toBe(true)
+      expect(wrapper.find('textarea#mjml').exists()).toBe(false)
+      await wrapper.vm.save()
+      expect(mockAdminsStore.edit.mock.calls[0][0]).not.toHaveProperty('mjml')
+    })
+
+    it('shows the MJML with a warning, and saves edits to it', async () => {
+      const wrapper = mountComponent({ open: true }, { mjml })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('see this version, not the plain text')
+      expect(wrapper.find('textarea#mjml').element.value).toBe(mjml)
+
+      await wrapper
+        .find('textarea#mjml')
+        .setValue(mjml.replace('Designed', 'Edited'))
+      await wrapper.vm.save()
+      expect(mockAdminsStore.edit.mock.calls[0][0].mjml).toContain('Edited')
+    })
+
+    it('refuses HTML in the text, and does not approve', async () => {
+      const wrapper = mountComponent({ open: true }, { text: '<b>Bold</b>' })
+      await wrapper.vm.approve()
+      expect(mockAdminsStore.edit).not.toHaveBeenCalled()
+      expect(mockAdminsStore.approve).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('must be plain text')
+    })
+
+    it('refuses unusable MJML', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { mjml: '<p>Just HTML</p>' }
+      )
+      expect(await wrapper.vm.save()).toBe(false)
+      expect(mockAdminsStore.edit).not.toHaveBeenCalled()
+    })
+
+    it('shows why the server refused, and does not approve', async () => {
+      mockAdminsStore.edit.mockRejectedValueOnce({
+        response: { data: { error: 400, message: 'Server says no' } },
+      })
+      const wrapper = mountComponent({ open: true }, { mjml })
+      await wrapper.vm.approve()
+      expect(mockAdminsStore.approve).not.toHaveBeenCalled()
+      expect(wrapper.vm.saveError).toBe('Server says no')
+      expect(wrapper.vm.saving).toBe(false)
+    })
+  })
+  describe('call to action', () => {
+    it('saves edits to the button text and link', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { ctatext: 'Donate', ctalink: 'https://example.com/a' }
+      )
+      wrapper.vm.admin.ctalink = 'https://example.com/b'
+      await wrapper.vm.save()
+      const params = mockAdminsStore.edit.mock.calls[0][0]
+      expect(params.ctatext).toBe('Donate')
+      expect(params.ctalink).toBe('https://example.com/b')
+    })
+
+    it('refuses a button with text but no link', async () => {
+      const wrapper = mountComponent({ open: true }, { ctatext: 'Donate' })
+      expect(await wrapper.vm.save()).toBe(false)
+      expect(mockAdminsStore.edit).not.toHaveBeenCalled()
     })
   })
 })

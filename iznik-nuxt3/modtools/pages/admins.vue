@@ -138,10 +138,69 @@
                     type="textarea"
                     placeholder="Put your message in here.  Plain-text only."
                     :rules="validateBody"
+                    :validate-on-input="true"
                     class="form-control"
                   />
                   <ErrorMessage name="body" class="text-danger fw-bold" />
                 </b-form-group>
+                <div class="mjml-part mb-3">
+                  <b-form-checkbox v-model="useMjml" class="mb-2">
+                    Also add a designed version using MJML (experts only)
+                  </b-form-checkbox>
+                  <div v-if="useMjml">
+                    <NoticeMessage variant="danger" class="mb-2">
+                      <p class="fw-bold mb-1">
+                        Only use this if you know what you are doing.
+                      </p>
+                      <p class="mb-0">
+                        A mistake here goes straight into the inbox of every
+                        member who gets this ADMIN, and email programs are far
+                        less forgiving than web browsers. If you have not
+                        written MJML before, leave this off and send the plain
+                        text above. That always works.
+                      </p>
+                    </NoticeMessage>
+                    <p class="small mb-1">
+                      <ExternalLink :href="MJML_SITE">MJML</ExternalLink> is a
+                      markup language for designing emails that look right in
+                      all the main email programs and on phones. Design and
+                      check yours in the
+                      <ExternalLink :href="MJML_TRY_IT"
+                        >MJML live editor</ExternalLink
+                      >
+                      first, then paste it here.
+                    </p>
+                    <ul class="small">
+                      <li>
+                        Paste only the <code>&lt;mj-section&gt;</code> elements
+                        from inside <code>&lt;mj-body&gt;</code>. Freegle adds
+                        its own header, footer and unsubscribe links around
+                        them.
+                      </li>
+                      <li>
+                        Members whose email shows formatted mail see this
+                        version. Everyone else sees the plain text above, so
+                        both must say the same thing.
+                      </li>
+                      <li>
+                        Scripts, forms, embedded frames and unsafe links are
+                        removed before it is sent. Your test email shows exactly
+                        what is left.
+                      </li>
+                    </ul>
+                    <b-form-textarea
+                      id="mjml"
+                      v-model="mjml"
+                      rows="12"
+                      class="font-monospace"
+                      spellcheck="false"
+                      placeholder="<mj-section>&#10;  <mj-column>&#10;    <mj-text>...</mj-text>&#10;  </mj-column>&#10;</mj-section>"
+                    />
+                    <div v-if="mjmlError" class="text-danger fw-bold">
+                      {{ mjmlError }}
+                    </div>
+                  </div>
+                </div>
                 <div
                   v-if="groupidcreate < 0"
                   class="modguidance border border-2 border-info rounded p-3 mb-3 mt-3"
@@ -210,11 +269,52 @@
                 </b-form-group>
               </div>
             </VeeForm>
+            <div class="test-send border border-2 rounded p-3 mb-3">
+              <h3 class="h5">Send a test first</h3>
+              <p class="mb-2">
+                You can't create the ADMIN until you've sent yourself a test.
+                Check it arrives and looks right. If you've used MJML, check it
+                on a phone too. If you change anything afterwards, send another
+                test.
+              </p>
+              <label for="testemail" class="fw-bold">Send the test to:</label>
+              <div class="d-flex flex-wrap gap-2 align-items-start">
+                <b-form-input
+                  id="testemail"
+                  v-model="testEmail"
+                  type="email"
+                  placeholder="One email address"
+                  style="max-width: 350px"
+                />
+                <b-button
+                  variant="info"
+                  :disabled="testing || !canCreateForGroup"
+                  @click="sendTest"
+                >
+                  <v-icon v-if="testing" icon="sync" class="fa-spin" />
+                  <v-icon v-else icon="envelope" />
+                  Send test
+                </b-button>
+              </div>
+              <p v-if="tested" class="text-success fw-bold mt-2 mb-0">
+                Test sent to {{ testedTo }}. Check it arrived and looks right
+                before you create the ADMIN.
+              </p>
+              <p v-else-if="testedKey" class="text-danger fw-bold mt-2 mb-0">
+                You've changed the ADMIN since the test, so please send another.
+              </p>
+              <p v-if="testError" class="text-danger fw-bold mt-2 mb-0">
+                {{ testError }}
+              </p>
+            </div>
+            <p v-if="createError" class="text-danger fw-bold">
+              {{ createError }}
+            </p>
             <b-button
               class="mt-2 mb-2"
               size="lg"
               :variant="groupidcreate < 0 ? 'danger' : 'primary'"
-              :disabled="groupidcreate <= 0 && groupidcreate !== -2"
+              :disabled="!canCreateForGroup || !tested || creating"
               @click="create"
             >
               <v-icon v-if="created" icon="check" />
@@ -265,6 +365,14 @@ import { required, email, min, max } from '@vee-validate/rules'
 import { useAdminsStore } from '~/stores/admins'
 import { useModGroupStore } from '@/stores/modgroup'
 import { inputToSendAfter } from '~/modtools/composables/useAdminSendAfter'
+import {
+  textProblem,
+  mjmlProblem,
+  isSingleEmail,
+  apiMessage,
+  MJML_SITE,
+  MJML_TRY_IT,
+} from '~/modtools/composables/useAdminContent'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
 
@@ -275,7 +383,7 @@ defineRule('max', max)
 
 const adminsStore = useAdminsStore()
 const modGroupStore = useModGroupStore()
-const { myGroups, supportOrAdmin } = useMe()
+const { me, myGroups, supportOrAdmin } = useMe()
 const { checkWork } = useModMe()
 
 // Template ref for form
@@ -296,6 +404,17 @@ const creating = ref(false)
 const created = ref(false)
 const essential = ref(true)
 const selectedTemplate = ref(null)
+const useMjml = ref(false)
+const mjml = ref('')
+const testEmail = ref(me.value?.email || '')
+const testing = ref(false)
+const testError = ref(null)
+const createError = ref(null)
+// The token from the last test, the content it was for, and where it went. Create needs a token
+// for exactly the content being created.
+const testtoken = ref(null)
+const testedKey = ref(null)
+const testedTo = ref(null)
 
 // Pre-designed admin-email templates, keyed by template id (see the template <select> above).
 // Empty now the one-off "Little Free Shop 2026" campaign is over; the mechanism stays for future
@@ -303,6 +422,46 @@ const selectedTemplate = ref(null)
 const templateDefaults = {}
 
 // Computed properties
+const canCreateForGroup = computed(
+  () => groupidcreate.value > 0 || groupidcreate.value === -2
+)
+
+const mjmlError = computed(() =>
+  useMjml.value ? mjmlProblem(mjml.value) : null
+)
+
+// Everything that changes what the email looks like - the same fields the server checks the test
+// token against.
+function contentParams() {
+  const groupid = groupidcreate.value > 0 ? groupidcreate.value : null
+
+  if (selectedTemplate.value) {
+    return {
+      groupid,
+      subject: templateDefaults[selectedTemplate.value]?.subject,
+      text: '(template)',
+      essential: false,
+      template: selectedTemplate.value,
+    }
+  }
+
+  return {
+    groupid,
+    subject: subject.value,
+    text: body.value,
+    mjml: useMjml.value ? mjml.value || '' : '',
+    ctatext: ctatext.value,
+    ctalink: ctalink.value,
+    essential: essential.value,
+  }
+}
+
+const contentKey = computed(() => JSON.stringify(contentParams()))
+
+const tested = computed(
+  () => !!testtoken.value && testedKey.value === contentKey.value
+)
+
 const pendingcount = computed(() => {
   let count = 0
 
@@ -340,6 +499,16 @@ const previous = computed(() => {
 })
 
 // Watchers
+// Default the test address to the moderator's own, once we know it.
+watch(
+  () => me.value?.email,
+  (email) => {
+    if (email && !testEmail.value) {
+      testEmail.value = email
+    }
+  }
+)
+
 watch(groupidshow, (newval) => {
   fetchAdmins(newval)
 })
@@ -357,41 +526,70 @@ function fetchPrevious() {
   fetchAdmins(groupidprevious.value)
 }
 
+// Returns a message if the content can't be sent yet, or null.
+async function contentInvalid() {
+  if (selectedTemplate.value) {
+    return null
+  }
+
+  const validate = await form.value.validate()
+  if (!validate.valid) {
+    return 'Please fix the problems above first.'
+  }
+
+  if ((ctatext.value && !ctalink.value) || (!ctatext.value && ctalink.value)) {
+    return 'A big button needs both its text and its link.'
+  }
+
+  return mjmlError.value
+}
+
+async function sendTest() {
+  testError.value = await contentInvalid()
+  if (testError.value) {
+    return
+  }
+
+  if (!isSingleEmail(testEmail.value)) {
+    testError.value = 'Please give one email address to send the test to.'
+    return
+  }
+
+  const content = contentParams()
+  const key = contentKey.value
+  const email = testEmail.value.trim()
+
+  testing.value = true
+  try {
+    testtoken.value = await adminsStore.test({ ...content, email })
+    testedKey.value = key
+    testedTo.value = email
+  } catch (e) {
+    testError.value = apiMessage(
+      e,
+      "Couldn't send the test - please try again."
+    )
+  } finally {
+    testing.value = false
+  }
+}
+
 async function create() {
-  let params
+  createError.value = await contentInvalid()
+  if (createError.value) {
+    return
+  }
+
+  if (!tested.value) {
+    createError.value = 'Please send a test of this ADMIN first.'
+    return
+  }
+
+  const params = { ...contentParams(), testtoken: testtoken.value }
 
   if (selectedTemplate.value) {
-    const defaults = templateDefaults[selectedTemplate.value]
-    params = {
-      groupid: groupidcreate.value > 0 ? groupidcreate.value : null,
-      subject: defaults.subject,
-      text: '(template)',
-      essential: false,
-      template: selectedTemplate.value,
-      editprotected: true,
-    }
+    params.editprotected = true
   } else {
-    const validate = await form.value.validate()
-    if (!validate.valid) {
-      return
-    }
-
-    if (
-      (ctatext.value && !ctalink.value) ||
-      (!ctatext.value && ctalink.value)
-    ) {
-      return
-    }
-
-    params = {
-      groupid: groupidcreate.value > 0 ? groupidcreate.value : null,
-      subject: subject.value,
-      text: body.value,
-      ctatext: ctatext.value,
-      ctalink: ctalink.value,
-      essential: essential.value,
-    }
-
     const sendAfterIso = inputToSendAfter(sendafter.value)
 
     if (sendAfterIso) {
@@ -405,9 +603,22 @@ async function create() {
   }
 
   creating.value = true
-  await adminsStore.add(params)
-  creating.value = false
+  try {
+    await adminsStore.add(params)
+  } catch (e) {
+    createError.value = apiMessage(
+      e,
+      "Couldn't create the ADMIN - please try again."
+    )
+    return
+  } finally {
+    creating.value = false
+  }
   created.value = true
+
+  // One test, one ADMIN: creating another needs another test.
+  testtoken.value = null
+  testedKey.value = null
 
   setTimeout(() => {
     created.value = false
@@ -439,7 +650,7 @@ function validateBody(value) {
   if (!value) {
     return 'Please add the message.'
   }
-  return true
+  return textProblem(value) || true
 }
 
 function copyAdmin(admin) {
@@ -447,6 +658,8 @@ function copyAdmin(admin) {
   groupidcreate.value = admin.groupid
   subject.value = admin.subject
   body.value = admin.text
+  mjml.value = admin.mjml || ''
+  useMjml.value = !!admin.mjml
   ctatext.value = admin.ctatext
   ctalink.value = admin.ctalink
   tabIndex.value = 1

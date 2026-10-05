@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
+	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -24,6 +25,8 @@ type Admin struct {
 	Groupid       *uint64    `json:"groupid"`
 	Subject       *string    `json:"subject"`
 	Text          *string    `json:"text"`
+	// Mjml is the optional MJML version of the body, used for the HTML part. Text stays the plain-text part.
+	Mjml          *string    `json:"mjml"`
 	CTA_Text      *string    `json:"ctatext"`
 	CTA_Link      *string    `json:"ctalink"`
 	Created       *time.Time `json:"created"`
@@ -47,7 +50,7 @@ type AdminUser struct {
 }
 
 // adminColumns are the admins columns returned to moderators. V1's Admin publicatts, plus modguidance.
-const adminColumns = "id, createdby, groupid, subject, text, ctatext, ctalink, created, complete, heldby, heldat, " +
+const adminColumns = "id, createdby, groupid, subject, text, mjml, ctatext, ctalink, created, complete, heldby, heldat, " +
 	"pending, parentid, activeonly, sendafter, essential, template, editprotected, modguidance"
 
 // addCreators fills in createdby as {id, displayname}.
@@ -170,7 +173,7 @@ func ListAdmins(c *fiber.Ctx) error {
 	// (absent/true/false) - 3 x 3 = 9 possible rendered forms, all proven by
 	// the retired ormharness (shapes.json / TestTier3Shapes_3d5506803f0c,
 	// removed in d22ba1d6c).
-	tx := db.Table("admins a").Select("a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, " +
+	tx := db.Table("admins a").Select("a.id, a.createdby, a.groupid, a.subject, a.text, a.mjml, a.ctatext, " +
 		"a.ctalink, a.created, a.complete, a.heldby, a.heldat, a.pending, a.parentid, a.activeonly, " +
 		"a.sendafter, a.essential, a.template, a.editprotected, a.modguidance")
 
@@ -220,6 +223,7 @@ type PostAdminRequest struct {
 	GroupID       uint64  `json:"groupid"`
 	Subject       string  `json:"subject"`
 	Text          string  `json:"text"`
+	Mjml          *string `json:"mjml,omitempty"`
 	CTA_Text      *string `json:"ctatext,omitempty"`
 	CTA_Link      *string `json:"ctalink,omitempty"`
 	Essential     *bool   `json:"essential,omitempty"`
@@ -227,9 +231,53 @@ type PostAdminRequest struct {
 	Editprotected *bool   `json:"editprotected,omitempty"`
 	SendAfter     *string `json:"sendafter,omitempty"`
 	Modguidance   *string `json:"modguidance,omitempty"`
+	// Email is the one address a Test goes to.
+	Email string `json:"email,omitempty"`
+	// TestToken is what a Test returned; Create requires one for exactly the content being created.
+	TestToken string `json:"testtoken,omitempty"`
 }
 
-// PostAdmin handles POST /admin - action-based handler for Create, Hold, Release.
+// checkNewAdmin applies the rules shared by Test and Create: who may send to the group, and what
+// the content may contain. It returns nil if the request is acceptable.
+func checkNewAdmin(myid uint64, req PostAdminRequest) error {
+	if req.GroupID == 0 && !user.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
+	}
+
+	if req.GroupID > 0 && !user.IsModOfGroup(myid, req.GroupID) {
+		return fiber.NewError(fiber.StatusForbidden, "Must be a moderator of the group")
+	}
+
+	if req.Subject == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "subject is required")
+	}
+
+	if strings.TrimSpace(req.Text) == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "text is required")
+	}
+
+	if msg := checkText(req.Text); msg != "" {
+		return fiber.NewError(fiber.StatusBadRequest, msg)
+	}
+
+	if req.Mjml != nil {
+		if msg := checkMjml(*req.Mjml); msg != "" {
+			return fiber.NewError(fiber.StatusBadRequest, msg)
+		}
+	}
+
+	return nil
+}
+
+// nilIfBlank stores an empty optional MJML part as NULL.
+func nilIfBlank(s *string) interface{} {
+	if s == nil || strings.TrimSpace(*s) == "" {
+		return nil
+	}
+	return *s
+}
+
+// PostAdmin handles POST /admin - action-based handler for Create, Test, Hold, Release.
 //
 // @Summary Create an admin message
 // @Tags admin
@@ -293,18 +341,46 @@ func PostAdmin(c *fiber.Ctx) error {
 		db.Table("admins").Where("id = ?", req.ID).Update("heldby", gorm.Expr("NULL"))
 		return c.JSON(fiber.Map{"success": true})
 
+	case "Test":
+		// Send this ADMIN, as it would go to a member, to one address. The token returned is
+		// what lets Create go ahead with exactly this content.
+		if err := checkNewAdmin(myid, req); err != nil {
+			return err
+		}
+
+		email := checkTestEmail(req.Email)
+		if email == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "Give one email address to send the test to")
+		}
+
+		content := contentOf(req)
+		if err := queue.QueueTask(queue.TaskEmailAdminTest, map[string]interface{}{
+			"user_id":   myid,
+			"email":     email,
+			"groupid":   content.GroupID,
+			"subject":   content.Subject,
+			"text":      content.Text,
+			"mjml":      content.Mjml,
+			"ctatext":   content.CTAText,
+			"ctalink":   content.CTALink,
+			"essential": content.Essential,
+			"template":  content.Template,
+		}); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to queue test email")
+		}
+
+		return c.JSON(fiber.Map{"success": true, "testtoken": testToken(myid, content)})
+
 	default:
 		// Create new admin.
-		if req.GroupID == 0 && !user.IsAdminOrSupport(myid) {
-			return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
+		if err := checkNewAdmin(myid, req); err != nil {
+			return err
 		}
 
-		if req.GroupID > 0 && !user.IsModOfGroup(myid, req.GroupID) {
-			return fiber.NewError(fiber.StatusForbidden, "Must be a moderator of the group")
-		}
-
-		if req.Subject == "" {
-			return fiber.NewError(fiber.StatusBadRequest, "subject is required")
+		// Nobody creates an ADMIN without first seeing a test of exactly what it will send.
+		if !testTokenValid(req.TestToken, myid, contentOf(req)) {
+			return fiber.NewError(fiber.StatusBadRequest,
+				"Send yourself a test of this ADMIN first. Any change after the test needs a new test.")
 		}
 
 		essential := true
@@ -327,6 +403,7 @@ func PostAdmin(c *fiber.Ctx) error {
 			"groupid":       utils.NilIfZero(req.GroupID),
 			"subject":       req.Subject,
 			"text":          req.Text,
+			"mjml":          nilIfBlank(req.Mjml),
 			"ctatext":       req.CTA_Text,
 			"ctalink":       req.CTA_Link,
 			"essential":     essential,
@@ -359,6 +436,7 @@ type PatchAdminRequest struct {
 	ID            uint64  `json:"id"`
 	Subject       *string `json:"subject,omitempty"`
 	Text          *string `json:"text,omitempty"`
+	Mjml          *string `json:"mjml,omitempty"`
 	Complete      *string `json:"complete,omitempty"`
 	Pending       *bool   `json:"pending,omitempty"`
 	CTA_Text      *string `json:"ctatext,omitempty"`
@@ -453,11 +531,28 @@ func PatchAdmin(c *fiber.Ctx) error {
 		}
 	}
 
+	if req.Text != nil {
+		if strings.TrimSpace(*req.Text) == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "text is required")
+		}
+		if msg := checkText(*req.Text); msg != "" {
+			return fiber.NewError(fiber.StatusBadRequest, msg)
+		}
+	}
+	if req.Mjml != nil {
+		if msg := checkMjml(*req.Mjml); msg != "" {
+			return fiber.NewError(fiber.StatusBadRequest, msg)
+		}
+	}
+
 	if req.Subject != nil {
 		db.Table("admins").Where("id = ?", req.ID).Update("subject", *req.Subject)
 	}
 	if req.Text != nil {
 		db.Table("admins").Where("id = ?", req.ID).Update("text", *req.Text)
+	}
+	if req.Mjml != nil {
+		db.Table("admins").Where("id = ?", req.ID).Update("mjml", nilIfBlank(req.Mjml))
 	}
 	if req.Complete != nil {
 		// Completing is terminal, so drop the hold with it. Leaving it set pinned the

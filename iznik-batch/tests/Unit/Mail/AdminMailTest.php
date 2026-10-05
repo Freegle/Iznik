@@ -314,6 +314,80 @@ class AdminMailTest extends TestCase
         $this->assertStringNotContainsString($guidance, $mail->envelope()->subject);
     }
 
+    public function test_mjml_part_replaces_the_text_in_the_html_only(): void
+    {
+        $user = $this->createTestUser();
+        $admin = $this->makeAdmin([
+            'text' => 'PLAIN-VERSION of the news',
+            'mjml' => '<mj-section><mj-column><mj-text>DESIGNED-VERSION <b>bold</b>'
+                . '<script>alert("x")</script><img src="https://x.example/i.png" onerror="alert(1)"></mj-text>'
+                . '</mj-column></mj-section>',
+        ]);
+
+        $mail = new AdminMail($user, $admin, 'Test Group', 'mods@groups.ilovefreegle.org', 'testgroup');
+
+        $html = $mail->render();
+        $text = view('emails.text.admin.admin', $mail->buildViewData())->render();
+
+        $this->assertStringContainsString('DESIGNED-VERSION', $html);
+        $this->assertStringNotContainsString('PLAIN-VERSION', $html);
+        $this->assertStringContainsString('PLAIN-VERSION', $text);
+        $this->assertStringNotContainsString('DESIGNED-VERSION', $text);
+
+        // Sanitised before compiling: no script, no handler.
+        $this->assertStringNotContainsString('alert', $html);
+        $this->assertStringNotContainsString('onerror', $html);
+
+        // Freegle's own footer still frames it.
+        $this->assertStringContainsString('Test Group', $html);
+    }
+
+    public function test_mjml_that_will_not_build_falls_back_to_the_text(): void
+    {
+        $admin = $this->makeAdmin([
+            'text' => 'PLAIN-VERSION of the news',
+            'mjml' => '<mj-section><mj-column><mj-text>Broken</mj-column></mj-section>',
+        ]);
+
+        // A member gets the plain text, and is not told about the failure.
+        $mail = new AdminMail($this->createTestUser(), $admin, 'Test Group');
+        $html = $mail->render();
+        $this->assertNotNull($mail->mjmlFailure);
+        $this->assertNull($mail->adminMjml);
+        $this->assertStringContainsString('PLAIN-VERSION', $html);
+        $this->assertStringNotContainsString('could not be built', $html);
+
+        // A test send says why at the top.
+        $test = new AdminMail($this->createTestUser(), $admin, 'Test Group', null, null, [], 'tester@example.com');
+        $html = $test->render();
+        $this->assertStringContainsString('could not be built', $html);
+        $this->assertStringContainsString('PLAIN-VERSION', $html);
+    }
+
+    public function test_mjml_builds_tells_good_from_broken(): void
+    {
+        $this->assertTrue(AdminMail::mjmlBuilds('<mj-section><mj-column><mj-text>Fine</mj-text></mj-column></mj-section>'));
+        $this->assertFalse(AdminMail::mjmlBuilds('<mj-section><mj-column><mj-text>Broken</mj-column></mj-section>'));
+    }
+
+    public function test_text_only_admin_has_no_mjml(): void
+    {
+        $mail = new AdminMail($this->createTestUser(), $this->makeAdmin(['mjml' => '']), 'Test Group');
+        $this->assertNull($mail->adminMjml);
+        $this->assertStringContainsString('this is a test admin message', $mail->render());
+    }
+
+    public function test_test_send_goes_to_the_test_address_with_test_subject(): void
+    {
+        $user = $this->createTestUser();
+        $mail = new AdminMail($user, $this->makeAdmin(['subject' => 'News']), 'Test Group', null, null, [], 'tester@example.com');
+        $mail->build();
+
+        $this->assertTrue($mail->hasTo('tester@example.com'));
+        $this->assertFalse($mail->hasTo($user->email_preferred));
+        $this->assertSame('TEST: ADMIN: News', $mail->envelope()->subject);
+    }
+
     private function subjectFor(array $overrides): string
     {
         $mail = new AdminMail($this->createTestUser(), $this->makeAdmin($overrides), 'Test Group');

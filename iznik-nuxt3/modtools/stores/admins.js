@@ -30,6 +30,9 @@ export const useAdminsStore = defineStore('admins', {
         }
       }
     },
+    test(params) {
+      return api(this.config).admins.test(params)
+    },
     async add(params) {
       const id = await api(this.config).admins.add(params)
 

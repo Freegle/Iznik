@@ -3,6 +3,21 @@
     <mj-body background-color="#f4f4f4">
         @include('emails.mjml.components.header')
 
+        @if(!empty($mjmlFailure))
+        <mj-section background-color="#fff3cd" padding="10px 20px">
+            <mj-column>
+                <mj-text font-size="14px" color="#856404" line-height="1.5">
+                    <strong>Test only:</strong> the MJML version could not be built, so members would
+                    get the plain text below instead. The error was: {{ $mjmlFailure }}
+                </mj-text>
+            </mj-column>
+        </mj-section>
+        @endif
+
+        @if(!empty($adminMjml))
+        {{-- The author's own MJML sections, already sanitised by AdminMjmlSanitiser. --}}
+        {!! $adminMjml !!}
+        @else
         <mj-section background-color="#ffffff" padding="20px">
             <mj-column>
                 <mj-text font-size="18px" font-weight="bold" color="#333333" padding-bottom="10px">
@@ -13,6 +28,7 @@
                 </mj-text>
             </mj-column>
         </mj-section>
+        @endif
 
         @if($ctaLink && $ctaText)
         <mj-section background-color="#ffffff" padding="10px 20px 20px">
