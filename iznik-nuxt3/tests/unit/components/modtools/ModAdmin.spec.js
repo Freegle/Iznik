@@ -233,6 +233,8 @@ describe('ModAdmin', () => {
         id: 1,
         subject: 'Test Admin',
         text: 'Test body',
+        ctatext: '',
+        ctalink: '',
         sendafter: null,
         pending: true,
       })
@@ -420,6 +422,25 @@ describe('ModAdmin', () => {
       expect(mockAdminsStore.approve).not.toHaveBeenCalled()
       expect(wrapper.vm.saveError).toBe('Server says no')
       expect(wrapper.vm.saving).toBe(false)
+    })
+  })
+  describe('call to action', () => {
+    it('saves edits to the button text and link', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { ctatext: 'Donate', ctalink: 'https://example.com/a' }
+      )
+      wrapper.vm.admin.ctalink = 'https://example.com/b'
+      await wrapper.vm.save()
+      const params = mockAdminsStore.edit.mock.calls[0][0]
+      expect(params.ctatext).toBe('Donate')
+      expect(params.ctalink).toBe('https://example.com/b')
+    })
+
+    it('refuses a button with text but no link', async () => {
+      const wrapper = mountComponent({ open: true }, { ctatext: 'Donate' })
+      expect(await wrapper.vm.save()).toBe(false)
+      expect(mockAdminsStore.edit).not.toHaveBeenCalled()
     })
   })
 })

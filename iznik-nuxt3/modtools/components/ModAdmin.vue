@@ -353,7 +353,11 @@ function deleteConfirmed() {
 // Returns whether the changes were saved.
 async function save() {
   saveError.value =
-    textProblem(admin.value.text) || mjmlProblem(admin.value.mjml)
+    textProblem(admin.value.text) ||
+    mjmlProblem(admin.value.mjml) ||
+    (!admin.value.ctatext !== !admin.value.ctalink
+      ? 'A big button needs both its text and its link.'
+      : null)
   if (saveError.value) {
     return false
   }
@@ -362,6 +366,8 @@ async function save() {
     id: admin.value.id,
     subject: admin.value.subject,
     text: admin.value.text,
+    ctatext: admin.value.ctatext ?? '',
+    ctalink: admin.value.ctalink ?? '',
     sendafter: admin.value.sendafter ?? null,
     pending: true,
   }
