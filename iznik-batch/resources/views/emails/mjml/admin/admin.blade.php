@@ -30,7 +30,8 @@
         </mj-section>
         @endif
 
-        @if($ctaLink && $ctaText)
+        {{-- A designed (MJML) version carries its own buttons. --}}
+        @if($ctaLink && $ctaText && empty($adminMjml))
         <mj-section background-color="#ffffff" padding="10px 20px 20px">
             <mj-column>
                 <mj-button mj-class="btn-success" href="{{ $ctaLink }}" font-size="16px" padding="10px 0">

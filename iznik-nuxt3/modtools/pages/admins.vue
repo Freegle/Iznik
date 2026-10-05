@@ -225,34 +225,37 @@
                     />
                   </b-form-group>
                 </div>
-                <p>
-                  You can optionally add a big button into the ADMIN, and
-                  specify where it will go.
-                </p>
-                <b-form-group
-                  label="Call To Action text:"
-                  label-for="ctatext"
-                  label-class="mb-0"
-                >
-                  <b-form-input
-                    id="ctatext"
-                    v-model="ctatext"
-                    class="mb-3"
-                    placeholder="(Option) Text for a big button"
-                  />
-                </b-form-group>
-                <b-form-group
-                  label="Call To Action link:"
-                  label-for="ctalink"
-                  label-class="mb-0"
-                >
-                  <b-form-input
-                    id="ctalink"
-                    v-model="ctalink"
-                    class="mb-3"
-                    placeholder="(Optional) Link for a big button"
-                  />
-                </b-form-group>
+                <!-- A designed (MJML) version carries its own buttons. -->
+                <template v-if="!useMjml">
+                  <p>
+                    You can optionally add a big button into the ADMIN, and
+                    specify where it will go.
+                  </p>
+                  <b-form-group
+                    label="Call To Action text:"
+                    label-for="ctatext"
+                    label-class="mb-0"
+                  >
+                    <b-form-input
+                      id="ctatext"
+                      v-model="ctatext"
+                      class="mb-3"
+                      placeholder="(Option) Text for a big button"
+                    />
+                  </b-form-group>
+                  <b-form-group
+                    label="Call To Action link:"
+                    label-for="ctalink"
+                    label-class="mb-0"
+                  >
+                    <b-form-input
+                      id="ctalink"
+                      v-model="ctalink"
+                      class="mb-3"
+                      placeholder="(Optional) Link for a big button"
+                    />
+                  </b-form-group>
+                </template>
                 <b-form-group
                   label="Send after (optional):"
                   label-for="sendafter"
@@ -287,7 +290,7 @@
                   style="max-width: 350px"
                 />
                 <b-button
-                  variant="info"
+                  variant="white"
                   :disabled="testing || !canCreateForGroup"
                   @click="sendTest"
                 >
@@ -450,8 +453,8 @@ function contentParams() {
     subject: subject.value,
     text: body.value,
     mjml: useMjml.value ? mjml.value || '' : '',
-    ctatext: ctatext.value,
-    ctalink: ctalink.value,
+    ctatext: useMjml.value ? null : ctatext.value,
+    ctalink: useMjml.value ? null : ctalink.value,
     essential: essential.value,
   }
 }
@@ -537,7 +540,10 @@ async function contentInvalid() {
     return 'Please fix the problems above first.'
   }
 
-  if ((ctatext.value && !ctalink.value) || (!ctatext.value && ctalink.value)) {
+  if (
+    !useMjml.value &&
+    ((ctatext.value && !ctalink.value) || (!ctatext.value && ctalink.value))
+  ) {
     return 'A big button needs both its text and its link.'
   }
 
@@ -670,3 +676,10 @@ onMounted(() => {
   fetchAdmins(groupidshow.value)
 })
 </script>
+<style scoped>
+/* The global form label style (bold, pushed down) is for field labels, not a checkbox. */
+.mjml-part :deep(.form-check-label) {
+  margin-top: 0;
+  font-weight: normal;
+}
+</style>

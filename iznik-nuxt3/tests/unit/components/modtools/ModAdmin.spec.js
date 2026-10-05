@@ -437,6 +437,17 @@ describe('ModAdmin', () => {
       expect(params.ctalink).toBe('https://example.com/b')
     })
 
+    it('hides the button fields when there is an MJML version', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { mjml: '<mj-section></mj-section>', ctatext: 'Donate' }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('#ctatext').exists()).toBe(false)
+      expect(wrapper.find('#ctalink').exists()).toBe(false)
+      expect(await wrapper.vm.save()).toBe(true)
+    })
+
     it('refuses a button with text but no link', async () => {
       const wrapper = mountComponent({ open: true }, { ctatext: 'Donate' })
       expect(await wrapper.vm.save()).toBe(false)

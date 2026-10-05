@@ -370,6 +370,21 @@ class AdminMailTest extends TestCase
         $this->assertFalse(AdminMail::mjmlBuilds('<mj-section><mj-column><mj-text>Broken</mj-column></mj-section>'));
     }
 
+    public function test_mjml_version_has_no_freegle_button(): void
+    {
+        $admin = $this->makeAdmin([
+            'ctatext' => 'FREEGLE-BUTTON',
+            'mjml' => '<mj-section><mj-column><mj-text>Designed</mj-text></mj-column></mj-section>',
+        ]);
+        $html = (new AdminMail($this->createTestUser(), $admin, 'Test Group'))->render();
+        $this->assertStringContainsString('Designed', $html);
+        $this->assertStringNotContainsString('FREEGLE-BUTTON', $html);
+
+        // The text-only email still has it.
+        $html = (new AdminMail($this->createTestUser(), $this->makeAdmin(['ctatext' => 'FREEGLE-BUTTON']), 'Test Group'))->render();
+        $this->assertStringContainsString('FREEGLE-BUTTON', $html);
+    }
+
     public function test_text_only_admin_has_no_mjml(): void
     {
         $mail = new AdminMail($this->createTestUser(), $this->makeAdmin(['mjml' => '']), 'Test Group');
