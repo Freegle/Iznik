@@ -10,6 +10,7 @@ const {
   mockBreakpoint,
   mockChitChatMod,
   mockSupportOrAdmin,
+  mockModsHeld,
   mockFetch,
   mockSend,
   mockDelete,
@@ -52,6 +53,7 @@ const {
     mockBreakpoint: ref('md'),
     mockChitChatMod: ref(false),
     mockSupportOrAdmin: ref(false),
+    mockModsHeld: ref(false),
     mockFetch: vi.fn(),
     mockSend: vi.fn(),
     mockDelete: vi.fn(),
@@ -144,6 +146,16 @@ vi.mock('~/composables/useMe', () => {
       // Use actual computed refs that reactively track the mock values
       chitChatMod: computed(() => mockChitChatMod.value),
       supportOrAdmin: computed(() => mockSupportOrAdmin.value),
+    }),
+  }
+})
+
+vi.mock('~/modtools/composables/useLockdown', () => {
+  const { computed } = require('vue')
+  return {
+    useLockdown: () => ({
+      modsHeld: computed(() => mockModsHeld.value),
+      held: () => false,
     }),
   }
 })
@@ -328,6 +340,7 @@ describe('NewsThread', () => {
     mockBreakpoint.value = 'md'
     mockChitChatMod.value = false
     mockSupportOrAdmin.value = false
+    mockModsHeld.value = false
     mockNewsfeedStore.byId.mockImplementation((id) =>
       id === 1 ? mockNewsfeed.value : null
     )
@@ -521,6 +534,24 @@ describe('NewsThread', () => {
       expect(wrapper.text()).toContain('the system')
     })
 
+    // Plan 10.6/10.12: ChitChat posts held by the lockdown switch are labelled so a
+    // volunteer can tell them apart from an ordinary system hide. Confirmed live via
+    // GET /newsfeed/:id -> .lockdownheld (unconditional, no mod-only gating).
+    it('shows "by lockdown" when lockdownheld is true and hiddenby is not set', async () => {
+      mockNewsfeed.value.hiddenby = null
+      mockNewsfeed.value.lockdownheld = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('by lockdown')
+      expect(wrapper.text()).not.toContain('the system')
+    })
+
+    it('prefers "by" and UserName over lockdownheld when hiddenby is set', async () => {
+      mockNewsfeed.value.hiddenby = 50
+      mockNewsfeed.value.lockdownheld = true
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.user-name').exists()).toBe(true)
+    })
+
     it('does not show hidden notice for regular users', async () => {
       mockMe.value.systemrole = 'User'
       const wrapper = await createWrapper()
@@ -702,6 +733,73 @@ describe('NewsThread', () => {
       const wrapper = await createWrapper()
       expect(wrapper.text()).not.toContain('Hide this thread')
       expect(wrapper.text()).not.toContain('Mute user on ChitChat')
+    })
+  })
+
+  describe('lockdown (mods held)', () => {
+    beforeEach(() => {
+      mockMe.value.systemrole = 'Moderator'
+      mockChitChatMod.value = true
+      mockNewsfeed.value.type = 'Message'
+      mockNewsfeed.value.hidden = false
+      mockModsHeld.value = true
+    })
+
+    it('hides "Post this as an OFFER/WANTED for them" when mods held', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain(
+        'Post this as an OFFER/WANTED for them'
+      )
+    })
+
+    it('hides all four refer options when mods held', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain('Refer to OFFER')
+      expect(wrapper.text()).not.toContain('Refer to WANTED')
+      expect(wrapper.text()).not.toContain('Refer to TAKEN')
+      expect(wrapper.text()).not.toContain('Refer to RECEIVED')
+    })
+
+    it('hides "Turn this into a Story" when mods held', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain('Turn this into a Story')
+    })
+
+    it('hides "Hide this thread" when mods held', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain('Hide this thread')
+    })
+
+    it('keeps "Unhide this thread" visible when mods held', async () => {
+      mockNewsfeed.value.hidden = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Unhide this thread')
+    })
+
+    it('leaves Edit, Delete and Mute/Unmute untouched when mods held', async () => {
+      mockNewsfeed.value.hidden = false
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Edit')
+      expect(wrapper.text()).toContain('Delete this thread')
+      expect(wrapper.text()).toContain('Mute user on ChitChat')
+    })
+
+    it('shows the refer/story/hide options again once mods is released', async () => {
+      mockModsHeld.value = false
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Refer to OFFER')
+      expect(wrapper.text()).toContain('Turn this into a Story')
+      expect(wrapper.text()).toContain('Hide this thread')
+    })
+
+    it('reads modsHeld from useLockdown rather than re-adding its own support/admin bypass', async () => {
+      // useLockdown already bakes the supportOrAdmin exemption into modsHeld,
+      // so NewsThread shouldn't need its own "|| supportOrAdmin" on top of
+      // the gate. Prove that by setting supportOrAdmin true while the mocked
+      // modsHeld (unaffected by that mock) stays held - refer should stay hidden.
+      mockSupportOrAdmin.value = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain('Refer to OFFER')
     })
   })
 

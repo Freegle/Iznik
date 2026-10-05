@@ -2,6 +2,7 @@
 
 namespace App\Mail\Message;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
@@ -15,7 +16,7 @@ use Illuminate\Mail\Mailables\Envelope;
  * V1 parity: sent from {groupnameshort}-volunteers@groups.ilovefreegle.org
  * (or the group's contactmail if set), with the mod's display name.
  */
-class ModStdMessageMail extends MjmlMailable
+class ModStdMessageMail extends MjmlMailable implements DescribesMemberContent
 {
     use TrackableEmail;
     use LoggableEmail;
@@ -83,5 +84,20 @@ class ModStdMessageMail extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->recipientUserId;
+    }
+
+    /**
+     * Names the post the standard message replies about and the poster it is addressed to
+     * (plan section 11.8); filter-spool removes this mail once that post is no longer
+     * Approved or the poster is now a spammer.
+     */
+    public function about(): array
+    {
+        return [
+            'chatmessages' => [],
+            'messages' => [$this->msgId],
+            'newsfeed' => [],
+            'users' => [$this->recipientUserId],
+        ];
     }
 }

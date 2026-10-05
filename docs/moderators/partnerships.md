@@ -154,6 +154,14 @@ Building one takes a few minutes, so it runs in the background:
 You do not have to keep the page open. If one council fails the others still come through,
 and the reason is shown against the job.
 
+## During a lockdown
+
+While Freegle is in a [lockdown](../ops/runbooks/lockdown.md), writes to a partnership
+(creating or editing a deal, recording an invoice, generating statistics) are refused for
+the Partnerships team. Support and Admin are exempt, so the team can still be helped
+with something urgent, but ordinary Partnerships access is read-only until the lockdown
+is lifted.
+
 ## Under the covers
 
 - Sponsor entries are written to `groups_sponsorship`, the same table the member site reads.

@@ -201,6 +201,7 @@ class TrystService
                 recipientUserId: $recipient->id,
                 recipientName: $recipient->displayname,
                 recipientEmail: $emailAddr,
+                otherUserId: $other->id,
             ));
 
             return $calendarLink;

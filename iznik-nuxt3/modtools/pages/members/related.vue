@@ -20,7 +20,11 @@
         <ModRelatedMember :memberid="member.id" @processed="bump++" />
       </div>
 
+      <!-- Not until the moderator is known: the layout renders pages before
+           sign-in has finished loading, and a fetch sent then goes without the
+           token and comes back 401. -->
       <infinite-loading
+        v-if="loggedIn"
         direction="top"
         :distance="distance"
         :identifier="bump"
@@ -42,8 +46,10 @@
 import { computed, onMounted, watch } from 'vue'
 import { setupModMembers } from '~/composables/useModMembers'
 import { useMemberStore } from '~/stores/member'
+import { useMe } from '~/composables/useMe'
 
 const memberStore = useMemberStore()
+const { loggedIn } = useMe()
 const { bump, collection, context, distance, groupid, show, loadMore } =
   setupModMembers(true)
 collection.value = 'Related'

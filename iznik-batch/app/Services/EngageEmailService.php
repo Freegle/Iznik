@@ -116,6 +116,19 @@ class EngageEmailService
                 continue;
             }
 
+            // Lockdown holds `email` (plan 2026-09-27-lockdown-switch.md, section 11.7):
+            // deliberately after every eligibility check above, for the same reason as the
+            // suppression check - a member who was never going to get this mail is not
+            // "deferred" by the hold. Skipped without recordAttempt(), so the `engage` table
+            // is not written and the RESEND_INTERVAL_DAYS clock does not start: once email
+            // resumes this member is picked up on the very next run as if nothing happened.
+            $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+            $lockdown->ack('mail-loops');
+            if ($lockdown->held('email')) {
+                $lockdown->count('deferred:engage');
+                continue;
+            }
+
             $mail = $this->chooseMail($engagement);
             if (!$mail) {
                 continue;

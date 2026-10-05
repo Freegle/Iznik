@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -375,6 +376,15 @@ func UpdateStory(c *fiber.Ctx) error {
 
 	if !canModStory(myid, req.ID) {
 		return fiber.NewError(fiber.StatusForbidden, "Permission denied")
+	}
+
+	// Section 11.3 of the lockdown plan: PATCH /story (an edit or a moderator's
+	// review) is refused outright while "events" is held - unlike communityevent
+	// and volunteering there is no approve-and-keep-draining exception here, because
+	// a story's review fields (Reviewed/Newsletterreviewed/Newsletter) are exactly
+	// what the plan means by "edits refused" for this endpoint.
+	if lockdown.GateMember(c, myid, "events") {
+		return nil
 	}
 
 	db := database.DBConn

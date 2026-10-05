@@ -6,6 +6,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -240,6 +241,10 @@ func PatchSpammer(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
+	if lockdown.GateMod(c, myid) {
+		return nil
+	}
+
 	type PatchRequest struct {
 		ID         uint64  `json:"id"`
 		Collection string  `json:"collection"`
@@ -367,6 +372,10 @@ func PatchSpammer(c *fiber.Ctx) error {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/spammers/export [get]
 func ExportSpammers(c *fiber.Ctx) error {
+	if lockdown.GateDownload(c) {
+		return nil
+	}
+
 	// Accept either partner key or moderator session.
 	partner := c.Query("partner", "")
 	if partner != "" {
@@ -426,6 +435,10 @@ func DeleteSpammer(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	if !user.IsAdminOrSupport(myid) && !auth.HasPermission(myid, auth.PERM_SPAM_ADMIN) {

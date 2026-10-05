@@ -97,9 +97,11 @@ async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
     `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
     { encoding: 'utf8', timeout: 300000 }
   )
+  // Migrating from empty replays every migration; on a loaded host that has measured over
+  // six minutes, so five minutes killed every run before a test started.
   execSync(
     `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
-    { encoding: 'utf8', timeout: 300000 }
+    { encoding: 'utf8', timeout: 900000 }
   )
   // Reload captured fixtures (replaces the retired V1 install/testenv.php seeding).
   execSync(
@@ -339,17 +341,19 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     // user-ratings) hang. We drive short run-once invocations from the (stable) status container
     // event loop rather than a long-lived detached process, which the batch PID 1 can reap. The
     // stale command-lock is cleared each tick (flock isn't reliably released on the bind mount).
+    // lockdown:tick runs on the same tick for the same reason: it writes the lockdown_holds
+    // rows the lockdown spec waits for, and is a no-op when no lockdown is active.
     let bgTasksBusy = false
     bgTasksInterval = setInterval(() => {
       if (bgTasksBusy) return
       bgTasksBusy = true
       exec(
-        `docker exec ${pfx}-batch sh -c "rm -f storage/framework/command-locks/App-Console-Commands-Chat-ProcessIncomingChatCommand.lock; php artisan chats:process-incoming"`,
+        `docker exec ${pfx}-batch sh -c "rm -f storage/framework/command-locks/App-Console-Commands-Chat-ProcessIncomingChatCommand.lock; php artisan chats:process-incoming; php artisan lockdown:tick"`,
         { timeout: 60000 },
         () => { bgTasksBusy = false }
       )
     }, 5000)
-    appendTestLogs('playwright', 'Started chats:process-incoming processor for the run\n')
+    appendTestLogs('playwright', 'Started chats:process-incoming and lockdown:tick for the run\n')
 
     // Start from the same clean database CI does. Without this the local database
     // drifts run by run and specs fail here that pass in CI.

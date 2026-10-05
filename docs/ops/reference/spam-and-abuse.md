@@ -236,6 +236,16 @@ See [`llm-modbot/RESULTS.md`](../../../llm-modbot/RESULTS.md) before proposing t
 The useful reading is that AI helps with formatting and spelling, and does not help with
 judgement.
 
+## Lockdown
+
+When a wave outruns the layers above, any Support user can press the lockdown switch.
+Members can still post, reply and chat, and it all looks sent, but it reaches nobody until
+a person lifts it; no member email or push goes out; moderators keep only the basic
+Approve button; downloads stop. The lockdown only holds: Support finds and deals with the
+accounts behind the wave with the existing tools, then lifts it area by area, and what was
+held goes through the usual checks. Pressing, checking it has taken effect, and lifting are
+in the [lockdown runbook](../runbooks/lockdown.md).
+
 ## Operational notes
 
 - Spam filtering is not the same problem as **deliverability**. If members are not

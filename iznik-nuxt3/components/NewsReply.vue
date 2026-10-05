@@ -32,7 +32,10 @@
         >
           <v-icon icon="trash" class="me-2" />Delete
         </b-dropdown-item>
-        <b-dropdown-item v-if="chitChatMod && !reply.hidden" @click="hideReply">
+        <b-dropdown-item
+          v-if="chitChatMod && !reply.hidden && !modsHeld"
+          @click="hideReply"
+        >
           <v-icon icon="eye-slash" class="me-2" />Hide
         </b-dropdown-item>
         <b-dropdown-item
@@ -335,6 +338,7 @@ import ProfileImage from '~/components/ProfileImage'
 import AutoHeightTextarea from '~/components/AutoHeightTextarea'
 import { timeago, timeagoShort } from '~/composables/useTimeFormat'
 import { useAuthStore } from '~/stores/auth'
+import { useLockdown } from '~/modtools/composables/useLockdown'
 
 const NewsPhotoModal = defineAsyncComponent(
   () => import('./NewsPhotoModal.vue')
@@ -394,6 +398,7 @@ const miscStore = useMiscStore()
 const authStore = useAuthStore()
 const me = computed(() => authStore.user)
 const myid = computed(() => me.value?.id)
+const { modsHeld } = useLockdown()
 
 const isMobile = computed(() => {
   return miscStore.breakpoint === 'xs' || miscStore.breakpoint === 'sm'
