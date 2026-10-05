@@ -137,7 +137,11 @@ and before the morning digest, outside the WhatJobs syncs, and tell whoever is o
 4. Take monit's hands off the rest: `monit unmonitor iznik-spatial-go iznik-routing-go mysqld
    mysql mysql_processes`. The spatial and routing servers can keep running; they log database
    errors for the duration and carry on, the spatial server reopens its indexes and the routing
-   server keeps its graph.
+   server keeps its graph. The routing container on the Docker host also reads reach
+   data from the write node, so the batch's ripple expansion pauses while that node is down and
+   resumes by itself (Sentry shows "reach evaluation unavailable" from the batch meanwhile); it
+   is not member-visible, and repointing that container costs a five-minute graph rebuild each
+   way, so for a stop of minutes the pause is the better trade.
 5. Stop the database cleanly: `systemctl stop mysql`, or `mysqladmin shutdown` for a node that
    was started by hand. Wait until `pgrep -x mysqld` prints nothing. Never `kill -9`.
 6. If the stop is for the cache: delete `galera.cache` and `gcache.page.*` from the data
