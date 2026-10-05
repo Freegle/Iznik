@@ -145,7 +145,11 @@ and before the morning digest, outside the WhatJobs syncs, and tell whoever is o
    Nothing else in the data directory is touched.
 7. `systemctl start mysql`. Watch `journalctl -fu mysql` and the node's error log for the IST
    and "ready for connections", then confirm `wsrep_local_state_comment` Synced and cluster
-   size 3. The node is now under the ordinary unit even if it was hand-started before.
+   size 3. The node is now under the ordinary unit even if it was hand-started before. If the
+   first start ends within seconds with "Receiving IST failed, node restart required: IST started
+   with wrong seqno" and the unit failed, the saved position and the bypass handshake disagreed by
+   a few seqnos; `systemctl reset-failed mysql` and `systemctl start mysql` again recovers the
+   position from InnoDB and the IST then succeeds. One retry, not a wipe.
 8. Give the services back: `monit monitor mysqld mysql mysql_processes iznik-spatial-go
    iznik-routing-go iznik-server-go`; monit starts the API from the node's `.env`. Verify by
    hand rather than by monit: the API answers `/api/group` with 200 on its port, the routing
@@ -153,9 +157,14 @@ and before the morning digest, outside the WhatJobs syncs, and tell whoever is o
    dead routing server as OK, the spatial server answers `/health`, the API log has no panics
    or "Error 1" lines since the start, and `monit summary` shows every service OK and none
    "Not monitored".
-9. Move the application back by reversing step 2, unless the cycle is also a role swap. The
-   load balancer needs nothing: the node returns as its health check passes, and sticky clients
-   drift back over the next half hour.
+9. Move the batch's writes or reads back (the recreate from step 2), but do not touch the
+   other node's API yet.
+10. Give the API on the node back to monit (`monit monitor iznik-server-go`), confirm 200 on
+   its port and the boot line naming the right database, and wait for the load balancer to show
+   it UP. Only now restart the other node's API to move its writes or reads back: with this
+   node's API still drained, that restart leaves the load balancer with no API server for about
+   15 seconds, and it answers 503 itself, which no API log shows. Sticky clients drift back over
+   the next half hour.
 
 Then the other node, from step 1. A full cycle of both nodes is two short stops of the write
 node's duty rather than one, because the roles are swapped across for the second half; keep the
