@@ -56,6 +56,7 @@
               title="#ReuseEveryday"
               image="/NRD/ReuseEveryday.png"
               description="Easy ways to #ReuseEveryday."
+              url="https://docs.google.com/document/d/1hqYmqLhWYR11NVyhn5nHMm2eIoCZtAeMslqhjMwPej4/edit?usp=sharing"
               colour="orange"
             />
             <NationalReuseDayBox
