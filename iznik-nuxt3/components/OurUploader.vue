@@ -268,9 +268,16 @@ const emit = defineEmits(['update:modelValue', 'closed', 'photoProcessed'])
 const uploadedPhotos = ref([])
 const busy = ref(false)
 
+const isApp = ref(mobileStore.isApp) // APP
+
+// In the app the first button opens the camera and the second the photo gallery, so say so,
+// matching the source choice in PhotoUploader. On the web the one button opens a picker that
+// offers both.
 const label = computed(() => {
   if (props.label) {
-    return label
+    return props.label
+  } else if (isApp.value) {
+    return 'Take photo'
   } else if (props.multiple) {
     return 'Add photos'
   } else {
@@ -278,17 +285,7 @@ const label = computed(() => {
   }
 })
 
-const isApp = ref(mobileStore.isApp) // APP
-
-const chooselabel = computed(() => {
-  if (props.label) {
-    return label
-  } else if (props.multiple) {
-    return props.modelValue.length > 0 ? 'Choose more photos' : 'Choose photos'
-  } else {
-    return 'Choose photo'
-  }
-})
+const chooselabel = 'Choose from gallery'
 
 let uppy = null
 
