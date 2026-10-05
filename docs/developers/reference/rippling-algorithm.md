@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-02
+last_reviewed: 2026-10-05
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -867,7 +867,8 @@ one: soft-deleted, a Message/Deleted log to that group, and the poster's ripple-
 (`rippled = 1`) removed when they have no other live post there, with no Group/Left. The post is
 then recorded in `rippling_blocked` (one row per post), and the home copies go to Pending as
 before. Back to pending from a receiving community's moderator, or the member-report quorum
-(`SendForReviewAllGroups`), withdraws nothing.
+(`SendForReviewAllGroups`), withdraws nothing. `SendForReviewAllGroups` moves only live copies (Approved, not
+deleted) to Pending, so a withdrawn copy stays withdrawn and gets no Hold log.
 
 `initialiseNew` never starts a reach for a post in `rippling_blocked`. That is what makes the
 block durable: the frozen reach row already stops expansion and every read path, but a repost

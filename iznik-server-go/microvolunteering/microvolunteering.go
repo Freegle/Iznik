@@ -882,7 +882,8 @@ func ModFeedback(c *fiber.Ctx) error {
 // currently live (Approved) on - its home group AND any rippled-out copies. Used once
 // the aggregate review quorum is reached (from in-app CheckMessage checks or website
 // reports) or on a moderator Back to Pending, so every affected community's moderators
-// see the post. Only Approved rows are touched. Exported so the moderation path reuses it.
+// see the post. Only live (Approved, not deleted) rows are touched: a copy withdrawn from its
+// community stays withdrawn. Exported so the moderation path reuses it.
 //
 // Every group whose copy is pulled back gets a Message/Hold log row carrying the reason,
 // so its moderators can see why a post they may never have looked at is in their queue
@@ -905,13 +906,13 @@ func SendForReviewAllGroupsWithRippledReason(db *gorm.DB, msgid uint64, reason s
 
 	var flipped []uint64
 	db.Table("messages_groups").Select("groupid").
-		Where("msgid = ? AND collection = ?", msgid, utils.COLLECTION_APPROVED).
+		Where("msgid = ? AND collection = ? AND deleted = 0", msgid, utils.COLLECTION_APPROVED).
 		Scan(&flipped)
 	if len(flipped) == 0 {
 		return nil
 	}
 
-	db.Table("messages_groups").Where("msgid = ? AND collection = ?", msgid, utils.COLLECTION_APPROVED).
+	db.Table("messages_groups").Where("msgid = ? AND collection = ? AND deleted = 0", msgid, utils.COLLECTION_APPROVED).
 		Updates(map[string]interface{}{"collection": utils.COLLECTION_PENDING, "spamreason": reason})
 
 	var rippledGroups []uint64
