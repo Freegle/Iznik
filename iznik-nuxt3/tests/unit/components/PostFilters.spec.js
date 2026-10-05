@@ -717,7 +717,8 @@ describe('PostFilters', () => {
         mockMe.value.settings.browseView,
         mockMe.value.settings.browseMaxDistance,
         false,
-        'Wanted'
+        'Wanted',
+        mockMe.value.settings.browseGroup
       )
     })
   })
@@ -746,6 +747,22 @@ describe('PostFilters', () => {
         }),
       })
       expect(wrapper.emitted('update:selectedGroup')[0]).toEqual([1])
+    })
+
+    it('refetches the badge count for the community after picking one', async () => {
+      const wrapper = createWrapper({ forceShowFilters: true })
+      mockMessageStore.fetchCount.mockClear()
+
+      pickGroup(wrapper, 1)
+      await flushPromises()
+
+      expect(mockMessageStore.fetchCount).toHaveBeenCalledWith(
+        mockMe.value.settings.browseView,
+        mockMe.value.settings.browseMaxDistance,
+        false,
+        mockMe.value.settings.browseType,
+        1
+      )
     })
 
     it('opens on the community the page restored, not on Nearby', () => {

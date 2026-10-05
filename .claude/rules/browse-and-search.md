@@ -53,13 +53,18 @@ telling the member different things, by construction.
 
 If you change one, change both, or confirm in the code which readers you have actually touched.
 
-## The Offer/Wanted filter is client-side, so the badge has to apply it itself
+## The Browse filters are client-side, so the badge has to apply them itself
 
-The feed returns both types and the Browse page filters them in the browser. The count is the
-one reader that cannot do that, so `Count` narrows by `ms.msgtype` (`onlyType` in
-`isochrone/message.go`), from `?type=` or else `settings.browseType`. Any new count path must
-call it, and anything cached by question (`browsecount`) must key on the type, or a member who
-switches filter is handed the other filter's number.
+The feed returns both post types and every community, and the Browse page narrows them in the
+browser: "Just OFFERs/WANTEDs" and "Show posts from" one community. The count is the one reader
+that cannot do that, so `Count` narrows with `narrow` in `isochrone/message.go`: `ms.msgtype`
+from `?type=` or else `settings.browseType`, and `ms.groupid` from `?groupid=` (0 means none) or
+else `settings.browseGroup`. The community is matched on `ms.groupid` because that is the
+groupid the feed sends and the browser compares, so a post that rippled in from elsewhere is
+not counted under it, as in the list. A saved community the member has left is ignored, as the
+browser ignores it. Any new count path must call `narrow`, and anything cached by question
+(`browsecount.Filter`) must key on both, or a member who switches filter is handed the other
+filter's number.
 
 ## Stacking: what is above what
 

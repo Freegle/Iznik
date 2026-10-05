@@ -32,14 +32,22 @@ const TTL = 30 * time.Second
 // is generous for the live population.
 const maxEntries = 20000
 
+// Filter is the Browse page's own narrowing of the feed: one post type (Offer or Wanted, ""
+// for both) and one community (0 for all). The badge counts what the list shows, so it
+// has to be part of the question.
+type Filter struct {
+	Type  string
+	Group uint64
+}
+
 // An entry is only reused for the same question. A viewer who moves the distance slider
-// (miles or its drive-minutes budget), changes the Offer/Wanted filter, or switches between "nearby" and "my communities"
+// (miles or its drive-minutes budget), changes the Offer/Wanted or community filter, or switches between "nearby" and "my communities"
 // is asking a different one.
 type entry struct {
 	browseView  string
 	maxDistance float64
 	maxMinutes  float64
-	msgType     string
+	filter      Filter
 	count       uint64
 	expires     time.Time
 }
@@ -50,7 +58,7 @@ var (
 )
 
 // Get returns a remembered count for this viewer and question, if there is a live one.
-func Get(myid uint64, browseView string, maxDistance float64, maxMinutes float64, msgType string) (uint64, bool) {
+func Get(myid uint64, browseView string, maxDistance float64, maxMinutes float64, filter Filter) (uint64, bool) {
 	if myid == 0 {
 		return 0, false
 	}
@@ -59,7 +67,7 @@ func Get(myid uint64, browseView string, maxDistance float64, maxMinutes float64
 	defer mu.Unlock()
 
 	e, ok := cache[myid]
-	if !ok || e.browseView != browseView || e.maxDistance != maxDistance || e.maxMinutes != maxMinutes || e.msgType != msgType {
+	if !ok || e.browseView != browseView || e.maxDistance != maxDistance || e.maxMinutes != maxMinutes || e.filter != filter {
 		return 0, false
 	}
 	if !time.Now().Before(e.expires) {
@@ -71,7 +79,7 @@ func Get(myid uint64, browseView string, maxDistance float64, maxMinutes float64
 }
 
 // Put remembers a count for this viewer.
-func Put(myid uint64, browseView string, maxDistance float64, maxMinutes float64, msgType string, count uint64) {
+func Put(myid uint64, browseView string, maxDistance float64, maxMinutes float64, filter Filter, count uint64) {
 	if myid == 0 {
 		return
 	}
@@ -94,7 +102,7 @@ func Put(myid uint64, browseView string, maxDistance float64, maxMinutes float64
 		browseView:  browseView,
 		maxDistance: maxDistance,
 		maxMinutes:  maxMinutes,
-		msgType:     msgType,
+		filter:      filter,
 		count:       count,
 		expires:     time.Now().Add(TTL),
 	}

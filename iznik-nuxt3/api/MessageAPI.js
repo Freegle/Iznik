@@ -339,7 +339,7 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
-  async count(browseView, maxDistance, log, browseType) {
+  async count(browseView, maxDistance, log, browseType, browseGroup) {
     const params = {
       browseView,
     }
@@ -357,6 +357,10 @@ export default class MessageAPI extends BaseAPI {
     if (browseType) {
       params.type = browseType
     }
+
+    // Likewise "Show posts from" naming one community. Always sent, 0 meaning no community,
+    // so an explicit choice of "all" beats a stale saved one.
+    params.groupid = parseInt(browseGroup) > 0 ? parseInt(browseGroup) : 0
 
     return await this.$getv2('/message/count', params, log)
   }

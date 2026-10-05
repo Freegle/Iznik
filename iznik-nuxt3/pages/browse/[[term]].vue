@@ -491,7 +491,8 @@ async function handleScroll() {
       me.value.settings?.browseView,
       me.value.settings?.browseMaxDistance,
       false,
-      me.value.settings?.browseType
+      me.value.settings?.browseType,
+      me.value.settings?.browseGroup
     )
     updatingCount.value = false
   }
