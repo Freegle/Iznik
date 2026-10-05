@@ -416,6 +416,31 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
+     * A post its home community sent back to pending is recorded in rippling_blocked and never
+     * gets a reach again, even though it is live and has no reach row (as after a repost or an
+     * expiry) - Discourse 9808/849.
+     */
+    public function test_blocked_post_never_starts_a_reach(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        DB::table('rippling_blocked')->insert([
+            'msgid' => $msgid,
+            'reason' => 'home sent back to pending',
+        ]);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['initialized']);
+        $this->assertNull(DB::table('rippling_reach')->where('msgid', $msgid)->first());
+
+        // Unblocked, the same post ripples: the block is the only thing stopping it.
+        DB::table('rippling_blocked')->where('msgid', $msgid)->delete();
+        $stats = $this->service()->process(false, 500);
+        $this->assertSame(1, $stats['initialized']);
+    }
+
+    /**
      * BUG FIX: blurOrigin can snap a post's origin onto a DISCONNECTED routing node (a driveway
      * stub / isolated segment) whose drive-isochrone reaches almost nothing, so the blurred origin
      * returns an EMPTY schedule and the post is skipped on EVERY run. Because the blur is

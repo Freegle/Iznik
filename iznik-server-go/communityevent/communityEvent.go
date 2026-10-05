@@ -3,6 +3,7 @@ package communityevent
 import (
 	"errors"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/newsfeed"
 	"github.com/freegle/iznik-server-go/queue"
@@ -325,6 +326,10 @@ func Create(c *fiber.Ctx) error {
 	if err := db.Table("communityevents").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create community event")
 	}
+	// New events always wait for approval; while events are held this one is also counted.
+	if lockdown.Held("events") {
+		lockdown.Count("held:events")
+	}
 	idInt, _ := row["@id"].(int64)
 	id := uint64(idInt)
 
@@ -421,6 +426,28 @@ func Update(c *fiber.Ctx) error {
 		if holder, name := eventHeldByAnother(db, req.ID, myid); holder != 0 {
 			return heldByAnotherResponse(c, holder, name)
 		}
+	}
+
+	// Section 11.3 of the lockdown plan: PATCH /communityevent is refused while
+	// "events" is held, except a moderator approving it out of moderation - setting
+	// Pending to false and nothing else in the same call - which stays allowed so the
+	// review queue keeps draining, the same shape as Approve elsewhere in the plan.
+	//
+	// isApprove is only a body-shape check, so it must never grant the fast path by
+	// itself: canModify above lets the event's own owner through this same code path,
+	// and without a role check here that owner could send the bare approve body and
+	// self-publish their own held event (review finding 3). Only a moderator of the
+	// event's group, or Support/Admin, gets the fast path; everyone else still needs
+	// isApprove to be false to even reach GateMember, so an owner's approve attempt is
+	// refused exactly as any other edit is.
+	isApprove := req.Pending != nil && !*req.Pending && req.Action == "" &&
+		req.Title == nil && req.Location == nil && req.Contactname == nil &&
+		req.Contactphone == nil && req.Contactemail == nil && req.Contacturl == nil &&
+		req.Description == nil
+	if isApprove && isModerator(myid, req.ID) {
+		lockdown.CountApproval(myid)
+	} else if lockdown.GateMember(c, myid, "events") {
+		return nil
 	}
 
 	// Update settable attributes

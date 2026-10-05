@@ -55,12 +55,19 @@ export const useMessageStore = defineStore('message', {
       // ModTools context
       this.context = null
     },
-    async fetchCount(browseView, maxDistance, log = true, browseType) {
+    async fetchCount(
+      browseView,
+      maxDistance,
+      log = true,
+      browseType,
+      browseGroup
+    ) {
       const ret = await api(this.config).message.count(
         browseView,
         maxDistance,
         log,
-        browseType
+        browseType,
+        browseGroup
       )
       this.count = ret?.count || 0
       return this.count
@@ -630,7 +637,8 @@ export const useMessageStore = defineStore('message', {
         settings?.browseView,
         settings?.browseMaxDistance,
         true,
-        settings?.browseType
+        settings?.browseType,
+        settings?.browseGroup
       )
     },
     // Mark the hidden crosspost/repost copies of an already-shown post as seen. The browse

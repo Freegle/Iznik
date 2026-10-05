@@ -27,25 +27,20 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     {
         parent::setUp();
 
-        // Ensure the background_tasks table exists in the test database.
-        DB::statement('CREATE TABLE IF NOT EXISTS background_tasks (
-            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            task_type VARCHAR(50) NOT NULL,
-            data JSON NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            processed_at TIMESTAMP NULL,
-            failed_at TIMESTAMP NULL,
-            error_message TEXT NULL,
-            attempts INT UNSIGNED DEFAULT 0,
-            INDEX idx_task_type (task_type),
-            INDEX idx_pending (processed_at, created_at)
-        )');
+        // background_tasks is created by migration 2026_02_09_120000_create_background_tasks_table;
+        // it is not created here. A CREATE TABLE run after parent::setUp() is DDL, which MySQL
+        // implicitly commits - that silently ends DatabaseTransactions' rollback-able transaction
+        // for the rest of the test, so every write this class makes would otherwise leak into
+        // later tests (in this class and beyond) uncommitted-turned-committed. See the same note
+        // in ProcessBackgroundTasksCommandLockdownTest, whose setUp/tearDown this mirrors.
+        DB::table('background_tasks')->delete();
     }
 
     protected function tearDown(): void
     {
-        // Clean up any tasks created during tests.
-        DB::table('background_tasks')->truncate();
+        // delete(), not truncate(): TRUNCATE is DDL and MySQL implicitly commits on DDL, which
+        // would end DatabaseTransactions' transaction before parent::tearDown() rolls it back.
+        DB::table('background_tasks')->delete();
         parent::tearDown();
     }
 

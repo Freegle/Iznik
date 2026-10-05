@@ -12,6 +12,11 @@ never the thing they point at.
 
 ## A moderator sees nothing, and the data is fine
 
+- **A pending post the content check has not reached.** The pending list only shows a Pending
+  post once `messages_groups.contentcheck_checked_at` is set, or after 30 minutes
+  (`message_list.go`). Anything that makes `messages:contentcheck` skip a post hides it from
+  moderators for that half hour, with no error. The lockdown hit this: skipping held posts meant
+  the moderators who could still approve them could not see them. Check without acting instead.
 - **Email history for a member in no communities.** The endpoint is gated on the moderator and
   the member sharing an active membership, so a member who has left everything returns a refusal
   and the tab looks empty. The emails were in the log the whole time. Support reports this as

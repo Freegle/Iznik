@@ -2,6 +2,7 @@
 
 namespace App\Mail\Admin;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
@@ -9,12 +10,14 @@ use App\Models\User;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-class AdminMail extends MjmlMailable
+class AdminMail extends MjmlMailable implements DescribesMemberContent
 {
     use LoggableEmail;
     use TrackableEmail;
 
     public User $user;
+
+    public ?int $adminId;
 
     public string $adminSubject;
 
@@ -75,6 +78,8 @@ class AdminMail extends MjmlMailable
         // Marketing opt-out shown for non-essential admins.
         $this->marketingOptOutUrl = !$this->essential ? $user->marketingOptOutUrl() : null;
 
+        $this->adminId = isset($admin['id']) ? (int) $admin['id'] : null;
+
         // Initialize email tracking.
         $this->initTracking(
             'Admin',
@@ -88,6 +93,21 @@ class AdminMail extends MjmlMailable
                 'essential' => $this->essential,
             ]
         );
+    }
+
+    /**
+     * Which admin this is, so lockdown:filter-spool can drop it from the send queue if the
+     * admin has been withdrawn (plan 2026-09-27-lockdown-switch.md section 11.11).
+     */
+    public function about(): array
+    {
+        return [
+            'chatmessages' => [],
+            'messages' => [],
+            'newsfeed' => [],
+            'users' => [],
+            'admins' => $this->adminId ? [$this->adminId] : [],
+        ];
     }
 
     /**

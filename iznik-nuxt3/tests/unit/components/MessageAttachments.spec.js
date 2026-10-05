@@ -116,6 +116,16 @@ describe('MessageAttachments', () => {
       const wrapper = createWrapper({ attachments: [] })
       expect(wrapper.find('.b-img').exists()).toBe(true)
     })
+
+    it('shows default camera image for a masked AI picture with no path', () => {
+      const wrapper = createWrapper({
+        attachments: [{ id: 5, path: '', paththumb: '', ouruid: '' }],
+      })
+      expect(wrapper.find('.b-img').attributes('src')).toBe('/camera.png')
+      expect(wrapper.find('.proxy-image').exists()).toBe(false)
+      expect(wrapper.find('.our-uploaded-image').exists()).toBe(false)
+      expect(wrapper.find('.photozoom').exists()).toBe(false)
+    })
   })
 
   describe('photo badge', () => {

@@ -126,9 +126,10 @@ and before the morning digest, outside the WhatJobs syncs, and tell whoever is o
    queued, so wait for the pid to change), then set `DB_HOST_READ_IP` and recreate batch-prod.
    For the write node, the same with `MYSQL_HOST` and `DB_HOST_IP`. Recreating batch-prod while
    `ripple:expand` is running leaves its lock held; clear it afterwards or the job skips until
-   the lock expires. The cheap alternative is to skip this step: reads (or writes) then fail for
-   the few minutes the database is down and resume by themselves. For the write node that is a
-   two to three minute write outage; for the read node every read fails, so do not skip it there.
+   the lock expires. This step is not optional: nothing fails over by itself (the Go API falls back from the
+   read replica to the write host only, the batch has one write host, the load balancer carries no
+   MySQL backend), so skipping it means every write, or every read, fails for as long as the
+   database is down.
 3. Drain the API on the node: `monit unmonitor iznik-server-go`, then
    `killall -SIGQUIT iznik-server-go`. The load balancer's health check marks the node down
    within seconds and sticky clients move. On the active node this sends all API traffic to the
@@ -136,7 +137,11 @@ and before the morning digest, outside the WhatJobs syncs, and tell whoever is o
 4. Take monit's hands off the rest: `monit unmonitor iznik-spatial-go iznik-routing-go mysqld
    mysql mysql_processes`. The spatial and routing servers can keep running; they log database
    errors for the duration and carry on, the spatial server reopens its indexes and the routing
-   server keeps its graph.
+   server keeps its graph. The routing container on the Docker host also reads reach
+   data from the write node, so the batch's ripple expansion pauses while that node is down and
+   resumes by itself (Sentry shows "reach evaluation unavailable" from the batch meanwhile); it
+   is not member-visible, and repointing that container costs a five-minute graph rebuild each
+   way, so for a stop of minutes the pause is the better trade.
 5. Stop the database cleanly: `systemctl stop mysql`, or `mysqladmin shutdown` for a node that
    was started by hand. Wait until `pgrep -x mysqld` prints nothing. Never `kill -9`.
 6. If the stop is for the cache: delete `galera.cache` and `gcache.page.*` from the data
@@ -144,7 +149,11 @@ and before the morning digest, outside the WhatJobs syncs, and tell whoever is o
    Nothing else in the data directory is touched.
 7. `systemctl start mysql`. Watch `journalctl -fu mysql` and the node's error log for the IST
    and "ready for connections", then confirm `wsrep_local_state_comment` Synced and cluster
-   size 3. The node is now under the ordinary unit even if it was hand-started before.
+   size 3. The node is now under the ordinary unit even if it was hand-started before. If the
+   first start ends within seconds with "Receiving IST failed, node restart required: IST started
+   with wrong seqno" and the unit failed, the saved position and the bypass handshake disagreed by
+   a few seqnos; `systemctl reset-failed mysql` and `systemctl start mysql` again recovers the
+   position from InnoDB and the IST then succeeds. One retry, not a wipe.
 8. Give the services back: `monit monitor mysqld mysql mysql_processes iznik-spatial-go
    iznik-routing-go iznik-server-go`; monit starts the API from the node's `.env`. Verify by
    hand rather than by monit: the API answers `/api/group` with 200 on its port, the routing
@@ -152,9 +161,14 @@ and before the morning digest, outside the WhatJobs syncs, and tell whoever is o
    dead routing server as OK, the spatial server answers `/health`, the API log has no panics
    or "Error 1" lines since the start, and `monit summary` shows every service OK and none
    "Not monitored".
-9. Move the application back by reversing step 2, unless the cycle is also a role swap. The
-   load balancer needs nothing: the node returns as its health check passes, and sticky clients
-   drift back over the next half hour.
+9. Move the batch's writes or reads back (the recreate from step 2), but do not touch the
+   other node's API yet.
+10. Give the API on the node back to monit (`monit monitor iznik-server-go`), confirm 200 on
+   its port and the boot line naming the right database, and wait for the load balancer to show
+   it UP. Only now restart the other node's API to move its writes or reads back: with this
+   node's API still drained, that restart leaves the load balancer with no API server for about
+   15 seconds, and it answers 503 itself, which no API log shows. Sticky clients drift back over
+   the next half hour.
 
 Then the other node, from step 1. A full cycle of both nodes is two short stops of the write
 node's duty rather than one, because the roles are swapped across for the second half; keep the
@@ -190,10 +204,11 @@ directories have been removed.
 
 ## The write-set cache after the node has served an SST
 
-A node that has just been the donor for an SST can stop purging its write-set cache. The ring
-buffer fills at the write rate and from then on every write-set goes into a 128 MB
-`gcache.page.NNNNNN` file in the data directory that is never deleted, whatever
-`gcache.keep_pages_count` says. The node keeps serving and stays Synced; the only symptom is
+A node can stop reusing its write-set cache: one buffer in the ring that is never released pins
+the ring tail, so every later write-set goes into a 128 MB `gcache.page.NNNNNN` file in the data
+directory, and because Galera only ever deletes the oldest page, and only once nothing in it is
+live, no page is deleted either, whatever `gcache.keep_pages_count` says. It has been seen on the
+write node after an SST and an arbitrator eviction in the same evening. The node keeps serving and stays Synced; the only symptom is
 its disk filling at the cluster's write rate, about 12 GB a day, while the other data node's
 disk is flat. The current Percona version (8.0.46) does this even though its release notes
 list PXC-4495, the known form of the bug, as fixed; report a fresh case to Percona with the
@@ -209,15 +224,21 @@ mysql -e "SHOW STATUS LIKE 'wsrep_local_cached_downto'; SHOW STATUS LIKE 'wsrep_
 run the second command twice a few minutes apart. Healthy: no page files, or a handful that
 come and go, and `wsrep_local_cached_downto` moving. Frozen: the same `cached_downto` at every
 reading while `last_committed` climbs, and a new page file every 10 to 20 minutes. The error
-log shows each one as "Created page ... gcache.page.NNNNNN". Nothing in the log says why.
+log shows each one as "Created page ... gcache.page.NNNNNN" and never "Deleted page". The
+sharpest sign is in the process: one thread of `mysqld` named `galera_recv-0` with hours of CPU
+(`for t in /proc/0 0pgrep -o -x mysqld)/task/*; do echo "0 0cat /comm) 0 0awk '{print (+)/100}' /stat)"; done | sort -k2 -rn | head`)
+and one such thread per page file behind it with none. That is the page-removal thread spinning
+on a buffer it cannot discard, with every later removal thread waiting on it; it also costs the
+node a full core for as long as it runs.
 
-**Cure.** There is no runtime fix. Stop the node cleanly, delete `galera.cache` and
-`gcache.page.*` from the data directory, and start it; it rebuilds an empty cache and rejoins
+**Cure.** There is no runtime fix. Stop the node cleanly, move `galera.cache` and the oldest
+`gcache.page.*` file aside for the bug report (the leaked buffer is in them) and delete the rest,
+then start it; it rebuilds an empty cache and rejoins
 by IST as long as the other data node's cache still covers the stop (2 GB is about 3.5 hours).
 Deleting those two things is the one case where removing files from the data directory is
 right; leave everything else. The application funnels writes to one node, so if that node is
-the one being restarted, writes fail until it is back unless they are moved first. The cycling
-recipe above gives the order for the services on the node and for moving writes.
+the one being restarted, move writes to the other node first. The cycling recipe above gives the
+order for the services on the node and for moving writes; it is the only acceptable way.
 
 **Keeping it rare.** The leak needs an SST, so the measures that avoid SSTs avoid it: the
 16 GB cache in the hosting plan, clean stops, and never wiping a data directory to make a

@@ -31,9 +31,8 @@ class ObjectStore
     /**
      * The object's length, or null when the store has no such key. Any other
      * failure (credentials, a 5xx, no answer) is ObjectStoreUnavailable: it
-     * must never read as "not there", or the migrator would count a broken
-     * store as work to do and verify would report a healthy store as missing
-     * everything.
+     * must never read as "not there", or a caller would treat a broken
+     * store as a missing object.
      */
     public function sizeOf(string $key): ?int
     {

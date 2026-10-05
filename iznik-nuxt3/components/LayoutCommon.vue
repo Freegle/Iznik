@@ -1,6 +1,9 @@
 <template>
   <div>
     <main class="ml-0 ps-0 pe-0 pageContent">
+      <client-only>
+        <LockdownNotice />
+      </client-only>
       <div
         class="aboveSticky"
         :class="{
@@ -167,6 +170,9 @@ const BouncingEmail = defineAsyncComponent(
 )
 const MailDelayed = defineAsyncComponent(
   () => import('~/components/MailDelayed')
+)
+const LockdownNotice = defineAsyncComponent(
+  () => import('~/components/LockdownNotice')
 )
 const BreakpointFettler = defineAsyncComponent(
   () => import('~/components/BreakpointFettler')

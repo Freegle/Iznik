@@ -8,6 +8,7 @@ use App\Mail\Welcome\WelcomeMail;
 use App\Models\BatchEmailProgress;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
+use App\Services\Lockdown\LockdownService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -62,6 +63,16 @@ class SendPendingWelcomeMailsCommand extends Command
         // Check if Welcome emails are enabled for this batch system.
         if (! self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
             $this->info("Welcome emails are not enabled in iznik-batch. Set FREEGLE_MAIL_ENABLED_TYPES in .env to include 'Welcome'.");
+
+            return Command::SUCCESS;
+        }
+
+        // Welcome mail is not on the lockdown allowlist (11.4) - a member mid
+        // signup still gets their verification/sign-in mail via the queue
+        // handlers above, but the separate welcome message waits until the
+        // lockdown lifts rather than being generated and then held in spool.
+        if (app(LockdownService::class)->held('email')) {
+            $this->info('Email is held by an active lockdown. Skipping welcome mail run.');
 
             return Command::SUCCESS;
         }

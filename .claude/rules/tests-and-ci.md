@@ -43,6 +43,14 @@ test, both invisible in CI.
 
 ## A green run that did not finish
 
+- **The status API reports the last run's result while a new one starts.** For the first
+  minute or so after a POST, `/api/tests/<suite>/status` can still say `completed` with the
+  previous run's message and logs, and it can flip back to that between polls. A poll loop that
+  stops on the first non-`running` answer reports a run that has not happened. The Playwright
+  container's `/app/test-results/junit.xml` is no better on its own: a restart can bring back
+  an old one for a moment before the runner deletes it. Believe a Playwright result only from a
+  `junit.xml` written after you started the run whose `tests=` count matches the run you
+  asked for.
 - **Vitest through the status API.** A run that dies partway still reports
   `status=completed` with "All tests passed (N passed)". Always check that
   `progress.completed` equals `progress.total` before believing it.
@@ -138,6 +146,14 @@ genuinely on different lines.
 - **`status-nuxt` has no lockfile**, so its image re-resolves dependencies on every build and is
   at the mercy of whatever the base image's package manager does with the peer graph. A build
   that worked yesterday can fail today with nothing changed on our side.
+- **A passing Playwright run deletes every PNG at the top of `SCREENSHOTS_DIR`.** `fixtures.js`
+  has a global `afterAll` that calls `cleanupScreenshots()` when the run exits clean, so images
+  a spec writes there with `page.screenshot({ path })` vanish seconds after they are logged as
+  written. Write images you want to keep into a subdirectory, which the cleanup does not read,
+  or attach them with `testInfo.attach`.
+- **A spec that presses the lockdown holds every other spec's writes.** Keep it in the
+  `lockdown` project, which runs as the teardown of `lockdown-order` after every other project
+  has finished, and out of the `chromium` project's match.
 
 ## CI failures that are about the build, not the branch
 

@@ -518,6 +518,7 @@ describe('message store - markSeen()', () => {
           browseView: 'mygroups',
           browseMaxDistance: 10,
           browseType: 'Wanted',
+          browseGroup: 7,
         },
       },
     })
@@ -531,7 +532,13 @@ describe('message store - markSeen()', () => {
     // must be recomputed for the member's actual view, else a mygroups/slider member sees a
     // different view's number and it never drops to zero. Likewise the Offer/Wanted filter:
     // the feed shows one type, so the badge must count that type.
-    expect(mockCount).toHaveBeenCalledWith('mygroups', 10, true, 'Wanted')
+    expect(mockCount).toHaveBeenCalledWith(
+      'mygroups',
+      10,
+      true,
+      'Wanted',
+      7
+    )
   })
 })
 
