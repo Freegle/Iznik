@@ -219,9 +219,8 @@ because of that hour. A 401 or 403 from the bucket is that incident again: check
 bucket's public-read setting and the key in the provider console before anything else.
 
 `php artisan images:object-store-check` reads a probe back anonymously at the public URL
-and is the only thing that proves the bucket is public. Run it before enabling
-`IMAGE_STORE_ENABLED` and after any change to the bucket or its keys
-(`docs/ops/runbooks/images-to-object-storage.md`).
+and is the only thing that proves the bucket is public. Run it after any change to the
+bucket or its keys (`docs/ops/runbooks/images-to-object-storage.md`).
 
 The same file is an envsubst template. Only `${IMAGE_STORE_*}` is substituted, because
 compose sets `NGINX_ENVSUBST_FILTER`; without the filter every nginx `$variable` is
