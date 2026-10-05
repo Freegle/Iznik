@@ -126,9 +126,9 @@ server refuses it from anywhere else. A rippled-in copy
 can also arrive Pending because it breaks your own keyword or worry-word rules, with the
 reason shown on the post. The whole picture is in [rippling out](rippling-out.md).
 
-If the post's **home** community sends it back to pending, your rippled-in copy shows a
-notice that the home community is reviewing it, and there is no Approve button until they
-approve theirs. You can still reject or hold your copy.
+If the post's **home** community sends it back to pending, the post is withdrawn from your
+community and never ripples to you again, even if they approve it. There is nothing for you to
+do: it does not arrive in your pending list.
 
 ### Safeguarding flags
 
@@ -206,9 +206,12 @@ network-wide:
   and stops rippling while under review. Each community's moderators then decide on their
   own copy.
 - **A moderator reporting**, or moving a post **Back to Pending** in ModTools, counts on
-  its own - no quorum needed - and pulls the post to Pending everywhere it has reached.
+  its own - no quorum needed - and pulls the post to Pending everywhere it has reached. The
+  exception is a moderator of the post's **home** community moving it back to pending: that
+  withdraws it from every community it rippled into instead, and it never ripples again.
 
-A copy moved **Back to Pending** waits for a moderator of that community. Nothing approves it
+A copy moved **Back to Pending** (other than by the home community) waits for a moderator of
+that community. Nothing approves it
 automatically: not the content check, not the auto-approval for posts that rippled in, and not
 the post being approved again on its home community. Approve or reject it as you would any
 other pending post.

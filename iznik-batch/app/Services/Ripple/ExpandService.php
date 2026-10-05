@@ -1243,6 +1243,9 @@ class ExpandService
             ? ''
             : ' AND (ms.groupid IS NULL OR ms.groupid NOT IN (' . implode(',', $outOptOut) . '))';
 
+        // A post its home community has sent back to pending never ripples again
+        // (rippling_blocked, written by the API's Back to pending): not on re-approval, and not
+        // after a repost or an expiry has removed its reach row (Discourse 9808/849).
         // Candidate source: live posts with NO reach row yet (anti-join).
         // keep-raw: ANY_VALUE + the ST_X/ST_Y spatial accessors on a GROUP BY the builder cannot render
         $rows = DB::select(
@@ -1257,7 +1260,8 @@ class ExpandService
                    SELECT 1 FROM messages_groups o
                     WHERE o.msgid = ms.msgid AND o.rippled_in = 0
                       AND o.deleted = 0 AND o.collection = \'Approved\'
-               )' . $scopeSql . $cutoffSql . $satSql . $optOutSql . '
+               )
+               AND NOT EXISTS (SELECT 1 FROM rippling_blocked rb WHERE rb.msgid = ms.msgid)' . $scopeSql . $cutoffSql . $satSql . $optOutSql . '
              GROUP BY ms.msgid
              LIMIT ?',
             $params

@@ -858,23 +858,24 @@ Freezing governs what we SEND, not who has been reached:
   a reply from them is still held. They have not been reached, and freezing does not alter that;
   the answer is the same one they would get on a post still expanding.
 
-### Home Back to pending locks the copies (`messages_groups.locked_by_home`)
+### Home Back to pending withdraws the copies (`rippling_blocked`)
 
-`handleBackToPending` (`iznik-server-go/message`) sets `locked_by_home = 1` (and
-`needs_moderator = 1`) on each Pending rippled-in copy when the acting moderator moderates a
-group the post was posted to directly (`HomeGroups`, `rippled_in = 0`). Back to pending from a
-receiving community's moderator, or the member-report quorum (`SendForReviewAllGroups`), sets
-nothing.
+`handleBackToPending` (`iznik-server-go/message`) calls `withdrawRippledCopiesAndBlock` when the
+acting moderator moderates a group the post was posted to directly (`HomeGroups`,
+`rippled_in = 0`). Each rippled-in copy is retracted the way `retractRippledCopyInGroup` retracts
+one: soft-deleted, a Message/Deleted log to that group, and the poster's ripple-join membership
+(`rippled = 1`) removed when they have no other live post there, with no Group/Left. The post is
+then recorded in `rippling_blocked` (one row per post), and the home copies go to Pending as
+before. Back to pending from a receiving community's moderator, or the member-report quorum
+(`SendForReviewAllGroups`), withdraws nothing.
 
-- `handleApprove` refuses (403) a locked copy while an undeleted home row exists that is not
-  Approved, unless the same action is approving a home group. The check is live, so a stale flag
-  after the home copy has been approved some other way blocks nothing.
-- Approving a home group clears the flag on every copy. The reach stays `held`; nothing is
-  re-sent.
-- `groups[].locked_by_home` in the message payload is the effective lock, not the stored flag.
-- AutoApproveService, ContentCheckService, incoming mail and TrashNothing ingestion each skip a
-  locked copy, as they already skip `needs_moderator` ones.
-- Receiving groups' hold log and `spamreason` say the home community did it.
+`initialiseNew` never starts a reach for a post in `rippling_blocked`. That is what makes the
+block durable: the frozen reach row already stops expansion and every read path, but a repost
+removes the reach row, and without the block the next approval would start a new one.
+
+`messages_groups.locked_by_home` is still honoured where set (`handleApprove` refuses a locked
+copy while the home row is not Approved; auto-approve, the content check, incoming mail and
+TrashNothing ingestion skip it; approving a home group clears it), but nothing sets it.
 
 ---
 

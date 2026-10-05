@@ -402,9 +402,10 @@ stranded on the neighbouring communities it had already reached.
 The clean-up happens on the next rippling run (within about a minute), not the instant you
 click - so a rippled copy may linger very briefly before it disappears.
 
-(**Back to Pending** now works differently from Delete/Reject: it keeps each community's
-copy for per-group review and does **not** re-ripple on re-approval - see **Reporting a
-post** below.)
+(**Back to Pending** works differently from Delete/Reject. From the home community it withdraws
+the rippled copies at once and the post never ripples again; from anywhere else it keeps each
+community's copy for per-group review and does **not** re-ripple on re-approval - see
+**Reporting a post** below.)
 
 While a post is in that frozen state we stop advertising it: it is not included in daily
 digests, immediate emails or phone notifications, because it is under review and we should
@@ -515,26 +516,20 @@ cannot see. As with a report, the copies are **kept** (not deleted), each commun
 or rejects its own, and **re-approving brings a copy back without re-notifying members or
 re-rippling from scratch**.
 
-If you moderate the post's **home** community, the other communities cannot approve their
-copies until you approve yours again (see above). If you only moderate a community it
-rippled into, your Back to Pending does not stop anyone else approving theirs.
+If you only moderate a community it rippled into, your Back to Pending does not stop anyone
+else approving theirs.
 
 **There is one exception, when a moderator of the post's home community does it.** The
-home community is where the poster posted, so if one of its moderators sends the post back,
-the neighbouring communities' copies are **locked**: their moderators cannot approve them
-until the home community approves its own copy again. Their pending list says why ("The
-home community is reviewing this post, so it can't be approved here until they approve
-it"), and so does the log, which names the home community rather than just "a moderator".
-They can still reject their copy or hold it.
+home community is where the poster posted, and its moderators have taken the decision, so the
+neighbouring communities are not each given a copy to decide again. The post is **withdrawn**
+from every community it rippled into, straight away, and their logs say it was withdrawn
+because the home community sent it back. It does **not** appear in their pending lists.
 
-When the home copy is approved, the locks lift and each copy goes back to ordinary
-per-community moderation: nothing is re-sent to members and the post does not ripple out
-again from scratch. If the home community deletes or rejects the post instead, every
-rippled copy is removed, even though it had been sent back to pending first.
+The post then **never ripples again**: not when the home community approves it, and not after
+the poster reposts it or it expires and is reposted. It stays on its home community only.
 
 A Back to Pending by a moderator of a community the post only rippled **into**, and a
-report by members, do **not** lock anything. Those copies stay independent, as described
-above.
+report by members, withdraw nothing. Those copies stay independent, as described above.
 
 ---
 
