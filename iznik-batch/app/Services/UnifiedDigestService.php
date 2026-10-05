@@ -295,6 +295,24 @@ class UnifiedDigestService
     protected function processGroupImmediate(object $cursorRow, bool $dryRun, ?int $userFilter = null): array
     {
         $groupid = (int) $cursorRow->groupid;
+
+        // Lockdown holds `email` (plan 2026-09-27-lockdown-switch.md, section 11.7): checked
+        // before anything else for this group, including the cursor read below. This group's
+        // watermark (groups_digests cursor) advances on every exit path from this function,
+        // including "nothing to send" (see .claude/rules/mail-and-data.md - "a digest cursor
+        // that moves past posts it never sent") - so a check placed inside the function, after
+        // messages have already been examined, would be too late for two of its three exits.
+        // Checking here instead means a held group is left completely untouched and is
+        // re-examined from the same cursor on the very next pass once email resumes. Counted
+        // once per group, not per recipient - matches sendReachDigests and spoolPostToRecipients,
+        // which defer the same 'digest_immediate' mail type from its other two entry points.
+        $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+        $lockdown->ack('mail-loops');
+        if ($lockdown->held('email')) {
+            $lockdown->count('deferred:digest_immediate');
+            return ['emails' => 0, 'users' => []];
+        }
+
         $cursorMsgdate = $cursorRow->cursor_msgdate;
         $cursorMsgid = (int) ($cursorRow->cursor_msgid ?? 0);
 
@@ -641,6 +659,26 @@ class UnifiedDigestService
         $stats = ['posts_processed' => 0, 'members_processed' => 0, 'emails_sent' => 0, 'errors' => 0];
 
         if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
+            return $stats;
+        }
+
+        // Lockdown holds `email` (plan 2026-09-27-lockdown-switch.md, section 11.7): checked
+        // before the shard mark is read, not down in the per-post loop. The mark is this pass's
+        // watermark, committed once at the end whenever the pass is "clean" (no errors, not
+        // stopped) - the same batch shape as StoriesNewsletterService's newsletter row, not a
+        // per-recipient one. Checking only per-post would still let the mark advance past posts
+        // this pass examined but deferred, and unlike a digest cursor there is no later re-scan:
+        // once a post's updated_at falls behind the mark it drops out of the query for good
+        // unless its reach changes again. So a held pass returns before the mark is even read,
+        // leaving it exactly where it was, and before drainMemberQueue's pending-row deletes too
+        // (that queue is drained only from here). Counted once per pass, not per post - the
+        // per-recipient defer for this same 'digest_immediate' mail lives in
+        // spoolPostToRecipients, which also covers mailPostToUsers' match-mail path and
+        // AutoApproveService's direct call, neither of which goes through this pass at all.
+        $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+        $lockdown->ack('mail-loops');
+        if ($lockdown->held('email')) {
+            $lockdown->count('deferred:digest_immediate');
             return $stats;
         }
 
@@ -1375,6 +1413,22 @@ class UnifiedDigestService
             )) {
                 continue;
             }
+            // Lockdown holds `email` (plan 2026-09-27-lockdown-switch.md, section 11.7):
+            // checked here, after every eligibility gate above and before the spool write, the
+            // same spot the suppression check sits in. Skipping before spool deliberately
+            // leaves rippling_reach_notified unwritten, exactly like the suppression and
+            // distance-preference skips above - so once email resumes this member is a fresh
+            // candidate again, picked up by whichever entry point reaches them (the reach-mail
+            // pass, the member queue, or a later match-mail/auto-approve call). Counted per
+            // recipient per pass, not deduplicated - this is the same 'digest_immediate' mail
+            // sendReachDigests defers once per pass at the batch level for its own shard mark;
+            // this is the per-recipient defer for the entry points that mark doesn't cover.
+            $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+            $lockdown->ack('mail-loops');
+            if ($lockdown->held('email')) {
+                $lockdown->count('deferred:digest_immediate');
+                continue;
+            }
             if ($dryRun) {
                 $mailed[] = (int) $user->id;
                 continue;
@@ -1904,6 +1958,21 @@ class UnifiedDigestService
         // mechanism for digests - no replay queue needed.
         if ($this->suppressions()->shouldSkip($email, (int) $user->id, 'digest_' . $mode)) {
             return ['status' => 'suppressed', 'count' => 0];
+        }
+
+        // Lockdown holds `email` (plan 2026-09-27-lockdown-switch.md, section 11.7): checked
+        // here, after the no-email and suppression gates and before the tracker is even fetched.
+        // This member's watermark ($digestTracker) advances on every exit path below it,
+        // including both "nothing to send" returns (see .claude/rules/mail-and-data.md - "a
+        // digest cursor that moves past posts it never sent") - so checking any later would let
+        // a held run examine this member's posts and advance past them anyway. Checking here
+        // instead leaves the tracker untouched, so the very next daily run re-examines from the
+        // same point once email resumes. Counted per user per pass, not deduplicated.
+        $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+        $lockdown->ack('mail-loops');
+        if ($lockdown->held('email')) {
+            $lockdown->count('deferred:digest_' . $mode);
+            return ['status' => 'skipped', 'count' => 0];
         }
 
         // Get or create digest tracking record.

@@ -1124,6 +1124,75 @@ func TestPatchMembershipsNonModCannotChangeRole(t *testing.T) {
 	assert.Equal(t, 403, resp.StatusCode)
 }
 
+// A TrashNothing account is a partner's member, not a volunteer, so it must never
+// be made a moderator or owner. Recognised by the tnuserid stamp or by a
+// preferred @user.trashnothing.com address.
+func TestPatchMembershipsTNAccountCannotBePromoted(t *testing.T) {
+	db := database.DBConn
+
+	for _, mark := range []string{"tnuserid", "tnemail"} {
+		for _, target := range []string{"Moderator", "Owner"} {
+			prefix := uniquePrefix("role_tn_" + mark + "_" + target)
+			ownerID := CreateTestUser(t, prefix+"_owner", "User")
+			tnID := CreateTestUser(t, prefix+"_tn", "User")
+			_, ownerToken := CreateTestSession(t, ownerID)
+			groupID := CreateTestGroup(t, prefix)
+			CreateTestMembership(t, ownerID, groupID, "Owner")
+			CreateTestMembership(t, tnID, groupID, "Member")
+
+			if mark == "tnuserid" {
+				db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", tnID+900000000, tnID)
+			} else {
+				db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", tnID)
+				db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)",
+					tnID, prefix+"-g1@user.trashnothing.com")
+			}
+
+			resp := patchMembershipRole(t, ownerToken, groupID, tnID, target)
+			assert.Equal(t, 400, resp.StatusCode, "%s promote to %s", mark, target)
+			assert.Equal(t, "Member", getActualRole(groupID, tnID), "%s promote to %s", mark, target)
+			assert.Equal(t, "User", getActualSystemrole(tnID), "%s promote to %s", mark, target)
+		}
+	}
+}
+
+// Demoting a TrashNothing account that already holds a mod role must still work,
+// so stale roles can be cleared.
+func TestPatchMembershipsTNAccountCanBeDemoted(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("role_tn_demote")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	tnID := CreateTestUser(t, prefix+"_tn", "Moderator")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Owner")
+	CreateTestMembership(t, tnID, groupID, "Moderator")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", tnID+900000000, tnID)
+
+	resp := patchMembershipRole(t, ownerToken, groupID, tnID, "Member")
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "Member", getActualRole(groupID, tnID))
+}
+
+// A TrashNothing address that is not the preferred one does not make the account a
+// TrashNothing account: Freegle volunteers who also use TrashNothing keep those.
+func TestPatchMembershipsNonPreferredTNEmailCanBePromoted(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("role_tn_nonpref")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Owner")
+	CreateTestMembership(t, memberID, groupID, "Member")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 0)",
+		memberID, prefix+"-g1@user.trashnothing.com")
+
+	resp := patchMembershipRole(t, ownerToken, groupID, memberID, "Moderator")
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "Moderator", getActualRole(groupID, memberID))
+}
+
 // --- POST /memberships (mod actions) ---
 
 func TestPostMembershipsNotLoggedIn(t *testing.T) {

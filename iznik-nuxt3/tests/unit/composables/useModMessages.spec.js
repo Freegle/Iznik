@@ -37,8 +37,15 @@ vi.mock('~/stores/message', () => ({
 }))
 
 let mockAuthWork = null
+// Groups the moderator is only a member of (or not in at all); every other group is one
+// they moderate, so tests that do not care about roles see the old behaviour.
+let mockNotModeratedGroups = new Set()
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ work: mockAuthWork }),
+  useAuthStore: () => ({
+    work: mockAuthWork,
+    member: (gid) =>
+      mockNotModeratedGroups.has(parseInt(gid)) ? 'Member' : 'Moderator',
+  }),
 }))
 
 const mockMiscGet = vi.fn(() => undefined)
@@ -420,6 +427,37 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     // listingIds has both 1 and 2 (from the original fetch), but only id=1 is
     // actually Pending — id=2 must be filtered out to prevent Approved buttons.
     expect(messages.value.map((m) => m.id)).toEqual([1])
+  })
+
+  // In "All my communities" a post stayed while ANY copy was pending, including copies on
+  // communities this moderator does not moderate - after an approve, nearly all of the copies
+  // a rippled post still has pending. The card then showed the copy just approved.
+  it('drops a message whose only pending copies are on groups I do not moderate', async () => {
+    mockNotModeratedGroups = new Set([20])
+    const msgApprovedHere = {
+      id: 3,
+      arrival: '2026-01-05',
+      groups: [
+        { groupid: 10, arrival: '2026-01-05', collection: 'Approved' },
+        { groupid: 20, arrival: '2026-01-05', collection: 'Pending' },
+      ],
+    }
+    const msgPendingHere = {
+      id: 4,
+      arrival: '2026-01-04',
+      groups: [{ groupid: 10, arrival: '2026-01-04', collection: 'Pending' }],
+    }
+    mockAll.value = [msgApprovedHere, msgPendingHere]
+    mockFetchMessagesMT.mockResolvedValue([3, 4])
+
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
+    const { getMessages, collection, messages } = setupModMessages(true)
+    collection.value = 'Pending'
+    await getMessages()
+
+    expect(messages.value.map((m) => m.id)).toEqual([4])
+    mockNotModeratedGroups = new Set()
   })
 
   it('includes PendingOther messages when listing Pending', async () => {

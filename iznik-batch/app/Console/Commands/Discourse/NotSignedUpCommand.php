@@ -7,14 +7,14 @@ use Illuminate\Console\Command;
 
 /**
  * Daily check for Freegle groups not represented by an active mod on Discourse,
- * active mods not signed up, and mods with TN preferred emails (V1
+ * active mods not signed up, and TrashNothing accounts with mod roles (V1
  * cron/discourse_not_signed_up.php).
  */
 class NotSignedUpCommand extends Command
 {
     protected $signature = 'discourse:not-signed-up';
 
-    protected $description = 'Report Freegle groups with no active mod on Discourse + mods not signed up (V1 discourse_not_signed_up.php)';
+    protected $description = 'Report Freegle groups with no active mod on Discourse + mods not signed up + TrashNothing accounts with mod roles';
 
     public function handle(DiscourseNotSignedUpService $service): int
     {
@@ -27,8 +27,8 @@ class NotSignedUpCommand extends Command
         }
 
         $this->info(sprintf(
-            'Done. groups not represented=%d, volunteers not signed up=%d, TN preferred emails=%d.',
-            $result['notrepresented'], $result['notondiscourse'], $result['tnpreferred']
+            'Done. groups not represented=%d, volunteers not signed up=%d, TN accounts with mod roles=%d.',
+            $result['notrepresented'], $result['notondiscourse'], $result['tnmods']
         ));
 
         return self::SUCCESS;

@@ -139,9 +139,15 @@ return [
             'minutes' => (int) env('BACKUP_DRAIN_MINUTES', 45),
             // Artisan command names that run anyway, matched without their arguments.
             // Keep this short: anything here is competing with the backup.
+            //
+            // lockdown:tick and lockdown:report default to always running: a lockdown
+            // is a live security incident, and the announce mail, holding and releasing,
+            // and the hourly report must not wait out a 45-minute backup window on top of whatever
+            // is actually happening. Override via BACKUP_DRAIN_ALWAYS_RUN if that default
+            // is ever wrong for a specific deployment.
             'always_run' => array_values(array_filter(array_map(
                 'trim',
-                explode(',', (string) env('BACKUP_DRAIN_ALWAYS_RUN', ''))
+                explode(',', (string) env('BACKUP_DRAIN_ALWAYS_RUN', 'lockdown:tick,lockdown:report'))
             ))),
         ],
 
@@ -730,10 +736,18 @@ return [
         // Post to ChitChat / send the digest AS this account ("Freegle").
         'system_user_email' => env('COMMUNITY_NEWS_SYSTEM_USER_EMAIL', env('FREEGLE_NOREPLY_ADDR', 'noreply@ilovefreegle.org')),
 
-        // Town assignment radius: an enabled group joins its nearest `towns`-table
-        // town within this many miles (the town names the area — the searchable
-        // unit); beyond it the group stands alone as its own area.
+        // Anchor radius: an enabled group is anchored on a town within this many miles
+        // (the town names the area - the searchable unit); with none, the group stands
+        // alone as its own area. Candidates are the curated towns and the places
+        // gazetteer; CommunityNewsAreaService::anchorFor says which wins.
         'area_cluster_miles' => (float) env('COMMUNITY_NEWS_AREA_MILES', 20),
+
+        // A curated town this close wins outright. Failing that, the closest place of at
+        // least this population within this many miles - so an area is named after a
+        // town people know, not the village or neighbourhood nearest the group's point.
+        'anchor_town_miles' => (float) env('COMMUNITY_NEWS_ANCHOR_TOWN_MILES', 3),
+        'anchor_place_min_population' => (int) env('COMMUNITY_NEWS_ANCHOR_PLACE_POPULATION', 10000),
+        'anchor_place_miles' => (float) env('COMMUNITY_NEWS_ANCHOR_PLACE_MILES', 6),
 
         // How many of an area's places to name in the research prompt, biggest
         // first. Areas hold a median of 6 and a p90 of 14, so this covers most

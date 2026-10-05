@@ -69,67 +69,87 @@ func rowOf(msgID, gid uint64) rowState {
 	return r
 }
 
-func TestHomeBackToPendingLocksRippledCopies(t *testing.T) {
-	f := newHomeLockFixture(t, "hl_lock")
+// A home send-back withdraws the post from every community it rippled into, instead of
+// putting a copy in each of their pending queues, and blocks it from rippling again
+// (Discourse 9808/849).
+func TestHomeBackToPendingWithdrawsRippledCopies(t *testing.T) {
+	f := newHomeLockFixture(t, "hl_withdraw")
 	db := database.DBConn
 
-	status, _ := postModAction(t, f.tokHome, f.msgID, "BackToPending", f.home)
-	assert.Equal(t, 200, status)
-
-	recv := rowOf(f.msgID, f.recv)
-	assert.Equal(t, "Pending", recv.Collection)
-	assert.Equal(t, 1, recv.LockedByHome, "the receiving copy is locked by the home community")
-	assert.Equal(t, 1, recv.NeedsModerator)
-	if assert.NotNil(t, recv.Spamreason) {
-		assert.Contains(t, *recv.Spamreason, "home community")
-	}
-	assert.Equal(t, 0, rowOf(f.msgID, f.home).LockedByHome, "the home copy is never locked")
-
-	// The receiving community's log says it was the home community.
-	var logText string
-	db.Raw("SELECT text FROM logs WHERE msgid = ? AND groupid = ? AND type = 'Message' AND subtype = 'Hold' ORDER BY id DESC LIMIT 1", f.msgID, f.recv).Scan(&logText)
-	assert.Contains(t, logText, "home community")
-
-	// Their moderator cannot approve it, and is told why.
-	status, body := postModAction(t, f.tokRecv, f.msgID, "Approve", f.recv)
-	assert.Equal(t, 403, status)
-	assert.Contains(t, body, "home community is reviewing")
-	assert.Equal(t, "Pending", rowOf(f.msgID, f.recv).Collection)
-
-	// ModTools is told the copy is locked.
-	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", f.msgID, f.tokRecv), nil))
-	b, _ := io.ReadAll(resp.Body)
-	var m message.Message
-	require.NoError(t, json.Unmarshal(b, &m))
-	locked := false
-	for _, g := range m.MessageGroups {
-		if g.Groupid == f.recv {
-			locked = g.LockedByHome == 1
-		}
-	}
-	assert.True(t, locked, "groups[].locked_by_home is exposed")
-
-	// Approving the home copy lifts the lock but does not approve the other copy.
-	status, _ = postModAction(t, f.tokHome, f.msgID, "Approve", f.home)
-	assert.Equal(t, 200, status)
-	recv = rowOf(f.msgID, f.recv)
-	assert.Equal(t, 0, recv.LockedByHome)
-	assert.Equal(t, "Pending", recv.Collection, "the copy returns to normal per-group moderation")
-
-	status, _ = postModAction(t, f.tokRecv, f.msgID, "Approve", f.recv)
-	assert.Equal(t, 200, status)
-	assert.Equal(t, "Approved", rowOf(f.msgID, f.recv).Collection)
-}
-
-func TestHomeLockOnlyBitesWhileHomeNotApproved(t *testing.T) {
-	f := newHomeLockFixture(t, "hl_leftover")
-	db := database.DBConn
+	var poster uint64
+	db.Raw("SELECT fromuser FROM messages WHERE id = ?", f.msgID).Scan(&poster)
+	// The ripple joined the poster to the receiving community to carry the post.
+	db.Exec("INSERT INTO memberships (userid, groupid, role, rippled) VALUES (?, ?, 'Member', 1)", poster, f.recv)
 
 	status, _ := postModAction(t, f.tokHome, f.msgID, "BackToPending", f.home)
 	require.Equal(t, 200, status)
 
-	// Home copy approved some other way, leaving a stale flag: it must not block, and must
-	// not be reported as a lock.
+	var recv struct {
+		Collection string
+		Deleted    int
+	}
+	db.Raw("SELECT collection, deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", f.msgID, f.recv).Scan(&recv)
+	assert.Equal(t, 1, recv.Deleted, "the rippled copy is withdrawn")
+	assert.NotEqual(t, "Pending", recv.Collection, "the receiving community gets nothing to moderate")
+	assert.Equal(t, 0, rowOf(f.msgID, f.recv).LockedByHome)
+
+	assert.Equal(t, "Pending", rowOf(f.msgID, f.home).Collection, "the home copy goes back to pending as before")
+
+	var deletedLogs, holdLogs int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE msgid = ? AND groupid = ? AND type = 'Message' AND subtype = 'Deleted'", f.msgID, f.recv).Scan(&deletedLogs)
+	db.Raw("SELECT COUNT(*) FROM logs WHERE msgid = ? AND groupid = ? AND type = 'Message' AND subtype = 'Hold'", f.msgID, f.recv).Scan(&holdLogs)
+	assert.Equal(t, int64(1), deletedLogs, "the receiving community's log says it was withdrawn")
+	assert.Equal(t, int64(0), holdLogs, "and does not say it is back in their queue")
+
+	var memberships int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", poster, f.recv).Scan(&memberships)
+	assert.Equal(t, int64(0), memberships, "the ripple-join membership goes with the only post it carried")
+
+	var blocked int64
+	db.Raw("SELECT COUNT(*) FROM rippling_blocked WHERE msgid = ?", f.msgID).Scan(&blocked)
+	assert.Equal(t, int64(1), blocked, "the post is recorded as never to ripple again")
+
+	// Re-approval at home brings back the home copy only.
+	status, _ = postModAction(t, f.tokHome, f.msgID, "Approve", f.home)
+	assert.Equal(t, 200, status)
+	assert.Equal(t, "Approved", rowOf(f.msgID, f.home).Collection)
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", f.msgID, f.recv).Scan(&recv.Deleted)
+	assert.Equal(t, 1, recv.Deleted, "the withdrawn copy stays withdrawn")
+}
+
+// A copy the receiving community's poster also holds organically is not touched beyond the
+// withdrawal: only a ripple-join membership is removed.
+func TestHomeBackToPendingKeepsOrganicMembership(t *testing.T) {
+	f := newHomeLockFixture(t, "hl_organic")
+	db := database.DBConn
+
+	var poster uint64
+	db.Raw("SELECT fromuser FROM messages WHERE id = ?", f.msgID).Scan(&poster)
+	CreateTestMembership(t, poster, f.recv, "Member")
+
+	status, _ := postModAction(t, f.tokHome, f.msgID, "BackToPending", f.home)
+	require.Equal(t, 200, status)
+
+	var memberships int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", poster, f.recv).Scan(&memberships)
+	assert.Equal(t, int64(1), memberships)
+}
+
+// Copies locked by a home send-back before withdrawal replaced locking still behave: the lock
+// only bites while the home copy is not approved.
+func TestHomeLockOnlyBitesWhileHomeNotApproved(t *testing.T) {
+	f := newHomeLockFixture(t, "hl_leftover")
+	db := database.DBConn
+
+	// The state an older home send-back left: home Pending, the rippled copy Pending and locked.
+	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ? AND groupid = ?", f.msgID, f.home)
+	db.Exec("UPDATE messages_groups SET collection = 'Pending', locked_by_home = 1, needs_moderator = 1 WHERE msgid = ? AND groupid = ?", f.msgID, f.recv)
+
+	status, body := postModAction(t, f.tokRecv, f.msgID, "Approve", f.recv)
+	assert.Equal(t, 403, status, "while the home copy is pending the lock holds")
+	assert.Contains(t, body, "home community is reviewing")
+
+	// Home copy approved some other way, leaving a stale flag: it must not block.
 	db.Exec("UPDATE messages_groups SET collection = 'Approved' WHERE msgid = ? AND groupid = ?", f.msgID, f.home)
 	assert.Equal(t, 1, rowOf(f.msgID, f.recv).LockedByHome)
 

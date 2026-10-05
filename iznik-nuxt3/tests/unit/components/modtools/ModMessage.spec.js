@@ -1478,6 +1478,29 @@ describe('ModMessage', () => {
     })
   })
 
+  // Plan 10.6/10.12: posts held by the lockdown switch are labelled in the queue.
+  // Confirmed live via GET /message/:id -> message.lockdownheld (always a bool).
+  describe('Lockdown held notice', () => {
+    it('shows the lockdown notice when message.lockdownheld is true', async () => {
+      const wrapper = mountComponent({ summary: false }, { lockdownheld: true })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('Held by lockdown')
+    })
+
+    it('does not show the lockdown notice when absent or false', async () => {
+      const wrapperAbsent = mountComponent({ summary: false })
+      await wrapperAbsent.vm.$nextTick()
+      expect(wrapperAbsent.text()).not.toContain('Held by lockdown')
+
+      const wrapperFalse = mountComponent(
+        { summary: false },
+        { lockdownheld: false }
+      )
+      await wrapperFalse.vm.$nextTick()
+      expect(wrapperFalse.text()).not.toContain('Held by lockdown')
+    })
+  })
+
   describe('Moderated member notice', () => {
     it('shows moderated notice for pending messages from MODERATED member', async () => {
       mockUserStore.byId.mockReturnValue({

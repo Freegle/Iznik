@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-13
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/settings/**
@@ -94,6 +94,11 @@ You can change any of it, or turn everything off, on the Settings page.
 - Other members can leave you **ratings** (a thank-you and thumbs up or down) on your
   public profile at `/profile/<id>`. Being reliable and polite keeps your ratings good,
   which helps people choose to give to you.
+
+If Freegle is in the middle of a security incident, profile changes are paused for
+everyone for a few hours. You will see a message explaining why if you try to change
+your name, photo or About Me while it is on; nothing is lost, and you can try again once
+it is lifted.
 
 ## Your posts
 

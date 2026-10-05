@@ -50,6 +50,14 @@ model) and refuses it unless:
 
 A refused PR is closed (its description blanked first if it held personal details), the report is
 held as `needs-detail`, and the reporter is asked for what would let the next attempt look it up.
+The gate proves reads were made, not that they show the failure: PR #1665 read that nearly every
+post ripples and fixed the wrong digest, and #1664's evidence was an absence of errors. So the
+adversarial review of a Discourse bug fix is also shown the reporter's own words and the evidence
+record (`reviewGroundingSection`, to the review model only), and three findings close the PR rather
+than expand it: **misread report** (it fixes something other than what the reporter saw),
+**ungrounded diagnosis** (the evidence is context, an absence or a failed read, not the failure
+itself), and **false premise** (it claims the system behaves in a way it does not).
+
 Fix agents run `ground.js check-pr <file> T/P` before opening, so a refusal is rare. An agent that
 cannot ground its diagnosis because the report names nothing emits `OUTCOME=needs-detail` and
 opens no PR. Fixes for Sentry errors and CI failures are not checked this way: they have no

@@ -145,6 +145,7 @@ import { computed, onMounted, useRoute } from '#imports'
 // polyfills
 import 'core-js/actual/array/to-sorted'
 import { useConfigStore } from '~/stores/config'
+import { useLockdownStore } from '~/stores/lockdown'
 import { badgeTitle, useReactiveTabBadge } from '~/composables/useTitleBadge'
 
 const route = useRoute()
@@ -209,6 +210,7 @@ const userStore = useUserStore()
 const nearbyStore = useNearbyStore()
 const composeStore = useComposeStore()
 const configStore = useConfigStore()
+const lockdownStore = useLockdownStore()
 const chatStore = useChatStore()
 const addressStore = useAddressStore()
 const trystStore = useTrystStore()
@@ -251,6 +253,7 @@ storyStore.init(runtimeConfig)
 volunteeringStore.init(runtimeConfig)
 communityEventStore.init(runtimeConfig)
 configStore.init(runtimeConfig)
+lockdownStore.init(runtimeConfig)
 jobStore.init(runtimeConfig)
 teamStore.init(runtimeConfig)
 donationStore.init(runtimeConfig)

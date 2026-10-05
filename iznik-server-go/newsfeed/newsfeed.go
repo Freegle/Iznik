@@ -13,6 +13,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/queue"
@@ -53,6 +54,11 @@ type NewsfeedSummary struct {
 	Eventpending        bool       `json:"-"`
 	Volunteeringpending bool       `json:"-"`
 	Storypending        bool       `json:"-"`
+	// Lockdownheld: section 10.6/10.12 of the lockdown plan. True while this ChitChat post
+	// has an unresolved lockdown_holds row (kind='chitchat'). Mods see hidden ChitChat
+	// inline in the ordinary feed rather than a separate queue, so this has to travel on
+	// the summary too, not just on the full Newsfeed detail. See lockdown.ItemHeld.
+	Lockdownheld bool `json:"lockdownheld" gorm:"-"`
 }
 
 func (NewsfeedPreview) TableName() string {
@@ -107,6 +113,9 @@ type Newsfeed struct {
 	// on any entry path (feed card or notification deep link) without an extra
 	// request. Never populated on nested replies.
 	SeenWatermark uint64 `json:"seenwatermark,omitempty" gorm:"-"`
+	// Lockdownheld: see NewsfeedSummary.Lockdownheld. Populated the same way, from
+	// lockdown.ItemHeld("chitchat", ...), on the full-detail thread fetch.
+	Lockdownheld bool `json:"lockdownheld" gorm:"-"`
 }
 
 func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, float64, float64) {
@@ -655,6 +664,11 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, minutes uint64, all
 			if newsfeed[i].Userid == myid || amAMod {
 				// Don't use hidden entries unless they are ours.  This means that to a spammer or suppressed user
 				// it looks like their posts are there but nobody else sees them.
+				// Section 10.6/10.12: label a lockdown-held ChitChat post so a mod browsing the
+				// ordinary feed - there is no separate ModTools ChitChat queue - sees "held by
+				// lockdown" rather than an unexplained hidden card. Only worth the extra query
+				// for the hidden subset, not every feed item.
+				newsfeed[i].Lockdownheld = lockdown.ItemHeld("chitchat", newsfeed[i].ID)
 				ret = append(ret, newsfeed[i])
 			}
 		} else {
@@ -956,6 +970,11 @@ func fetchSingle(id uint64, myid uint64, lovelist bool) (Newsfeed, bool) {
 		if newsfeed.Replyto == 0 {
 			newsfeed.Threadhead = newsfeed.ID
 		}
+
+		// Section 10.6/10.12: label a lockdown-held ChitChat post on the full-detail thread
+		// fetch too, so NewsThread.vue can show "held by lockdown" on a single opened item
+		// as well as on the feed-summary card. See NewsfeedSummary.Lockdownheld.
+		newsfeed.Lockdownheld = lockdown.ItemHeld("chitchat", newsfeed.ID)
 
 		return newsfeed, false
 	} else {
@@ -1274,6 +1293,9 @@ func Post(c *fiber.Ctx) error {
 		}
 	case "Hide":
 		if req.ID > 0 && canHidePost(myid) {
+			if lockdown.GateMod(c, myid) {
+				return nil
+			}
 			db.Table("newsfeed").Where("id = ?", req.ID).
 				Updates(map[string]interface{}{"hidden": gorm.Expr("NOW()"), "hiddenby": myid})
 			db.Table("logs").Create(map[string]interface{}{
@@ -1313,6 +1335,9 @@ func Post(c *fiber.Ctx) error {
 		if !canHidePost(myid) {
 			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 		}
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 
 		createRefer(db, myid, req.ID, "ConvertedToPost", req.Msgid)
 
@@ -1346,18 +1371,30 @@ func Post(c *fiber.Ctx) error {
 		})
 	case "ReferToWanted":
 		if req.ID > 0 {
+			if lockdown.GateMod(c, myid) {
+				return nil
+			}
 			createRefer(db, myid, req.ID, "ReferToWanted", 0)
 		}
 	case "ReferToOffer":
 		if req.ID > 0 {
+			if lockdown.GateMod(c, myid) {
+				return nil
+			}
 			createRefer(db, myid, req.ID, "ReferToOffer", 0)
 		}
 	case "ReferToTaken":
 		if req.ID > 0 {
+			if lockdown.GateMod(c, myid) {
+				return nil
+			}
 			createRefer(db, myid, req.ID, "ReferToTaken", 0)
 		}
 	case "ReferToReceived":
 		if req.ID > 0 {
+			if lockdown.GateMod(c, myid) {
+				return nil
+			}
 			createRefer(db, myid, req.ID, "ReferToReceived", 0)
 		}
 	case "AttachToThread":
@@ -1366,6 +1403,9 @@ func Post(c *fiber.Ctx) error {
 			var modCount int64
 			db.Table("memberships").Where("userid = ? AND role IN (?, ?) AND collection = ?", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Count(&modCount)
 			if modCount > 0 {
+				if lockdown.GateMod(c, myid) {
+					return nil
+				}
 				db.Table("newsfeed").Where("id = ?", req.ID).Update("replyto", req.Replyto)
 				db.Table("logs").Create(map[string]interface{}{
 					"timestamp": gorm.Expr("NOW()"),
@@ -1385,6 +1425,12 @@ func Post(c *fiber.Ctx) error {
 			db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 			if modCount == 0 {
 				return fiber.NewError(fiber.StatusForbidden, "Permission denied")
+			}
+
+			// Section 11.3 of the lockdown plan: converting a newsfeed entry into a
+			// story is a moderator action, refused while "mods" is held.
+			if lockdown.GateMod(c, myid) {
+				return nil
 			}
 
 			// Get the newsfeed entry
@@ -1445,7 +1491,13 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 	// Check suppression status
 	var newsfeedmodstatus string
 	db.Table("users").Select("COALESCE(newsfeedmodstatus, '')").Where("id = ?", myid).Scan(&newsfeedmodstatus)
-	hidden := newsfeedmodstatus == utils.NEWSFEED_MODSTATUS_SUPPRESSED
+
+	// Section 11.3 of the lockdown plan: while "chitchat" is held, a new post or
+	// reply is created hidden (same mechanism as a suppressed poster) rather than
+	// refused, and a lockdown_holds row is inserted below once the id is known, so
+	// it can be counted, browsed and released when ChitChat is lifted.
+	chitchatHeld := lockdown.Held("chitchat")
+	hidden := newsfeedmodstatus == utils.NEWSFEED_MODSTATUS_SUPPRESSED || chitchatHeld
 
 	// Get user's lat/lng for geographic positioning
 	latlng := user.GetLatLng(myid)
@@ -1526,6 +1578,10 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 
 	idInt, _ := row["@id"].(int64)
 	id := uint64(idInt)
+
+	if chitchatHeld && id > 0 {
+		lockdown.InsertHold("chitchat", id, myid)
+	}
 
 	// If this is a reply and not hidden, bump the thread
 	if id > 0 && req.Replyto > 0 && !hidden {
@@ -1697,6 +1753,14 @@ func Edit(c *fiber.Ctx) error {
 
 	if ownerID != myid && !canModifyPost(myid, req.ID) {
 		return fiber.NewError(fiber.StatusForbidden, "Not authorized to edit this post")
+	}
+
+	// Section 11.3 of the lockdown plan: PATCH /newsfeed is refused outright while
+	// "chitchat" is held, for both the poster's own edit and a moderator's edit -
+	// unlike the create path just above, there is no pending-edits state for a
+	// ChitChat post to fall back to.
+	if lockdown.GateMember(c, myid, "chitchat") {
+		return nil
 	}
 
 	db.Table("newsfeed").Where("id = ?", req.ID).Update("message", req.Message)

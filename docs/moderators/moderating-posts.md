@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-02
+last_reviewed: 2026-10-03
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -45,7 +45,9 @@ For each post you can:
   time. Release it when you are done. The lock is enforced: while you hold a post, another
   moderator who tries to approve, reject, delete or spam it is told you are holding it and
   the action does not happen. If they need to act anyway - say you are away - they can
-  **Release** it first, which is always allowed.
+  **Release** it first, which is always allowed. A hold applies only to the copy on the community you are
+  moderating, and only while that copy is still pending: holding a rippled post does not
+  lock its copies on other communities, and an approved copy is never shown as held.
 
   A hold applies to **your community's copy of the post, not the post everywhere**. A post
   that has rippled out to neighbouring communities has a separate copy on each, and each
@@ -124,9 +126,9 @@ server refuses it from anywhere else. A rippled-in copy
 can also arrive Pending because it breaks your own keyword or worry-word rules, with the
 reason shown on the post. The whole picture is in [rippling out](rippling-out.md).
 
-If the post's **home** community sends it back to pending, your rippled-in copy shows a
-notice that the home community is reviewing it, and there is no Approve button until they
-approve theirs. You can still reject or hold your copy.
+If the post's **home** community sends it back to pending, the post is withdrawn from your
+community and never ripples to you again, even if they approve it. There is nothing for you to
+do: it does not arrive in your pending list.
 
 ### Safeguarding flags
 
@@ -204,9 +206,12 @@ network-wide:
   and stops rippling while under review. Each community's moderators then decide on their
   own copy.
 - **A moderator reporting**, or moving a post **Back to Pending** in ModTools, counts on
-  its own - no quorum needed - and pulls the post to Pending everywhere it has reached.
+  its own - no quorum needed - and pulls the post to Pending everywhere it has reached. The
+  exception is a moderator of the post's **home** community moving it back to pending: that
+  withdraws it from every community it rippled into instead, and it never ripples again.
 
-A copy moved **Back to Pending** waits for a moderator of that community. Nothing approves it
+A copy moved **Back to Pending** (other than by the home community) waits for a moderator of
+that community. Nothing approves it
 automatically: not the content check, not the auto-approval for posts that rippled in, and not
 the post being approved again on its home community. Approve or reject it as you would any
 other pending post.
@@ -250,6 +255,16 @@ away by itself and they become an ordinary member.
 
 Ordinary freeglers are unaffected - they can still reply to the post, and the reply reaches
 the poster on Trash Nothing as usual.
+
+## When ModTools shows a red lockdown banner
+
+During a spam attack the Support team can lock Freegle down. While the red banner is up,
+members' posts, chats and ChitChat posts are held and reach nobody, and ModTools offers
+only the basic **Approve** button: approve one item at a time, with no message attached.
+Rejecting, holding, editing, banning and similar actions are paused and say so if you try
+them. Items labelled "held by lockdown" are in your queues as normal; approve the genuine
+ones and report anything that looks like the attack. The banner goes when Support lifts the
+lockdown, and held items then arrive in your queues at a steady pace.
 
 ## Next steps
 

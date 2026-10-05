@@ -55,11 +55,19 @@ export const useMessageStore = defineStore('message', {
       // ModTools context
       this.context = null
     },
-    async fetchCount(browseView, maxDistance, log = true) {
+    async fetchCount(
+      browseView,
+      maxDistance,
+      log = true,
+      browseType,
+      browseGroup
+    ) {
       const ret = await api(this.config).message.count(
         browseView,
         maxDistance,
-        log
+        log,
+        browseType,
+        browseGroup
       )
       this.count = ret?.count || 0
       return this.count
@@ -625,7 +633,13 @@ export const useMessageStore = defineStore('message', {
       // the badge repaint with a different view's number right after marking seen, i.e. it
       // didn't drop to zero. Mirror nearbyStore.fetchMessages and read the settings here.
       const settings = useAuthStore().user?.settings
-      await this.fetchCount(settings?.browseView, settings?.browseMaxDistance)
+      await this.fetchCount(
+        settings?.browseView,
+        settings?.browseMaxDistance,
+        true,
+        settings?.browseType,
+        settings?.browseGroup
+      )
     },
     // Mark the hidden crosspost/repost copies of an already-shown post as seen. The browse
     // feed collapses a poster's duplicate copies to one card (useMessageDedup), but the server
@@ -799,8 +813,17 @@ export const useMessageStore = defineStore('message', {
       } catch (e) {
         message = null
       }
-      const stillInReviewQueue = !!message?.groups?.some((g) =>
-        ['Pending', 'PendingOther', 'Spam'].includes(g.collection)
+      // Only copies on groups this moderator moderates. A rippled post's other copies are
+      // mostly pending on communities they do not run, and keeping the post for those left
+      // its card showing the copy just approved in "All my communities".
+      const authStore = useAuthStore()
+      const moderates = (g) =>
+        typeof authStore?.member !== 'function' ||
+        ['Moderator', 'Owner'].includes(authStore.member(g.groupid))
+      const stillInReviewQueue = !!message?.groups?.some(
+        (g) =>
+          ['Pending', 'PendingOther', 'Spam'].includes(g.collection) &&
+          moderates(g)
       )
       if (stillInReviewQueue) {
         this.list[message.id] = message

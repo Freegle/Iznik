@@ -2,6 +2,7 @@
 
 namespace App\Mail\Volunteering;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\TrackableEmail;
 use App\Services\DonateLinkService;
@@ -10,7 +11,7 @@ use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Collection;
 
-class VolunteeringDigestMail extends MjmlMailable
+class VolunteeringDigestMail extends MjmlMailable implements DescribesMemberContent
 {
     use TrackableEmail;
 
@@ -25,7 +26,8 @@ class VolunteeringDigestMail extends MjmlMailable
      *                             global opportunities). Each carries a 'groups'
      *                             array of ['name' => , 'url' => ] pairs for the
      *                             recipient's groups it was posted on (empty for
-     *                             global opportunities).
+     *                             global opportunities), and a 'userid' naming its
+     *                             poster where known (see about()).
      */
     public function __construct(
         public readonly string $recipientEmail,
@@ -49,6 +51,32 @@ class VolunteeringDigestMail extends MjmlMailable
     protected function getSubject(): string
     {
         return 'Volunteer opportunities near you';
+    }
+
+    /**
+     * Each opportunity names its poster's userid (since the additive fix alongside
+     * this); an entry built without one (e.g. an older test fixture, or an
+     * opportunity posted before the column was backfilled) simply contributes
+     * nothing to users. There is no bucket in about() for a volunteering
+     * opportunity itself, only for the people named in it - filter-spool removes
+     * this mail once every poster it names is now a spammer, the same as any
+     * other member-content mail (plan section 11.8).
+     */
+    public function about(): array
+    {
+        $users = [];
+        foreach ($this->volunteerings as $opp) {
+            if (isset($opp['userid'])) {
+                $users[] = (int) $opp['userid'];
+            }
+        }
+
+        return [
+            'chatmessages' => [],
+            'messages' => [],
+            'newsfeed' => [],
+            'users' => array_values(array_unique($users)),
+        ];
     }
 
     public function envelope(): Envelope

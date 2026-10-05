@@ -168,6 +168,20 @@ so use plain approve if you want them to stay under review.
 (This is different from moderating the **ChitChat** discussion feed, which is done on the
 main Freegle site by the ChitChat Moderation team, not in ModTools.)
 
+## During a lockdown
+
+While Freegle is in a [lockdown](../ops/runbooks/lockdown.md), most of the member tools
+on this page are switched off on purpose. You keep the plain **Approve** button; Ban,
+Remove, Merge, and the **Mail** and **Leave** standard-message buttons are refused, and
+you cannot start a new chat with a member. A lockdown is a response to a spam or
+phishing wave, and the tools that write to a member or open a chat with one are
+exactly the ones worth taking away while an incident is live.
+
+Chat between members is held while the lockdown is on, and nobody reads it. When Support
+lifts it, the held messages go through the usual checks: messages from accounts marked as
+spammers are dropped, and anything the checks would normally send to **Chats > Review**
+still goes there.
+
 ## Notes about members
 
 **Members > Notes** (`/members/notes`) is a feed of moderator notes. Flagged notes are

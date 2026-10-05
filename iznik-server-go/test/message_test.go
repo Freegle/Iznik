@@ -3593,6 +3593,53 @@ func TestPutMessageGeneratesSyntheticMessageID(t *testing.T) {
 	assert.Contains(t, *messageid, fmt.Sprintf("-%d", groupID), "messageid must have -{groupid} suffix")
 }
 
+// TestPutMessageUnmoderatedMemberGoesDirectToApproved verifies that a trusted
+// (unmoderated, DEFAULT ourPostingStatus) member's direct PUT /message submission
+// on a non-moderated, non-closed group goes straight to Approved, not Pending.
+// This pins down a real bug found while testing the lockdown switch: the
+// ourPostingStatus lookup used to Scan into a throwaway one-field struct whose
+// field name ("OurPostingStatus" -> GORM's default "our_posting_status") never
+// matched the raw "ourPostingStatus" column actually selected, so the value was
+// silently always nil and every direct-submit member was forced through Pending
+// regardless of their real posting status - with no error surfaced beyond a
+// TRACE-level GORM scan warning. Fixed by scanning directly into *string, the
+// same pattern already used by every other ourPostingStatus read in this file.
+func TestPutMessageUnmoderatedMemberGoesDirectToApproved(t *testing.T) {
+	prefix := uniquePrefix("msgput_directapprove")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ? AND groupid = ?", userID, groupID)
+	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.moderated', 0, '$.closed', 0) WHERE id = ?", groupID)
+
+	body := map[string]interface{}{
+		"groupid":    groupID,
+		"type":       "Offer",
+		"subject":    prefix + " Test Offer",
+		"textbody":   "A test offer message",
+		"item":       "Test Item",
+		"collection": "Pending",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PUT", "/api/message?jwt="+token, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	newID := uint64(result["id"].(float64))
+
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", newID, groupID).Scan(&collection)
+	assert.Equal(t, "Approved", collection, "a trusted (unmoderated) member's direct post must go straight to Approved")
+}
+
 // TestPutMessageAvailableNowSetsInitially verifies: sending only
 // availablenow sets both availableinitially and availablenow to that value.
 func TestPutMessageAvailableNowSetsInitially(t *testing.T) {
@@ -11165,4 +11212,74 @@ func TestModerationAllowedWhenHeldBySelf(t *testing.T) {
 	var collection string
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&collection)
 	assert.Equal(t, utils.COLLECTION_REJECTED, collection)
+}
+
+// A Hold that lands on a copy already Approved (auto-approval or another mod got
+// there first, or an admin/support hold fans out over every group on the post) must
+// not leave the live post showing "Held by" someone, and must not hold a copy on a
+// group where the holder is not a moderator (Discourse 10102/14).
+func TestPostMessageHoldIgnoresApprovedCopy(t *testing.T) {
+	prefix := uniquePrefix("hold_appr")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	_, supportToken := CreateTestSession(t, supportID)
+
+	// Pending on A, already Approved on B.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Hold"})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", supportToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var heldA, heldB *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&heldA)
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldB)
+	assert.NotNil(t, heldA, "the pending copy is held")
+	assert.Nil(t, heldB, "the approved copy must not be held")
+}
+
+// Discourse 10102/14: a Support user who moderates some of the communities a post rippled
+// into pressed Hold to stop it there. With no community in the request, Support access made
+// the hold land on every copy of the post, so another community saw it "Held by" someone who
+// does not moderate it. A Hold with no community holds only the copies on communities the
+// holder moderates; Support's every-copy reach is a fallback for when they moderate none.
+func TestPostMessageHoldWithoutGroupStaysOnHoldersOwnGroups(t *testing.T) {
+	prefix := uniquePrefix("hold_own")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, supportID, groupA, "Moderator")
+	_, supportToken := CreateTestSession(t, supportID)
+
+	// Pending on both; the holder moderates A only.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Hold"})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", supportToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var heldA, heldB *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&heldA)
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldB)
+	assert.NotNil(t, heldA, "the copy on the holder's own community is held")
+	assert.Nil(t, heldB, "the copy on a community the holder does not moderate is not held")
 }

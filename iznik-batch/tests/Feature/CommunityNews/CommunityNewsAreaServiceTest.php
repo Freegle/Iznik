@@ -50,6 +50,161 @@ class CommunityNewsAreaServiceTest extends TestCase
         return (int) DB::table('towns')->insertGetId(['name' => $name, 'lat' => $lat, 'lng' => $lng]);
     }
 
+    private function place(string $name, float $lat, float $lng, int $population): int
+    {
+        return (int) DB::table('places')->insertGetId([
+            'name' => $name,
+            'lat' => $lat,
+            'lng' => $lng,
+            'population' => $population,
+            'position' => DB::raw('ST_SRID(POINT(' . $lng . ', ' . $lat . '), 3857)'),
+        ]);
+    }
+
+    private function nation(string $name, string $wkt, string $code = 'CUN'): int
+    {
+        return (int) DB::table('authorities')->insertGetId([
+            'name' => $name,
+            'area_code' => $code,
+            'polygon' => DB::raw("ST_GeomFromText('$wkt', 3857)"),
+        ]);
+    }
+
+    public function test_group_does_not_anchor_to_a_town_in_another_nation(): void
+    {
+        // Oswestry Freegle is in England but its nearest town, Wrexham, is in
+        // Wales 12.7 miles away. Fabricated remote geography, same shape:
+        // two adjacent nations split at lng -40. The group sits just EAST of
+        // the border (lng -39.95, Testland East) while its nearest town is WEST.
+        $this->nation('Testland East ' . uniqid(), 'POLYGON((-40 50, -38 50, -38 52, -40 52, -40 50))');
+        $this->nation('Testland West ' . uniqid(), 'POLYGON((-42 50, -40 50, -40 52, -42 52, -42 50))');
+
+        $this->town('Wrexhamlike', 51.0, -40.15);   // west of the border (Testland West), ~7 miles from the group
+        $this->town('Shrewsburylike', 51.0, -39.55); // east of the border, ~15 miles away
+
+        $oswestry = $this->createTestGroup(['lat' => 51.0, 'lng' => -39.95, 'settings' => ['communitynews' => 1]]);
+        // A neighbour on the far side of the border: Wrexhamlike is rightly its town.
+        $wrexham = $this->createTestGroup(['lat' => 51.0, 'lng' => -40.25, 'settings' => ['communitynews' => 1]]);
+
+        config(['freegle.communitynews.area_cluster_miles' => 20]);
+        $this->svc()->rebuildAreas();
+
+        $o = $this->areasContaining([$oswestry->id])->first();
+        $w = $this->areasContaining([$wrexham->id])->first();
+
+        $this->assertSame('Shrewsburylike', $o->name);
+        $this->assertSame('Wrexhamlike', $w->name);
+    }
+
+    public function test_detailed_polygons_override_rough_outline_near_border(): void
+    {
+        // The rough country outlines overreach: here the rough Wales outline
+        // swallows an English group (Oswestry) and its English neighbour town.
+        // The detailed Welsh Assembly polygon (WAE) stops at lng -60, and a
+        // Westminster constituency (WMC) covers the English side, so the group
+        // is England and must anchor to the English town, not Wrexham.
+        DB::table('authorities')->whereIn('area_code', ['CUN', 'WAE', 'WMC'])
+            ->where('name', 'like', 'Detail%')->delete();
+        $this->nation('Wales', 'POLYGON((-62 50, -57 50, -57 52, -62 52, -62 50))');
+        $this->nation('Detail Wales', 'POLYGON((-62 50, -60 50, -60 52, -62 52, -62 50))', 'WAE');
+        $this->nation('Detail Constituency', 'POLYGON((-60 50, -57 50, -57 52, -60 52, -60 50))', 'WMC');
+
+        $this->town('Wrexhamlike', 51.0, -60.15);    // Welsh side, ~7 miles from the group
+        $this->town('Shrewsburylike', 51.0, -59.55); // English side, ~15 miles away
+
+        $oswestry = $this->createTestGroup(['lat' => 51.0, 'lng' => -59.95, 'settings' => ['communitynews' => 1]]);
+
+        config(['freegle.communitynews.area_cluster_miles' => 20]);
+        $this->svc()->rebuildAreas();
+
+        $this->assertSame('Shrewsburylike', $this->areasContaining([$oswestry->id])->first()->name);
+    }
+
+    // An area is named after the town closest to its communities. The curated towns list is
+    // short, so for many communities "closest" was a town miles away: Oswestry Freegle was
+    // filed under Wrecsam (12.7 miles, another nation) because the list has no Oswestry. The
+    // places gazetteer has it. Remote coordinates throughout - see areasContaining().
+    public function test_closest_place_anchors_when_no_curated_town_is_near(): void
+    {
+        $this->town('Wrecsamlike ' . uniqid(), 46.10, -50.0);          // ~13 miles north
+        $this->place('Oswestrylike ' . uniqid(), 45.912, -50.0, 18743); // ~0.2 miles
+
+        $g = $this->createTestGroup(['lat' => 45.91, 'lng' => -50.0, 'settings' => ['communitynews' => 1]]);
+
+        config(['freegle.communitynews.area_cluster_miles' => 20]);
+        $this->svc()->rebuildAreas();
+
+        $area = CommunityNewsArea::where('anchorgroupid', $g->id)->first();
+        $this->assertNotNull($area);
+        $this->assertStringStartsWith('Oswestrylike', $area->name);
+    }
+
+    // A city's recorded centre sits among its neighbourhoods, each in the gazetteer. A curated
+    // town close by is the deliberate choice and wins (Birmingham, not Aston).
+    public function test_curated_town_within_reach_beats_a_closer_neighbourhood(): void
+    {
+        $this->town('Citylike ' . uniqid(), 46.513, -51.0);            // ~0.9 miles
+        $this->place('Neighbourhoodlike ' . uniqid(), 46.508, -51.0, 60000); // ~0.6 miles
+
+        $g = $this->createTestGroup(['lat' => 46.50, 'lng' => -51.0, 'settings' => ['communitynews' => 1]]);
+
+        config(['freegle.communitynews.area_cluster_miles' => 20]);
+        $this->svc()->rebuildAreas();
+
+        $this->assertStringStartsWith('Citylike', CommunityNewsArea::where('anchorgroupid', $g->id)->first()->name);
+    }
+
+    // With no curated town near, a sizeable place beats a closer hamlet, so the area is named
+    // after the town people know (Dundee, not a village across the water).
+    public function test_sizeable_place_beats_a_closer_small_one(): void
+    {
+        $this->place('Hamletlike ' . uniqid(), 47.505, -52.0, 1500);   // ~0.3 miles
+        $this->place('Townlike ' . uniqid(), 47.54, -52.0, 45000);     // ~2.8 miles
+
+        $g = $this->createTestGroup(['lat' => 47.50, 'lng' => -52.0, 'settings' => ['communitynews' => 1]]);
+
+        config(['freegle.communitynews.area_cluster_miles' => 20]);
+        $this->svc()->rebuildAreas();
+
+        $this->assertStringStartsWith('Townlike', CommunityNewsArea::where('anchorgroupid', $g->id)->first()->name);
+    }
+
+    // Communities whose closest place is the same one share an area.
+    public function test_communities_sharing_a_closest_place_share_an_area(): void
+    {
+        $this->place('Sharedlike ' . uniqid(), 48.50, -53.0, 30000);
+
+        $a = $this->createTestGroup(['lat' => 48.49, 'lng' => -53.0, 'settings' => ['communitynews' => 1]]);
+        $b = $this->createTestGroup(['lat' => 48.51, 'lng' => -53.0, 'settings' => ['communitynews' => 1]]);
+
+        config(['freegle.communitynews.area_cluster_miles' => 20]);
+        $this->svc()->rebuildAreas();
+
+        $areas = $this->areasContaining([$a->id, $b->id]);
+        $this->assertSame(1, $areas->count());
+        $this->assertSame(2, $areas->first()->groupcount);
+        $this->assertStringStartsWith('Sharedlike', $areas->first()->name);
+    }
+
+    // A place that is also a curated town is one candidate, not two, so communities either
+    // side of it cannot be split into twin areas of the same name.
+    public function test_a_place_that_is_a_curated_town_is_not_a_second_anchor(): void
+    {
+        $name = 'Twinlike ' . uniqid();
+        $this->town($name, 49.50, -54.0);
+        $this->place($name, 49.501, -54.0, 30000);
+
+        // 2.5 miles from the town, so it takes the town; 4 miles away, so it would take the
+        // place - the twin - if the place were still listed.
+        $a = $this->createTestGroup(['lat' => 49.464, 'lng' => -54.0, 'settings' => ['communitynews' => 1]]);
+        $b = $this->createTestGroup(['lat' => 49.558, 'lng' => -54.0, 'settings' => ['communitynews' => 1]]);
+
+        config(['freegle.communitynews.area_cluster_miles' => 20]);
+        $this->svc()->rebuildAreas();
+
+        $this->assertSame(1, $this->areasContaining([$a->id, $b->id])->count());
+    }
+
     public function test_groups_assign_to_nearest_town(): void
     {
         // Areas are anchored on the towns table: each enabled group joins its

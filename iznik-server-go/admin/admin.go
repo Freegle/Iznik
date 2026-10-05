@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -242,6 +243,10 @@ func PostAdmin(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
+	if lockdown.GateMod(c, myid) {
+		return nil
+	}
+
 	var req PostAdminRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
@@ -403,6 +408,10 @@ func PatchAdmin(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
+	if lockdown.GateMod(c, myid) {
+		return nil
+	}
+
 	var req PatchAdminRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
@@ -505,6 +514,10 @@ func DeleteAdmin(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	// Support both body and query parameter for ID.
