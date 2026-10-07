@@ -160,6 +160,14 @@ so duplicates created from now on are still merged and the reviewed backlog wait
 - `User::tnDisplayName($username)` - The display name for a username (`tricia.hayes` → "Tricia Hayes"), matching Go's `partnerDisplayName`
 - `TnUserProvisioner::resolveOrCreate($tnUserId)` - The Freegle user for a TN user id, created from TN's API if needed
 
+**Names run one way.** The address gives the username, and the username gives both the
+address and the display name. Nothing reads a username or an address back out of `fullname`:
+the name is made from the username once, then the email path, the member or a mod may change
+it. `users:fix-tn-names` (`FixTNNamesCommand`) follows the same rule. It names a member from
+their **preferred** TN address. It replaces only a name that is empty or is a raw form of that
+address: the address itself, the alias local part (`alice-g3486`) or the bare username. A
+hyphen in a name does not mean it came from the username, so "Mary-Jane Smith" is left alone.
+
 ## Integration Mechanisms
 
 ### Message Delivery (Email-Based)

@@ -2141,6 +2141,8 @@ class TNSyncCommandTest extends TestCase
     /**
      * Create a user with a TrashNothing email address. $tnUsername sets the
      * username in that address, which is what the sync reads as the current one.
+     * The default username is unrelated to $name on purpose: a fullname says nothing
+     * about the username, so a test must only pass if the code reads the address.
      */
     private function createTNUser(string $name = 'TNUser', ?string $tnUsername = null): User
     {
@@ -2151,7 +2153,7 @@ class TNSyncCommandTest extends TestCase
             'added' => now(),
         ]);
 
-        $uniquePrefix = $tnUsername ?? strtolower($name) . '_' . uniqid('', true);
+        $uniquePrefix = $tnUsername ?? uniqid('tnuser_', true);
 
         UserEmail::create([
             'userid' => $user->id,

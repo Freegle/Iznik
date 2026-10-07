@@ -89,7 +89,7 @@ func TestCreatePartnerUser(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND email = ?", userID, email).Scan(&emailCount)
 	assert.Equal(t, int64(1), emailCount)
 
-	// Verify name was extracted from email prefix (before -g).
+	// Verify name was taken from the username behind the address (any -g<digits> suffix dropped).
 	// The name extraction replaces underscores with spaces and title-cases.
 	var fullname string
 	db.Raw("SELECT fullname FROM users WHERE id = ?", userID).Scan(&fullname)

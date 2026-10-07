@@ -312,6 +312,15 @@ Stripping a trailing `-g\d+` from a display name (`removeTNGroup`, Go's `TidyNam
 different thing and is fine. Those strip the suffix TN used to put in names, and they do nothing
 to a name that has none.
 
+**Never infer the username, or the address, from the name.** Information runs one way: address
+→ username (the helper), and username → address (`User::tnEmailForUsername`) or → display name
+(`User::tnDisplayName`, Go's `partnerDisplayName`). `fullname` is made from the username once,
+but the email path sets it from the From header, and members and mods edit it. Comparing
+`removeTNGroup($user->fullname)` with a username made every TN change event look like a rename
+once names were prettified. Treating any hyphenated `fullname` as a raw username overwrote real
+names like "Mary-Jane Smith". To decide whether a name came from the address, compare it with
+forms derived **from** the address, never the reverse.
+
 ## See also
 
 - `docs/developers/reference/unsubscribe.md` - the intended unsubscribe behaviour.

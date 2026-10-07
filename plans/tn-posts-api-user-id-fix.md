@@ -105,7 +105,7 @@ Added next to `removeTNGroup()` in `app/Models/User.php`:
     - Dropping the suffixed aliases is safe for inbound mail. TN still sends from `new-gNNN@` aliases, and `findUserByEmail`'s canon fallback reduces those to `new@usertrashnothingcom`, the same canon as the bare address. The Go partner sync's `EnsurePartnerIdentifiers` may re-attach a `new-gNNN` alias later, and that is harmless.
     - If the bare `new@` address already belongs to a *different* user (`users_emails.email` is UNIQUE), leave this user's addresses untouched. Log `TN-SYNC-TRACE [NAME-CHANGE] … email-clash` and send the error to Sentry rather than throwing mid-change.
     - Emit `TN-SYNC-TRACE [WRITE]` lines and honour `dryRun` throughout, as the existing code does.
-- If no TN email can be found, fall back to the current comparison.
+- ~~If no TN email can be found, fall back to the current comparison.~~ Dropped: there is no `fullname` fallback (see step 8). `sync()` already skips users whose preferred address is not TN.
 
 ### 5. Remove the "every TN address has a `-gXXX` suffix" assumption across the codebase — **DONE**
 - **As implemented:**
@@ -278,6 +278,35 @@ Docs and tests for every step land here, so `check-docs-freshness` and the suite
   - The cross-stack canon table: one PHP test and one Go test asserting the same input → canon pairs across `canonMail`, `canonicalizeEmail` and `CanonicalizePartnerEmail`.
 - **Tests, step 6:** none beyond step 4's. The rename tests already assert the bare address.
 - **Run everything:** the Go suite as well as the batch Unit/Feature/Integration suites and the nuxt unit tests (for `ModMember.spec.js`), then `node scripts/check-docs-freshness.mjs` (diffs against `origin/master` by default).
+
+### 8. No inference from `fullname` to TN username or TN address — **DONE**
+**Rule.** Information only flows one way: TN address → username (`User::tnUsernameFromEmail` / Go `TNAliasIdentity`), and username → address (`User::tnEmailForUsername`) or → display name (`tnDisplayName` / Go `partnerDisplayName`). `users.fullname` is created from the username but has no other relationship to it. The email path sets it from the From-header display name, and members and mods can edit it. Nothing may read a username or an address back out of `fullname`, `firstname` or `lastname`, or decide from the name's shape that it "is" a username.
+
+**Audit (2026-10-07).** Searched `iznik-batch/app`, `iznik-server-go`, `iznik-nuxt3` (components, modtools, stores, composables, pages), `status-nuxt`, `monitor-fsm`, `scripts`, the tests, docs and rules. The searches covered every caller of the TN helpers, every construction of a `@user.trashnothing.com` / `trashnothing_domain` string, `fullname`/`firstname`/`lastname`/`displayname` within reach of TN terms, and `fullname` used in a `WHERE`, `LIKE`, `REPLACE` or compared with `email`/`canon`.
+
+| Site | What it does | Verdict |
+|---|---|---|
+| `UserChangesSyncer` (old `removeTNGroup($user->fullname)` vs `username`) | read the username out of `fullname` | **was the only real case**; fixed in step 4 (`applyUsername` reads the preferred TN address) |
+| `User::tnEmailForUsername` | the only place a TN address is built; callers pass an API username (`TnUserProvisioner`, `UserChangesSyncer`) or one parsed from an address (`TNSyncCommand:522`) | OK |
+| `TnUserProvisioner`, `TNSyncCommand`, Go `partner.go` (`CreatePartnerUser`, `FindTNCandidates`, `EnsurePartnerIdentifiers`, `FindTNSiblings`), `membership.go` partner join | match by `tnuserid` and address only; `fullname` is only written | OK |
+| `GroupPostIngestionService:513` (`fromname`), `synthesizeRfc822` (`From: name <noreply@trashnothing.com>`), `EmailReplaySyncer::ensureUserExists`, `IncomingMailService::handleSubscribe` | write or show the name; the address never comes from it | OK |
+| Go `InventName` / `TidyName`, `partnerDisplayName` | address → name, the allowed direction | OK |
+| `User::removeTNGroup`/`getDisplayNameAttribute`, `ListModsService::name`, `PushNotificationService:1374`, `NameSanitiser`/`namevalidation.go` | tidy or vet a name for **display**; never yield a username or address | OK |
+| nuxt `ModMember`, `ModMergeMemberModal`, `ModStdMessageModal`, `MessageHistory` | TN detection by address or `tnuserid` | OK |
+| Name searches (`user.go:1281`, `membership.go:749`, `chatroom.go`, `spammers.go`, `logs.go`, `message_list.go`, `DonationThankPrepService:622`) | general user search; not TN-specific | n/a |
+
+**Fixes (as planned; as implemented below):**
+1. **`FixTNNamesCommand` row filter (`:54-57`).** It picks users whose `fullname IS NULL OR fullname LIKE '%-%'`, which treats any hyphen in a name as a sign that the name is a raw username. A member whose name really is hyphenated (for example "Mary-Jane Smith", set from a From header or by the member, with `firstname`/`lastname` empty) is overwritten with the prettified username every night. It also takes **any** of the user's TN addresses, not the preferred one (see step 7's ping-pong finding). Proposed fix: decide whether a name needs fixing from the address, not from the name's shape. Rewrite only when `fullname` is NULL/empty, or when it equals (case-insensitively) something derived from one of the user's own TN addresses: the full address, its local part (`alice-g3486`), or its username (`alice`). Use the **preferred** TN address as the source of the new name. Tests in `FixTNNamesCommandTest`: a genuine hyphenated name is left alone; `alice-g3486`, `alice-g3486@user.trashnothing.com` and NULL are each fixed; the preferred address wins over a second TN address.
+2. **Test fixture `TNSyncCommandTest::createTNUser` (`:2145`).** When no username is passed, it builds the address from `strtolower($name)`, so `fullname` and username agree by construction. That hides any regression back to name-based inference. Proposed fix: default to a username unrelated to `$name` (e.g. `tnuser_<uniqid>`), so a test only passes if the code reads the address.
+3. **Comment, Go `test/partner_test.go:92`** ("extracted from email prefix (before -g)"): now the username behind the address, suffix optional. Wording only.
+
+**Docs.** `trashnothing.md:507` already states that the rename path does not read `fullname`. Add one sentence to `.claude/rules/mail-and-data.md`'s TN trap stating the one-way rule above, so it loads wherever the parsing lives.
+
+- **As implemented:**
+  - `FixTNNamesCommand`: joins only the **preferred** address; the SQL filter (`fullname` NULL, empty or containing a hyphen) now only narrows candidates; `nameCameFromAddress()` decides. A name containing `@` must be a TN address with the same username; otherwise `strtolower(removeTNGroup(fullname))` must equal the username. Raw dotted usernames with no hyphen (`tricia.hayes`) are still outside the SQL filter, as before; widening it would scan every TN member nightly.
+  - `FixTNNamesCommandTest`: `test_fixes_tn_user_with_hyphenated_fullname` setup changed from `Charlie-12345` to `Charlie-g12345`. The old value is not derivable from the member's address (it came from the retired `name-12345@trashnothing.com` fixture shape), so under the rule it is correctly left alone. Added tests: real hyphenated names left alone, raw forms of the address fixed, preferred address only and stable across two runs.
+  - `TNSyncCommandTest::createTNUser` defaults to `uniqid('tnuser_')`, unrelated to `$name`. Go `partner_test.go:92` comment reworded.
+  - Docs: a "Names run one way" paragraph under Key functions in `trashnothing.md`; the rule in `mail-and-data.md`'s TN trap.
 
 ## Critical files
 - `iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php`

@@ -127,8 +127,10 @@ class FixTNNamesCommandTest extends TestCase
     public function test_fixes_tn_user_with_hyphenated_fullname(): void
     {
         $userId = $this->createTNUser('Charlie');
-        // fullname contains a hyphen — previously set from a stale TN sync
-        DB::table('users')->where('id', $userId)->update(['fullname' => 'Charlie-12345']);
+        // fullname is the member's own alias local part, as TN used to send it in
+        // the From header. "Charlie-12345" would be left alone: nothing in the
+        // address says that name came from it.
+        DB::table('users')->where('id', $userId)->update(['fullname' => 'Charlie-g12345']);
 
         $this->artisan('users:fix-tn-names')
             ->assertExitCode(0);
@@ -217,6 +219,71 @@ class FixTNNamesCommandTest extends TestCase
             ->assertExitCode(0);
 
         $this->assertSame('Fixtn-Ann-Lee', DB::table('users')->where('id', $userId)->value('fullname'));
+    }
+
+    /**
+     * A fullname is made from the username but says nothing about it afterwards.
+     * A hyphen in a name is not evidence the name came from the address: a real
+     * "Mary-Jane Smith" must survive, as must a name unrelated to the username.
+     */
+    public function test_leaves_a_real_hyphenated_name_alone(): void
+    {
+        $realName = $this->createTNUser('fixtn-tricia.hayes', '12');
+        DB::table('users')->where('id', $realName)->update(['fullname' => 'Mary-Jane Smith']);
+
+        $prefix = $this->createTNUser('fixtn-alice', '34');
+        DB::table('users')->where('id', $prefix)->update(['fullname' => 'Fixtn-Alice-Smith']);
+
+        $this->artisan('users:fix-tn-names')->assertExitCode(0);
+
+        $this->assertSame('Mary-Jane Smith', DB::table('users')->where('id', $realName)->value('fullname'));
+        $this->assertSame('Fixtn-Alice-Smith', DB::table('users')->where('id', $prefix)->value('fullname'));
+    }
+
+    /**
+     * The raw forms of the member's own address are what the command exists to
+     * replace: the whole address, the alias local part and an empty name.
+     */
+    public function test_fixes_names_that_are_raw_forms_of_the_address(): void
+    {
+        $address = $this->createTNUser('fixtn-ann.lee', '56');
+        DB::table('users')->where('id', $address)->update(['fullname' => 'fixtn-ann.lee-g56@user.trashnothing.com']);
+
+        $alias = $this->createTNUser('fixtn-bo.ng', '78');
+        DB::table('users')->where('id', $alias)->update(['fullname' => 'fixtn-bo.ng-g78']);
+
+        $empty = $this->createTNUser('fixtn-cy', '90');
+        DB::table('users')->where('id', $empty)->update(['fullname' => '']);
+
+        $this->artisan('users:fix-tn-names')->assertExitCode(0);
+
+        $this->assertSame('Fixtn-Ann Lee', DB::table('users')->where('id', $address)->value('fullname'));
+        $this->assertSame('Fixtn-Bo Ng', DB::table('users')->where('id', $alias)->value('fullname'));
+        $this->assertSame('Fixtn-Cy', DB::table('users')->where('id', $empty)->value('fullname'));
+    }
+
+    /**
+     * Only the preferred address names the member. Reading every TN address gave
+     * one candidate per address, so a member holding two usernames' addresses was
+     * renamed back and forth on alternate runs.
+     */
+    public function test_names_the_member_from_the_preferred_address_only(): void
+    {
+        $userId = $this->createTNUser('fixtn-new-name', '11');
+        DB::table('users_emails')->insert([
+            'userid'    => $userId,
+            'email'     => 'fixtn-old-name-g22@user.trashnothing.com',
+            'backwards' => strrev('fixtn-old-name-g22@user.trashnothing.com'),
+            'preferred' => 0,
+            'added'     => now(),
+        ]);
+
+        $this->artisan('users:fix-tn-names')->assertExitCode(0);
+        $this->assertSame('Fixtn-New-Name', DB::table('users')->where('id', $userId)->value('fullname'));
+
+        // A second run must not flip it to the other address's username.
+        $this->artisan('users:fix-tn-names')->assertExitCode(0);
+        $this->assertSame('Fixtn-New-Name', DB::table('users')->where('id', $userId)->value('fullname'));
     }
 
     /**
