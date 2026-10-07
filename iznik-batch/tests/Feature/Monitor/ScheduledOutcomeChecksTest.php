@@ -318,7 +318,13 @@ class ScheduledOutcomeChecksTest extends TestCase
         $this->fail('the daily-stats coverage check is not registered');
     }
 
-    /** Give every group a stats row for $day, and return the ids seeded. */
+    /**
+     * Give every group a stats row for $day, and return the ids seeded. Reads whatever is
+     * in `groups` at call time - migrate:fresh seeds none, so a caller wanting a non-empty
+     * result must create its own with createTestGroup() first (see .claude/rules/
+     * tests-and-ci.md: the batch test database is not otherwise reliably empty either,
+     * which is exactly why this must not depend on ambient rows from other tests).
+     */
     private function seedStatsForAllGroups(string $day): array
     {
         $ids = DB::table('groups')->pluck('id')->all();
@@ -339,6 +345,10 @@ class ScheduledOutcomeChecksTest extends TestCase
     public function test_stats_coverage_ok_when_every_community_is_covered(): void
     {
         Carbon::setTestNow(Carbon::create(2026, 9, 15, 7, 0, 0, 'Europe/London'));
+        // groups is empty until a test puts rows in it (migrate:fresh seeds none) - founded
+        // left null counts as "existed before the day", same as the check's own oldest
+        // real communities.
+        $this->createTestGroup();
         $this->seedStatsForAllGroups('2026-09-14');
 
         $result = $this->statsCoverageCheck()->evaluate(Carbon::now());
@@ -349,6 +359,10 @@ class ScheduledOutcomeChecksTest extends TestCase
     public function test_stats_coverage_breaches_when_a_community_is_missed(): void
     {
         Carbon::setTestNow(Carbon::create(2026, 9, 15, 7, 0, 0, 'Europe/London'));
+        // Two communities, so losing one still leaves one covered - see note above on why
+        // groups needs seeding here.
+        $this->createTestGroup();
+        $this->createTestGroup();
         $ids = $this->seedStatsForAllGroups('2026-09-14');
         $this->assertNotEmpty($ids, 'there are groups to cover');
 
@@ -365,6 +379,9 @@ class ScheduledOutcomeChecksTest extends TestCase
     public function test_stats_coverage_ignores_a_community_founded_after_the_day(): void
     {
         Carbon::setTestNow(Carbon::create(2026, 9, 15, 7, 0, 0, 'Europe/London'));
+        // See note on test_stats_coverage_ok_when_every_community_is_covered - groups needs
+        // at least one qualifying community before the new, excluded one is added below.
+        $this->createTestGroup();
         $this->seedStatsForAllGroups('2026-09-14');
 
         // Founded after the day being checked, so it cannot have stats for it and must not

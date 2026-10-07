@@ -9,6 +9,7 @@ const mockAdminsStore = {
   clear: vi.fn().mockResolvedValue({}),
   fetch: vi.fn().mockResolvedValue({}),
   add: vi.fn().mockResolvedValue({}),
+  test: vi.fn().mockResolvedValue('test-token'),
 }
 
 const mockModGroupStore = {
@@ -65,6 +66,7 @@ vi.mock('@/stores/modgroup', () => ({
 // Mock composables
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
+    me: ref({ email: 'mod@example.com' }),
     myGroups: ref([
       { id: 1, role: 'Moderator' },
       { id: 2, role: 'Moderator' },
@@ -111,6 +113,9 @@ describe('admins.vue page', () => {
           },
           VeeForm: {
             template: '<form class="vee-form-stub" ref="form"><slot /></form>',
+            methods: {
+              validate: () => Promise.resolve({ valid: true }),
+            },
           },
           Field: {
             template:
@@ -149,7 +154,12 @@ describe('admins.vue page', () => {
           },
           'b-form-input': {
             template:
-              '<input class="form-input" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+              '<input class="form-input" :id="id" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+            props: ['modelValue', 'id'],
+          },
+          'b-form-textarea': {
+            template:
+              '<textarea class="form-textarea" :id="id" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
             props: ['modelValue', 'id'],
           },
           'b-form-select': {
@@ -158,6 +168,15 @@ describe('admins.vue page', () => {
             props: ['modelValue'],
           },
           'v-icon': { template: '<span class="icon-stub" />' },
+          ExternalLink: {
+            template: '<a class="external-link" :href="href"><slot /></a>',
+            props: ['href'],
+          },
+          'b-form-checkbox': {
+            template:
+              '<label><input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" /><slot /></label>',
+            props: ['modelValue'],
+          },
         },
         ...options.global,
       },
@@ -238,6 +257,17 @@ describe('admins.vue page', () => {
       const wrapper = mountComponent()
       expect(wrapper.vm.validateBody('')).toBe('Please add the message.')
       expect(wrapper.vm.validateBody(null)).toBe('Please add the message.')
+    })
+
+    it('validateBody refuses HTML in the plain-text part', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.vm.validateBody('Hello <b>there</b>')).toContain(
+        'must be plain text'
+      )
+      expect(wrapper.vm.validateBody('Line<br>break')).toContain(
+        'must be plain text'
+      )
+      expect(wrapper.vm.validateBody('Please add <your names here>')).toBe(true)
     })
 
     it('validateBody returns true for valid body', () => {
@@ -343,6 +373,209 @@ describe('admins.vue page', () => {
     it('renders group select in Pending tab', () => {
       const wrapper = mountComponent()
       expect(wrapper.find('.group-select-stub').exists()).toBe(true)
+    })
+  })
+
+  describe('guidance for local moderators', () => {
+    it('shows the separate guidance field for a system-wide ADMIN only', async () => {
+      const wrapper = mountComponent()
+      expect(wrapper.find('#modguidance').exists()).toBe(false)
+
+      wrapper.vm.groupidcreate = 5
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('#modguidance').exists()).toBe(false)
+
+      wrapper.vm.groupidcreate = -2
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.modguidance').exists()).toBe(true)
+      expect(wrapper.find('textarea#modguidance').exists()).toBe(true)
+      expect(
+        wrapper.find('.modguidance .form-group').attributes('label')
+      ).toContain('NOT sent to members')
+    })
+
+    it('sends guidance as its own field and keeps it out of the body', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.groupidcreate = -2
+      wrapper.vm.subject = 'Subject'
+      wrapper.vm.body = 'The message to members'
+      wrapper.vm.modguidance = 'Tell your mods to add local details'
+      await wrapper.vm.create()
+
+      expect(mockAdminsStore.add).toHaveBeenCalledTimes(1)
+      const params = mockAdminsStore.add.mock.calls[0][0]
+      expect(params.modguidance).toBe('Tell your mods to add local details')
+      expect(params.text).toBe('The message to members')
+      expect(params.subject).toBe('Subject')
+      expect(params.text).not.toContain('local details')
+    })
+
+    it('does not send guidance for a single-group ADMIN', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.groupidcreate = 5
+      wrapper.vm.subject = 'Subject'
+      wrapper.vm.body = 'Body'
+      wrapper.vm.modguidance = 'Should be dropped'
+      await wrapper.vm.create()
+
+      const params = mockAdminsStore.add.mock.calls[0][0]
+      expect(params).not.toHaveProperty('modguidance')
+    })
+  })
+
+  describe('send after', () => {
+    it('sends the chosen time as ISO, and nothing when left empty', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.groupidcreate = 5
+      wrapper.vm.subject = 'Subject'
+      wrapper.vm.body = 'Body'
+      await wrapper.vm.create()
+      expect(mockAdminsStore.add.mock.calls[0][0]).not.toHaveProperty(
+        'sendafter'
+      )
+
+      wrapper.vm.sendafter = '2031-02-03T04:05'
+      await wrapper.vm.create()
+      expect(mockAdminsStore.add.mock.calls[1][0].sendafter).toBe(
+        new Date('2031-02-03T04:05').toISOString()
+      )
+    })
+  })
+  describe('MJML part', () => {
+    const mjml =
+      '<mj-section><mj-column><mj-text>Designed</mj-text></mj-column></mj-section>'
+
+    function filled() {
+      const wrapper = mountComponent()
+      wrapper.vm.groupidcreate = 5
+      wrapper.vm.subject = 'Subject'
+      wrapper.vm.body = 'Plain body'
+      return wrapper
+    }
+
+    it('links to MJML and its live editor, and warns before showing the MJML box', async () => {
+      const wrapper = filled()
+      expect(wrapper.find('textarea#mjml').exists()).toBe(false)
+
+      wrapper.vm.useMjml = true
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('textarea#mjml').exists()).toBe(true)
+      expect(wrapper.find('.mjml-part').text()).toContain(
+        'Only use this if you know what you are doing'
+      )
+      expect(wrapper.find('.mjml-part').html()).toContain('https://mjml.io')
+      expect(wrapper.find('.mjml-part').html()).toContain(
+        'https://mjml.io/try-it-live'
+      )
+    })
+
+    it('has no test send, and says only an MJML ADMIN needs a test from Pending', async () => {
+      const wrapper = filled()
+      expect(wrapper.find('.test-send').exists()).toBe(false)
+      expect(wrapper.find('.test-first').text()).toContain('Pending tab')
+      expect(wrapper.find('.test-first').text()).not.toContain('test')
+
+      wrapper.vm.useMjml = true
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.test-first').text()).toContain(
+        'send yourself a test'
+      )
+    })
+
+    it('creates without a test, sending the MJML', async () => {
+      const wrapper = filled()
+      wrapper.vm.useMjml = true
+      wrapper.vm.mjml = mjml
+      await wrapper.vm.create()
+
+      const params = mockAdminsStore.add.mock.calls[0][0]
+      expect(params.mjml).toBe(mjml)
+      expect(params.text).toBe('Plain body')
+      expect(params).not.toHaveProperty('testtoken')
+      expect(mockAdminsStore.test).not.toHaveBeenCalled()
+    })
+
+    it('does not send the MJML once it is switched off', async () => {
+      const wrapper = filled()
+      wrapper.vm.useMjml = true
+      wrapper.vm.mjml = mjml
+      wrapper.vm.useMjml = false
+      await wrapper.vm.create()
+      expect(mockAdminsStore.add.mock.calls[0][0].mjml).toBe('')
+    })
+
+    it('refuses unusable MJML', async () => {
+      const wrapper = filled()
+      wrapper.vm.useMjml = true
+      wrapper.vm.mjml = '<mjml><mj-body>' + mjml + '</mj-body></mjml>'
+      await wrapper.vm.create()
+      expect(wrapper.vm.createError).toContain('inside <mj-body>')
+      expect(mockAdminsStore.add).not.toHaveBeenCalled()
+    })
+
+    it('shows why the server refused to create', async () => {
+      mockAdminsStore.add.mockRejectedValueOnce({
+        response: { data: { error: 400, message: 'Server says no' } },
+      })
+      const wrapper = filled()
+      await wrapper.vm.create()
+      expect(wrapper.vm.createError).toBe('Server says no')
+      expect(wrapper.vm.creating).toBe(false)
+      expect(wrapper.vm.created).toBe(false)
+    })
+
+    it('needs both parts of a big button', async () => {
+      const wrapper = filled()
+      wrapper.vm.ctatext = 'Click'
+      await wrapper.vm.create()
+      expect(wrapper.vm.createError).toContain('both its text and its link')
+    })
+
+    it('drops the big button when there is an MJML version', async () => {
+      const wrapper = filled()
+      wrapper.vm.ctatext = 'Click'
+      wrapper.vm.ctalink = 'https://example.com'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('#ctatext').exists()).toBe(true)
+
+      wrapper.vm.useMjml = true
+      wrapper.vm.mjml = mjml
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('#ctatext').exists()).toBe(false)
+
+      await wrapper.vm.create()
+      const params = mockAdminsStore.add.mock.calls[0][0]
+      expect(params.ctatext).toBeNull()
+      expect(params.ctalink).toBeNull()
+    })
+
+    it('copyAdmin brings the MJML part with it', () => {
+      const wrapper = mountComponent()
+      wrapper.vm.copyAdmin({
+        essential: 1,
+        groupid: 5,
+        subject: 'S',
+        text: 'T',
+        mjml,
+      })
+      expect(wrapper.vm.mjml).toBe(mjml)
+      expect(wrapper.vm.useMjml).toBe(true)
+    })
+  })
+
+  describe('create button', () => {
+    it('says creating only saves to Pending', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.groupidcreate = 5
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain(
+        'Save to Pending ADMINs (nothing is sent yet)'
+      )
+      wrapper.vm.groupidcreate = -2
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain(
+        'Suggest to all communities (nothing is sent yet)'
+      )
     })
   })
 })

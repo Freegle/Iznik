@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Sandwich-bounds columns on rippling_reach itself
- * (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md).
+ * (docs/developers/reference/rippling-algorithm.md section 11).
  *
  * The exact reach polygons are grid-fill isochrones averaging ~11k vertices / 178 KB;
  * the reach containment queries consult two SMALL derived polygons stored alongside:

@@ -192,9 +192,11 @@ class NewsfeedDigestService
             }
 
             $items[] = [
+                'id' => (int) $post->id,
                 'type' => $post->type,
                 'text' => $this->snip($text),
                 'author' => $this->userName((int) $post->userid),
+                'authorid' => (int) $post->userid,
                 'replies' => $this->repliesFor((int) $post->id),
             ];
 
@@ -237,16 +239,16 @@ class NewsfeedDigestService
     }
 
     /**
-     * V1 getLatLng(FALSE): prefer the user's saved 'mylocation' setting, then
-     * their lastlocation.
+     * V1 getLatLng(FALSE): prefer the user's saved 'mylocation' setting (never for a TN
+     * member, see User::chosenLatLng), then their lastlocation.
      *
      * @return array{0: float|null, 1: float|null}
      */
     private function resolveLatLng(User $user): array
     {
-        $settings = $user->settings ?? [];
-        if (isset($settings['mylocation']['lat'], $settings['mylocation']['lng'])) {
-            return [(float) $settings['mylocation']['lat'], (float) $settings['mylocation']['lng']];
+        $chosen = User::chosenLatLng($user->settings, $user->tnuserid);
+        if ($chosen) {
+            return $chosen;
         }
 
         [$lat, $lng] = $user->getLatLng();

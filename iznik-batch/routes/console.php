@@ -85,23 +85,11 @@ Schedule::command('images:push-spool')
     ->sendOutputTo(cronLog('images:push-spool'))
     ->runInBackground();
 
-// The one-off copy of the legacy NFS store, in slices: each stops on its time
-// budget and the next carries on from the cursor. On only between the cutover
-// and a clean --verify. The backup drain's skip() applies to it like every
-// other event, so it merely pauses for the window.
-Schedule::command('images:migrate-legacy')
-    ->everyFiveMinutes()
-    ->withoutOverlapping(10)
-    ->when(fn () => (bool) config('freegle.image_store.enabled', false)
-        && (bool) config('freegle.image_store.migrate_enabled', false))
-    ->sendOutputTo(cronLog('images:migrate-legacy'))
-    ->runInBackground();
-
 // Proves the bucket is still writable and, above all, still PUBLICLY readable:
-// the read chain in frontend-nginx falls through to the legacy share on any
-// bucket error, so a bucket that stops answering (public read switched off, key
-// revoked, service disabled) shows up only as every image that exists solely
-// in the bucket going missing. --report raises ObjectStoreUnavailable in Sentry.
+// the read chain in frontend-nginx ends at the bucket, so a bucket that stops
+// answering (public read switched off, key revoked, service disabled) shows up
+// only as every image not in the spool going missing. --report raises
+// ObjectStoreUnavailable in Sentry.
 Schedule::command('images:object-store-check --report')
     ->everyTenMinutes()
     ->withoutOverlapping(10)
@@ -1921,6 +1909,25 @@ Schedule::command('backup:database')
     ->when(fn () => config('freegle.backup.database.enabled', false))
     ->withoutOverlapping(480)
     ->sendOutputTo(cronLog('backup:database'))
+    ->runInBackground();
+
+// Lockdown switch (plans/active/2026-09-27-lockdown-switch.md, section 11.11): announces
+// any lockdowns row not yet announced, records what this incident holds, and releases
+// ChitChat holds once ChitChat is lifted. A no-op (bar the announce check) when
+// nothing has ever been pressed, so this is safe to leave running always-on.
+Schedule::command('lockdown:tick')
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->sendOutputTo(cronLog('lockdown:tick'))
+    ->runInBackground();
+
+// Hourly stats mail to geeks@ while a lockdown is active; a no-op once it is closed
+// (the closing summary is sent explicitly, with --closing, from lockdown:off's own
+// runbook step, not from this schedule).
+Schedule::command('lockdown:report')
+    ->hourly()
+    ->withoutOverlapping(15)
+    ->sendOutputTo(cronLog('lockdown:report'))
     ->runInBackground();
 
 // =============================================================================

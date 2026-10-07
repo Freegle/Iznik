@@ -2,7 +2,9 @@
 
 namespace App\Console\Commands\Queue;
 
+use App\Console\Commands\Mail\SendAdminCommand;
 use App\Console\Concerns\PreventsOverlapping;
+use App\Mail\Admin\AdminMail;
 use App\Mail\Charity\CharitySignupMail;
 use App\Mail\Chat\ChatSpamReportMail;
 use App\Mail\Chat\ReferToSupportMail;
@@ -16,10 +18,12 @@ use App\Mail\Session\VerifyEmailMail;
 use App\Mail\Message\ModStdMessageMail;
 use App\Models\BackgroundTask;
 use App\Models\ChatRoom;
+use App\Models\Group;
 use App\Models\User;
 use App\Services\BlockedKeywordBackfillService;
 use App\Services\EmailSpoolerService;
 use App\Services\HousekeeperService;
+use App\Services\Lockdown\LockdownService;
 use App\Services\PostcodeRemapService;
 use App\Services\UserManagementService;
 use App\Services\PushNotificationService;
@@ -53,6 +57,20 @@ class ProcessBackgroundTasksCommand extends Command
     protected $description = 'Process background tasks queued by the Go API server';
 
     private const MAX_ATTEMPTS = 3;
+
+    /**
+     * Email task types still processed while a lockdown holds `email` (plan
+     * 2026-09-27-lockdown-switch.md, section 11.4) - matches
+     * MailSuppressionService::ALLOWLISTED_EMAIL_TYPES_WHILE_HELD. Kept as task
+     * types rather than re-deriving from data, since the choice between
+     * ForgotPasswordMail and LoginLinkMail for email_forgot_password is made
+     * inside its handler, after this gate, and both are allowlisted anyway.
+     */
+    private const EMAIL_TASKS_ALLOWED_WHILE_HELD = [
+        BackgroundTask::TASK_EMAIL_FORGOT_PASSWORD,
+        BackgroundTask::TASK_EMAIL_VERIFY,
+        BackgroundTask::TASK_EMAIL_UNSUBSCRIBE,
+    ];
 
     public function handle(PushNotificationService $pushService, EmailSpoolerService $spooler): int
     {
@@ -162,6 +180,21 @@ class ProcessBackgroundTasksCommand extends Command
                 break;
             }
 
+            // Every task passes through here (section 11.6 point 3), so this is the one
+            // place to mark the background-tasks loop as still running.
+            app(LockdownService::class)->ack('background-tasks');
+
+            // Step over email tasks outside the lockdown allowlist while email is held -
+            // left exactly as they are (no attempt spent, no processed_at) for a later
+            // iteration once email is lifted. Re-checked every task rather than once per
+            // iteration: held() is a memory read within LockdownService's five-second
+            // cache, so this costs nothing extra beyond the first check every five seconds.
+            if (str_starts_with($task->task_type, 'email_')
+                && !in_array($task->task_type, self::EMAIL_TASKS_ALLOWED_WHILE_HELD, true)
+                && app(LockdownService::class)->held('email')) {
+                continue;
+            }
+
             try {
                 DB::table('background_tasks')
                     ->where('id', $task->id)
@@ -223,6 +256,7 @@ class ProcessBackgroundTasksCommand extends Command
             BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS  => $this->handlePushNotifyGroupMods($data, $pushService),
             BackgroundTask::TASK_EMAIL_CHITCHAT_REPORT   => $this->handleEmailChitchatReport($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_CHAT_SPAM_REPORT  => $this->handleEmailChatSpamReport($data, $spooler, $shouldSpool),
+            BackgroundTask::TASK_EMAIL_ADMIN_TEST        => $this->handleEmailAdminTest($data, $spooler),
             BackgroundTask::TASK_EMAIL_CHARITY_SIGNUP    => $this->handleEmailCharitySignup($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_DONATE_EXTERNAL   => $this->handleEmailDonateExternal($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_FORGOT_PASSWORD   => $this->handleEmailForgotPassword($data, $spooler, $shouldSpool),
@@ -377,6 +411,50 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
+     * Send a test copy of an ADMIN to the one address the moderator gave, built exactly as a member
+     * of the group would get it, with the moderator standing in for the member.
+     */
+    protected function handleEmailAdminTest(array $data, EmailSpoolerService $spooler): void
+    {
+        foreach (['user_id', 'email', 'subject', 'text'] as $field) {
+            if (empty($data[$field])) {
+                throw new \RuntimeException("email_admin_test requires {$field}");
+            }
+        }
+
+        $user = User::find((int) $data['user_id']);
+        if (!$user) {
+            throw new \RuntimeException("email_admin_test: user {$data['user_id']} not found");
+        }
+
+        $groupName = $modsEmail = $groupShort = null;
+        $volunteers = [];
+        $group = !empty($data['groupid']) ? Group::find((int) $data['groupid']) : null;
+        if ($group) {
+            $groupName = $group->namefull ?: $group->nameshort;
+            $modsEmail = $group->nameshort ? "{$group->nameshort}-volunteers@groups.ilovefreegle.org" : null;
+            $groupShort = $group->nameshort;
+            $volunteers = SendAdminCommand::getLocalVolunteers($group->id);
+        }
+
+        $admin = SendAdminCommand::personalise([
+            'groupid' => $group?->id,
+            'subject' => $data['subject'],
+            'text' => $data['text'],
+            'mjml' => $data['mjml'] ?? null,
+            'ctatext' => $data['ctatext'] ?? null,
+            'ctalink' => $data['ctalink'] ?? null,
+            'essential' => $data['essential'] ?? true,
+            'template' => ($data['template'] ?? '') ?: null,
+        ], $groupName, $modsEmail, $user);
+
+        $mail = new AdminMail($user, $admin, $groupName, $modsEmail, $groupShort, $volunteers, $data['email']);
+        $spooler->spool($mail, $data['email']);
+
+        Log::info('Sent ADMIN test', ['user_id' => $user->id, 'groupid' => $group?->id]);
+    }
+
+    /**
      * Send a forgot-password email with auto-login link.
      */
     protected function handleEmailForgotPassword(
@@ -402,7 +480,7 @@ class ProcessBackgroundTasksCommand extends Command
                 loginUrl: $this->signInLinkFromResetUrl($data['reset_url']),
             );
 
-            $spooler->spool($mail, $data['email']);
+            $spooler->spool($mail, $data['email'], 'signin_link');
 
             Log::info('Sent sign-in link email', [
                 'user_id' => $data['user_id'],
@@ -417,7 +495,7 @@ class ProcessBackgroundTasksCommand extends Command
             resetUrl: $data['reset_url'],
         );
 
-        $spooler->spool($mail, $data['email']);
+        $spooler->spool($mail, $data['email'], 'password_reset');
 
         Log::info('Sent forgot password email', [
             'user_id' => $data['user_id'],
@@ -468,7 +546,7 @@ class ProcessBackgroundTasksCommand extends Command
             unsubUrl: $data['unsub_url'],
         );
 
-        $spooler->spool($mail, $data['email']);
+        $spooler->spool($mail, $data['email'], 'unsubscribe_confirm');
 
         Log::info('Sent unsubscribe confirmation email', [
             'user_id' => $data['user_id'],
@@ -1172,7 +1250,7 @@ class ProcessBackgroundTasksCommand extends Command
             confirmUrl: $confirmUrl,
         );
 
-        $spooler->spool($mail, $email);
+        $spooler->spool($mail, $email, 'verify_email');
 
         Log::info('Sent email verification', [
             'user_id' => $userId,

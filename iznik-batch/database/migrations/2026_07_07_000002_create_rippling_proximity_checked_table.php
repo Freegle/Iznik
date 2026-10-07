@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * rippling_proximity_checked — checked-once-forever negative-memoization marker for
- * ripple:proximity-notes (Phase 0 of plans/routing-performance-step-change.md). A row means this
+ * ripple:proximity-notes. A row means this
  * (msgid, groupid) rippled-in copy got a DEFINITIVE proximity answer (note written, not quicker,
  * or unreachable within budget) and is never re-queried. Without it, "no note needed" rows were
  * recomputed on every 5-minute run for the whole 8-day candidate window — up to ~12 CPU-hours/day

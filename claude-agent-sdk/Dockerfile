@@ -12,8 +12,13 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user for running the application
-RUN useradd -m -s /bin/bash claude && \
+# Create non-root user for running the application. Its uid is the host user's
+# (CLAUDE_UID, default 1000), because session mode bind-mounts the host's
+# ~/.claude/.credentials.json, which is mode 600: any other uid cannot read it.
+# The base image's own "node" user holds uid 1000, so it is removed first.
+ARG CLAUDE_UID=1000
+RUN if getent passwd node >/dev/null; then userdel -r node; fi && \
+    useradd -m -u ${CLAUDE_UID} -s /bin/bash claude && \
     mkdir -p /app/codebase /home/claude/.claude/debug && \
     chown -R claude:claude /app /home/claude
 
@@ -47,8 +52,9 @@ RUN mkdir -p /app/audit && chown claude:claude /app/audit
 COPY --chown=claude:claude entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Switch to non-root user
-USER claude
+# The entrypoint starts as root only to take ownership of the audit volume (a
+# volume created under an earlier uid keeps that owner), then runs the server
+# as claude.
 ENV HOME=/home/claude
 
 EXPOSE 3000

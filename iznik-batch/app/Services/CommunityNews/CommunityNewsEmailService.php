@@ -64,6 +64,22 @@ class CommunityNewsEmailService
                 continue;
             }
 
+            // Lockdown holds `email` (plan 2026-09-27-lockdown-switch.md, section 11.7):
+            // checked once per area, before anything for it is generated. This area's
+            // watermark (items.emailed_at, area.lastemailed) is only committed after the
+            // whole area's member loop below finishes, so checking here means a held area
+            // is skipped completely - nothing rendered, nothing spooled, watermark
+            // untouched - and is retried in full on the very next run once email resumes.
+            // That is the "check before each group" rule for a per-group watermark: once
+            // an area is let through it runs to completion, so a press mid-area still
+            // finishes that area rather than mailing some members twice on lift.
+            $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+            $lockdown->ack('mail-loops');
+            if ($lockdown->held('email')) {
+                $lockdown->count('deferred:communitynews');
+                continue;
+            }
+
             $items = CommunityNewsItem::where('areaid', $area->id)
                 ->whereNull('emailed_at')
                 ->where('researched_at', '>', now()->subDays($freshDays))
@@ -269,11 +285,11 @@ class CommunityNewsEmailService
 
         $memberPoint = "ST_SRID(POINT(" .
             "CASE WHEN JSON_EXTRACT(users.settings, '$.mylocation.lat') IS NOT NULL" .
-            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL" .
+            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL AND users.tnuserid IS NULL" .
             "     THEN CAST(JSON_EXTRACT(users.settings, '$.mylocation.lng') AS DECIMAL(10,6))" .
             "     ELSE lastloc.lng END, " .
             "CASE WHEN JSON_EXTRACT(users.settings, '$.mylocation.lat') IS NOT NULL" .
-            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL" .
+            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL AND users.tnuserid IS NULL" .
             "     THEN CAST(JSON_EXTRACT(users.settings, '$.mylocation.lat') AS DECIMAL(10,6))" .
             "     ELSE lastloc.lat END" .
             "), {$srid})";

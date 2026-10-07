@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-26
+last_reviewed: 2026-10-02
 owner: Freegle ops
 covers:
   - conf/rspamd
@@ -102,7 +102,7 @@ Reference data lives in its own tables, each with a moderator-facing editor in M
 
 | Table | What it holds |
 |---|---|
-| `concern_keywords` | Phrases that flag or block a post or chat message, Freegle-wide (`scope = global`) or for one community. `category = allowed` rows are the whitelist: phrases such as place and shop names that must never feed a match |
+| `concern_keywords` | Phrases that flag or block a post or chat message, Freegle-wide (`scope = global`) or for one community. `category = allowed` rows are the whitelist: phrases such as place and shop names that must never feed a match. `category = safeguarding` rows (refuge, domestic abuse, hostel and the like) flag a post that may show where someone escaping abuse lives; a moderator checks the location before approving, and approval then proceeds as for any post |
 | `worrywords` | Words that signal a safeguarding or welfare concern rather than spam - these route to people, not to a bin |
 | `spam_users` | Known bad accounts, shared across communities |
 | `spam_countries` | Country-level signals |
@@ -235,6 +235,16 @@ production moderation data, and the result was negative for the thing that matte
 See [`llm-modbot/RESULTS.md`](../../../llm-modbot/RESULTS.md) before proposing this again.
 The useful reading is that AI helps with formatting and spelling, and does not help with
 judgement.
+
+## Lockdown
+
+When a wave outruns the layers above, any Support user can press the lockdown switch.
+Members can still post, reply and chat, and it all looks sent, but it reaches nobody until
+a person lifts it; no member email or push goes out; moderators keep only the basic
+Approve button; downloads stop. The lockdown only holds: Support finds and deals with the
+accounts behind the wave with the existing tools, then lifts it area by area, and what was
+held goes through the usual checks. Pressing, checking it has taken effect, and lifting are
+in the [lockdown runbook](../runbooks/lockdown.md).
 
 ## Operational notes
 

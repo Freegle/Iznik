@@ -7,7 +7,6 @@ use Aws\Command;
 use Aws\S3\Exception\S3Exception;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Filesystem\FilesystemAdapter;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
@@ -21,7 +20,7 @@ use League\Flysystem\UnableToWriteFile;
 use Tests\TestCase;
 
 /**
- * The three artisan commands are thin: they hand options to the services and
+ * The two artisan commands are thin: they hand options to the services and
  * report. What is pinned here is the wiring, the exit codes and the one check
  * that has to fail loudly - a bucket that is not actually public.
  */
@@ -33,15 +32,11 @@ class ImageStoreCommandsTest extends TestCase
     {
         parent::setUp();
         Storage::fake('tusd-spool');
-        Storage::fake('tusd-legacy');
         Storage::fake('images');
-        DB::table('image_store_migration')->delete();
-        DB::table('users_images')->delete();
         config(['filesystems.disks.images.url' => 'http://store.test/images/']);
-        // The commands check the configured roots exist before touching a
-        // disk, so point them at the fakes' directories.
+        // The command checks the configured spool root exists before touching
+        // the disk, so point it at the fake's directory.
         config(['filesystems.disks.tusd-spool.root' => Storage::disk('tusd-spool')->path('')]);
-        config(['filesystems.disks.tusd-legacy.root' => Storage::disk('tusd-legacy')->path('')]);
     }
 
     private function spool(string $id, int $ageSeconds = 120): void
@@ -86,36 +81,6 @@ class ImageStoreCommandsTest extends TestCase
             ->assertExitCode(1);
     }
 
-    public function test_migrate_legacy_copies_and_status_shows_the_cursor(): void
-    {
-        Storage::disk('tusd-legacy')->put('m1', self::JPEG);
-        DB::table('users_images')->insert(['contenttype' => 'image/jpeg', 'externaluid' => 'freegletusd-m1']);
-
-        $this->artisan('images:migrate-legacy --source=users_images --time-budget=30')
-            ->assertExitCode(0);
-
-        Storage::disk('images')->assertExists('m1');
-
-        $this->artisan('images:migrate-legacy --status')
-            ->expectsOutputToContain('users_images')
-            ->assertExitCode(0);
-    }
-
-    public function test_migrate_legacy_verify_exits_non_zero_when_something_is_missing(): void
-    {
-        DB::table('users_images')->insert(['contenttype' => 'image/jpeg', 'externaluid' => 'freegletusd-m2']);
-
-        $this->artisan('images:migrate-legacy --source=users_images --verify')
-            ->expectsOutputToContain('m2')
-            ->assertExitCode(1);
-    }
-
-    public function test_migrate_legacy_rejects_an_unknown_source(): void
-    {
-        $this->artisan('images:migrate-legacy --source=users')
-            ->assertExitCode(1);
-    }
-
     public function test_object_store_check_passes_when_the_probe_is_publicly_readable(): void
     {
         Http::fake(function ($request) {
@@ -136,9 +101,9 @@ class ImageStoreCommandsTest extends TestCase
 
     public function test_object_store_check_fails_when_anonymous_reads_are_refused(): void
     {
-        // A private bucket answers 403. nginx would fall through to the legacy
-        // hop and every NEW image would 404 with nothing in any log naming the
-        // cause, so this is the check that must be loud.
+        // A private bucket answers 403. nginx passes that straight back and
+        // every image not in the spool breaks with nothing in any log naming
+        // the cause, so this is the check that must be loud.
         Http::fake(['http://store.test/images/*' => Http::response('AccessDenied', 403)]);
 
         $this->artisan('images:object-store-check')
@@ -211,23 +176,6 @@ class ImageStoreCommandsTest extends TestCase
 
         Storage::disk('tusd-spool')->assertExists('aaaa');
         Storage::disk('tusd-spool')->assertExists('bbbb');
-        Exceptions::assertReported(ObjectStoreUnavailable::class);
-    }
-
-    public function test_migrate_legacy_stops_and_reports_when_the_store_is_unavailable(): void
-    {
-        Exceptions::fake();
-        Storage::disk('tusd-legacy')->put('cccc', self::JPEG);
-        DB::table('users_images')->insert(['contenttype' => 'image/jpeg', 'externaluid' => 'freegletusd-cccc']);
-        $this->bucketThatAnswers(403);
-
-        $this->artisan('images:migrate-legacy --source=users_images --time-budget=30')
-            ->expectsOutputToContain('unavailable')
-            ->assertExitCode(1);
-
-        $row = DB::table('image_store_migration')->where('source', 'users_images')->first();
-        $this->assertSame(0, (int) $row->failed);
-        $this->assertSame(0, (int) $row->last_id);
         Exceptions::assertReported(ObjectStoreUnavailable::class);
     }
 

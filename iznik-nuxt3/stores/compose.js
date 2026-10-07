@@ -21,6 +21,14 @@ const defaultWanted = {
   attachments: [],
 }
 
+// The API takes the quantity as a whole number and rejects the whole request
+// with a 400 if it is a decimal. The input rounds, but a draft saved in the
+// browser before it did can still hold one (SR-UZFMH).
+function wholeCount(value) {
+  const n = Math.round(Number(value))
+  return Number.isFinite(n) && n >= 1 ? n : 1
+}
+
 export const useComposeStore = defineStore('compose', {
   persist: {
     storage: piniaPluginPersistedstate.localStorage(),
@@ -155,7 +163,7 @@ export const useComposeStore = defineStore('compose', {
         messagetype: message.type,
         item: message.item,
         textbody: message.description,
-        availablenow: message.availablenow,
+        availablenow: wholeCount(message.availablenow),
         attachments: attids,
         groupid: this.group,
         email,
@@ -281,7 +289,7 @@ export const useComposeStore = defineStore('compose', {
         textbody,
         attachments,
         groupid,
-        availablenow,
+        availablenow: wholeCount(availablenow),
       }
       if (accessinstructions) {
         data.accessinstructions = accessinstructions

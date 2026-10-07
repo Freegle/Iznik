@@ -19,17 +19,18 @@ import (
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/driving"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/group"
 	"github.com/freegle/iznik-server-go/item"
 	"github.com/freegle/iznik-server-go/location"
+	"github.com/freegle/iznik-server-go/lockdown"
 	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/modmessaging"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/spatial"
@@ -272,6 +273,11 @@ type Message struct {
 	// no messages.heldby column behind it any more. Remove once the app floor has moved
 	// past the per-group frontend.
 	Heldby           *uint64          `json:"heldby"`
+	// Lockdownheld: section 10.6/10.12 of the lockdown plan. True while this post has an
+	// unresolved lockdown_holds row (kind='post') - inserted by the Laravel batch lockdown:tick
+	// service, not by this API - so ModTools can label the pending card "held by lockdown"
+	// rather than showing it as an ordinary pending post. See lockdown.ItemHeld.
+	Lockdownheld     bool             `json:"lockdownheld" gorm:"-"`
 	Source           *string          `json:"source"`
 	Sourceheader     *string          `json:"sourceheader"`
 	Fromaddr         *string          `json:"fromaddr"`
@@ -603,8 +609,9 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// issue because these messages were posted with the intention of being public. It also
 				// allows shared links to work even before moderation approval.
 				db.Table("messages_groups").
-					Select("groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in, mod_messaging_allowed").
+					Select("groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in, mod_messaging_allowed, locked_by_home").
 					Where("msgid = ? AND deleted = 0", id).Scan(&messageGroups)
+				effectiveHomeLocks(messageGroups)
 
 				// Moderator-only "quicker to get to" P/Q note, kept in its own rippling_proximity
 				// table (off the hot messages_groups path). Best-effort: only for mods, and a
@@ -641,7 +648,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				db.Table("messages_attachments ma").
 					Select("ma.id, ma.msgid, bia.bulkitemid, ma.archived, "+
 						"CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid, "+
-						"ma.externalmods").
+						"ai.id IS NOT NULL AS masked, ma.externalmods").
 					Joins("LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating', 'suppressed')").
 					Joins("LEFT JOIN messages_bulk_item_attachments bia ON bia.attachmentid = ma.id").
 					Where("ma.msgid = ?", id).
@@ -733,10 +740,11 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 
 			wg.Wait()
 
+			idNum, _ := strconv.ParseUint(id, 10, 64)
+
 			// isGroupMod is used for edit access and location disclosure.
 			isGroupMod := isMod
 			if !isGroupMod {
-				idNum, _ := strconv.ParseUint(id, 10, 64)
 				isGroupMod = isModForMessage(db, myid, idNum)
 			}
 
@@ -781,6 +789,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			message.MessageReply = messageReply
 			message.MessageOutcomes = messageOutcomes
 			message.MessagePromises = messagePromises
+			message.Lockdownheld = lockdown.ItemHeld("post", idNum)
 			if isMod && len(messageEdits) > 0 {
 				message.Edits = messageEdits
 			}
@@ -857,6 +866,9 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 						message.MessageAttachments[i].Externalmods = a.Externalmods
 						message.MessageAttachments[i].Path = misc.GetImageDeliveryUrl(a.Externaluid, string(a.Externalmods))
 						message.MessageAttachments[i].Paththumb = misc.GetImageDeliveryUrl(a.Externaluid, string(a.Externalmods))
+					} else if a.Masked {
+						// Masked AI picture: leave the paths empty so the frontend shows the placeholder.
+						continue
 					} else if a.Archived > 0 {
 						message.MessageAttachments[i].Path = "https://" + archiveDomain + "/img_" + strconv.FormatUint(a.ID, 10) + ".jpg"
 						message.MessageAttachments[i].Paththumb = "https://" + archiveDomain + "/timg_" + strconv.FormatUint(a.ID, 10) + ".jpg"
@@ -1286,6 +1298,7 @@ func checkWorryWords(db *gorm.DB, messages []Message) {
 			"WHEN 'substance_regulated' THEN 'Regulated' " +
 			"WHEN 'substance_reportable' THEN 'Reportable' " +
 			"WHEN 'substance_medicine' THEN 'Medicine' " +
+			"WHEN 'safeguarding' THEN 'Safeguarding' " +
 			"WHEN 'review' THEN 'Review' " +
 			"WHEN 'allowed' THEN 'Allowed' " +
 			"ELSE 'Review' END AS type").
@@ -2439,18 +2452,22 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Set ctx.Groupid to the primary acted-on group (for logging).
 	ctx.Groupid = authorizedGroups[0]
 
-	// Move to Approved with arrival=NOW() so immediate-email recipients get it.
-	// Guard against double-approve by requiring collection != Approved.
-	// Restrict to groups the caller is authorised for.
-	if result := db.Table("messages_groups").
-		Where("msgid = ? AND groupid IN ? AND collection != ?", req.ID, authorizedGroups, utils.COLLECTION_APPROVED).
-		Updates(map[string]interface{}{
-			"collection": utils.COLLECTION_APPROVED, "approvedby": myid,
-			"approvedat": gorm.Expr("NOW()"), "arrival": gorm.Expr("NOW()"),
-			"needs_moderator": 0,
-		}); result.Error != nil {
-		log.Printf("Failed to approve message %d: %v", req.ID, result.Error)
+	// A copy that rippled in cannot be approved while the post's home community is
+	// reviewing it (their moderator sent it back to pending): see lockedCopiesBlocked.
+	if blocked := lockedCopiesBlocked(db, req.ID, authorizedGroups); len(blocked) > 0 {
+		return fiber.NewError(fiber.StatusForbidden, homeLockedMessage)
 	}
+
+	approvable, stillHeld := ApprovePendingCopies(db, req.ID, myid, authorizedGroups)
+	if len(approvable) == 0 && len(stillHeld) > 0 {
+		holder, holderName := heldByAnotherMod(myid, req)
+		return heldByAnotherResponse(c, holder, holderName)
+	}
+	authorizedGroups = approvable
+
+	// The home copy is approved, so the copies it was locking go back to normal per-group
+	// moderation. The reach stays frozen: nothing is re-sent.
+	clearHomeLocksIfHomeApproved(db, req.ID, authorizedGroups)
 
 	// Release hold on the same authorised groups.
 	// Identical to cc381d7c669b
@@ -2526,6 +2543,94 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// ApprovePendingCopies moves the message's copies on the given groups to Approved, with
+// arrival=NOW() so immediate-email recipients get it, and returns the groups the caller may
+// carry on with plus those it must leave alone.
+//
+// The hold is checked in the write itself, not only by the check in
+// dispatchPostMessageAction: a hold and an approval by two moderators in the same second both
+// succeeded, because the hold landed between that check and this update (Discourse 9808/835,
+// where it is how the post first went live). A copy held by somebody else is simply not
+// touched, and, unlike the rest of the approval, its hold is not released afterwards.
+//
+// Guards against double-approve by requiring collection != Approved. heldByOther lists the
+// groups still Pending under another moderator's hold; approvable is everything else asked
+// for.
+func ApprovePendingCopies(db *gorm.DB, msgid uint64, myid uint64, groups []uint64) (approvable []uint64, heldByOther []uint64) {
+	if result := db.Table("messages_groups").
+		Where("msgid = ? AND groupid IN ? AND collection != ? AND (heldby IS NULL OR heldby = ?)", msgid, groups, utils.COLLECTION_APPROVED, myid).
+		Updates(map[string]interface{}{
+			"collection": utils.COLLECTION_APPROVED, "approvedby": myid,
+			"approvedat": gorm.Expr("NOW()"), "arrival": gorm.Expr("NOW()"),
+			"needs_moderator": 0,
+		}); result.Error != nil {
+		log.Printf("Failed to approve message %d: %v", msgid, result.Error)
+	}
+
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND groupid IN ? AND collection != ? AND heldby IS NOT NULL AND heldby != ? AND deleted = 0",
+			msgid, groups, utils.COLLECTION_APPROVED, myid).
+		Scan(&heldByOther)
+
+	held := map[uint64]bool{}
+	for _, gid := range heldByOther {
+		held[gid] = true
+	}
+	for _, gid := range groups {
+		if !held[gid] {
+			approvable = append(approvable, gid)
+		}
+	}
+
+	return approvable, heldByOther
+}
+
+// homeLockedMessage is what a receiving community's moderator is told when they try to
+// approve a copy their post's home community has pulled back.
+const homeLockedMessage = "The post's home community is reviewing this post, so it can't be approved here until they approve it."
+
+// lockedCopiesBlocked returns the groups, among those the moderator is acting on, whose
+// copy is locked by the home community and so may not be approved. A copy is blocked while
+// the post has an undeleted home row that is not Approved. Acting on the home group itself
+// is never blocked: that approval is what lifts the lock.
+func lockedCopiesBlocked(db *gorm.DB, msgid uint64, groups []uint64) []uint64 {
+	home := HomeGroups(db, msgid)
+	for _, gid := range groups {
+		if home[gid] {
+			return nil
+		}
+	}
+
+	var homePending int64
+	db.Table("messages_groups").
+		Where("msgid = ? AND rippled_in = 0 AND deleted = 0 AND collection != ?", msgid, utils.COLLECTION_APPROVED).
+		Count(&homePending)
+	if homePending == 0 {
+		return nil
+	}
+
+	var blocked []uint64
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND groupid IN ? AND rippled_in = 1 AND locked_by_home = 1 AND deleted = 0", msgid, groups).
+		Scan(&blocked)
+
+	return blocked
+}
+
+// clearHomeLocksIfHomeApproved lifts the home lock on a post's other copies once a home
+// group's copy has been approved by this action.
+func clearHomeLocksIfHomeApproved(db *gorm.DB, msgid uint64, approvedGroups []uint64) {
+	home := HomeGroups(db, msgid)
+	for _, gid := range approvedGroups {
+		if home[gid] {
+			db.Table("messages_groups").
+				Where("msgid = ? AND locked_by_home = 1", msgid).
+				Update("locked_by_home", 0)
+			return
+		}
+	}
 }
 
 // handleReject rejects a pending message.
@@ -2984,11 +3089,37 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return err
 	}
 
-	// Per-group hold: set heldby on the authorized groups' rows.
-	// Identical golden to
-	// 1a12de474647 (handleBackToPending); converted together per gate (h).
-	db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
-		Update("heldby", myid)
+	// With no community in the request, Support or Admin access resolves to every copy of
+	// the post. A holder who moderates some of those communities is acting as their
+	// moderator there, so the hold stays on those copies (Discourse 10102/14: a Support
+	// user's hold landed on another community's copy). Every copy is only the fallback,
+	// for someone who moderates none of them.
+	// The role is read from memberships directly: auth.IsModOfGroup answers yes for every
+	// group to a Support or Admin user, which is the very widening this undoes.
+	if reqGid == 0 && len(authorizedGroups) > 0 {
+		var mine []uint64
+		db.Table("memberships").Select("groupid").
+			Where("userid = ? AND groupid IN ? AND role IN ?", myid, authorizedGroups,
+				[]string{utils.ROLE_MODERATOR, utils.ROLE_OWNER}).
+			Scan(&mine)
+		if len(mine) > 0 {
+			authorizedGroups = mine
+		}
+	}
+
+	// A hold is a pending-queue concept, so only Pending copies take one. A copy that is
+	// already Approved would otherwise show "Held by" on a live post. Back to pending sets
+	// its hold itself, before flipping the copy.
+	var pendingGroups []uint64
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND groupid IN ? AND collection = ?", req.ID, authorizedGroups, utils.COLLECTION_PENDING).
+		Scan(&pendingGroups)
+	authorizedGroups = pendingGroups
+
+	if len(authorizedGroups) > 0 {
+		db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
+			Update("heldby", myid)
+	}
 
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
@@ -2997,6 +3128,19 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// actingOnHomeGroup reports whether any group a moderator is acting on is one the post was
+// posted to directly (HomeGroups), as opposed to one it merely rippled into.
+func actingOnHomeGroup(db *gorm.DB, msgid uint64, acting []uint64) bool {
+	home := HomeGroups(db, msgid)
+	for _, gid := range acting {
+		if home[gid] {
+			return true
+		}
+	}
+
+	return false
 }
 
 // handleBackToPending moves an approved message back to pending.
@@ -3017,9 +3161,9 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		return err
 	}
 
-	// Per-group hold for re-review.
-	// Identical golden to
-	// 8c1766162f86 (handleHold); converted together per gate (h).
+	// Per-group hold for re-review. Unlike handleHold this is not limited to Pending
+	// copies: the copy is about to be flipped back to Pending below, so setting the hold
+	// first is what stops it ever showing as an Approved copy "Held by" someone.
 	db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
 		Update("heldby", myid)
 
@@ -3035,7 +3179,18 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// every other group whose copy is pulled back (rippled copies elsewhere) gets a Hold
 	// log from SendForReviewAllGroups, so its moderators can see why the post is back in
 	// their queue and who did it (Discourse 10102).
-	flipped := microvolunteering.SendForReviewAllGroups(db, req.ID, "A moderator moved this post back to pending for review.", &myid, authorizedGroups)
+	//
+	// When the acting moderator moderates the post's HOME community, the post is withdrawn
+	// from every community it rippled into and never ripples again (Discourse 9808/849): the
+	// home community has taken the decision, so the receiving communities' moderators are not
+	// given a copy each to decide again. A Back to pending from a receiving community's own
+	// moderator, or by a members' report quorum, withdraws nothing: those copies stay
+	// independent and come back to Pending for their own moderators.
+	fromHome := actingOnHomeGroup(db, req.ID, authorizedGroups)
+	if fromHome {
+		withdrawRippledCopiesAndBlock(db, req.ID, myid)
+	}
+	flipped := microvolunteering.SendForReviewAllGroupsWithRippledReason(db, req.ID, "A moderator moved this post back to pending for review.", "", &myid, authorizedGroups)
 
 	// Every copy pulled back, and the copy this moderator acted on, now waits for a
 	// moderator of its own group: needs_moderator stops the content check and auto-approve
@@ -3948,8 +4103,18 @@ func buildApplyPatchMessageCoreUpdateSet(subject, textbody, msgType, deadline *s
 	return set
 }
 
+// errLockdownResponded is a sentinel returned by applyPatchMessageCore when a lockdown
+// gate has already written its own response (409, via c.Status().JSON()). Callers must
+// treat this exactly like "stop, nothing more to write" (return nil to Fiber) rather
+// than like a real error - and, critically, must NOT go on to write their own success
+// response afterward: Fiber's c.JSON() only replaces the body, it does not reset a
+// status code an earlier c.Status() call already set, so an unconditional success
+// write on top would leave the response as 409 with a "Success" body.
+var errLockdownResponded = errors.New("lockdown: response already written")
+
 // applyPatchMessageCore performs the edit on a message without writing the HTTP response.
-// Returns non-nil on failure. Callers are responsible for writing the success response.
+// Returns non-nil on failure. Callers are responsible for writing the success response,
+// except when the error is errLockdownResponded - see its comment.
 func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, fromPartner bool) error {
 	db := database.DBConn
 
@@ -3970,6 +4135,16 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 
 	if !isOwner && !isMod {
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to modify this message")
+	}
+
+	// Section 11.3 of the lockdown plan: a moderator editing someone else's post is
+	// refused outright while "mods" is held. The poster editing their own post (even
+	// when they are also a moderator of the group) is a member edit, handled below via
+	// the "posts" hold instead.
+	if isMod && !isOwner {
+		if lockdown.GateMod(c, myid) {
+			return errLockdownResponded
+		}
 	}
 
 	// An unaddressed TN post is not a post its host community owns: the poster never chose
@@ -4416,7 +4591,13 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		reviewRequired := 0
 		groupIDs := getAllGroupsForMessage(db, req.ID)
 
-		if !isMod {
+		if !isMod && lockdown.Held("posts") {
+			// Section 11.3 of the lockdown plan: while "posts" is held, a member's edit
+			// of a live post is forced through the same pending-edits review an already-
+			// moderated member's edit would need, even for a member normally trusted to
+			// skip it.
+			reviewRequired = 1
+		} else if !isMod {
 			for _, gid := range groupIDs {
 				// Check if the message is currently Approved on this group.
 				var collection string
@@ -4499,6 +4680,9 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 // applyPatchMessage performs the edit on a message after auth and ID are resolved.
 func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
 	if err := applyPatchMessageCore(c, myid, req, false); err != nil {
+		if err == errLockdownResponded {
+			return nil
+		}
 		return err
 	}
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -4653,6 +4837,9 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 		}
 
 		if err := applyPatchMessageCore(c, actingid, req, true); err != nil {
+			if err == errLockdownResponded {
+				return nil
+			}
 			return err
 		}
 	}
@@ -4872,7 +5059,9 @@ type OnBehalfPosting struct {
 // postcode their own posts carry. Deliberately not derived from lastlocation or
 // a nearest-postcode lookup: those say where they last were, not where they say
 // they are, so they would stamp a postcode on a member's post that the member
-// never picked. If they have not set one, we refuse rather than guess.
+// never picked. If they have not set one, we refuse rather than guess. A Trash
+// Nothing member's mylocation is stale V1 data (TN is the master for their
+// location), so it does not count as chosen.
 //
 // The error text is shown to the moderator, so it says what to do about it.
 func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
@@ -4890,7 +5079,7 @@ func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
 			"JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.name')) AS locationname, "+
 			"JSON_EXTRACT(settings, '$.mylocation.lat') AS lat, "+
 			"JSON_EXTRACT(settings, '$.mylocation.lng') AS lng").
-		Where("id = ?", author).Scan(&chosen)
+		Where("id = ? AND tnuserid IS NULL", author).Scan(&chosen)
 
 	if chosen.Locationid == 0 || chosen.Locationname == "" {
 		return nil, errors.New("That member hasn't set their location, so we can't post for them - ask them to set it first")
@@ -5073,19 +5262,26 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 	}
 
 	// For non-Draft, check membership and fetch posting status in one query.
+	//
+	// Read the row through .Row().Scan(), not GORM's own .Scan(): GORM's Scan
+	// unwraps a **string destination (the *string var below, taken by address so a
+	// NULL column comes back as a nil pointer rather than an empty string) down to
+	// its inner string Kind before dispatching, which routes it through Scan()'s
+	// final reflect.Kind default case - and that case never increments
+	// RowsAffected, so "no membership row" and "a row with ourPostingStatus set"
+	// were indistinguishable and every non-Draft submission read as not a member.
+	// database/sql's own Row.Scan handles a **string destination correctly (it
+	// recurses one level and leaves it nil on NULL), and its error tells us
+	// definitively whether a row was found - the same idiom postingWouldBeModerated
+	// above already uses for scalar columns.
 	var ourPostingStatus *string
 	var isMember bool
 	if req.Collection != "Draft" && req.Groupid > 0 {
-		type MembershipInfo struct {
-			OurPostingStatus *string
-		}
-		var info MembershipInfo
-		result := db.Table("memberships").Select("ourPostingStatus").Where("userid = ? AND groupid = ?", myid, req.Groupid).Limit(1).Scan(&info)
-		if result.RowsAffected == 0 {
+		row := db.Table("memberships").Select("ourPostingStatus").Where("userid = ? AND groupid = ?", myid, req.Groupid).Limit(1).Row()
+		if err := row.Scan(&ourPostingStatus); err != nil {
 			return fiber.NewError(fiber.StatusForbidden, "Not a member of this group")
 		}
 		isMember = true
-		ourPostingStatus = info.OurPostingStatus
 	}
 
 	// PUT /message only accepted availablenow and set both fields
@@ -5191,6 +5387,13 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 			!strings.EqualFold(*ourPostingStatus, utils.POSTING_STATUS_PROHIBITED) &&
 			*ourPostingStatus != "" {
 			collection = utils.COLLECTION_APPROVED
+		}
+
+		// Section 11.3 of the lockdown plan: while "posts" is held, the direct-approve
+		// path above for an unmoderated (trusted) member is forced back to Pending, same
+		// as a moderated member. No Go hold row - the batch writes post holds.
+		if lockdown.Held("posts") {
+			collection = utils.COLLECTION_PENDING
 		}
 
 		// msgtype is a denormalised copy of messages.type. Left unset it stays
@@ -5531,6 +5734,30 @@ var moderationActionsBlockedByHold = map[string]bool{
 	"BackToDraft":   true,
 }
 
+// lockdownRefusedModeratorActions are the moderator actions on a post that section 11.3
+// of the lockdown plan refuses outright while the site-wide "mods" hold is active
+// (separate from, and in addition to, the per-message moderationActionsBlockedByHold
+// check above). Release is deliberately included here even though it is excluded from
+// that other map: releasing a message a colleague is holding must always work, but
+// during a security incident moderators changing any message's state stops, releases
+// included. Approve is handled separately just below it in dispatchPostMessageAction:
+// it stays allowed, but only the basic button (no subject/body/stdmsgid) - an approve
+// carrying a message is composing moderator text, which is exactly what the hold
+// exists to stop.
+var lockdownRefusedModeratorActions = map[string]bool{
+	"Reject":        true,
+	"Delete":        true,
+	"Spam":          true,
+	"Hold":          true,
+	"Release":       true,
+	"ApproveEdits":  true,
+	"RevertEdits":   true,
+	"Move":          true,
+	"BackToPending": true,
+	"RejectToDraft": true,
+	"BackToDraft":   true,
+}
+
 // heldByAnotherMod returns the id and name of a DIFFERENT moderator holding this
 // message on any of the groups the action would touch, or 0 if it is free to act
 // on.
@@ -5569,18 +5796,38 @@ func heldByAnotherMod(myid uint64, req PostMessageRequest) (uint64, string) {
 	return holder, holderName
 }
 
+// heldByAnotherResponse is the 409 body ModTools reads to show who holds the post.
+func heldByAnotherResponse(c *fiber.Ctx, holder uint64, holderName string) error {
+	return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+		"ret":        1,
+		"status":     "Held by another moderator",
+		"heldby":     holder,
+		"heldbyname": holderName,
+	})
+}
+
 // dispatchPostMessageAction routes a POST /message action to the correct handler.
 func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Enforced centrally rather than per-handler so a new moderation action
 	// cannot silently skip the check by forgetting to call it.
 	if moderationActionsBlockedByHold[req.Action] {
 		if holder, holderName := heldByAnotherMod(myid, req); holder != 0 {
-			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-				"ret":        1,
-				"status":     "Held by another moderator",
-				"heldby":     holder,
-				"heldbyname": holderName,
-			})
+			return heldByAnotherResponse(c, holder, holderName)
+		}
+	}
+
+	if req.Action == "Approve" {
+		hasText := (req.Subject != nil && *req.Subject != "") || (req.Body != nil && *req.Body != "") || req.Stdmsgid != nil
+		if hasText {
+			if lockdown.GateMod(c, myid) {
+				return nil
+			}
+		} else {
+			lockdown.CountApproval(myid)
+		}
+	} else if lockdownRefusedModeratorActions[req.Action] {
+		if lockdown.GateMod(c, myid) {
+			return nil
 		}
 	}
 
@@ -6416,4 +6663,55 @@ func isAIAttachment(mods json.RawMessage) bool {
 	default:
 		return false
 	}
+}
+
+// rippleBlockedReason is the rippling_blocked.reason for a home send-back.
+const rippleBlockedReason = "home sent back to pending"
+
+// withdrawnByHomeLogText is the log text a receiving community sees when a home send-back
+// withdraws the post from it.
+const withdrawnByHomeLogText = "Withdrawn: the home community moved this post back to pending, so it will not ripple here again."
+
+// withdrawRippledCopiesAndBlock takes a post out of every community it rippled into, the way
+// the ripple engine retracts a copy (ExpandService::retractRippledCopyInGroup): soft-delete the
+// copy, log Message/Deleted to that community, and remove the poster's ripple-join membership
+// when they have no other live post there. No Group/Left is written: a Left after a rippled
+// join reads as the poster opting out of that community for good.
+//
+// It then records the post in rippling_blocked, which the ripple engine reads before starting a
+// reach, so a re-approval, a repost or an expiry and repost never ripples it out again. The
+// reach row itself is frozen by FreezeReachIfOriginPending once the home copy is Pending.
+func withdrawRippledCopiesAndBlock(db *gorm.DB, msgid, myid uint64) {
+	var fromuser uint64
+	db.Table("messages").Select("fromuser").Where("id = ?", msgid).Scan(&fromuser)
+
+	var rippled []uint64
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND rippled_in = 1 AND deleted = 0", msgid).
+		Scan(&rippled)
+
+	for _, gid := range rippled {
+		res := db.Table("messages_groups").
+			Where("msgid = ? AND groupid = ? AND rippled_in = 1 AND deleted = 0", msgid, gid).
+			Update("deleted", 1)
+		if res.RowsAffected < 1 {
+			continue
+		}
+		logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, gid, fromuser, myid, msgid, 0, withdrawnByHomeLogText)
+
+		if fromuser == 0 {
+			continue
+		}
+		var otherPosts int64
+		db.Table("messages_groups mg").
+			Joins("JOIN messages m ON m.id = mg.msgid").
+			Where("m.fromuser = ? AND mg.groupid = ? AND mg.deleted = 0", fromuser, gid).
+			Count(&otherPosts)
+		if otherPosts == 0 {
+			// Only a ripple-join (rippled = 1) is removed; an organic membership never is.
+			db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND rippled = 1", fromuser, gid)
+		}
+	}
+
+	db.Exec("INSERT IGNORE INTO rippling_blocked (msgid, byuser, reason) VALUES (?, ?, ?)", msgid, myid, rippleBlockedReason)
 }

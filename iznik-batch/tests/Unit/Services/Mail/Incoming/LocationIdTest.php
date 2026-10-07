@@ -27,6 +27,9 @@ class LocationIdTest extends TestCase
      */
     private const STALE_PC_ID = 99000012;
 
+    /** A TN member's home postcode; only in `locations`, never in the spatial index. */
+    private const HOME_PC_ID = 99000013;
+
     private IncomingMailService $service;
 
     private ReflectionClass $reflection;
@@ -157,6 +160,46 @@ class LocationIdTest extends TestCase
         $this->assertNotNull($message, 'The post was lost rather than posted without a location');
         $this->assertNull($message->locationid);
         $this->assertNull(DB::table('users')->where('id', $user->id)->value('lastlocation'));
+    }
+
+    /**
+     * TN is the master for a TN member's location; tn:sync keeps lastlocation in step with
+     * it. A post's own coordinates are where the item is, so they place the post but must
+     * not move the member - otherwise every post flips lastlocation away from TN's value
+     * until the next sync puts it back.
+     */
+    #[Test]
+    public function a_tn_post_does_not_move_a_tn_member_who_already_has_a_location(): void
+    {
+        $this->seedSpatialPoint('postcodes', self::PC_ID, 56.700, 3.100);
+        DB::table('locations')->insert([
+            'id' => self::PC_ID, 'name' => 'ZZ9 9ZZ', 'type' => 'Postcode', 'lat' => 56.700, 'lng' => 3.100,
+            'geometry' => DB::raw("ST_GeomFromText('POINT(3.1 56.7)', ".(int) config('freegle.srid', 3857).')'),
+        ]);
+        $homeId = self::HOME_PC_ID;
+        DB::table('locations')->insert([
+            'id' => $homeId, 'name' => 'EH33 1LH', 'type' => 'Postcode', 'lat' => 55.94, 'lng' => -2.95,
+        ]);
+
+        $group = $this->createTestGroup(['lat' => 56.700, 'lng' => 3.100]);
+        $user = $this->createTestUser([
+            'lastlocation' => $homeId,
+            'email_preferred' => 'member_'.uniqid('', true).'-g1@user.trashnothing.com',
+        ]);
+        $userEmail = $user->emails()->first();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'MODERATED']);
+
+        $postId = 'tn-home-loc-'.uniqid();
+        $envelopeTo = $group->nameshort.'@'.config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
+        $raw = $this->buildTnPostEmail($userEmail->email, $envelopeTo, 'OFFER: Garden chair', $postId);
+
+        $parsed = app(MailParserService::class)->parse($raw, $userEmail->email, $envelopeTo);
+        $this->service->route($parsed);
+
+        $message = DB::table('messages')->where('fromuser', $user->id)->first();
+        $this->assertNotNull($message);
+        $this->assertEquals(self::PC_ID, $message->locationid);
+        $this->assertEquals($homeId, DB::table('users')->where('id', $user->id)->value('lastlocation'));
     }
 
     /**

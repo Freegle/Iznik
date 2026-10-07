@@ -262,6 +262,22 @@ describe('work_router_decide action', () => {
   })
 })
 
+// The backlog query did not select first_seen_at, so every backlog bug sorted as
+// '9999' and the batch was simply table order: the oldest reports could wait for
+// ever behind newer ones.
+describe('backlog dispatch order', () => {
+  it('dispatches the oldest backlog bugs first, not in table order', async () => {
+    for (let i = 0; i < 7; i++) {
+      upsertDiscourseBug(db, { topic: 9800 + i, post: 1, reporter: 'r', excerpt: 'The Give button does nothing on iOS.', state: 'open' })
+    }
+    // The two inserted last are the oldest.
+    db.prepare(`UPDATE discourse_bug SET first_seen_at = '2026-01-01 00:00:00' WHERE topic IN (9805, 9806)`).run()
+    const result = await workRouterHandler({}, { phase: 'analysis', classifications: [], bugsFixed: [] })
+    const topics = (result.bugBatch ?? []).map((b: any) => Number(b.topic))
+    expect(topics.slice(0, 2).sort()).toEqual([9805, 9806])
+  })
+})
+
 describe('recent merged PR dedup in work_router_decide', () => {
   it('skips DB bug from dispatch when recent merged PR title mentions its featureArea', async () => {
     upsertDiscourseBug(db, { topic: 300, post: 1, state: 'open', featureArea: 'modtools' })
@@ -338,5 +354,38 @@ describe('recent merged PR dedup in work_router_decide', () => {
     })
 
     expect(result._transition).toBe('PARALLEL_FIX_BUGS')
+  })
+})
+
+// A task's deferral lived only in context.bugsFixed. A later VERIFY tick replaced that
+// list with its own batch, so the router re-dispatched three reports it had deferred an
+// hour earlier in the same iteration (10042/3, 10044/11, 10085/9) - and every iteration
+// after, since the DB still said open. The router now writes the deferral down.
+describe('task deferrals are recorded', () => {
+  it('marks a deferred bug deferred in the DB so it is not dispatched again', async () => {
+    upsertDiscourseBug(db, { topic: 9900, post: 3, reporter: 'r', excerpt: 'Mail to AOL stopped', state: 'open' })
+    await workRouterHandler({}, {
+      phase: 'analysis', classifications: [],
+      bugsFixed: [{ topic: 9900, post: 3, outcome: 'deferred', reason: 'working-as-designed: external deliverability' }],
+    })
+    const bug = getDiscourseBug(db, 9900, 3)
+    expect(bug?.state).toBe('deferred')
+    expect(bug?.reason ?? '').toContain('working-as-designed')
+
+    const again = await workRouterHandler({}, { phase: 'analysis', classifications: [], bugsFixed: [] })
+    expect(JSON.stringify(again.bugBatch ?? [])).not.toContain('9900')
+  })
+
+  it.each([
+    'delegate timed out — re-run next iteration',
+    'delegate failed',
+    'adversarial review blocked: test proves nothing',
+  ])('leaves a retryable outcome open: %s', async (reason) => {
+    upsertDiscourseBug(db, { topic: 9901, post: 1, reporter: 'r', excerpt: 'The Give button does nothing on iOS.', state: 'open' })
+    await workRouterHandler({}, {
+      phase: 'analysis', classifications: [],
+      bugsFixed: [{ topic: 9901, post: 1, outcome: 'deferred', reason }],
+    })
+    expect(getDiscourseBug(db, 9901, 1)?.state).toBe('open')
   })
 })

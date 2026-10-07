@@ -12,7 +12,7 @@
           <b-card v-else border-variant="warning" class="ms-2">
             <b-card-title>
               <b-img
-                v-if="refmsg?.attachments?.length > 0"
+                v-if="refmsg?.attachments?.[0]?.paththumb"
                 class="float-end"
                 rounded
                 thumbnail
@@ -71,7 +71,7 @@
           <b-card v-else border-variant="warning">
             <b-card-title>
               <b-img
-                v-if="refmsg && refmsg.attachments?.length > 0"
+                v-if="refmsg?.attachments?.[0]?.paththumb"
                 class="float-end"
                 rounded
                 thumbnail

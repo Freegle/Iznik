@@ -695,6 +695,87 @@ class TNSyncCommandTest extends TestCase
         }
     }
 
+    /**
+     * TN is the master for a TN member's location. A stale FD-side settings.mylocation
+     * (V1 data from before the account was linked to TN) is read first by the profile,
+     * distances and Browse, so it must go once TN tells us where the member is - even
+     * when the postcode TN resolves to is the one we already hold.
+     */
+    public function test_sync_location_drops_stale_fd_mylocation(): void
+    {
+        $user = $this->createTNUser();
+
+        $pcId = 99000202;
+        $lat = 55.94439;
+        $lng = -2.95412;
+        $srid = (int) config('freegle.srid', 3857);
+        DB::table('locations')->updateOrInsert(['id' => $pcId], [
+            'name' => 'EH33 1LH',
+            'type' => 'Postcode',
+            'lat' => $lat,
+            'lng' => $lng,
+            'geometry' => DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, $srid)),
+        ]);
+
+        DB::table('users')->where('id', $user->id)->update([
+            'lastlocation' => $pcId,
+            'settings' => json_encode([
+                'dummy' => true,
+                'mylocation' => ['id' => 1, 'name' => 'M34 6PB', 'lat' => 53.453008, 'lng' => -2.103187],
+                'browseMaxMinutes' => 45,
+            ]),
+        ]);
+
+        try {
+            Http::fake([
+                '*/ratings*' => Http::response(['ratings' => []], 200),
+                '*/user-changes*' => Http::response([
+                    'changes' => [[
+                        'fd_user_id' => $user->id,
+                        'location' => ['latitude' => $lat, 'longitude' => $lng],
+                        'date' => self::DATE_SYNC,
+                    ]],
+                ], 200),
+                '*/v1/postcodes/knn*' => Http::response(['results' => [['id' => $pcId, 'distance' => 0]]], 200),
+            ]);
+
+            $this->artisan('tn:sync')->assertExitCode(0);
+
+            $row = DB::table('users')->where('id', $user->id)->first(['lastlocation', 'settings']);
+            $settings = json_decode($row->settings, true);
+            $this->assertEquals($pcId, $row->lastlocation);
+            $this->assertArrayNotHasKey('mylocation', $settings);
+            $this->assertSame(45, $settings['browseMaxMinutes']);
+        } finally {
+            DB::table('locations')->where('id', $pcId)->delete();
+        }
+    }
+
+    public function test_sync_without_location_keeps_fd_mylocation(): void
+    {
+        $user = $this->createTNUser();
+        $myloc = ['id' => 1, 'name' => 'M34 6PB', 'lat' => 53.453008, 'lng' => -2.103187];
+        DB::table('users')->where('id', $user->id)->update([
+            'settings' => json_encode(['mylocation' => $myloc]),
+        ]);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'reply_time' => 60,
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $settings = json_decode(DB::table('users')->where('id', $user->id)->value('settings'), true);
+        $this->assertSame($myloc, $settings['mylocation']);
+    }
+
     // =========================================================================
     // User changes: skip non-TN users
     // =========================================================================

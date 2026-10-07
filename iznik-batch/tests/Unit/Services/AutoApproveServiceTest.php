@@ -477,6 +477,36 @@ class AutoApproveServiceTest extends TestCase
     }
 
     /**
+     * A copy a moderator of the post's HOME community pulled back is locked to the home
+     * copy: the receiving community cannot approve it, and neither can auto-approve. The lock
+     * is checked on its own, not only through needs_moderator, so a lock written by any path
+     * holds.
+     */
+    public function test_does_not_auto_approve_a_copy_locked_by_the_home_community(): void
+    {
+        $user = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $nearbyGroup = $this->createTestGroup();
+        $this->createMembership($user, $originGroup, ['added' => now()->subHours(72)]);
+
+        $message = $this->createTestMessage($user, $originGroup);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $originGroup->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()->subHours(3)]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $nearbyGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING, 'arrival' => now()->subHours(2),
+            'msgtype' => 'Offer', 'rippled_in' => 1, 'needs_moderator' => 0, 'locked_by_home' => 1,
+        ]);
+
+        $this->service->process();
+
+        $this->assertSame(MessageGroup::COLLECTION_PENDING, DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $nearbyGroup->id)->value('collection'),
+            'a copy locked by the home community is never auto-approved');
+    }
+
+    /**
      * A rippled-in post (messages_groups.rippled_in = 1) already Approved on its origin
      * group is fast-tracked on nearby groups after the short veto window — even though the
      * poster is NOT a member of the nearby group (the membership gate would block it, and

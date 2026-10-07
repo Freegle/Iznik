@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-01
+last_reviewed: 2026-10-02
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -16,6 +16,7 @@ covers:
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-server-go/test/modmessaging_test.go
   - iznik-server-go/user/partner.go
+  - iznik-server-go/test/user_tn_location_test.go
   - iznik-server-go/test/user_tn_privacy_test.go
 ---
 
@@ -247,7 +248,7 @@ would sit in the mod queue with nothing able to promote them.
 **A stale spatial-index location costs the post its location, not the post.** The
 spatial server keeps its own R-tree, rebuilt from MySQL on its own schedule, so its
 nearest-postcode answer can name a `locations` row that has since been purged or
-renumbered. `users.lastlocation` is a foreign key, and both paths write it *inside*
+renumbered. `users.lastlocation` is a foreign key, and both paths can write it *inside*
 message creation, so an id that is no longer in `locations` throws there and takes
 the whole post down rather than just its location - it routes Pending and creates no
 `messages` row at all. `GroupPostIngestionService` and
@@ -448,6 +449,26 @@ Syncs:
 - Username changes
 - Location updates
 - Account removal notifications
+
+**TN is the master for a TN member's location.** A change row's `location` sets
+`users.lastlocation` to the nearest postcode. `settings.mylocation` is read before
+`lastlocation` for other members, but on TN accounts it is V1-era data from before the
+account was linked to TN, so every reader ignores it when `tnuserid` is set:
+
+- Go: `user.GetLatLng`, `GetPublicLocationForUser`, the ModTools location name,
+  `ResolveOnBehalfPosting` and the visualise map. The session's own location is left
+  alone, as TN members do not log in.
+- Batch: `User::chosenLatLng()` for code holding a user, and `AND <alias>.tnuserid IS NULL`
+  in the SQL "mylocation else lastlocation" expressions (digests, Community News,
+  first-reply match mail, the approximate-location map).
+
+The sync also removes the setting when TN sends a location, so the stale data goes as
+members are active. For the same reason a TN post (either path) only writes `lastlocation` when it is
+empty: the post's coordinates are where the item is, not where the member is.
+
+Each change row carries the member's *current* state, not the state at that row's
+`date`, so re-reading old rows from the feed cannot show what a past sync received;
+the batch log's `TN-SYNC-TRACE [LOCATION]` lines are the record of that.
 
 ### Changes Feed (TN pulls from Freegle)
 
@@ -663,6 +684,10 @@ fresh id, the digest listed the same item once per posting - "Small lamp" four t
 The same key now decides the immediate mails too, over a seven-day window
 (`UnifiedDigestService::ITEM_DEDUP_DAYS`). Past that, a member re-offering the same thing is
 news again and gets a fresh mail.
+
+While a [lockdown](../../ops/runbooks/lockdown.md) holds `email`, both the digest pass and the
+immediate-mail pass return before touching their cursor or watermark, so a held pass loses
+nothing and the next pass after the hold re-examines the same posts.
 
 Note the deliberate asymmetry: a repost is **not** collapsed on the browse feed. The feed
 collapses on `msgid` and nothing else, so each posting is its own card. Two postings days

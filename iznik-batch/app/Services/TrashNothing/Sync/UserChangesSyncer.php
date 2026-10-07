@@ -124,6 +124,17 @@ class UserChangesSyncer
                                 Log::info('TN-SYNC-TRACE [LOCATION] fd_user_id=' . $change['fd_user_id'] . ' lat=' . $lat . ' lng=' . $lng . ' old_loc=' . $user->lastlocation . ' new_loc=' . $loc->id);
                                 $user->lastlocation = $loc->id;
                             }
+
+                            // TN is the master for a TN member's location. settings.mylocation
+                            // is read before lastlocation almost everywhere, and on TN accounts
+                            // it is stale V1 data from before the account was linked to TN, so
+                            // drop it and let lastlocation stand.
+                            $settings = $user->settings;
+                            if (is_array($settings) && array_key_exists('mylocation', $settings)) {
+                                Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $change['fd_user_id'] . ' set=settings.mylocation=removed');
+                                unset($settings['mylocation']);
+                                $user->settings = $settings;
+                            }
                         }
                     }
 

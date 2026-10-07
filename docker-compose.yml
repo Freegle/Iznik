@@ -450,13 +450,6 @@ services:
     volumes:
       - ./frontend-nginx.conf:/etc/nginx/templates/nginx.conf.template:ro
       - delivery-cache:/var/cache/nginx/wsrv_cache
-      # The LEGACY upload store, read-only: nginx serves a GET from here only
-      # after the spool and the object store have both said 404. Static files,
-      # no tusd in front (tusd creates a lock file even on GET, which a
-      # read-only mount refuses). On the prod host the edge override binds the
-      # NFS share here; on dev it is an empty volume. Dropped, with the nginx
-      # hop, once images:migrate-legacy --verify reports nothing missing.
-      - tusd-legacy:/images:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8081/healthz || exit 1"]
       interval: 10s
@@ -635,6 +628,9 @@ services:
     build:
       context: ./claude-agent-sdk
       network: host
+      args:
+        # The host user owning SUPPORT_CLAUDE_DIR/.credentials.json, which session mode reads.
+        CLAUDE_UID: ${SUPPORT_CLAUDE_UID:-1000}
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-ai-support-helper
     profiles:
       - backend
@@ -1400,6 +1396,8 @@ services:
     restart: "no"
     environment:
       - IZNIK_API_V2=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api
+      # The helper is reached through traefik, so its URL carries the worktree's port offset.
+      - AI_SUPPORT_URL=${AI_SUPPORT_URL:-http://ai-support-helper.localhost:${PORT_TRAEFIK_HTTP:-80}}
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
       - TUS_UPLOADER=http://tusd.localhost:${PORT_TRAEFIK_HTTP:-80}/tus/
       - IMAGE_BASE_URL=http://tusd:8080/tus
@@ -1456,6 +1454,8 @@ services:
     environment:
       # LIVE/Production APIs - REAL DATA!
       - IZNIK_API_V2=${LIVE_MT_API_V2:-https://api.ilovefreegle.org/apiv2}
+      # The helper is reached through traefik, so its URL carries the worktree's port offset.
+      - AI_SUPPORT_URL=${AI_SUPPORT_URL:-http://ai-support-helper.localhost:${PORT_TRAEFIK_HTTP:-80}}
       # Use production delivery and USER_SITE - local delivery won't work
       # from mobile devices since they can't resolve localhost hostnames
       - IMAGE_DELIVERY=https://delivery.ilovefreegle.org
@@ -2065,8 +2065,6 @@ volumes:
     driver: local   # frontend-nginx wsrv_cache (mirror of app1's 41 GB delivery cache)
   tusd-spool:
     driver: local   # tusd's local upload spool; images:push-spool drains it to the object store
-  tusd-legacy:
-    driver: local   # empty stand-in for the legacy NFS share (the edge override binds the real one into frontend-nginx)
   objectstore-data:
     driver: local   # dev/CI object store
   osm-data:

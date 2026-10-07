@@ -2,6 +2,7 @@
 
 namespace App\Mail\Message;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
@@ -10,7 +11,7 @@ use App\Models\User;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-class DeadlineReached extends MjmlMailable
+class DeadlineReached extends MjmlMailable implements DescribesMemberContent
 {
     use TrackableEmail;
     use LoggableEmail;
@@ -135,5 +136,20 @@ class DeadlineReached extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->user->id ?? null;
+    }
+
+    /**
+     * Names the post whose deadline was reached and the poster it is addressed to (plan
+     * section 11.8); filter-spool removes this mail once that post is no longer Approved
+     * or the poster is now a spammer.
+     */
+    public function about(): array
+    {
+        return [
+            'chatmessages' => [],
+            'messages' => [$this->message->id],
+            'newsfeed' => [],
+            'users' => [$this->user->id],
+        ];
     }
 }

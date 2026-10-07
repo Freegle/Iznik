@@ -235,6 +235,7 @@ func verifyRequiredTables() {
 
 func TestMain(m *testing.M) {
 	dropLegacyReachGeometry()
+	purgeStaleLockdownState()
 
 	code := m.Run()
 
@@ -268,6 +269,32 @@ func dropLegacyReachGeometry() {
 
 	if err := db.Exec("ALTER TABLE rippling_reach DROP COLUMN polygon").Error; err != nil {
 		fmt.Printf("WARNING: could not drop legacy rippling_reach.polygon: %v\n", err)
+	}
+}
+
+// lockdown_handlers_test.go is the one file in this package that writes real "lockdowns"
+// rows through the real HTTP endpoint (every other lockdown_gates_*_test.go uses
+// lockdown.SetTestState instead, so nothing else in this binary touches the table for
+// real). Each of its tests cleans up its own incident before returning, but that cleanup
+// is scoped to the incident id the test itself created, so it cannot remove a row left
+// behind by something outside a normal run of this file - a crashed previous run that
+// never reached its cleanup, or a one-off manual press against this same test database.
+// Any such row is "active" from a press nobody ever closed, and since press() refuses to
+// run again while one is active, it silently turns every press test in the file into a
+// 409 for the rest of the suite, cascading into every gate elsewhere that holds the
+// surface it locked.
+//
+// Called once, here, before m.Run() starts - nothing in this binary has written a real
+// lockdowns row yet at this point, so there is nothing legitimate to lose.
+func purgeStaleLockdownState() {
+	db := database.DBConn
+	for _, table := range []string{"lockdowns", "lockdown_holds", "lockdown_counters", "lockdown_acks"} {
+		result := db.Exec("DELETE FROM " + table)
+		if result.Error != nil {
+			fmt.Printf("WARNING: could not purge stale %s: %v\n", table, result.Error)
+		} else if result.RowsAffected > 0 {
+			fmt.Printf("Purged %d stale row(s) from %s left over from outside this test run\n", result.RowsAffected, table)
+		}
 	}
 }
 

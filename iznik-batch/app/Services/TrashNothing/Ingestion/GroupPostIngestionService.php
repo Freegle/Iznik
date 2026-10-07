@@ -413,6 +413,7 @@ class GroupPostIngestionService
             if (!$this->dryRun) {
                 MessageGroup::where('msgid', $messageId)
                     ->where('needs_moderator', 0)
+                    ->where('locked_by_home', 0)
                     ->update([
                         'collection' => MessageGroup::COLLECTION_APPROVED,
                         'approvedat' => now(),
@@ -498,7 +499,10 @@ class GroupPostIngestionService
                 $locationId = null;
             }
 
-            if ($locationId && $user->id) {
+            // TN is the master for a TN member's location (tn:sync keeps lastlocation in
+            // step with it), so a post only fills it in when it is empty; the post's own
+            // point is where the item is, not where the member is.
+            if ($locationId && $user->id && $user->lastlocation === null) {
                 Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastlocation=' . $locationId);
                 if (!$this->dryRun) {
                     $user->lastlocation = $locationId;

@@ -234,3 +234,48 @@ describe('ask_reporter_for_detail', () => {
     expect(res.queued).toBe(false)
   })
 })
+
+// Reports classified before the vagueness check existed sit in the backlog as open,
+// with only a paraphrase. 10029/9 and 10200/1 went to a fix this way and both PRs
+// were closed as guesses. The router judges the reporter's own words before dispatch.
+describe('an old open report re-checked before dispatch', () => {
+  it('is held and asked about when the reporter named nothing', async () => {
+    const mod = await import('../actions/index.js')
+    vi.spyOn(mod.questionAnswerDeps, 'fetchReporterPost').mockResolvedValue({
+      text: 'We have had two members who cannot see messages with an address in. What sort of information would be useful?',
+      hasImage: false,
+    })
+    upsertDiscourseBug(db, { topic: 9700, post: 1, reporter: 'Sandra', excerpt: 'Members cannot see chat messages with addresses', state: 'open' })
+    const decision = await workRouter({}, { classifications: [], bugsFixed: [], phase: 'analysis' })
+    expect(JSON.stringify(decision.bugBatch ?? [])).not.toContain('9700')
+    expect(getDiscourseBug(db, 9700, 1)?.state).toBe('needs-detail')
+    expect(posted.some(p => p.topic === 9700)).toBe(true)
+  })
+
+  it('is dispatched as before when the reporter named something', async () => {
+    const mod = await import('../actions/index.js')
+    vi.spyOn(mod.questionAnswerDeps, 'fetchReporterPost').mockResolvedValue({
+      text: 'A member (40959909) cannot donate with Google Pay on Chrome.',
+      hasImage: false,
+    })
+    upsertDiscourseBug(db, { topic: 9701, post: 1, reporter: 'Carol', excerpt: 'Google Pay donation fails', state: 'open' })
+    const decision = await workRouter({}, { classifications: [], bugsFixed: [], phase: 'analysis' })
+    expect(JSON.stringify(decision.bugBatch ?? [])).toContain('9701')
+  })
+})
+
+// The re-check read the post as plain text, so a screenshot never counted. Two reporters
+// (4290/12, 10216/2) were asked for screenshots they had already posted.
+describe('the backlog re-check and screenshots', () => {
+  it('counts a screenshot in the post as something to work from', async () => {
+    const mod = await import('../actions/index.js')
+    vi.spyOn(mod.questionAnswerDeps, 'fetchReporterPost').mockResolvedValue({
+      text: 'I withdrew 2 test posts and the Browse bar still says 2 posts by you. It looks wrong.',
+      hasImage: true,
+    })
+    upsertDiscourseBug(db, { topic: 9702, post: 2, reporter: 'Nev', excerpt: 'Browse counts withdrawn posts', state: 'open' })
+    const decision = await workRouter({}, { classifications: [], bugsFixed: [], phase: 'analysis' })
+    expect(JSON.stringify(decision.bugBatch ?? [])).toContain('9702')
+    expect(posted.some(p => p.topic === 9702)).toBe(false)
+  })
+})

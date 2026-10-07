@@ -1478,6 +1478,29 @@ describe('ModMessage', () => {
     })
   })
 
+  // Plan 10.6/10.12: posts held by the lockdown switch are labelled in the queue.
+  // Confirmed live via GET /message/:id -> message.lockdownheld (always a bool).
+  describe('Lockdown held notice', () => {
+    it('shows the lockdown notice when message.lockdownheld is true', async () => {
+      const wrapper = mountComponent({ summary: false }, { lockdownheld: true })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('Held by lockdown')
+    })
+
+    it('does not show the lockdown notice when absent or false', async () => {
+      const wrapperAbsent = mountComponent({ summary: false })
+      await wrapperAbsent.vm.$nextTick()
+      expect(wrapperAbsent.text()).not.toContain('Held by lockdown')
+
+      const wrapperFalse = mountComponent(
+        { summary: false },
+        { lockdownheld: false }
+      )
+      await wrapperFalse.vm.$nextTick()
+      expect(wrapperFalse.text()).not.toContain('Held by lockdown')
+    })
+  })
+
   describe('Moderated member notice', () => {
     it('shows moderated notice for pending messages from MODERATED member', async () => {
       mockUserStore.byId.mockReturnValue({
@@ -1940,6 +1963,63 @@ describe('ModMessage', () => {
       )
       expect(warning.exists()).toBe(true)
       expect(warning.text()).toContain('out of area')
+    })
+
+    it('tells the moderator the home community is reviewing a locked copy', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Pending',
+              rippled_in: 0,
+              arrival: rippleEarlier,
+            },
+            {
+              groupid: 789,
+              namedisplay: 'Context',
+              collection: 'Pending',
+              rippled_in: 1,
+              locked_by_home: 1,
+              arrival: rippleLater,
+            },
+          ],
+        }
+      )
+      const notice = wrapper.find('[data-test="locked-by-home-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toContain('home community is reviewing this post')
+      expect(notice.text()).toContain("can't be approved here")
+    })
+
+    it('shows no locked notice once the lock has lifted', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Approved',
+              rippled_in: 0,
+              arrival: rippleEarlier,
+            },
+            {
+              groupid: 789,
+              namedisplay: 'Context',
+              collection: 'Pending',
+              rippled_in: 1,
+              locked_by_home: 0,
+              arrival: rippleLater,
+            },
+          ],
+        }
+      )
+      expect(wrapper.find('[data-test="locked-by-home-notice"]').exists()).toBe(
+        false
+      )
     })
 
     // Task #23: the P/Q "quicker to get to" note. Wording (fixed by product spec) is

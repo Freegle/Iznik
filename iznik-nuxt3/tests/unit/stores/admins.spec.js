@@ -41,6 +41,16 @@ describe('admins store', () => {
     expect(store.list[1]).toEqual({ id: 1, subject: 'Test Admin' })
   })
 
+  it('never files a list under a single id', async () => {
+    const store = useAdminsStore()
+    store.config = {}
+    mockFetch.mockResolvedValue([{ id: 1 }, { id: 2 }])
+
+    await store.fetch({ id: 7 })
+
+    expect(store.list[7]).toBeUndefined()
+  })
+
   it('stores array of admins on list fetch', async () => {
     const store = useAdminsStore()
     store.config = {}
@@ -53,6 +63,22 @@ describe('admins store', () => {
 
     expect(store.list[1].subject).toBe('A')
     expect(store.list[2].subject).toBe('B')
+  })
+
+  it('edit saves, then re-reads the admin by id alone', async () => {
+    const store = useAdminsStore()
+    store.config = {}
+    const long = 'x'.repeat(20000)
+    mockFetch.mockResolvedValue({ id: 5, subject: 'Saved', mjml: long })
+
+    await store.edit({ id: 5, subject: 'Saved', text: long, mjml: long })
+
+    expect(mockPatch).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 5, mjml: long })
+    )
+    // The whole text and MJML in a GET URL is refused by the server.
+    expect(mockFetch).toHaveBeenCalledWith({ id: 5 })
+    expect(store.list[5].subject).toBe('Saved')
   })
 
   it('clear empties list', () => {

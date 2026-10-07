@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-28
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 covers:
   - iznik-server-go/message/postmatches.go
@@ -90,6 +90,14 @@ This is a **separate** mail from the daily digest's relevance ranking
   This is now one case of the general scheme every bulk mailable follows —
   `MatchedPosts` declares the `relevant` category and keeps `relevantoff` as its
   targeted endpoint. See [./unsubscribe.md](./unsubscribe.md).
+
+## Lockdown
+
+`App\Mail\Matched\MatchedPosts` names the two posts and their authors in each item it
+shows, through an `about()` method. If a [lockdown](../../ops/runbooks/lockdown.md) holds
+this mail in the spool and one of those posts stops being Approved, or one of those
+authors becomes a spammer, `lockdown:filter-spool` drops the mail before it resumes
+rather than sending someone to a match that no longer exists.
 
 ## Preview
 

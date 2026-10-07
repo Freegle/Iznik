@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-01
+last_reviewed: 2026-09-28
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/NotificationChaseUpService.php
@@ -116,6 +116,14 @@ marked `mailed`.
 route is registered at the app root (`iznik-server-go/router/routes.go`), not under `/api`, so a
 value with `/api/avatar` gives every card a broken image in local previews. Set
 correctly for both batch services in `docker-compose.yml`.
+
+## Lockdown
+
+`ChaseUpMail` names the newsfeed items its ChitChat-linked notifications point at,
+through an `about()` method (Exhort nudges point at a site path rather than a post, so
+they carry nothing here). If a [lockdown](../../ops/runbooks/lockdown.md) holds this
+mail in the spool and one of those newsfeed items is removed, `lockdown:filter-spool`
+drops the mail before it resumes rather than pointing a member at a thread that is gone.
 
 ## Unsubscribing
 

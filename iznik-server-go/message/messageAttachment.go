@@ -22,6 +22,9 @@ type MessageAttachment struct {
 	Ouruid       string          `json:"ouruid"`
 	Externalmods json.RawMessage `json:"externalmods"`
 	AI           bool            `json:"ai" gorm:"-"`
+	// Set when the AI picture was rejected, regenerating or suppressed. It has no path either, so the
+	// frontend shows the no-photo placeholder.
+	Masked       bool            `json:"-"`
 }
 
 // ComputeAI populates the AI field from the externalmods JSON.

@@ -29,7 +29,7 @@ class GenerateIllustrationsCommand extends Command
             $dryRun = (bool) $this->option('dry-run');
 
             if ($dryRun) {
-                $this->info('Dry run — counting work but not calling pollinations.ai or writing.');
+                $this->info('Dry run — counting work but not calling the image generator or writing.');
             } else {
                 Log::info('Starting message illustrations generation');
             }
