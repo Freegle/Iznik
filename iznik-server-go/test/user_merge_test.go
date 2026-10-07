@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/user"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -449,4 +450,95 @@ func TestMergeMergeLogEntries(t *testing.T) {
 
 	entry2 := findLog(db, "User", "Merged", id2)
 	assert.NotNil(t, entry2, "should have a Merged log for the kept user (id2)")
+}
+
+// ── TrashNothing accounts ────────────────────────────────────────────────────
+
+// stampTN gives a test user a TrashNothing id, releasing it from any user an earlier run
+// left holding it (tnuserid is UNIQUE).
+func stampTN(id uint64, tnuserid uint64) {
+	db := database.DBConn
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", tnuserid)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", tnuserid, id)
+}
+
+func userExists(id uint64) bool {
+	var n int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM users WHERE id = ?", id).Scan(&n)
+	return n > 0
+}
+
+// A Freegle account and a TrashNothing account are never merged, even by id: ModTools only
+// refused when a TrashNothing address was typed in.
+func TestMergeRefusesFreegleWithTrashNothingByID(t *testing.T) {
+	prefix := uniquePrefix("merge_fd_tn")
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	fd := CreateTestUser(t, prefix+"_fd", "User")
+	tn := CreateTestUser(t, prefix+"_tn", "User")
+	stampTN(tn, 991001)
+
+	assert.Equal(t, 400, mergeUsers(t, adminToken, fd, tn))
+	assert.Equal(t, 400, mergeUsers(t, adminToken, tn, fd), "refused in either direction")
+	assert.True(t, userExists(fd))
+	assert.True(t, userExists(tn))
+}
+
+// A TrashNothing address as the preferred email makes an account a TrashNothing member even
+// without a tnuserid stamp.
+func TestMergeRefusesFreegleWithTrashNothingPreferredEmail(t *testing.T) {
+	prefix := uniquePrefix("merge_fd_tnmail")
+	db := database.DBConn
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	fd := CreateTestUser(t, prefix+"_fd", "User")
+	tn := CreateTestUser(t, prefix+"_tn", "User")
+	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", tn)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", tn, prefix+"-g1@user.trashnothing.com")
+
+	assert.Equal(t, 400, mergeUsers(t, adminToken, fd, tn))
+	assert.True(t, userExists(fd))
+}
+
+// Two different TrashNothing ids are two TrashNothing members: merging them would drop one id.
+func TestMergeRefusesTwoDifferentTrashNothingMembers(t *testing.T) {
+	prefix := uniquePrefix("merge_tn_tn")
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	a := CreateTestUser(t, prefix+"_a", "User")
+	b := CreateTestUser(t, prefix+"_b", "User")
+	stampTN(a, 991002)
+	stampTN(b, 991003)
+
+	assert.Equal(t, 400, mergeUsers(t, adminToken, a, b))
+	assert.True(t, userExists(a))
+	assert.True(t, userExists(b))
+
+	// The shared merge refuses it too, so the TN divergence heal cannot do it either.
+	assert.Error(t, user.MergeUsersTx(database.DBConn, a, b, b))
+	assert.True(t, userExists(a))
+
+	var tnA uint64
+	database.DBConn.Raw("SELECT COALESCE(tnuserid, 0) FROM users WHERE id = ?", a).Scan(&tnA)
+	assert.Equal(t, uint64(991002), tnA, "both ids kept")
+}
+
+// Twin repair stays possible: one account stamped, its twin not, both TrashNothing.
+func TestMergeAllowsTrashNothingTwinWithoutStamp(t *testing.T) {
+	prefix := uniquePrefix("merge_tn_twin")
+	db := database.DBConn
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	stamped := CreateTestUser(t, prefix+"_s", "User")
+	twin := CreateTestUser(t, prefix+"_t", "User")
+	stampTN(stamped, 991004)
+	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", twin)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", twin, prefix+"-g2@user.trashnothing.com")
+
+	assert.Equal(t, 200, mergeUsers(t, adminToken, twin, stamped))
+	assert.False(t, userExists(twin))
+
+	var tn uint64
+	db.Raw("SELECT COALESCE(tnuserid, 0) FROM users WHERE id = ?", stamped).Scan(&tn)
+	assert.Equal(t, uint64(991004), tn)
 }

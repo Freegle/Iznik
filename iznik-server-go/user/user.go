@@ -3074,6 +3074,13 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
 	}
 
+	// A TrashNothing member is a partner's member, not one of ours: their account is never merged
+	// with a Freegle account, whoever asks (.claude/rules/conventions.md). ModTools refuses this
+	// too, but only by looking at the email typed in, so a merge by id went straight through.
+	if isTrashNothingAccount(db, uint64(req.ID1)) != isTrashNothingAccount(db, uint64(req.ID2)) {
+		return fiber.NewError(fiber.StatusBadRequest, "You can't merge a TrashNothing member with a Freegle account. Add a note to each to say they are the same person.")
+	}
+
 	if err := MergeUsersTx(db, uint64(req.ID1), uint64(req.ID2), myid); err != nil {
 		return err
 	}
@@ -3088,6 +3095,17 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 // heal (see FindTNCandidates) can merge a member's twin accounts through
 // exactly the moderator-merge code path.
 func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
+	// Two different TrashNothing ids are two different TrashNothing members. Merging them keeps one
+	// id and drops the other, which loses that member for good (Discourse: pchide251 and
+	// brianandi170). Every merge path comes through here: the moderator merge and the TN
+	// divergence heal, whose own case - one twin stamped, the other not - is still allowed.
+	var tn1, tn2 *uint64
+	db.Table("users").Select("tnuserid").Where("id = ?", id1).Scan(&tn1)
+	db.Table("users").Select("tnuserid").Where("id = ?", id2).Scan(&tn2)
+	if tn1 != nil && tn2 != nil && *tn1 != *tn2 {
+		return fiber.NewError(fiber.StatusBadRequest, "These accounts belong to two different TrashNothing members and can't be merged.")
+	}
+
 	// All merge operations run inside a single transaction (V1 parity).
 	// id1 = DISCARD (source), id2 = KEEP (destination). All data moves FROM id1 TO id2.
 	tx := db.Begin()
@@ -3805,4 +3823,22 @@ func GetUserLogins(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(logins)
+}
+
+// isTrashNothingAccount reports whether the user is a TrashNothing member: stamped with a
+// tnuserid, or with a TrashNothing address as their preferred email. A non-preferred
+// TrashNothing address does not count, since volunteers may also use TrashNothing. Same
+// definition as the membership package's, which this package cannot import.
+func isTrashNothingAccount(db *gorm.DB, userid uint64) bool {
+	var stamped int64
+	db.Table("users").Where("id = ? AND tnuserid IS NOT NULL", userid).Count(&stamped)
+	if stamped > 0 {
+		return true
+	}
+
+	var tnPreferred int64
+	db.Table("users_emails").
+		Where("userid = ? AND preferred = 1 AND email LIKE ?", userid, "%@user.trashnothing.com").
+		Count(&tnPreferred)
+	return tnPreferred > 0
 }
