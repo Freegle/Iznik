@@ -1,0 +1,15 @@
+# Mail relay (bulk2): overnight low in mail, clear of its own 05:00 log rotation and 06:00 upgrade cron.
+# Install: cp to /etc/systemd/system/, systemctl daemon-reload,
+# systemctl enable --now freegle-maint-mail.timer. Shipped disabled.
+[Unit]
+Description=Freegle host maintenance timer: mail
+
+[Timer]
+OnCalendar=Wed *-*-* 02:15:00 UTC
+# A missed slot is skipped, never run late: the start window would refuse it anyway.
+Persistent=false
+AccuracySec=1min
+Unit=freegle-maint@mail.service
+
+[Install]
+WantedBy=timers.target

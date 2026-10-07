@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-04
+last_reviewed: 2026-10-07
 owner: Freegle dev team
 ---
 
@@ -97,6 +97,10 @@ to 18 minutes. Let it run. Killing the joiner during an SST is what produces the
 file, the abort loop and the half-copied data directory that then look like a broken node.
 
 ## Cycling a data node, and both in turn
+
+The weekly patch-and-reboot of a data node runs this procedure automatically, around the
+reboot: see [automated host maintenance](automated-host-maintenance.md). What follows is
+the hand version, for a stop and start that is not part of it.
 
 Untested as written: walk it on the read node first, with someone watching. It is the
 procedure for a stop and start that is not a reboot: clearing a frozen write-set cache, changing
