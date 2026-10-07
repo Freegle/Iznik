@@ -240,10 +240,13 @@ class TnUserProvisioner
      * first, then the canon, which also matches the per-group -gNNN aliases the
      * email path created.
      *
-     * A canon match must also carry exactly this username. Today's canonMail
-     * strips everything after the LAST hyphen of a TN local part, so the canon
-     * of "mary-jane@" is "mary@", and without the check a "mary-g12@" alias
-     * belonging to someone else would be taken for this member.
+     * A canon match must also carry exactly this username. canonMail strips
+     * only a -g<digits> suffix now, but it used to strip everything after the
+     * LAST hyphen of a TN local part, and rows written then keep that canon
+     * until users:backfill-email-canon rewrites them. So a stale row for
+     * someone else's "mary-jane-x@" holds canon "mary-jane@usertrashnothingcom",
+     * the same as this member's "mary-jane@", and without the check would be
+     * taken for this member.
      */
     private function findExistingAccount(string $username, string $email): ?User
     {

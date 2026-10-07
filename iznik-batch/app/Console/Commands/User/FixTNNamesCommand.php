@@ -40,9 +40,10 @@ class FixTNNamesCommand extends Command
             // the domain dots, but some rows hold REVERSE(email) and some hold NULL. A
             // prefix on it reached 20.5% of Trash Nothing members and silently skipped
             // the rest. See .claude/rules/mail-and-data.md.
-            // Both shapes are live: the per-group aliases are name-gNNNN@user.trashnothing.com,
-            // and older rows sit directly on the bare domain. The reversed prefix this
-            // replaced matched both, so the address pattern has to as well.
+            // The pattern also matches older rows on the bare @trashnothing.com domain, as
+            // the reversed prefix it replaced did. Those are not member addresses
+            // (User::tnUsernameFromEmail takes only @user.trashnothing.com), so they are
+            // counted as skipped rather than named.
             $tnAddressSuffix = '%@%' . config('freegle.mail.trashnothing_domain');
 
             $rows = DB::table('users')

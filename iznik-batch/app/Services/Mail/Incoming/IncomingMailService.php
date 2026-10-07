@@ -1179,9 +1179,9 @@ class IncomingMailService
         // Find or create the user.
         //
         // findUserByEmail falls back to a canon lookup, which is the thing that stops a
-        // Trash Nothing member's second per-group address creating a second Freegle
-        // account: canon strips the -gNNNN suffix, so every alias of one member reduces
-        // to the same value. Matching the address alone, as this did, is how the member
+        // Trash Nothing member's second address creating a second Freegle account:
+        // canon strips a -gNNNN suffix, so the bare username@ address and every
+        // per-group alias of one member reduce to the same value. Matching the address alone, as this did, is how the member
         // in Discourse's 403 report came to hold two accounts - TN sends a Subscribe
         // mail per group, each from a different alias.
         $envFrom = $email->envelopeFrom;
@@ -1226,9 +1226,9 @@ class IncomingMailService
                 'created_new' => true,
             ]);
         } else {
-            // It may have matched on canon rather than on the address itself - another
-            // per-group alias of the same member. Attach this one so later mail from it
-            // matches outright.
+            // It may have matched on canon rather than on the address itself - the bare
+            // address or another per-group alias of the same member. Attach this one so
+            // later mail from it matches outright.
             $this->addEmailToUser($user->id, $envFrom);
 
             // Update last access

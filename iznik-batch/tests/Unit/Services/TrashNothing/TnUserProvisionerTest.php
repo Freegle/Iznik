@@ -249,9 +249,9 @@ class TnUserProvisionerTest extends TestCase
     }
 
     /**
-     * canonMail strips everything after the last hyphen of a TN local part, so
-     * "maryX-jane@" and someone else's "maryX-g12@" share a canon. They are
-     * different people.
+     * "maryX-jane@" and someone else's "maryX-g12@" are different people. canonMail
+     * used to strip everything after the last hyphen, which gave them one canon;
+     * it now strips only a -g<digits> suffix, so they no longer collide at all.
      */
     public function test_canon_match_with_a_different_username_is_not_linked(): void
     {
@@ -265,6 +265,38 @@ class TnUserProvisionerTest extends TestCase
         $this->assertNotSame($other->id, $user->id);
         $this->assertNull($other->fresh()->tnuserid);
         $this->assertSame("{$mary}-jane@user.trashnothing.com", $user->fresh()->email_preferred);
+    }
+
+    /**
+     * Rows written before canonMail stopped stripping after the last hyphen keep
+     * the old canon until users:backfill-email-canon rewrites them. Someone else's
+     * "maryX-jane-x@" then still holds canon "maryX-jane@usertrashnothingcom", the
+     * same as this member's bare address. The username check must refuse it.
+     */
+    public function test_stale_canon_row_for_a_different_username_is_not_linked(): void
+    {
+        $tnId     = $this->tnId();
+        $username = $this->uniqueUsername('mary') . '-jane';
+        $other    = $this->createTestUser();
+        DB::table('users_emails')->insert([
+            'userid'    => $other->id,
+            'email'     => "{$username}-x@user.trashnothing.com",
+            'canon'     => "{$username}@usertrashnothingcom",
+            'backwards' => strrev("{$username}@usertrashnothingcom"),
+            'preferred' => 0,
+            'added'     => now(),
+        ]);
+        $this->assertSame(
+            User::canonMail("{$username}@user.trashnothing.com"),
+            "{$username}@usertrashnothingcom",
+            'the stale row must collide on canon, or this test proves nothing'
+        );
+        $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
+
+        $user = $this->provisioner()->resolveOrCreate($tnId);
+
+        $this->assertNotSame($other->id, $user->id);
+        $this->assertNull($other->fresh()->tnuserid);
     }
 
     public function test_deleted_account_is_not_linked(): void

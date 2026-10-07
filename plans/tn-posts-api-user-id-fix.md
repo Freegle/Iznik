@@ -116,6 +116,35 @@ Added next to `removeTNGroup()` in `app/Models/User.php`:
   - **`NameSanitiser::TN_EMAIL_SUFFIX` / Go `tnEmailSuffix`** are now the domain check. Both are **unreachable**: `isSuspicious` returns early on any `@` first. Candidates for removal in both stacks.
   - **Audit (re-run 2026-10-07):** no A-row sites beyond the table. Extra domain-only (B) sites: Go `user/user.go:3841`, `membership/membership.go:94`. C-row `TidyName` and `ListModsService` do receive email local parts, but only strip a trailing `-g\d+`, which matches the replacement rule.
   - **B-row tests** already used bare addresses (`UserModelTest::test_is_tn_returns_true_for_trashnothing_user`, `DiscourseNotSignedUpServiceTest`, `ModMember.spec.js`); none added.
+- **Second-pass inventory (2026-10-07).** Wider grep than the audit procedure below: it also catches comments and prose (`-gNNNN`, `-gXXX`, "per-group alias", "group suffix"), escaped forms (`\-g`, `g\d+@`), `strpos`/`indexOf`/`explode` on hyphens, raw SQL, the nuxt client and the housekeeper's job descriptions. Every hit, classified:
+
+  | Site | What it does with the suffix | Class | Status |
+  |---|---|---|---|
+  | `User.php` `tnUsernameFromEmail` (`/^(.+?)(?:-g\d+)?@user\.trashnothing\.com$/i`) | optional suffix | shared PHP helper | already right (step 1) |
+  | `User.php` `canonMail` | strips only `-g\d+` before the TN domain | A | fixed |
+  | `IncomingMailService::canonicalizeEmail` | delegates to `canonMail` | A | fixed |
+  | `IncomingMailService.php` `handleSubscribe` comments (the "second per-group address" / "another per-group alias" notes) | describe aliases only | comment | updated in this pass to include the bare form |
+  | `TnUserProvisioner::findExistingAccount` docblock, and its test `test_canon_match_with_a_different_username_is_not_linked` | say canonMail "strips everything after the LAST hyphen" | comment/test | outdated; updated in this pass. The guard stays: rows written before step 5 keep the old canon until `users:backfill-email-canon` rewrites them. A stale-canon test was added |
+  | `TNSyncCommand::tnUsernameFromAddress`, per-tick `LIKE 'username-g%@'` | now via `tnUsernameFromEmail`; probe also matches `email = 'username@…'` | A | fixed |
+  | `TNSyncCommand.php` backwards-format comment (`canon strips the -gNNNN suffix`) | describes canon | comment | still accurate |
+  | `FixTNNamesCommand` name extraction | via `tnUsernameFromEmail` + `tnDisplayName` | A | fixed |
+  | `FixTNNamesCommand` row-filter comment ("older rows sit directly on the bare domain") | refers to `@trashnothing.com` (no `user.`), which the `%@%trashnothing.com` filter matches | comment | **open question**, see below |
+  | `NameSanitiser::TN_EMAIL_SUFFIX`, Go `tnEmailSuffix` | domain check | A | fixed; unreachable behind the `@` early return |
+  | `UserEmail.php:60`, `BackfillEmailCanonCommand.php:14` | "canonMail drops the -gNNNN suffix" | comment | still accurate |
+  | `UserChangesSyncer.php:170` | collapse aliases to bare | step 4 | accurate |
+  | Go `partner.go` `tnAliasRegexp`/`TNAliasIdentity`, `FindTNSiblings` LIKE, `CanonicalizePartnerEmail`, `partnerDisplayName` | optional suffix; bare only on TN domain | A | fixed |
+  | Go `message/message.go` comment above `WithTNSiblings` in `resolvePartnerAuth` ("a DIFFERENT per-group alias") | describes aliases only | comment | updated in this pass |
+  | Go `housekeeper/housekeeper.go:377` `users:fix-tn-names` description (`firstname-groupid@trashnothing.com`) | wrong shape and domain | comment/UI text | updated in this pass |
+  | Go `user/user.go:3841`, `membership/membership.go:94` (`LIKE '%@user.trashnothing.com'`), `chat/chatmessage.go:2151` (`freegleDomains` contains `trashnothing`) | domain only | B | no change |
+  | nuxt `ModMember.vue:454`, `MessageHistory.vue:249`, `ModMergeMemberModal.vue:131-132`, `ModStdMessageModal.vue:572` | `includes('trashnothing…')` | B | no change |
+  | `User::removeTNGroup`/`getDisplayNameAttribute`, `ListModsService.php:130-155`, `PushNotificationService.php:1374`, Go `utils.TN_REGEXP`/`tnRegexp`/`tnOnlyRegexp`/`TidyName`, `chat/chatroom.go:1120`, `message/message.go:50,694` | strip a trailing `-g\d+` from a **name** | C | no change. `TidyName` (via `InventName`, `user.go:491`) and `ListModsService` do receive an email local part, but they strip only a trailing `-g\d+`, which is the replacement rule, so a bare username passes through intact |
+  | `NewsfeedDigestService.php:203,260` ("group suffix" of a location name), nuxt `ChatListEntry.vue:66` (` (Group)` in a chat name), `IncomingMailService.php:1648` (`explode('-')` on `replyto-…`) | not TN addresses | n/a | unrelated |
+  | Tests: Go `utils*_test.go` TidyName cases, `partner_test.go` alias comments, nuxt "group suffix" specs | C-row or accurate | — | no change |
+  | Docs: `docs/developers/reference/trashnothing.md:39-44, 61, 68-77, 87, 402-404, 568, 826`; rules: `.claude/rules/mail-and-data.md:180, 240` | describe `-g{groupid}` as universal, `tnUsernameFromAddress()`'s mandatory suffix, PHP vs Go canon table | docs | **step 7** (deliberately not touched here) |
+
+  **Open question (FixTNNamesCommand).** Its filter is `email LIKE '%@%trashnothing.com'`, and the original comment says some older rows sit on the bare `@trashnothing.com` domain (the old test fixture used `name-12345@trashnothing.com`). `tnUsernameFromEmail` only accepts `@user.trashnothing.com`, so those rows are now skipped instead of getting a name. Every other TN check in the codebase (`isTN`, `TNAliasIdentity`, the partner domain) also ignores `@trashnothing.com`. Count them on production before deciding whether the command should still name them:
+  `SELECT COUNT(*) FROM users_emails WHERE email LIKE '%@trashnothing.com'`.
+
 - **Tests:** cross-stack canon table in `UserEmailTest::tnCanonTable` (also driven through `IncomingMailServiceTest` via `DataProviderExternal`) and `iznik-server-go/user/partner_canon_test.go`; `findUserByEmail` bare/alias and prefix-sharing cases; `TNSyncCommandTest` incremental bare↔alias merge, prefix-sharing kept apart, full-pass grouping; `FixTNNamesCommandTest` bare, hyphenated, already-correct and non-member cases; `partner_test.go` bare sibling lookup, hyphenated display names, bare canon; `NameSanitiserTest`/`namevalidation_test.go` bare inputs.
 
 After steps 2 and 4, TN addresses **without** a `-gXXX` suffix become normal: the provisioner creates bare `username@user.trashnothing.com`, and a rename collapses everything to that form. (Some legacy bare rows already exist; `FixTNNamesCommand.php:40` says "older rows sit directly on the bare domain".) This step needs extensive checks, rewrites and tests, because every piece of code that recognises or parses a TN address by its suffix will silently mishandle the bare form. None of it throws; it produces a plausible wrong answer.
