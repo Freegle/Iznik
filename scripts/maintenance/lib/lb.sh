@@ -3,12 +3,11 @@
 # Profile: the load balancer host (HAProxy). It is a single machine with no
 # standby and no floating address: rebooting it takes every hostname it fronts
 # (the API, ModTools, uploads, image delivery) offline until HAProxy is back.
-# There is no drain that avoids that. So by default this profile patches in
-# service and, when a reboot is needed, does not reboot: it reports that a
-# reboot is pending and leaves the outage to be scheduled by a person.
-# MAINT_LB_ALLOW_REBOOT=1 lets it reboot in its window, with the checks below.
+# There is no drain that avoids that. The window is 04:00 UK time, when the
+# outage is accepted. MAINT_LB_ALLOW_REBOOT=0 makes it patch in service only
+# and report a pending reboot instead.
 
-MAINT_LB_ALLOW_REBOOT="${MAINT_LB_ALLOW_REBOOT:-0}"
+MAINT_LB_ALLOW_REBOOT="${MAINT_LB_ALLOW_REBOOT:-1}"
 MAINT_LB_APT_EXCLUDE="${MAINT_LB_APT_EXCLUDE:-^haproxy}"
 MAINT_LB_BACKENDS="${MAINT_LB_BACKENDS:-api_server_backend spatial_backend}"
 MAINT_LB_PROBE_URLS="${MAINT_LB_PROBE_URLS:-https://api.ilovefreegle.org/api/group}"
@@ -34,7 +33,7 @@ lb_public_probe() {
 lb_run() {
   local L=$MAINT_LB_HOST
   TARGET=$L
-  WINDOW=$MAINT_WINDOW_LB
+  WINDOW=$MAINT_WINDOW_LB; WINDOW_TZ=$MAINT_WINDOW_LB_TZ
 
   phase preflight
   check_reachable "$L"; check_root_disk "$L"

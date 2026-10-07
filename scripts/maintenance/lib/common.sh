@@ -33,12 +33,15 @@ MAINT_ARBITRATOR="${MAINT_ARBITRATOR:-db1-internal}"
 MAINT_LB_HOST="${MAINT_LB_HOST:-ha-internal}"
 MAINT_MAIL_HOST="${MAINT_MAIL_HOST:-bulk2-internal}"
 
-# Start windows, UTC, HHMM-HHMM. A run that starts outside its window refuses.
+# Start windows, HHMM-HHMM, in UTC except the load balancer, which is UK time.
+# A run that starts outside its window refuses.
 MAINT_WINDOW_DB="${MAINT_WINDOW_DB:-0440-0505}"
 MAINT_WINDOW_ARBITRATOR="${MAINT_WINDOW_ARBITRATOR:-0440-0505}"
 MAINT_WINDOW_MAIL="${MAINT_WINDOW_MAIL:-0215-0240}"
 MAINT_WINDOW_DOCKER="${MAINT_WINDOW_DOCKER:-2335-2355}"
-MAINT_WINDOW_LB="${MAINT_WINDOW_LB:-0310-0330}"
+MAINT_WINDOW_LB="${MAINT_WINDOW_LB:-0400-0420}"
+MAINT_WINDOW_LB_TZ="${MAINT_WINDOW_LB_TZ:-Europe/London}"
+WINDOW_TZ=UTC
 
 # Gates shared by every profile.
 MAINT_MIN_GAP_HOURS="${MAINT_MIN_GAP_HOURS:-20}"          # since the last live run on any host
@@ -262,16 +265,16 @@ send_alert() {  # send_alert <subject> <body>
 # ---------------------------------------------------------------------------
 # Generic gates
 # ---------------------------------------------------------------------------
-check_window() {  # uses WINDOW (HHMM-HHMM, UTC)
+check_window() {  # uses WINDOW (HHMM-HHMM) in WINDOW_TZ
   $IGNORE_WINDOW && return 0
   local now start end
-  now=$((10#$(date -u +%H%M))); start=$((10#${WINDOW%-*})); end=$((10#${WINDOW#*-}))
+  now=$((10#$(TZ=$WINDOW_TZ date +%H%M))); start=$((10#${WINDOW%-*})); end=$((10#${WINDOW#*-}))
   if [ "$start" -le "$end" ]; then
     { [ "$now" -ge "$start" ] && [ "$now" -le "$end" ]; } && return 0
   else
     { [ "$now" -ge "$start" ] || [ "$now" -le "$end" ]; } && return 0
   fi
-  die "outside the start window $WINDOW UTC (now $(date -u +%H%M)); --ignore-window overrides for a human run"
+  die "outside the start window $WINDOW $WINDOW_TZ (now $(TZ=$WINDOW_TZ date +%H%M)); --ignore-window overrides for a human run"
 }
 
 check_gap() {

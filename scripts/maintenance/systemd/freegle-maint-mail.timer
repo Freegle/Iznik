@@ -1,4 +1,4 @@
-# Mail relay (bulk2): overnight low in mail, clear of its own 05:00 log rotation and 06:00 upgrade cron.
+# Mail relay (bulk2): overnight low in mail, clear of its own 05:00 log rotation.
 # Install: cp to /etc/systemd/system/, systemctl daemon-reload,
 # systemctl enable --now freegle-maint-mail.timer. Shipped disabled.
 [Unit]

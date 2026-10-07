@@ -36,15 +36,16 @@ ssh for deploys. That makes one lock, one log and one alert path for the whole e
 
 ## Schedule
 
-All times are UTC. Each run refuses to start outside its start window.
+Times are UTC except the load balancer, which is UK time. Each run refuses to start
+outside its start window.
 
 | Slot | When | Machine | Why this time |
 |---|---|---|---|
 | `db` | Tuesday 04:40 | db2 in even weeks, db3 in odd weeks | After the backup drain and the backup's desync on db2, before the morning digest. Each data node is done every other week, and never both in one week. |
-| `mail` | Wednesday 02:15 | bulk2 | The overnight low in outgoing mail, clear of the relay's own 05:00 log rotation and 06:00 upgrade job. |
+| `mail` | Wednesday 02:15 | bulk2 | The overnight low in outgoing mail, clear of the relay's own 05:00 log rotation. |
 | `arbitrator` | Thursday 04:40 | db1 | Two days clear of the data-node slot. |
 | `docker` | Saturday 23:35 | the Docker host | After the 23:00 jobs and before the 00:30 log rotation and 01:00 postcode remap. Saturday has no 23:00 digest. |
-| `lb` | Sunday 03:10 | the load balancer | The API's lowest-traffic hour. |
+| `lb` | Monday 04:00 UK time | the load balancer | The overnight low, when its reboot outage is accepted. A day clear of the Docker host and the data nodes, as the 20-hour gap between runs needs. |
 
 Weeks are counted from the Unix epoch, so the data nodes alternate strictly. A 53-week
 year does not repeat one. Swap the order with `MAINT_DB_ROTATION`.
@@ -129,9 +130,9 @@ cluster size again.
 
 There is one load balancer and no standby or floating address. Rebooting it is an outage
 of everything it fronts: the API, ModTools, uploads and image delivery. No drain avoids
-that. So by default this slot patches in service and does not reboot. When a reboot is
-pending it says so in the alert, and a person schedules the outage. With
-`MAINT_LB_ALLOW_REBOOT=1` it reboots in its window instead. It first validates the
+that, so the outage is accepted at 04:00 UK time on Monday, and the slot reboots when
+patching needs it. With `MAINT_LB_ALLOW_REBOOT=0` it patches in service only and reports
+a pending reboot in the alert. Before a reboot it validates the
 configuration on disk with `haproxy -c`, and afterwards checks every backend has a
 server UP and the public probe answers 200.
 
@@ -279,4 +280,4 @@ the machine drained.
   stays a hand procedure.
 - Recover a node that will not rejoin, beyond the one retry. It alerts and leaves
   everything on the other node.
-- Reboot the load balancer unless allowed to.
+- Reboot the load balancer outside its window, or with `MAINT_LB_ALLOW_REBOOT=0`.

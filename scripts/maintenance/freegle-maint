@@ -85,7 +85,7 @@ start_run() {  # <host>
   check_pause
   case "$PROFILE" in
     db) WINDOW=$MAINT_WINDOW_DB;; arbitrator) WINDOW=$MAINT_WINDOW_ARBITRATOR;;
-    lb) WINDOW=$MAINT_WINDOW_LB;; mail) WINDOW=$MAINT_WINDOW_MAIL;; docker) WINDOW=$MAINT_WINDOW_DOCKER;;
+    lb) WINDOW=$MAINT_WINDOW_LB; WINDOW_TZ=$MAINT_WINDOW_LB_TZ;; mail) WINDOW=$MAINT_WINDOW_MAIL;; docker) WINDOW=$MAINT_WINDOW_DOCKER;;
   esac
   check_window
   check_gap
