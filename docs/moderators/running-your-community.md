@@ -89,7 +89,9 @@ already read and copy those.
 **Essential** message (which members cannot opt out of) or a **Newsletter** message
 (which they can), optionally with a call-to-action button. Admins and Support can target a
 single community or suggest copies to many communities that each community then edits and
-approves. Use these sparingly and keep them warm.
+approves. A community's own ADMIN goes to all its members; a copy of a suggested ADMIN only goes to
+members active in the last six months, to keep a burst of mail across every community from drawing spam
+reports. Use these sparingly and keep them warm.
 
 While Freegle is in a [lockdown](../ops/runbooks/lockdown.md), creating, editing or deleting
 an ADMIN is refused for moderators; Support and Admin are exempt.
@@ -112,12 +114,26 @@ placeholders in angle brackets such as `<your names here>` are fine. If you know
 unsubscribe links. Members whose email shows formatted mail get the designed version and
 everyone else gets the plain text, so both must say the same. Before it is sent, scripts, forms,
 embedded frames, event handlers and links that are not http, https, mailto or tel are removed.
-A pending copy that has a designed version shows it for editing under the text.
+A designed version has no separate big button: put any buttons in the MJML.
 
-**You must send a test before you can create an ADMIN.** Give one email address (it starts as
-your own) and press *Send test*. The test is built exactly as a member of that community would
-get it, with "TEST:" in front of the subject. Any change to the message after the test needs a
-new test, and each test allows one ADMIN to be created.
+A pending ADMIN can be switched between Essential and Newsletter before it is approved, with the
+same toggle as the Create tab.
+
+On a pending ADMIN with a designed version, the two versions are shown as tabs, *Plain text version*
+and *Designed (MJML) version*, with a reminder that every member gets one of them, so any change
+must be made in both. Saving a change to only one of them asks you to confirm. The MJML tab says how
+to change the wording without touching the tags, and links to the
+[MJML live editor](https://mjml.io/try-it-live) for checking how it looks. A text-only pending ADMIN
+can have a designed version added with a tick box.
+
+Creating an ADMIN (*Save to Pending ADMINs*) sends nothing: it goes to the Pending tab.
+**Before a pending ADMIN with a designed version can be approved, you must send a test of it.**
+Text-only ADMINs need no test. Give one email address (it starts as your own) and press
+*Send one test to this address only*. That sends one email, to that
+address only, built exactly as a member of that community would get it, with "TEST:" in front of
+the subject. *Approve and send to all members* stays unavailable until the test is sent, and any
+change after the test needs a new test. The exception is a copy of a suggested ADMIN that nobody
+has changed, which can be approved without a test.
 
 ## Logs and maps
 

@@ -51,6 +51,8 @@ export const useAdminsStore = defineStore('admins', {
           api(this.config).admins.patch({
             id: params.id,
             pending: false,
+            // A test of exactly this content, unless it is an unedited suggested copy.
+            testtoken: params.testtoken,
           }),
         () => this.fetch({ id: params.id })
       )

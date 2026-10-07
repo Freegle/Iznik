@@ -244,6 +244,32 @@ class CopyAdminsCommandTest extends TestCase
     }
 
     /**
+     * Test: every copy of a suggested ADMIN only goes to recently active members, even when the
+     * suggestion itself is not marked that way (V1 copyForGroup).
+     */
+    public function test_copies_only_go_to_recently_active_members(): void
+    {
+        $group = $this->createTestGroup();
+
+        foreach ([true, false] as $essential) {
+            $suggestedId = DB::table('admins')->insertGetId([
+                'groupid' => null,
+                'subject' => 'S',
+                'text' => 'B',
+                'pending' => 0,
+                'essential' => $essential,
+                'activeonly' => false,
+                'created' => now(),
+            ]);
+
+            $this->artisan('mail:admin:copy')->assertSuccessful();
+
+            $copy = DB::table('admins')->where('parentid', $suggestedId)->where('groupid', $group->id)->first();
+            $this->assertEquals(1, $copy->activeonly);
+        }
+    }
+
+    /**
      * Test: The MJML part travels with each per-group copy.
      */
     public function test_mjml_is_copied(): void

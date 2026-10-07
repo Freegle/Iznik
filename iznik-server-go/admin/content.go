@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // maxMjmlBytes caps the MJML part. A designed newsletter is a few tens of kilobytes; this
@@ -128,4 +130,62 @@ func testTokenValid(token string, myid uint64, content emailContent) bool {
 		return false
 	}
 	return hmac.Equal([]byte(parts[1]), []byte(signContent(myid, content, expiry)))
+}
+
+// uneditedCopies returns which of these admins are copies of a suggested ADMIN still exactly as
+// suggested. Those were seen by whoever suggested them, so a local moderator may approve one
+// without sending a test; any edit means a test is needed.
+func uneditedCopies(db *gorm.DB, ids []uint64) map[uint64]bool {
+	out := map[uint64]bool{}
+	if len(ids) == 0 {
+		return out
+	}
+
+	var rows []uint64
+	db.Raw("SELECT c.id FROM admins c JOIN admins p ON p.id = c.parentid "+
+		"WHERE c.id IN (?) AND c.subject = p.subject AND c.text = p.text "+
+		"AND COALESCE(c.mjml, '') = COALESCE(p.mjml, '') "+
+		"AND COALESCE(c.ctatext, '') = COALESCE(p.ctatext, '') "+
+		"AND COALESCE(c.ctalink, '') = COALESCE(p.ctalink, '') "+
+		"AND c.essential = p.essential AND COALESCE(c.template, '') = COALESCE(p.template, '')", ids).Scan(&rows)
+	for _, id := range rows {
+		out[id] = true
+	}
+	return out
+}
+
+// storedContent is the email content of an admin as saved.
+func storedContent(db *gorm.DB, id uint64) emailContent {
+	var row struct {
+		Groupid   *uint64
+		Subject   string
+		Text      string
+		Mjml      *string
+		Ctatext   *string
+		Ctalink   *string
+		Essential bool
+		Template  *string
+	}
+	db.Raw("SELECT groupid, subject, text, mjml, ctatext, ctalink, essential, template FROM admins WHERE id = ?", id).Scan(&row)
+
+	deref := func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	}
+	var groupid uint64
+	if row.Groupid != nil {
+		groupid = *row.Groupid
+	}
+	return emailContent{
+		GroupID:   groupid,
+		Subject:   row.Subject,
+		Text:      row.Text,
+		Mjml:      deref(row.Mjml),
+		CTAText:   deref(row.Ctatext),
+		CTALink:   deref(row.Ctalink),
+		Essential: row.Essential,
+		Template:  deref(row.Template),
+	}
 }
