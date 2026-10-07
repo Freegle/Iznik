@@ -63,7 +63,9 @@ export const useAdminsStore = defineStore('admins', {
         () => api(this.config).admins.patch(params),
         () => this.fetch({ id: params.id })
       )
-      await api(this.config).admins.fetch(params)
+      // Re-read by id only. Passing every edited field made a GET whose URL held the whole text and
+      // MJML, which the server refused, so saving - and approving, which saves first - failed.
+      await this.fetch({ id: params.id })
     },
     async delete(params) {
       await api(this.config).admins.del(params)
