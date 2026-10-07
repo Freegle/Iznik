@@ -513,9 +513,13 @@ class User extends Model implements Auditable
         $email = str_replace('@googlemail.', '@gmail.', $email);
         $email = str_replace('@googlemail.co.uk', '@gmail.co.uk', $email);
 
-        # Canonicalise TN addresses.
-        if (preg_match('/(.*)\-(.*)(@user.trashnothing.com)/', $email, $matches)) {
-            $email = $matches[1] . $matches[3];
+        # Canonicalise TN addresses: strip a per-group -g<digits> suffix, and only that.
+        # Usernames can contain hyphens, and a bare username@ address has no suffix, so
+        # stripping after the last hyphen would give "mary-jane@" the canon of another
+        # member's "mary-g12@". Go's CanonicalizePartnerEmail must agree; the shared
+        # table in UserEmailTest and partner_canon_test.go guards it.
+        if (preg_match('/^(.+)-g\d+(@user\.trashnothing\.com)$/i', $email, $matches)) {
+            $email = $matches[1] . $matches[2];
         }
 
         # Remove plus addressing, which is sometimes used by spammers as a trick, except for Facebook where it

@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\User;
 
+use App\Models\User;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -30,7 +31,9 @@ class FixTNNamesCommand extends Command
             $fixed  = 0;
             $skipped = 0;
 
-            // TN emails have the format: firstname-groupid@user.trashnothing.com.
+            // TN member addresses are username@user.trashnothing.com or a per-group
+            // alias, username-gNNNN@user.trashnothing.com. The name is the whole
+            // username: usernames can contain hyphens, so only the -gNNNN suffix goes.
             //
             // Matched on the address, not on backwards. That column does not hold one
             // thing: its definition is REVERSE(canon), which drops the -gNNNN suffix and
@@ -55,9 +58,12 @@ class FixTNNamesCommand extends Command
                 ->get();
 
             foreach ($rows as $row) {
-                if (preg_match('/^(.*)-[^-]+@/', $row->email, $matches)) {
-                    $name = $matches[1];
+                $username = User::tnUsernameFromEmail($row->email);
+                $name = $username === null ? null : User::tnDisplayName($username);
 
+                // A hyphenated name ("Mary-Jane") still matches the hyphen filter
+                // above once fixed, so leave one that is already right alone.
+                if ($name !== null && $name !== $row->fullname) {
                     Log::debug("FixTNNames: set fullname for user {$row->id} from {$row->email} => {$name}");
 
                     if (!$dryRun) {

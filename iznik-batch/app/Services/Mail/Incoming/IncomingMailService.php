@@ -3791,42 +3791,12 @@ class IncomingMailService
      * Canonicalize an email address for matching.
      *
      * Handles: TN group suffixes, googlemail->gmail, plus addressing, gmail dots.
+     * Delegates to User::canonMail so the canon written and the canon looked up
+     * cannot drift apart; they were separate copies until the TN rule changed.
      */
     private function canonicalizeEmail(string $email): string
     {
-        // Googlemail → Gmail
-        $email = str_replace('@googlemail.', '@gmail.', $email);
-        $email = str_replace('@googlemail.co.uk', '@gmail.co.uk', $email);
-
-        // Strip TN group suffix: user-gNNNN@user.trashnothing.com → user@user.trashnothing.com
-        if (preg_match('/(.*)\-(.*)(@user\.trashnothing\.com)/', $email, $matches)) {
-            $email = $matches[1].$matches[3];
-        }
-
-        // Remove plus addressing (except Facebook proxy and leading +)
-        if (
-            str_starts_with($email, '+') === false &&
-            preg_match('/(.*)\+(.*)(@.*)/', $email, $matches) &&
-            strpos($email, '@proxymail.facebook.com') === false
-        ) {
-            $email = $matches[1].$matches[3];
-        }
-
-        // Remove dots in Gmail LHS
-        $p = strpos($email, '@');
-        if ($p !== false) {
-            $lhs = substr($email, 0, $p);
-            $rhs = substr($email, $p);
-
-            if (stripos($rhs, '@gmail') !== false || stripos($rhs, '@googlemail') !== false) {
-                $lhs = str_replace('.', '', $lhs);
-            }
-
-            // Remove dots from RHS for canonical comparison
-            $email = $lhs.str_replace('.', '', $rhs);
-        }
-
-        return $email;
+        return User::canonMail($email);
     }
 
     /**

@@ -94,6 +94,10 @@ func TestSanitizeDisplayName_Clean(t *testing.T) {
 
 		// TN-format email leak — handled but not rewritten to empty.
 		{"trashnothing email leak", "alice-g3486@user.trashnothing.com"},
+		// Bare TN addresses: the same inputs as NameSanitiserTest.php.
+		{"trashnothing bare email leak", "mary-jane@user.trashnothing.com"},
+		{"trashnothing bare dotted email leak", "tricia.hayes@user.trashnothing.com"},
+		{"trashnothing hyphenated alias email leak", "bibiana-gomes-g4840@user.trashnothing.com"},
 	}
 
 	for _, c := range cases {

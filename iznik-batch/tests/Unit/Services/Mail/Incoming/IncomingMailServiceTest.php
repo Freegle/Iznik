@@ -201,6 +201,75 @@ class IncomingMailServiceTest extends TestCase
     }
 
     /**
+     * canonicalizeEmail must agree with User::canonMail on every TN shape, or the
+     * canon fallback looks for a value no row holds.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProviderExternal(\Tests\Unit\Models\UserEmailTest::class, 'tnCanonTable')]
+    public function test_canonicalize_email_matches_the_cross_stack_tn_table(string $email, string $canon): void
+    {
+        $method = new \ReflectionMethod(IncomingMailService::class, 'canonicalizeEmail');
+        $method->setAccessible(true);
+
+        $this->assertSame($canon, $method->invoke($this->service, strtolower($email)));
+        $this->assertSame(User::canonMail($email), $method->invoke($this->service, $email));
+    }
+
+    private function findUserByEmail(string $email): ?User
+    {
+        $method = new \ReflectionMethod(IncomingMailService::class, 'findUserByEmail');
+        $method->setAccessible(true);
+
+        return $method->invoke($this->service, $email);
+    }
+
+    private function attachTnAddress(User $user, string $email): void
+    {
+        DB::table('users_emails')->insert([
+            'userid' => $user->id,
+            'email' => $email,
+            'canon' => User::canonMail(strtolower($email)),
+            'backwards' => strrev(User::canonMail(strtolower($email))),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+    }
+
+    /**
+     * A member on a bare address and an alias of the same member are one account.
+     */
+    public function test_find_user_by_email_matches_a_bare_address_to_its_alias(): void
+    {
+        $base = 'tnbare'.str_replace('.', '', uniqid('', true));
+        $member = $this->createTestUser();
+        $this->attachTnAddress($member, "{$base}-jane@user.trashnothing.com");
+
+        $this->assertSame($member->id, $this->findUserByEmail("{$base}-jane-g12@user.trashnothing.com")?->id);
+
+        $dotted = $this->createTestUser();
+        $this->attachTnAddress($dotted, "{$base}.hayes-g298@user.trashnothing.com");
+
+        $this->assertSame($dotted->id, $this->findUserByEmail("{$base}.hayes@user.trashnothing.com")?->id);
+    }
+
+    /**
+     * The old canon stripped everything after the last hyphen, so mail from a
+     * bare "mary-jane@" resolved to whoever held "mary-gNNN@".
+     */
+    public function test_find_user_by_email_keeps_prefix_sharing_members_apart(): void
+    {
+        $base = 'tnapart'.str_replace('.', '', uniqid('', true));
+        $mary = $this->createTestUser();
+        $this->attachTnAddress($mary, "{$base}-g12@user.trashnothing.com");
+
+        $this->assertNull($this->findUserByEmail("{$base}-jane@user.trashnothing.com"));
+
+        $bibiana = $this->createTestUser();
+        $this->attachTnAddress($bibiana, "{$base}b@user.trashnothing.com");
+
+        $this->assertNull($this->findUserByEmail("{$base}b-gomes-g4840@user.trashnothing.com"));
+    }
+
+    /**
      * A users_emails row whose user is gone is a broken state, not a new member.
      * users_emails.email is UNIQUE, so taking the create branch would collide on it
      * and throw where this drops cleanly.

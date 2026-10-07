@@ -195,6 +195,65 @@ class UserEmailTest extends TestCase
         $this->assertEquals('alice@usertrashnothingcom', $canon);
     }
 
+    /**
+     * The cross-stack TN canon table. The SAME pairs are asserted in Go by
+     * iznik-server-go/user/partner_canon_test.go against CanonicalizePartnerEmail,
+     * so a change to either side that the other does not make fails a test.
+     * Keep the two tables identical.
+     *
+     * Inputs are lowercased first, as the UserEmail hook and
+     * users:backfill-email-canon do; Go lowercases inside TNAliasIdentity.
+     */
+    public static function tnCanonTable(): array
+    {
+        return [
+            'suffixed alias' => ['alice-g123@user.trashnothing.com', 'alice@usertrashnothingcom'],
+            'bare dotted' => ['tricia.hayes@user.trashnothing.com', 'tricia.hayes@usertrashnothingcom'],
+            'suffixed dotted' => ['tricia.hayes-g298@user.trashnothing.com', 'tricia.hayes@usertrashnothingcom'],
+            'bare hyphenated' => ['mary-jane@user.trashnothing.com', 'mary-jane@usertrashnothingcom'],
+            'suffixed hyphenated' => ['mary-jane-g12@user.trashnothing.com', 'mary-jane@usertrashnothingcom'],
+            'bare hyphen-g word' => ['mary-grace@user.trashnothing.com', 'mary-grace@usertrashnothingcom'],
+            'bare short prefix' => ['bibiana@user.trashnothing.com', 'bibiana@usertrashnothingcom'],
+            'suffixed longer name' => ['bibiana-gomes-g4840@user.trashnothing.com', 'bibiana-gomes@usertrashnothingcom'],
+            'only the last suffix' => ['ann-g12-g34@user.trashnothing.com', 'ann-g12@usertrashnothingcom'],
+            'mixed case' => ['Mary-Jane-G12@User.TrashNothing.com', 'mary-jane@usertrashnothingcom'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('tnCanonTable')]
+    public function test_canon_mail_matches_the_cross_stack_tn_table(string $email, string $canon): void
+    {
+        $this->assertSame($canon, User::canonMail(strtolower($email)));
+    }
+
+    /**
+     * The old rule stripped everything after the LAST hyphen, so a bare
+     * "mary-jane@" shared a canon with another member's "mary-g12@" and the
+     * canon fallback in findUserByEmail could hand one member's mail to the other.
+     */
+    public function test_canon_mail_keeps_bare_and_suffixed_members_apart(): void
+    {
+        $this->assertNotSame(
+            User::canonMail('mary-jane@user.trashnothing.com'),
+            User::canonMail('mary-g12@user.trashnothing.com')
+        );
+        $this->assertNotSame(
+            User::canonMail('bibiana@user.trashnothing.com'),
+            User::canonMail('bibiana-gomes-g4840@user.trashnothing.com')
+        );
+        $this->assertSame(
+            User::canonMail('mary-jane@user.trashnothing.com'),
+            User::canonMail('mary-jane-g12@user.trashnothing.com'),
+            'a bare address and an alias of the same member are one canon'
+        );
+    }
+
+    public function test_canon_mail_leaves_hyphens_in_other_domains_alone(): void
+    {
+        $this->assertSame('mary-jane@examplecom', User::canonMail('mary-jane@example.com'));
+        $this->assertSame('alice-g123@examplecom', User::canonMail('alice-g123@example.com'));
+    }
+
     public function test_canon_mail_googlemail_to_gmail(): void
     {
         $canon = User::canonMail('test@googlemail.com');

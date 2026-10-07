@@ -7,7 +7,16 @@ use Tests\TestCase;
 
 class FixTNNamesCommandTest extends TestCase
 {
-    private function createTNUser(string $namePart, string $groupId = '12345'): int
+    private function createTNUser(string $namePart, ?string $groupId = '12345'): int
+    {
+        $email = $groupId === null
+            ? "{$namePart}@user.trashnothing.com"
+            : "{$namePart}-g{$groupId}@user.trashnothing.com";
+
+        return $this->createUserWithEmail($email);
+    }
+
+    private function createUserWithEmail(string $email): int
     {
         $userId = DB::table('users')->insertGetId([
             'firstname' => null,
@@ -15,8 +24,6 @@ class FixTNNamesCommandTest extends TestCase
             'fullname'  => null,
             'added'     => now(),
         ]);
-
-        $email = "{$namePart}-{$groupId}@trashnothing.com";
 
         DB::table('users_emails')->insert([
             'userid'    => $userId,
@@ -82,7 +89,7 @@ class FixTNNamesCommandTest extends TestCase
         $this->artisan('users:fix-tn-names')->assertExitCode(0);
 
         $this->assertSame(
-            'canonform',
+            'Canonform',
             DB::table('users')->where('id', $userId)->value('fullname'),
             'a member whose row holds the canon form must still be found'
         );
@@ -162,5 +169,66 @@ class FixTNNamesCommandTest extends TestCase
 
         $this->assertSame('Eve', DB::table('users')->where('id', $id1)->value('fullname'));
         $this->assertSame('Frank', DB::table('users')->where('id', $id2)->value('fullname'));
+    }
+
+    /**
+     * Bare addresses have no -gNNN suffix. The old rule needed a hyphen before the
+     * @, so "tricia.hayes@" was skipped and "mary-jane@" became "mary". The name is
+     * the whole username, prettified the same way as everywhere else.
+     */
+    public function test_fixes_bare_tn_addresses_from_the_whole_username(): void
+    {
+        $dotted = $this->createTNUser('fixtn.tricia.hayes', null);
+        $hyphenated = $this->createTNUser('fixtn-mary-jane', null);
+        $hyphenG = $this->createTNUser('fixtn-mary-grace', null);
+
+        $this->artisan('users:fix-tn-names')->assertExitCode(0);
+
+        $this->assertSame('Fixtn Tricia Hayes', DB::table('users')->where('id', $dotted)->value('fullname'));
+        $this->assertSame('Fixtn-Mary-Jane', DB::table('users')->where('id', $hyphenated)->value('fullname'));
+        $this->assertSame('Fixtn-Mary-Grace', DB::table('users')->where('id', $hyphenG)->value('fullname'));
+    }
+
+    /**
+     * Only the -g<digits> before the domain is a suffix: "bibiana-gomes-g4840" is
+     * Bibiana-Gomes, not Bibiana.
+     */
+    public function test_keeps_a_hyphenated_username_behind_a_suffix(): void
+    {
+        $userId = $this->createTNUser('fixtn-bibiana-gomes', '4840');
+
+        $this->artisan('users:fix-tn-names')->assertExitCode(0);
+
+        $this->assertSame('Fixtn-Bibiana-Gomes', DB::table('users')->where('id', $userId)->value('fullname'));
+    }
+
+    /**
+     * A hyphenated name keeps matching the command's "fullname contains a hyphen"
+     * filter after it is fixed. Rewriting it to the same value on every run is a
+     * wasted write, and reporting it as fixed hides how much real work there was.
+     */
+    public function test_leaves_an_already_correct_hyphenated_name_alone(): void
+    {
+        $userId = $this->createTNUser('fixtn-ann-lee', '77');
+        DB::table('users')->where('id', $userId)->update(['fullname' => 'Fixtn-Ann-Lee']);
+
+        $this->artisan('users:fix-tn-names')
+            ->expectsOutputToContain('skipped')
+            ->assertExitCode(0);
+
+        $this->assertSame('Fixtn-Ann-Lee', DB::table('users')->where('id', $userId)->value('fullname'));
+    }
+
+    /**
+     * Member addresses live on user.trashnothing.com. Anything else on the TN
+     * domain is not a member's address and does not name anyone.
+     */
+    public function test_skips_addresses_that_are_not_tn_member_addresses(): void
+    {
+        $userId = $this->createUserWithEmail('fixtn-noreply-12345@trashnothing.com');
+
+        $this->artisan('users:fix-tn-names')->assertExitCode(0);
+
+        $this->assertNull(DB::table('users')->where('id', $userId)->value('fullname'));
     }
 }

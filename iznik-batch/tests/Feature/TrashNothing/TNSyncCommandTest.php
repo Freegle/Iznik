@@ -940,6 +940,116 @@ class TNSyncCommandTest extends TestCase
         );
     }
 
+    private function insertTnAddress(int $userid, string $email): void
+    {
+        DB::table('users_emails')->insert([
+            'userid' => $userid,
+            'email' => $email,
+            'backwards' => strrev($email),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+    }
+
+    private function fakeEmptyTnFeeds(): void
+    {
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+    }
+
+    /**
+     * A member may hold a bare username@ address as well as -gNNN aliases. The
+     * per-tick probe must find the bare form from an alias and the aliases from
+     * the bare form, or a member's twin accounts are never merged.
+     */
+    public function test_incremental_scan_merges_a_bare_address_with_its_alias(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $base = 'mary_' . str_replace('.', '', uniqid('', true)) . '-jane';
+        $bareUser = $this->createTestUser(['fullname' => 'Mary-Jane']);
+        $this->insertTnAddress($bareUser->id, "{$base}@user.trashnothing.com");
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $aliasUser = $this->createTestUser(['fullname' => 'Mary-Jane']);
+        $this->insertTnAddress($aliasUser->id, "{$base}-g12@user.trashnothing.com");
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertTrue(
+            (User::find($bareUser->id) !== null) xor (User::find($aliasUser->id) !== null),
+            'a new alias must be merged with the account on the bare address'
+        );
+
+        // And the other way round: the alias is old, the bare address is new.
+        $dotted = 'tricia_' . str_replace('.', '', uniqid('', true)) . '.hayes';
+        $oldAlias = $this->createTestUser(['fullname' => 'Tricia Hayes']);
+        $this->insertTnAddress($oldAlias->id, "{$dotted}-g298@user.trashnothing.com");
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $newBare = $this->createTestUser(['fullname' => 'Tricia Hayes']);
+        $this->insertTnAddress($newBare->id, "{$dotted}@user.trashnothing.com");
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertTrue(
+            (User::find($oldAlias->id) !== null) xor (User::find($newBare->id) !== null),
+            'a new bare address must be merged with the account on the alias'
+        );
+    }
+
+    /**
+     * A bare address is the whole username. "bibiana@" and "bibiana-gomes-g4840@"
+     * are different members, and so are "mary-jane@" and "mary-g12@".
+     */
+    public function test_incremental_scan_keeps_bare_prefix_sharing_members_apart(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $base = 'bibi_' . str_replace('.', '', uniqid('', true));
+        $longer = $this->createTestUser(['fullname' => 'Bibiana Gomes']);
+        $this->insertTnAddress($longer->id, "{$base}-gomes-g4840@user.trashnothing.com");
+        $mary = $this->createTestUser(['fullname' => 'Mary']);
+        $this->insertTnAddress($mary->id, "{$base}x-g12@user.trashnothing.com");
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $shorter = $this->createTestUser(['fullname' => 'Bibiana']);
+        $this->insertTnAddress($shorter->id, "{$base}@user.trashnothing.com");
+        $maryJane = $this->createTestUser(['fullname' => 'Mary-Jane']);
+        $this->insertTnAddress($maryJane->id, "{$base}x-jane@user.trashnothing.com");
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        foreach ([$longer, $mary, $shorter, $maryJane] as $user) {
+            $this->assertNotNull(User::find($user->id), "user {$user->fullname} must survive");
+        }
+    }
+
+    /**
+     * The whole-table pass groups by the same username rule: a bare address and an
+     * alias of one member are one group; a hyphenated bare username is not
+     * truncated at its hyphen.
+     */
+    public function test_full_scan_groups_bare_and_suffixed_addresses_by_exact_username(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $base = 'full_' . str_replace('.', '', uniqid('', true));
+        $bare = $this->createTestUser(['fullname' => 'Ann']);
+        $this->insertTnAddress($bare->id, "{$base}-ann@user.trashnothing.com");
+        $alias = $this->createTestUser(['fullname' => 'Ann']);
+        $this->insertTnAddress($alias->id, "{$base}-ann-g7@user.trashnothing.com");
+        $other = $this->createTestUser(['fullname' => 'Someone Else']);
+        $this->insertTnAddress($other->id, "{$base}-g8@user.trashnothing.com");
+
+        $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
+
+        $this->assertTrue(
+            (User::find($bare->id) !== null) xor (User::find($alias->id) !== null),
+            'the bare address and the alias of one member must be merged'
+        );
+        $this->assertNotNull(User::find($other->id), 'the shorter username is a different member');
+    }
+
     /**
      * The hole the incremental check cannot see: a duplicate made by re-pointing an
      * existing row, which adds no new id. One tick a day re-scans everything to catch

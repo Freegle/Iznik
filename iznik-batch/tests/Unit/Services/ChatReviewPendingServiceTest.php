@@ -199,9 +199,7 @@ class ChatReviewPendingServiceTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    /**
-     * @dataProvider modRoleProvider
-     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('modRoleProvider')]
     public function test_owner_and_moderator_roles_both_notified(string $role): void
     {
         Mail::fake();

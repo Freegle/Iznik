@@ -50,6 +50,12 @@ class GroupPostIngestionServiceTest extends TestCase
 
         $baseUrl = rtrim(Configuration::getDefaultConfiguration()->getHost(), '/');
         Http::fake(function (Request $request) use ($baseUrl) {
+            // Only TN is faked. Anything else (the spatial index the location tests
+            // seed through SeedsSpatialIndex) returns null, which lets it through to
+            // the real service; answering it 404 broke that seeding.
+            if (!str_starts_with($request->url(), $baseUrl)) {
+                return null;
+            }
             if (!preg_match('#^' . preg_quote($baseUrl, '#') . '/users/(\d+)\?#', $request->url(), $m)) {
                 return Http::response('not found', 404);
             }
