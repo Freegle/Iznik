@@ -540,6 +540,20 @@ describe('ModAdmin', () => {
       expect(wrapper.vm.saveError).toContain('add the MJML')
     })
 
+    it('saving or approving without touching the MJML keeps it', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { mjml, parentid: 7, unedited: true }
+      )
+      await wrapper.vm.$nextTick()
+      await wrapper.vm.save()
+      expect(mockAdminsStore.edit.mock.calls[0][0].mjml).toBe(mjml)
+
+      await wrapper.vm.approve()
+      expect(mockAdminsStore.edit.mock.calls[1][0].mjml).toBe(mjml)
+      expect(mockAdminsStore.approve).toHaveBeenCalled()
+    })
+
     it('can remove the MJML version', async () => {
       const wrapper = mountComponent({ open: true }, { mjml })
       await wrapper.vm.$nextTick()
