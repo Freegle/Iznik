@@ -176,7 +176,7 @@ func TestCreateAdmin(t *testing.T) {
 	_, modToken := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"groupid":%d,"subject":"Test Subject %s","text":"Test text"}`, groupID, prefix)
-	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+modToken, bytes.NewBufferString(withTestToken(t, modToken, body)))
+	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+modToken, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
@@ -414,7 +414,7 @@ func TestPostAdminCreateWithSendAfter(t *testing.T) {
 	// Send a future sendafter datetime.
 	sendAfter := time.Now().Add(24 * time.Hour).Format("2006-01-02T15:04:05Z")
 	body := fmt.Sprintf(`{"groupid":%d,"subject":"test sendafter","text":"body","sendafter":"%s"}`, groupID, sendAfter)
-	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+modToken, bytes.NewBufferString(withTestToken(t, modToken, body)))
+	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+modToken, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	respBody := rsp(resp)
@@ -460,7 +460,7 @@ func TestCreateSystemWideAdminStoresGuidanceSeparately(t *testing.T) {
 
 	guidance := "GUIDANCE-" + prefix + " add your own sign-off"
 	body := fmt.Sprintf(`{"subject":"Sys %s","text":"Body for members","modguidance":%q}`, prefix, guidance)
-	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+token, bytes.NewBufferString(withTestToken(t, token, body)))
+	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+token, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
@@ -489,7 +489,7 @@ func TestCreateGroupAdminIgnoresGuidance(t *testing.T) {
 	_, token := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"groupid":%d,"subject":"Grp %s","text":"Body","modguidance":"nobody reads this"}`, groupID, prefix)
-	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+token, bytes.NewBufferString(withTestToken(t, token, body)))
+	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+token, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
@@ -746,7 +746,7 @@ func TestCreateAdminSendAfterAcceptsDatetimeLocal(t *testing.T) {
 	_, token := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"groupid":%d,"subject":"SA %s","text":"x","sendafter":"2031-01-02T03:04"}`, groupID, prefix)
-	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+token, bytes.NewBufferString(withTestToken(t, token, body)))
+	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+token, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)

@@ -50,7 +50,32 @@
               This is a suggested ADMIN. All local communities will get "copies"
               of this (unless they've opted out), and mods can then
               edit/approve/reject them. Members won't receive multiple copies.
+              Copies only go to members active in the last six months.
             </NoticeMessage>
+            <div
+              v-if="groupidcreate < 0"
+              class="modguidance border border-2 border-info rounded p-3 mb-3 mt-3"
+            >
+              <b-form-group
+                label="Guidance for local moderators (NOT sent to members):"
+                label-for="modguidance"
+                label-class="mb-0 fw-bold"
+              >
+                <p class="small text-muted mb-1">
+                  Optional. Local moderators see this above their copy of the
+                  ADMIN, to help them adapt it for their community. It is stored
+                  separately and is never part of the email that goes to
+                  members.
+                </p>
+                <b-form-textarea
+                  id="modguidance"
+                  v-model="modguidance"
+                  rows="5"
+                  spellcheck="true"
+                  placeholder="e.g. Please add your own local details at the end, and delete the paragraph about X if it doesn't apply to your area."
+                />
+              </b-form-group>
+            </div>
             <VeeForm ref="form">
               <b-form-group
                 label="Subject of ADMIN:"
@@ -201,30 +226,6 @@
                     </div>
                   </div>
                 </div>
-                <div
-                  v-if="groupidcreate < 0"
-                  class="modguidance border border-2 border-info rounded p-3 mb-3 mt-3"
-                >
-                  <b-form-group
-                    label="Guidance for local moderators (NOT sent to members):"
-                    label-for="modguidance"
-                    label-class="mb-0 fw-bold"
-                  >
-                    <p class="small text-muted mb-1">
-                      Optional. Local moderators see this above their copy of
-                      the ADMIN, to help them adapt it for their community. It
-                      is stored separately and is never part of the email that
-                      goes to members.
-                    </p>
-                    <b-form-textarea
-                      id="modguidance"
-                      v-model="modguidance"
-                      rows="5"
-                      spellcheck="true"
-                      placeholder="e.g. Please add your own local details at the end, and delete the paragraph about X if it doesn't apply to your area."
-                    />
-                  </b-form-group>
-                </div>
                 <!-- A designed (MJML) version carries its own buttons. -->
                 <template v-if="!useMjml">
                   <p>
@@ -272,44 +273,14 @@
                 </b-form-group>
               </div>
             </VeeForm>
-            <div class="test-send border border-2 rounded p-3 mb-3">
-              <h3 class="h5">Send a test first</h3>
-              <p class="mb-2">
-                You can't create the ADMIN until you've sent yourself a test.
-                Check it arrives and looks right. If you've used MJML, check it
-                on a phone too. If you change anything afterwards, send another
-                test.
-              </p>
-              <label for="testemail" class="fw-bold">Send the test to:</label>
-              <div class="d-flex flex-wrap gap-2 align-items-start">
-                <b-form-input
-                  id="testemail"
-                  v-model="testEmail"
-                  type="email"
-                  placeholder="One email address"
-                  style="max-width: 350px"
-                />
-                <b-button
-                  variant="white"
-                  :disabled="testing || !canCreateForGroup"
-                  @click="sendTest"
-                >
-                  <v-icon v-if="testing" icon="sync" class="fa-spin" />
-                  <v-icon v-else icon="envelope" />
-                  Send test
-                </b-button>
-              </div>
-              <p v-if="tested" class="text-success fw-bold mt-2 mb-0">
-                Test sent to {{ testedTo }}. Check it arrived and looks right
-                before you create the ADMIN.
-              </p>
-              <p v-else-if="testedKey" class="text-danger fw-bold mt-2 mb-0">
-                You've changed the ADMIN since the test, so please send another.
-              </p>
-              <p v-if="testError" class="text-danger fw-bold mt-2 mb-0">
-                {{ testError }}
-              </p>
-            </div>
+            <NoticeMessage variant="info" class="mb-3 test-first">
+              Creating the ADMIN sends nothing. It goes to the Pending tab,
+              where it is approved and sent to members.
+              <span v-if="useMjml">
+                Because it has a designed (MJML) version, you will need to send
+                yourself a test from there before it can be approved.
+              </span>
+            </NoticeMessage>
             <p v-if="createError" class="text-danger fw-bold">
               {{ createError }}
             </p>
@@ -317,14 +288,16 @@
               class="mt-2 mb-2"
               size="lg"
               :variant="groupidcreate < 0 ? 'danger' : 'primary'"
-              :disabled="!canCreateForGroup || !tested || creating"
+              :disabled="!canCreateForGroup || creating"
               @click="create"
             >
               <v-icon v-if="created" icon="check" />
               <v-icon v-else-if="creating" icon="sync" class="fa-spin" />
               <v-icon v-else icon="save" />
-              <span v-if="groupidcreate < 0"> Send to all communities </span>
-              <span v-else> Send to Pending ADMINs </span>
+              <span v-if="groupidcreate < 0">
+                Suggest to all communities (nothing is sent yet)
+              </span>
+              <span v-else> Save to Pending ADMINs (nothing is sent yet) </span>
             </b-button>
             <p>
               It's a good idea to have a fellow mod take a look at an ADMIN
@@ -371,7 +344,6 @@ import { inputToSendAfter } from '~/modtools/composables/useAdminSendAfter'
 import {
   textProblem,
   mjmlProblem,
-  isSingleEmail,
   apiMessage,
   MJML_SITE,
   MJML_TRY_IT,
@@ -386,7 +358,7 @@ defineRule('max', max)
 
 const adminsStore = useAdminsStore()
 const modGroupStore = useModGroupStore()
-const { me, myGroups, supportOrAdmin } = useMe()
+const { myGroups, supportOrAdmin } = useMe()
 const { checkWork } = useModMe()
 
 // Template ref for form
@@ -409,15 +381,7 @@ const essential = ref(true)
 const selectedTemplate = ref(null)
 const useMjml = ref(false)
 const mjml = ref('')
-const testEmail = ref(me.value?.email || '')
-const testing = ref(false)
-const testError = ref(null)
 const createError = ref(null)
-// The token from the last test, the content it was for, and where it went. Create needs a token
-// for exactly the content being created.
-const testtoken = ref(null)
-const testedKey = ref(null)
-const testedTo = ref(null)
 
 // Pre-designed admin-email templates, keyed by template id (see the template <select> above).
 // Empty now the one-off "Little Free Shop 2026" campaign is over; the mechanism stays for future
@@ -459,12 +423,6 @@ function contentParams() {
   }
 }
 
-const contentKey = computed(() => JSON.stringify(contentParams()))
-
-const tested = computed(
-  () => !!testtoken.value && testedKey.value === contentKey.value
-)
-
 const pendingcount = computed(() => {
   let count = 0
 
@@ -502,16 +460,6 @@ const previous = computed(() => {
 })
 
 // Watchers
-// Default the test address to the moderator's own, once we know it.
-watch(
-  () => me.value?.email,
-  (email) => {
-    if (email && !testEmail.value) {
-      testEmail.value = email
-    }
-  }
-)
-
 watch(groupidshow, (newval) => {
   fetchAdmins(newval)
 })
@@ -550,48 +498,13 @@ async function contentInvalid() {
   return mjmlError.value
 }
 
-async function sendTest() {
-  testError.value = await contentInvalid()
-  if (testError.value) {
-    return
-  }
-
-  if (!isSingleEmail(testEmail.value)) {
-    testError.value = 'Please give one email address to send the test to.'
-    return
-  }
-
-  const content = contentParams()
-  const key = contentKey.value
-  const email = testEmail.value.trim()
-
-  testing.value = true
-  try {
-    testtoken.value = await adminsStore.test({ ...content, email })
-    testedKey.value = key
-    testedTo.value = email
-  } catch (e) {
-    testError.value = apiMessage(
-      e,
-      "Couldn't send the test - please try again."
-    )
-  } finally {
-    testing.value = false
-  }
-}
-
 async function create() {
   createError.value = await contentInvalid()
   if (createError.value) {
     return
   }
 
-  if (!tested.value) {
-    createError.value = 'Please send a test of this ADMIN first.'
-    return
-  }
-
-  const params = { ...contentParams(), testtoken: testtoken.value }
+  const params = contentParams()
 
   if (selectedTemplate.value) {
     params.editprotected = true
@@ -621,10 +534,6 @@ async function create() {
     creating.value = false
   }
   created.value = true
-
-  // One test, one ADMIN: creating another needs another test.
-  testtoken.value = null
-  testedKey.value = null
 
   setTimeout(() => {
     created.value = false

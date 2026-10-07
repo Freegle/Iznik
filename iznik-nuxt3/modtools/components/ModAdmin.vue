@@ -19,6 +19,9 @@
           </b-col>
           <b-col cols="12" md="4">
             {{ admin.subject }}
+            <b-badge v-if="admin.mjml" variant="info" class="ms-1">
+              Designed (MJML)
+            </b-badge>
           </b-col>
           <b-col cols="12" md="3">
             <span class="d-block float-end">
@@ -112,15 +115,26 @@
             </span>
           </span>
         </p>
+        <OurToggle
+          v-if="admin.pending && !admin.template && !admin.editprotected"
+          v-model="essential"
+          class="mb-2 type-toggle"
+          :height="30"
+          :width="150"
+          :font-size="14"
+          :sync="true"
+          :labels="{ checked: 'Essential', unchecked: 'Newsletter' }"
+          variant="modgreen"
+        />
         <NoticeMessage
           :variant="admin.essential ? 'warning' : 'info'"
           class="mb-2"
         >
           <span v-if="admin.essential">
-            Essential - will be sent to all members.
+            Essential - will be sent to {{ audience }}.
           </span>
           <span v-else>
-            Newsletter - will not be sent to members who have opted out.
+            Newsletter - will be sent to {{ audience }} who haven't opted out.
           </span>
         </NoticeMessage>
         <template v-if="admin.template">
@@ -144,40 +158,86 @@
               placeholder="Subject (don't include ADMIN - added automatically)"
             />
           </b-form-group>
-          <b-form-group
-            label="Body of ADMIN:"
-            label-for="body"
-            label-class="mb-0"
-          >
-            <b-form-textarea
-              id="body"
-              v-model="admin.text"
-              class="mb-3"
-              placeholder="Put your message in here.  Plain-text only."
-              rows="15"
-            />
-          </b-form-group>
-          <b-form-group
-            v-if="admin.mjml !== null && admin.mjml !== undefined"
-            label="Designed (MJML) version of ADMIN:"
-            label-for="mjml"
-            label-class="mb-0"
-          >
-            <NoticeMessage variant="warning" class="mb-2">
-              Members whose email shows formatted mail see this version, not the
-              plain text above. If you change the text, make the same change
-              here, or remove this version by emptying the box. Only edit it if
-              you know
-              <ExternalLink :href="MJML_SITE">MJML</ExternalLink>.
+          <template v-if="useMjml">
+            <NoticeMessage variant="warning" class="mb-2 both-versions">
+              <p class="fw-bold mb-1">
+                This ADMIN has a plain text and an HTML version. Every member
+                gets one of them, so any change must be made in both.
+              </p>
+              <p class="mb-0">
+                Members whose email shows formatted mail get the designed
+                version. Everyone else gets the plain text.
+              </p>
             </NoticeMessage>
-            <b-form-textarea
-              id="mjml"
-              v-model="admin.mjml"
-              class="mb-3 font-monospace"
-              spellcheck="false"
-              rows="12"
-            />
-          </b-form-group>
+            <b-tabs content-class="mt-2" class="mb-3">
+              <b-tab title="Plain text version" active>
+                <b-form-textarea
+                  id="body"
+                  v-model="admin.text"
+                  placeholder="Put your message in here.  Plain-text only."
+                  rows="15"
+                />
+              </b-tab>
+              <b-tab title="Designed (MJML) version">
+                <NoticeMessage variant="info" class="mb-2 mjml-help">
+                  <p class="mb-1">
+                    To change the wording, edit the words between
+                    <code>&lt;mj-text&gt;</code> and
+                    <code>&lt;/mj-text&gt;</code>, or a button's words between
+                    <code>&lt;mj-button ...&gt;</code> and
+                    <code>&lt;/mj-button&gt;</code>. Leave the tags themselves,
+                    anything inside <code>&lt; &gt;</code>, alone.
+                  </p>
+                  <p class="mb-0">
+                    To see how it looks, copy it into the
+                    <ExternalLink :href="MJML_TRY_IT"
+                      >MJML live editor</ExternalLink
+                    >
+                    with <code>&lt;mjml&gt;&lt;mj-body&gt;</code> before it and
+                    <code>&lt;/mj-body&gt;&lt;/mjml&gt;</code> after it. You can
+                    edit it there and paste it back. Your test email shows
+                    exactly what members will get.
+                  </p>
+                </NoticeMessage>
+                <b-form-textarea
+                  id="mjml"
+                  v-model="admin.mjml"
+                  class="font-monospace"
+                  spellcheck="false"
+                  rows="15"
+                  placeholder="<mj-section>...</mj-section>"
+                />
+                <b-button
+                  variant="link"
+                  size="sm"
+                  class="remove-mjml p-0 mt-1"
+                  @click="useMjml = false"
+                >
+                  Remove the designed version, and send the plain text only
+                </b-button>
+              </b-tab>
+            </b-tabs>
+          </template>
+          <template v-else>
+            <b-form-group
+              label="Body of ADMIN:"
+              label-for="body"
+              label-class="mb-0"
+            >
+              <b-form-textarea
+                id="body"
+                v-model="admin.text"
+                class="mb-3"
+                placeholder="Put your message in here.  Plain-text only."
+                rows="15"
+              />
+            </b-form-group>
+            <div class="mjml-part mb-3">
+              <b-form-checkbox v-model="useMjml">
+                Add a designed version using MJML (experts only)
+              </b-form-checkbox>
+            </div>
+          </template>
           <b-form-group
             label="Send after (optional):"
             label-for="sendafter"
@@ -193,7 +253,7 @@
             />
           </b-form-group>
           <!-- A designed (MJML) version carries its own buttons. -->
-          <template v-if="!admin.mjml">
+          <template v-if="!useMjml">
             <b-form-group
               label="Call To Action text:"
               label-for="ctatext"
@@ -220,9 +280,43 @@
             </b-form-group>
           </template>
         </template>
+        <template v-if="admin.pending && hasMjml">
+          <NoticeMessage
+            v-if="needsTest && !tested"
+            variant="danger"
+            class="mb-2 test-first"
+          >
+            This ADMIN has a designed (MJML) version, so you need to send a test
+            of it before you can approve it and send it to members.
+          </NoticeMessage>
+          <ModAdminTestSend
+            v-model:email="testEmail"
+            title="Send a test"
+            :input-id="'testemail-' + admin.id"
+            :testing="testing"
+            :tested="tested"
+            :tested-to="testedTo"
+            :stale="!!testedKey && !tested"
+            :error="testError"
+            @send="sendTest"
+          >
+            See this ADMIN exactly as a member will, with your changes. The test
+            goes only to the address below, not to any members.
+            <span v-if="!needsTest">
+              This is the suggested ADMIN unchanged, so a test is optional.
+            </span>
+          </ModAdminTestSend>
+        </template>
       </b-card-body>
       <b-card-footer v-if="expanded && admin.pending">
         <p v-if="saveError" class="text-danger fw-bold">{{ saveError }}</p>
+        <NoticeMessage v-if="oneSided" variant="warning" class="mb-2 one-sided">
+          You've changed the {{ oneSided }} version but not the other one. Every
+          member gets one of the two, so they should normally say the same.
+          <b-button variant="white" size="sm" class="ms-2" @click="saveAnyway">
+            Save anyway
+          </b-button>
+        </NoticeMessage>
         <b-button v-if="!admin.heldby" variant="warning" @click="deleteIt">
           <v-icon icon="trash-alt" /> Delete
         </b-button>
@@ -246,8 +340,19 @@
         <b-button v-else variant="secondary" @click="release">
           <v-icon icon="play" /> Release
         </b-button>
-        <b-button v-if="!admin.heldby" variant="primary" @click="approve">
-          <v-icon icon="check" /> Approve and Send
+        <b-button
+          v-if="!admin.heldby"
+          variant="primary"
+          :disabled="needsTest && !tested"
+          @click="approve"
+        >
+          <v-icon icon="check" />
+          <span v-if="admin.essential">
+            Approve and send to {{ audienceShort }}
+          </span>
+          <span v-else>
+            Approve and send to {{ audienceShort }} who haven't opted out
+          </span>
         </b-button>
       </b-card-footer>
     </b-card>
@@ -275,8 +380,10 @@ import {
   textProblem,
   mjmlProblem,
   apiMessage,
-  MJML_SITE,
+  MJML_TRY_IT,
 } from '~/modtools/composables/useAdminContent'
+import { useAdminTestSend } from '~/modtools/composables/useAdminTestSend'
+import ModAdminTestSend from '~/modtools/components/ModAdminTestSend.vue'
 
 const props = defineProps({
   id: {
@@ -305,6 +412,30 @@ const saveError = ref(null)
 const showConfirmModal = ref(false)
 
 const admin = computed(() => adminsStore.get(props.id))
+
+// Copies of a central ADMIN go only to members active recently; a community's own ADMIN goes to
+// everyone (iznik-batch SendAdminCommand, CopyAdminsCommand).
+const audience = computed(() =>
+  admin.value?.activeonly
+    ? 'members active in the last six months'
+    : 'all members'
+)
+const audienceShort = computed(() =>
+  admin.value?.activeonly ? 'recently active members' : 'all members'
+)
+
+// Essential (an ADMIN everyone gets) or Newsletter (members can opt out). Saved with the rest.
+const essential = computed({
+  get: () => !!admin.value?.essential,
+  set: (val) => {
+    if (admin.value) {
+      admin.value.essential = val
+    }
+  },
+})
+
+// Whether this ADMIN has a designed (MJML) version, which a moderator can add or remove.
+const useMjml = ref(!!admin.value?.mjml)
 
 const groupname = computed(() => {
   if (!admin.value) return null
@@ -353,29 +484,113 @@ function deleteConfirmed() {
   checkWork(true)
 }
 
-// Returns whether the changes were saved.
-async function save() {
-  saveError.value =
-    textProblem(admin.value.text) ||
-    mjmlProblem(admin.value.mjml) ||
-    (!admin.value.mjml && !admin.value.ctatext !== !admin.value.ctalink
+// What the email will be made from, as currently edited - the same fields the server checks a
+// test against. With a designed (MJML) version there is no big button: the MJML carries its own.
+function contentParams() {
+  const a = admin.value
+  return {
+    groupid: a.groupid,
+    subject: a.subject,
+    text: a.text,
+    mjml: useMjml.value ? a.mjml || '' : '',
+    ctatext: useMjml.value ? '' : (a.ctatext ?? ''),
+    ctalink: useMjml.value ? '' : (a.ctalink ?? ''),
+    essential: !!a.essential,
+    template: a.template || '',
+  }
+}
+
+// Returns a message if the content can't be saved, or null.
+function contentProblem() {
+  const c = contentParams()
+  if (useMjml.value && !c.mjml.trim()) {
+    return 'Please add the MJML, or untick the designed version.'
+  }
+  return (
+    textProblem(c.text) ||
+    mjmlProblem(c.mjml) ||
+    (!c.ctatext !== !c.ctalink
       ? 'A big button needs both its text and its link.'
       : null)
+  )
+}
+
+// The content as loaded, to tell what has been edited since.
+const loaded = ref(JSON.stringify(contentParams()))
+const loadedText = ref(admin.value?.text)
+const loadedMjml = ref(admin.value?.mjml || '')
+
+// Whether what would be sent has a designed (MJML) version.
+const hasMjml = computed(
+  () => useMjml.value && !!(admin.value?.mjml || '').trim()
+)
+
+// A designed version needs a test before approving, unless this is a suggested ADMIN nobody has
+// changed. Text-only ADMINs never need one.
+const needsTest = computed(
+  () =>
+    hasMjml.value &&
+    !(admin.value?.unedited && JSON.stringify(contentParams()) === loaded.value)
+)
+
+const {
+  testEmail,
+  testing,
+  testError,
+  testtoken,
+  testedKey,
+  testedTo,
+  tested,
+  sendTest,
+} = useAdminTestSend(contentParams, () => contentProblem())
+
+// Which version was changed when the other was not, while both exist, or null.
+const oneSided = ref(null)
+const oneSidedOk = ref(false)
+
+function oneSidedChange() {
+  if (!useMjml.value || !loadedMjml.value) {
+    return null
+  }
+  const textChanged = admin.value.text !== loadedText.value
+  const mjmlChanged = (admin.value.mjml || '') !== loadedMjml.value
+  if (textChanged && !mjmlChanged) {
+    return 'plain text'
+  }
+  if (mjmlChanged && !textChanged) {
+    return 'designed (MJML)'
+  }
+  return null
+}
+
+function saveAnyway() {
+  oneSidedOk.value = true
+  save()
+}
+
+// Returns whether the changes were saved.
+async function save() {
+  saveError.value = contentProblem()
   if (saveError.value) {
     return false
   }
 
+  oneSided.value = oneSidedOk.value ? null : oneSidedChange()
+  if (oneSided.value) {
+    return false
+  }
+
+  const content = contentParams()
   const params = {
     id: admin.value.id,
-    subject: admin.value.subject,
-    text: admin.value.text,
-    ctatext: admin.value.ctatext ?? '',
-    ctalink: admin.value.ctalink ?? '',
+    essential: content.essential,
+    subject: content.subject,
+    text: content.text,
+    mjml: content.mjml,
+    ctatext: content.ctatext,
+    ctalink: content.ctalink,
     sendafter: admin.value.sendafter ?? null,
     pending: true,
-  }
-  if (admin.value.mjml !== null && admin.value.mjml !== undefined) {
-    params.mjml = admin.value.mjml
   }
 
   saving.value = true
@@ -390,6 +605,11 @@ async function save() {
   } finally {
     saving.value = false
   }
+
+  // What is saved now is the starting point for spotting a one-sided change.
+  loadedText.value = admin.value.text
+  loadedMjml.value = useMjml.value ? admin.value.mjml || '' : ''
+  oneSidedOk.value = false
 
   saved.value = true
   setTimeout(() => {
@@ -413,7 +633,13 @@ async function approve() {
     return
   }
 
-  await guardHold(() => adminsStore.approve({ id: admin.value.id }))
+  if (needsTest.value && !tested.value) {
+    return
+  }
+
+  await guardHold(() =>
+    adminsStore.approve({ id: admin.value.id, testtoken: testtoken.value })
+  )
 
   checkWork(true)
 }

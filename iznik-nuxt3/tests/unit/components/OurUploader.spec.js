@@ -305,9 +305,11 @@ describe('OurUploader', () => {
       expect(wrapper.findComponent(OurUploader).props('label')).toBe(null)
     })
 
-    // NOTE: The component has a bug where label computed returns itself instead
-    // of props.label when props.label is set, causing render errors.
-    // This test verifies the prop is defined on the component.
+    it('shows a label passed in', async () => {
+      const wrapper = await createWrapper({ label: 'Upload logo' })
+      expect(wrapper.text()).toContain('Upload logo')
+    })
+
     it('has label prop defined', () => {
       const labelProp = OurUploader.props.label
       expect(labelProp.type).toBe(String)
@@ -549,25 +551,19 @@ describe('OurUploader', () => {
       expect(wrapper.find('.uppy-dashboard-modal').exists()).toBe(false)
     })
 
-    it('renders Choose photo button in app mode', async () => {
-      const wrapper = await createWrapper({ multiple: false })
-      expect(wrapper.text()).toContain('Choose photo')
-    })
-
-    it('renders Choose photos button when multiple in app mode', async () => {
-      const wrapper = await createWrapper({
-        multiple: true,
-        modelValue: [],
-      })
-      expect(wrapper.text()).toContain('Choose photos')
-    })
-
-    it('renders Choose more photos when multiple and has photos', async () => {
-      const wrapper = await createWrapper({
-        multiple: true,
-        modelValue: [{ id: 1 }],
-      })
-      expect(wrapper.text()).toContain('Choose more photos')
+    it('says which button takes a photo and which uses the gallery', async () => {
+      for (const props of [
+        { multiple: false },
+        { multiple: true, modelValue: [] },
+        { multiple: true, modelValue: [{ id: 1 }] },
+      ]) {
+        const wrapper = await createWrapper(props)
+        const buttons = wrapper.findAll('.b-button')
+        expect(buttons[0].text()).toBe('Take photo')
+        expect(buttons[1].text()).toBe('Choose from gallery')
+        expect(wrapper.text()).not.toContain('Choose more photos')
+        expect(wrapper.text()).not.toContain('Add photos')
+      }
     })
   })
 

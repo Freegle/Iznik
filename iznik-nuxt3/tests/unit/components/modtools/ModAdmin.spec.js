@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { ref, reactive } from 'vue'
 import {
   createMockAdminsStore,
   createMockUserStore,
@@ -8,7 +9,9 @@ import {
 import ModAdmin from '~/modtools/components/ModAdmin.vue'
 
 // Create mock store instances
-const mockAdminsStore = createMockAdminsStore()
+const mockAdminsStore = createMockAdminsStore({
+  test: vi.fn().mockResolvedValue('test-token'),
+})
 const mockUserStore = createMockUserStore()
 const mockGroupStore = createMockGroupStore()
 const mockCheckWork = vi.fn()
@@ -30,6 +33,7 @@ vi.mock('~/stores/group', () => ({
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     myid: 999,
+    me: ref({ email: 'mod@example.com' }),
   }),
 }))
 
@@ -67,7 +71,10 @@ describe('ModAdmin', () => {
   }
 
   function mountComponent(props = {}, adminOverrides = {}) {
-    mockAdminsStore.get.mockReturnValue({ ...defaultAdmin, ...adminOverrides })
+    // Store objects are reactive, so edits to them re-render.
+    mockAdminsStore.get.mockReturnValue(
+      reactive({ ...defaultAdmin, ...adminOverrides })
+    )
 
     return mount(ModAdmin, {
       props: { ...defaultProps, ...props },
@@ -106,6 +113,22 @@ describe('ModAdmin', () => {
             props: ['modelValue'],
           },
           NoticeMessage: { template: '<div class="notice"><slot /></div>' },
+          'b-badge': { template: '<span class="badge"><slot /></span>' },
+          OurToggle: {
+            template:
+              '<label class="our-toggle"><input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" />{{ modelValue ? labels.checked : labels.unchecked }}</label>',
+            props: ['modelValue', 'labels'],
+          },
+          'b-tabs': { template: '<div class="tabs"><slot /></div>' },
+          'b-tab': {
+            template: '<div class="tab"><h6>{{ title }}</h6><slot /></div>',
+            props: ['title', 'active'],
+          },
+          'b-form-checkbox': {
+            template:
+              '<label class="mjml-toggle"><input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" /><slot /></label>',
+            props: ['modelValue'],
+          },
           ConfirmModal: {
             template: '<div class="confirm-modal"><slot /></div>',
           },
@@ -231,8 +254,10 @@ describe('ModAdmin', () => {
 
       expect(mockAdminsStore.edit).toHaveBeenCalledWith({
         id: 1,
+        essential: false,
         subject: 'Test Admin',
         text: 'Test body',
+        mjml: '',
         ctatext: '',
         ctalink: '',
         sendafter: null,
@@ -268,12 +293,15 @@ describe('ModAdmin', () => {
       expect(mockCheckWork).toHaveBeenCalledWith(true)
     })
 
-    it('calls save then approve on approve', async () => {
+    it('calls save then approve on approve, with no test for a text-only ADMIN', async () => {
       const wrapper = mountComponent()
       await wrapper.vm.approve()
 
       expect(mockAdminsStore.edit).toHaveBeenCalled()
-      expect(mockAdminsStore.approve).toHaveBeenCalledWith({ id: 1 })
+      expect(mockAdminsStore.approve).toHaveBeenCalledWith({
+        id: 1,
+        testtoken: null,
+      })
       expect(mockCheckWork).toHaveBeenCalledWith(true)
     })
   })
@@ -380,19 +408,35 @@ describe('ModAdmin', () => {
       expect(wrapper.find('textarea#body').exists()).toBe(true)
       expect(wrapper.find('textarea#mjml').exists()).toBe(false)
       await wrapper.vm.save()
-      expect(mockAdminsStore.edit.mock.calls[0][0]).not.toHaveProperty('mjml')
+      expect(mockAdminsStore.edit.mock.calls[0][0].mjml).toBe('')
     })
 
     it('shows the MJML with a warning, and saves edits to it', async () => {
       const wrapper = mountComponent({ open: true }, { mjml })
       await wrapper.vm.$nextTick()
-      expect(wrapper.text()).toContain('see this version, not the plain text')
+      expect(wrapper.find('.both-versions').text()).toContain(
+        'any change must be made in both'
+      )
+      expect(wrapper.text()).toContain('Plain text version')
+      expect(wrapper.text()).toContain('Designed (MJML) version')
+      expect(wrapper.find('.mjml-help').html()).toContain(
+        'https://mjml.io/try-it-live'
+      )
       expect(wrapper.find('textarea#mjml').element.value).toBe(mjml)
 
+      // Changing only the MJML asks first.
       await wrapper
         .find('textarea#mjml')
         .setValue(mjml.replace('Designed', 'Edited'))
-      await wrapper.vm.save()
+      expect(await wrapper.vm.save()).toBe(false)
+      expect(mockAdminsStore.edit).not.toHaveBeenCalled()
+      expect(wrapper.find('.one-sided').text()).toContain(
+        'changed the designed (MJML) version but not the other'
+      )
+
+      wrapper.vm.saveAnyway()
+      await wrapper.vm.$nextTick()
+      await new Promise((resolve) => setTimeout(resolve, 0))
       expect(mockAdminsStore.edit.mock.calls[0][0].mjml).toContain('Edited')
     })
 
@@ -452,6 +496,182 @@ describe('ModAdmin', () => {
       const wrapper = mountComponent({ open: true }, { ctatext: 'Donate' })
       expect(await wrapper.vm.save()).toBe(false)
       expect(mockAdminsStore.edit).not.toHaveBeenCalled()
+    })
+  })
+  describe('pending ADMIN review', () => {
+    const mjml =
+      '<mj-section><mj-column><mj-text>Designed</mj-text></mj-column></mj-section>'
+
+    it('marks an ADMIN with an MJML version in its header', () => {
+      expect(mountComponent({}, { mjml }).text()).toContain('Designed (MJML)')
+      expect(mountComponent().text()).not.toContain('Designed (MJML)')
+    })
+
+    it('can add an MJML version to a text-only ADMIN, which hides the button fields', async () => {
+      const wrapper = mountComponent({ open: true })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('#ctatext').exists()).toBe(true)
+
+      await wrapper.find('.mjml-toggle input').setValue(true)
+      expect(wrapper.find('#ctatext').exists()).toBe(false)
+      await wrapper.find('textarea#mjml').setValue(mjml)
+      await wrapper.vm.save()
+      expect(mockAdminsStore.edit.mock.calls[0][0].mjml).toBe(mjml)
+    })
+
+    it('asks for the MJML when the box is ticked but empty', async () => {
+      const wrapper = mountComponent({ open: true })
+      await wrapper.vm.$nextTick()
+      await wrapper.find('.mjml-toggle input').setValue(true)
+      expect(await wrapper.vm.save()).toBe(false)
+      expect(wrapper.vm.saveError).toContain('add the MJML')
+    })
+
+    it('can remove the MJML version', async () => {
+      const wrapper = mountComponent({ open: true }, { mjml })
+      await wrapper.vm.$nextTick()
+      await wrapper.find('.remove-mjml').trigger('click')
+      expect(wrapper.find('textarea#mjml').exists()).toBe(false)
+      await wrapper.vm.save()
+      expect(mockAdminsStore.edit.mock.calls[0][0].mjml).toBe('')
+    })
+
+    it('needs a test before approving, and says so', async () => {
+      const wrapper = mountComponent({ open: true }, { mjml })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.test-first').text()).toContain(
+        'need to send a test of it before you can approve'
+      )
+
+      await wrapper.vm.approve()
+      expect(mockAdminsStore.approve).not.toHaveBeenCalled()
+
+      await wrapper.vm.sendTest()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.test-first').exists()).toBe(false)
+      expect(mockAdminsStore.test).toHaveBeenCalledWith(
+        expect.objectContaining({
+          groupid: 1,
+          mjml,
+          email: 'mod@example.com',
+        })
+      )
+      await wrapper.vm.approve()
+      expect(mockAdminsStore.approve).toHaveBeenCalledWith({
+        id: 1,
+        testtoken: 'test-token',
+      })
+    })
+
+    it('shows no test for a text-only ADMIN', async () => {
+      const wrapper = mountComponent({ open: true })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.test-send').exists()).toBe(false)
+      expect(wrapper.find('.test-first').exists()).toBe(false)
+    })
+
+    it('needs a new test after an edit', async () => {
+      const wrapper = mountComponent({ open: true }, { mjml })
+      await wrapper.vm.$nextTick()
+      await wrapper.vm.sendTest()
+      wrapper.vm.admin.text = 'Edited after the test'
+      wrapper.vm.admin.mjml = mjml.replace('Designed', 'Edited')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain(
+        "You've changed the ADMIN since the test"
+      )
+      await wrapper.vm.approve()
+      expect(mockAdminsStore.approve).not.toHaveBeenCalled()
+    })
+
+    it('lets an unedited suggested ADMIN be approved without a test', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { parentid: 7, unedited: true, mjml }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.test-first').exists()).toBe(false)
+      expect(wrapper.text()).toContain('a test is optional')
+      await wrapper.vm.approve()
+      expect(mockAdminsStore.approve).toHaveBeenCalledWith({
+        id: 1,
+        testtoken: null,
+      })
+    })
+
+    it('needs a test once a suggested ADMIN is edited', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { parentid: 7, unedited: true, mjml }
+      )
+      await wrapper.vm.$nextTick()
+      wrapper.vm.admin.text = 'Our own sign-off'
+      wrapper.vm.admin.mjml = mjml.replace('Designed', 'Our own sign-off')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.test-first').exists()).toBe(true)
+      await wrapper.vm.approve()
+      expect(mockAdminsStore.approve).not.toHaveBeenCalled()
+    })
+
+    it('says approving sends to all members', async () => {
+      const essential = mountComponent({ open: true }, { essential: 1 })
+      await essential.vm.$nextTick()
+      expect(essential.text()).toContain('Approve and send to all members')
+
+      const newsletter = mountComponent({ open: true }, { essential: 0 })
+      await newsletter.vm.$nextTick()
+      expect(newsletter.text()).toContain(
+        "send to all members who haven't opted out"
+      )
+    })
+  })
+  describe('essential or newsletter', () => {
+    it('can switch a pending ADMIN between Essential and Newsletter', async () => {
+      const wrapper = mountComponent({ open: true }, { essential: 1 })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.type-toggle').text()).toContain('Essential')
+      expect(wrapper.text()).toContain('Approve and send to all members')
+
+      await wrapper.find('.type-toggle input').setValue(false)
+      expect(wrapper.text()).toContain(
+        'Newsletter - will be sent to all members'
+      )
+      expect(wrapper.text()).toContain("who haven't opted out")
+
+      await wrapper.vm.save()
+      expect(mockAdminsStore.edit.mock.calls[0][0].essential).toBe(false)
+    })
+
+    it('does not offer the switch for a pre-designed template', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { template: 'fundraising' }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.type-toggle').exists()).toBe(false)
+    })
+  })
+  describe('who it goes to', () => {
+    it('a copy of a central ADMIN goes only to recently active members', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { essential: 1, parentid: 7, activeonly: 1 }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain(
+        'Essential - will be sent to members active in the last six months'
+      )
+      expect(wrapper.text()).toContain(
+        'Approve and send to recently active members'
+      )
+    })
+
+    it("a community's own ADMIN goes to all members", async () => {
+      const wrapper = mountComponent({ open: true }, { essential: 1 })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain(
+        'Essential - will be sent to all members'
+      )
     })
   })
 })

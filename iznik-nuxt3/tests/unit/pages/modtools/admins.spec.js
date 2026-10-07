@@ -400,7 +400,6 @@ describe('admins.vue page', () => {
       wrapper.vm.subject = 'Subject'
       wrapper.vm.body = 'The message to members'
       wrapper.vm.modguidance = 'Tell your mods to add local details'
-      await wrapper.vm.sendTest()
       await wrapper.vm.create()
 
       expect(mockAdminsStore.add).toHaveBeenCalledTimes(1)
@@ -417,7 +416,6 @@ describe('admins.vue page', () => {
       wrapper.vm.subject = 'Subject'
       wrapper.vm.body = 'Body'
       wrapper.vm.modguidance = 'Should be dropped'
-      await wrapper.vm.sendTest()
       await wrapper.vm.create()
 
       const params = mockAdminsStore.add.mock.calls[0][0]
@@ -431,21 +429,19 @@ describe('admins.vue page', () => {
       wrapper.vm.groupidcreate = 5
       wrapper.vm.subject = 'Subject'
       wrapper.vm.body = 'Body'
-      await wrapper.vm.sendTest()
       await wrapper.vm.create()
       expect(mockAdminsStore.add.mock.calls[0][0]).not.toHaveProperty(
         'sendafter'
       )
 
       wrapper.vm.sendafter = '2031-02-03T04:05'
-      await wrapper.vm.sendTest()
       await wrapper.vm.create()
       expect(mockAdminsStore.add.mock.calls[1][0].sendafter).toBe(
         new Date('2031-02-03T04:05').toISOString()
       )
     })
   })
-  describe('MJML part and test send', () => {
+  describe('MJML part', () => {
     const mjml =
       '<mj-section><mj-column><mj-text>Designed</mj-text></mj-column></mj-section>'
 
@@ -457,11 +453,7 @@ describe('admins.vue page', () => {
       return wrapper
     }
 
-    it('defaults the test address to my own', () => {
-      expect(mountComponent().vm.testEmail).toBe('mod@example.com')
-    })
-
-    it('links to the MJML website and warns before showing the MJML box', async () => {
+    it('links to MJML and its live editor, and warns before showing the MJML box', async () => {
       const wrapper = filled()
       expect(wrapper.find('textarea#mjml').exists()).toBe(false)
 
@@ -472,107 +464,62 @@ describe('admins.vue page', () => {
         'Only use this if you know what you are doing'
       )
       expect(wrapper.find('.mjml-part').html()).toContain('https://mjml.io')
+      expect(wrapper.find('.mjml-part').html()).toContain(
+        'https://mjml.io/try-it-live'
+      )
     })
 
-    it('will not create without a test', async () => {
+    it('has no test send, and says only an MJML ADMIN needs a test from Pending', async () => {
       const wrapper = filled()
-      expect(wrapper.vm.tested).toBe(false)
-      await wrapper.vm.create()
-      expect(mockAdminsStore.add).not.toHaveBeenCalled()
-      expect(wrapper.vm.createError).toContain('test')
+      expect(wrapper.find('.test-send').exists()).toBe(false)
+      expect(wrapper.find('.test-first').text()).toContain('Pending tab')
+      expect(wrapper.find('.test-first').text()).not.toContain('test')
+
+      wrapper.vm.useMjml = true
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.test-first').text()).toContain(
+        'send yourself a test'
+      )
     })
 
-    it('sends a test of the content to one address, then creates with its token', async () => {
+    it('creates without a test, sending the MJML', async () => {
       const wrapper = filled()
       wrapper.vm.useMjml = true
       wrapper.vm.mjml = mjml
-      wrapper.vm.testEmail = ' other@example.com '
-      await wrapper.vm.sendTest()
-
-      expect(mockAdminsStore.test).toHaveBeenCalledWith(
-        expect.objectContaining({
-          groupid: 5,
-          subject: 'Subject',
-          text: 'Plain body',
-          mjml,
-          email: 'other@example.com',
-        })
-      )
-      expect(wrapper.vm.tested).toBe(true)
-      expect(wrapper.vm.testedTo).toBe('other@example.com')
-
       await wrapper.vm.create()
+
       const params = mockAdminsStore.add.mock.calls[0][0]
-      expect(params.testtoken).toBe('test-token')
       expect(params.mjml).toBe(mjml)
       expect(params.text).toBe('Plain body')
-
-      // One test, one ADMIN.
-      expect(wrapper.vm.tested).toBe(false)
+      expect(params).not.toHaveProperty('testtoken')
+      expect(mockAdminsStore.test).not.toHaveBeenCalled()
     })
 
-    it('needs a new test after any change', async () => {
-      const wrapper = filled()
-      await wrapper.vm.sendTest()
-      expect(wrapper.vm.tested).toBe(true)
-
-      wrapper.vm.body = 'Edited after the test'
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.tested).toBe(false)
-      expect(wrapper.text()).toContain(
-        "You've changed the ADMIN since the test"
-      )
-
-      await wrapper.vm.create()
-      expect(mockAdminsStore.add).not.toHaveBeenCalled()
-    })
-
-    it('does not send the MJML box once it is switched off', async () => {
+    it('does not send the MJML once it is switched off', async () => {
       const wrapper = filled()
       wrapper.vm.useMjml = true
       wrapper.vm.mjml = mjml
       wrapper.vm.useMjml = false
-      await wrapper.vm.sendTest()
-      expect(mockAdminsStore.test.mock.calls[0][0].mjml).toBe('')
+      await wrapper.vm.create()
+      expect(mockAdminsStore.add.mock.calls[0][0].mjml).toBe('')
     })
 
-    it('refuses a test to anything but one address', async () => {
-      const wrapper = filled()
-      for (const email of ['', 'nope', 'a@example.com, b@example.com']) {
-        wrapper.vm.testEmail = email
-        await wrapper.vm.sendTest()
-        expect(wrapper.vm.testError).toContain('one email address')
-      }
-      expect(mockAdminsStore.test).not.toHaveBeenCalled()
-    })
-
-    it('refuses unusable MJML before sending a test', async () => {
+    it('refuses unusable MJML', async () => {
       const wrapper = filled()
       wrapper.vm.useMjml = true
       wrapper.vm.mjml = '<mjml><mj-body>' + mjml + '</mj-body></mjml>'
-      await wrapper.vm.sendTest()
-      expect(wrapper.vm.testError).toContain('inside <mj-body>')
-      expect(mockAdminsStore.test).not.toHaveBeenCalled()
-    })
-
-    it('shows why the server refused a test', async () => {
-      mockAdminsStore.test.mockRejectedValueOnce({
-        response: { data: { error: 400, message: 'Server says no' } },
-      })
-      const wrapper = filled()
-      await wrapper.vm.sendTest()
-      expect(wrapper.vm.testError).toBe('Server says no')
-      expect(wrapper.vm.tested).toBe(false)
+      await wrapper.vm.create()
+      expect(wrapper.vm.createError).toContain('inside <mj-body>')
+      expect(mockAdminsStore.add).not.toHaveBeenCalled()
     })
 
     it('shows why the server refused to create', async () => {
       mockAdminsStore.add.mockRejectedValueOnce({
-        response: { data: { error: 400, message: 'Send a test first' } },
+        response: { data: { error: 400, message: 'Server says no' } },
       })
       const wrapper = filled()
-      await wrapper.vm.sendTest()
       await wrapper.vm.create()
-      expect(wrapper.vm.createError).toBe('Send a test first')
+      expect(wrapper.vm.createError).toBe('Server says no')
       expect(wrapper.vm.creating).toBe(false)
       expect(wrapper.vm.created).toBe(false)
     })
@@ -580,8 +527,8 @@ describe('admins.vue page', () => {
     it('needs both parts of a big button', async () => {
       const wrapper = filled()
       wrapper.vm.ctatext = 'Click'
-      await wrapper.vm.sendTest()
-      expect(wrapper.vm.testError).toContain('both its text and its link')
+      await wrapper.vm.create()
+      expect(wrapper.vm.createError).toContain('both its text and its link')
     })
 
     it('drops the big button when there is an MJML version', async () => {
@@ -595,21 +542,11 @@ describe('admins.vue page', () => {
       wrapper.vm.mjml = mjml
       await wrapper.vm.$nextTick()
       expect(wrapper.find('#ctatext').exists()).toBe(false)
-      expect(wrapper.find('#ctalink').exists()).toBe(false)
 
-      await wrapper.vm.sendTest()
-      const params = mockAdminsStore.test.mock.calls[0][0]
+      await wrapper.vm.create()
+      const params = mockAdminsStore.add.mock.calls[0][0]
       expect(params.ctatext).toBeNull()
       expect(params.ctalink).toBeNull()
-    })
-
-    it('does not need both parts of a button when using MJML', async () => {
-      const wrapper = filled()
-      wrapper.vm.ctatext = 'Click'
-      wrapper.vm.useMjml = true
-      wrapper.vm.mjml = mjml
-      await wrapper.vm.sendTest()
-      expect(wrapper.vm.testError).toBeNull()
     })
 
     it('copyAdmin brings the MJML part with it', () => {
@@ -623,6 +560,22 @@ describe('admins.vue page', () => {
       })
       expect(wrapper.vm.mjml).toBe(mjml)
       expect(wrapper.vm.useMjml).toBe(true)
+    })
+  })
+
+  describe('create button', () => {
+    it('says creating only saves to Pending', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.groupidcreate = 5
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain(
+        'Save to Pending ADMINs (nothing is sent yet)'
+      )
+      wrapper.vm.groupidcreate = -2
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain(
+        'Suggest to all communities (nothing is sent yet)'
+      )
     })
   })
 })

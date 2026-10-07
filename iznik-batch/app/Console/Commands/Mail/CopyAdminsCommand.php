@@ -106,7 +106,10 @@ class CopyAdminsCommand extends Command
                     'ctatext' => $admin->ctatext,
                     'pending' => 1,
                     'parentid' => $admin->id,
-                    'activeonly' => $admin->activeonly,
+                    // A suggested ADMIN goes to every community at once, which is a lot of mail very
+                    // quickly; sent to everyone it draws spam reports. So, as V1's copyForGroup did,
+                    // every copy only goes to recently active members, whatever the suggestion says.
+                    'activeonly' => 1,
                     'sendafter' => $admin->sendafter,
                     'essential' => $admin->essential,
                     'editprotected' => $admin->editprotected,

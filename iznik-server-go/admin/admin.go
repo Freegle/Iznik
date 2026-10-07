@@ -41,6 +41,9 @@ type Admin struct {
 	Template      *string    `json:"template"`
 	Editprotected bool       `json:"editprotected"`
 	Modguidance   *string    `json:"modguidance"`
+	// Unedited is set on a copy of a suggested ADMIN that is still exactly as suggested; it can be
+	// approved without a test.
+	Unedited bool `json:"unedited" gorm:"-"`
 }
 
 // AdminUser is the creator of an admin, as V1 returned it.
@@ -52,6 +55,20 @@ type AdminUser struct {
 // adminColumns are the admins columns returned to moderators. V1's Admin publicatts, plus modguidance.
 const adminColumns = "id, createdby, groupid, subject, text, mjml, ctatext, ctalink, created, complete, heldby, heldat, " +
 	"pending, parentid, activeonly, sendafter, essential, template, editprotected, modguidance"
+
+// addUnedited marks the copies of suggested ADMINs that are still exactly as suggested.
+func addUnedited(db *gorm.DB, admins []Admin) {
+	ids := []uint64{}
+	for _, a := range admins {
+		if a.Parentid != nil {
+			ids = append(ids, a.ID)
+		}
+	}
+	unedited := uneditedCopies(db, ids)
+	for i := range admins {
+		admins[i].Unedited = unedited[admins[i].ID]
+	}
+}
 
 // addCreators fills in createdby as {id, displayname}.
 func addCreators(db *gorm.DB, admins []Admin) {
@@ -137,6 +154,7 @@ func GetAdmin(c *fiber.Ctx) error {
 
 	one := []Admin{admin}
 	addCreators(db, one)
+	addUnedited(db, one)
 	admin = one[0]
 
 	return c.JSON(admin)
@@ -213,6 +231,7 @@ func ListAdmins(c *fiber.Ctx) error {
 	}
 
 	addCreators(db, admins)
+	addUnedited(db, admins)
 
 	return c.JSON(admins)
 }
@@ -233,8 +252,7 @@ type PostAdminRequest struct {
 	Modguidance   *string `json:"modguidance,omitempty"`
 	// Email is the one address a Test goes to.
 	Email string `json:"email,omitempty"`
-	// TestToken is what a Test returned; Create requires one for exactly the content being created.
-	TestToken string `json:"testtoken,omitempty"`
+
 }
 
 // checkNewAdmin applies the rules shared by Test and Create: who may send to the group, and what
@@ -371,17 +389,12 @@ func PostAdmin(c *fiber.Ctx) error {
 
 		return c.JSON(fiber.Map{"success": true, "testtoken": testToken(myid, content)})
 
-	default:
+	case "", "Create":
 		// Create new admin.
 		if err := checkNewAdmin(myid, req); err != nil {
 			return err
 		}
 
-		// Nobody creates an ADMIN without first seeing a test of exactly what it will send.
-		if !testTokenValid(req.TestToken, myid, contentOf(req)) {
-			return fiber.NewError(fiber.StatusBadRequest,
-				"Send yourself a test of this ADMIN first. Any change after the test needs a new test.")
-		}
 
 		essential := true
 		if req.Essential != nil {
@@ -429,6 +442,11 @@ func PostAdmin(c *fiber.Ctx) error {
 		}
 
 		return c.JSON(fiber.Map{"id": id})
+
+	default:
+		// An action this API does not know must not fall through to creating an ADMIN: a newer
+		// ModTools asking for one would otherwise make a pending ADMIN by accident.
+		return fiber.NewError(fiber.StatusBadRequest, "Unknown action "+req.Action)
 	}
 }
 
@@ -446,6 +464,43 @@ type PatchAdminRequest struct {
 	Editprotected *bool   `json:"editprotected,omitempty"`
 	// Sendafter is held raw so an explicit null or "" (clear it) can be told from absent.
 	Sendafter json.RawMessage `json:"sendafter,omitempty"`
+	// TestToken is what a Test returned. Approving (pending false) an ADMIN with an MJML version needs
+	// one for exactly the content being approved, unless it is a copy of a suggestion nobody edited.
+	TestToken string `json:"testtoken,omitempty"`
+}
+
+// approvedContent is what an ADMIN will send once this PATCH is applied: the saved content with
+// any fields the request changes.
+func approvedContent(db *gorm.DB, req PatchAdminRequest) emailContent {
+	content := storedContent(db, req.ID)
+	if req.Subject != nil {
+		content.Subject = *req.Subject
+	}
+	if req.Text != nil {
+		content.Text = *req.Text
+	}
+	if req.Mjml != nil {
+		content.Mjml = *req.Mjml
+	}
+	if req.CTA_Text != nil {
+		content.CTAText = *req.CTA_Text
+	}
+	if req.CTA_Link != nil {
+		content.CTALink = *req.CTA_Link
+	}
+	if req.Essential != nil {
+		content.Essential = *req.Essential
+	}
+	if req.Template != nil {
+		content.Template = *req.Template
+	}
+	return content
+}
+
+// contentChanges reports whether the request edits what the email will say.
+func contentChanges(req PatchAdminRequest) bool {
+	return req.Subject != nil || req.Text != nil || req.Mjml != nil || req.CTA_Text != nil ||
+		req.CTA_Link != nil || req.Essential != nil || req.Template != nil
 }
 
 // PatchAdmin handles PATCH /admin - update an admin.
@@ -542,6 +597,18 @@ func PatchAdmin(c *fiber.Ctx) error {
 	if req.Mjml != nil {
 		if msg := checkMjml(*req.Mjml); msg != "" {
 			return fiber.NewError(fiber.StatusBadRequest, msg)
+		}
+	}
+
+	// An ADMIN with an MJML version does not go to members until somebody has seen a test of
+	// exactly what will be sent: designed email is easy to get wrong in ways the text never is.
+	// Text-only ADMINs, and copies of a suggested ADMIN that nobody has changed, need no test.
+	if req.Pending != nil && !*req.Pending {
+		content := approvedContent(db, req)
+		unedited := !contentChanges(req) && uneditedCopies(db, []uint64{req.ID})[req.ID]
+		if strings.TrimSpace(content.Mjml) != "" && !unedited && !testTokenValid(req.TestToken, myid, content) {
+			return fiber.NewError(fiber.StatusBadRequest,
+				"This ADMIN has a designed (MJML) version, so send a test of it before approving it. Any change after the test needs a new test.")
 		}
 	}
 
