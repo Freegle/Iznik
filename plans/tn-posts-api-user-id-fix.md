@@ -85,7 +85,16 @@ Added next to `removeTNGroup()` in `app/Models/User.php`:
 - Replace `resolveUser()` with the provisioner. Keep the `user === null` branch for the remaining failures, using new API-only reason constants `REASON_TN_USER_LOOKUP_FAILED` and `REASON_TN_USERNAME_CLASH` (map from `TnUserProvisioner::lastFailureReason()`). Keep `REASON_UNKNOWN_USER` for `TnUserProvisioner::REASON_NOT_FOUND` (a 404 or null username).
 - Rewrite the `resolveUser` docblock and the comment at `:232-237`. Add a note by the reason constants that creating the user is a **deliberate divergence** from email-path case 2, which still drops. Parity comparisons will then show API-side Pending against email-side Dropped/unknown-user, and that is expected.
 
-### 4. Fix `UserChangesSyncer`'s username handling (`UserChangesSyncer.php:110-131`)
+### 4. Fix `UserChangesSyncer`'s username handling (`UserChangesSyncer.php:110-131`) — **DONE**
+- **As implemented:** the username logic moved to `UserChangesSyncer::applyUsername()`.
+  - The old username is `tnUsernameFromEmail($user->email_preferred)`, compared with `strtolower($new)`, so a case-only change is not a rename. There is no `fullname` fallback: `sync()` already skips users whose preferred address is not TN.
+  - On a rename, `fullname = tnDisplayName($new)`. The TN addresses whose `tnUsernameFromEmail()` equals the old username are collected. Other usernames' TN addresses (e.g. `bibiana-gomes-g4840@` when the old username is `bibiana`) and non-TN addresses are left alone.
+  - The bare `new@` is added **before** the old addresses are removed, so the user always keeps a preferred TN address, even if a removal fails partway. It is `primary: 1` if any removed address was preferred.
+  - **Email clash:** `fullname` is still updated (the TN rename is real), but the addresses are left untouched. A `[NAME-CHANGE] … email-clash=… held_by=…` trace line is logged and `\Sentry\captureMessage` is called.
+- **Tests:**
+  - New `tests/Unit/Services/TrashNothing/UserChangesSyncerTest.php`, 7 tests: the unchanged prettified name, a case-only change, collapsing two aliases with one Loki event each, a rename from a bare address, other usernames' and non-TN addresses left alone, the clash, and dry run. All 7 failed before the fix.
+  - `TNSyncCommandTest`: `createTNUser()` takes an optional TN username. Four name-change tests (`updates_fullname`, `updates_tn_emails`, `skips_name_change_when_unchanged`, `test_loki_logs_user_email_rename`) were rewritten for the new behaviour, because they asserted the old raw-username `fullname` and the suffix-preserving rewrite.
+- **Verified:** the filtered run (250 tests) and the full Unit/Feature/Integration suites (7083 tests) pass via the status API. Docs (`trashnothing.md` User Changes section) are left for step 5.
 - Today it compares `removeTNGroup($user->fullname)` with `$change['username']`, then sets `fullname` to the raw username. For any user whose `fullname` was prettified (every user `CreatePartnerUser` made, and now these too), every change event looks like a rename. `fullname` gets overwritten with `tricia.hayes`, and the `"{$oldname}-"` email replace never matches.
 - Instead, derive the old username from the user's TN email: `tnUsernameFromEmail()` on the preferred address.
 - On a real rename:
@@ -174,6 +183,17 @@ After steps 2 and 4, TN addresses **without** a `-gXXX` suffix become normal: th
 **Docs and rules.**
 - Update the "Email Canonicalization" and "Identifying the member behind an address" sections of `docs/developers/reference/trashnothing.md`.
 - Add a trap to `.claude/rules/mail-and-data.md`: TN addresses are no longer always `-gNNN` aliases, so recognise them by domain and parse the username with the shared helper.
+
+### 7. Move every TN user to a bare address (after step 6)
+**Goal:** every TN member ends up with one preferred bare `username@user.trashnothing.com` address and no `-gNNN` aliases. This depends on step 6, so do not start before it has landed. Until then, bare addresses mis-canonicalise (`mary-jane@` → `mary@…`) and are invisible to Go's `TNAliasIdentity`/`FindTNSiblings` and to `TNSyncCommand`'s grouping.
+
+- **Normalise on every change event.** In `UserChangesSyncer::applyUsername()`, the early return for an unchanged username skips the email collapse. That return should skip only the `fullname` update; the collapse then runs whenever the user still holds a `-gNNN` alias or lacks the bare address. Pull the collapse (clash check, add before remove, one `user-email-rename` event per removed address) into a method that both paths call.
+  - Reverse the two tests that currently assert the alias survives an unchanged username: `test_prettified_fullname_with_unchanged_username_is_not_renamed` (`UserChangesSyncerTest`) and `test_sync_skips_name_change_when_unchanged` (`TNSyncCommandTest`). They should still assert that `fullname` is left alone.
+  - Add a test that a user already on the bare address with no aliases gets no writes and no Loki events.
+  - Expect a slow but large migration: change events carry `username` even when only `about_me`, `reply_time` or the location changed.
+- **Backfill members with no change events.** Add an artisan command that applies the same collapse, keyed by the shared username helper. It needs `--dry-run` and a batch limit, and must log clashes (see step 4) rather than throw. Members who never generate a change event would otherwise keep their aliases forever.
+- **The Go partner sync re-adds aliases.** `EnsurePartnerIdentifiers` (`partner.go:226`) may attach a `-gNNN` alias again. It does not change the preferred address, so this is harmless for `isTN()`. To reach "no aliases at all", that function has to stop adding them, or add the bare form instead.
+- **Before the backfill,** count the TN users still holding a `-gNNN` alias and the bare addresses that would clash, so the size of the move is known.
 
 ## Critical files
 - `iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php`
