@@ -282,21 +282,23 @@ class TnUserProvisioner
      * rather than minting a twin. Mirrors EnsurePartnerIdentifiers in
      * iznik-server-go/user/partner.go. The bare address is attached as a
      * non-preferred one, so later exact-match lookups hit and the member's
-     * current preferred address stays.
+     * current preferred address stays. changeprimary: false, because the
+     * address may be the one already held and preferred, and addEmail would
+     * otherwise demote it, leaving no preferred address (isTN() false).
      */
     private function linkExisting(User $user, int $tnUserId, string $email): User
     {
         Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=tnuserid=' . $tnUserId);
 
         if ($this->dryRun) {
-            $user->addEmail($email, primary: 0, dryRun: true);
+            $user->addEmail($email, primary: 0, changeprimary: false, dryRun: true);
             return $user;
         }
 
         DB::transaction(function () use ($user, $tnUserId, $email) {
             $user->tnuserid = $tnUserId;
             $user->save();
-            $user->addEmail($email, primary: 0);
+            $user->addEmail($email, primary: 0, changeprimary: false);
         });
 
         return $user;

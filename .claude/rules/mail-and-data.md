@@ -5,6 +5,11 @@ paths:
   - "iznik-batch/app/Services/Mail/**"
   - "iznik-batch/app/Console/Commands/TrashNothing/**"
   - "iznik-server-go/user/partner.go"
+  - "iznik-server-go/user/namevalidation.go"
+  - "iznik-batch/app/Models/User.php"
+  - "iznik-batch/app/Support/NameSanitiser.php"
+  - "iznik-batch/app/Console/Commands/User/FixTNNamesCommand.php"
+  - "iznik-batch/app/Services/TrashNothing/**"
   - "iznik-batch/resources/views/**"
   - "scripts/bulk2/**"
   - "ops/hosts/mail-host/**"
@@ -203,14 +208,14 @@ and overwrites it whenever the email is dirty, which on a create is always:
 
 ```php
 if ($record->isDirty('email') || is_null($record->backwards)) {
-    $record->backwards = strrev(strtolower((string) $record->email));
+    $record->backwards = strrev((string) $record->canon);
 }
 ```
 
-So a `UserEmail::create([... 'backwards' => strrev($canon)])` is silently discarded and the row
-lands in the address form regardless. Only a raw `DB::table('users_emails')->insert()` keeps what
-you pass. That hook is the single place every Eloquent write gets its value from, so it is where
-the format has to change, not at the call sites.
+So whatever a caller passes for `backwards` is silently discarded. Only a raw
+`DB::table('users_emails')->insert()` keeps what you pass. That hook is the single place every
+Eloquent write gets its value from. Until 2026-09-19 it reversed the address, which is where the
+450,846 address-form rows above came from. It now reverses the canon (89a8d21843).
 
 **V1 did not trust the column either.** Its Support Tools search pairs the `backwards` arm with a
 second `canon` arm built from the search term with every dot removed, and says why:
@@ -222,8 +227,8 @@ second `canon` arm built from the search term with every dot removed, and says w
 
 The Go member search inherited the same shape and compensates differently, with an
 `email LIKE '%term%'` arm that finds the rows regardless, so **it is not the thing that breaks**.
-What breaks is any consumer filtering on `backwards` alone: `users:fix-tn-names` does exactly
-that and sees 20.5% of Trash Nothing members.
+What breaks is any consumer filtering on `backwards` alone: `users:fix-tn-names` did exactly
+that and saw 20.5% of Trash Nothing members, until it moved to filtering on the address.
 
 **The index is not buying what it looks like it buys.** EXPLAIN on production picks a full scan
 for every form of that filter, because each prefix matches far too much of the table. Measured
@@ -235,9 +240,9 @@ group in PHP; that is where 5e2a90450's real speedup came from anyway.
 
 They share a name and a purpose and agree on almost nothing:
 
-| | PHP `IncomingMailService::canonicalizeEmail` | Go `user.CanonicalizeEmail` |
+| | PHP `User::canonMail` (`IncomingMailService::canonicalizeEmail` delegates to it) | Go `user.CanonicalizeEmail` |
 |---|---|---|
-| TN `-gNNNN` suffix | stripped | kept |
+| TN `-gNNNN` suffix | stripped, only a `-g<digits>` right before `@user.trashnothing.com` | kept |
 | dots in local part | stripped for gmail/googlemail only | stripped for every domain |
 | dots in domain | stripped | kept |
 | googlemail -> gmail | yes | no |
@@ -265,6 +270,47 @@ PHP-shaped, not that anything breaks loudly.
 Aligning them is not a rename: donation matching and social auth both look up on `canon`, so
 changing the general Go function changes who those match. Fix it at the specific site and say
 which semantics you mean.
+
+For Trash Nothing addresses that has been done: the partner write sites use
+`user.CanonicalizePartnerEmail`, which reproduces `canonMail` for both the bare and the
+suffixed form. The same input and canon pairs are asserted in both stacks, in
+`UserEmailTest::tnCanonTable` and `iznik-server-go/user/partner_canon_test.go`. Change one
+table and you must change the other. Go lowercases the username and PHP does not, which is
+harmless because both tables lowercase first and `canon` compares case-insensitively.
+
+## A Trash Nothing address does not always carry a `-gNNNN` suffix
+
+TN used to mint one address per group, `username-g1234@user.trashnothing.com`, and much of the
+code was written as if that were the only shape. It is not. A member created from the posts API
+(`TnUserProvisioner`), and any member who renames on TN (`UserChangesSyncer`), holds the bare
+`username@user.trashnothing.com`. Members who do neither keep their aliases, so both shapes are
+live, often on the same account.
+
+Code that assumes the suffix does not fail. It gives a plausible wrong answer:
+
+- **Splitting on a hyphen.** Usernames contain hyphens. The old canon rule stripped everything
+  after the last one, so a bare `mary-jane@` got the canon of another member's `mary-g12@`, and
+  the canon fallback in `findUserByEmail` could hand one member's mail to the other. Splitting on
+  the first `-g` turns `mary-grace@` into "Mary" and `bibiana-gomes-g4840@` into "Bibiana".
+- **Requiring the suffix.** A pattern like `-g\d+@` does not match a bare address. The duplicate
+  merge then took the whole address as the username, and Go's `TNAliasIdentity` returned not-ok,
+  so the bare and suffixed accounts of one member were never grouped.
+
+The rules:
+
+- *Is this a TN address?* Check the domain, `@user.trashnothing.com`, case-insensitive, and
+  nothing else.
+- *Which username is it?* Use the shared helper: `User::tnUsernameFromEmail()` in PHP,
+  `user.TNAliasIdentity()` in Go. Both strip an optional `-g<digits>` only where it sits
+  immediately before the `@`, and both lowercase the result.
+- *Find the member's other addresses.* Match `email = 'username@…' OR email LIKE
+  'username-g%@…'`, then keep only rows whose helper username equals the one you want. The
+  `LIKE` runs past the end of the username (`bibiana-g%` finds `bibiana-gomes-g4840@`). Leaving
+  out that exact test merged two unrelated members on 2026-09-13.
+
+Stripping a trailing `-g\d+` from a display name (`removeTNGroup`, Go's `TidyName`) is a
+different thing and is fine. Those strip the suffix TN used to put in names, and they do nothing
+to a name that has none.
 
 ## See also
 

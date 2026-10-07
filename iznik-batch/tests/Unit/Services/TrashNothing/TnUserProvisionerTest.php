@@ -246,6 +246,11 @@ class TnUserProvisionerTest extends TestCase
         $this->assertSame($existing->id, $user->id);
         $this->assertSame($tnId, (int) $existing->fresh()->tnuserid);
         $this->assertSame(1, UserEmail::where('userid', $existing->id)->count());
+        // Attaching the address it already holds must not demote it: addEmail's
+        // primary: 0 would otherwise un-prefer it, leaving no preferred address,
+        // so isTN() turns false and the user-changes sync skips the member.
+        $this->assertSame(1, (int) UserEmail::where('userid', $existing->id)->value('preferred'));
+        $this->assertTrue($existing->fresh()->isTN());
     }
 
     /**
