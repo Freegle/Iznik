@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-28
+last_reviewed: 2026-10-07
 owner: Freegle dev team
 covers:
   - iznik-server-go/donations/**
@@ -33,6 +33,9 @@ first line and postcode of their home address, and a declaration from them.
 The Stripe webhook handles **`charge.succeeded` only**. That is deliberate and worth
 knowing: other Stripe event types are ignored, so if a donation is missing from the
 database, check which event Stripe actually sent before looking for a bug in our code.
+
+PayPal resends an IPN until it gets a 200. The handler acknowledges a `txn_id` that is
+already in `users_donations` without touching it, so a resend never records a donation twice.
 
 Donations land in `users_donations`. Asks (the prompts we show) are recorded separately in
 `users_donations_asks`, so how often we ask can be measured against what we raise. What

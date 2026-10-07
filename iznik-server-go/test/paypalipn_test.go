@@ -399,3 +399,40 @@ func TestPayPalIPN_NoMcGross(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 }
+
+// PayPal resends an IPN until it gets a 200. A resend of a recorded transaction is
+// acknowledged with a 200 and leaves the one row as it was.
+func TestPayPalIPN_ResendOfRecordedTransactionIsAcknowledged(t *testing.T) {
+	prefix := uniquePrefix("paypalresend")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_donor", "User")
+	email := prefix + "_donor@test.com"
+	txnID := "PAY_" + prefix
+
+	body := makePayPalForm(map[string]string{
+		"mc_gross":     "1.00",
+		"payer_email":  email,
+		"first_name":   "Test",
+		"last_name":    "Donor",
+		"txn_id":       txnID,
+		"txn_type":     "subscr_payment",
+		"payment_date": "2026-01-15 10:30:00",
+	})
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest("POST", "/donateipn", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode, "attempt %d must be acknowledged", i+1)
+	}
+
+	var donationCount int64
+	db.Raw("SELECT COUNT(*) FROM users_donations WHERE TransactionID = ?", txnID).Scan(&donationCount)
+	assert.Equal(t, int64(1), donationCount, "a resend must not add a second row")
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", txnID)
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'email_donate_external' AND data LIKE ?",
+		fmt.Sprintf("%%\"user_id\":%d%%", userID))
+}
