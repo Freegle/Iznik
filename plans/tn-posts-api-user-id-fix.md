@@ -23,7 +23,7 @@ Added next to `removeTNGroup()` in `app/Models/User.php`:
   - **Not `ucwords`.** Go's `strings.Title` capitalises after any non-letter/digit/underscore, not just whitespace. Verified by running Go in `freegle-apiv2`: `mary-jane` → `Mary-Jane`, `o'brien` → `O'Brien`, `x2y.z` → `X2y Z`, `élise.dupont` → `Élise Dupont`, `ALREADY.up` → `ALREADY Up`. The PHP version uses `preg_replace_callback('/(?<![\p{L}\p{N}_])\p{Ll}/u', mb_strtoupper)` to match.
   - Known residual difference: Go treats non-ASCII non-letter symbols (e.g. `€`) as non-separators; the PHP regex treats them as separators. Accepted, since TN usernames are not expected to contain them.
 - `tnEmailForUsername(string $username): string`. Returns `"{$username}@user.trashnothing.com"`.
-- `tnUsernameFromEmail(string $email): ?string`. Already follows step 6's replacement rule: `/^(.+?)(?:-g\d+)?@user\.trashnothing\.com$/i`, stripping an optional `-g<digits>` only immediately before the domain. Returns null for non-TN addresses. Trims and **lowercases** the result, matching Go's `TNAliasIdentity`. (Step 4 compares usernames through this, so compare against a lowercased new username there.)
+- `tnUsernameFromEmail(string $email): ?string`. Already follows step 5's replacement rule: `/^(.+?)(?:-g\d+)?@user\.trashnothing\.com$/i`, stripping an optional `-g<digits>` only immediately before the domain. Returns null for non-TN addresses. Trims and **lowercases** the result, matching Go's `TNAliasIdentity`. (Step 4 compares usernames through this, so compare against a lowercased new username there.)
 - Tests: five new cases in `tests/Unit/Models/UserModelTest.php` (Go-parity display names, bare/alias/mixed-case addresses, hyphenated usernames incl. `bibiana` vs `bibiana-gomes-g4840` and `ann-g12-g34`, non-TN rejections). `UserModelTest` passes (72 tests) via the status API.
 - **Running tests:** a hook blocks `php artisan test` directly. Use the status API instead: `curl -s -X POST http://localhost:8081/api/tests/laravel -H 'Content-Type: application/json' -d '{"filter":"…","testsuite":"Unit"}'`, then poll `/api/tests/laravel/status`. The full Unit/Feature suites have not been run yet for this step; run them before pushing.
 
@@ -74,13 +74,13 @@ Added next to `removeTNGroup()` in `app/Models/User.php`:
   - **Trace lines.** `TN-SYNC-TRACE [TN-USER] tn_user_id=… result=…` (`not-found`, `no-usable-username`, `username-clash`, `created`, `linked`, `lost-race`) alongside the `[WRITE]` lines.
   - **`about_me`/`reply_time`** rows use `timestamp = now()` (the user-changes path uses the change date, which the users endpoint does not give). `reply_time = 0` is stored.
   - **Fixture:** `tests/fixtures/tn_sync/users/99010901.json` (`fixture.poster`) for the `localTesting` path. A missing fixture file is treated as a 404.
-- **Tests:** `tests/Unit/Services/TrashNothing/TnUserProvisionerTest.php`, 21 tests, all passing via the status API. They cover the step 5 list, plus field parity, null first/last names, bare-address linking, the canon guard, deleted accounts not linked, an invalid built address, 429 and `cf-mitigated`, dry-run linking, a miss asked again later, and both `localTesting` paths. The race test creates the competing user from inside the `Http::fake` closure, so it really hits the `tnuserid` unique index. The full Unit/Feature suites have **not** been run for this step yet; run them before pushing.
+- **Tests:** `tests/Unit/Services/TrashNothing/TnUserProvisionerTest.php`, 21 tests, all passing via the status API. They cover the step 7 list, plus field parity, null first/last names, bare-address linking, the canon guard, deleted accounts not linked, an invalid built address, 429 and `cf-mitigated`, dry-run linking, a miss asked again later, and both `localTesting` paths. The race test creates the competing user from inside the `Http::fake` closure, so it really hits the `tnuserid` unique index. The full Unit/Feature suites have **not** been run for this step yet; run them before pushing.
 
 ### 3. Wire it into `GroupPostIngestionService` — **DONE**
 - **As implemented:** constructor parameter `TnUserProvisioner $userProvisioner`; `resolveUser()` removed and replaced by `unresolvedUserReason()`, which maps `lastFailureReason()` onto the routing reason. `REASON_TN_USER_LOOKUP_FAILED`/`REASON_TN_USERNAME_CLASH` take their values from the provisioner's constants, so the strings cannot drift. The `[POST-SKIP]` trace keeps `reason=unknown-user` for a not-found (it matches the email path's trace) and uses the reason string for the two new failures; the `post-skip-unknown-user` Loki event gains a `reason` key. `PostSyncer` builds the provisioner with `$this->apiKey`, its shared rate limiter, `dryRun` and `localTesting` (not `fixtureDir`: the users fixture always comes from `tests/fixtures/tn_sync/users/`).
 - **Tests:** `GroupPostIngestionServiceTest` now fakes `GET /users/{id}` with one closure keyed on the id (404 by default, so existing unknown-user cases still drop). New cases: a new poster is created and the post goes Pending with `reason=unmapped user` and no membership; dry run traces the user insert and writes nothing; a 503 gives `tn-user-lookup-failed`; an address held under another `tnuserid` gives `tn-username-clash`. No other test posts from an unknown user outside `localTesting`, so `EmailApiParityTest`/`TnApiLokiParityTest` needed no change. `PostSyncerTest`'s ingestion spy now passes a provisioner too.
 - **Bug found in step 2 while wiring:** `TnUserProvisioner::create()` now sets `lastlocation => null` explicitly. Without it, the model from `User::create`/`new User` has no `lastlocation` key, so `ingest()`'s `$user->lastlocation` resolved the `lastLocation()` relation and threw.
-- **Verified:** the filtered run (286 tests) and the full Unit/Feature suites (7076 tests) pass via the status API. `check-docs-freshness` still flags `trashnothing.md` because of step 2's `TnUserProvisioner.php`; that is left for step 5.
+- **Verified:** the filtered run (286 tests) and the full Unit/Feature suites (7076 tests) pass via the status API. `check-docs-freshness` still flags `trashnothing.md` because of step 2's `TnUserProvisioner.php`; that is left for step 7.
 - Inject `TnUserProvisioner` through the constructor. `PostSyncer` builds it from `$this->apiKey` (the public key), its shared rate limiter, `dryRun` and `localTesting` (`PostSyncer.php:70`).
 - Replace `resolveUser()` with the provisioner. Keep the `user === null` branch for the remaining failures, using new API-only reason constants `REASON_TN_USER_LOOKUP_FAILED` and `REASON_TN_USERNAME_CLASH` (map from `TnUserProvisioner::lastFailureReason()`). Keep `REASON_UNKNOWN_USER` for `TnUserProvisioner::REASON_NOT_FOUND` (a 404 or null username).
 - Rewrite the `resolveUser` docblock and the comment at `:232-237`. Add a note by the reason constants that creating the user is a **deliberate divergence** from email-path case 2, which still drops. Parity comparisons will then show API-side Pending against email-side Dropped/unknown-user, and that is expected.
@@ -94,7 +94,7 @@ Added next to `removeTNGroup()` in `app/Models/User.php`:
 - **Tests:**
   - New `tests/Unit/Services/TrashNothing/UserChangesSyncerTest.php`, 7 tests: the unchanged prettified name, a case-only change, collapsing two aliases with one Loki event each, a rename from a bare address, other usernames' and non-TN addresses left alone, the clash, and dry run. All 7 failed before the fix.
   - `TNSyncCommandTest`: `createTNUser()` takes an optional TN username. Four name-change tests (`updates_fullname`, `updates_tn_emails`, `skips_name_change_when_unchanged`, `test_loki_logs_user_email_rename`) were rewritten for the new behaviour, because they asserted the old raw-username `fullname` and the suffix-preserving rewrite.
-- **Verified:** the filtered run (250 tests) and the full Unit/Feature/Integration suites (7083 tests) pass via the status API. Docs (`trashnothing.md` User Changes section) are left for step 5.
+- **Verified:** the filtered run (250 tests) and the full Unit/Feature/Integration suites (7083 tests) pass via the status API. Docs (`trashnothing.md` User Changes section) are left for step 7.
 - Today it compares `removeTNGroup($user->fullname)` with `$change['username']`, then sets `fullname` to the raw username. For any user whose `fullname` was prettified (every user `CreatePartnerUser` made, and now these too), every change event looks like a rename. `fullname` gets overwritten with `tricia.hayes`, and the `"{$oldname}-"` email replace never matches.
 - Instead, derive the old username from the user's TN email: `tnUsernameFromEmail()` on the preferred address.
 - On a real rename:
@@ -107,30 +107,7 @@ Added next to `removeTNGroup()` in `app/Models/User.php`:
     - Emit `TN-SYNC-TRACE [WRITE]` lines and honour `dryRun` throughout, as the existing code does.
 - If no TN email can be found, fall back to the current comparison.
 
-### 5. Config, docs, tests
-- **Config:** none. The host comes from the generated client (step 2) and the timeout is Laravel's default.
-- **Docs:** update `docs/developers/reference/trashnothing.md`.
-  - The section near line 184 ("poster is resolved through `users.tnuserid`… nothing is created") becomes the provisioning behaviour.
-  - Update the User Changes API section to cover the rename fix.
-  - Respect its `covers:` front matter so `check-docs-freshness` passes.
-- **`plans/tn-api-post-ingestion.md` §F:** close the "missing user" open item.
-- **Tests:**
-  - **Done in step 2.** `tests/Unit/Services/TrashNothing/TnUserProvisionerTest.php` (new), using `Http::fake` with **one** closure keyed on the request URL (see laravel-batch-traps: fakes merge, and the first stub wins). Cases:
-    - existing `tnuserid` makes no HTTP call;
-    - create from a full response checks `fullname` "Tricia Hayes", the email, `tnuserid` and `firstname` handling;
-    - an existing account with a matching `-gNNN` alias and no `tnuserid` is linked, not duplicated;
-    - a clash with a different `tnuserid` returns null;
-    - a 404 or null username returns null with the not-found reason, and a later call asks TN again;
-    - a 500 returns null with `tn-user-lookup-failed`;
-    - dry run writes nothing;
-    - a duplicate-key race returns the existing user;
-    - the API key does not appear in logs.
-  - `GroupPostIngestionServiceTest`: update the unknown-user case near `:981` so an unknown `tn_user_id` with a faked TN response now creates the user and the post goes **Pending, reason `unmapped user`**. Add cases for the lookup-failure and clash reasons.
-  - `UserChangesSyncer` test: a prettified-`fullname` user with an unchanged username must not be renamed; a rename on a user holding `old-g123@` (preferred) and `old-g456@` ends with exactly one TN address, bare `new@user.trashnothing.com`, preferred, so `isTN()` stays true; a rename from a bare `old@` does the same; a non-TN address on the user is left alone; an email clash with another user leaves the addresses unchanged; dry run writes nothing.
-  - `EmailApiParityTest` / `TnApiLokiParityTest`: if any fixture relies on the unknown-user drop, mark the divergence explicitly. Do not loosen the assertions.
-  - A `User` helper unit test, with one Go/PHP parity example per transformation.
-
-### 6. Remove the "every TN address has a `-gXXX` suffix" assumption across the codebase
+### 5. Remove the "every TN address has a `-gXXX` suffix" assumption across the codebase
 After steps 2 and 4, TN addresses **without** a `-gXXX` suffix become normal: the provisioner creates bare `username@user.trashnothing.com`, and a rename collapses everything to that form. (Some legacy bare rows already exist; `FixTNNamesCommand.php:40` says "older rows sit directly on the bare domain".) This step needs extensive checks, rewrites and tests, because every piece of code that recognises or parses a TN address by its suffix will silently mishandle the bare form. None of it throws; it produces a plausible wrong answer.
 
 **Replacement rule.**
@@ -180,12 +157,10 @@ After steps 2 and 4, TN addresses **without** a `-gXXX` suffix become normal: th
 - Add one cross-stack canon table (the same input → expected canon pairs, asserted in both a PHP and a Go test), so `canonMail`, `canonicalizeEmail` and `CanonicalizePartnerEmail` cannot drift apart again.
 - Run the Go suite as well as the batch suites, since this step touches `iznik-server-go`. Per CLAUDE.md, update the CircleCI orb if test wiring changes.
 
-**Docs and rules.**
-- Update the "Email Canonicalization" and "Identifying the member behind an address" sections of `docs/developers/reference/trashnothing.md`.
-- Add a trap to `.claude/rules/mail-and-data.md`: TN addresses are no longer always `-gNNN` aliases, so recognise them by domain and parse the username with the shared helper.
+**Docs and rules.** See step 7: `trashnothing.md` sections, its `covers:` front matter, and the `mail-and-data.md` trap. Step 7 also maps each A-row site to its test file.
 
-### 7. Move every TN user to a bare address (after step 6)
-**Goal:** every TN member ends up with one preferred bare `username@user.trashnothing.com` address and no `-gNNN` aliases. This depends on step 6, so do not start before it has landed. Until then, bare addresses mis-canonicalise (`mary-jane@` → `mary@…`) and are invisible to Go's `TNAliasIdentity`/`FindTNSiblings` and to `TNSyncCommand`'s grouping.
+### 6. Move every TN user to a bare address (after step 5)
+**Goal:** every TN member ends up with one preferred bare `username@user.trashnothing.com` address and no `-gNNN` aliases. This depends on step 5, so do not start before it has landed. Until then, bare addresses mis-canonicalise (`mary-jane@` → `mary@…`) and are invisible to Go's `TNAliasIdentity`/`FindTNSiblings` and to `TNSyncCommand`'s grouping.
 
 - **Normalise on every change event.** In `UserChangesSyncer::applyUsername()`, the early return for an unchanged username skips the email collapse. That return should skip only the `fullname` update; the collapse then runs whenever the user still holds a `-gNNN` alias or lacks the bare address. Pull the collapse (clash check, add before remove, one `user-email-rename` event per removed address) into a method that both paths call.
   - Reverse the two tests that currently assert the alias survives an unchanged username: `test_prettified_fullname_with_unchanged_username_is_not_renamed` (`UserChangesSyncerTest`) and `test_sync_skips_name_change_when_unchanged` (`TNSyncCommandTest`). They should still assert that `fullname` is left alone.
@@ -195,6 +170,67 @@ After steps 2 and 4, TN addresses **without** a `-gXXX` suffix become normal: th
 - **The Go partner sync re-adds aliases.** `EnsurePartnerIdentifiers` (`partner.go:226`) may attach a `-gNNN` alias again. It does not change the preferred address, so this is harmless for `isTN()`. To reach "no aliases at all", that function has to stop adding them, or add the bare form instead.
 - **Before the backfill,** count the TN users still holding a `-gNNN` alias and the bare addresses that would clash, so the size of the move is known.
 
+### 7. Config, docs, tests
+Docs and tests for every step land here, so `check-docs-freshness` and the suites are satisfied once, against the finished behaviour.
+
+- **Config:**
+  - Steps 1–4: none. The host comes from the generated client (step 2) and the timeout is Laravel's default.
+  - Steps 5–6: no new env vars or flags expected. If step 6's backfill command is scheduled rather than run by hand, add it to `iznik-batch/routes/console.php` next to `users:fix-tn-names` (`:1338`). `FREEGLE_TN_MERGE_LEGACY_DUPLICATES` keeps its meaning; the step 5 changes to `TNSyncCommand`'s grouping apply under both settings.
+  - If any test wiring changes (for example a new Go test package for the cross-stack canon table), update and republish the CircleCI orb, per CLAUDE.md.
+- **Docs: `docs/developers/reference/trashnothing.md`.**
+  - **Front matter `covers:`.** It already covers `IncomingMailService.php`, `Commands/TrashNothing/**`, `Ingestion/**`, `Sync/**` and `partner.go`, so steps 2–6 will trip the freshness check on it. Add the step 5 files it does not yet cover: `iznik-batch/app/Models/User.php`, `iznik-batch/app/Console/Commands/User/FixTNNamesCommand.php`, `iznik-batch/app/Support/NameSanitiser.php` and `iznik-server-go/user/namevalidation.go`. Add the two halves of the cross-stack canon table test under the "cross-stack behaviour tests" comment.
+  - **Post Ingestion via API** (near line 184, "poster is resolved through `users.tnuserid`… nothing is created"): describe provisioning, with the three failure reasons and the Pending/`unmapped user` routing.
+  - **User Changes API** (near line 441): cover the rename fix (step 4) and the collapse to one bare address on every change event (step 6).
+  - **Email-Based Detection** (near line 32): the `{username}-g{groupid}@` format is no longer universal. Say that addresses are recognised by domain, and that a member may hold a bare `username@` address, the `-gNNN` form, or both while step 6 runs.
+  - **Email Canonicalization** (near line 57): only a `-g<digits>` immediately before the domain is stripped. Give `mary-jane@` as the example that used to collapse to `mary@`.
+  - **Identifying the member behind an address** (near line 64): the sibling probe matches both `username@` and `username-g%@`, and the username comes from the shared helper rather than `tnUsernameFromAddress()`'s mandatory suffix.
+  - **Group Membership (Subscribe Mail)** (near line 400): "every `-gNNNN` alias canonicalises to one value" also holds for the bare address now.
+  - **Key functions** (near line 127): add `User::tnUsernameFromEmail`, the other step 1 helpers and `TnUserProvisioner::resolveOrCreate`.
+  - **Areas for Possible Improvement → 7. Duplicate User Detection** (near line 798): update the description of `EnsurePartnerIdentifiers` to match whatever step 6 decides (stops adding aliases, or adds the bare form).
+  - **Maintenance:** document step 6's backfill command: its `--dry-run`, batch limit and clash logging, and the pre-backfill count query.
+- **Rules: `.claude/rules/mail-and-data.md`.**
+  - Add the trap: TN addresses are no longer always `-gNNN` aliases. Recognise them by domain and parse the username with the shared helper. Never split on the first `-` or `-g`.
+  - **"Go's CanonicalizeEmail is not PHP's canonicalizeEmail"**: update the "TN `-gNNNN` suffix" row. After step 5, PHP strips only `-g\d+` and Go's `CanonicalizePartnerEmail` handles the bare form. Point at the cross-stack canon table test as the guard against drift.
+  - **"`users_emails.backwards` is REVERSE(canon)"**: check that the worked example and the `users:fix-tn-names` note still hold after `FixTNNamesCommand` changes.
+  - **Front matter `paths:`**: add `iznik-batch/app/Models/User.php`, `iznik-batch/app/Support/NameSanitiser.php`, `iznik-server-go/user/namevalidation.go` and `iznik-batch/app/Console/Commands/User/FixTNNamesCommand.php`, so the trap loads where the parsing lives.
+- **`plans/tn-api-post-ingestion.md` §F:** close the "missing user" open item.
+- **Tests, steps 1–4:**
+  - **Done in step 2.** `tests/Unit/Services/TrashNothing/TnUserProvisionerTest.php` (new), using `Http::fake` with **one** closure keyed on the request URL (see laravel-batch-traps: fakes merge, and the first stub wins). Cases:
+    - existing `tnuserid` makes no HTTP call;
+    - create from a full response checks `fullname` "Tricia Hayes", the email, `tnuserid` and `firstname` handling;
+    - an existing account with a matching `-gNNN` alias and no `tnuserid` is linked, not duplicated;
+    - a clash with a different `tnuserid` returns null;
+    - a 404 or null username returns null with the not-found reason, and a later call asks TN again;
+    - a 500 returns null with `tn-user-lookup-failed`;
+    - dry run writes nothing;
+    - a duplicate-key race returns the existing user;
+    - the API key does not appear in logs.
+  - `GroupPostIngestionServiceTest`: update the unknown-user case near `:981` so an unknown `tn_user_id` with a faked TN response now creates the user and the post goes **Pending, reason `unmapped user`**. Add cases for the lookup-failure and clash reasons.
+  - `UserChangesSyncer` test: a prettified-`fullname` user with an unchanged username must not be renamed; a rename on a user holding `old-g123@` (preferred) and `old-g456@` ends with exactly one TN address, bare `new@user.trashnothing.com`, preferred, so `isTN()` stays true; a rename from a bare `old@` does the same; a non-TN address on the user is left alone; an email clash with another user leaves the addresses unchanged; dry run writes nothing. (Step 6 changes the unchanged-username case: `fullname` is still left alone, but the aliases now collapse.)
+  - `EmailApiParityTest` / `TnApiLokiParityTest`: if any fixture relies on the unknown-user drop, mark the divergence explicitly. Do not loosen the assertions.
+  - A `User` helper unit test, with one Go/PHP parity example per transformation.
+- **Tests, step 5.** Each A-row site has an existing test file. Add the bare-address cases listed in step 5 to each:
+
+  | Site | Test file |
+  |---|---|
+  | `User::canonMail`, `tnUsernameFromEmail` | `iznik-batch/tests/Unit/Models/UserModelTest.php`, `tests/Unit/Models/UserEmailTest.php` |
+  | `IncomingMailService::canonicalizeEmail`, `findUserByEmail` canon fallback | `iznik-batch/tests/Unit/Services/Mail/Incoming/IncomingMailServiceTest.php` |
+  | canon rewrite of existing rows | `iznik-batch/tests/Unit/Commands/User/BackfillEmailCanonCommandTest.php` |
+  | `TNAliasIdentity`, `CanonicalizePartnerEmail`, `FindTNSiblings`, `CreatePartnerUser` | `iznik-server-go/test/partner_test.go`; check `test/user_tn_privacy_test.go` still passes with a bare-address member |
+  | `TNSyncCommand::tnUsernameFromAddress` and the per-tick LIKE | `iznik-batch/tests/Feature/TrashNothing/TNSyncCommandTest.php` |
+  | `FixTNNamesCommand` | `iznik-batch/tests/Feature/User/FixTNNamesCommandTest.php` |
+  | `NameSanitiser::TN_EMAIL_SUFFIX` / Go `tnEmailSuffix` | `iznik-batch/tests/Unit/Support/NameSanitiserTest.php`, `iznik-server-go/user/namevalidation_test.go` (the same inputs in both) |
+
+  - B rows (already domain-only): add a bare-address case to `UserModelTest` (`isTN`), `iznik-nuxt3/tests/unit/components/modtools/ModMember.spec.js` and `DiscourseNotSignedUpServiceTest.php`.
+  - C rows (display-name stripping): `PushNotificationServiceTest.php` and the Go `TidyName` tests should still pass unchanged. A failure there means a C site was receiving an address after all.
+  - The cross-stack canon table: one PHP test and one Go test asserting the same input → canon pairs across `canonMail`, `canonicalizeEmail` and `CanonicalizePartnerEmail`.
+- **Tests, step 6:**
+  - Reverse `test_prettified_fullname_with_unchanged_username_is_not_renamed` (`UserChangesSyncerTest`) and `test_sync_skips_name_change_when_unchanged` (`TNSyncCommandTest`), as step 6 describes.
+  - A test that a user already on the bare address with no aliases gets no writes and no Loki events.
+  - A new test file for the backfill command: dry run writes nothing; the batch limit is honoured; a clash is logged and skipped, not thrown; a hyphenated username (`mary-jane-g12@` → `mary-jane@`) and a prefix-sharing pair (`bibiana-g1@` vs `bibiana-gomes-g4840@`) are handled correctly.
+  - If `EnsurePartnerIdentifiers` changes, cover it in `iznik-server-go/test/partner_test.go`: a partner action for a member already on the bare address adds no `-gNNN` alias (or adds the bare form, whichever step 6 settles on).
+- **Run everything:** the Go suite as well as the batch Unit/Feature/Integration suites and the nuxt unit tests (for `ModMember.spec.js`), then `node scripts/check-docs-freshness.mjs` (diffs against `origin/master` by default).
+
 ## Critical files
 - `iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php`
 - `iznik-batch/app/Services/TrashNothing/Ingestion/TnUserProvisioner.php` (new)
@@ -202,7 +238,7 @@ After steps 2 and 4, TN addresses **without** a `-gXXX` suffix become normal: th
 - `iznik-batch/app/Services/TrashNothing/Sync/UserChangesSyncer.php`
 - `iznik-batch/app/Models/User.php`
 - `docs/developers/reference/trashnothing.md`
-- Step 6 (suffix audit): `IncomingMailService.php` (`canonicalizeEmail`), `TNSyncCommand.php`, `FixTNNamesCommand.php`, `NameSanitiser.php`, `iznik-server-go/user/partner.go`, `iznik-server-go/user/namevalidation.go`, `.claude/rules/mail-and-data.md`
+- Step 5 (suffix audit): `IncomingMailService.php` (`canonicalizeEmail`), `TNSyncCommand.php`, `FixTNNamesCommand.php`, `NameSanitiser.php`, `iznik-server-go/user/partner.go`, `iznik-server-go/user/namevalidation.go`, `.claude/rules/mail-and-data.md`
 
 Reused as-is: `TrashNothingRateLimiter`, `PostSyncer::redactApiKey`, `User::addEmail`/`canonMail`/`removeTNGroup`, the `UserAboutMe`/`UserReplyTime` models, `LokiService::logEvent`.
 
@@ -210,5 +246,5 @@ Reused as-is: `TrashNothingRateLimiter`, `PostSyncer::redactApiKey`, `User::addE
 1. Through the status API (direct `php artisan test` is blocked by a hook): POST `/api/tests/laravel` with `{"filter":"UserModelTest|TnUserProvisioner|GroupPostIngestionService|UserChangesSyncer|EmailApiParity|TnApiLokiParity","testsuite":"Unit,Feature"}`, then with an empty body for the full suites.
 2. `docker exec freegle-batch php artisan tn:sync --local-testing` with a fixture post whose `user_id` is unknown, plus `tests/fixtures/tn_sync/users/{id}.json`. Check the `TN-SYNC-TRACE` lines for the user and email inserts, and the message landing Pending/`unmapped user`.
 3. Against the real API with the dev key: `tn:parity-check` (or `tn:sync --dry-run --local-testing` off) on a window containing an unknown poster. Confirm the lookup succeeds with `username` populated for the developer key.
-4. Step 6: the Go suite for `iznik-server-go/user`, plus the full batch suites. Then re-run the audit grep and confirm that every remaining `-g` hit is a C-row (display-name) site.
+4. Step 5: the Go suite for `iznik-server-go/user`, plus the full batch suites. Then re-run the audit grep and confirm that every remaining `-g` hit is a C-row (display-name) site.
 5. ~~Rate-limit probe~~ Done 2026-10-01; see "Rate-limit probe results" above. Outcome: `await()` stays as is.
