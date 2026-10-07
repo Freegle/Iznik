@@ -2494,6 +2494,12 @@ func PatchUser(c *fiber.Ctx) error {
 		if settingsJSON, err := json.Marshal(req.Settings); err == nil {
 			var setClauses []string
 			var setArgs []interface{}
+			// Deployment switch PROTECTED_SETTINGS_KEYS: a member editing
+			// themselves here (rather than a mod editing a member) may not
+			// change those keys. A no-op for Freegle.
+			if targetID == myid && !auth.CanWriteProtectedSettings(c, myid) {
+				settingsJSON = ApplyProtectedSettings(settingsJSON, myid)
+			}
 			settingsJSON = ProcessSettingsUpdate(settingsJSON, targetID, &setClauses, &setArgs)
 			// ProcessSettingsUpdate appends at most ONE extra clause
 			// ("lastlocation = ?", on a postcode change) - a genuine 2-shape

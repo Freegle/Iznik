@@ -208,6 +208,52 @@ func HasPermission(userid uint64, perm string) bool {
 }
 
 // IsSystemMod checks if the user has system-level Moderator, Support, or Admin role.
+// JWTHasServiceClaim reports whether the request's JWT carries svc="1". Such a
+// token can only have been minted by a holder of JWT_SECRET - a deployment's
+// own server acting for a member (for example a payment webhook recording
+// that the member paid). It is what lets that server write
+// PROTECTED_SETTINGS_KEYS (see user.ProtectedSettingsKeys) which the member
+// themselves cannot. Freegle mints no such tokens.
+func JWTHasServiceClaim(c *fiber.Ctx) bool {
+	tokenString := c.Query("jwt")
+	if tokenString == "" {
+		tokenString = c.Get("Authorization")
+	}
+	if len(tokenString) > 2 {
+		if tokenString[0] == '"' {
+			tokenString = tokenString[1:]
+		}
+		if tokenString[len(tokenString)-1] == '"' {
+			tokenString = tokenString[:len(tokenString)-1]
+		}
+	}
+	if tokenString == "" {
+		return false
+	}
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected signing method")
+		}
+		return []byte(os.Getenv("JWT_SECRET")), nil
+	})
+	if err != nil || !token.Valid {
+		return false
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return false
+	}
+	svc, _ := claims["svc"].(string)
+	return svc == "1"
+}
+
+// CanWriteProtectedSettings: system moderators, and servers holding
+// JWT_SECRET (JWTHasServiceClaim), may change PROTECTED_SETTINGS_KEYS in a
+// member's settings; the member themselves may not.
+func CanWriteProtectedSettings(c *fiber.Ctx, myid uint64) bool {
+	return IsSystemMod(myid) || JWTHasServiceClaim(c)
+}
+
 func IsSystemMod(myid uint64) bool {
 	db := database.DBConn
 	var systemrole string

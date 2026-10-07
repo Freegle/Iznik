@@ -15,6 +15,9 @@ covers:
   - iznik-batch/database/migrations/2026_09_06_000001_add_agreement_columns_to_messages_promises.php
   - iznik-server-go/message/messageOutcome.go
   - iznik-server-go/test/message_agreement_test.go
+  - iznik-server-go/user/protectedSettings.go
+  - iznik-server-go/user/protectedSettings_test.go
+  - iznik-server-go/test/protected_settings_test.go
   - iznik-nuxt3/eslint.config.mjs
 ---
 
@@ -44,6 +47,7 @@ variables like every other Freegle setting.
 | `mail.enabled_types` | `FREEGLE_MAIL_ENABLED_TYPES` | (as before) | New: a `*` in the list enables every type, so a deployment with its own mailables need not re-list Freegle's whole catalogue. |
 | `schedule.profile` | `FREEGLE_SCHEDULE_PROFILE` | `full` | `overlay-only` runs nothing from `routes/console.php` except what the overlay file below schedules. Any other value behaves as `full`, so a typo can never quietly stop the schedule. |
 | `schedule.overlay` | `FREEGLE_SCHEDULE_OVERLAY` | `routes/console.deployment.php` | A schedule file loaded **if it exists** (relative to the app root, or absolute). Freegle ships none. A deployment puts its own jobs there. |
+| (Go API) | `PROTECTED_SETTINGS_KEYS` | (none) | Comma-separated top-level `settings` keys a member may not change about themselves. See [Protected settings](#protected-settings). |
 
 ### Sign-in links
 
@@ -61,6 +65,26 @@ hundred used to have to edit it. Now it drops a file at `routes/console.deployme
 (or wherever `schedule.overlay` points) written exactly like the main file, and that is
 loaded first. With the default `full` profile the overlay simply adds to Freegle's
 schedule. With `overlay-only` the rest of the file is skipped, so only the overlay runs.
+
+## Protected settings
+
+A member's `settings` blob is theirs to edit, through `PATCH /session` (and `PATCH /user` on
+themselves). That is right for preferences, and wrong for anything a deployment records in
+settings that the member must not be able to grant themselves, such as whether a joining fee
+has been paid.
+
+`PROTECTED_SETTINGS_KEYS` (Go API, comma-separated, default none) names top-level settings
+keys a member may not change about themselves. A member's own PATCH keeps whatever is stored
+for those keys: a changed value is ignored, a new one is dropped, an omitted one is put back.
+Everything else in the same PATCH applies as normal, so the web client's read-merge-write of
+the whole blob keeps working. Two kinds of caller may write them:
+
+- **System moderators** (Support and Admin), on any member, including through `PATCH /user`.
+- **The deployment's own server**, using a token minted with the shared `JWT_SECRET` that
+  carries the claim `svc: "1"` alongside the usual `id` and `sessionid` (a payment webhook, for
+  example, acting for the member who paid). Nothing a browser holds can produce that claim.
+
+With the switch unset nothing changes, which is how Freegle runs.
 
 ## Promises that become agreements
 

@@ -2099,7 +2099,13 @@ func PatchSession(c *fiber.Ctx) error {
 		// changing its signature.
 		var settingsPrefixClauses []string
 		var settingsPrefixArgs []interface{}
-		settingsJSON := user.ProcessSettingsUpdate([]byte(*req.Settings), myid, &settingsPrefixClauses, &settingsPrefixArgs)
+		// Deployment switch PROTECTED_SETTINGS_KEYS: keys a member may not change
+		// about themselves keep their stored value here. A no-op for Freegle.
+		incomingSettings := []byte(*req.Settings)
+		if !auth.CanWriteProtectedSettings(c, myid) {
+			incomingSettings = user.ApplyProtectedSettings(incomingSettings, myid)
+		}
+		settingsJSON := user.ProcessSettingsUpdate(incomingSettings, myid, &settingsPrefixClauses, &settingsPrefixArgs)
 		s := string(settingsJSON)
 		settingsJSONStr = &s
 		if len(settingsPrefixArgs) > 0 {
