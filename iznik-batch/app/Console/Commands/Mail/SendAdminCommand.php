@@ -146,8 +146,12 @@ class SendAdminCommand extends Command
      * Mirrors V1's process() query:
      * - complete IS NULL (not yet sent)
      * - pending = 0 (approved)
-     * - Created or edited within last 7 days
+     * - Created or edited within last 7 days, or its sendafter time fell within them
      * - sendafter has passed (if set)
+     *
+     * The 7 days stop an old, forgotten admin going out late. A sendafter time is a deliberate
+     * choice, so the window runs from it too: otherwise an admin approved more than 7 days
+     * before its sendafter time was never sent at all (V1 had the same gap).
      */
     protected function findReadyAdmins(?int $specificId = null): \Illuminate\Support\Collection
     {
@@ -161,6 +165,10 @@ class SendAdminCommand extends Command
                     ->orWhere(function ($q2) use ($cutoff) {
                         $q2->whereNotNull('editedat')
                             ->where('editedat', '>', $cutoff);
+                    })
+                    ->orWhere(function ($q3) use ($cutoff) {
+                        $q3->whereNotNull('sendafter')
+                            ->where('sendafter', '>', $cutoff);
                     });
             })
             ->where(function ($q) {

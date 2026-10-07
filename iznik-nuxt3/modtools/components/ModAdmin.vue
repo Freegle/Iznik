@@ -45,7 +45,7 @@
           </span>
         </NoticeMessage>
         <NoticeMessage
-          v-if="admin.parentid && !admin.complete"
+          v-if="admin.parentid && !admin.complete && !admin.modguidance"
           variant="info"
           class="mb-2"
         >
@@ -90,9 +90,8 @@
             sent to members
           </h4>
           <p class="small mb-1">
-            This is advice from Support on how you might adapt this ADMIN for
-            your community. It is not part of the message and will not be in the
-            email.
+            This is advice on how you might adapt this ADMIN for your community.
+            It is not part of the message and will not be in the email.
           </p>
           <p class="modguidance-text mb-0">{{ admin.modguidance }}</p>
         </NoticeMessage>
