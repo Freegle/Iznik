@@ -487,7 +487,9 @@ function deleteConfirmed() {
 // What the email will be made from, as currently edited - the same fields the server checks a
 // test against. With a designed (MJML) version there is no big button: the MJML carries its own.
 function contentParams() {
-  const a = admin.value
+  // The card can be set up, or re-render, while its ADMIN is briefly not in the store (around an
+  // approve or a refetch). It renders nothing then, so empty content is fine; reading null is not.
+  const a = admin.value || {}
   return {
     groupid: a.groupid,
     subject: a.subject,

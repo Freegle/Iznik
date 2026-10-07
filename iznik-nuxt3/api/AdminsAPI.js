@@ -3,6 +3,11 @@ import { notAHeldConflict } from '~/api/heldConflict'
 
 export default class AdminsAPI extends BaseAPI {
   fetch(params) {
+    // One ADMIN is /modtools/admin/<id>. The list endpoint ignores an id parameter and returns the
+    // whole list, which the store then filed under that id as if it were the ADMIN.
+    if (params?.id) {
+      return this.$getv2('/modtools/admin/' + params.id)
+    }
     return this.$getv2('/modtools/admin', params)
   }
 

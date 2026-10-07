@@ -41,6 +41,16 @@ describe('admins store', () => {
     expect(store.list[1]).toEqual({ id: 1, subject: 'Test Admin' })
   })
 
+  it('never files a list under a single id', async () => {
+    const store = useAdminsStore()
+    store.config = {}
+    mockFetch.mockResolvedValue([{ id: 1 }, { id: 2 }])
+
+    await store.fetch({ id: 7 })
+
+    expect(store.list[7]).toBeUndefined()
+  })
+
   it('stores array of admins on list fetch', async () => {
     const store = useAdminsStore()
     store.config = {}

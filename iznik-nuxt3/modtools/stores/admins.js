@@ -20,8 +20,11 @@ export const useAdminsStore = defineStore('admins', {
     async fetch(params) {
       const data = await api(this.config).admins.fetch(params)
       if (params && params.id) {
-        // Single admin fetch — V2 returns the admin object directly.
-        this.list[params.id] = data
+        // Single admin fetch — V2 returns the admin object directly. Anything else (a list) must
+        // not be filed under this id, or a card is set up for an ADMIN that does not exist.
+        if (data && !Array.isArray(data) && data.id) {
+          this.list[params.id] = data
+        }
       } else {
         // List fetch — V2 returns a naked array.
         const admins = Array.isArray(data) ? data : data?.admins || []

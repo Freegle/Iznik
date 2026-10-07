@@ -73,7 +73,9 @@ describe('ModAdmin', () => {
   function mountComponent(props = {}, adminOverrides = {}) {
     // Store objects are reactive, so edits to them re-render.
     mockAdminsStore.get.mockReturnValue(
-      reactive({ ...defaultAdmin, ...adminOverrides })
+      adminOverrides === null
+        ? null
+        : reactive({ ...defaultAdmin, ...adminOverrides })
     )
 
     return mount(ModAdmin, {
@@ -672,6 +674,12 @@ describe('ModAdmin', () => {
       expect(wrapper.text()).toContain(
         'Essential - will be sent to all members'
       )
+    })
+  })
+  describe('an ADMIN missing from the store', () => {
+    it('mounts without error and renders nothing', () => {
+      const wrapper = mountComponent({ id: 99 }, null)
+      expect(wrapper.find('.card').exists()).toBe(false)
     })
   })
 })
