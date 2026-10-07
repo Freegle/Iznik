@@ -521,6 +521,53 @@ class SendAdminCommandTest extends TestCase
     }
 
     /**
+     * Test: an admin approved long before its sendafter time is still sent when that time comes,
+     * as a suggested copy approved a fortnight ahead of the date would be.
+     */
+    public function test_sendafter_long_after_approval_is_still_sent(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $this->createMembership($user, $group);
+
+        $adminId = $this->createAdmin($group, [
+            'created' => now()->subDays(15),
+            'editedat' => now()->subDays(14),
+            'sendafter' => now()->subHour(),
+        ]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, 1);
+    }
+
+    /**
+     * Test: an old admin with no recent sendafter is still not sent late.
+     */
+    public function test_old_admin_with_old_sendafter_is_not_sent(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $this->createMembership($user, $group);
+
+        $adminId = $this->createAdmin($group, [
+            'created' => now()->subDays(30),
+            'editedat' => now()->subDays(30),
+            'sendafter' => now()->subDays(20),
+        ]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])->assertSuccessful();
+
+        Mail::assertNothingSent();
+    }
+
+    /**
      * Test: sendafter in the past → sent.
      */
     public function test_sendafter_past_is_sent(): void
