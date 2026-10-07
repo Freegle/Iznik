@@ -102,7 +102,8 @@ them back. It ships as dry runs until a person names each machine as live.
 - Full description, schedule, gates and how to turn it on:
   **[automated-host-maintenance.md](automated-host-maintenance.md)**.
 - `freegle-maint status` shows the state; `freegle-maint pause` stops all of it.
-- The load balancer has no standby, so its reboot stays a scheduled outage unless allowed.
+- The load balancer has no standby, so its reboot is a short outage, accepted at 04:00 UK
+  time on Monday.
 
 ## CookieYes watchdog says the login is lost
 

@@ -119,10 +119,11 @@ check the donor's write-set cache the next day, as the runbook says.
 
 ## Arbitrator (db1)
 
-Its maintenance is safe only while both data nodes are healthy: without it they keep
-quorum with two votes of three. The run stops `garbd` cleanly before patching, even when
-no reboot is needed. A clean leave is one view change, where a stalled arbitrator on that
-small machine has cost the cluster its primary component before. After the patch or
+Its maintenance causes no outage, because it starts only while both data nodes are
+Synced at full cluster size and both APIs answer 200: without it they keep quorum with
+two votes of three, and writes continue. The run stops `garbd` cleanly before patching, even when
+no reboot is needed. A clean leave is one view change, while an arbitrator that stalls
+under patching on that small machine can flap and cost the cluster its primary component. After the patch or
 reboot it checks `garbd` is active, monit watches it, and both data nodes show the full
 cluster size again.
 

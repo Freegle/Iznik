@@ -3,8 +3,8 @@
 # Profile: the Galera arbitrator (garbd on db1). It holds no data and only votes.
 # With it gone the two data nodes keep quorum (two votes of three), so its
 # maintenance is safe only while both data nodes are healthy, and garbd is stopped
-# cleanly first: a clean leave is one view change, where a stalled arbitrator on
-# this small machine has flapped and cost the cluster its primary component before.
+# cleanly first: a clean leave is one view change, while an arbitrator that stalls
+# under patching on this small machine can flap and cost the cluster its primary component.
 # Patching always happens with garbd stopped, for the same reason.
 
 MAINT_ARB_APT_EXCLUDE="${MAINT_ARB_APT_EXCLUDE:-^percona-}"
