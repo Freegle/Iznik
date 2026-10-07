@@ -96,6 +96,18 @@ func CreateTestGroup(t *testing.T, prefix string) uint64 {
 	db := database.DBConn
 	name := fmt.Sprintf("TestGroup_%s", prefix)
 
+	// nameshort is varchar(80) (iznik-batch/database/migrations/2025_12_10_094529_create_groups_table.php).
+	// A prefix built from t.Name() inside a t.Run subtest includes the parent test
+	// name plus a "/", which can push this well past 80 chars; MySQL's non-strict-mode
+	// INSERT then silently truncates it from the right, but the SELECT below still
+	// looks up the untruncated string and finds nothing ("Group was created but ID
+	// not found"). Truncate here first, keeping uniquePrefix's trailing "_<nanosecond>"
+	// suffix intact, so the INSERT and SELECT agree on the same (already-safe) string.
+	const maxNameshort = 80
+	if len(name) > maxNameshort {
+		name = name[:maxNameshort-20] + name[len(name)-20:]
+	}
+
 	result := db.Exec(fmt.Sprintf("INSERT INTO `groups` (nameshort, namefull, type, onhere, polyindex, lat, lng) "+
 		"VALUES (?, ?, 'Freegle', 1, ST_GeomFromText('POINT(-3.1883 55.9533)', %d), 55.9533, -3.1883)", utils.SRID),
 		name, "Test Group "+prefix)

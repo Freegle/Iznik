@@ -9,9 +9,8 @@ use Illuminate\Support\Facades\Log;
 
 /**
  * Daily check for Freegle groups not represented by an active moderator on
- * Discourse, plus active mods who haven't signed up and mods whose preferred
- * email is a TrashNothing address. Faithful migration of V1
- * scripts/cron/discourse_not_signed_up.php.
+ * Discourse, plus active mods who haven't signed up and TrashNothing accounts
+ * holding a mod role. Migrated from V1 scripts/cron/discourse_not_signed_up.php.
  *
  * "Active" mod = Owner/Moderator on a Freegle group with users.lastaccess in
  * the last 6 months. Reports daily to geeks (and central mods) on Saturdays or
@@ -74,9 +73,8 @@ class DiscourseNotSignedUpService
 
         $activeModIds = $activeModsGroups->pluck('id')->map(fn ($v) => (int) $v)->unique()->all();
 
-        // Resolve every Discourse user's MT external_id and flag TN preferred mails.
+        // Resolve every Discourse user's MT external_id.
         $discourseExternalIds = [];
-        $modswithTNpreferredemails = 0;
 
         foreach ($allDusers as $duser) {
             $this->throttle($throttleUs);
@@ -107,17 +105,14 @@ class DiscourseNotSignedUpService
             }
 
             $discourseExternalIds[$externalId] = true;
+        }
 
-            // Mods whose preferred email is a TrashNothing address.
-            $tn = DB::table('users_emails')
-                ->where('userid', $externalId)
-                ->where('preferred', 1)
-                ->where('email', 'LIKE', '%@user.trashnothing.com')
-                ->value('email');
-            if ($tn) {
-                $reportTop .= 'MOD HAS TN preferred email: '.$externalId.' - '.$tn."\n";
-                $modswithTNpreferredemails++;
-            }
+        // TrashNothing accounts must never hold a mod role. They are never on
+        // Discourse and are often long inactive, so look for them in the
+        // memberships directly rather than among the Discourse users.
+        $tnMods = $this->tnAccountsWithModRole();
+        foreach ($tnMods as $tnMod) {
+            $reportTop .= 'TN ACCOUNT HAS MOD ROLE: '.$tnMod->id.' - '.$tnMod->fullname.' - '.$tnMod->roles."\n";
         }
 
         // Active mods not on Discourse, and which groups are represented.
@@ -163,7 +158,7 @@ class DiscourseNotSignedUpService
         }
 
         $reportTop .= "\nGroups without active volunteers on Discourse: $notrepresentedcount\n";
-        $reportTop .= "Mods with TN preferred emails: $modswithTNpreferredemails\n\n";
+        $reportTop .= 'TN accounts with mod roles: '.count($tnMods)."\n\n";
 
         $report = $reportTop.$reportMid;
         $report .= "\ndiscourse:not-signed-up — migrated from V1 discourse_not_signed_up.php\n";
@@ -174,8 +169,40 @@ class DiscourseNotSignedUpService
             'skipped' => false,
             'notrepresented' => $notrepresentedcount,
             'notondiscourse' => $notondiscourse,
-            'tnpreferred' => $modswithTNpreferredemails,
+            'tnmods' => count($tnMods),
         ];
+    }
+
+    /**
+     * Users stamped with a tnuserid or whose preferred email is a TrashNothing
+     * address, holding Owner/Moderator on any Freegle group, with those groups.
+     *
+     * @return \Illuminate\Support\Collection<int, object{id: int, fullname: ?string, roles: string}>
+     */
+    private function tnAccountsWithModRole(): \Illuminate\Support\Collection
+    {
+        return DB::table('users')
+            ->join('memberships', 'users.id', '=', 'memberships.userid')
+            ->join('groups', 'groups.id', '=', 'memberships.groupid')
+            ->whereIn('memberships.role', ['Owner', 'Moderator'])
+            ->where('groups.type', 'Freegle')
+            ->where(function ($q) {
+                $q->whereNotNull('users.tnuserid')
+                    ->orWhereExists(function ($e) {
+                        $e->select(DB::raw(1))
+                            ->from('users_emails')
+                            ->whereColumn('users_emails.userid', 'users.id')
+                            ->where('users_emails.preferred', 1)
+                            ->where('users_emails.email', 'LIKE', '%@user.trashnothing.com');
+                    });
+            })
+            ->groupBy('users.id', 'users.fullname')
+            ->orderBy('users.id')
+            ->get([
+                'users.id',
+                'users.fullname',
+                DB::raw("GROUP_CONCAT(CONCAT(groups.nameshort, ' (', memberships.role, ')') ORDER BY groups.nameshort SEPARATOR ', ') AS roles"),
+            ]);
     }
 
     private function sendReports(int $notrepresented, int $notondiscourse, string $report): void

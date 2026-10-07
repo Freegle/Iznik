@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import SupportPage from '~/modtools/pages/support/[[id]].vue'
+import { useLockdownStore } from '~/stores/lockdown'
 
 // Mock stores
 const mockChatStore = {
@@ -79,10 +80,10 @@ globalThis.__testUseRoute = () => ({
 })
 
 describe('support/[[id]].vue page', () => {
-  function mountComponent() {
+  function mountComponent(pinia = createPinia()) {
     return mount(SupportPage, {
       global: {
-        plugins: [createPinia()],
+        plugins: [pinia],
         stubs: {
           ModSupportFindUser: {
             template: '<div class="mod-support-find-user" />',
@@ -132,6 +133,9 @@ describe('support/[[id]].vue page', () => {
           ModSupportConcernKeywords: {
             template: '<div class="mod-support-concern-keywords" />',
           },
+          ModSupportLockdown: {
+            template: '<div class="mod-support-lockdown" />',
+          },
           NoticeMessage: {
             template: '<div class="notice-message"><slot /></div>',
             props: ['variant'],
@@ -175,6 +179,23 @@ describe('support/[[id]].vue page', () => {
     it('renders user tab component', () => {
       const wrapper = mountComponent()
       expect(wrapper.find('.mod-support-find-user').exists()).toBe(true)
+    })
+
+    // plans/active/2026-09-27-lockdown-switch.md section 11.11: the Lockdown
+    // tab is last and red.
+    it('renders the Lockdown tab component', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.find('.mod-support-lockdown').exists()).toBe(true)
+    })
+
+    it('renders the Lockdown tab title in red, after every other tab', () => {
+      const wrapper = mountComponent()
+      const titles = wrapper.findAll('.b-tab').map((t) => t.text())
+      expect(titles[titles.length - 1]).toContain('Lockdown')
+      expect(titles[0]).not.toContain('Lockdown')
+      const lockdownTitle = wrapper.find('[data-testid="lockdown-tab-title"]')
+      expect(lockdownTitle.exists()).toBe(true)
+      expect(lockdownTitle.classes()).toContain('text-danger')
     })
   })
 
@@ -259,6 +280,33 @@ describe('support/[[id]].vue page', () => {
       await wrapper.vm.$nextTick()
       await flushPromises()
       expect(wrapper.vm.activeTab).toBe(1)
+    })
+
+    it('sets activeTab to 5 for the lockdown tab', async () => {
+      mockRouteQuery.value = { tab: 'lockdown' }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      await flushPromises()
+      expect(wrapper.vm.activeTab).toBe(5)
+    })
+  })
+
+  // A bookmarked or shared /support link with no ?tab must keep opening on
+  // User, same as before the Lockdown tab existed - it only jumps the
+  // default when there's actually an incident to react to (or the link asks
+  // for it explicitly, covered above).
+  describe('default tab', () => {
+    it('defaults to the User tab when no lockdown is active and no tab query param is set', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.vm.activeTab).toBe(0)
+    })
+
+    it('defaults to the Lockdown tab when a lockdown is active', () => {
+      const pinia = createPinia()
+      setActivePinia(pinia)
+      useLockdownStore().active = true
+      const wrapper = mountComponent(pinia)
+      expect(wrapper.vm.activeTab).toBe(5)
     })
   })
 })

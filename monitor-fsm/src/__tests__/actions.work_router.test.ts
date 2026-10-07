@@ -356,3 +356,36 @@ describe('recent merged PR dedup in work_router_decide', () => {
     expect(result._transition).toBe('PARALLEL_FIX_BUGS')
   })
 })
+
+// A task's deferral lived only in context.bugsFixed. A later VERIFY tick replaced that
+// list with its own batch, so the router re-dispatched three reports it had deferred an
+// hour earlier in the same iteration (10042/3, 10044/11, 10085/9) - and every iteration
+// after, since the DB still said open. The router now writes the deferral down.
+describe('task deferrals are recorded', () => {
+  it('marks a deferred bug deferred in the DB so it is not dispatched again', async () => {
+    upsertDiscourseBug(db, { topic: 9900, post: 3, reporter: 'r', excerpt: 'Mail to AOL stopped', state: 'open' })
+    await workRouterHandler({}, {
+      phase: 'analysis', classifications: [],
+      bugsFixed: [{ topic: 9900, post: 3, outcome: 'deferred', reason: 'working-as-designed: external deliverability' }],
+    })
+    const bug = getDiscourseBug(db, 9900, 3)
+    expect(bug?.state).toBe('deferred')
+    expect(bug?.reason ?? '').toContain('working-as-designed')
+
+    const again = await workRouterHandler({}, { phase: 'analysis', classifications: [], bugsFixed: [] })
+    expect(JSON.stringify(again.bugBatch ?? [])).not.toContain('9900')
+  })
+
+  it.each([
+    'delegate timed out — re-run next iteration',
+    'delegate failed',
+    'adversarial review blocked: test proves nothing',
+  ])('leaves a retryable outcome open: %s', async (reason) => {
+    upsertDiscourseBug(db, { topic: 9901, post: 1, reporter: 'r', excerpt: 'The Give button does nothing on iOS.', state: 'open' })
+    await workRouterHandler({}, {
+      phase: 'analysis', classifications: [],
+      bugsFixed: [{ topic: 9901, post: 1, outcome: 'deferred', reason }],
+    })
+    expect(getDiscourseBug(db, 9901, 1)?.state).toBe('open')
+  })
+})

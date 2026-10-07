@@ -55,6 +55,18 @@ class SendAdminCommand extends Command
             return Command::SUCCESS;
         }
 
+        // While a lockdown holds email, generate nothing (plan 2026-09-27-lockdown-switch.md
+        // section 11.11). Admins a moderator queued before the press have already been sent
+        // back to pending by lockdown:tick, so they wait for a fresh approval.
+        $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+        $lockdown->ack('mail-loops');
+        if ($lockdown->held('email')) {
+            $lockdown->count('deferred:admin');
+            $this->info('Email is held by the lockdown; no admins sent.');
+
+            return Command::SUCCESS;
+        }
+
         if (!$this->acquireLock()) {
             $this->warn('Another instance of mail:admin:send is already running.');
 
@@ -134,8 +146,12 @@ class SendAdminCommand extends Command
      * Mirrors V1's process() query:
      * - complete IS NULL (not yet sent)
      * - pending = 0 (approved)
-     * - Created or edited within last 7 days
+     * - Created or edited within last 7 days, or its sendafter time fell within them
      * - sendafter has passed (if set)
+     *
+     * The 7 days stop an old, forgotten admin going out late. A sendafter time is a deliberate
+     * choice, so the window runs from it too: otherwise an admin approved more than 7 days
+     * before its sendafter time was never sent at all (V1 had the same gap).
      */
     protected function findReadyAdmins(?int $specificId = null): \Illuminate\Support\Collection
     {
@@ -149,6 +165,10 @@ class SendAdminCommand extends Command
                     ->orWhere(function ($q2) use ($cutoff) {
                         $q2->whereNotNull('editedat')
                             ->where('editedat', '>', $cutoff);
+                    })
+                    ->orWhere(function ($q3) use ($cutoff) {
+                        $q3->whereNotNull('sendafter')
+                            ->where('sendafter', '>', $cutoff);
                     });
             })
             ->where(function ($q) {
@@ -161,6 +181,24 @@ class SendAdminCommand extends Command
         }
 
         return $query->get();
+    }
+
+    /**
+     * Fill in the template variables, matching V1's constructMessage(). The MJML part is markup,
+     * so the values going into it are HTML-escaped: a member's name must not become a tag.
+     */
+    public static function personalise(array $admin, ?string $groupName, ?string $modsEmail, User $user): array
+    {
+        $names = ['$groupname', '$owneremail', '$membername', '$memberid'];
+        $values = [$groupName ?? '', $modsEmail ?? '', $user->fullname ?? '', (string) $user->id];
+
+        $admin['text'] = str_replace($names, $values, $admin['text']);
+
+        if (!empty($admin['mjml'])) {
+            $admin['mjml'] = str_replace($names, array_map('e', $values), $admin['mjml']);
+        }
+
+        return $admin;
     }
 
     /**
@@ -281,6 +319,13 @@ class SendAdminCommand extends Command
 
         $activeThreshold = now()->subDays(User::USER_INACTIVE_DAYS);
         $adminArr = (array) $admin;
+
+        // A designed version that will not build is dropped once here, so members get the plain
+        // text without every one of their copies failing to compile first.
+        if (!empty($adminArr['mjml']) && !AdminMail::mjmlBuilds($adminArr['mjml'])) {
+            Log::warning("Admin {$admin->id}: MJML part does not build, sending the plain text only.");
+            $adminArr['mjml'] = NULL;
+        }
 
         $interrupted = FALSE;
 
@@ -439,13 +484,7 @@ class SendAdminCommand extends Command
             }
 
             try {
-                // Substitute template variables in admin text, matching V1's constructMessage().
-                $substitutedAdmin = $adminArr;
-                $substitutedAdmin['text'] = str_replace(
-                    ['$groupname', '$owneremail', '$membername', '$memberid'],
-                    [$groupName ?? '', $modsEmail ?? '', $user->fullname ?? '', (string) $user->id],
-                    $substitutedAdmin['text']
-                );
+                $substitutedAdmin = self::personalise($adminArr, $groupName, $modsEmail, $user);
 
                 $mailable = new AdminMail($user, $substitutedAdmin, $groupName, $modsEmail, $groupShort, $volunteers);
 

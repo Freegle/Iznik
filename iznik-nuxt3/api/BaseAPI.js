@@ -78,6 +78,11 @@ export default class BaseAPI {
   }
 
   async $requestv2(method, path, config, logError = true, body = null) {
+    // Sentry groups events by title, so a title must name the endpoint, not this one request:
+    // the query string below gains loggedInAs and a request counter, which made every failure
+    // a new issue (a page-wide poll such as /lockdown opened one per member per blip).
+    const reportPath = path.split('?')[0]
+
     // timer++
     // const timerLabel = path + ' api-' + timer
 
@@ -289,7 +294,7 @@ export default class BaseAPI {
         // when unloading (user navigated away — expected).
         if (typeof Sentry?.captureMessage === 'function') {
           Sentry.captureMessage(
-            `API network failure ${method} ${path}: ${e.message}`,
+            `API network failure ${method} ${reportPath}: ${e.message}`,
             {
               level: 'warning',
               tags: { api_path: path, error_type: 'network' },
@@ -335,7 +340,7 @@ export default class BaseAPI {
         if (typeof Sentry?.captureMessage === 'function') {
           Sentry.captureMessage(
             'API2 request failed ' +
-              path +
+              reportPath +
               ' returned HTTP ' +
               status +
               ' status ' +

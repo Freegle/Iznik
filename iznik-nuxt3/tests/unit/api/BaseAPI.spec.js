@@ -162,6 +162,22 @@ describe('BaseAPI', () => {
 
       expect(mockCaptureMessage).toHaveBeenCalled()
     })
+
+    it('names the endpoint without its query string, so failures group in Sentry', async () => {
+      mockFetch.mockResolvedValue([500, { error: 'Server error' }])
+
+      const api = createApi()
+
+      try {
+        await api.$requestv2('GET', '/lockdown?x=1', {})
+      } catch (e) {
+        // expected
+      }
+
+      const title = mockCaptureMessage.mock.calls[0][0]
+      expect(title).toMatch(/^API2 request failed \/lockdown returned HTTP 500/)
+      expect(title).not.toContain('?')
+    })
   })
 
   describe('successful responses', () => {
@@ -195,6 +211,24 @@ describe('BaseAPI', () => {
           level: 'warning',
           tags: expect.objectContaining({ error_type: 'network' }),
         })
+      )
+    })
+
+    it('names the endpoint without its query string on a network failure', async () => {
+      mockMiscStore.online = true
+      mockFetch.mockRejectedValue(new Error('Too many retries, give up'))
+
+      const api = createApi()
+
+      try {
+        await api.$requestv2('GET', '/lockdown?x=1', {})
+      } catch (e) {
+        // expected to throw
+      }
+
+      expect(mockCaptureMessage).toHaveBeenCalledWith(
+        'API network failure GET /lockdown: Too many retries, give up',
+        expect.anything()
       )
     })
 

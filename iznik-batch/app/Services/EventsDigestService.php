@@ -170,6 +170,7 @@ class EventsDigestService
             ->orderBy('communityevents_dates.start')
             ->select([
                 'communityevents.id',
+                'communityevents.userid',
                 'communityevents.title',
                 'communityevents.location',
                 'communityevents.description',
@@ -248,6 +249,7 @@ class EventsDigestService
 
             $eventsById[(int) $event->id] = [
                 'id'           => (int) $event->id,
+                'userid'       => $event->userid !== null ? (int) $event->userid : null,
                 'title'        => $decode($event->title),
                 'location'     => $decode($event->location),
                 'description'  => $decode($event->description),

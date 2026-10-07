@@ -86,3 +86,18 @@ test('honours an alternative repo url', () => {
 
   assert.match(r.calls[0].cmd, /https:\/\/example\.test\/thing\.git \/tmp\/x/)
 })
+
+// The image creates the checkout directory empty (Dockerfile mkdir). That must read as "not
+// cloned yet": a pull in an empty folder fails and nothing ever clones, which is how the
+// production helper ran without a codebase from 2026-09-02 to 2026-10-03.
+test('an empty pre-created directory is cloned into, not pulled', () => {
+  const r = recorder()
+  const status = syncCodebase({
+    dir: '/app/codebase',
+    run: r.run,
+    exists: (p) => p === '/app/codebase',
+  })
+  assert.equal(status.action, 'cloned')
+  assert.equal(status.error, null)
+  assert.match(r.calls[0].cmd, /^git clone --depth 1 /)
+})

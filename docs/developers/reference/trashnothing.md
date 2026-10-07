@@ -685,6 +685,10 @@ The same key now decides the immediate mails too, over a seven-day window
 (`UnifiedDigestService::ITEM_DEDUP_DAYS`). Past that, a member re-offering the same thing is
 news again and gets a fresh mail.
 
+While a [lockdown](../../ops/runbooks/lockdown.md) holds `email`, both the digest pass and the
+immediate-mail pass return before touching their cursor or watermark, so a held pass loses
+nothing and the next pass after the hold re-examines the same posts.
+
 Note the deliberate asymmetry: a repost is **not** collapsed on the browse feed. The feed
 collapses on `msgid` and nothing else, so each posting is its own card. Two postings days
 apart are two real posts, and the member meant to make both. The same is true of a

@@ -2,11 +2,12 @@
 
 namespace App\Mail\Newsfeed;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-class NewsfeedModNotifMail extends MjmlMailable
+class NewsfeedModNotifMail extends MjmlMailable implements DescribesMemberContent
 {
     /**
      * Transactional - a moderator notification - so it carries no List-Unsubscribe.
@@ -52,5 +53,31 @@ class NewsfeedModNotifMail extends MjmlMailable
             'userSite' => $userSite,
             'email'    => $this->recipientEmail,
         ]);
+    }
+
+    /**
+     * Each row carries its own newsfeed id and (since the additive fix alongside this) the
+     * poster's userid; a row built without 'userid' (e.g. an older test fixture) simply
+     * contributes nothing to users, rather than being rejected.
+     */
+    public function about(): array
+    {
+        $newsfeed = [];
+        $users = [];
+        foreach ($this->posts as $post) {
+            if (isset($post['id'])) {
+                $newsfeed[] = (int) $post['id'];
+            }
+            if (isset($post['userid'])) {
+                $users[] = (int) $post['userid'];
+            }
+        }
+
+        return [
+            'chatmessages' => [],
+            'messages' => [],
+            'newsfeed' => array_values(array_unique($newsfeed)),
+            'users' => array_values(array_unique($users)),
+        ];
     }
 }

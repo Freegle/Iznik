@@ -243,7 +243,7 @@ class JobIllustrationsService
             }
 
             if ($dryRun) {
-                // Don't call pollinations.ai (costs $); count and stop after reporting batch.
+                // Don't call the image generator (costs $); count and stop after reporting batch.
                 $wouldFetch += count($batchItems);
                 foreach ($batchItems as $item) {
                     Log::info("JobIllustrations dry-run: would fetch '{$item['name']}'");

@@ -14,10 +14,9 @@ use Illuminate\Support\Facades\Http;
  *
  * The last part is the one that matters. frontend-nginx asks the bucket for
  * every image the spool no longer holds. A bucket that is not public answers
- * 401 or 403; nginx falls through to the legacy share, and every image that
- * exists only in the bucket 404s with nothing anywhere naming the cause. Run
- * this before enabling the store and after any change to the bucket or its
- * keys. The schedule runs it every ten minutes with --report while the store
+ * 401 or 403, which nginx passes straight back, and every image the spool
+ * no longer holds breaks with nothing anywhere naming the cause. Run this
+ * after any change to the bucket or its keys. The schedule runs it every ten minutes with --report while the store
  * is enabled, so a bucket that goes dark (2026-09-28: public read and the key
  * both revoked at once, provider side) raises a Sentry error within minutes
  * instead of being found on a status question an hour later.

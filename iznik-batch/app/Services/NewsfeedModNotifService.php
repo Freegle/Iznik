@@ -170,6 +170,7 @@ class NewsfeedModNotifService
                     'added'      => $post->added,
                     'userName'   => $author?->displayname ?: 'A freegler',
                     'userAvatar' => $this->resolveAvatarUrl($author),
+                    'userid'     => (int) $post->userid,
                 ];
             }
 

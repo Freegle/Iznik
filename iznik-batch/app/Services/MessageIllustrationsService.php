@@ -271,7 +271,7 @@ class MessageIllustrationsService
 
             if (! empty($newMessages)) {
                 if ($dryRun) {
-                    // Don't call pollinations.ai (costs $) on dry-run; just count.
+                    // Don't call the image generator (costs $) on dry-run; just count.
                     $wouldFetch += count($newMessages);
                     foreach ($newMessages as $msg) {
                         Log::info("MessageIllustrations dry-run: would fetch '{$msg['itemName']}' for message {$msg['msgid']}");

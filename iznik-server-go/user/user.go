@@ -19,6 +19,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/emailhygiene"
 	"github.com/freegle/iznik-server-go/location"
+	"github.com/freegle/iznik-server-go/lockdown"
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/reachqueue"
@@ -1863,6 +1864,12 @@ func handleRatingReviewed(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRe
 		}
 	}
 
+	// Section 11.3 of the lockdown plan: POST /user RatingReviewed is a moderator
+	// action, refused outright while "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
+	}
+
 	db.Table("ratings").Where("id = ?", req.Ratingid).Update("reviewrequired", gorm.Expr("0"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -2521,6 +2528,13 @@ func PatchUser(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusForbidden, "Not authorized to moderate this user")
 		}
 
+		// Section 11.3 of the lockdown plan: PATCH /user's moderation statuses
+		// (chatmodstatus, newsfeedmodstatus, and a moderator setting someone else's
+		// trustlevel below) are refused outright while "mods" is held.
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
+
 		// chatmodstatus is an ENUM. Without this check an unrecognised value is
 		// coerced to '' by MySQL in non-strict mode, which reads back as neither
 		// Moderated nor Fully and so quietly drops the member out of the spam
@@ -2571,6 +2585,10 @@ func PatchUser(c *fiber.Ctx) error {
 			}
 		}
 
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
+
 		db.Table("users").Where("id = ?", req.ID).Update("newsfeedmodstatus", *req.Newsfeedmodstatus)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
@@ -2606,6 +2624,12 @@ func PatchUser(c *fiber.Ctx) error {
 
 	// Self-only updates always target the logged-in user.
 	if req.Displayname != nil {
+		// Section 11.3 of the lockdown plan (Profile/"posts" row): a member
+		// changing their public-facing name is refused while "posts" is held.
+		if lockdown.GateMember(c, myid, "posts") {
+			return nil
+		}
+
 		// None of these three
 		// assignments reference another assigned column.
 		db.Table("users").Where("id = ?", myid).Updates(map[string]interface{}{
@@ -2667,6 +2691,12 @@ func PatchUser(c *fiber.Ctx) error {
 	}
 
 	if req.Aboutme != nil {
+		// Section 11.3 of the lockdown plan (Profile/"posts" row): a member
+		// editing their "about me" text is refused while "posts" is held.
+		if lockdown.GateMember(c, myid, "posts") {
+			return nil
+		}
+
 		// Insert a new aboutme entry. The most recent is fetched via ORDER BY timestamp DESC LIMIT 1.
 		db.Table("users_aboutme").Create(map[string]interface{}{
 			"userid":    myid,
@@ -2746,6 +2776,14 @@ func PatchUser(c *fiber.Ctx) error {
 		}
 
 		if isMod {
+			// A moderator setting someone's trust level is a moderation status
+			// change, refused while "mods" is held (section 11.3 of the lockdown
+			// plan) - the self-service Basic/Declined path below is a personal
+			// setting, not moderation, and stays ungated.
+			if lockdown.GateMod(c, myid) {
+				return nil
+			}
+
 			if *req.Trustlevel == "" {
 				db.Table("users").Where("id = ?", trustTarget).Update("trustlevel", gorm.Expr("NULL"))
 			} else {
@@ -3036,6 +3074,13 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
 	}
 
+	// A TrashNothing member is a partner's member, not one of ours: their account is never merged
+	// with a Freegle account, whoever asks (.claude/rules/conventions.md). ModTools refuses this
+	// too, but only by looking at the email typed in, so a merge by id went straight through.
+	if isTrashNothingAccount(db, uint64(req.ID1)) != isTrashNothingAccount(db, uint64(req.ID2)) {
+		return fiber.NewError(fiber.StatusBadRequest, "You can't merge a TrashNothing member with a Freegle account. Add a note to each to say they are the same person.")
+	}
+
 	if err := MergeUsersTx(db, uint64(req.ID1), uint64(req.ID2), myid); err != nil {
 		return err
 	}
@@ -3050,6 +3095,17 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 // heal (see FindTNCandidates) can merge a member's twin accounts through
 // exactly the moderator-merge code path.
 func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
+	// Two different TrashNothing ids are two different TrashNothing members. Merging them keeps one
+	// id and drops the other, which loses that member for good (Discourse: pchide251 and
+	// brianandi170). Every merge path comes through here: the moderator merge and the TN
+	// divergence heal, whose own case - one twin stamped, the other not - is still allowed.
+	var tn1, tn2 *uint64
+	db.Table("users").Select("tnuserid").Where("id = ?", id1).Scan(&tn1)
+	db.Table("users").Select("tnuserid").Where("id = ?", id2).Scan(&tn2)
+	if tn1 != nil && tn2 != nil && *tn1 != *tn2 {
+		return fiber.NewError(fiber.StatusBadRequest, "These accounts belong to two different TrashNothing members and can't be merged.")
+	}
+
 	// All merge operations run inside a single transaction (V1 parity).
 	// id1 = DISCARD (source), id2 = KEEP (destination). All data moves FROM id1 TO id2.
 	tx := db.Begin()
@@ -3767,4 +3823,22 @@ func GetUserLogins(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(logins)
+}
+
+// isTrashNothingAccount reports whether the user is a TrashNothing member: stamped with a
+// tnuserid, or with a TrashNothing address as their preferred email. A non-preferred
+// TrashNothing address does not count, since volunteers may also use TrashNothing. Same
+// definition as the membership package's, which this package cannot import.
+func isTrashNothingAccount(db *gorm.DB, userid uint64) bool {
+	var stamped int64
+	db.Table("users").Where("id = ? AND tnuserid IS NOT NULL", userid).Count(&stamped)
+	if stamped > 0 {
+		return true
+	}
+
+	var tnPreferred int64
+	db.Table("users_emails").
+		Where("userid = ? AND preferred = 1 AND email LIKE ?", userid, "%@user.trashnothing.com").
+		Count(&tnPreferred)
+	return tnPreferred > 0
 }

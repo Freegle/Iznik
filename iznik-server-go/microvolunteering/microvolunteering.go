@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/modmessaging"
@@ -156,6 +157,16 @@ func GetChallenge(c *fiber.Ctx) error {
 			ChallengeEEELabel,
 			ChallengePhotoRotate,
 		}
+	}
+
+	// Section 11.3 of the lockdown plan: while "mods" or "posts" is held, no new
+	// microvolunteering challenges are offered - not a refusal (nothing was
+	// attempted that needs blocking), just the same silent "nothing to offer right
+	// now" response already used below for declined/excluded trust levels, so
+	// members aren't asked to help moderate or check posts while incident response
+	// is under way.
+	if lockdown.Held("mods") || lockdown.Held("posts") {
+		return c.JSON(fiber.Map{})
 	}
 
 	// Get user's trust level
@@ -840,6 +851,12 @@ func ModFeedback(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator")
 	}
 
+	// Section 11.3 of the lockdown plan: PATCH /microvolunteering is a moderator
+	// action, refused outright while "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
+	}
+
 	var req ModFeedbackRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
@@ -865,7 +882,8 @@ func ModFeedback(c *fiber.Ctx) error {
 // currently live (Approved) on - its home group AND any rippled-out copies. Used once
 // the aggregate review quorum is reached (from in-app CheckMessage checks or website
 // reports) or on a moderator Back to Pending, so every affected community's moderators
-// see the post. Only Approved rows are touched. Exported so the moderation path reuses it.
+// see the post. Only live (Approved, not deleted) rows are touched: a copy withdrawn from its
+// community stays withdrawn. Exported so the moderation path reuses it.
 //
 // Every group whose copy is pulled back gets a Message/Hold log row carrying the reason,
 // so its moderators can see why a post they may never have looked at is in their queue
@@ -888,13 +906,13 @@ func SendForReviewAllGroupsWithRippledReason(db *gorm.DB, msgid uint64, reason s
 
 	var flipped []uint64
 	db.Table("messages_groups").Select("groupid").
-		Where("msgid = ? AND collection = ?", msgid, utils.COLLECTION_APPROVED).
+		Where("msgid = ? AND collection = ? AND deleted = 0", msgid, utils.COLLECTION_APPROVED).
 		Scan(&flipped)
 	if len(flipped) == 0 {
 		return nil
 	}
 
-	db.Table("messages_groups").Where("msgid = ? AND collection = ?", msgid, utils.COLLECTION_APPROVED).
+	db.Table("messages_groups").Where("msgid = ? AND collection = ? AND deleted = 0", msgid, utils.COLLECTION_APPROVED).
 		Updates(map[string]interface{}{"collection": utils.COLLECTION_PENDING, "spamreason": reason})
 
 	var rippledGroups []uint64

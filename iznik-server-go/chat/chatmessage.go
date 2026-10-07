@@ -12,6 +12,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/firstreply"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
@@ -1284,18 +1285,38 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator")
 	}
 
+	// Section 11.3 of the lockdown plan: chatmessages moderation Approve stays
+	// allowed (there is no subject/body field to carry a composed message, so it is
+	// inherently the basic button); ApproveAllFuture changes the member's moderation
+	// status and is refused along with the rest.
 	switch req.Action {
 	case "Approve":
+		lockdown.CountApproval(myid)
 		return approveChatMessage(c, db, myid, req.ID, false)
 	case "ApproveAllFuture":
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		return approveChatMessage(c, db, myid, req.ID, true)
 	case "Reject":
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		return rejectChatMessage(c, db, myid, req.ID)
 	case "Hold":
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		return holdChatMessage(c, db, myid, req.ID)
 	case "Release":
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		return releaseChatMessage(c, db, myid, req.ID)
 	case "Redact":
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
 		return redactChatMessage(c, db, myid, req.ID)
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid action: "+req.Action)

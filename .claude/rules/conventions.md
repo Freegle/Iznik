@@ -78,6 +78,15 @@ Disabling a button does not achieve this. The list is fetched from `/memberships
 that only hides the interface leaves the data one call away. If the capability is not wanted,
 the code goes.
 
+## TrashNothing accounts are never moderators, and are never merged
+
+A TrashNothing account (a `tnuserid` stamp, or a preferred `@user.trashnothing.com` address)
+is a partner's member, not a volunteer. It must not hold Owner or Moderator on any community;
+`PATCH /memberships` refuses the promotion and `discourse:not-signed-up` lists any that do.
+
+When a volunteer has both a Freegle account and a TrashNothing account, do not merge them.
+They stay separate; remove the role from the TrashNothing one instead.
+
 ## See also
 
 - `docs/developers/reference/coding-standards.md` - the rest of the coding rules.

@@ -63,6 +63,14 @@ abstract class TestCase extends BaseTestCase
         // the same process, long after its transaction rolled back, and mail
         // in an unrelated test would silently stop being generated.
         app(\App\Services\Mail\MailSuppressionService::class)->flushCache();
+        // LockdownService caches the active lockdown row in a static,
+        // process-wide property for up to 5 seconds (section 11.6, so a
+        // long-running batch command doesn't hit the DB on every count()
+        // call). A test that presses a lockdown leaves that cache populated
+        // after its own DB transaction rolls back, which would otherwise
+        // leak an "active" lockdown into whatever test runs next in the same
+        // process, whether or not that test mentions Lockdown at all.
+        \App\Services\Lockdown\LockdownService::flushCache();
         // Force mail driver to 'array' for testing.
         // Docker's MAIL_MAILER=smtp would otherwise override phpunit.xml's setting.
         config(['mail.default' => 'array']);

@@ -172,6 +172,18 @@
             :key="'rippling-analytics-' + ripplingBump"
           />
         </b-tab>
+
+        <!-- AI Helper Tab: every question put to the AI Support Helper and
+             how the volunteer rated the answer, so poor answers can be found. -->
+        <b-tab @click="onSupportAITab">
+          <template #title>
+            <h2 class="ms-2 me-2">AI Helper</h2>
+          </template>
+          <ModSysAdminSupportAI
+            v-if="showSupportAI"
+            :key="'supportai-' + supportAIBump"
+          />
+        </b-tab>
       </b-tabs>
     </div>
     <NoticeMessage v-else variant="warning">
@@ -212,6 +224,8 @@ const showRecommendations = ref(false)
 const recommendationsBump = ref(0)
 const showReengage = ref(false)
 const reengageBump = ref(0)
+const showSupportAI = ref(false)
+const supportAIBump = ref(0)
 
 // Top-level tab index per deep-link query param. Outgoing/incoming both open the
 // Mail tab; scrolling/recommendations/reengagement all open the Behaviour tab.
@@ -230,6 +244,7 @@ const topTabMap = {
   recommendations: 3,
   reengagement: 3,
   rippling: 4,
+  aihelper: 5,
 }
 
 function onHousekeepingTab() {
@@ -293,6 +308,11 @@ function onRipplingTab() {
   ripplingBump.value = Date.now()
 }
 
+function onSupportAITab() {
+  showSupportAI.value = true
+  supportAIBump.value = Date.now()
+}
+
 onMounted(() => {
   const tab = route.query.tab
   if (tab && topTabMap[tab] !== undefined) {
@@ -319,6 +339,7 @@ onMounted(() => {
       behaviourSubTab.value = 2
       onReengageTab()
     } else if (tab === 'rippling') onRipplingTab()
+    else if (tab === 'aihelper') onSupportAITab()
   } else {
     // Default to showing housekeeping
     onHousekeepingTab()

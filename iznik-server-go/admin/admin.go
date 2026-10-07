@@ -8,6 +8,8 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
+	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -23,6 +25,8 @@ type Admin struct {
 	Groupid       *uint64    `json:"groupid"`
 	Subject       *string    `json:"subject"`
 	Text          *string    `json:"text"`
+	// Mjml is the optional MJML version of the body, used for the HTML part. Text stays the plain-text part.
+	Mjml          *string    `json:"mjml"`
 	CTA_Text      *string    `json:"ctatext"`
 	CTA_Link      *string    `json:"ctalink"`
 	Created       *time.Time `json:"created"`
@@ -37,6 +41,9 @@ type Admin struct {
 	Template      *string    `json:"template"`
 	Editprotected bool       `json:"editprotected"`
 	Modguidance   *string    `json:"modguidance"`
+	// Unedited is set on a copy of a suggested ADMIN that is still exactly as suggested; it can be
+	// approved without a test.
+	Unedited bool `json:"unedited" gorm:"-"`
 }
 
 // AdminUser is the creator of an admin, as V1 returned it.
@@ -46,8 +53,22 @@ type AdminUser struct {
 }
 
 // adminColumns are the admins columns returned to moderators. V1's Admin publicatts, plus modguidance.
-const adminColumns = "id, createdby, groupid, subject, text, ctatext, ctalink, created, complete, heldby, heldat, " +
+const adminColumns = "id, createdby, groupid, subject, text, mjml, ctatext, ctalink, created, complete, heldby, heldat, " +
 	"pending, parentid, activeonly, sendafter, essential, template, editprotected, modguidance"
+
+// addUnedited marks the copies of suggested ADMINs that are still exactly as suggested.
+func addUnedited(db *gorm.DB, admins []Admin) {
+	ids := []uint64{}
+	for _, a := range admins {
+		if a.Parentid != nil {
+			ids = append(ids, a.ID)
+		}
+	}
+	unedited := uneditedCopies(db, ids)
+	for i := range admins {
+		admins[i].Unedited = unedited[admins[i].ID]
+	}
+}
 
 // addCreators fills in createdby as {id, displayname}.
 func addCreators(db *gorm.DB, admins []Admin) {
@@ -133,6 +154,7 @@ func GetAdmin(c *fiber.Ctx) error {
 
 	one := []Admin{admin}
 	addCreators(db, one)
+	addUnedited(db, one)
 	admin = one[0]
 
 	return c.JSON(admin)
@@ -169,7 +191,7 @@ func ListAdmins(c *fiber.Ctx) error {
 	// (absent/true/false) - 3 x 3 = 9 possible rendered forms, all proven by
 	// the retired ormharness (shapes.json / TestTier3Shapes_3d5506803f0c,
 	// removed in d22ba1d6c).
-	tx := db.Table("admins a").Select("a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, " +
+	tx := db.Table("admins a").Select("a.id, a.createdby, a.groupid, a.subject, a.text, a.mjml, a.ctatext, " +
 		"a.ctalink, a.created, a.complete, a.heldby, a.heldat, a.pending, a.parentid, a.activeonly, " +
 		"a.sendafter, a.essential, a.template, a.editprotected, a.modguidance")
 
@@ -209,6 +231,7 @@ func ListAdmins(c *fiber.Ctx) error {
 	}
 
 	addCreators(db, admins)
+	addUnedited(db, admins)
 
 	return c.JSON(admins)
 }
@@ -219,6 +242,7 @@ type PostAdminRequest struct {
 	GroupID       uint64  `json:"groupid"`
 	Subject       string  `json:"subject"`
 	Text          string  `json:"text"`
+	Mjml          *string `json:"mjml,omitempty"`
 	CTA_Text      *string `json:"ctatext,omitempty"`
 	CTA_Link      *string `json:"ctalink,omitempty"`
 	Essential     *bool   `json:"essential,omitempty"`
@@ -226,9 +250,52 @@ type PostAdminRequest struct {
 	Editprotected *bool   `json:"editprotected,omitempty"`
 	SendAfter     *string `json:"sendafter,omitempty"`
 	Modguidance   *string `json:"modguidance,omitempty"`
+	// Email is the one address a Test goes to.
+	Email string `json:"email,omitempty"`
+
 }
 
-// PostAdmin handles POST /admin - action-based handler for Create, Hold, Release.
+// checkNewAdmin applies the rules shared by Test and Create: who may send to the group, and what
+// the content may contain. It returns nil if the request is acceptable.
+func checkNewAdmin(myid uint64, req PostAdminRequest) error {
+	if req.GroupID == 0 && !user.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
+	}
+
+	if req.GroupID > 0 && !user.IsModOfGroup(myid, req.GroupID) {
+		return fiber.NewError(fiber.StatusForbidden, "Must be a moderator of the group")
+	}
+
+	if req.Subject == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "subject is required")
+	}
+
+	if strings.TrimSpace(req.Text) == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "text is required")
+	}
+
+	if msg := checkText(req.Text); msg != "" {
+		return fiber.NewError(fiber.StatusBadRequest, msg)
+	}
+
+	if req.Mjml != nil {
+		if msg := checkMjml(*req.Mjml); msg != "" {
+			return fiber.NewError(fiber.StatusBadRequest, msg)
+		}
+	}
+
+	return nil
+}
+
+// nilIfBlank stores an empty optional MJML part as NULL.
+func nilIfBlank(s *string) interface{} {
+	if s == nil || strings.TrimSpace(*s) == "" {
+		return nil
+	}
+	return *s
+}
+
+// PostAdmin handles POST /admin - action-based handler for Create, Test, Hold, Release.
 //
 // @Summary Create an admin message
 // @Tags admin
@@ -240,6 +307,10 @@ func PostAdmin(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	var req PostAdminRequest
@@ -288,19 +359,42 @@ func PostAdmin(c *fiber.Ctx) error {
 		db.Table("admins").Where("id = ?", req.ID).Update("heldby", gorm.Expr("NULL"))
 		return c.JSON(fiber.Map{"success": true})
 
-	default:
+	case "Test":
+		// Send this ADMIN, as it would go to a member, to one address. The token returned is
+		// what lets Create go ahead with exactly this content.
+		if err := checkNewAdmin(myid, req); err != nil {
+			return err
+		}
+
+		email := checkTestEmail(req.Email)
+		if email == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "Give one email address to send the test to")
+		}
+
+		content := contentOf(req)
+		if err := queue.QueueTask(queue.TaskEmailAdminTest, map[string]interface{}{
+			"user_id":   myid,
+			"email":     email,
+			"groupid":   content.GroupID,
+			"subject":   content.Subject,
+			"text":      content.Text,
+			"mjml":      content.Mjml,
+			"ctatext":   content.CTAText,
+			"ctalink":   content.CTALink,
+			"essential": content.Essential,
+			"template":  content.Template,
+		}); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to queue test email")
+		}
+
+		return c.JSON(fiber.Map{"success": true, "testtoken": testToken(myid, content)})
+
+	case "", "Create":
 		// Create new admin.
-		if req.GroupID == 0 && !user.IsAdminOrSupport(myid) {
-			return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
+		if err := checkNewAdmin(myid, req); err != nil {
+			return err
 		}
 
-		if req.GroupID > 0 && !user.IsModOfGroup(myid, req.GroupID) {
-			return fiber.NewError(fiber.StatusForbidden, "Must be a moderator of the group")
-		}
-
-		if req.Subject == "" {
-			return fiber.NewError(fiber.StatusBadRequest, "subject is required")
-		}
 
 		essential := true
 		if req.Essential != nil {
@@ -322,6 +416,7 @@ func PostAdmin(c *fiber.Ctx) error {
 			"groupid":       utils.NilIfZero(req.GroupID),
 			"subject":       req.Subject,
 			"text":          req.Text,
+			"mjml":          nilIfBlank(req.Mjml),
 			"ctatext":       req.CTA_Text,
 			"ctalink":       req.CTA_Link,
 			"essential":     essential,
@@ -347,6 +442,11 @@ func PostAdmin(c *fiber.Ctx) error {
 		}
 
 		return c.JSON(fiber.Map{"id": id})
+
+	default:
+		// An action this API does not know must not fall through to creating an ADMIN: a newer
+		// ModTools asking for one would otherwise make a pending ADMIN by accident.
+		return fiber.NewError(fiber.StatusBadRequest, "Unknown action "+req.Action)
 	}
 }
 
@@ -354,6 +454,7 @@ type PatchAdminRequest struct {
 	ID            uint64  `json:"id"`
 	Subject       *string `json:"subject,omitempty"`
 	Text          *string `json:"text,omitempty"`
+	Mjml          *string `json:"mjml,omitempty"`
 	Complete      *string `json:"complete,omitempty"`
 	Pending       *bool   `json:"pending,omitempty"`
 	CTA_Text      *string `json:"ctatext,omitempty"`
@@ -363,6 +464,43 @@ type PatchAdminRequest struct {
 	Editprotected *bool   `json:"editprotected,omitempty"`
 	// Sendafter is held raw so an explicit null or "" (clear it) can be told from absent.
 	Sendafter json.RawMessage `json:"sendafter,omitempty"`
+	// TestToken is what a Test returned. Approving (pending false) an ADMIN with an MJML version needs
+	// one for exactly the content being approved, unless it is a copy of a suggestion nobody edited.
+	TestToken string `json:"testtoken,omitempty"`
+}
+
+// approvedContent is what an ADMIN will send once this PATCH is applied: the saved content with
+// any fields the request changes.
+func approvedContent(db *gorm.DB, req PatchAdminRequest) emailContent {
+	content := storedContent(db, req.ID)
+	if req.Subject != nil {
+		content.Subject = *req.Subject
+	}
+	if req.Text != nil {
+		content.Text = *req.Text
+	}
+	if req.Mjml != nil {
+		content.Mjml = *req.Mjml
+	}
+	if req.CTA_Text != nil {
+		content.CTAText = *req.CTA_Text
+	}
+	if req.CTA_Link != nil {
+		content.CTALink = *req.CTA_Link
+	}
+	if req.Essential != nil {
+		content.Essential = *req.Essential
+	}
+	if req.Template != nil {
+		content.Template = *req.Template
+	}
+	return content
+}
+
+// contentChanges reports whether the request edits what the email will say.
+func contentChanges(req PatchAdminRequest) bool {
+	return req.Subject != nil || req.Text != nil || req.Mjml != nil || req.CTA_Text != nil ||
+		req.CTA_Link != nil || req.Essential != nil || req.Template != nil
 }
 
 // PatchAdmin handles PATCH /admin - update an admin.
@@ -401,6 +539,10 @@ func PatchAdmin(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	var req PatchAdminRequest
@@ -444,11 +586,40 @@ func PatchAdmin(c *fiber.Ctx) error {
 		}
 	}
 
+	if req.Text != nil {
+		if strings.TrimSpace(*req.Text) == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "text is required")
+		}
+		if msg := checkText(*req.Text); msg != "" {
+			return fiber.NewError(fiber.StatusBadRequest, msg)
+		}
+	}
+	if req.Mjml != nil {
+		if msg := checkMjml(*req.Mjml); msg != "" {
+			return fiber.NewError(fiber.StatusBadRequest, msg)
+		}
+	}
+
+	// An ADMIN with an MJML version does not go to members until somebody has seen a test of
+	// exactly what will be sent: designed email is easy to get wrong in ways the text never is.
+	// Text-only ADMINs, and copies of a suggested ADMIN that nobody has changed, need no test.
+	if req.Pending != nil && !*req.Pending {
+		content := approvedContent(db, req)
+		unedited := !contentChanges(req) && uneditedCopies(db, []uint64{req.ID})[req.ID]
+		if strings.TrimSpace(content.Mjml) != "" && !unedited && !testTokenValid(req.TestToken, myid, content) {
+			return fiber.NewError(fiber.StatusBadRequest,
+				"This ADMIN has a designed (MJML) version, so send a test of it before approving it. Any change after the test needs a new test.")
+		}
+	}
+
 	if req.Subject != nil {
 		db.Table("admins").Where("id = ?", req.ID).Update("subject", *req.Subject)
 	}
 	if req.Text != nil {
 		db.Table("admins").Where("id = ?", req.ID).Update("text", *req.Text)
+	}
+	if req.Mjml != nil {
+		db.Table("admins").Where("id = ?", req.ID).Update("mjml", nilIfBlank(req.Mjml))
 	}
 	if req.Complete != nil {
 		// Completing is terminal, so drop the hold with it. Leaving it set pinned the
@@ -505,6 +676,10 @@ func DeleteAdmin(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	// Support both body and query parameter for ID.

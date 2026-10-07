@@ -73,9 +73,24 @@ class CommunityNewsPlacesTest extends TestCase
 
     public function test_the_area_name_survives_even_when_it_sits_outside(): void
     {
-        // Oswestry Freegle's area is named "Wrecsam", 12.7 miles away and over
-        // the border. Dropping the name from the prompt would have the email
-        // disown its own subject line.
+        // A group with no town or place of its own is anchored on the closest
+        // town, outside its boundary. Dropping that name from the prompt would
+        // have the email disown its own subject line.
+        $g = $this->createTestGroup(['lat' => 52.866, 'lng' => -3.021, 'settings' => ['communitynews' => 1]]);
+        $this->boundary($g, 52.866, -3.021, 0.08);
+
+        DB::table('towns')->insert(['name' => 'Wrecsam', 'lat' => 53.05, 'lng' => -3.00]);
+        $this->svc()->rebuildAreas();
+
+        $area = CommunityNewsArea::where('anchorgroupid', $g->id)->first();
+        $this->assertSame('Wrecsam', $area->name);
+        $this->assertContains('Wrecsam', $this->svc()->placesCovered($area));
+    }
+
+    public function test_a_place_of_its_own_names_the_area(): void
+    {
+        // Oswestry Freegle was filed under Wrecsam, 12.7 miles away, because the
+        // curated towns have no Oswestry. The gazetteer has it, and it is closer.
         $this->place('Oswestry', 52.8620, -3.0550, 18743);
 
         $g = $this->createTestGroup(['lat' => 52.866, 'lng' => -3.021, 'settings' => ['communitynews' => 1]]);
@@ -85,10 +100,8 @@ class CommunityNewsPlacesTest extends TestCase
         $this->svc()->rebuildAreas();
 
         $area = CommunityNewsArea::where('anchorgroupid', $g->id)->first();
-        $places = $this->svc()->placesCovered($area);
-
-        $this->assertContains('Wrecsam', $places);
-        $this->assertContains('Oswestry', $places);
+        $this->assertSame('Oswestry', $area->name);
+        $this->assertContains('Oswestry', $this->svc()->placesCovered($area));
     }
 
     public function test_the_list_is_capped(): void

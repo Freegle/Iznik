@@ -2,23 +2,38 @@
 
 namespace App\Mail\Admin;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
 use App\Models\User;
+use App\Services\AdminMjmlSanitiser;
+use App\Services\MjmlCompilerService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
+use Illuminate\Support\Facades\Log;
 
-class AdminMail extends MjmlMailable
+class AdminMail extends MjmlMailable implements DescribesMemberContent
 {
     use LoggableEmail;
     use TrackableEmail;
 
     public User $user;
 
+    public ?int $adminId;
+
     public string $adminSubject;
 
     public string $adminText;
+
+    /** The sanitised MJML part, which replaces the text in the HTML part; NULL for a text-only ADMIN. */
+    public ?string $adminMjml;
+
+    /** Set for a test send: the one address it goes to, instead of the member. */
+    public ?string $testRecipient;
+
+    /** Why the MJML part would not build, when the email fell back to the plain text. */
+    public ?string $mjmlFailure = null;
 
     public ?string $ctaLink;
 
@@ -53,14 +68,19 @@ class AdminMail extends MjmlMailable
      * @param string|null $modsEmail Group mods email for reply-to
      * @param string|null $groupShort Group's nameshort for from address
      * @param array $volunteers Local volunteers [{id, displayname, firstname}, ...]
+     * @param string|null $testRecipient For a test send, the address it goes to; $user is then the moderator
      */
-    public function __construct(User $user, array $admin, ?string $groupName = null, ?string $modsEmail = null, ?string $groupShort = null, array $volunteers = [])
+    public function __construct(User $user, array $admin, ?string $groupName = null, ?string $modsEmail = null, ?string $groupShort = null, array $volunteers = [], ?string $testRecipient = null)
     {
         parent::__construct();
 
         $this->user = $user;
         $this->adminSubject = $admin['subject'];
         $this->adminText = $admin['text'];
+        $this->adminMjml = !empty($admin['mjml'])
+            ? app(AdminMjmlSanitiser::class)->sanitise($admin['mjml'])
+            : null;
+        $this->testRecipient = $testRecipient;
         $this->ctaLink = $admin['ctalink'] ?? null;
         $this->ctaText = $admin['ctatext'] ?? null;
         $this->groupName = $groupName;
@@ -75,10 +95,12 @@ class AdminMail extends MjmlMailable
         // Marketing opt-out shown for non-essential admins.
         $this->marketingOptOutUrl = !$this->essential ? $user->marketingOptOutUrl() : null;
 
+        $this->adminId = isset($admin['id']) ? (int) $admin['id'] : null;
+
         // Initialize email tracking.
         $this->initTracking(
-            'Admin',
-            $this->user->email_preferred,
+            $testRecipient ? 'AdminTest' : 'Admin',
+            $testRecipient ?? $this->user->email_preferred,
             $this->user->id,
             $admin['groupid'] ?? null,
             $this->adminSubject,
@@ -88,6 +110,21 @@ class AdminMail extends MjmlMailable
                 'essential' => $this->essential,
             ]
         );
+    }
+
+    /**
+     * Which admin this is, so lockdown:filter-spool can drop it from the send queue if the
+     * admin has been withdrawn (plan 2026-09-27-lockdown-switch.md section 11.11).
+     */
+    public function about(): array
+    {
+        return [
+            'chatmessages' => [],
+            'messages' => [],
+            'newsfeed' => [],
+            'users' => [],
+            'admins' => $this->adminId ? [$this->adminId] : [],
+        ];
     }
 
     /**
@@ -122,6 +159,7 @@ class AdminMail extends MjmlMailable
             'userSite' => $this->userSite,
             'adminSubject' => $this->adminSubject,
             'adminText' => $this->adminText,
+            'adminMjml' => $this->adminMjml,
             'ctaLink' => $this->ctaLink ? $this->trackedUrl($this->ctaLink, 'cta_button', 'cta') : null,
             'ctaText' => $this->ctaText,
             'groupName' => $this->groupName,
@@ -144,9 +182,31 @@ class AdminMail extends MjmlMailable
         // block were removed once the campaign was over; the generic template mechanism remains.)
         $mjmlView = $this->isMarketing ? "emails.mjml.admin.{$this->template}" : 'emails.mjml.admin.admin';
 
-        $result = $this->to($this->user->email_preferred, $this->user->displayname)
-            ->subject($this->getSubject())
-            ->mjmlView($mjmlView, $data, 'emails.text.admin.admin');
+        $result = ($this->testRecipient
+                ? $this->to($this->testRecipient)
+                : $this->to($this->user->email_preferred, $this->user->displayname))
+            ->subject($this->getSubject());
+
+        try {
+            $result->mjmlView($mjmlView, $data, 'emails.text.admin.admin');
+        } catch (\RuntimeException $e) {
+            if ($this->adminMjml === null) {
+                throw $e;
+            }
+
+            // The MJML part would not build. Members get the plain text instead of nothing, and a
+            // test send says why at the top, so the moderator can fix it.
+            $this->mjmlFailure = mb_substr($e->getPrevious()?->getMessage() ?? $e->getMessage(), 0, 500);
+            Log::warning('ADMIN MJML part did not build; sending the plain text', [
+                'admin_id' => $this->adminId,
+                'error' => $this->mjmlFailure,
+            ]);
+
+            $this->adminMjml = null;
+            $data['adminMjml'] = null;
+            $data['mjmlFailure'] = $this->testRecipient ? $this->mjmlFailure : null;
+            $result->mjmlView($mjmlView, $data, 'emails.text.admin.admin');
+        }
 
         // Add reply-to for group mods.
         if ($this->modsEmail) {
@@ -154,6 +214,23 @@ class AdminMail extends MjmlMailable
         }
 
         return $result->applyLogging('Admin');
+    }
+
+    /**
+     * Whether an MJML part builds on its own, once sanitised. SendAdminCommand checks this once per
+     * ADMIN so that a broken one is dropped up front rather than failing for every member.
+     */
+    public static function mjmlBuilds(string $mjml): bool
+    {
+        try {
+            app(MjmlCompilerService::class)->compile(
+                '<mjml><mj-body>' . app(AdminMjmlSanitiser::class)->sanitise($mjml) . '</mj-body></mjml>'
+            );
+
+            return TRUE;
+        } catch (\RuntimeException $e) {
+            return FALSE;
+        }
     }
 
     /**
@@ -177,9 +254,17 @@ class AdminMail extends MjmlMailable
     }
 
     /**
-     * Get the subject line - "ADMIN: " for essential admins, "NEWSLETTER: " for non-essential ones, and the subject unchanged for marketing templates.
+     * Get the subject line - the member's subject, with "TEST: " in front for a test send.
      */
     protected function getSubject(): string
+    {
+        return ($this->testRecipient ? 'TEST: ' : '') . $this->memberSubject();
+    }
+
+    /**
+     * The member's subject line - "ADMIN: " for essential admins, "NEWSLETTER: " for non-essential ones, and the subject unchanged for marketing templates.
+     */
+    protected function memberSubject(): string
     {
         if ($this->isMarketing) {
             return $this->adminSubject;

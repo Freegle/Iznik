@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-23
+last_reviewed: 2026-10-04
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/index.vue
@@ -73,7 +73,8 @@ you, on a map and as a list.
   "Closest", and to set how far away posts can come from.
 - Click any post to see the detail and, if it is an OFFER you want, to reply.
 
-Freegle remembers your filters between visits, so you only set them once.
+Freegle remembers your filters between visits, so you only set them once. The number of new
+posts shown on the Browse button counts only what your filters let through.
 
 ## How "rippling out" works
 

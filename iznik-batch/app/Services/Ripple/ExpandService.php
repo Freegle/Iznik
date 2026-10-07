@@ -1235,6 +1235,12 @@ class ExpandService
                     ->where('o.rippled_in', 0)
                     ->where('o.deleted', 0)
                     ->where('o.collection', 'Approved');
+            })
+            // A post its home community has sent back to pending never ripples again
+            // (rippling_blocked, written by the API's Back to pending): not on re-approval, and
+            // not after a repost or an expiry has removed its reach row (Discourse 9808/849).
+            ->whereNotExists(function ($sub) {
+                $sub->from('rippling_blocked as rb')->whereColumn('rb.msgid', 'ms.msgid');
             });
 
         if ($onlyMsgid !== null) {
