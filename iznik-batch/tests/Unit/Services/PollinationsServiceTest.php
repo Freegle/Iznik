@@ -162,6 +162,7 @@ class PollinationsServiceTest extends TestCase
                 && $request->hasHeader('Authorization', 'Bearer tok456')
                 && $body['prompt'] === 'a red chair'
                 && $body['steps'] === 8
+                && ! array_key_exists('seed', $body)
                 && ! array_key_exists('width', $body)
                 && ! array_key_exists('height', $body);
         });

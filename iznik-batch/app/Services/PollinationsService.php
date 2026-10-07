@@ -233,8 +233,10 @@ class PollinationsService
     /**
      * One Flux Schnell image from Cloudflare Workers AI.
      *
-     * Flux Schnell's input schema is closed: it takes only prompt, steps (max 8) and seed, and
-     * rejects width/height. The response is a JSON envelope with a base64 image.
+     * Flux Schnell's input schema is closed: it takes prompt and steps (max 8) only. Anything
+     * else, seed and width/height included, gets the whole request refused with HTTP 400
+     * (code 5006, "Additional or unevaluated properties"). The response is a JSON envelope
+     * with a base64 image.
      *
      * @return string|false|null Image bytes; false when rate limited (stop the batch); null when
      *                           this item failed (content refused, error, or not configured).
@@ -255,7 +257,7 @@ class PollinationsService
         try {
             $response = Http::withToken($token)
                 ->timeout($timeout)
-                ->post($url, ['prompt' => $prompt, 'steps' => 8, 'seed' => random_int(1, 999999)]);
+                ->post($url, ['prompt' => $prompt, 'steps' => 8]);
         } catch (\Throwable $e) {
             Log::warning("PollinationsService: Cloudflare request failed for '{$name}': " . $e->getMessage());
 
