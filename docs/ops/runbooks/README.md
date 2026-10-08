@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-29
+last_reviewed: 2026-10-07
 owner: Freegle dev team
 ---
 
@@ -91,6 +91,19 @@ stop and start makes a rejoin slower.
 - Stop with the service, never a kill; do not remove the data directory or touch the state
   file; a joining node refusing connections for 10 to 18 minutes is a full copy in
   progress, not a hang.
+
+## Weekly OS patching and reboots
+
+`freegle-maint` patches each production machine and reboots it when the patching needs
+it: one machine per night on a weekly rotation, never two at once. Around a reboot it
+moves traffic and work off the machine first and verifies everything on it before moving
+them back. It ships as dry runs until a person names each machine as live.
+
+- Full description, schedule, gates and how to turn it on:
+  **[automated-host-maintenance.md](automated-host-maintenance.md)**.
+- `freegle-maint status` shows the state; `freegle-maint pause` stops all of it.
+- The load balancer has no standby, so its reboot is a short outage, accepted at 04:00 UK
+  time on Monday.
 
 ## CookieYes watchdog says the login is lost
 

@@ -1,0 +1,12 @@
+# One scheduled maintenance slot (db, arbitrator, mail, docker, lb). Started by
+# the matching freegle-maint-<slot>.timer. Whether the run is live or a dry run
+# is decided by MAINT_LIVE_HOSTS in /etc/freegle-maint/freegle-maint.env.
+[Unit]
+Description=Freegle host maintenance, slot %i
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/var/www/FreegleDocker/scripts/maintenance/freegle-maint scheduled %i
+TimeoutStartSec=3h

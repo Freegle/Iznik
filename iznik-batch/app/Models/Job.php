@@ -67,16 +67,17 @@ class Job extends Model
         }
 
         $results = static::select('id', 'title', 'canonical_title', 'location', 'company', 'city', 'url', 'cpc', 'clickability')
-            // Expected value (cpc * clickability) discounted by a mild freshness
-            // factor, matching the public jobs page (Go job.GetJobs) so digest and
-            // web agree on ordering. Older WhatJobs postings are likelier already
-            // filled/closed (so a click redirects to a different job and doesn't
-            // convert), so decay the score with the posting age: factor 1.0 when
-            // fresh, floored at 0.5 by ~7 days. posted_at NULL -> treated as fresh.
-            // Selected as `score` so the variety step below can weight by it.
+            // Pay first, matching the public jobs page (Go job.GetJobs) so digest
+            // and web agree on ordering. Clickability is a count of title keywords
+            // seen in recently clicked jobs, not a click rate: it ranges far wider
+            // than cpc and favours whatever was shown before, so as a multiplier it
+            // let common 8p jobs outrank 36p ones. It only breaks ties at equal
+            // pay, discounted by posting age (older WhatJobs postings are likelier
+            // filled/closed): factor 1.0 when fresh, floored at 0.5 by ~7 days,
+            // posted_at NULL -> fresh.
             ->addSelect(new Alias(
                 new Arithmetic(
-                    new Arithmetic('cpc', '*', 'clickability'),
+                    'clickability',
                     '*',
                     new Greatest(
                         Value::of(0.5),
@@ -91,12 +92,13 @@ class Job extends Model
                         )
                     )
                 ),
-                'score'
+                'tiebreak'
             ))
             ->whereIn('id', $ids)
             ->where('cpc', '>=', self::MINIMUM_CPC)
             ->where('visible', 1)
-            ->orderBy('score', 'desc')
+            ->orderBy('cpc', 'desc')
+            ->orderBy('tiebreak', 'desc')
             ->orderBy('id')
             ->get();
 
@@ -107,23 +109,19 @@ class Job extends Model
 
         // Vary the picks across consecutive sends so the same user doesn't see
         // identical job rows every immediate-mode digest / chat notification —
-        // but WEIGHTED by score, not uniformly. A plain shuffle() threw away the
-        // score-DESC ordering above and took a uniform random sample of the
-        // (proximity-selected) pool, which is why clicked ads averaged a LOWER
-        // cpc than the pool: the revenue ranking was computed then discarded.
+        // but WEIGHTED by cpc, not uniformly, so the picks lean to better-paid
+        // jobs. A uniform shuffle would discard the pay ordering above.
         //
         // Weighted reservoir sampling (Efraimidis-Spirakis): each row gets key
-        // u^(1/score) with u uniform in (0,1]; taking the highest keys draws a
-        // sample without replacement in which higher-score rows are likelier to
-        // come first. So variety is preserved while the picks lean to higher
-        // expected revenue. Only applied when the pool exceeds the limit (below
-        // it there's nothing to choose, so score-DESC order stands — keeping the
-        // deterministic ordering the sub-limit tests assert).
+        // u^(1/cpc) with u uniform in (0,1]; taking the highest keys draws a
+        // sample without replacement in which better-paid rows are likelier to
+        // come first. Only applied when the pool exceeds the limit (below it
+        // there's nothing to choose, so the ordering above stands).
         if ($results->count() > $limit) {
             $results = $results->sortByDesc(function ($job) {
-                $score = max((float) $job->score, 1e-6);
+                $weight = max((float) $job->cpc, 1e-6);
                 $u = (mt_rand() + 1) / (mt_getrandmax() + 2); // uniform in (0,1)
-                return pow($u, 1.0 / $score);
+                return pow($u, 1.0 / $weight);
             })->values();
         }
 

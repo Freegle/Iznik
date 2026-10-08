@@ -1,0 +1,18 @@
+# Runs at boot only when a Docker-host maintenance left a resume marker, and
+# verifies the host came back: containers, batch-prod, Loki, status, monit.
+# Install: cp to /etc/systemd/system/, systemctl daemon-reload,
+# systemctl enable freegle-maint-resume.service. The Docker-host run refuses to
+# start unless this unit is enabled.
+[Unit]
+Description=Freegle host maintenance: verify the Docker host after its reboot
+After=freegle-docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/freegle-maint/resume
+
+[Service]
+Type=oneshot
+ExecStart=/var/www/FreegleDocker/scripts/maintenance/freegle-maint resume
+TimeoutStartSec=1h
+
+[Install]
+WantedBy=multi-user.target

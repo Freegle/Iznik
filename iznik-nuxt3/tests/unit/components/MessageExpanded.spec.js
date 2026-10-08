@@ -1279,11 +1279,45 @@ describe('MessageExpanded', () => {
       vi.useFakeTimers()
       comp.vm.showReplyOverlay = true
       comp.vm.sent()
-      // Confirmation shows first; not closed immediately.
+      // Confirmation stays up long enough to read; not closed after 1.5s.
       expect(comp.emitted('close')).toBeFalsy()
       vi.advanceTimersByTime(1500)
+      expect(comp.emitted('close')).toBeFalsy()
+      vi.advanceTimersByTime(3500)
       vi.useRealTimers()
       expect(comp.emitted('close')).toBeTruthy()
+    })
+
+    it('sent counts down the seconds until the message closes', async () => {
+      const wrapper = await createWrapper({ inModal: true })
+      const comp = wrapper.findComponent(MessageExpanded)
+      vi.useFakeTimers()
+      comp.vm.sent()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('[data-testid="sent-countdown"]').text()).toContain(
+        'Closing in 5s'
+      )
+      vi.advanceTimersByTime(2000)
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('[data-testid="sent-countdown"]').text()).toContain(
+        'Closing in 3s'
+      )
+      vi.advanceTimersByTime(3000)
+      vi.useRealTimers()
+      expect(comp.emitted('close')).toBeTruthy()
+    })
+
+    it('sent shows no countdown on the standalone message page', async () => {
+      const wrapper = await createWrapper({
+        inModal: false,
+        fullscreenOverlay: false,
+      })
+      const comp = wrapper.findComponent(MessageExpanded)
+      comp.vm.sent()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('[data-testid="sent-countdown"]').exists()).toBe(
+        false
+      )
     })
 
     it('sent does NOT auto-close on the standalone message page (navigates to chat instead)', async () => {

@@ -632,7 +632,7 @@ func TestEmailTrackingImageCompactScrollDepth(t *testing.T) {
 // The lookup carried "AND backwards IS NULL", which made it miss almost every real
 // address: on production only 140,057 of 4,476,456 rows have a null there, and
 // 136,047 of those are Freegle's own proxy addresses. A member looked up by the
-// address they actually use fell through to the users.email fallback instead, which
+// address they actually use was searched for by recipient address instead, which
 // is why it went unnoticed. V1 has no such condition anywhere.
 func TestEmailTrackingFindsUserByTheirOwnAddress(t *testing.T) {
 	prefix := uniquePrefix("emailbyaddr")
@@ -677,4 +677,34 @@ func reverseForTest(s string) string {
 		r[i], r[j] = r[j], r[i]
 	}
 	return string(r)
+}
+
+// An address that belongs to no member is searched for in email_tracking itself.
+// users has no email column, so the lookup must not query one: that fails with
+// Error 1054 on every such request.
+func TestEmailTrackingAddressOfNoMemberSearchesRecipient(t *testing.T) {
+	prefix := uniquePrefix("emailnomember")
+	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	_, token := CreateTestSession(t, supportID)
+
+	address := prefix + "_nobody@test.com"
+	db := database.DBConn
+	tracking := &emailtracking.EmailTracking{
+		TrackingID:     "nomember-" + randomString(16),
+		EmailType:      "Test",
+		RecipientEmail: address,
+	}
+	db.Create(tracking)
+	defer db.Where("tracking_id = ?", tracking.TrackingID).Delete(&emailtracking.EmailTracking{})
+
+	req := httptest.NewRequest("GET",
+		"/api/modtools/email/user/0?email="+address+"&jwt="+token, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	emails, _ := result["emails"].([]interface{})
+	assert.Len(t, emails, 1, "the tracking row for an address of no member must be found")
 }
