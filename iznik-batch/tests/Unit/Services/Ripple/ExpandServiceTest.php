@@ -5492,7 +5492,7 @@ class ExpandServiceTest extends TestCase
         $msgid = $this->seedSpatialPost(now()->subHours(7)); // approvedby NULL = auto-published
         $groupB = $this->seedCoveringGroup();
         $this->seedAdvanceDueReach($msgid);
-        Http::fake(); // cached schedule - no routing call expected
+        $this->fakeSpatialHttp(); // cached schedule - no routing call expected
         $before = DB::selectOne('SELECT polygon_cells AS cells, tick FROM rippling_reach WHERE msgid = ?', [$msgid]);
 
         $stats = $this->service()->process(false, 500);
@@ -5527,7 +5527,7 @@ class ExpandServiceTest extends TestCase
         $this->seedAdvanceDueReach($msgid);
         $this->addCleanViews($msgid, 10);
         $this->reportToMods($msgid);
-        Http::fake();
+        $this->fakeSpatialHttp();
         $before = DB::selectOne('SELECT polygon_cells AS cells, tick FROM rippling_reach WHERE msgid = ?', [$msgid]);
 
         $stats = $this->service()->process(false, 500);
@@ -5553,7 +5553,7 @@ class ExpandServiceTest extends TestCase
         $msgid = $this->seedSpatialPost(now()->subHours(7));
         $groupB = $this->seedCoveringGroup();
         $this->seedAdvanceDueReach($msgid);
-        Http::fake();
+        $this->fakeSpatialHttp();
 
         $stats1 = $this->service()->process(false, 500); // 0 views -> capped
         $this->assertSame(1, $stats1['reach_capped']);
@@ -5585,7 +5585,7 @@ class ExpandServiceTest extends TestCase
         $msgid = $this->seedSpatialPost(now()->subHours(7));
         $this->seedCoveringGroup();
         $this->seedAdvanceDueReach($msgid);
-        Http::fake();
+        $this->fakeSpatialHttp();
 
         $stats1 = $this->service()->process(false, 500); // 0 views -> capped, stamp set
         $this->assertSame(1, $stats1['reach_capped']);
