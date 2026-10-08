@@ -848,6 +848,55 @@ class TNSyncCommandTest extends TestCase
     }
 
     /**
+     * A shared username with two different tnuserids is two TN accounts - a username
+     * released and retaken, or a member who re-registered. Merging would delete one
+     * account and its tnuserid, after which that TN user's posts resolve to nobody.
+     */
+    public function test_merge_skips_users_with_different_tnuserids(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $user1 = $this->createTestUser(['fullname' => 'Carol']);
+        $user2 = $this->createTestUser(['fullname' => 'Carol']);
+        DB::table('users')->where('id', $user1->id)->update(['tnuserid' => 99020101]);
+        DB::table('users')->where('id', $user2->id)->update(['tnuserid' => 99020102]);
+
+        $tnBase = 'carol_' . str_replace('.', '', uniqid('', true));
+        $this->insertTnAddress($user1->id, "{$tnBase}-g101@user.trashnothing.com");
+        $this->insertTnAddress($user2->id, "{$tnBase}@user.trashnothing.com");
+
+        $this->artisan('tn:sync', ['--full-duplicate-scan' => true])->assertExitCode(0);
+
+        $this->assertNotNull(User::find($user1->id), 'the first TN account must survive');
+        $this->assertNotNull(User::find($user2->id), 'the second TN account must survive');
+        $this->assertEquals(99020101, User::find($user1->id)->tnuserid);
+        $this->assertEquals(99020102, User::find($user2->id)->tnuserid);
+    }
+
+    /**
+     * Only one side holding a tnuserid is the ordinary duplicate - an email-path
+     * account and its partner twin - and is still merged, keeping the tnuserid.
+     */
+    public function test_merge_keeps_the_only_tnuserid(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $user1 = $this->createTestUser(['fullname' => 'Dave']);
+        $user2 = $this->createTestUser(['fullname' => 'Dave']);
+        DB::table('users')->where('id', $user2->id)->update(['tnuserid' => 99020103]);
+
+        $tnBase = 'dave_' . str_replace('.', '', uniqid('', true));
+        $this->insertTnAddress($user1->id, "{$tnBase}-g101@user.trashnothing.com");
+        $this->insertTnAddress($user2->id, "{$tnBase}-g202@user.trashnothing.com");
+
+        $this->artisan('tn:sync', ['--full-duplicate-scan' => true])->assertExitCode(0);
+
+        $this->assertNotNull(User::find($user1->id), 'the first account seen is the one kept');
+        $this->assertNull(User::find($user2->id), 'the twin is merged in');
+        $this->assertEquals(99020103, User::find($user1->id)->tnuserid);
+    }
+
+    /**
      * The per-tick duplicate check now reads only addresses added since last time,
      * instead of streaming all ~400,000 Trash Nothing addresses every minute. A pair
      * created after the last run must still be caught.

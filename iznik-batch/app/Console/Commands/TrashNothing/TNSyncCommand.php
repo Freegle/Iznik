@@ -584,6 +584,32 @@ class TNSyncCommand extends Command
             $uniqueIds = array_values(array_unique($userIds));
             Log::info('Found ' . count($uniqueIds) . " users for {$username}");
 
+            // A shared username is not a shared identity: TN does not promise usernames
+            // are unique, and a released one can be retaken. Two different tnuserids are
+            // two TN accounts, and User::merge would keep one id and delete the other,
+            // after which posts from the lost id resolve to nobody. Leave the group for a
+            // person - reportDuplicateGroups() flags exactly these for review.
+            $tnuserids = DB::table('users')
+                ->whereIn('id', $uniqueIds)
+                ->whereNotNull('tnuserid')
+                ->distinct()
+                ->pluck('tnuserid')
+                ->all();
+
+            if (count($tnuserids) > 1) {
+                $idList = implode(',', $uniqueIds);
+                $tnList = implode(',', $tnuserids);
+                Log::warning("Not merging TN users for {$username}: users {$idList} hold different tnuserids {$tnList}");
+                Log::info("TN-SYNC-TRACE [MERGE-SKIP] reason=tnuserid-conflict users={$idList} tnuserids={$tnList}");
+                $this->loki->logEvent('tn-sync', 'user-merge-skip', [
+                    'reason' => 'tnuserid-conflict',
+                    'user_ids' => $uniqueIds,
+                    'tn_user_ids' => $tnuserids,
+                ]);
+
+                continue;
+            }
+
             $mergeTo = $uniqueIds[0];
 
             foreach (array_slice($uniqueIds, 1) as $userId) {
