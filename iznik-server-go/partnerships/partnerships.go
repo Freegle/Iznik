@@ -1136,12 +1136,13 @@ func Summary(c *fiber.Ctx) error {
 }
 
 // detectGroups brings partnerships_groups into line with the authority boundary: a new
-// community inside it is covered, a Boundary community no longer inside it is dropped, and
+// community that overlaps it significantly is covered (one that only grazes the edge is not),
+// a Boundary community that no longer does is dropped, and
 // every row's overlap is refreshed. Communities added or left out by hand stay as they are,
 // so re-checking never undoes a decision someone made.
 func detectGroups(db *gorm.DB, partnershipid uint64, authorityid uint64) {
 	inside := map[uint64]float64{}
-	for _, g := range authority.GroupsForAuthority(authorityid) {
+	for _, g := range authority.SignificantGroupsForAuthority(authorityid) {
 		inside[g.ID] = g.Overlap
 	}
 

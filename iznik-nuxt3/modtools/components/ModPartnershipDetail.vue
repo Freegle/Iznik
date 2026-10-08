@@ -29,10 +29,11 @@
       <b-col cols="12" lg="6">
         <h5>Communities covered</h5>
         <p class="text-muted small">
-          Every community that overlaps the council boundary is covered,
-          including any set up later. The percentage is how much of it lies
-          inside the boundary; the statistics count that share of it. These are
-          the communities the statistics report on.
+          Every community that overlaps the council boundary significantly is
+          covered, including any set up later. One that only touches the edge
+          is not. The percentage is how much of it lies inside the boundary; the
+          statistics count that share of it. These are the communities the
+          statistics report on.
         </p>
         <NoticeMessage v-if="!covered.length" variant="warning">
           No communities are covered, so nothing is showing to members.
