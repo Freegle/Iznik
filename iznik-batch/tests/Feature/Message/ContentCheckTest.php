@@ -3357,4 +3357,144 @@ class ContentCheckTest extends TestCase
         $this->assertNull($row->contentcheck_reasons,
             'an approved post carries no hold reasons');
     }
+
+    // -------------------------------------------------------------------------
+    // Place names near the post are not concerns
+    // -------------------------------------------------------------------------
+
+    private function placeNameMessage(string $subject, string $body, float $lat, float $lng): array
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => $subject,
+            'textbody' => $body,
+            'message'  => $body,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+            'lat'      => $lat,
+            'lng'      => $lng,
+        ]);
+
+        return [$msgid, $group->id];
+    }
+
+    private function addPlace(string $name, string $type, int $osmPlace, float $lat, float $lng, array $extra = []): void
+    {
+        DB::table('locations')->insert(array_merge([
+            'name' => $name, 'type' => $type, 'osm_place' => $osmPlace, 'lat' => $lat, 'lng' => $lng,
+        ], $extra));
+    }
+
+    private function addReviewKeyword(string $keyword): void
+    {
+        DB::table('concern_keywords')->insert([
+            'keyword' => $keyword, 'category' => 'review', 'action' => 'flag', 'match_mode' => 'fuzzy',
+        ]);
+    }
+
+    private function concernReasons(int $msgid, int $groupid): array
+    {
+        return array_values(array_filter(
+            $this->service->checkMessage($msgid, $groupid),
+            fn($r) => $r['check'] === ContentCheckService::CHECK_CONCERN_KEYWORD
+        ));
+    }
+
+    public function test_concern_word_inside_nearby_place_name_is_let_through(): void
+    {
+        $this->addReviewKeyword('cock');
+        $this->addPlace('Cock Clarks', 'Point', 1, 51.6947, 0.6222);
+        [$msgid, $gid] = $this->placeNameMessage('OFFER: Shelves (Cock Clarks CM3)', 'Oak shelves.', 51.6950, 0.6240);
+
+        $this->assertSame([], $this->concernReasons($msgid, $gid));
+    }
+
+    public function test_hyphenated_place_name_matches_a_spaced_or_hyphenated_post(): void
+    {
+        $this->addReviewKeyword('cum');
+        $this->addPlace('Salcott-cum-Virley', 'Polygon', 1, 51.7908, 0.8166);
+        [$m1, $g1] = $this->placeNameMessage('OFFER: Pots (Salcott-cum-Virley CO5)', 'Pots.', 51.7900, 0.8170);
+        [$m2, $g2] = $this->placeNameMessage('OFFER: Pots (Salcott cum Virley CO5)', 'Pots.', 51.7900, 0.8170);
+
+        $this->assertSame([], $this->concernReasons($m1, $g1));
+        $this->assertSame([], $this->concernReasons($m2, $g2));
+    }
+
+    public function test_same_place_name_far_from_the_post_still_flags(): void
+    {
+        $this->addReviewKeyword('cock');
+        $this->addPlace('Cock Clarks', 'Point', 1, 51.6947, 0.6222);
+        // About 60km away.
+        [$msgid, $gid] = $this->placeNameMessage('OFFER: Shelves (Cock Clarks CM3)', 'Oak shelves.', 52.2, 0.1);
+
+        $reasons = $this->concernReasons($msgid, $gid);
+        $this->assertCount(1, $reasons);
+        $this->assertStringContainsString('cock', strtolower($reasons[0]['detail']));
+    }
+
+    public function test_real_concern_word_beside_a_place_name_still_flags(): void
+    {
+        $this->addReviewKeyword('cock');
+        $this->addPlace('Cock Clarks', 'Point', 1, 51.6947, 0.6222);
+        [$msgid, $gid] = $this->placeNameMessage(
+            'OFFER: Cockerel (Cock Clarks CM3)',
+            'Also a big cock for sale. Collect from Cock Clarks.',
+            51.6950,
+            0.6240
+        );
+
+        $this->assertCount(1, $this->concernReasons($msgid, $gid));
+    }
+
+    public function test_shop_or_amenity_with_a_concern_word_does_not_excuse_it(): void
+    {
+        $this->addReviewKeyword('dog');
+        $this->addPlace('The Dog', 'Point', 0, 51.5, -0.1, ['osm_amenity' => 1]);
+        [$msgid, $gid] = $this->placeNameMessage('OFFER: Spare the dog bed', 'A bed for the dog.', 51.5, -0.1);
+
+        $this->assertCount(1, $this->concernReasons($msgid, $gid));
+    }
+
+    public function test_street_name_near_the_post_is_let_through(): void
+    {
+        $this->addReviewKeyword('butt');
+        $this->addPlace('Butt Lane', 'Line', 0, 53.08, -2.25);
+        [$msgid, $gid] = $this->placeNameMessage('WANTED: Carpet (Butt Lane ST7)', 'Any carpet.', 53.081, -2.251);
+
+        $this->assertSame([], $this->concernReasons($msgid, $gid));
+    }
+
+    public function test_block_keyword_is_not_excused_by_a_place_name(): void
+    {
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'cock', 'category' => 'scam', 'action' => 'block', 'match_mode' => 'literal',
+        ]);
+        $this->addPlace('Cock Clarks', 'Point', 1, 51.6947, 0.6222);
+        [$msgid, $gid] = $this->placeNameMessage('OFFER: Shelves (Cock Clarks CM3)', 'Oak shelves.', 51.6950, 0.6240);
+
+        $this->assertCount(1, $this->concernReasons($msgid, $gid));
+    }
+
+    public function test_place_name_is_judged_from_the_poster_location_when_the_post_has_none(): void
+    {
+        $this->addReviewKeyword('cock');
+        $this->addPlace('Cock Clarks', 'Point', 1, 51.6947, 0.6222);
+        $group = $this->createTestGroup();
+        $locid = DB::table('locations')->insertGetId([
+            'name' => 'CM3 5XX', 'type' => 'Postcode', 'osm_place' => 0, 'lat' => 51.6950, 'lng' => 0.6230,
+        ]);
+        $user  = $this->createTestUser();
+        DB::table('users')->where('id', $user->id)->update(['lastlocation' => $locid]);
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id, 'type' => 'Offer', 'subject' => 'OFFER: Shelves (Cock Clarks CM3)',
+            'textbody' => 'Oak shelves.', 'message' => 'Oak shelves.', 'arrival' => now(), 'date' => now(),
+            'source' => 'Platform', 'lat' => null, 'lng' => null,
+        ]);
+
+        $this->assertSame([], $this->concernReasons($msgid, $group->id));
+    }
 }
