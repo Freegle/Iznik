@@ -1204,6 +1204,7 @@ class User extends Model implements Auditable
         return $role;
     }
 
+
     /**
      * Merge two user accounts, consolidating $id2 into $id1.
      *
@@ -1216,7 +1217,8 @@ class User extends Model implements Auditable
      * @param int $id1 The user ID to keep (merge target)
      * @param int $id2 The user ID to absorb and delete
      * @param string $reason Human-readable reason for the merge
-     * @param bool $forceMerge If TRUE, bypass canMerge() checks
+     * @param bool $forceMerge If TRUE, bypass canMerge() checks and the different-tnuserid
+     *                         refusal (still reported)
      * @param int|null $byUserId The user performing the merge (for logging)
      * @return bool TRUE on success, FALSE on failure or if merge is blocked
      */
@@ -1237,6 +1239,23 @@ class User extends Model implements Auditable
 
         if (!$forceMerge && (!$u1->canMerge() || !$u2->canMerge())) {
             return FALSE;
+        }
+
+        // Two different tnuserids are two Trash Nothing accounts. The merge below keeps
+        // id1's and deletes id2 with its own, after which TN posts from the lost id
+        // resolve to nobody - and it cannot be undone. Refuse unless forced, and report
+        // to Sentry either way: a caller asking for this at all means something upstream
+        // decided two TN accounts were one person.
+        if ($u1->tnuserid && $u2->tnuserid && (int) $u1->tnuserid !== (int) $u2->tnuserid) {
+            $detail = "user {$id2} (tnuserid {$u2->tnuserid}) into user {$id1} (tnuserid {$u1->tnuserid}), reason: {$reason}";
+
+            if (!$forceMerge) {
+                report(new TnUserIdMergeConflict("Refused merge of two Trash Nothing accounts: {$detail}"));
+
+                return FALSE;
+            }
+
+            report(new TnUserIdMergeConflict("Forced merge of two Trash Nothing accounts, tnuserid {$u2->tnuserid} will be lost: {$detail}"));
         }
 
         try {

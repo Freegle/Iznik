@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-07
+last_reviewed: 2026-10-08
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -103,6 +103,15 @@ username, so `bibiana-g%` also matches `bibiana-gomes-g4840@...`, a different me
 Both passes decide on an exact username from `User::tnUsernameFromEmail()`. Merging two
 members into one account deletes one of them and re-points their mail, so the exact test
 is what stands between a longer username and being absorbed by its own prefix.
+
+A shared username is still not a shared identity: TN does not promise usernames are unique,
+and a released one can be retaken. A group whose accounts hold **two different `tnuserid`s**
+is skipped, with a `TN-SYNC-TRACE [MERGE-SKIP] reason=tnuserid-conflict` line and a
+`tn-sync`/`user-merge-skip` Loki event, and stays listed by `--report-duplicates` until a
+person resolves it. Merging would keep one id and delete the other, and the provisioner
+would then answer every post from the lost id with `tn-username-clash`. `User::merge` refuses
+the same pair itself, for any caller, and `report()`s a `TnUserIdMergeConflict` so it reaches
+Sentry. With `$forceMerge` it goes ahead, but still reports it.
 
 ### Finding the addresses: not via the backwards column
 
