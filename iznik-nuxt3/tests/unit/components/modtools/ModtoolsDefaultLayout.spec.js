@@ -274,6 +274,7 @@ describe('modtools default layout — pending badge includes spam', () => {
           link: props.link,
           name: props.name,
           count: props.count ? [...props.count] : null,
+          othercount: props.othercount ? [...props.othercount] : null,
         })
       },
     }
@@ -290,6 +291,43 @@ describe('modtools default layout — pending badge includes spam', () => {
     // Fails on buggy code (count=['pending'], spam not present).
     // Passes after fix (count=['pending','spam']).
     expect(pendingItem.count).toContain('spam')
+  })
+
+  async function captureMenu() {
+    const capturedItems = []
+    const Capturing = {
+      template: '<div />',
+      props: ['link', 'name', 'count', 'othercount', 'indent', 'countVariant'],
+      setup(props) {
+        capturedItems.push({
+          link: props.link,
+          count: props.count ? [...props.count] : null,
+          othercount: props.othercount ? [...props.othercount] : null,
+        })
+      },
+    }
+    mountLayout({ ModMenuItemLeft: Capturing })
+    await flushPromises()
+    await nextTick()
+    return capturedItems
+  }
+
+  it('Member Review shows spammembers red and held spammembersother blue', async () => {
+    // Held or inactive-community members are counted in spammembersother, so a
+    // moderator who has dealt with everything sees blue, not red.
+    const items = await captureMenu()
+    const item = items.find((i) => i.link === '/members/review')
+    expect(item, 'Member Review menu item must be rendered').toBeDefined()
+    expect(item.count).toEqual(['spammembers'])
+    expect(item.othercount).toEqual(['spammembersother'])
+  })
+
+  it('Volunteering shows held opportunities as the blue other count', async () => {
+    const items = await captureMenu()
+    const item = items.find((i) => i.link === '/volunteering')
+    expect(item, 'Volunteering menu item must be rendered').toBeDefined()
+    expect(item.count).toEqual(['pendingvolunteering'])
+    expect(item.othercount).toEqual(['pendingvolunteeringother'])
   })
 })
 

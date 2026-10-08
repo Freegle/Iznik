@@ -14,6 +14,8 @@ const mockAdd = vi.fn()
 const mockSave = vi.fn()
 const mockRenew = vi.fn()
 const mockExpire = vi.fn()
+const mockHold = vi.fn()
+const mockRelease = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -31,6 +33,8 @@ vi.mock('~/api', () => ({
       save: mockSave,
       renew: mockRenew,
       expire: mockExpire,
+      hold: mockHold,
+      release: mockRelease,
     },
   }),
 }))
@@ -402,6 +406,48 @@ describe('volunteering store', () => {
 
       await store.expire(42)
       expect(mockExpire).toHaveBeenCalledWith(42)
+    })
+  })
+
+  describe('hold and release', () => {
+    it('hold calls the API and refetches so Held by shows', async () => {
+      const store = useVolunteeringStore()
+      store.init({ public: {} })
+      mockHold.mockResolvedValue({})
+      mockFetchVol.mockResolvedValue({ id: 42, heldby: 7 })
+
+      await store.hold(42)
+      expect(mockHold).toHaveBeenCalledWith(42)
+      expect(store.list[42].heldby).toBe(7)
+    })
+
+    it('hold refused by another moderator refetches and throws a named error', async () => {
+      const store = useVolunteeringStore()
+      store.init({ public: {} })
+      const err = new Error('refused')
+      err.response = {
+        status: 409,
+        data: { heldby: 9, heldbyname: 'Other Mod' },
+      }
+      mockHold.mockRejectedValue(err)
+      mockFetchVol.mockResolvedValue({ id: 42, heldby: 9 })
+
+      await expect(store.hold(42)).rejects.toMatchObject({
+        heldByOtherMod: true,
+        message: expect.stringContaining('Other Mod'),
+      })
+      expect(mockFetchVol).toHaveBeenCalled()
+    })
+
+    it('release calls the API and refetches', async () => {
+      const store = useVolunteeringStore()
+      store.init({ public: {} })
+      mockRelease.mockResolvedValue({})
+      mockFetchVol.mockResolvedValue({ id: 42, heldby: null })
+
+      await store.release(42)
+      expect(mockRelease).toHaveBeenCalledWith(42)
+      expect(store.list[42].heldby).toBeNull()
     })
   })
 
