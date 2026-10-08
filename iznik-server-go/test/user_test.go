@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	json2 "encoding/json"
 	"fmt"
+	neturl "net/url"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -5367,4 +5368,113 @@ func TestGetUserKeepsNameOfOfficialFreegleAddress(t *testing.T) {
 
 	assert.Equal(t, "Freegle Support", displayName(officialID), "a configured Freegle address keeps its name")
 	assert.Equal(t, "A freegler", displayName(impostorID), "the same name on any other address is still rewritten")
+}
+
+// =============================================================================
+// Support search: donation payer email and postcode matches
+// =============================================================================
+
+type searchResult struct {
+	Users   []uint64            `json:"users"`
+	Matches map[string][]string `json:"matches"`
+}
+
+func doSupportSearch(t *testing.T, q string, token string) searchResult {
+	url := fmt.Sprintf("/api/user/search?q=%s&jwt=%s", neturl.QueryEscape(q), token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	var r searchResult
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&r))
+	return r
+}
+
+func (r searchResult) has(id uint64) bool {
+	for _, u := range r.Users {
+		if u == id {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSearchUsers_ByDonationPayerEmail(t *testing.T) {
+	prefix := uniquePrefix("searchpayer")
+	db := database.DBConn
+
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	// The donor's account has one email but they paid with another.
+	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	payer := prefix + "_paypalpayer@example.org"
+	db.Exec("INSERT INTO users_donations (userid, Payer, PayerDisplayName, TransactionID, GrossAmount, type) VALUES (?, ?, 'Payer', ?, 5, 'PayPal')",
+		donorID, payer, prefix+"_txn")
+
+	r := doSupportSearch(t, payer, token)
+	assert.True(t, r.has(donorID), "donor should be found by payer email")
+	assert.Contains(t, r.Matches[fmt.Sprint(donorID)], "donation_payer")
+
+	// A donation with no user attached must not break the search.
+	db.Exec("INSERT INTO users_donations (userid, Payer, PayerDisplayName, TransactionID, GrossAmount, type) VALUES (NULL, ?, 'Payer', ?, 5, 'PayPal')",
+		prefix+"_orphan@example.org", prefix+"_txn2")
+	r = doSupportSearch(t, prefix+"_orphan@example.org", token)
+	assert.Empty(t, r.Users)
+}
+
+func TestSearchUsers_ByPostcode(t *testing.T) {
+	prefix := uniquePrefix("searchpc")
+	db := database.DBConn
+
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, token := CreateTestSession(t, adminID)
+
+	// Unique-looking postcode in the test area ZY (not a real UK area).
+	district := "ZY8"
+	pc := "ZY8 7QW"
+	db.Exec("DELETE FROM locations WHERE name = ? AND type = 'Postcode'", pc)
+	db.Exec("INSERT INTO locations (name, type, canon, popularity) VALUES (?, 'Postcode', ?, 0)", pc, "zy87qw")
+	var locid uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? AND type = 'Postcode' LIMIT 1", pc).Scan(&locid)
+
+	userID := CreateTestUser(t, prefix+"_loc", "User")
+	db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", locid, userID)
+
+	giftUser := CreateTestUser(t, prefix+"_gift", "User")
+	db.Exec(`INSERT INTO giftaid (userid, period, fullname, homeaddress, postcode)
+		VALUES (?, 'This', 'Gift Aider', '1 Test Street', ?)`, giftUser, pc)
+
+	// Full postcode, with and without the space, any case.
+	for _, q := range []string{"ZY8 7QW", "zy87qw", "zy8 7qw"} {
+		r := doSupportSearch(t, q, token)
+		assert.True(t, r.has(userID), "location user found by %q", q)
+		assert.Contains(t, r.Matches[fmt.Sprint(userID)], "postcode")
+		assert.True(t, r.has(giftUser), "gift aid user found by %q", q)
+		assert.Contains(t, r.Matches[fmt.Sprint(giftUser)], "giftaid_postcode")
+	}
+
+	// District.
+	r := doSupportSearch(t, district, token)
+	assert.True(t, r.has(userID))
+	assert.True(t, r.has(giftUser))
+
+	// A different postcode must not match.
+	r = doSupportSearch(t, "ZY8 7QX", token)
+	assert.False(t, r.has(userID))
+	assert.False(t, r.has(giftUser))
+}
+
+func TestSearchUsers_PostcodeStillSupportOnly(t *testing.T) {
+	prefix := uniquePrefix("searchpcforbid")
+	modID := CreateTestUser(t, prefix, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	url := fmt.Sprintf("/api/user/search?q=ZY8+7QW&jwt=%s", token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode)
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	assert.Nil(t, body["users"])
+	assert.Nil(t, body["matches"])
 }

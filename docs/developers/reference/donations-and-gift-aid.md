@@ -1,8 +1,9 @@
 ---
-last_reviewed: 2026-10-07
+last_reviewed: 2026-10-08
 owner: Freegle dev team
 covers:
   - iznik-server-go/donations/**
+  - iznik-server-go/user/user.go
   - iznik-batch/app/Services/DonationService.php
   - iznik-batch/app/Services/GiftAidClaimService.php
   - iznik-batch/app/Services/PaypalDownloadService.php
@@ -94,3 +95,15 @@ Claims are submitted to HMRC by a person, not by this code. Who does that is in
 - Some payers are deliberately excluded from the ads target calculation
   (`getExcludedPayersCondition`), so totals in the database and totals in that job will not
   always agree.
+
+## Finding a donor from the support search
+
+The ModTools support user search (`GET /api/user/search`, Admin and Support only) also finds
+people through donation and Gift Aid data, and says why each result matched:
+
+- An email matches `users_donations.Payer`, so a donor who paid with an address that is not on
+  their account can still be found (`donation_payer`).
+- A UK postcode or district matches the member's last location (`postcode`) and the Gift Aid
+  declaration postcode (`giftaid_postcode`).
+
+This is personal data and stays in the support-only endpoint. Ordinary moderators get a 403.
