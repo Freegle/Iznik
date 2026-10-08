@@ -16,22 +16,23 @@ import (
 // Active groups get primary fields (red badges), inactive/backup groups get
 // "other" fields (blue badges).
 type GroupWork struct {
-	Groupid             uint64 `json:"groupid"`
-	Pending             int64  `json:"pending"`
-	Pendingother        int64  `json:"pendingother"`
-	Spam                int64  `json:"spam"`
-	Pendingmembers      int64  `json:"pendingmembers"`
-	Pendingmembersother int64  `json:"pendingmembersother"`
-	Spammembers         int64  `json:"spammembers"`
-	Spammembersother    int64  `json:"spammembersother"`
-	Pendingevents       int64  `json:"pendingevents"`
-	Pendingvolunteering int64  `json:"pendingvolunteering"`
-	Editreview          int64  `json:"editreview"`
-	Pendingadmins       int64  `json:"pendingadmins"`
-	Happiness           int64  `json:"happiness"`
-	Relatedmembers      int64  `json:"relatedmembers"`
-	Chatreview          int64  `json:"chatreview"`
-	Chatreviewother     int64  `json:"chatreviewother"`
+	Groupid                  uint64 `json:"groupid"`
+	Pending                  int64  `json:"pending"`
+	Pendingother             int64  `json:"pendingother"`
+	Spam                     int64  `json:"spam"`
+	Pendingmembers           int64  `json:"pendingmembers"`
+	Pendingmembersother      int64  `json:"pendingmembersother"`
+	Spammembers              int64  `json:"spammembers"`
+	Spammembersother         int64  `json:"spammembersother"`
+	Pendingevents            int64  `json:"pendingevents"`
+	Pendingvolunteering      int64  `json:"pendingvolunteering"`
+	Pendingvolunteeringother int64  `json:"pendingvolunteeringother"`
+	Editreview               int64  `json:"editreview"`
+	Pendingadmins            int64  `json:"pendingadmins"`
+	Happiness                int64  `json:"happiness"`
+	Relatedmembers           int64  `json:"relatedmembers"`
+	Chatreview               int64  `json:"chatreview"`
+	Chatreviewother          int64  `json:"chatreviewother"`
 }
 
 // isActiveModForGroup checks membership settings JSON for the active flag.
@@ -279,13 +280,26 @@ func GetGroupWork(c *fiber.Ctx) error {
 			Select("vg.groupid, COUNT(DISTINCT v.id) as count").
 			Joins("INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id").
 			Joins("LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id").
-			Where("vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND (vd.end IS NULL OR vd.end >= NOW())", activeGroupIDs).
+			Where("vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND v.heldby IS NULL AND (vd.end IS NULL OR vd.end >= NOW())", activeGroupIDs).
 			Group("vg.groupid").
 			Scan(&rows)
+		var heldRows []countRow
+		db.Table("volunteering v").
+			Select("vg.groupid, COUNT(DISTINCT v.id) as count").
+			Joins("INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id").
+			Joins("LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id").
+			Where("vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND v.heldby IS NOT NULL AND (vd.end IS NULL OR vd.end >= NOW())", activeGroupIDs).
+			Group("vg.groupid").
+			Scan(&heldRows)
 		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
 				w.Pendingvolunteering = r.Count
+			}
+		}
+		for _, r := range heldRows {
+			if w := workMap[r.Groupid]; w != nil {
+				w.Pendingvolunteeringother = r.Count
 			}
 		}
 		mapMutex.Unlock()

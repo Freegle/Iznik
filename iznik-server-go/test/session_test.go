@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/group"
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/session"
 	"github.com/stretchr/testify/assert"
@@ -2854,6 +2855,88 @@ func TestWorkCountPendingVolunteering(t *testing.T) {
 	assert.GreaterOrEqual(t, vol, float64(1), "Should count pending volunteering")
 }
 
+// A held pending volunteering opportunity is claimed work: it leaves the red
+// pendingvolunteering count and shows in the blue pendingvolunteeringother count, the
+// same split as pending messages. Counts are cross-group aggregates, so compare deltas.
+func TestWorkCountHeldVolunteeringIsBlueNotRed(t *testing.T) {
+	prefix := uniquePrefix("wc_volheld")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	holderID := CreateTestUser(t, prefix+"_holder", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) "+
+		"VALUES (?, 'Held Vol', 'Description', '', 1, 0, 0)", memberID)
+	var volID uint64
+	db.Raw("SELECT id FROM volunteering WHERE userid = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&volID)
+	db.Exec("INSERT INTO volunteering_groups (volunteeringid, groupid) VALUES (?, ?)", volID, groupID)
+	defer func() {
+		db.Exec("DELETE FROM volunteering_groups WHERE volunteeringid = ?", volID)
+		db.Exec("DELETE FROM volunteering WHERE id = ?", volID)
+	}()
+
+	unheld := getSessionWork(t, token)
+
+	db.Exec("UPDATE volunteering SET heldby = ? WHERE id = ?", holderID, volID)
+	held := getSessionWork(t, token)
+
+	assert.Equal(t, unheld["pendingvolunteering"].(float64)-1, held["pendingvolunteering"].(float64),
+		"holding must remove it from the red count")
+	assert.Equal(t, unheld["pendingvolunteeringother"].(float64)+1, held["pendingvolunteeringother"].(float64),
+		"holding must add it to the blue count")
+	assert.Equal(t, unheld["total"].(float64)-1, held["total"].(float64),
+		"a held opportunity is not actionable, so it leaves the total")
+
+	// And the per-group badge agrees with the menu.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result []group.GroupWork
+	json.Unmarshal(rsp(resp), &result)
+	var found *group.GroupWork
+	for i := range result {
+		if result[i].Groupid == groupID {
+			found = &result[i]
+		}
+	}
+	if assert.NotNil(t, found) {
+		assert.Equal(t, int64(0), found.Pendingvolunteering)
+		assert.Equal(t, int64(1), found.Pendingvolunteeringother)
+	}
+}
+
+// The Member Review menu item shows spammembers in red and spammembersother in blue.
+// A member who has been dealt with (reviewed after being flagged) is in neither; a
+// flagged member who is held is blue only; an unheld flagged member is red only.
+func TestWorkCountSpamMembersHeldIsBlueAndReviewedIsNeither(t *testing.T) {
+	prefix := uniquePrefix("wc_spamheld")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	holderID := CreateTestUser(t, prefix+"_holder", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	spamUserID := CreateTestUser(t, prefix+"_spam", "User")
+	db.Exec(`INSERT INTO memberships (userid, groupid, role, collection, reviewrequestedat)
+		VALUES (?, ?, 'Member', 'Approved', NOW())`, spamUserID, groupID)
+	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", spamUserID, groupID)
+
+	flagged := getSessionWork(t, token)
+
+	db.Exec("UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?", holderID, spamUserID, groupID)
+	held := getSessionWork(t, token)
+	assert.Equal(t, flagged["spammembers"].(float64)-1, held["spammembers"].(float64), "held leaves red")
+	assert.Equal(t, flagged["spammembersother"].(float64)+1, held["spammembersother"].(float64), "held joins blue")
+
+	db.Exec("UPDATE memberships SET heldby = NULL, reviewedat = DATE_ADD(NOW(), INTERVAL 1 MINUTE) WHERE userid = ? AND groupid = ?", spamUserID, groupID)
+	reviewed := getSessionWork(t, token)
+	assert.Equal(t, flagged["spammembers"].(float64)-1, reviewed["spammembers"].(float64), "reviewed is not red")
+	assert.Equal(t, flagged["spammembersother"].(float64), reviewed["spammembersother"].(float64), "reviewed is not blue")
+}
+
 // ---------------------------------------------------------------------------
 // Work Counts: All fields present
 // ---------------------------------------------------------------------------
@@ -2871,7 +2954,7 @@ func TestWorkCountAllFieldsPresent(t *testing.T) {
 	expectedFields := []string{
 		"pending", "pendingother", "spam", "pendingmembers",
 		"spammembers", "spammembersother",
-		"pendingevents", "pendingadmins", "editreview", "pendingvolunteering",
+		"pendingevents", "pendingadmins", "editreview", "pendingvolunteering", "pendingvolunteeringother",
 		"stories", "spammerpendingadd", "spammerpendingremove",
 		"chatreview", "chatreviewother", "newsletterstories",
 		"giftaid", "happiness", "relatedmembers", "total",

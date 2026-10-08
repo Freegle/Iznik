@@ -129,6 +129,17 @@ export const useVolunteeringStore = defineStore('volunteering', {
       )
       await this.fetch(data.id, true)
     },
+    async hold(id) {
+      await runHoldAware(
+        () => api(this.config).volunteering.hold(id),
+        () => this.fetch(id, true)
+      )
+      await this.fetch(id, true)
+    },
+    async release(id) {
+      await api(this.config).volunteering.release(id)
+      await this.fetch(id, true)
+    },
     async renew(id) {
       await api(this.config).volunteering.renew(id)
       await this.fetch(id, true)

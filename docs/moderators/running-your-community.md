@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-05
+last_reviewed: 2026-10-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/settings/**
@@ -7,6 +7,8 @@ covers:
   - iznik-nuxt3/modtools/composables/useModConfigPdf.js
   - iznik-nuxt3/modtools/pages/members/stories.vue
   - iznik-nuxt3/modtools/pages/communityevents/**
+  - iznik-nuxt3/modtools/components/ModVolunteerOpportunity.vue
+  - iznik-server-go/volunteering/volunteering.go
   - iznik-nuxt3/modtools/pages/admins.vue
   - iznik-nuxt3/modtools/components/ModAdmin.vue
   - iznik-server-go/admin/admin.go
@@ -82,6 +84,10 @@ already read and copy those.
   roundup email.
 - **Volunteering** (`/volunteering`) - the same review pattern for volunteering
   opportunities, including opportunities fed in from partners.
+  Use **Hold** on an opportunity while you query the member, so another moderator does not
+  approve it in the meantime. Others then see "Held by <your name>" and cannot act on it
+  until you **Release** it. Held opportunities show in the menu count in blue instead of
+  red.
 
 ## Broadcasts to the whole community
 
