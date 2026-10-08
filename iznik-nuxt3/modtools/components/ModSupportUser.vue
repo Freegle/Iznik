@@ -585,6 +585,7 @@
       :title="'Reset password for ' + user.displayname + '?'"
       message="<p>Are you sure you want to reset this user's password?</p>"
       @confirm="setPasswordConfirmed"
+      @hidden="passwordConfirmClosed"
     />
     <ProfileModal
       v-if="showProfile && user && user.info"
@@ -926,6 +927,10 @@ function setPassword(callback) {
 }
 
 async function setPasswordConfirmed() {
+  // Take the callback before the await: the modal emits hidden as it shuts,
+  // and passwordConfirmClosed below must not stop the spinner a second time.
+  const callback = passwordCallback
+  passwordCallback = null
   if (newpassword.value) {
     await userStore.edit({
       id: user.value.id,
@@ -933,10 +938,18 @@ async function setPasswordConfirmed() {
     })
   }
   showPasswordConfirm.value = false
-  if (passwordCallback) {
-    passwordCallback()
-    passwordCallback = null
-  }
+  callback?.()
+}
+
+function passwordConfirmClosed() {
+  // The modal shuts on Cancel, and on Escape or the backdrop, as well as on
+  // Confirm. Nothing else here tells the SpinButton that opened it that the
+  // action is over, so it spins for its full 20 seconds and reports a
+  // forgotten callback to Sentry - see components/SpinButton.vue.
+  showPasswordConfirm.value = false
+  const callback = passwordCallback
+  passwordCallback = null
+  callback?.()
 }
 
 async function addEmail(callback) {
