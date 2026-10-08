@@ -1149,7 +1149,7 @@ func GetSession(c *fiber.Ctx) error {
 		var pending, pendingother, spam int64
 		var pendingmembers, spammembers, spammembersother int64
 		var pendingevents, pendingadmins, editreview int64
-		var pendingvolunteering, spammerpendingadd, spammerpendingremove, stories int64
+		var pendingvolunteering, pendingvolunteeringother, spammerpendingadd, spammerpendingremove, stories int64
 		var chatreview, chatreviewother, newsletterstories, giftaid, happiness, relatedmembers int64
 		var housekeeping, cronjobs int64
 		var emailin, emailout int64
@@ -1314,13 +1314,22 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
+				// Unheld → pendingvolunteering (red); held by a moderator →
+				// pendingvolunteeringother (blue), the same split as pending messages.
 				db.Table("volunteering v").
 					Select("COUNT(DISTINCT v.id)").
 					Joins("INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id").
 					Joins("LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id").
-					Where("vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND (vd.end IS NULL OR vd.end >= NOW())",
+					Where("vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND v.heldby IS NULL AND (vd.end IS NULL OR vd.end >= NOW())",
 						activeGroupIDs).
 					Scan(&pendingvolunteering)
+				db.Table("volunteering v").
+					Select("COUNT(DISTINCT v.id)").
+					Joins("INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id").
+					Joins("LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id").
+					Where("vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND v.heldby IS NOT NULL AND (vd.end IS NULL OR vd.end >= NOW())",
+						activeGroupIDs).
+					Scan(&pendingvolunteeringother)
 			}
 		}()
 
@@ -1641,32 +1650,33 @@ func GetSession(c *fiber.Ctx) error {
 			emailin + emailout + helperEscalated + maildeferrals
 
 		work = fiber.Map{
-			"pending":              pending,
-			"pendingother":         pendingother,
-			"spam":                 spam,
-			"pendingmembers":       pendingmembers,
-			"spammembers":          spammembers,
-			"spammembersother":     spammembersother,
-			"pendingevents":        pendingevents,
-			"pendingadmins":        pendingadmins,
-			"editreview":           editreview,
-			"pendingvolunteering":  pendingvolunteering,
-			"stories":              stories,
-			"spammerpendingadd":    spammerpendingadd,
-			"spammerpendingremove": spammerpendingremove,
-			"chatreview":           chatreview,
-			"chatreviewother":      chatreviewother,
-			"newsletterstories":    newsletterstories,
-			"helperEscalated":      helperEscalated,
-			"giftaid":              giftaid,
-			"happiness":            happiness,
-			"relatedmembers":       relatedmembers,
-			"housekeeping":         housekeeping,
-			"cronjobs":             cronjobs,
-			"emailin":              emailin,
-			"emailout":             emailout,
-			"maildeferrals":        maildeferrals,
-			"total":                total,
+			"pending":                  pending,
+			"pendingother":             pendingother,
+			"spam":                     spam,
+			"pendingmembers":           pendingmembers,
+			"spammembers":              spammembers,
+			"spammembersother":         spammembersother,
+			"pendingevents":            pendingevents,
+			"pendingadmins":            pendingadmins,
+			"editreview":               editreview,
+			"pendingvolunteering":      pendingvolunteering,
+			"pendingvolunteeringother": pendingvolunteeringother,
+			"stories":                  stories,
+			"spammerpendingadd":        spammerpendingadd,
+			"spammerpendingremove":     spammerpendingremove,
+			"chatreview":               chatreview,
+			"chatreviewother":          chatreviewother,
+			"newsletterstories":        newsletterstories,
+			"helperEscalated":          helperEscalated,
+			"giftaid":                  giftaid,
+			"happiness":                happiness,
+			"relatedmembers":           relatedmembers,
+			"housekeeping":             housekeeping,
+			"cronjobs":                 cronjobs,
+			"emailin":                  emailin,
+			"emailout":                 emailout,
+			"maildeferrals":            maildeferrals,
+			"total":                    total,
 		}
 	}
 

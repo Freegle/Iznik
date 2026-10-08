@@ -3,7 +3,7 @@
     <b-input-group class="mb-2">
       <b-form-input
         v-model="searchuser"
-        placeholder="Email, numerical id, or ~- encoded id"
+        placeholder="Email (incl. donation payer email), postcode, name, numerical id, or ~- encoded id"
         class="max"
         :disabled="searching"
         autocapitalize="none"
@@ -19,12 +19,22 @@
       </slot>
     </b-input-group>
     <div v-if="!searching && searchuser && searched">
-      <ModSupportUser
-        v-for="user in visible"
-        :id="user.id"
-        :key="user.id"
-        :expand="expand"
-      />
+      <div v-for="user in visible" :key="user.id">
+        <div
+          v-if="matchReasons(user.id).length"
+          class="small text-muted ms-1 mt-1 match-reasons"
+        >
+          <b-badge
+            v-for="reason in matchReasons(user.id)"
+            :key="reason"
+            variant="info"
+            class="me-1"
+          >
+            {{ reason }}
+          </b-badge>
+        </div>
+        <ModSupportUser :id="user.id" :expand="expand" />
+      </div>
       <infinite-loading :distance="200" @infinite="loadMoreUsers">
         <template #spinner />
         <template #complete>
@@ -101,6 +111,17 @@ async function usersearch() {
       return new Date(b.lastaccess).getTime() - new Date(a.lastaccess).getTime()
     })
   }
+}
+
+const REASON_TEXT = {
+  donation_payer: 'Matched donation payer email',
+  postcode: 'Matched postcode (member location)',
+  giftaid_postcode: 'Matched gift aid postcode',
+}
+
+function matchReasons(id) {
+  const reasons = userStore.searchMatches?.[id] || []
+  return reasons.map((r) => REASON_TEXT[r] || r)
 }
 
 function loadMoreUsers($state) {
