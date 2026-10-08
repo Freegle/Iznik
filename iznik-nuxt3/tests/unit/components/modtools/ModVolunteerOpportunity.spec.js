@@ -8,6 +8,9 @@ const mockDelete = vi.fn()
 const mockSave = vi.fn()
 const mockRemove = vi.fn()
 const mockByIdVolunteering = vi.fn()
+const mockHold = vi.fn()
+const mockRelease = vi.fn()
+const mockCheckWork = vi.fn()
 
 vi.mock('@/stores/volunteering', () => ({
   useVolunteeringStore: () => ({
@@ -15,7 +18,18 @@ vi.mock('@/stores/volunteering', () => ({
     save: mockSave,
     remove: mockRemove,
     byId: mockByIdVolunteering,
+    hold: mockHold,
+    release: mockRelease,
   }),
+}))
+
+vi.mock('~/composables/useMe', async () => {
+  const { ref } = await import('vue')
+  return { useMe: () => ({ myid: ref(999) }) }
+})
+
+vi.mock('~/composables/useModMe', () => ({
+  useModMe: () => ({ checkWork: mockCheckWork }),
 }))
 
 const mockGroupStore = {
@@ -124,6 +138,8 @@ describe('ModVolunteerOpportunity', () => {
     mockDelete.mockResolvedValue()
     mockSave.mockResolvedValue()
     mockRemove.mockResolvedValue()
+    mockHold.mockResolvedValue()
+    mockRelease.mockResolvedValue()
     mockByIdVolunteering.mockReturnValue(defaultVolunteering)
     mockGroupStore.get.mockReturnValue(mockGroup)
     mockUserStore.byId.mockReturnValue(mockUser)
@@ -215,6 +231,30 @@ describe('ModVolunteerOpportunity', () => {
       expect(mockDelete).toHaveBeenCalledWith(123)
     })
 
+    it('hold calls the store and refreshes the work counts', async () => {
+      const wrapper = mountComponent()
+      await wrapper.vm.hold()
+      expect(mockHold).toHaveBeenCalledWith(123)
+      expect(mockCheckWork).toHaveBeenCalledWith(true)
+    })
+
+    it('hold refused by another moderator shows who, and does not throw', async () => {
+      const held = new Error('Other Mod is holding this.')
+      held.heldByOtherMod = true
+      mockHold.mockRejectedValue(held)
+      const wrapper = mountComponent()
+      await wrapper.vm.hold()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('Other Mod is holding this.')
+    })
+
+    it('release calls the store and refreshes the work counts', async () => {
+      const wrapper = mountComponent({}, { heldby: 999 })
+      await wrapper.vm.release()
+      expect(mockRelease).toHaveBeenCalledWith(123)
+      expect(mockCheckWork).toHaveBeenCalledWith(true)
+    })
+
     it('approve calls save and remove', async () => {
       const wrapper = mountComponent()
       await wrapper.vm.approve()
@@ -223,6 +263,37 @@ describe('ModVolunteerOpportunity', () => {
         pending: false,
       })
       expect(mockRemove).toHaveBeenCalledWith(123)
+    })
+  })
+
+  describe('holding', () => {
+    it('shows Hold, and Approve/Edit/Delete, when not held', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.text()).toContain('Hold')
+      expect(wrapper.text()).toContain('Approve')
+      expect(wrapper.text()).not.toContain('Release')
+      expect(wrapper.text()).not.toContain('Held by')
+    })
+
+    it('names the holder and hides the action buttons when held by someone else', () => {
+      mockUserStore.byId.mockImplementation((id) =>
+        id === 55 ? { id: 55, displayname: 'Holly Holder' } : mockUser
+      )
+      const wrapper = mountComponent({}, { heldby: 55 })
+      expect(wrapper.text()).toContain('Held by')
+      expect(wrapper.text()).toContain('Holly Holder')
+      expect(wrapper.text()).toContain('Release')
+      expect(wrapper.text()).not.toContain('Approve')
+      expect(wrapper.text()).not.toContain('Delete')
+      expect(mockUserStore.fetch).toHaveBeenCalledWith(55)
+    })
+
+    it('keeps the action buttons when held by me, and says so', () => {
+      const wrapper = mountComponent({}, { heldby: 999 })
+      expect(wrapper.text()).toContain('You held this')
+      expect(wrapper.text()).toContain('Release')
+      expect(wrapper.text()).toContain('Approve')
+      expect(wrapper.text()).not.toContain('Held by')
     })
   })
 })

@@ -58,4 +58,16 @@ export default class VolunteeringAPI extends BaseAPI {
   expire(id) {
     return this.$patchv2('/volunteering', { id, action: 'Expire' })
   }
+
+  hold(id) {
+    return this.$patchv2(
+      '/volunteering',
+      { id, action: 'Hold' },
+      notAHeldConflict
+    )
+  }
+
+  release(id) {
+    return this.$patchv2('/volunteering', { id, action: 'Release' })
+  }
 }
