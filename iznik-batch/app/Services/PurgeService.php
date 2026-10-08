@@ -22,34 +22,159 @@ class PurgeService
     protected int $chunkSize = 1000;
 
     /**
-     * Purge spam chat messages older than specified days.
+     * Where the spam purge keeps its place in chat_messages: the highest id it has finished
+     * examining, in the `config` table. Same pattern as ripple_leave_check_last_log_id.
+     */
+    private const SPAM_WATERMARK_KEY = 'purge_chats_spam_last_id';
+
+    /**
+     * How long past the purge cutoff the watermark trails, in days.
+     *
+     * A message can be rejected after it is old enough to purge: the 09:00 chats:review-pending run
+     * auto-rejects review items older than 7 days (so a message is rejected at 7 to 8 days old, just
+     * after the 7 day purge cutoff), and a moderator can reject while it is still in the queue. The
+     * watermark therefore only moves past messages older than cutoff + this trail, so every message
+     * is looked at again on each nightly run until it is 14 days old, which leaves a week of slack
+     * for a missed review run. In production the trail costs about 66,000 rows a night, against
+     * about 20.5 million for a scan from the start.
+     */
+    private const SPAM_WATERMARK_TRAIL_DAYS = 7;
+
+    private const SPAMMER_COLLECTION = 'Spammer';
+
+    /**
+     * How many ids one scan statement covers. Chat message ids are sparse (about 3 per row), so
+     * this is roughly a third as many rows. Bounds each SELECT so the first run, which starts at
+     * id 0, is many short reads and not one statement over the whole table.
+     */
+    protected int $spamScanWindow = 200000;
+
+    /**
+     * Purge rejected chat messages older than the specified days.
+     *
+     * Two passes, both chunked with each DELETE its own short transaction:
+     *
+     * 1. A scan of ids above a persisted watermark. Rejected messages are rare (a handful a day),
+     *    so a scan from the start of the table every night was 20.5 million rows to find them,
+     *    300 s on db3 in one pass and another 250 s in the loop's empty second pass.
+     * 2. The rejected messages of known spammers, by their userid index. Marking a user a spammer
+     *    rejects all their messages whatever their age, so those are the rejections the watermark
+     *    can pass before they happen.
      */
     public function purgeSpamChatMessages(int $daysOld = 7, bool $dryRun = false): int
     {
         $cutoff = now()->subDays($daysOld);
-
-        if ($dryRun) {
-            return ChatMessage::where('date', '<', $cutoff)
-                ->where('reviewrejected', 1)
-                ->count();
-        }
+        $upper = $this->newestChatMessageIdBefore($cutoff);
+        $safe = $this->newestChatMessageIdBefore($cutoff->copy()->subDays(self::SPAM_WATERMARK_TRAIL_DAYS));
+        $watermark = $this->getSpamWatermark();
 
         $total = 0;
+        $seen = [];
+        $pos = $watermark;
 
-        do {
-            $deleted = ChatMessage::where('date', '<', $cutoff)
-                ->where('reviewrejected', 1)
-                ->limit($this->chunkSize)
-                ->delete();
+        while ($pos < $upper) {
+            $end = min($pos + $this->spamScanWindow, $upper);
 
-            $total += $deleted;
+            do {
+                $ids = $this->rejectedIdsBetween($pos, $end, $cutoff);
+                $full = $ids->count() >= $this->chunkSize;
 
-            if ($total % $this->logInterval === 0 && $total > 0) {
-                Log::info("Purged {$total} spam chat messages");
+                if ($dryRun) {
+                    foreach ($ids as $id) {
+                        $seen[$id] = true;
+                    }
+                } else {
+                    $total += $this->deleteChatMessages($ids->all());
+                }
+
+                $pos = $full ? (int) $ids->last() : $end;
+            } while ($full);
+
+            // Short chunk: the window is finished. Persist progress so an interrupted first run
+            // resumes, but never past the trail.
+            if (!$dryRun && min($end, $safe) > $watermark) {
+                $watermark = min($end, $safe);
+                $this->setSpamWatermark($watermark);
             }
-        } while ($deleted > 0);
+        }
+
+        // Rejected messages of spammers, wherever the watermark is.
+        do {
+            $ids = ChatMessage::whereIn('userid', function ($q) {
+                $q->select('userid')->from('spam_users')->where('collection', self::SPAMMER_COLLECTION);
+            })
+                ->where('reviewrejected', 1)
+                ->where('date', '<', $cutoff)
+                ->orderBy('id')
+                ->limit($this->chunkSize)
+                ->pluck('id');
+            $full = $ids->count() >= $this->chunkSize;
+
+            if ($dryRun) {
+                foreach ($ids as $id) {
+                    $seen[$id] = true;
+                }
+                break;
+            }
+
+            $total += $this->deleteChatMessages($ids->all());
+        } while ($full);
+
+        if ($dryRun) {
+            return count($seen);
+        }
+
+        if ($total > 0) {
+            Log::info("Purged {$total} spam chat messages");
+        }
 
         return $total;
+    }
+
+    /**
+     * Id of the newest chat message dated before $when, or 0. A backward walk of the date index
+     * that stops at the first row.
+     */
+    private function newestChatMessageIdBefore(\Carbon\CarbonInterface $when): int
+    {
+        return (int) ChatMessage::where('date', '<', $when)->orderByDesc('date')->limit(1)->value('id');
+    }
+
+    /**
+     * Rejected messages old enough to purge with $after < id <= $upTo, lowest id first. The id
+     * range keeps this a bounded primary-key range read.
+     */
+    private function rejectedIdsBetween(int $after, int $upTo, \Carbon\CarbonInterface $cutoff): \Illuminate\Support\Collection
+    {
+        return ChatMessage::where('id', '>', $after)
+            ->where('id', '<=', $upTo)
+            ->where('reviewrejected', 1)
+            ->where('date', '<', $cutoff)
+            ->orderBy('id')
+            ->limit($this->chunkSize)
+            ->pluck('id');
+    }
+
+    /**
+     * @param int[] $ids
+     */
+    private function deleteChatMessages(array $ids): int
+    {
+        if ($ids === []) {
+            return 0;
+        }
+
+        return ChatMessage::whereIn('id', $ids)->delete();
+    }
+
+    private function getSpamWatermark(): int
+    {
+        return (int) (DB::table('config')->where('key', self::SPAM_WATERMARK_KEY)->value('value') ?? 0);
+    }
+
+    private function setSpamWatermark(int $id): void
+    {
+        DB::table('config')->upsert(['key' => self::SPAM_WATERMARK_KEY, 'value' => (string) $id], ['key'], ['value']);
     }
 
     /**

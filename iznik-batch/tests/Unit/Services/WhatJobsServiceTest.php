@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Services\WhatJobsService;
+use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
@@ -878,6 +879,29 @@ class WhatJobsServiceTest extends TestCase
             $this->assertSame('legit-1', $jobs[0]['job_reference']);
         } finally {
             @unlink($path);
+        }
+    }
+
+    /**
+     * WhatJobsService replaces `jobs` by building jobs_new LIKE jobs and renaming it into place, so
+     * an index on `jobs` only survives every swap if LIKE copies it. The spatial server's jobs
+     * delta count depends on visible_cpc.
+     */
+    public function test_the_replacement_jobs_table_carries_the_visible_cpc_index(): void
+    {
+        $svc = new WhatJobsService();
+
+        try {
+            $svc->prepareTempTable();
+
+            $cols = collect(DB::select('SHOW INDEX FROM jobs_new WHERE Key_name = ?', ['visible_cpc']))
+                ->sortBy('Seq_in_index')
+                ->pluck('Column_name')
+                ->all();
+
+            $this->assertSame(['visible', 'cpc'], $cols);
+        } finally {
+            DB::statement('DROP TABLE IF EXISTS jobs_new');
         }
     }
 }

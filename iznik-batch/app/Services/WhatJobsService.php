@@ -892,7 +892,9 @@ class WhatJobsService
         }
 
         $count   = 0;
-        $hasNode = $reader->read();
+        // An empty feed file opens fine and then warns on the first read (libxml: "Extra content at
+        // the end of the document"), which Laravel turns into an ErrorException. Treat it as no jobs.
+        $hasNode = @$reader->read();
         while ($hasNode) {
             if ($reader->nodeType !== \XMLReader::ELEMENT || $reader->depth !== 2) {
                 $hasNode = $reader->read();
