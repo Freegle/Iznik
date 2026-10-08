@@ -43,6 +43,18 @@ func PayPalIPN(c *fiber.Ctx) error {
 
 	gdb := database.DBConn
 
+	// PayPal resends an IPN until it gets a 200. A transaction already recorded is
+	// acknowledged, not inserted again: TransactionID is unique, so the insert would
+	// fail and the 500 would keep PayPal retrying for days.
+	if txnID != "" {
+		var existing int64
+		gdb.Table("users_donations").Where("TransactionID = ?", txnID).Count(&existing)
+		if existing > 0 {
+			log.Printf("[PayPalIPN] txn_id=%s already recorded, acknowledging", txnID)
+			return c.SendStatus(fiber.StatusOK)
+		}
+	}
+
 	// Try to identify the user.
 	var userID uint64
 	displayName := firstName + " " + lastName

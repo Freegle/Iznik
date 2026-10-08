@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-29
+last_reviewed: 2026-10-07
 owner: Freegle ops
 covers:
   - ops/hosts/README.md
@@ -73,6 +73,7 @@ Two monit traps from that page, repeated here because they bite:
 
 | Check | How | Why |
 |---|---|---|
+| Automated maintenance ran | `freegle-maint status` on the Docker host, and the run mails | A failed run holds the lock until a person clears it, so no machine gets patched until then. See [automated host maintenance](../runbooks/automated-host-maintenance.md) |
 | `monit summary` on each machine | every service should read OK | A check that has been failing for days is invisible unless you look |
 | Disk headroom on all machines | monit `disk.conf` alarms plus your own eyes | The Yesterday pool grows by 10-20G a day; disk is the most common slow-motion outage |
 | Galera cluster health | `SHOW STATUS LIKE 'wsrep_%'` - cluster size 3, all nodes Synced | A node can drop out and the site stays up, so nothing tells you until the second one goes |

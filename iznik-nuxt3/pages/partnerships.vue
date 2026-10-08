@@ -149,6 +149,46 @@
       </div>
     </section>
 
+    <section class="partnerships__section partnerships__reusual">
+      <img
+        src="/partnerships/reusual-suspects.png"
+        alt="The Reusual Suspects"
+        class="partnerships__reusual-logo"
+      />
+      <h2>The Reusual Suspects</h2>
+      <p>
+        The Reusual Suspects is a free, friendly network bringing together
+        everyone in the UK &amp; Ireland working in reuse - and everyone is
+        welcome to our monthly meetings. Think of it as an informal drop-in
+        where you can:
+      </p>
+      <ul class="partnerships__reusual-list">
+        <li>
+          <span aria-hidden="true">&#x2728;</span> Share your wins (and the
+          things that didn&rsquo;t quite go to plan!)
+        </li>
+        <li>
+          <span aria-hidden="true">&#x1F91D;</span> Make unexpected connections
+          across sectors
+        </li>
+        <li>
+          <span aria-hidden="true">&#x1F4A1;</span> Swap ideas, tips and
+          problem-solving strategies
+        </li>
+        <li>
+          <span aria-hidden="true">&#x1F680;</span> Find ways to make more reuse
+          happen together
+        </li>
+      </ul>
+      <p>
+        To join, email
+        <ExternalLink href="mailto:reusualsuspects@gmail.com"
+          >reusualsuspects@gmail.com</ExternalLink
+        >
+        and we&rsquo;ll let you know about future sessions.
+      </p>
+    </section>
+
     <section class="partnerships__section partnerships__section--cta">
       <h2>Get in Touch</h2>
       <p>Interested in partnering with Freegle? We'd love to hear from you.</p>
@@ -579,6 +619,29 @@ const team = [
 }
 
 /* ── CTA ──────────────────────────────────────────────────── */
+
+/* ── The Reusual Suspects ─────────────────────────────────── */
+
+.partnerships__reusual-logo {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  height: auto;
+  margin: 0 auto 1.25rem;
+}
+
+.partnerships__reusual-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+
+  li {
+    font-size: 0.9375rem;
+    line-height: 1.7;
+    color: $gray-700;
+    margin-bottom: 0.25rem;
+  }
+}
 
 .partnerships__section--cta {
   text-align: center;

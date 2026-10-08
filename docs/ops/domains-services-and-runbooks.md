@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-02
+last_reviewed: 2026-10-07
 owner: Freegle dev team
 covers:
   - docs/ops/reference/database-read-write-split.md
@@ -117,3 +117,7 @@ Operational runbooks are indexed in [runbooks/](runbooks/README.md). They descri
 non-sensitive level, what to do for recurring operational events such as a background-host
 reboot or an edge-tier change. The detailed, host-specific steps are maintained in the ops
 team's operational notes rather than reproduced here.
+
+Routine OS patching and the reboots it needs are automated, one machine per night on a
+weekly rotation, with the graceful drain around every reboot: see
+[automated host maintenance](runbooks/automated-host-maintenance.md).

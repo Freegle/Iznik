@@ -1,0 +1,154 @@
+#!/bin/bash
+#
+# freegle-maint - automated, graceful OS patching and reboots for the production
+# hosts, one host at a time. Runs on the Docker host.
+#
+#   freegle-maint run <host> [--live] [--force-reboot] [--ignore-window]
+#       One host. A dry run unless --live: the real read-only preflight runs and
+#       every action is printed, nothing is changed.
+#       <host>: db2-internal | db3-internal | db1-internal | ha-internal |
+#               bulk2-internal | docker   (the names are configurable)
+#   freegle-maint scheduled <slot>
+#       What the systemd timers call. <slot>: db | arbitrator | mail | docker | lb.
+#       The db slot picks the data node by week (MAINT_DB_ROTATION). Live only
+#       for hosts listed in MAINT_LIVE_HOSTS; otherwise a dry run.
+#   freegle-maint resume          at boot, after a Docker-host reboot (systemd)
+#   freegle-maint status          lock, pause, failure marker, recent runs
+#   freegle-maint pause [reason]  kill switch: no run starts while it exists
+#   freegle-maint unpause
+#   freegle-maint clear-failed    after a person has dealt with a failed run
+#
+# Procedure and gates: docs/ops/runbooks/automated-host-maintenance.md.
+#
+set -uo pipefail
+
+MAINT_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$MAINT_HOME/lib/common.sh"
+# shellcheck source=lib/batch.sh
+. "$MAINT_HOME/lib/batch.sh"
+# shellcheck source=lib/db-node.sh
+. "$MAINT_HOME/lib/db-node.sh"
+# shellcheck source=lib/arbitrator.sh
+. "$MAINT_HOME/lib/arbitrator.sh"
+# shellcheck source=lib/lb.sh
+. "$MAINT_HOME/lib/lb.sh"
+# shellcheck source=lib/mail-host.sh
+. "$MAINT_HOME/lib/mail-host.sh"
+# shellcheck source=lib/docker-host.sh
+. "$MAINT_HOME/lib/docker-host.sh"
+
+usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+profile_of() {
+  case "$1" in
+    local|docker) echo docker; return;;
+    "$MAINT_ARBITRATOR") echo arbitrator; return;;
+    "$MAINT_LB_HOST") echo lb; return;;
+    "$MAINT_MAIL_HOST") echo mail; return;;
+  esac
+  case " $MAINT_DB_NODES " in *" $1 "*) echo db; return;; esac
+  echo unknown
+}
+
+slot_host() {
+  case "$1" in
+    db)
+      # Alternate the data nodes by week, so each is done every other week and the
+      # two never fall in the same week. Weeks counted from the epoch, not ISO
+      # weeks, so a 53-week year does not repeat a node.
+      local -a nodes; read -r -a nodes <<< "$MAINT_DB_ROTATION"
+      echo "${nodes[$(( $(date -u +%s) / 604800 % ${#nodes[@]} ))]}";;
+    arbitrator) echo "$MAINT_ARBITRATOR";;
+    mail) echo "$MAINT_MAIL_HOST";;
+    lb) echo "$MAINT_LB_HOST";;
+    docker) echo docker;;
+    *) echo "";;
+  esac
+}
+
+is_live_host() { case " $MAINT_LIVE_HOSTS " in *" $1 "*) return 0;; esac; return 1; }
+
+start_run() {  # <host>
+  TARGET=$1
+  [ "$TARGET" = docker ] && TARGET=local
+  PROFILE=$(profile_of "$1")
+  [ "$PROFILE" = unknown ] && { echo "unknown host $1" >&2; exit 64; }
+  if ! $DRY && [ "$(id -u)" != 0 ]; then echo "a live run must be root" >&2; exit 64; fi
+  RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(short_name "$1")"
+  RUN_DIR="$MAINT_STATE_DIR/runs/$RUN_ID"
+  mkdir -p "$RUN_DIR" "$MAINT_LOG_DIR" || { echo "cannot create $RUN_DIR or $MAINT_LOG_DIR" >&2; exit 70; }
+  LOG_FILE="$MAINT_LOG_DIR/maint.log"
+  trap on_exit EXIT
+  info "start: host $1, profile $PROFILE, $($DRY && echo 'dry run' || echo LIVE)"
+  acquire_lock
+  check_pause
+  case "$PROFILE" in
+    db) WINDOW=$MAINT_WINDOW_DB;; arbitrator) WINDOW=$MAINT_WINDOW_ARBITRATOR;;
+    lb) WINDOW=$MAINT_WINDOW_LB; WINDOW_TZ=$MAINT_WINDOW_LB_TZ;; mail) WINDOW=$MAINT_WINDOW_MAIL;; docker) WINDOW=$MAINT_WINDOW_DOCKER;;
+  esac
+  check_window
+  check_gap
+  check_deploy_quiet
+  case "$PROFILE" in
+    db) db_run "$TARGET";;
+    arbitrator) arb_run;;
+    lb) lb_run;;
+    mail) mail_run;;
+    docker) docker_run;;
+  esac
+}
+
+cmd_status() {
+  echo "pause file:   $([ -e "$MAINT_PAUSE_FILE" ] && echo "PRESENT: $(head -c 200 "$MAINT_PAUSE_FILE")" || echo absent)"
+  echo "failed:       $([ -f "$MAINT_STATE_DIR/FAILED" ] && tr '\n' ' ' < "$MAINT_STATE_DIR/FAILED" || echo none)"
+  echo "active:       $([ -f "$MAINT_STATE_DIR/active" ] && tr '\n' ' ' < "$MAINT_STATE_DIR/active" || echo none)"
+  echo "resume:       $([ -f "$MAINT_STATE_DIR/resume" ] && echo pending || echo none)"
+  echo "live hosts:   ${MAINT_LIVE_HOSTS:-none (every scheduled run is a dry run)}"
+  echo "db this week: $(slot_host db)"
+  local f
+  for f in "$MAINT_STATE_DIR"/last-ok-*; do [ -f "$f" ] && echo "last ok:      ${f##*/last-ok-} $(cat "$f")"; done
+  echo "recent runs:"
+  find "$MAINT_STATE_DIR/runs" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -8 | while read -r d; do
+    printf '  %s  %s\n' "${d##*/}" "$(tail -1 "$d/summary.txt" 2>/dev/null | cut -c1-140)"
+  done
+  systemctl list-timers --all --no-pager 'freegle-maint-*' 2>/dev/null
+}
+
+[ $# -ge 1 ] || usage 64
+cmd=$1; shift
+case "$cmd" in
+  run)
+    [ $# -ge 1 ] || usage 64
+    host=$1; shift
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --live) DRY=false;;
+        --dry-run) DRY=true;;
+        --force-reboot) FORCE_REBOOT=true;;
+        --ignore-window) IGNORE_WINDOW=true;;
+        *) usage 64;;
+      esac
+      shift
+    done
+    start_run "$host";;
+  scheduled)
+    [ $# -eq 1 ] || usage 64
+    host=$(slot_host "$1"); [ -n "$host" ] || usage 64
+    if is_live_host "$host" || { [ "$host" = docker ] && is_live_host local; }; then DRY=false; else DRY=true; fi
+    start_run "$host";;
+  resume)
+    docker_resume;;
+  status)
+    cmd_status;;
+  pause)
+    mkdir -p "$(dirname "$MAINT_PAUSE_FILE")"
+    echo "${*:-paused} (by $(id -un) at $(date -u +%FT%TZ))" > "$MAINT_PAUSE_FILE"; echo "paused";;
+  unpause)
+    rm -f "$MAINT_PAUSE_FILE"; echo "unpaused";;
+  clear-failed)
+    [ -f "$MAINT_STATE_DIR/FAILED" ] && cat "$MAINT_STATE_DIR/FAILED"
+    rm -f "$MAINT_STATE_DIR/FAILED" "$MAINT_STATE_DIR/active"; echo "cleared";;
+  -h|--help|help) usage 0;;
+  *) usage 64;;
+esac
