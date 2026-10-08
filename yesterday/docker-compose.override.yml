@@ -207,6 +207,14 @@ services:
     deploy:
       replicas: 0
 
+  # The routing container needs the full UK OSM graph (/data/uk-latest.osm.pbf), which is not
+  # downloaded on Yesterday, so it reads the Bristol extract baked into the image (as CI does)
+  # and serves the Bristol area rather than exiting on the missing file.
+  spatial:
+    environment:
+      - OSM_PBF_PATH=/app/testdata/bristol.osm.pbf
+      - DEPRIVATION_CSV=/app/testdata/bristol_lsoa.csv
+
   batch:
     # Disable batch on Yesterday - scheduled jobs should not run against backup database
     deploy:

@@ -403,13 +403,20 @@ ylvm_reset_root_password() {
         docker compose up -d percona >/dev/null 2>&1 || true
         ylvm_die "percona socket not ready for password reset - see: docker logs ${project}-percona"
     fi
+    # Production has root@localhost but no root@'%', and phpMyAdmin and the other containers
+    # connect over the network, so root@'%' is created here rather than altered.
+    local reset_ok=1
     docker exec "${project}-percona" mysql --socket=/var/lib/mysql/mysql.sock -u root -e \
-        "FLUSH PRIVILEGES; ALTER USER 'root'@'localhost' IDENTIFIED BY '${pw}'; ALTER USER 'root'@'%' IDENTIFIED BY '${pw}'; FLUSH PRIVILEGES;" 2>/dev/null \
-        || ylvm_log "⚠️  password reset query failed"
+        "FLUSH PRIVILEGES; ALTER USER 'root'@'localhost' IDENTIFIED BY '${pw}'; CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY '${pw}'; ALTER USER 'root'@'%' IDENTIFIED BY '${pw}'; GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;" \
+        || { reset_ok=; ylvm_log "⚠️  password reset query failed"; }
     sed -i '/skip-grant-tables/d' "$cnf"
     docker compose restart percona >/dev/null 2>&1
     for i in $(seq 1 90); do docker compose ps percona 2>/dev/null | grep -q healthy && break; sleep 2; done
-    ylvm_log "✅ root password reset to local value"
+    if [ -n "$reset_ok" ]; then
+        ylvm_log "✅ root password reset to local value"
+    else
+        ylvm_log "❌ root password NOT reset - phpMyAdmin and the dev containers cannot log in"
+    fi
 }
 
 # List available dated snapshots (newest first), as YYYYMMDD.
