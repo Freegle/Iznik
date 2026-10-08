@@ -493,6 +493,13 @@
               >
                 Message sent! Check your
                 <nuxt-link to="/chats">Chats</nuxt-link>.
+                <span
+                  v-if="sentCountdown"
+                  class="sent-countdown"
+                  data-testid="sent-countdown"
+                >
+                  Closing in {{ sentCountdown }}s…
+                </span>
               </b-alert>
             </div>
           </div>
@@ -581,6 +588,13 @@
         </div>
         <b-alert v-if="replied" variant="info" :model-value="true" class="mb-0">
           Message sent! Check your <nuxt-link to="/chats">Chats</nuxt-link>.
+          <span
+            v-if="sentCountdown"
+            class="sent-countdown"
+            data-testid="sent-countdown"
+          >
+            Closing in {{ sentCountdown }}s…
+          </span>
         </b-alert>
       </div>
     </div>
@@ -868,6 +882,13 @@ const thumbnailsRef = ref(null)
 const thumbnailTouchStartX = ref(0)
 const thumbnailScrollStart = ref(0)
 let thumbnailScrollInterval = null
+
+// Long enough to read the "Message sent" confirmation, and to tap its Chats
+// link, before the message closes back to the list. The confirmation counts
+// down the seconds left so the close does not come as a surprise.
+const SENT_CLOSE_DELAY_SECS = 5
+const sentCountdown = ref(null)
+let sentCloseTimer = null
 let photoAreaObserver = null
 
 // Computed (additional to composable)
@@ -1051,13 +1072,20 @@ function sent() {
 
   // When we're a message inside a list (browse / explore), the reply was sent
   // WITHOUT navigating to the chat. Show the "Message sent" confirmation
-  // briefly, then close this message so the user is back on the list and can
-  // reply to more items. On the standalone message page the state machine has
-  // already navigated to the chat, so we leave navigation alone.
+  // for a few seconds, then close this message so the user is back on the
+  // list and can reply to more items. On the standalone message page the
+  // state machine has already navigated to the chat, so we leave navigation
+  // alone.
   if (props.inModal || props.fullscreenOverlay) {
-    setTimeout(() => {
-      emit('close')
-    }, 1500)
+    sentCountdown.value = SENT_CLOSE_DELAY_SECS
+    sentCloseTimer = setInterval(() => {
+      sentCountdown.value--
+      if (sentCountdown.value <= 0) {
+        clearInterval(sentCloseTimer)
+        sentCloseTimer = null
+        emit('close')
+      }
+    }, 1000)
   }
 }
 
@@ -1126,6 +1154,11 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (sentCloseTimer) {
+    clearInterval(sentCloseTimer)
+    sentCloseTimer = null
+  }
+
   const timeOpenMs = mountTime.value ? Date.now() - mountTime.value : null
 
   action('message_expanded_unmount', {
@@ -2461,6 +2494,11 @@ onUnmounted(() => {
 .footer-buttons:has(.cancel-button:only-child) .cancel-button {
   flex: 1;
   width: 100% !important;
+}
+
+.sent-countdown {
+  white-space: nowrap;
+  opacity: 0.75;
 }
 
 .promised-notice {
