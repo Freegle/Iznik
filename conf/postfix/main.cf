@@ -29,6 +29,11 @@ transport_maps = lmdb:/etc/postfix/transport
 # Concurrency limits for Laravel pipe transport
 # Limit parallel deliveries to avoid overwhelming the server
 freegle_destination_concurrency_limit = 4
+
+# One recipient per pipe invocation. freegle-mail-handler reads a single recipient
+# ($2) and sends one POST per run, so without this Postfix batches several
+# recipients of one message into a single run and only the first is delivered.
+freegle_destination_recipient_limit = 1
 default_process_limit = 50
 
 # Size limits

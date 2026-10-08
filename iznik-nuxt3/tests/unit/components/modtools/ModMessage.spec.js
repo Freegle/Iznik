@@ -1646,6 +1646,36 @@ describe('ModMessage', () => {
   })
 
   describe('Edit review mode', () => {
+    describe('post on several of my communities', () => {
+      const twoGroups = [
+        { groupid: 789, namedisplay: 'Test Group', collection: 'Pending' },
+        { groupid: 790, namedisplay: 'Other Group', collection: 'Pending' },
+      ]
+      beforeEach(() => {
+        mockMyModGroups.push({ ...mockMyModGroups[0], id: 790 })
+      })
+      afterEach(() => {
+        mockMyModGroups.splice(1)
+      })
+
+      it('warns that approving affects one community when moderating', () => {
+        const wrapper = mountComponent({}, { groups: twoGroups })
+        expect(
+          wrapper.find('[data-test="multi-group-mod-warning"]').exists()
+        ).toBe(true)
+      })
+
+      it('does not warn when reviewing an edit, which applies to every community', () => {
+        const wrapper = mountComponent(
+          { editreview: true },
+          { groups: twoGroups }
+        )
+        expect(
+          wrapper.find('[data-test="multi-group-mod-warning"]').exists()
+        ).toBe(false)
+      })
+    })
+
     it('shows ModDiff for subject when editreview with changes', () => {
       const wrapper = mountComponent(
         { editreview: true },

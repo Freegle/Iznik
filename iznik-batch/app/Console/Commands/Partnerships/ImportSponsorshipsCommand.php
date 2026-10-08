@@ -117,10 +117,10 @@ class ImportSponsorshipsCommand extends Command
                 ]);
             }
 
-            // A community inside the council boundary becomes a boundary one, so it is
-            // weighted by its overlap like any other; one outside it was sponsored anyway.
+            // A community significantly inside the council boundary becomes a boundary one, so
+            // it is weighted by its overlap like any other; one that is not was sponsored anyway.
             $inside = [];
-            foreach ($authorityStats->getAuthority($authorityId)['groups'] ?? [] as $group) {
+            foreach ($authorityStats->getSignificantGroups($authorityId)['groups'] ?? [] as $group) {
                 $inside[$group['id']] = $group['overlap'];
             }
 
