@@ -106,6 +106,12 @@ Worth a design look, not a fix:
   time in 05:28-07:28 and 11.8 of the node's 16.2 active threads in the 07:00 hour. Volume
   2.31 M image rows a day (as before). `emailtracking.go` (~361). Whether 2.3 M rows a day is
   worth it is a product question; whether the parent row needs an UPDATE per image is not.
+  **Done in the email-tracking-journal PR (2026-10-08):** image loads and pixel opens append to
+  `email_tracking_journal` in batches (no lookup, no FK, no parent UPDATE) and `mail:tracking:fold`
+  applies them at 01:35. `scroll_depth_percent` has no reader at all. The 2.3 M rows a day are
+  still written (the user data dump reads them); dropping them is the remaining product question.
+  Reader inventory and the delivery-health / mark-seen adjustments:
+  `docs/developers/reference/email-tracking-journal.md`.
 - **Browse spatial queries**: 10-02/03 seven shapes 38,929 s = 10.3% of db3 statement time, 6.9%
   of threads (was 24.2%). Largest 30,812 calls at 347 ms, examining 263,005 rows to return 1,330;
   the `COALESCE(MIN(mgv.arrival))` variant 15,432 calls at 312 ms, 438,201 rows; the

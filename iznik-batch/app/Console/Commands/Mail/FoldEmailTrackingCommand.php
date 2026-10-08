@@ -20,6 +20,7 @@ class FoldEmailTrackingCommand extends Command
 {
     protected $signature = 'mail:tracking:fold
         {--chunk=5000 : Journal rows applied per transaction}
+        {--pause-ms=100 : Pause between chunks, to leave room for the other cluster nodes to apply them}
         {--max-seen-hours=72 : Cap on the look-back handed to mail:digest:mark-seen}';
 
     protected $description = 'Fold the email tracking journal into email_tracking and email_tracking_images';
@@ -29,7 +30,7 @@ class FoldEmailTrackingCommand extends Command
 
     public function handle(EmailTrackingFoldService $service): int
     {
-        $stats = $service->fold(max(100, (int) $this->option('chunk')));
+        $stats = $service->fold(max(100, (int) $this->option('chunk')), null, max(0, (int) $this->option('pause-ms')));
 
         $this->info(sprintf(
             'mail:tracking:fold: %d events in %d chunks: %d emails opened, %d scroll depths, %d image rows, %d for unknown emails dropped.',

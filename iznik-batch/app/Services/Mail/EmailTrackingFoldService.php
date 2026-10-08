@@ -55,9 +55,11 @@ class EmailTrackingFoldService
      *
      * @param int $chunkSize Journal rows per transaction.
      * @param int|null $ceilingId Fold only rows up to this id (default: the highest id now).
+     * @param int $pauseMs Pause between chunks, so a day's backlog does not hold the cluster in
+     *                     flow control while the other nodes apply each chunk.
      * @return array{events:int, chunks:int, opened:int, scroll_updates:int, images:int, unresolved:int, oldest_event:?string}
      */
-    public function fold(int $chunkSize = self::DEFAULT_CHUNK, ?int $ceilingId = null): array
+    public function fold(int $chunkSize = self::DEFAULT_CHUNK, ?int $ceilingId = null, int $pauseMs = 0): array
     {
         $stats = [
             'events' => 0,
@@ -101,6 +103,10 @@ class EmailTrackingFoldService
             }
 
             $last = $high;
+
+            if ($pauseMs > 0 && $last < $ceiling) {
+                usleep($pauseMs * 1000);
+            }
         }
 
         $this->resolved = [];
