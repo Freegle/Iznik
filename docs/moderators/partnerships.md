@@ -8,6 +8,7 @@ covers:
   - iznik-nuxt3/modtools/stores/partnerships.js
   - iznik-nuxt3/api/PartnershipsAPI.js
   - iznik-server-go/partnerships/**
+  - iznik-server-go/authority/authority.go
   - iznik-batch/app/Console/Commands/Partnerships/**
   - iznik-batch/app/Services/PartnershipGroupsService.php
   - iznik-batch/app/Services/AuthorityStatsService.php
@@ -71,14 +72,24 @@ named.
 
 ## Which communities a deal covers
 
-A deal covers every community that overlaps the council boundary, **including any set up
-later** - a daily check picks those up, so nobody has to add them. These are the same
-communities the authority stats page on the member site uses.
+A deal covers every community that overlaps the council boundary **significantly**, including
+any set up later - a daily check picks those up, so nobody has to add them.
+
+"Significantly" means at least 5% of the community lies inside the boundary, or the community
+covers at least 5% of the council's area. So a small community wholly inside a big county
+counts, and so does a big community that holds a small council, but a community that only
+grazes the edge, such as Southend against Essex County at about 1%, is not listed. The daily
+check also drops a community it listed earlier that turns out to graze the edge.
+
+Communities you added or left out by hand are never changed by the check. A community you add
+from outside the boundary counts in full.
+
+The authority stats page on the member site is different: it counts every community that
+touches the council, each weighted by its share, so a grazing community adds a matching
+sliver. That page is deliberately left that way.
 
 Each community shows the share of it that lies inside the boundary, and the statistics count
-only that share of its figures, as the authority stats page does. A community that only
-touches the edge, such as Southend against Essex County at about 1%, adds very little; leave it
-out if the council should not be shown as sponsoring it.
+only that share of its figures.
 
 When you create a deal, the communities are listed as soon as you pick the council, largest
 share first, and you can untick any to leave them out. Under **Details** you can also:

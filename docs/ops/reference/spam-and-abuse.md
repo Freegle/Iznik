@@ -2,6 +2,7 @@
 last_reviewed: 2026-10-08
 owner: Freegle ops
 covers:
+  - conf/postfix
   - conf/rspamd
   - iznik-batch/app/Services/Mail/Incoming/SpamCheckService.php
   - iznik-batch/app/Services/ContentCheckService.php
@@ -58,7 +59,9 @@ The web UI is password-protected; set the password as an encrypted hash with
 **Where milter-modified mail actually goes.** Mail to `groups.ilovefreegle.org`,
 `users.ilovefreegle.org` and similar is routed by `transport_maps` to the
 `freegle-mail-handler` pipe, which POSTs the now-decorated message to the batch
-processor's `/api/mail/incoming` endpoint. It does **not** go to mailpit. To check
+processor's `/api/mail/incoming` endpoint. It does **not** go to mailpit. The pipe
+handles one recipient per run (`freegle_destination_recipient_limit = 1`), so a message sent to
+several group addresses is delivered once per address. To check
 headers and scores, look at the batch logs or the rspamd History tab.
 
 ## Mail layer: SpamAssassin, in parallel

@@ -172,14 +172,69 @@ class AuthorityStatsServiceTest extends TestCase
     {
         $this->seedAuthorityScenario();
 
-        // 2% of this group is inside the authority - Southend against Essex County. It is kept,
-        // and counts for 2% of its figures, as on the authority stats page.
+        // 2% of this group is inside the authority - Southend against Essex County. The stats
+        // page keeps it and counts 2% of its figures; only the Partnerships list drops it.
         $this->insertGroup(900104, 'grazegrp', 'Graze Group', 'POLYGON((0.98 10.5, 1.98 10.5, 1.98 10.6, 0.98 10.6, 0.98 10.5))');
 
         $overlaps = array_column($this->service->getAuthority($this->authorityId)['groups'], 'overlap', 'namedisplay');
 
         $this->assertArrayHasKey('Graze Group', $overlaps);
         $this->assertEqualsWithDelta(0.02, $overlaps['Graze Group'], 0.005);
+    }
+
+    public function test_get_authority_reports_how_much_of_the_authority_each_group_covers(): void
+    {
+        $this->seedAuthorityScenario();
+
+        $coverage = array_column($this->service->getAuthority($this->authorityId)['groups'], 'coverage', 'namedisplay');
+
+        // Full is 1x1 inside a 2x2 authority; Half has 0.5x1 of it inside.
+        $this->assertEqualsWithDelta(0.25, $coverage['Full Group'], 0.001);
+        $this->assertEqualsWithDelta(0.125, $coverage['Half Group'], 0.001);
+    }
+
+    public function test_significant_groups_drops_a_group_that_only_grazes_the_boundary(): void
+    {
+        $this->seedAuthorityScenario();
+        $this->insertGroup(900104, 'grazegrp', 'Graze Group', 'POLYGON((0.98 10.5, 1.98 10.5, 1.98 10.6, 0.98 10.6, 0.98 10.5))');
+
+        $names = array_column($this->service->getSignificantGroups($this->authorityId)['groups'], 'namedisplay');
+
+        $this->assertNotContains('Graze Group', $names);
+        $this->assertContains('Full Group', $names);
+        $this->assertContains('Half Group', $names);
+    }
+
+    public function test_significant_groups_keeps_a_small_group_wholly_inside_a_big_authority(): void
+    {
+        $this->seedAuthorityScenario();
+
+        // Covers a hundredth of the authority, but all of it is inside: Castle Point in Essex.
+        $this->insertGroup(900106, 'tinygrp', 'Tiny Group', 'POLYGON((0 10.5, 0.2 10.5, 0.2 10.7, 0 10.7, 0 10.5))');
+
+        $names = array_column($this->service->getSignificantGroups($this->authorityId)['groups'], 'namedisplay');
+
+        $this->assertContains('Tiny Group', $names);
+    }
+
+    public function test_significant_groups_keeps_a_big_group_that_covers_a_small_authority(): void
+    {
+        $this->seedAuthorityScenario();
+
+        // Much bigger than the authority and holds all of it, so only about 1% of the group is
+        // inside: a small council in a large community.
+        $this->insertGroup(900107, 'biggrp', 'Big Group', 'POLYGON((-10 5, 10 5, 10 20, -10 20, -10 5))');
+
+        $names = array_column($this->service->getSignificantGroups($this->authorityId)['groups'], 'namedisplay');
+
+        $this->assertContains('Big Group', $names);
+    }
+
+    public function test_is_significant_overlap_uses_the_same_five_percent_in_either_direction(): void
+    {
+        $this->assertTrue(AuthorityStatsService::isSignificantOverlap(0.05, 0.0));
+        $this->assertTrue(AuthorityStatsService::isSignificantOverlap(0.0, 0.05));
+        $this->assertFalse(AuthorityStatsService::isSignificantOverlap(0.049, 0.049));
     }
 
     public function test_compute_report_for_a_partnership_reports_exactly_its_communities(): void

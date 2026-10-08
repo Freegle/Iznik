@@ -63,14 +63,14 @@
           </p>
           <template v-else>
             <p class="text-muted small mb-1">
-              Every community that overlaps the council boundary is covered,
-              including any set up later. The percentage is how much of the
+              Every community that overlaps the council boundary significantly
+              is covered, including any set up later. A community that only
+              touches the edge is not listed. The percentage is how much of the
               community lies inside the boundary, and the statistics count that
-              share of it, as on the authority stats page. Untick one to leave
-              it out - for example one that only touches the edge.
+              share of it. Untick one to leave it out.
             </p>
             <NoticeMessage v-if="!boundaryGroups.length" variant="warning">
-              No communities overlap this council's boundary.
+              No communities overlap this council's boundary significantly.
             </NoticeMessage>
             <b-form-checkbox
               v-for="g in boundaryGroups"
@@ -477,8 +477,10 @@ async function pickAuthority(a) {
   loadingBoundary.value = true
   try {
     const authority = await api(runtimeConfig).authority.fetch(a.id)
+    // The authority stats page counts every community that touches the council; a deal only
+    // lists the ones that overlap it significantly (the API says which).
     boundaryGroups.value = (authority?.groups || [])
-      .slice()
+      .filter((g) => g.significant !== false)
       .sort((x, y) => (y.overlap || 0) - (x.overlap || 0))
   } finally {
     loadingBoundary.value = false

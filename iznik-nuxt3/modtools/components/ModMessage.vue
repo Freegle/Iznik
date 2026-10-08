@@ -1141,11 +1141,12 @@ const alreadyOnHomeGroup = computed(() => {
 
 // The groups this post is on that the current user actually moderates. When there's more
 // than one, a Reject/Approve here is ambiguous unless we say which group it applies to.
+// Edit review is not: an accepted or rejected edit changes the post itself, on every group.
 const moderatedGroupsOnPost = computed(() =>
   (message.value?.groups || []).filter((g) => amAModOn(parseInt(g.groupid)))
 )
 const onMultipleOfMyGroups = computed(
-  () => moderatedGroupsOnPost.value.length > 1
+  () => !props.editreview && moderatedGroupsOnPost.value.length > 1
 )
 // The name of the group this copy is being administered on (the context group).
 const currentGroupName = computed(() => {

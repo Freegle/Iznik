@@ -59,6 +59,12 @@ class SyncGroupsCommandTest extends TestCase
         return $this->group('POLYGON((-30.5 10.5, -29.5 10.5, -29.5 11.5, -30.5 11.5, -30.5 10.5))');
     }
 
+    /** A big community that only has a thin strip along the council's eastern edge. */
+    private function sliver(): int
+    {
+        return $this->group('POLYGON((-29.02 10.5, -20 10.5, -20 30.5, -29.02 30.5, -29.02 10.5))');
+    }
+
     private function link(int $groupId, string $source): void
     {
         DB::table('partnerships_groups')->insert([
@@ -99,6 +105,42 @@ class SyncGroupsCommandTest extends TestCase
         $this->artisan('partnerships:sync-groups')->assertExitCode(0);
 
         $this->assertNull($this->row($farAway));
+    }
+
+    public function test_does_not_cover_a_community_that_only_slightly_overlaps_the_boundary(): void
+    {
+        $sliver = $this->sliver();
+
+        $this->artisan('partnerships:sync-groups')->assertExitCode(0);
+
+        $this->assertNull($this->row($sliver));
+    }
+
+    public function test_drops_a_boundary_community_that_turns_out_to_be_a_sliver(): void
+    {
+        $sliver = $this->sliver();
+        $this->link($sliver, 'Boundary');
+        $sponsorshipId = DB::table('groups_sponsorship')->insertGetId(['groupid' => $sliver, 'name' => 'Sync Test Council']);
+        DB::table('partnerships_groups')->where('groupid', $sliver)->update(['sponsorshipid' => $sponsorshipId]);
+
+        $this->artisan('partnerships:sync-groups')->assertExitCode(0);
+
+        $this->assertNull($this->row($sliver));
+        $this->assertNull(DB::table('groups_sponsorship')->where('id', $sponsorshipId)->first(), 'its sponsor entry goes too');
+    }
+
+    public function test_keeps_a_sliver_community_that_was_added_or_left_out_by_hand(): void
+    {
+        $added = $this->sliver();
+        $this->link($added, 'Added');
+        $removed = $this->sliver();
+        $this->link($removed, 'Removed');
+
+        $this->artisan('partnerships:sync-groups')->assertExitCode(0);
+
+        $this->assertSame('Added', $this->row($added)->source);
+        $this->assertNotNull($this->row($added)->sponsorshipid);
+        $this->assertSame('Removed', $this->row($removed)->source);
     }
 
     public function test_leaves_hand_decisions_alone(): void
