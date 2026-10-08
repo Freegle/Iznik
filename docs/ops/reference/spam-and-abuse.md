@@ -259,3 +259,4 @@ in the [lockdown runbook](../runbooks/lockdown.md).
   addresses.
 - Changing a threshold is cheap; changing what happens at a threshold is not. Prefer
   moving a score boundary over adding a new rule.
+- The spam and content-check queries use the Laravel query builder; a statement that stays raw carries a written reason in the raw-SQL inventory.

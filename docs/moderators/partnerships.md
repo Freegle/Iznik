@@ -79,7 +79,7 @@ any set up later - a daily check picks those up, so nobody has to add them.
 covers at least 5% of the council's area. So a small community wholly inside a big county
 counts, and so does a big community that holds a small council, but a community that only
 grazes the edge, such as Southend against Essex County at about 1%, is not listed. The daily
-check also drops a community it listed earlier that turns out to graze the edge.
+check also drops a community it listed earlier that turns out to graze the edge. Both percentages are measured from the community and council boundary shapes in the database.
 
 Communities you added or left out by hand are never changed by the check. A community you add
 from outside the boundary counts in full.
