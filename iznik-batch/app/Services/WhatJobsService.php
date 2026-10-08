@@ -1567,6 +1567,19 @@ class WhatJobsService
     {
         DB::statement('DROP TABLE IF EXISTS jobs_new');
         DB::statement('CREATE TABLE jobs_new LIKE jobs');
+
+        // visible_cpc (visible, cpc) covers the spatial server's jobs count. It is added here, on
+        // the empty replacement table, rather than by ALTER on the live 0.5 GB jobs table under
+        // Galera. Once the first swap after deploy has run, every later jobs_new inherits it
+        // through LIKE; the check keeps this a no-op from then on.
+        $hasIndex = DB::selectOne(
+            'SELECT COUNT(*) AS n FROM information_schema.statistics
+             WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?',
+            ['jobs_new', 'visible_cpc']
+        );
+        if ((int) ($hasIndex->n ?? 0) === 0) {
+            DB::statement('ALTER TABLE jobs_new ADD INDEX visible_cpc (visible, cpc)');
+        }
     }
 
     /**

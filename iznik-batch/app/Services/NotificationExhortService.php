@@ -33,7 +33,7 @@ class NotificationExhortService
         string $url,
         string $title,
         string $text,
-        string $activeSince = '5 minutes ago',
+        string $activeSince = '6 minutes ago',
         string $joinedBefore = '1 week ago',
         bool $dryRun = false
     ): int {
@@ -45,9 +45,10 @@ class NotificationExhortService
         // production - 95% - so the optimiser used that index to select nearly the whole table
         // and then did 1,488,055 random primary-key lookups off it. A plain scan of all 2.9M
         // rows beats that by 4.3x (6.59s -> 1.55s, measured on db2 2026-09-18). The predicate
-        // that would really pay is `lastaccess >= ?` (3,850 rows, 0.13%), and the
-        // deleted_lastaccess (deleted, lastaccess) index serves it as a range read. Only the
-        // `deleted` index is ignored here, so that one stays available.
+        // that would really pay is `lastaccess >= ?` (3,850 rows, 0.13%), but there is no index
+        // on lastaccess and the (added, lastaccess) composite cannot help, because
+        // `added <= <a week ago>` matches nearly every account. An index on users.lastaccess
+        // would be better still - that is a Galera DDL decision for an operator, not a PR.
         //
         // A hint is only as good as the index name it quotes; ExhortUsersCommandTest asserts
         // that `users.deleted` still exists, so renaming it fails there rather than here.

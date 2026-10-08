@@ -883,25 +883,38 @@ class WhatJobsServiceTest extends TestCase
     }
 
     /**
-     * WhatJobsService replaces `jobs` by building jobs_new LIKE jobs and renaming it into place, so
-     * an index on `jobs` only survives every swap if LIKE copies it. The spatial server's jobs
-     * delta count depends on visible_cpc.
+     * Production never ALTERs live jobs: prepareTempTable adds visible_cpc to the empty jobs_new
+     * table and the swap carries it over. So the swap must add the index even when jobs lacks it
+     * (the state production is in until the first sync after deploy), and must not fail when jobs
+     * already has it (every sync after that, via CREATE TABLE ... LIKE).
      */
-    public function test_the_replacement_jobs_table_carries_the_visible_cpc_index(): void
+    public function test_the_replacement_jobs_table_gets_the_visible_cpc_index(): void
     {
         $svc = new WhatJobsService();
+        $columns = fn () => collect(DB::select('SHOW INDEX FROM jobs_new WHERE Key_name = ?', ['visible_cpc']))
+            ->sortBy('Seq_in_index')
+            ->pluck('Column_name')
+            ->all();
+        $jobsHasIndex = fn () => count(DB::select('SHOW INDEX FROM jobs WHERE Key_name = ?', ['visible_cpc'])) > 0;
 
         try {
+            if ($jobsHasIndex()) {
+                DB::statement('ALTER TABLE jobs DROP INDEX visible_cpc');
+            }
+
+            // Production's state before the first sync: jobs has no index.
             $svc->prepareTempTable();
+            $this->assertSame(['visible', 'cpc'], $columns());
 
-            $cols = collect(DB::select('SHOW INDEX FROM jobs_new WHERE Key_name = ?', ['visible_cpc']))
-                ->sortBy('Seq_in_index')
-                ->pluck('Column_name')
-                ->all();
-
-            $this->assertSame(['visible', 'cpc'], $cols);
+            // Every later sync: jobs has it, LIKE copies it, and nothing is added twice.
+            DB::statement('ALTER TABLE jobs ADD INDEX visible_cpc (visible, cpc)');
+            $svc->prepareTempTable();
+            $this->assertSame(['visible', 'cpc'], $columns());
         } finally {
             DB::statement('DROP TABLE IF EXISTS jobs_new');
+            if (! $jobsHasIndex()) {
+                DB::statement('ALTER TABLE jobs ADD INDEX visible_cpc (visible, cpc)');
+            }
         }
     }
 }

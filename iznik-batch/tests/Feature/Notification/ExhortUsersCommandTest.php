@@ -339,19 +339,4 @@ class ExhortUsersCommandTest extends TestCase
                 . 'must still exist, or the active-user scan throws'
         );
     }
-
-    /**
-     * The scan's real predicate is `lastaccess >= <minutes ago>`. users.deleted_lastaccess is what
-     * lets it range on that instead of reading every account; it is added by hand in production
-     * and by the 2026_10_08_000001 migration everywhere else.
-     */
-    public function test_users_has_the_deleted_lastaccess_index(): void
-    {
-        $columns = collect(DB::select('SHOW INDEX FROM users WHERE Key_name = ?', ['deleted_lastaccess']))
-            ->sortBy('Seq_in_index')
-            ->pluck('Column_name')
-            ->all();
-
-        $this->assertSame(['deleted', 'lastaccess'], $columns);
-    }
 }

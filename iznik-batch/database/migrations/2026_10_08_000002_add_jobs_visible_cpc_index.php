@@ -5,18 +5,18 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * jobs (visible, cpc): the spatial server five-minute jobs delta check counts
- * `visible = 1 AND cpc >= 0.08 AND geometry IS NOT NULL`. geometry is NOT NULL, so MySQL drops that
- * predicate and the count is covered by this index alone, instead of scanning the whole compressed
- * table every time.
+ * jobs (visible, cpc): the spatial server's five-minute jobs delta check counts
+ * `visible = 1 AND cpc >= 0.08`, and this index answers that without reading the table.
  *
- * WhatJobsService builds each replacement with CREATE TABLE jobs_new LIKE jobs, so the index
- * survives every table swap.
+ * PRODUCTION NEVER RUNS THIS ALTER. The batch container runs `artisan migrate` on start, and jobs
+ * on production is about 0.73M rows (0.54 GB compressed) under Galera TOI, where an index add runs
+ * cluster-wide. WhatJobsService::prepareTempTable adds the index to the empty jobs_new table on
+ * every sync, and the RENAME swap puts it on the live table, so production gets it at the next
+ * sync with no ALTER on the live table.
  *
- * PRODUCTION NOTE. Production is Galera with wsrep_OSU_method=TOI, so the ALTER runs cluster-wide.
- * The index is added by hand BEFORE deploy (see the companion _migration.sql); this migration then
- * finds it already there and does nothing. It only builds the index on databases that do not have
- * it (local, CI, yesterday).
+ * This migration exists so that a fresh database (local, CI, yesterday) has the schema without
+ * waiting for a sync. It only acts on a small table: when jobs already holds more than
+ * SMALL_TABLE_ROWS rows it leaves the index to the swap.
  */
 return new class extends Migration
 {
@@ -24,9 +24,11 @@ return new class extends Migration
 
     private const INDEX = 'visible_cpc';
 
+    private const SMALL_TABLE_ROWS = 10000;
+
     public function up(): void
     {
-        if (! Schema::hasTable(self::TABLE) || $this->indexExists()) {
+        if (! Schema::hasTable(self::TABLE) || $this->indexExists() || ! $this->isSmall()) {
             return;
         }
 
@@ -38,6 +40,14 @@ return new class extends Migration
         if (Schema::hasTable(self::TABLE) && $this->indexExists()) {
             DB::statement('ALTER TABLE '.self::TABLE.' DROP INDEX '.self::INDEX);
         }
+    }
+
+    private function isSmall(): bool
+    {
+        // LIMIT inside a subquery so a big table is never counted in full.
+        $row = DB::selectOne('SELECT COUNT(*) AS n FROM (SELECT 1 FROM '.self::TABLE.' LIMIT '.(self::SMALL_TABLE_ROWS + 1).') t');
+
+        return (int) ($row->n ?? 0) <= self::SMALL_TABLE_ROWS;
     }
 
     private function indexExists(): bool
