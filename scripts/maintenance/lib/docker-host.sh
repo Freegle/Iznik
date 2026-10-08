@@ -109,7 +109,7 @@ docker_resume() {
   local f="$MAINT_STATE_DIR/resume"
   [ -f "$f" ] || { echo "no resume marker"; exit 0; }
   RUN_ID=$(sed -n 's/^run=//p' "$f"); RUN_DIR=$(sed -n 's/^run_dir=//p' "$f"); REBOOT_WHY=$(sed -n 's/^why=//p' "$f")
-  TARGET=local; PROFILE=docker; DRY=false; PONR=true; DRAINED=true; WROTE_ACTIVE=true
+  TARGET=local; PROFILE=docker; DRY=false; SLOT=docker; PONR=true; DRAINED=true; WROTE_ACTIVE=true
   RUN_STARTED_EPOCH=$(date -u -d "$(sed -n 's/^at=//p' "$f")" +%s 2>/dev/null || date -u +%s)
   LOG_FILE="$MAINT_LOG_DIR/maint.log"
   rm -f "$f"     # one attempt only: a resume that dies leaves FAILED, not a loop
