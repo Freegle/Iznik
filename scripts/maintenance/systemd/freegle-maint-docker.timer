@@ -1,0 +1,15 @@
+# Docker host: after the 23:00 jobs, before 00:30 log rotation and the 01:00 remap; Saturday has no 23:00 digest.
+# Install: cp to /etc/systemd/system/, systemctl daemon-reload,
+# systemctl enable --now freegle-maint-docker.timer. Shipped disabled.
+[Unit]
+Description=Freegle host maintenance timer: docker
+
+[Timer]
+OnCalendar=Sat *-*-* 23:35:00 UTC
+# A missed slot is skipped, never run late: the start window would refuse it anyway.
+Persistent=false
+AccuracySec=1min
+Unit=freegle-maint@docker.service
+
+[Install]
+WantedBy=timers.target
