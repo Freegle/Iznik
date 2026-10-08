@@ -2181,7 +2181,7 @@ class ExpandService
                 // keywords, so stamping it would permanently exclude the row from processUnprocessed()'s
                 // periodic full checkMessage() pipeline - silently skipping money/phone/PII/URL/spam
                 // checks for every rippled-in post held this way (Discourse 10063/4).
-                $breaches = $this->contentCheck->checkGroupOwnRules($subject, $textbody, (int) $g->id);
+                $breaches = $this->contentCheck->checkGroupOwnRules($subject, $textbody, (int) $g->id, (int) $msgid);
 
                 if (!empty($breaches)) {
                     $inserted = DB::affectingStatement(

@@ -148,10 +148,12 @@ class ContentCheckService
 
         $reasons = [];
 
-        if ($r = $this->checkConcernKeywords($subject, $textbody, $groupid)) {
+        $near = $this->postLocationPoints($msgid);
+
+        if ($r = $this->checkConcernKeywords($subject, $textbody, $groupid, $near)) {
             $reasons[] = $r;
         }
-        if ($r = $this->checkPerGroupWorryWords($subject, $textbody, $groupid)) {
+        if ($r = $this->checkPerGroupWorryWords($subject, $textbody, $groupid, $near)) {
             $reasons[] = $r;
         }
         if ($r = $this->checkVagueItem($itemName)) {
@@ -881,6 +883,126 @@ class ContentCheckService
         return $text;
     }
 
+    /**
+     * How close a place must be to the post for its name to be let through a concern
+     * keyword. Measured on 90 days of flagged posts (2026-10): every flag that really was
+     * a place name sat within 1.6 km of the post or poster, because the place is the
+     * location the poster picked; the first look-alike that was not (a hamlet called
+     * "Dog Kennel", against a post about a dog kennel) was 4.5 km away.
+     */
+    public const PLACE_NAME_RADIUS_KM = 3.0;
+
+    private const PLACE_NAME_MAX_WORDS = 5;
+
+    /**
+     * Where the post is: its own point, and where its poster last was. Either can be missing.
+     *
+     * @return array<int, array{0: float, 1: float}>
+     */
+    private function postLocationPoints(int $msgid): array
+    {
+        $row = DB::table('messages as m')
+            ->leftJoin('users as u', 'u.id', '=', 'm.fromuser')
+            ->leftJoin('locations as l', 'l.id', '=', 'u.lastlocation')
+            ->where('m.id', $msgid)
+            ->first(['m.lat as mlat', 'm.lng as mlng', 'l.lat as ulat', 'l.lng as ulng']);
+
+        $points = [];
+        if ($row) {
+            if ($row->mlat !== null && $row->mlng !== null) {
+                $points[] = [(float) $row->mlat, (float) $row->mlng];
+            }
+            if ($row->ulat !== null && $row->ulng !== null) {
+                $points[] = [(float) $row->ulat, (float) $row->ulng];
+            }
+        }
+
+        return $points;
+    }
+
+    /**
+     * Remove from an already-normalised text every phrase that is the name of a place within
+     * PLACE_NAME_RADIUS_KM of one of $near and contains the keyword as a part. Returns the text
+     * unchanged when there is none.
+     *
+     * Only populated places and streets count (osm_place, Road, Line); shops and amenities do
+     * not, because a pub called "The Dog" is no reason to wave through a dog. The place name
+     * has to be longer than the keyword, so a keyword that is itself a place name is not
+     * excused by that.
+     */
+    private function stripNearbyPlaceNames(string $haystack, string $needle, array $near): string
+    {
+        $needle = trim($needle);
+        if ($needle === '' || $near === []) {
+            return $haystack;
+        }
+
+        preg_match_all('/[\p{L}\p{N}\']+/u', $haystack, $m);
+        $tokens = $m[0];
+        $count  = count($tokens);
+
+        $names = [];
+        for ($i = 0; $i < $count; $i++) {
+            for ($n = 2; $n <= self::PLACE_NAME_MAX_WORDS && $i + $n <= $count; $n++) {
+                $window = array_slice($tokens, $i, $n);
+                $spaced = implode(' ', $window);
+                if (!str_contains($spaced, $needle)) {
+                    continue;
+                }
+                $names[$spaced] = true;
+                $names[implode('-', $window)] = true;
+                if (count($names) > 200) {
+                    break 2;
+                }
+            }
+        }
+        if ($names === []) {
+            return $haystack;
+        }
+
+        $places = DB::table('locations')
+            ->whereIn('name', array_keys($names))
+            ->where('type', '!=', 'Postcode')
+            ->where('osm_amenity', 0)
+            ->where('osm_shop', 0)
+            ->where(function ($q) {
+                $q->where('osm_place', 1)->orWhereIn('type', ['Road', 'Line']);
+            })
+            ->get(['name', 'lat', 'lng']);
+
+        $out = $haystack;
+        $done = [];
+        foreach ($places as $p) {
+            $key = mb_strtolower(preg_replace('/[\s-]+/u', ' ', $p->name));
+            if (isset($done[$key]) || $p->lat === null || $p->lng === null) {
+                continue;
+            }
+            foreach ($near as [$lat, $lng]) {
+                if ($this->distanceKm($lat, $lng, (float) $p->lat, (float) $p->lng) <= self::PLACE_NAME_RADIUS_KM) {
+                    $parts = array_map(fn($w) => preg_quote($w, '/'), explode(' ', $key));
+                    $out = (string) preg_replace(
+                        '/(?<![\p{L}\p{N}])' . implode('[\s-]+', $parts) . '(?![\p{L}\p{N}])/iu',
+                        ' ',
+                        $out
+                    );
+                    $done[$key] = true;
+                    break;
+                }
+            }
+        }
+
+        return $out;
+    }
+
+    private function distanceKm(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+        $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+
+        return 12742 * asin(min(1.0, sqrt($a)));
+    }
+
     private function matchesFuzzy(string $haystack, string $keyword): bool
     {
         $kwLower = strtolower($keyword);
@@ -1071,7 +1193,7 @@ class ContentCheckService
     // (flag = keep pending for review; block = move to Spam collection).
     // -------------------------------------------------------------------------
 
-    public function checkConcernKeywords(string $subject, string $textbody, int $groupid): ?array
+    public function checkConcernKeywords(string $subject, string $textbody, int $groupid, array $near = []): ?array
     {
         $keywords = DB::table('concern_keywords')
             ->where(function ($q) use ($groupid) {
@@ -1083,7 +1205,7 @@ class ContentCheckService
             ->where('category', '!=', 'allowed')
             ->get();
 
-        return $this->matchKeywords($keywords, $subject, $textbody, $groupid);
+        return $this->matchKeywords($keywords, $subject, $textbody, $groupid, $near);
     }
 
     /**
@@ -1131,8 +1253,9 @@ class ContentCheckService
      *
      * @return array<int, array<string, mixed>> Empty when the group's own rules say nothing.
      */
-    public function checkGroupOwnRules(string $subject, string $textbody, int $groupid): array
+    public function checkGroupOwnRules(string $subject, string $textbody, int $groupid, ?int $msgid = null): array
     {
+        $near = $msgid ? $this->postLocationPoints($msgid) : [];
         $keywords = DB::table('concern_keywords')
             ->where('scope', 'group')
             ->where('group_id', $groupid)
@@ -1141,10 +1264,10 @@ class ContentCheckService
 
         $reasons = [];
 
-        if ($r = $this->matchKeywords($keywords, $subject, $textbody, $groupid)) {
+        if ($r = $this->matchKeywords($keywords, $subject, $textbody, $groupid, $near)) {
             $reasons[] = $r;
         }
-        if ($r = $this->checkPerGroupWorryWords($subject, $textbody, $groupid)) {
+        if ($r = $this->checkPerGroupWorryWords($subject, $textbody, $groupid, $near)) {
             $reasons[] = $r;
         }
 
@@ -1197,7 +1320,7 @@ class ContentCheckService
      *
      * Flag keywords keep the whitelist removal and the innocent-context check.
      */
-    private function matchKeywords($keywords, string $subject, string $textbody, int $groupid): ?array
+    private function matchKeywords($keywords, string $subject, string $textbody, int $groupid, array $near = []): ?array
     {
         // Both the text and every literal/fuzzy keyword are folded to a plain,
         // lower-case form first (KeywordTextNormalizer), so styled or obfuscated
@@ -1270,6 +1393,20 @@ class ContentCheckService
 
             if (!empty($kw->exclude) && $this->safePreg('/' . $kw->exclude . '/i', $original)) {
                 continue;
+            }
+
+            // A hit that sits inside the name of a place near the poster ("Cock Clarks",
+            // "Brightwell-cum-Sotwell") is a location, not a concern. Only the place
+            // phrase is removed, so the same word used elsewhere in the post still flags.
+            // Never for block keywords or regex patterns.
+            if (!$isBlock && !$isRegex && !empty($near)) {
+                $withoutPlaces = $this->stripNearbyPlaceNames($haystack, $needle, $near);
+                if ($withoutPlaces !== $haystack
+                    && !($kw->match_mode === 'literal'
+                        ? $this->matchesLiteral($withoutPlaces, $needle)
+                        : $this->matchesFuzzy($withoutPlaces, $needle))) {
+                    continue;
+                }
             }
 
             // Contextual check: if the embedding service identifies this as an
@@ -1746,7 +1883,7 @@ class ContentCheckService
     // Uses the same fuzzy matching as global concern keywords.
     // -------------------------------------------------------------------------
 
-    public function checkPerGroupWorryWords(string $subject, string $textbody, int $groupid): ?array
+    public function checkPerGroupWorryWords(string $subject, string $textbody, int $groupid, array $near = []): ?array
     {
         $raw = DB::table('groups')
             ->where('id', $groupid)
@@ -1768,6 +1905,12 @@ class ContentCheckService
                 continue;
             }
             if ($this->matchesFuzzy($haystack, $word)) {
+                if (!empty($near)) {
+                    $withoutPlaces = $this->stripNearbyPlaceNames($haystack, strtolower($word), $near);
+                    if ($withoutPlaces !== $haystack && !$this->matchesFuzzy($withoutPlaces, $word)) {
+                        continue;
+                    }
+                }
                 return [
                     'check'    => self::CHECK_PER_GROUP_WORRY,
                     'category' => null,
