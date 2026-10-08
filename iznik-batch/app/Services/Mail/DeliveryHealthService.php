@@ -54,6 +54,29 @@ class DeliveryHealthService
     public const COLLAPSE_RATIO = 0.4;
 
     /**
+     * The moment before which opens are fully recorded: SETTLE_HOURS ago, or the oldest event still
+     * waiting in the tracking journal if that is earlier.
+     *
+     * Image loads and pixel opens reach email_tracking.opened_at via the nightly mail:tracking:fold,
+     * so by 13:00 the opens of the last twelve hours or so are not in it yet. Judging a window that
+     * runs up to "six hours ago" would count every one of those mails as unopened and read a
+     * perfectly healthy domain as collapsed. So the window stops where the folded data stops.
+     */
+    private function settledBefore(Carbon $now): Carbon
+    {
+        $settled = $now->copy()->subHours(self::SETTLE_HOURS);
+
+        try {
+            $unfolded = EmailTrackingFoldService::oldestUnfolded();
+        } catch (\Throwable $e) {
+            // No journal table (migration not applied yet): nothing is waiting to be folded.
+            return $settled;
+        }
+
+        return ($unfolded !== null && $unfolded->lt($settled)) ? $unfolded : $settled;
+    }
+
+    /**
      * Domains whose open rate has collapsed against their own baseline, worst first.
      *
      * @param int $recentDays Length of the window being judged.
@@ -63,7 +86,7 @@ class DeliveryHealthService
      */
     public function collapsedDomains(int $recentDays = 1, int $baselineDays = 14, ?Carbon $now = null): array
     {
-        $recentEnd = ($now ? $now->copy() : Carbon::now())->subHours(self::SETTLE_HOURS);
+        $recentEnd = $this->settledBefore($now ? $now->copy() : Carbon::now());
         $recentStart = $recentEnd->copy()->subDays($recentDays);
         $baselineStart = $recentStart->copy()->subDays($baselineDays);
 

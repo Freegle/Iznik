@@ -448,6 +448,18 @@ Schedule::command('mail:digest:mark-seen')
     ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('mail:digest:mark-seen'));
 
+// Apply the email tracking journal (image loads and pixel opens, appended by the Go delivery
+// handlers instead of locking each email's tracking row on every hit) to email_tracking and
+// email_tracking_images, then mark the posts of the digests it shows were opened as seen.
+// 01:35 UTC: inside the 21:00-05:00 trough, after the 01:00 job and well clear of the 03:00 spatial
+// rebuild cluster and the 03:50-04:35 backup drain window. A day of events is ~2.2M rows,
+// folded in 5,000-row transactions; runInBackground so it cannot hold up the minute scheduler.
+Schedule::command('mail:tracking:fold')
+    ->dailyAt('01:35')
+    ->withoutOverlapping(180)
+    ->sendOutputTo(cronLog('mail:tracking:fold'))
+    ->runInBackground();
+
 Schedule::command('mail:bounced')
     ->hourly()
     ->withoutOverlapping(120)

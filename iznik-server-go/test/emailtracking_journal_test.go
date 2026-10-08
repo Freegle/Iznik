@@ -181,7 +181,9 @@ func TestEmailTrackingJournalBatchesManyLoadsInOrder(t *testing.T) {
 	for i := 0; i < 120; i++ {
 		emailtracking.RecordImageLoad(tracking.TrackingID, "item_"+strings.Repeat("x", i%5), i%101)
 	}
-	assert.Equal(t, 120, emailtracking.FlushJournal())
+	// The background flusher may have written some of them already; what matters is that after a
+	// flush all are there and a second flush has nothing left.
+	emailtracking.FlushJournal()
 	assert.Equal(t, 0, emailtracking.FlushJournal(), "a second flush has nothing left")
 
 	rows := journalRowsFor(tracking.TrackingID)
