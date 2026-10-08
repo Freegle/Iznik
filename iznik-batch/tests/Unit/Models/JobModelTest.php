@@ -234,10 +234,10 @@ class JobModelTest extends TestCase
         );
     }
 
-    public function test_near_location_weights_variety_by_score(): void
+    public function test_near_location_weights_variety_by_cpc(): void
     {
-        // When the pool exceeds the limit, the variety step is WEIGHTED by score
-        // (cpc * clickability * freshness), not a uniform shuffle. A much
+        // When the pool exceeds the limit, the variety step is WEIGHTED by cpc,
+        // not a uniform shuffle. A much
         // higher-cpc job should be drawn into the great majority of sends, while
         // the floor-cpc jobs still rotate (variety preserved). A uniform shuffle
         // would put the top job in only ~limit/pool ≈ 33% of draws — the bug this
@@ -304,6 +304,62 @@ class JobModelTest extends TestCase
         $this->assertEquals('High CPC', $result[0]->title);
         $this->assertEquals('Medium CPC', $result[1]->title);
         $this->assertEquals('Low CPC', $result[2]->title);
+    }
+
+    public function test_near_location_ranks_pay_before_clickability(): void
+    {
+        $this->clearJobsTable();
+
+        // Clickability is a keyword count, not a click rate, and ranges far wider
+        // than cpc, so cpc * clickability let common cheap jobs outrank much
+        // better-paid ones. Pay ranks first; clickability breaks ties.
+        $this->seedJob(['title' => 'Cheap clickable', 'cpc' => 0.084, 'clickability' => 50]);
+        $this->seedJob(['title' => 'Well paid', 'cpc' => 0.36, 'clickability' => 1]);
+        $this->seedJob(['title' => 'Same pay, low', 'cpc' => 0.20, 'clickability' => 1]);
+
+        $result = Job::nearLocation(51.5074, -0.1278);
+
+        $this->assertEquals('Well paid', $result[0]->title);
+        $this->assertEquals('Same pay, low', $result[1]->title);
+        $this->assertEquals('Cheap clickable', $result[2]->title);
+
+        $this->seedJob(['title' => 'Same pay, high', 'cpc' => 0.20, 'clickability' => 9]);
+
+        $result = Job::nearLocation(51.5074, -0.1278);
+
+        $this->assertEquals('Well paid', $result[0]->title);
+        $this->assertEquals('Same pay, high', $result[1]->title);
+        $this->assertEquals('Same pay, low', $result[2]->title);
+        $this->assertEquals('Cheap clickable', $result[3]->title);
+    }
+
+    public function test_near_location_weights_variety_by_pay_not_clickability(): void
+    {
+        // In the variety draw a well-paid job must beat cheap jobs that carry a
+        // high clickability, which under cpc * clickability it lost.
+        $this->clearJobsTable();
+
+        mt_srand(424242);
+
+        $limit = 4;
+        $wellPaid = $this->seedJob(['title' => 'Well paid', 'cpc' => 0.36, 'clickability' => 1]);
+        for ($i = 0; $i < 11; $i++) {
+            $this->seedJob(['title' => 'Cheap ' . $i, 'cpc' => 0.084, 'clickability' => 50]);
+        }
+
+        $runs = 200;
+        $picks = 0;
+        for ($r = 0; $r < $runs; $r++) {
+            if (Job::nearLocation(51.5074, -0.1278, $limit)->contains('id', $wellPaid)) {
+                $picks++;
+            }
+        }
+
+        $this->assertGreaterThan(
+            (int) ($runs * 0.6),
+            $picks,
+            "Well-paid job should be drawn into most sends (got {$picks}/{$runs})"
+        );
     }
 
     public function test_near_location_prefers_fresher_postings_at_equal_value(): void
