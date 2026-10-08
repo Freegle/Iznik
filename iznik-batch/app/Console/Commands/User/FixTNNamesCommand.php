@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\User;
 
+use App\Models\User;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -30,34 +31,50 @@ class FixTNNamesCommand extends Command
             $fixed  = 0;
             $skipped = 0;
 
-            // TN emails have the format: firstname-groupid@user.trashnothing.com.
+            // TN member addresses are username@user.trashnothing.com or a per-group
+            // alias, username-gNNNN@user.trashnothing.com. The name is the whole
+            // username: usernames can contain hyphens, so only the -gNNNN suffix goes.
             //
             // Matched on the address, not on backwards. That column does not hold one
             // thing: its definition is REVERSE(canon), which drops the -gNNNN suffix and
             // the domain dots, but some rows hold REVERSE(email) and some hold NULL. A
             // prefix on it reached 20.5% of Trash Nothing members and silently skipped
             // the rest. See .claude/rules/mail-and-data.md.
-            // Both shapes are live: the per-group aliases are name-gNNNN@user.trashnothing.com,
-            // and older rows sit directly on the bare domain. The reversed prefix this
-            // replaced matched both, so the address pattern has to as well.
+            // The pattern also matches older rows on the bare @trashnothing.com domain, as
+            // the reversed prefix it replaced did. Those are not member addresses
+            // (User::tnUsernameFromEmail takes only @user.trashnothing.com), so they are
+            // counted as skipped rather than named.
+            //
+            // Only the preferred address names the member. Taking every TN address
+            // gave one row per address, so a user holding two usernames' addresses
+            // was renamed back and forth on alternate runs.
+            //
+            // The hyphen filter only narrows the candidates. It does not mean the name
+            // came from the username: "Mary-Jane Smith" is a real name. Whether a name
+            // is fixed is decided per row by nameCameFromAddress().
             $tnAddressSuffix = '%@%' . config('freegle.mail.trashnothing_domain');
 
             $rows = DB::table('users')
                 ->join('users_emails', 'users.id', '=', 'users_emails.userid')
+                ->where('users_emails.preferred', 1)
                 ->where('users_emails.email', 'LIKE', $tnAddressSuffix)
                 ->whereNull('users.firstname')
                 ->whereNull('users.lastname')
                 ->where(function ($q) {
                     $q->whereNull('users.fullname')
+                      ->orWhere('users.fullname', '')
                       ->orWhereRaw("users.fullname LIKE '%-%'");
                 })
                 ->select('users.id', 'users.fullname', 'users_emails.email')
                 ->get();
 
             foreach ($rows as $row) {
-                if (preg_match('/^(.*)-[^-]+@/', $row->email, $matches)) {
-                    $name = $matches[1];
+                $username = User::tnUsernameFromEmail($row->email);
+                $name = $username === null ? null : User::tnDisplayName($username);
 
+                // A hyphenated name ("Mary-Jane") still matches the hyphen filter
+                // above once fixed, so leave one that is already right alone.
+                if ($name !== null && $name !== $row->fullname && self::nameCameFromAddress($row->fullname, $username)) {
                     Log::debug("FixTNNames: set fullname for user {$row->id} from {$row->email} => {$name}");
 
                     if (!$dryRun) {
@@ -82,5 +99,29 @@ class FixTNNamesCommand extends Command
 
             return Command::SUCCESS;
         });
+    }
+
+    /**
+     * Whether the stored name is empty or is one of the raw forms of this member's
+     * own TN address: the address itself, its alias local part ("alice-g3486") or
+     * the bare username ("tricia.hayes"). Only those are safe to replace.
+     *
+     * The comparison runs from the address to the name, never the other way: a
+     * fullname has no relationship to the TN username beyond having been made
+     * from it, and a member or mod may have set it to anything since.
+     */
+    private static function nameCameFromAddress(?string $fullname, string $username): bool
+    {
+        $fullname = trim((string) $fullname);
+
+        if ($fullname === '') {
+            return true;
+        }
+
+        if (str_contains($fullname, '@')) {
+            return User::tnUsernameFromEmail($fullname) === $username;
+        }
+
+        return strtolower(User::removeTNGroup($fullname)) === $username;
     }
 }

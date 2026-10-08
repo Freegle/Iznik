@@ -378,10 +378,10 @@ class TNSyncCommand extends Command
         }
     }
 
-    /** Where the per-tick duplicate check remembers how far it has read. */
-    /** The domain every Trash Nothing per-group address ends with. */
+    /** The domain every Trash Nothing address ends with, bare or per-group alias. */
     private const TN_ADDRESS_SUFFIX = '@user.trashnothing.com';
 
+    /** Where the per-tick duplicate check remembers how far it has read. */
     private const DUP_CURSOR_KEY = 'tn.dupscan_cursor';
 
     /** When the last whole-table duplicate re-scan finished. */
@@ -399,13 +399,15 @@ class TNSyncCommand extends Command
     private const DUP_FULL_SCAN_HOURS = 24;
 
     /**
-     * The Trash Nothing username inside a per-group address: `bibiana-g288@...` is
-     * `bibiana`. The whole duplicate check turns on this being the member's identity,
-     * so both passes have to derive it the same way.
+     * The Trash Nothing username behind an address, bare or per-group alias:
+     * `bibiana-g288@...` and `bibiana@...` are both `bibiana`. The whole duplicate
+     * check turns on this being the member's identity, so both passes have to derive
+     * it the same way - and the same way as Go's TNAliasIdentity, hence the shared
+     * helper. NULL for an address that is not TN.
      */
-    private function tnUsernameFromAddress(string $email): string
+    private function tnUsernameFromAddress(string $email): ?string
     {
-        return preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $email);
+        return User::tnUsernameFromEmail($email);
     }
 
     /**
@@ -464,6 +466,9 @@ class TNSyncCommand extends Command
                     ->cursor() as $row
             ) {
                 $username = $this->tnUsernameFromAddress($row->email);
+                if ($username === null) {
+                    continue;
+                }
                 $userid = (int) $row->userid;
 
                 if (!isset($firstSeen[$username])) {
@@ -500,16 +505,22 @@ class TNSyncCommand extends Command
                     ->where('id', '<=', $highWater)
                     ->cursor() as $row
             ) {
-                $newUsernames[$this->tnUsernameFromAddress($row->email)] = true;
+                $username = $this->tnUsernameFromAddress($row->email);
+                if ($username !== null) {
+                    $newUsernames[$username] = true;
+                }
             }
 
             foreach (array_keys($newUsernames) as $username) {
                 foreach (
                     DB::table('users_emails')
                         ->select('userid', 'email')
-                        // Escape the escape character first, then the wildcards - doing it
-                        // the other way round would re-escape the backslashes just added.
-                        ->where('email', 'LIKE', str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $username) . '-g%@user.trashnothing.com')
+                        // The bare address, or a per-group alias of it. Escape the escape
+                        // character first, then the wildcards - doing it the other way
+                        // round would re-escape the backslashes just added.
+                        ->where(fn ($q) => $q
+                            ->where('email', User::tnEmailForUsername($username))
+                            ->orWhere('email', 'LIKE', str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $username) . '-g%@user.trashnothing.com'))
                         // Same ordering as the full pass above. Whichever account comes
                         // first is the one kept when duplicates are merged, and it takes
                         // its own name over the other's, so the order decides what the
@@ -572,6 +583,32 @@ class TNSyncCommand extends Command
         foreach ($duplicateGroups as $username => $userIds) {
             $uniqueIds = array_values(array_unique($userIds));
             Log::info('Found ' . count($uniqueIds) . " users for {$username}");
+
+            // A shared username is not a shared identity: TN does not promise usernames
+            // are unique, and a released one can be retaken. Two different tnuserids are
+            // two TN accounts, and User::merge would keep one id and delete the other,
+            // after which posts from the lost id resolve to nobody. Leave the group for a
+            // person - reportDuplicateGroups() flags exactly these for review.
+            $tnuserids = DB::table('users')
+                ->whereIn('id', $uniqueIds)
+                ->whereNotNull('tnuserid')
+                ->distinct()
+                ->pluck('tnuserid')
+                ->all();
+
+            if (count($tnuserids) > 1) {
+                $idList = implode(',', $uniqueIds);
+                $tnList = implode(',', $tnuserids);
+                Log::warning("Not merging TN users for {$username}: users {$idList} hold different tnuserids {$tnList}");
+                Log::info("TN-SYNC-TRACE [MERGE-SKIP] reason=tnuserid-conflict users={$idList} tnuserids={$tnList}");
+                $this->loki->logEvent('tn-sync', 'user-merge-skip', [
+                    'reason' => 'tnuserid-conflict',
+                    'user_ids' => $uniqueIds,
+                    'tn_user_ids' => $tnuserids,
+                ]);
+
+                continue;
+            }
 
             $mergeTo = $uniqueIds[0];
 

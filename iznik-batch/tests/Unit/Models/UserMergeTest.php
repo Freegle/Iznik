@@ -3,8 +3,10 @@
 namespace Tests\Unit\Models;
 
 use App\Models\Membership;
+use App\Models\TnUserIdMergeConflict;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Exceptions;
 use Tests\TestCase;
 
 /**
@@ -219,6 +221,56 @@ class UserMergeTest extends TestCase
 
         $tnId = DB::table('users')->where('id', $user1->id)->value('tnuserid');
         $this->assertEquals(12345, $tnId);
+    }
+
+    public function test_merge_refuses_different_tn_user_ids_and_reports_it(): void
+    {
+        Exceptions::fake();
+
+        $user1 = $this->createTestUser(['tnuserid' => 99020201]);
+        $user2 = $this->createTestUser(['tnuserid' => 99020202]);
+
+        $this->assertFalse(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $this->assertNotNull(User::find($user1->id));
+        $this->assertNotNull(User::find($user2->id));
+        $this->assertEquals(99020202, DB::table('users')->where('id', $user2->id)->value('tnuserid'));
+
+        // Reported, so it reaches Sentry: one report naming both accounts.
+        Exceptions::assertReportedCount(1);
+        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) =>
+            str_contains($e->getMessage(), 'Refused merge')
+            && str_contains($e->getMessage(), '99020201')
+            && str_contains($e->getMessage(), '99020202'));
+    }
+
+    public function test_forced_merge_of_different_tn_user_ids_proceeds_and_reports_it(): void
+    {
+        Exceptions::fake();
+
+        $user1 = $this->createTestUser(['tnuserid' => 99020203]);
+        $user2 = $this->createTestUser(['tnuserid' => 99020204]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON, true));
+
+        $this->assertNull(User::find($user2->id));
+        $this->assertEquals(99020203, DB::table('users')->where('id', $user1->id)->value('tnuserid'));
+
+        Exceptions::assertReportedCount(1);
+        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) =>
+            str_contains($e->getMessage(), 'tnuserid 99020204 will be lost'));
+    }
+
+    public function test_merge_with_one_tn_user_id_is_not_reported(): void
+    {
+        Exceptions::fake();
+
+        $user1 = $this->createTestUser(['tnuserid' => 99020205]);
+        $user2 = $this->createTestUser(['tnuserid' => null]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        Exceptions::assertNotReported(TnUserIdMergeConflict::class);
     }
 
     public function test_merge_returns_false_for_same_user(): void

@@ -5,6 +5,7 @@ namespace App\Services\TrashNothing\Sync;
 use App\Models\Location;
 use App\Models\User;
 use App\Models\UserAboutMe;
+use App\Models\UserEmail;
 use App\Models\UserReplyTime;
 use App\Services\LokiService;
 use Illuminate\Support\Facades\Http;
@@ -108,27 +109,7 @@ class UserChangesSyncer
                     }
 
                     if (!empty($change['username'])) {
-                        $oldname = User::removeTNGroup($user->fullname ?? '');
-
-                        if ($oldname != $change['username']) {
-                            Log::info("Name change for {$change['fd_user_id']} {$oldname} => {$change['username']}");
-                            Log::info('TN-SYNC-TRACE [NAME-CHANGE] fd_user_id=' . $change['fd_user_id'] . ' old=' . $oldname . ' new=' . $change['username']);
-                            $user->fullname = $change['username'];
-
-                            foreach ($user->emails()->pluck('email') as $email) {
-                                if (str_contains($email, "{$oldname}-")) {
-                                    $newEmail = str_replace("{$oldname}-", "{$change['username']}-", $email);
-                                    $user->removeEmail($email, $this->dryRun);
-                                    Log::info("...{$email} => {$newEmail}");
-                                    $user->addEmail($newEmail, dryRun: $this->dryRun);
-                                    $this->loki->logEvent('tn-sync', 'user-email-rename', [
-                                        'user_id'   => $change['fd_user_id'],
-                                        'old_email' => $email,
-                                        'new_email' => $newEmail,
-                                    ]);
-                                }
-                            }
-                        }
+                        $this->applyUsername($user, $change['username']);
                     }
 
                     if (!empty($change['location'])) {
@@ -177,6 +158,65 @@ class UserChangesSyncer
         } while ($changes && count($changes) === self::PAGE_SIZE);
 
         return [$count, $maxDate];
+    }
+
+    /**
+     * Apply the username from a change event. The old username is read from the
+     * member's preferred TN address, not from fullname: fullname is the
+     * prettified display name ("Tricia Hayes"), so comparing it with the raw
+     * username made every event look like a rename.
+     *
+     * A rename collapses the member's TN addresses for the old username, bare
+     * and -gNNN aliases alike, into one bare new@user.trashnothing.com. Inbound
+     * mail from new-gNNN@ aliases still resolves through the canon fallback.
+     * The caller saves $user.
+     */
+    private function applyUsername(User $user, string $newUsername): void
+    {
+        $oldUsername = User::tnUsernameFromEmail($user->email_preferred ?? '');
+
+        if ($oldUsername === strtolower($newUsername)) {
+            return;
+        }
+
+        Log::info("Name change for {$user->id} {$oldUsername} => {$newUsername}");
+        $user->fullname = User::tnDisplayName($newUsername);
+
+        $newEmail = User::tnEmailForUsername($newUsername);
+        $oldEmails = $user->emails()
+            ->get(['email', 'preferred'])
+            ->filter(fn ($row) => User::tnUsernameFromEmail($row->email) === $oldUsername);
+
+        // users_emails.email is UNIQUE, so the new address cannot be added while
+        // another member holds it. Keep this user's addresses rather than throw.
+        $clash = UserEmail::where('email', $newEmail)->where('userid', '!=', $user->id)->value('userid');
+        if ($clash) {
+            Log::info('TN-SYNC-TRACE [NAME-CHANGE] fd_user_id=' . $user->id . ' old=' . $oldUsername . ' new=' . $newUsername . ' email-clash=' . $newEmail . ' held_by=' . $clash);
+            if (function_exists('\Sentry\captureMessage')) {
+                \Sentry\captureMessage("TN rename of user {$user->id} to {$newEmail} clashes with user {$clash}");
+            }
+            return;
+        }
+
+        Log::info('TN-SYNC-TRACE [NAME-CHANGE] fd_user_id=' . $user->id . ' old=' . $oldUsername . ' new=' . $newUsername);
+
+        if ($oldEmails->isEmpty()) {
+            return;
+        }
+
+        // Add before removing, so the user is never left without a preferred TN
+        // address: isTN() reads it, and this sync skips users without one.
+        $user->addEmail($newEmail, primary: $oldEmails->contains('preferred', 1) ? 1 : 0, dryRun: $this->dryRun);
+
+        foreach ($oldEmails as $row) {
+            $user->removeEmail($row->email, $this->dryRun);
+            Log::info("...{$row->email} => {$newEmail}");
+            $this->loki->logEvent('tn-sync', 'user-email-rename', [
+                'user_id'   => $user->id,
+                'old_email' => $row->email,
+                'new_email' => $newEmail,
+            ]);
+        }
     }
 
     /**

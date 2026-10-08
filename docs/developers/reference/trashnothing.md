@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-02
+last_reviewed: 2026-10-08
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -13,11 +13,16 @@ covers:
   - iznik-batch/app/Services/TrashNothing/Sync/**
   - iznik-server-go/modmessaging/**
   - iznik-nuxt3/modtools/components/ModMessageTnNotice.vue
+  - iznik-batch/app/Console/Commands/User/FixTNNamesCommand.php
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-server-go/test/modmessaging_test.go
   - iznik-server-go/user/partner.go
   - iznik-server-go/test/user_tn_location_test.go
   - iznik-server-go/test/user_tn_privacy_test.go
+  - iznik-server-go/user/partner_canon_test.go
+  - iznik-batch/tests/Unit/Models/UserEmailTest.php
+  - iznik-batch/tests/Unit/Services/TrashNothing/TnUserProvisionerTest.php
+  - iznik-batch/tests/Unit/Services/TrashNothing/UserChangesSyncerTest.php
 ---
 
 # TrashNothing Integration Documentation
@@ -33,15 +38,26 @@ TrashNothing is a partner platform that syndicates with Freegle groups. TN users
 ### Email-Based Detection
 
 TN users are identified by their email addresses matching the pattern `*@user.trashnothing.com`.
+The domain is the whole test.
 
-TN emails follow a specific format:
+A TN address comes in two shapes, and one member may hold either or both:
+
 ```
-{username}-g{groupid}@user.trashnothing.com
+{username}-g{groupid}@user.trashnothing.com    per-group alias, e.g. john-g1234@
+{username}@user.trashnothing.com               bare, e.g. john@
 ```
 
-Example: `john-g1234@user.trashnothing.com`
+TN historically minted one alias per group a member joined through it, and most existing
+accounts hold only aliases. TN confirms the bare address is deliverable. Freegle writes the
+bare form in two places: when it creates a member from the posts API (see "Post Ingestion via
+API" below) and when a member renames on TN (see "User Changes API"). Nothing migrates
+existing aliases, so members who do neither keep them.
 
-The `-g{groupid}` suffix indicates which Freegle group the user joined through TN. This suffix is stripped when displaying user names to avoid confusion.
+Usernames can contain hyphens (`mary-jane`, `bibiana-gomes`), so the username is everything
+before an optional `-g<digits>` that sits immediately before the `@`. It is never "everything
+before the first hyphen". `User::tnUsernameFromEmail()` in PHP and `user.TNAliasIdentity()` in
+Go are the only parsers, and both lowercase the result. `.claude/rules/mail-and-data.md` has the
+trap.
 
 ### Database Linking
 
@@ -57,26 +73,45 @@ When processing TN messages, the system:
 
 ### Email Canonicalization
 
-To prevent duplicate user accounts when the same TN user joins multiple groups:
-1. Strip `-g{groupid}` suffix: `john-g123@user.trashnothing.com` → `john@user.trashnothing.com`
+To prevent duplicate user accounts when the same TN user joins multiple groups,
+`User::canonMail` reduces every address of one member to one canon:
+1. Strip a `-g<digits>` suffix, only where it sits immediately before
+   `@user.trashnothing.com`: `john-g123@` and `john@` both become `john@…`
 2. Strip plus addressing
 3. Remove dots (Gmail-style normalization)
 
+Step 1 used to strip everything after the *last* hyphen. That was harmless while every address
+carried a suffix. With bare addresses it gave `mary-jane@` the canon of another member's
+`mary-g12@`. Go writes the same canon for partner addresses (`CanonicalizePartnerEmail`),
+and `UserEmailTest::tnCanonTable` and `partner_canon_test.go` assert the same table in both
+stacks. Rows written under the old rule keep their old canon until
+`users:backfill-email-canon` rewrites them.
+
 ### Identifying the member behind an address
 
-A member's TN identity is the username in their per-group addresses - `bibiana` in
-`bibiana-g288@user.trashnothing.com` - and it is the whole of it, not a prefix of it.
+A member's TN identity is the username in their addresses - `bibiana` in both
+`bibiana-g288@user.trashnothing.com` and `bibiana@user.trashnothing.com` - and it is the
+whole of it, not a prefix of it. Usernames are compared lowercased, as Go does.
 `tn:sync`'s duplicate check (`TNSyncCommand::mergeDuplicateTNUsers`) merges the accounts
 that share one, keeping the lowest `users_emails.id`.
 
 Per tick it reads only addresses added since the last run and probes for siblings of each
-with `LIKE '<username>-g%@user.trashnothing.com'`; one tick a day regroups the whole table
+with `email = '<username>@user.trashnothing.com' OR email LIKE '<username>-g%@user.trashnothing.com'`; one tick a day regroups the whole table
 instead, which is what catches a duplicate made by re-pointing an existing row. That
 `LIKE` is an index narrowing and not the test: its `%` runs on past the end of the
 username, so `bibiana-g%` also matches `bibiana-gomes-g4840@...`, a different member.
-Both passes decide on an exact username from `tnUsernameFromAddress()`. Merging two
+Both passes decide on an exact username from `User::tnUsernameFromEmail()`. Merging two
 members into one account deletes one of them and re-points their mail, so the exact test
 is what stands between a longer username and being absorbed by its own prefix.
+
+A shared username is still not a shared identity: TN does not promise usernames are unique,
+and a released one can be retaken. A group whose accounts hold **two different `tnuserid`s**
+is skipped, with a `TN-SYNC-TRACE [MERGE-SKIP] reason=tnuserid-conflict` line and a
+`tn-sync`/`user-merge-skip` Loki event, and stays listed by `--report-duplicates` until a
+person resolves it. Merging would keep one id and delete the other, and the provisioner
+would then answer every post from the lost id with `tn-username-clash`. `User::merge` refuses
+the same pair itself, for any caller, and `report()`s a `TnUserIdMergeConflict` so it reaches
+Sentry. With `$forceMerge` it goes ahead, but still reports it.
 
 ### Finding the addresses: not via the backwards column
 
@@ -129,6 +164,18 @@ so duplicates created from now on are still merged and the reviewed backlog wait
 - `User::findByTNId($id)` - Look up user by TN ID
 - `User::removeTNGroup($name)` - Remove `-gxxx` suffix from display names
 - `User::canonMail($email)` - Normalize TN email addresses
+- `User::tnUsernameFromEmail($email)` - The lowercased TN username behind a bare or suffixed address, or null if the address is not TN
+- `User::tnEmailForUsername($username)` - The bare `username@user.trashnothing.com` address
+- `User::tnDisplayName($username)` - The display name for a username (`tricia.hayes` → "Tricia Hayes"), matching Go's `partnerDisplayName`
+- `TnUserProvisioner::resolveOrCreate($tnUserId)` - The Freegle user for a TN user id, created from TN's API if needed
+
+**Names run one way.** The address gives the username, and the username gives both the
+address and the display name. Nothing reads a username or an address back out of `fullname`:
+the name is made from the username once, then the email path, the member or a mod may change
+it. `users:fix-tn-names` (`FixTNNamesCommand`) follows the same rule. It names a member from
+their **preferred** TN address. It replaces only a name that is empty or is a raw form of that
+address: the address itself, the alias local part (`alice-g3486`) or the bare username. A
+hyphen in a name does not mean it came from the username, so "Mary-Jane Smith" is left alone.
 
 ## Integration Mechanisms
 
@@ -183,13 +230,36 @@ and `tn:parity-check`, neither of which needs the email path switched off. On, i
 Five differences from the email path are intentional, not bugs, and all matter
 when reading any coverage report:
 
-- **The poster is resolved through `users.tnuserid`.** The API's `user_id` is TN's own
-  id, never a Freegle id, and `users.tnuserid` (unique, written by the partner
-  membership-add flow) is the only mapping. A TN user Freegle has never met is skipped
-  (`post-skip-unknown-user`): the API gives no name and no address for them, so nothing
-  could deliver a reply, and nothing is invented for them - no stub account, no
-  synthetic address. Treating the number as a Freegle id would hand the post to whichever
-  unrelated account holds it.
+- **The poster is resolved through `users.tnuserid`, and created if Freegle has never
+  met them.** The API's `user_id` is TN's own id, never a Freegle id. Treating the number
+  as a Freegle id would hand the post to whichever unrelated account holds it.
+  `users.tnuserid` (unique, written by the partner membership-add flow) is the mapping. When
+  no user holds the id, `TnUserProvisioner` asks TN (`GET /users/{id}`, an endpoint missing
+  from TN's published spec) for the username. It then looks for an account the email path
+  already made for that member. It tries the exact bare address first, then the canon, with
+  an exact-username check. If that account has no `tnuserid`, the id is stamped on it and the
+  bare address is attached, non-preferred. Otherwise it creates a user: `fullname` from
+  `User::tnDisplayName`, TN's `firstname`/`lastname`/`about_me`/`reply_time` when given,
+  and the bare address as the preferred email.
+  The new user has **no membership and no `lastlocation`**. That means no welcome mail or
+  digests, and TN's partner sync adds the membership if and when the member joins. Its first
+  post therefore goes Pending as `unmapped user`, and the moderators are notified.
+  The email path still drops the same post as unknown-user (case 2), so parity shows
+  API-side Pending against email-side Dropped. That is expected. The post is dropped only
+  when provisioning fails, with one of three `routing_reason`s:
+
+  | `routing_reason` | Cause |
+  |---|---|
+  | `Post from unknown user` | TN 404s the id, or gives no usable username |
+  | `tn-user-lookup-failed` | 5xx, 429, timeout, a Cloudflare challenge (`cf-mitigated`), a non-JSON body, or a duplicate key with no `tnuserid` winner |
+  | `tn-username-clash` | the username's address belongs to a user with a **different** `tnuserid`. TN usernames are not guaranteed unique, so this is two people |
+
+  Each drop logs `post-skip-unknown-user` with a `reason`, and each success logs
+  `user-create-from-tn` with `linked_existing`. Nothing is cached: a miss is asked again
+  the next time that poster appears. After the cutover, `tn:verify-email-coverage` finds
+  a dropped post and its backfill retries the lookup. The lookup shares the posts sync's
+  key and `TrashNothingRateLimiter`. In `--dry-run` nothing is written, so several posts
+  from one new poster each fetch from TN and each trace a `users op=insert`.
 - **Group placement is by coordinates**, via `Location::groupsNear()` on the
   post's own lat/lng — never TN's `group_id`, which is TN's internal ID and
   drifts from Freegle's boundaries.
@@ -401,8 +471,8 @@ membership on daily digest.
 "Finds or creates the user" reads on the canon, not on the address. TN sends one of these
 per group and each comes from a different per-group alias, so matching the address alone
 meant the second alias found nothing and created a second Freegle account for the same
-member. Every `-gNNNN` alias canonicalises to one value, so the canon lookup finds the
-account the member already has; the new alias is then attached to it, and later mail from
+member. Every `-gNNNN` alias, and the bare `username@` address, canonicalises to one
+value, so the canon lookup finds the account the member already has; the new alias is then attached to it, and later mail from
 it matches outright.
 
 Two things gate and record that join:
@@ -449,6 +519,23 @@ Syncs:
 - Username changes
 - Location updates
 - Account removal notifications
+
+**A username change renames the member and collapses their addresses.** The previous
+username is read from the member's preferred TN address. It is not read from `fullname`,
+which holds the prettified display name, so comparing against it made every change row look
+like a rename. A change in case alone is not a rename. On a real rename
+(`UserChangesSyncer::applyUsername`):
+
+- `fullname` becomes `User::tnDisplayName(new)`.
+- The bare `new@user.trashnothing.com` is added, preferred if a removed address was, and then
+  every address of the *old* username is removed, bare and `-gNNNN` alike. One
+  `user-email-rename` Loki event is logged per removed address. The suffix is not carried
+  over: mail TN still sends from `new-gNNNN@` resolves through the canon fallback.
+- Addresses of other usernames, and non-TN addresses, are left alone.
+- If another user already holds `new@`, `fullname` is still updated but no address is
+  touched. A `[NAME-CHANGE] … email-clash` trace is logged and the clash goes to Sentry.
+
+Members who never rename keep their existing aliases. No backfill moves them.
 
 **TN is the master for a TN member's location.** A change row's `location` sets
 `users.lastlocation` to the nearest postcode. `settings.mylocation` is read before

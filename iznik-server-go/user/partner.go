@@ -141,27 +141,36 @@ func FindPartnerOwnerForMessage(db *gorm.DB, domain string, msgID uint64) uint64
 	return 0
 }
 
+// partnerUsernameRegexp takes the local part of an address, dropping a per-group
+// -g<digits> only where it sits immediately before the @. Usernames can contain
+// hyphens, so "bibiana-gomes-g4840" is "bibiana-gomes" and a bare "mary-grace" is
+// "mary-grace". Case is kept, unlike TNAliasIdentity, so the display name matches
+// iznik-batch's User::tnDisplayName.
+var partnerUsernameRegexp = regexp.MustCompile(`^(.+?)(?:-g\d+)?@`)
+
+// partnerDisplayName prettifies the username behind a partner address: dots and
+// underscores become spaces, then title case. iznik-batch's User::tnDisplayName
+// is the PHP port of this.
+func partnerDisplayName(email string) string {
+	prefix := email
+	if m := partnerUsernameRegexp.FindStringSubmatch(email); m != nil {
+		prefix = m[1]
+	}
+
+	name := strings.ReplaceAll(prefix, ".", " ")
+	name = strings.ReplaceAll(name, "_", " ")
+	return strings.Title(name) //nolint:staticcheck
+}
+
 // CreatePartnerUser creates a new user for a partner integration.
-// It extracts a display name from the email prefix (before -g or @),
+// It takes a display name from the username behind the address,
 // sets the tnuserid, and adds the email to users_emails.
 func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, error) {
 	if email == "" {
 		return 0, errors.New("email is required")
 	}
 
-	// Extract name from email prefix: take part before -g or @ (whichever comes first).
-	prefix := email
-	if atIdx := strings.Index(prefix, "@"); atIdx >= 0 {
-		prefix = prefix[:atIdx]
-	}
-	if gIdx := strings.Index(prefix, "-g"); gIdx >= 0 {
-		prefix = prefix[:gIdx]
-	}
-
-	// Replace dots/underscores with spaces and title-case.
-	name := strings.ReplaceAll(prefix, ".", " ")
-	name = strings.ReplaceAll(name, "_", " ")
-	name = strings.Title(name) //nolint:staticcheck
+	name := partnerDisplayName(email)
 
 	// Plain, isolated, literal single-row
 	// INSERT; id read back via GORM's map-Create "@id" writeback (proven in
@@ -262,25 +271,29 @@ func FindPartnerByName(name string) uint64 {
 	return partnerID
 }
 
-// tnPartnerDomain is the only domain whose per-group aliases iznik-batch's
-// canonicalizeEmail strips a -gNNNN suffix from, so it is the only one where Go
-// may do the same and still agree with it.
+// tnPartnerDomain is the only domain whose addresses iznik-batch's
+// User::canonMail strips a -gNNNN suffix from, so it is the only one where Go
+// may do the same and still agree with it. It is also the only domain where a
+// bare username@ address is treated as a TN identity.
 const tnPartnerDomain = "user.trashnothing.com"
 
-// tnAliasRegexp matches a partner per-group alias, <username>-g<groupid>@<domain>.
-// Trash Nothing mints one address per TN GROUP, so a member active in several TN
-// groups presents several addresses differing only in the -g part. It mirrors
-// iznik-batch's TNSyncCommand::tnUsernameFromAddress so both stacks decide
-// "same member" by the same rule.
-var tnAliasRegexp = regexp.MustCompile(`^(.+)-g\d+@(.+)$`)
+// tnAliasRegexp matches a partner address, <username>[-g<groupid>]@<domain>.
+// Trash Nothing has minted one address per TN GROUP, so a member active in several
+// TN groups presents several addresses differing only in the -g part; a member may
+// also hold the bare <username>@ form. Only a -g<digits> immediately before the @ is
+// a suffix, because usernames can contain hyphens. It mirrors iznik-batch's
+// User::tnUsernameFromEmail so both stacks decide "same member" by the same rule.
+var tnAliasRegexp = regexp.MustCompile(`^(.+?)(-g\d+)?@(.+)$`)
 
-// TNAliasIdentity splits a per-group alias into the TN username and the domain.
+// TNAliasIdentity splits a partner address into the TN username and the domain.
+// A per-group alias qualifies on any domain; a bare address only on the TN domain,
+// since elsewhere it is just somebody's address.
 func TNAliasIdentity(email string) (string, string, bool) {
 	m := tnAliasRegexp.FindStringSubmatch(strings.ToLower(strings.TrimSpace(email)))
-	if m == nil {
+	if m == nil || (m[2] == "" && m[3] != tnPartnerDomain) {
 		return "", "", false
 	}
-	return m[1], m[2], true
+	return m[1], m[3], true
 }
 
 // likeEscape neutralises the LIKE wildcards in a value used as a literal prefix,
@@ -292,9 +305,9 @@ func likeEscape(s string) string {
 	return s
 }
 
-// FindTNSiblings returns the other live accounts holding a per-group alias of the
-// same TN member as the address given, excluding the account that address itself
-// belongs to.
+// FindTNSiblings returns the other live accounts holding an address (bare or
+// per-group alias) of the same TN member as the address given, excluding the
+// account that address itself belongs to.
 //
 // A TN member can own more than one Freegle account. Until the alias back-fill
 // landed (2026-08-11) a second TN group's alias arriving for the first time minted
@@ -308,11 +321,13 @@ func FindTNSiblings(db *gorm.DB, email string) []uint64 {
 		return nil
 	}
 
-	// Indexed prefix scan on the address. The trailing % runs on past the end of
-	// the username, so "bibiana-g%" also matches "bibiana-gomes-g4840@...", a
-	// different member - the LIKE only narrows, the exact-identity test below
-	// decides. iznik-batch merged two unrelated members on 2026-09-13 for want of
-	// that test, so it is not theoretical.
+	// Indexed lookups on the address: the bare form, and a prefix scan for the
+	// per-group aliases. The trailing % runs on past the end of the username, so
+	// "bibiana-g%" also matches "bibiana-gomes-g4840@...", a different member - the
+	// LIKE only narrows, the exact-identity test below decides. iznik-batch merged
+	// two unrelated members on 2026-09-13 for want of that test, so it is not
+	// theoretical.
+	bare := username + "@" + domain
 	like := likeEscape(username) + "-g%@" + likeEscape(domain)
 
 	var rows []struct {
@@ -322,7 +337,7 @@ func FindTNSiblings(db *gorm.DB, email string) []uint64 {
 	db.Table("users_emails").
 		Select("users_emails.userid, users_emails.email").
 		Joins("INNER JOIN users ON users.id = users_emails.userid").
-		Where("users_emails.email LIKE ? AND users.deleted IS NULL", like).
+		Where("(users_emails.email = ? OR users_emails.email LIKE ?) AND users.deleted IS NULL", bare, like).
 		Scan(&rows)
 
 	self := uint64(0)
@@ -379,9 +394,9 @@ func WithTNSiblings(db *gorm.DB, candidates []uint64, email string) []uint64 {
 
 // CanonicalizePartnerEmail returns the canon to STORE for a partner address.
 //
-// For a Trash Nothing per-group alias it reproduces iznik-batch's
-// canonicalizeEmail exactly - strip the -gNNNN suffix, strip the dots in the
-// domain - so every alias of one member canonicalises to one value and a PHP canon
+// For a Trash Nothing address, bare or per-group alias, it reproduces
+// iznik-batch's User::canonMail exactly - strip a -gNNNN suffix, strip the dots in
+// the domain - so every address of one member canonicalises to one value and a PHP canon
 // lookup can find the row. Go's general CanonicalizeEmail does neither, so rows it
 // wrote were invisible to that lookup, which is the backstop that stops a member's
 // second address minting a second account.

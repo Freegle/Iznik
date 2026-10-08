@@ -70,10 +70,12 @@ class NameSanitiser
     ];
 
     /**
-     * TN-imported fullnames like "alice-g3486@user.trashnothing.com" are an
-     * import side-effect, not deliberate impersonation.
+     * TN-imported fullnames like "alice-g3486@user.trashnothing.com" or a bare
+     * "mary-jane@user.trashnothing.com" are an import side-effect, not deliberate
+     * impersonation. Recognised by domain alone: not every TN address carries a
+     * -gNNNN suffix. Twinned with Go's tnEmailSuffix in user/namevalidation.go.
      */
-    private const TN_EMAIL_SUFFIX = '/-g[0-9]+@user\.trashnothing\.com$/i';
+    private const TN_EMAIL_SUFFIX = '/@user\.trashnothing\.com$/i';
 
     /**
      * Returns a safe rewrite of $raw for non-exempt users, or $raw unchanged

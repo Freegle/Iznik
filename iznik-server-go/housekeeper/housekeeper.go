@@ -374,7 +374,7 @@ var cronJobs = []CronJob{
 	// the Laravel port.
 	{Command: "users:update-approx-locs", Name: "Approx Locations", Description: "Refreshes users_approxlocs, the ~400m-blurred point cloud of recently-active members that drives the rippling reach query; prunes members inactive for 6 months", Schedule: "Daily at 4:45am", IntervalMinutes: 1440, Category: "User Management", Active: true},
 	{Command: "users:cleanup", Name: "User Cleanup", Description: "Cleans up Yahoo Groups users, inactive users, GDPR forgets, and fully forgotten users", Schedule: "Daily (6am)", IntervalMinutes: 1440, Category: "User Management", Active: true},
-	{Command: "users:fix-tn-names", Name: "Fix TN Names", Description: "Extracts display names from TrashNothing email addresses (firstname-groupid@trashnothing.com) for users with no first/last name", Schedule: "Daily at 6:30am", IntervalMinutes: 1440, Category: "User Management", Active: true},
+	{Command: "users:fix-tn-names", Name: "Fix TN Names", Description: "Sets display names from TrashNothing usernames (username@user.trashnothing.com or username-gNNNN@user.trashnothing.com) for users with no first/last name", Schedule: "Daily at 6:30am", IntervalMinutes: 1440, Category: "User Management", Active: true},
 
 	// Cleanup additions
 	{Command: "cleanup:archive-profile-images", Name: "Archive Profile Images", Description: "Removes older duplicate profile images (keeps most recent per user) and orphan rows where userid IS NULL", Schedule: "Daily at 10:30pm", IntervalMinutes: 1440, Category: "Cleanup", Active: true},

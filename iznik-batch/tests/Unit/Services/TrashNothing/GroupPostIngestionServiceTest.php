@@ -9,8 +9,13 @@ use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
+use App\Services\TrashNothing\Ingestion\TnUserProvisioner;
+use App\Services\TrashNothing\Sync\TrashNothingRateLimiter;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use OpenAPI\Client\Configuration;
 use Tests\Support\SeedsSpatialIndex;
 use Tests\TestCase;
 
@@ -28,11 +33,67 @@ class GroupPostIngestionServiceTest extends TestCase
     private LokiService $loki;
     private ItemService $itemService;
 
+    /**
+     * TN's GET /users/{id} answer per TN user id, as [status, body]. Anything
+     * not listed is TN's 404. ONE Http::fake reads this, because fakes merge
+     * and the first registered stub wins (see .claude/rules/laravel-batch-traps.md).
+     *
+     * @var array<int, array{int, mixed}>
+     */
+    private array $tnUsers = [];
+
     protected function setUp(): void
     {
         parent::setUp();
         $this->loki = app(LokiService::class);
         $this->itemService = app(ItemService::class);
+
+        $baseUrl = rtrim(Configuration::getDefaultConfiguration()->getHost(), '/');
+        Http::fake(function (Request $request) use ($baseUrl) {
+            // Only TN is faked. Anything else (the spatial index the location tests
+            // seed through SeedsSpatialIndex) returns null, which lets it through to
+            // the real service; answering it 404 broke that seeding.
+            if (!str_starts_with($request->url(), $baseUrl)) {
+                return null;
+            }
+            if (!preg_match('#^' . preg_quote($baseUrl, '#') . '/users/(\d+)\?#', $request->url(), $m)) {
+                return Http::response('not found', 404);
+            }
+
+            [$status, $body] = $this->tnUsers[(int) $m[1]] ?? [404, 'User does not exist.'];
+
+            return Http::response(
+                is_array($body) ? json_encode($body) : $body,
+                $status,
+                ['Content-Type' => is_array($body) ? 'application/json' : 'text/html'],
+            );
+        });
+    }
+
+    /**
+     * Make TN answer GET /users/{id} for a poster Freegle has never met, with a
+     * username unique to this test so parallel runs cannot share an address.
+     *
+     * @return array{int, string} [tnUserId, username]
+     */
+    private function tnKnowsPoster(): array
+    {
+        $tnUserId = random_int(900000000, 999999999);
+        $username = 'tricia.hayes' . uniqid();
+        $this->tnUsers[$tnUserId] = [200, [
+            'user_id'       => (string) $tnUserId,
+            'username'      => $username,
+            'country'       => 'GB',
+            'profile_image' => null,
+            'member_since'  => '2024-03-01T09:00:00Z',
+            'firstname'     => 'Tricia',
+            'lastname'      => 'Hayes',
+            'reply_time'    => null,
+            'feedback'      => null,
+            'about_me'      => null,
+        ]];
+
+        return [$tnUserId, $username];
     }
 
     /**
@@ -50,6 +111,13 @@ class GroupPostIngestionServiceTest extends TestCase
             dryRun: $dryRun,
             loki: $this->loki,
             itemService: $this->itemService,
+            userProvisioner: new TnUserProvisioner(
+                dryRun: $dryRun,
+                localTesting: false,
+                publicApiKey: 'test-public-key',
+                loki: $this->loki,
+                rateLimiter: new TrashNothingRateLimiter(0),
+            ),
         );
     }
 
@@ -97,11 +165,12 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertSame('skipped', $result);
     }
 
-    public function test_skips_a_post_from_a_tn_user_freegle_does_not_know(): void
+    public function test_skips_a_post_from_a_tn_user_neither_freegle_nor_tn_knows(): void
     {
-        // TN's user_id is TN's own id. With no users.tnuserid match there is no name
-        // and no address for the poster, so the post is skipped in live mode too, and
-        // nothing is invented: no user, no address, no membership, no message.
+        // TN's user_id is TN's own id. With no users.tnuserid match and a 404 from
+        // TN's users endpoint there is no name and no address for the poster, so the
+        // post is skipped in live mode too, and nothing is invented: no user, no
+        // address, no membership, no message.
         $group   = $this->createTestGroup();
         $tnId    = 999999999;
         $postId  = 'tn-unknown-' . uniqid();
@@ -114,6 +183,114 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertSame($before, DB::table('users')->count(), 'No stub user may be created');
         $this->assertFalse(DB::table('users')->where('id', $tnId)->exists(), 'The TN id must never become a Freegle id');
         $this->assertFalse(DB::table('users_emails')->where('email', "tn{$tnId}@user.trashnothing.com")->exists());
+        $this->assertSame(0, Message::where('tnpostid', $postId)->count());
+    }
+
+    public function test_creates_a_tn_poster_freegle_has_never_met_and_holds_the_post_as_unmapped(): void
+    {
+        // A deliberate divergence from email-path case 2, which drops this post:
+        // TN gives the poster's username, so the user is created and the post
+        // ingested. The new user has no lastlocation, so it waits for a moderator.
+        [$tnId, $username] = $this->tnKnowsPoster();
+        $group  = $this->createTestGroup();
+        $postId = 'tn-new-poster-' . uniqid();
+
+        $pendingTrace = [];
+        Log::listen(function ($message) use (&$pendingTrace) {
+            if (str_contains((string) $message->message, 'table=messages_groups op=update')) {
+                $pendingTrace[] = (string) $message->message;
+            }
+        });
+
+        $service = $this->makeService(dryRun: false);
+        $result  = $service->ingest($this->makePost(['post_id' => $postId, 'user_id' => $tnId]), $group);
+
+        $this->assertSame('pending', $result);
+        $user = User::where('tnuserid', $tnId)->first();
+        $this->assertNotNull($user, 'The poster is created with their TN id');
+        $this->assertStringStartsWith('Tricia Hayes', $user->fullname, 'Prettified as Go CreatePartnerUser does');
+        $this->assertNull($user->lastlocation);
+        $this->assertTrue(
+            DB::table('users_emails')->where('userid', $user->id)->where('email', "{$username}@user.trashnothing.com")->exists(),
+        );
+        $this->assertFalse(DB::table('memberships')->where('userid', $user->id)->exists(), 'No membership is added');
+
+        $message = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($message);
+        $this->assertSame($user->id, (int) $message->fromuser);
+        $this->assertSame(
+            MessageGroup::COLLECTION_PENDING,
+            MessageGroup::where('msgid', $message->id)->where('groupid', $group->id)->value('collection'),
+        );
+        $this->assertCount(1, $pendingTrace);
+        $this->assertStringContainsString('reason=unmapped user', $pendingTrace[0]);
+        // A pending reason is kept out of the context, as for any Pending post.
+        $this->assertArrayNotHasKey('routing_reason', $service->getLastRoutingContext());
+    }
+
+    public function test_dry_run_traces_a_new_tn_poster_without_writing_them(): void
+    {
+        [$tnId, $username] = $this->tnKnowsPoster();
+        $group = $this->createTestGroup();
+
+        $writes = [];
+        Log::listen(function ($message) use (&$writes) {
+            if (str_contains((string) $message->message, 'TN-SYNC-TRACE [WRITE]')) {
+                $writes[] = (string) $message->message;
+            }
+        });
+
+        $result = $this->makeService(dryRun: true)->ingest($this->makePost(['user_id' => $tnId]), $group);
+
+        $this->assertSame('pending', $result);
+        $this->assertFalse(User::where('tnuserid', $tnId)->exists(), 'Dry run creates no user');
+        $this->assertFalse(DB::table('users_emails')->where('email', "{$username}@user.trashnothing.com")->exists());
+        $this->assertNotEmpty(
+            array_filter($writes, fn ($line) => str_contains($line, 'table=users op=insert')),
+            'The would-be user insert is traced',
+        );
+    }
+
+    public function test_skips_with_a_lookup_failed_reason_when_tn_cannot_be_asked(): void
+    {
+        $tnId = random_int(900000000, 999999999);
+        $this->tnUsers[$tnId] = [503, 'Service Unavailable'];
+        $group  = $this->createTestGroup();
+        $postId = 'tn-lookup-failed-' . uniqid();
+        $before = DB::table('users')->count();
+
+        $service = $this->makeService(dryRun: false);
+
+        $this->assertSame('skipped', $service->ingest($this->makePost(['post_id' => $postId, 'user_id' => $tnId]), $group));
+        $this->assertSame(RoutingResult::DROPPED, GroupPostIngestionService::outcomeFor('skipped'));
+        $this->assertSame(
+            ['routing_reason' => GroupPostIngestionService::REASON_TN_USER_LOOKUP_FAILED],
+            $service->getLastRoutingContext(),
+        );
+        $this->assertSame('tn-user-lookup-failed', GroupPostIngestionService::REASON_TN_USER_LOOKUP_FAILED);
+        $this->assertSame($before, DB::table('users')->count());
+        $this->assertSame(0, Message::where('tnpostid', $postId)->count());
+    }
+
+    public function test_skips_with_a_username_clash_reason_when_the_address_belongs_to_another_tn_user(): void
+    {
+        // TN says usernames are not guaranteed unique: an account already holding
+        // the address under a different tnuserid is somebody else.
+        [$tnId, $username] = $this->tnKnowsPoster();
+        $other  = $this->createTnUser(['email_preferred' => "{$username}@user.trashnothing.com"]);
+        $group  = $this->createTestGroup();
+        $postId = 'tn-clash-' . uniqid();
+
+        $service = $this->makeService(dryRun: false);
+
+        $this->assertSame('skipped', $service->ingest($this->makePost(['post_id' => $postId, 'user_id' => $tnId]), $group));
+        $this->assertSame(
+            ['routing_reason' => GroupPostIngestionService::REASON_TN_USERNAME_CLASH],
+            $service->getLastRoutingContext(),
+        );
+        $this->assertSame('tn-username-clash', GroupPostIngestionService::REASON_TN_USERNAME_CLASH);
+        $this->assertFalse(User::where('tnuserid', $tnId)->exists());
+        $this->assertNotSame($tnId, (int) $other->fresh()->tnuserid, 'The other member keeps their own TN id');
         $this->assertSame(0, Message::where('tnpostid', $postId)->count());
     }
 

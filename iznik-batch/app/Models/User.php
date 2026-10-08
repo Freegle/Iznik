@@ -388,6 +388,51 @@ class User extends Model implements Auditable
     }
 
     /**
+     * Display name for a TN username: dots and underscores become spaces, then
+     * title case ("tricia.hayes" -> "Tricia Hayes").
+     *
+     * Mirrors CreatePartnerUser in iznik-server-go/user/partner.go, which uses
+     * Go's strings.Title. That capitalises after any non-alphanumeric, not
+     * just whitespace ("mary-jane" -> "Mary-Jane"), so ucwords() would drift.
+     */
+    public static function tnDisplayName(string $username): string
+    {
+        $name = str_replace(['.', '_'], ' ', $username);
+
+        return preg_replace_callback(
+            '/(?<![\p{L}\p{N}_])\p{Ll}/u',
+            fn ($m) => mb_strtoupper($m[0]),
+            $name
+        );
+    }
+
+    /**
+     * The bare TN address for a username. TN confirm it is deliverable.
+     */
+    public static function tnEmailForUsername(string $username): string
+    {
+        return "{$username}@user.trashnothing.com";
+    }
+
+    /**
+     * The TN username behind a TN address, bare or per-group alias:
+     * "tricia.hayes-g298@user.trashnothing.com" and
+     * "tricia.hayes@user.trashnothing.com" both give "tricia.hayes".
+     *
+     * Only a -g<digits> immediately before the domain is stripped, because
+     * usernames can contain hyphens ("bibiana-gomes-g4840" is "bibiana-gomes").
+     * Returns NULL for anything that is not a TN address.
+     */
+    public static function tnUsernameFromEmail(string $email): ?string
+    {
+        if (!preg_match('/^(.+?)(?:-g\d+)?@user\.trashnothing\.com$/i', trim($email), $m)) {
+            return NULL;
+        }
+
+        return strtolower($m[1]);
+    }
+
+    /**
      * Check if user is a moderator of any group.
      */
     public function isModerator(): bool
@@ -468,9 +513,13 @@ class User extends Model implements Auditable
         $email = str_replace('@googlemail.', '@gmail.', $email);
         $email = str_replace('@googlemail.co.uk', '@gmail.co.uk', $email);
 
-        # Canonicalise TN addresses.
-        if (preg_match('/(.*)\-(.*)(@user.trashnothing.com)/', $email, $matches)) {
-            $email = $matches[1] . $matches[3];
+        # Canonicalise TN addresses: strip a per-group -g<digits> suffix, and only that.
+        # Usernames can contain hyphens, and a bare username@ address has no suffix, so
+        # stripping after the last hyphen would give "mary-jane@" the canon of another
+        # member's "mary-g12@". Go's CanonicalizePartnerEmail must agree; the shared
+        # table in UserEmailTest and partner_canon_test.go guards it.
+        if (preg_match('/^(.+)-g\d+(@user\.trashnothing\.com)$/i', $email, $matches)) {
+            $email = $matches[1] . $matches[2];
         }
 
         # Remove plus addressing, which is sometimes used by spammers as a trick, except for Facebook where it
@@ -1155,6 +1204,7 @@ class User extends Model implements Auditable
         return $role;
     }
 
+
     /**
      * Merge two user accounts, consolidating $id2 into $id1.
      *
@@ -1167,7 +1217,8 @@ class User extends Model implements Auditable
      * @param int $id1 The user ID to keep (merge target)
      * @param int $id2 The user ID to absorb and delete
      * @param string $reason Human-readable reason for the merge
-     * @param bool $forceMerge If TRUE, bypass canMerge() checks
+     * @param bool $forceMerge If TRUE, bypass canMerge() checks and the different-tnuserid
+     *                         refusal (still reported)
      * @param int|null $byUserId The user performing the merge (for logging)
      * @return bool TRUE on success, FALSE on failure or if merge is blocked
      */
@@ -1188,6 +1239,23 @@ class User extends Model implements Auditable
 
         if (!$forceMerge && (!$u1->canMerge() || !$u2->canMerge())) {
             return FALSE;
+        }
+
+        // Two different tnuserids are two Trash Nothing accounts. The merge below keeps
+        // id1's and deletes id2 with its own, after which TN posts from the lost id
+        // resolve to nobody - and it cannot be undone. Refuse unless forced, and report
+        // to Sentry either way: a caller asking for this at all means something upstream
+        // decided two TN accounts were one person.
+        if ($u1->tnuserid && $u2->tnuserid && (int) $u1->tnuserid !== (int) $u2->tnuserid) {
+            $detail = "user {$id2} (tnuserid {$u2->tnuserid}) into user {$id1} (tnuserid {$u1->tnuserid}), reason: {$reason}";
+
+            if (!$forceMerge) {
+                report(new TnUserIdMergeConflict("Refused merge of two Trash Nothing accounts: {$detail}"));
+
+                return FALSE;
+            }
+
+            report(new TnUserIdMergeConflict("Forced merge of two Trash Nothing accounts, tnuserid {$u2->tnuserid} will be lost: {$detail}"));
         }
 
         try {

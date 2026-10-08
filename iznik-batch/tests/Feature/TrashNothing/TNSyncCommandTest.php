@@ -548,14 +548,15 @@ class TNSyncCommandTest extends TestCase
 
     public function test_sync_name_change_updates_fullname(): void
     {
-        $user = $this->createTNUser('OldName');
+        $user = $this->createTNUser('OldName', 'oldname' . random_int(100000, 999999));
+        $new = 'new.name' . random_int(100000, 999999);
 
         Http::fake([
             '*/ratings*' => Http::response(['ratings' => []], 200),
             '*/user-changes*' => Http::response([
                 'changes' => [[
                     'fd_user_id' => $user->id,
-                    'username' => 'NewName',
+                    'username' => $new,
                     'date' => self::DATE_SYNC,
                 ]],
             ], 200),
@@ -563,16 +564,19 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync')->assertExitCode(0);
 
+        // fullname is the display name for the username, as CreatePartnerUser makes it.
         $fullname = DB::table('users')->where('id', $user->id)->value('fullname');
-        $this->assertEquals('NewName', $fullname);
+        $this->assertEquals(User::tnDisplayName($new), $fullname);
     }
 
     public function test_sync_name_change_updates_tn_emails(): void
     {
-        $user = $this->createTNUser('OldName');
+        $old = 'oldname' . random_int(100000, 999999);
+        $new = 'newname' . random_int(100000, 999999);
+        $user = $this->createTNUser('OldName', $old);
 
-        // Add a TN-style email with the old name.
-        $oldEmail = 'OldName-g123@user.trashnothing.com';
+        // A second per-group alias for the same username.
+        $oldEmail = "{$old}-g123@user.trashnothing.com";
         DB::table('users_emails')->insert([
             'userid' => $user->id,
             'email' => $oldEmail,
@@ -585,7 +589,7 @@ class TNSyncCommandTest extends TestCase
             '*/user-changes*' => Http::response([
                 'changes' => [[
                     'fd_user_id' => $user->id,
-                    'username' => 'NewName',
+                    'username' => $new,
                     'date' => self::DATE_SYNC,
                 ]],
             ], 200),
@@ -593,30 +597,24 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync')->assertExitCode(0);
 
-        // Old email should be removed or replaced.
-        $this->assertFalse(
-            DB::table('users_emails')->where('userid', $user->id)->where('email', $oldEmail)->exists()
-        );
-
-        // New email should exist.
-        $this->assertTrue(
-            DB::table('users_emails')
-                ->where('userid', $user->id)
-                ->where('email', 'NewName-g123@user.trashnothing.com')
-                ->exists()
+        // Every alias for the old username collapses into one preferred bare address.
+        $this->assertEquals(
+            ["{$new}@user.trashnothing.com" => 1],
+            DB::table('users_emails')->where('userid', $user->id)->pluck('preferred', 'email')->all()
         );
     }
 
     public function test_sync_skips_name_change_when_unchanged(): void
     {
-        $user = $this->createTNUser('SameName');
+        $username = 'same.name' . random_int(100000, 999999);
+        $user = $this->createTNUser(User::tnDisplayName($username), $username);
 
         Http::fake([
             '*/ratings*' => Http::response(['ratings' => []], 200),
             '*/user-changes*' => Http::response([
                 'changes' => [[
                     'fd_user_id' => $user->id,
-                    'username' => 'SameName',
+                    'username' => $username,
                     'date' => self::DATE_SYNC,
                 ]],
             ], 200),
@@ -624,8 +622,12 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync')->assertExitCode(0);
 
+        // The prettified fullname never equals the raw username; that is not a rename.
         $fullname = DB::table('users')->where('id', $user->id)->value('fullname');
-        $this->assertEquals('SameName', $fullname);
+        $this->assertEquals(User::tnDisplayName($username), $fullname);
+        $this->assertTrue(
+            DB::table('users_emails')->where('userid', $user->id)->where('email', "{$username}-g1@user.trashnothing.com")->exists()
+        );
     }
 
     public function test_sync_name_change_executes_without_error_when_name_changes(): void
@@ -643,8 +645,6 @@ class TNSyncCommandTest extends TestCase
             ], 200),
         ]);
 
-        // User has no email matching the "{oldname}-" pattern so no removeEmail/addEmail
-        // is triggered. Save is commented out in port-testing mode.
         $this->artisan('tn:sync')->assertExitCode(0);
     }
 
@@ -848,6 +848,55 @@ class TNSyncCommandTest extends TestCase
     }
 
     /**
+     * A shared username with two different tnuserids is two TN accounts - a username
+     * released and retaken, or a member who re-registered. Merging would delete one
+     * account and its tnuserid, after which that TN user's posts resolve to nobody.
+     */
+    public function test_merge_skips_users_with_different_tnuserids(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $user1 = $this->createTestUser(['fullname' => 'Carol']);
+        $user2 = $this->createTestUser(['fullname' => 'Carol']);
+        DB::table('users')->where('id', $user1->id)->update(['tnuserid' => 99020101]);
+        DB::table('users')->where('id', $user2->id)->update(['tnuserid' => 99020102]);
+
+        $tnBase = 'carol_' . str_replace('.', '', uniqid('', true));
+        $this->insertTnAddress($user1->id, "{$tnBase}-g101@user.trashnothing.com");
+        $this->insertTnAddress($user2->id, "{$tnBase}@user.trashnothing.com");
+
+        $this->artisan('tn:sync', ['--full-duplicate-scan' => true])->assertExitCode(0);
+
+        $this->assertNotNull(User::find($user1->id), 'the first TN account must survive');
+        $this->assertNotNull(User::find($user2->id), 'the second TN account must survive');
+        $this->assertEquals(99020101, User::find($user1->id)->tnuserid);
+        $this->assertEquals(99020102, User::find($user2->id)->tnuserid);
+    }
+
+    /**
+     * Only one side holding a tnuserid is the ordinary duplicate - an email-path
+     * account and its partner twin - and is still merged, keeping the tnuserid.
+     */
+    public function test_merge_keeps_the_only_tnuserid(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $user1 = $this->createTestUser(['fullname' => 'Dave']);
+        $user2 = $this->createTestUser(['fullname' => 'Dave']);
+        DB::table('users')->where('id', $user2->id)->update(['tnuserid' => 99020103]);
+
+        $tnBase = 'dave_' . str_replace('.', '', uniqid('', true));
+        $this->insertTnAddress($user1->id, "{$tnBase}-g101@user.trashnothing.com");
+        $this->insertTnAddress($user2->id, "{$tnBase}-g202@user.trashnothing.com");
+
+        $this->artisan('tn:sync', ['--full-duplicate-scan' => true])->assertExitCode(0);
+
+        $this->assertNotNull(User::find($user1->id), 'the first account seen is the one kept');
+        $this->assertNull(User::find($user2->id), 'the twin is merged in');
+        $this->assertEquals(99020103, User::find($user1->id)->tnuserid);
+    }
+
+    /**
      * The per-tick duplicate check now reads only addresses added since last time,
      * instead of streaming all ~400,000 Trash Nothing addresses every minute. A pair
      * created after the last run must still be caught.
@@ -938,6 +987,116 @@ class TNSyncCommandTest extends TestCase
             DB::table('users_emails')->where('email', $longEmail)->value('userid'),
             'the longer name keeps its own address'
         );
+    }
+
+    private function insertTnAddress(int $userid, string $email): void
+    {
+        DB::table('users_emails')->insert([
+            'userid' => $userid,
+            'email' => $email,
+            'backwards' => strrev($email),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+    }
+
+    private function fakeEmptyTnFeeds(): void
+    {
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+    }
+
+    /**
+     * A member may hold a bare username@ address as well as -gNNN aliases. The
+     * per-tick probe must find the bare form from an alias and the aliases from
+     * the bare form, or a member's twin accounts are never merged.
+     */
+    public function test_incremental_scan_merges_a_bare_address_with_its_alias(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $base = 'mary_' . str_replace('.', '', uniqid('', true)) . '-jane';
+        $bareUser = $this->createTestUser(['fullname' => 'Mary-Jane']);
+        $this->insertTnAddress($bareUser->id, "{$base}@user.trashnothing.com");
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $aliasUser = $this->createTestUser(['fullname' => 'Mary-Jane']);
+        $this->insertTnAddress($aliasUser->id, "{$base}-g12@user.trashnothing.com");
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertTrue(
+            (User::find($bareUser->id) !== null) xor (User::find($aliasUser->id) !== null),
+            'a new alias must be merged with the account on the bare address'
+        );
+
+        // And the other way round: the alias is old, the bare address is new.
+        $dotted = 'tricia_' . str_replace('.', '', uniqid('', true)) . '.hayes';
+        $oldAlias = $this->createTestUser(['fullname' => 'Tricia Hayes']);
+        $this->insertTnAddress($oldAlias->id, "{$dotted}-g298@user.trashnothing.com");
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $newBare = $this->createTestUser(['fullname' => 'Tricia Hayes']);
+        $this->insertTnAddress($newBare->id, "{$dotted}@user.trashnothing.com");
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertTrue(
+            (User::find($oldAlias->id) !== null) xor (User::find($newBare->id) !== null),
+            'a new bare address must be merged with the account on the alias'
+        );
+    }
+
+    /**
+     * A bare address is the whole username. "bibiana@" and "bibiana-gomes-g4840@"
+     * are different members, and so are "mary-jane@" and "mary-g12@".
+     */
+    public function test_incremental_scan_keeps_bare_prefix_sharing_members_apart(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $base = 'bibi_' . str_replace('.', '', uniqid('', true));
+        $longer = $this->createTestUser(['fullname' => 'Bibiana Gomes']);
+        $this->insertTnAddress($longer->id, "{$base}-gomes-g4840@user.trashnothing.com");
+        $mary = $this->createTestUser(['fullname' => 'Mary']);
+        $this->insertTnAddress($mary->id, "{$base}x-g12@user.trashnothing.com");
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $shorter = $this->createTestUser(['fullname' => 'Bibiana']);
+        $this->insertTnAddress($shorter->id, "{$base}@user.trashnothing.com");
+        $maryJane = $this->createTestUser(['fullname' => 'Mary-Jane']);
+        $this->insertTnAddress($maryJane->id, "{$base}x-jane@user.trashnothing.com");
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        foreach ([$longer, $mary, $shorter, $maryJane] as $user) {
+            $this->assertNotNull(User::find($user->id), "user {$user->fullname} must survive");
+        }
+    }
+
+    /**
+     * The whole-table pass groups by the same username rule: a bare address and an
+     * alias of one member are one group; a hyphenated bare username is not
+     * truncated at its hyphen.
+     */
+    public function test_full_scan_groups_bare_and_suffixed_addresses_by_exact_username(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $base = 'full_' . str_replace('.', '', uniqid('', true));
+        $bare = $this->createTestUser(['fullname' => 'Ann']);
+        $this->insertTnAddress($bare->id, "{$base}-ann@user.trashnothing.com");
+        $alias = $this->createTestUser(['fullname' => 'Ann']);
+        $this->insertTnAddress($alias->id, "{$base}-ann-g7@user.trashnothing.com");
+        $other = $this->createTestUser(['fullname' => 'Someone Else']);
+        $this->insertTnAddress($other->id, "{$base}-g8@user.trashnothing.com");
+
+        $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
+
+        $this->assertTrue(
+            (User::find($bare->id) !== null) xor (User::find($alias->id) !== null),
+            'the bare address and the alias of one member must be merged'
+        );
+        $this->assertNotNull(User::find($other->id), 'the shorter username is a different member');
     }
 
     /**
@@ -1541,14 +1700,9 @@ class TNSyncCommandTest extends TestCase
 
     public function test_loki_logs_user_email_rename(): void
     {
-        $user = $this->createTNUser('OldName');
-
-        DB::table('users_emails')->insert([
-            'userid' => $user->id,
-            'email' => 'OldName-g123@user.trashnothing.com',
-            'preferred' => 0,
-            'added' => now(),
-        ]);
+        $old = 'oldname' . random_int(100000, 999999);
+        $new = 'newname' . random_int(100000, 999999);
+        $user = $this->createTNUser('OldName', $old);
 
         $loki = $this->mock(LokiService::class);
         $loki->shouldIgnoreMissing();
@@ -1556,8 +1710,8 @@ class TNSyncCommandTest extends TestCase
             ->once()
             ->with('tn-sync', 'user-email-rename', \Mockery::on(fn($ctx) =>
                 $ctx['user_id'] === $user->id &&
-                $ctx['old_email'] === 'OldName-g123@user.trashnothing.com' &&
-                $ctx['new_email'] === 'NewName-g123@user.trashnothing.com'
+                $ctx['old_email'] === "{$old}-g1@user.trashnothing.com" &&
+                $ctx['new_email'] === "{$new}@user.trashnothing.com"
             ));
         $loki->shouldReceive('logEvent')
             ->once()
@@ -1568,7 +1722,7 @@ class TNSyncCommandTest extends TestCase
             '*/user-changes*' => Http::response([
                 'changes' => [[
                     'fd_user_id' => $user->id,
-                    'username' => 'NewName',
+                    'username' => $new,
                     'date' => self::DATE_SYNC,
                 ]],
             ], 200),
@@ -2034,9 +2188,12 @@ class TNSyncCommandTest extends TestCase
     // =========================================================================
 
     /**
-     * Create a user with a TrashNothing email address.
+     * Create a user with a TrashNothing email address. $tnUsername sets the
+     * username in that address, which is what the sync reads as the current one.
+     * The default username is unrelated to $name on purpose: a fullname says nothing
+     * about the username, so a test must only pass if the code reads the address.
      */
-    private function createTNUser(string $name = 'TNUser'): User
+    private function createTNUser(string $name = 'TNUser', ?string $tnUsername = null): User
     {
         $user = User::create([
             'firstname' => $name,
@@ -2045,7 +2202,7 @@ class TNSyncCommandTest extends TestCase
             'added' => now(),
         ]);
 
-        $uniquePrefix = strtolower($name) . '_' . uniqid('', true);
+        $uniquePrefix = $tnUsername ?? uniqid('tnuser_', true);
 
         UserEmail::create([
             'userid' => $user->id,

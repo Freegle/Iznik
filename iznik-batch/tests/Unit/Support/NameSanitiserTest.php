@@ -78,6 +78,10 @@ class NameSanitiserTest extends TestCase
             'empty' => [''],
             'single letter' => ['J'],
             'tn email leak' => ['alice-g3486@user.trashnothing.com'],
+            // Bare TN addresses: the same inputs as namevalidation_test.go.
+            'tn bare email leak' => ['mary-jane@user.trashnothing.com'],
+            'tn bare dotted email leak' => ['tricia.hayes@user.trashnothing.com'],
+            'tn hyphenated alias email leak' => ['bibiana-gomes-g4840@user.trashnothing.com'],
             // @ in name bypasses suspicious check entirely
             'arbitrary email address' => ['admin@example.com'],
             'freegle.com domain' => ['user@freegle.com'],

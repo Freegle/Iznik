@@ -3989,9 +3989,9 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, []uint64, error) {
 	// The sync's job is to STOP divergence, not tolerate it: merge the twins
 	// (falls back to the split candidates if the merge fails).
 	candidates = user.HealTNDivergence(db, candidates)
-	// The member may hold further accounts carrying a DIFFERENT per-group alias
-	// (see user.FindTNSiblings). Added after the heal, so they widen owner
-	// arbitration without being merged.
+	// The member may hold further accounts carrying a DIFFERENT address of the
+	// same TN username, bare or per-group alias (see user.FindTNSiblings). Added
+	// after the heal, so they widen owner arbitration without being merged.
 	return candidates[0], user.WithTNSiblings(db, candidates, email), nil
 }
 

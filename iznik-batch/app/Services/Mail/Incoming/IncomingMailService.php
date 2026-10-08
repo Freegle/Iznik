@@ -1179,9 +1179,9 @@ class IncomingMailService
         // Find or create the user.
         //
         // findUserByEmail falls back to a canon lookup, which is the thing that stops a
-        // Trash Nothing member's second per-group address creating a second Freegle
-        // account: canon strips the -gNNNN suffix, so every alias of one member reduces
-        // to the same value. Matching the address alone, as this did, is how the member
+        // Trash Nothing member's second address creating a second Freegle account:
+        // canon strips a -gNNNN suffix, so the bare username@ address and every
+        // per-group alias of one member reduce to the same value. Matching the address alone, as this did, is how the member
         // in Discourse's 403 report came to hold two accounts - TN sends a Subscribe
         // mail per group, each from a different alias.
         $envFrom = $email->envelopeFrom;
@@ -1226,9 +1226,9 @@ class IncomingMailService
                 'created_new' => true,
             ]);
         } else {
-            // It may have matched on canon rather than on the address itself - another
-            // per-group alias of the same member. Attach this one so later mail from it
-            // matches outright.
+            // It may have matched on canon rather than on the address itself - the bare
+            // address or another per-group alias of the same member. Attach this one so
+            // later mail from it matches outright.
             $this->addEmailToUser($user->id, $envFrom);
 
             // Update last access
@@ -3791,42 +3791,12 @@ class IncomingMailService
      * Canonicalize an email address for matching.
      *
      * Handles: TN group suffixes, googlemail->gmail, plus addressing, gmail dots.
+     * Delegates to User::canonMail so the canon written and the canon looked up
+     * cannot drift apart; they were separate copies until the TN rule changed.
      */
     private function canonicalizeEmail(string $email): string
     {
-        // Googlemail → Gmail
-        $email = str_replace('@googlemail.', '@gmail.', $email);
-        $email = str_replace('@googlemail.co.uk', '@gmail.co.uk', $email);
-
-        // Strip TN group suffix: user-gNNNN@user.trashnothing.com → user@user.trashnothing.com
-        if (preg_match('/(.*)\-(.*)(@user\.trashnothing\.com)/', $email, $matches)) {
-            $email = $matches[1].$matches[3];
-        }
-
-        // Remove plus addressing (except Facebook proxy and leading +)
-        if (
-            str_starts_with($email, '+') === false &&
-            preg_match('/(.*)\+(.*)(@.*)/', $email, $matches) &&
-            strpos($email, '@proxymail.facebook.com') === false
-        ) {
-            $email = $matches[1].$matches[3];
-        }
-
-        // Remove dots in Gmail LHS
-        $p = strpos($email, '@');
-        if ($p !== false) {
-            $lhs = substr($email, 0, $p);
-            $rhs = substr($email, $p);
-
-            if (stripos($rhs, '@gmail') !== false || stripos($rhs, '@googlemail') !== false) {
-                $lhs = str_replace('.', '', $lhs);
-            }
-
-            // Remove dots from RHS for canonical comparison
-            $email = $lhs.str_replace('.', '', $rhs);
-        }
-
-        return $email;
+        return User::canonMail($email);
     }
 
     /**
