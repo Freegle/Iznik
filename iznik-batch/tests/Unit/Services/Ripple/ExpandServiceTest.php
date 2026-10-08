@@ -5474,10 +5474,10 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
-            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
+            [$msgid, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
         );
     }
 
@@ -5493,7 +5493,7 @@ class ExpandServiceTest extends TestCase
         $groupB = $this->seedCoveringGroup();
         $this->seedAdvanceDueReach($msgid);
         Http::fake(); // cached schedule - no routing call expected
-        $before = DB::selectOne('SELECT ST_AsText(polygon) AS wkt, tick FROM rippling_reach WHERE msgid = ?', [$msgid]);
+        $before = DB::selectOne('SELECT polygon_cells AS cells, tick FROM rippling_reach WHERE msgid = ?', [$msgid]);
 
         $stats = $this->service()->process(false, 500);
 
@@ -5501,9 +5501,9 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(0, $stats['expanded'], 'a capped advance is not an expansion');
         $row = DB::selectOne(
             'SELECT tick, status, next_expansion_at, awaiting_review_since,
-                    ST_Equals(polygon, ST_GeomFromText(?, 3857)) AS same_poly
+                    polygon_cells = ? AS same_poly
                FROM rippling_reach WHERE msgid = ?',
-            [$before->wkt, $msgid]
+            [$before->cells, $msgid]
         );
         $this->assertSame(1, (int) $row->same_poly, 'polygon must NOT advance while capped');
         $this->assertSame((int) $before->tick, (int) $row->tick, 'tick must NOT advance while capped');
@@ -5528,15 +5528,15 @@ class ExpandServiceTest extends TestCase
         $this->addCleanViews($msgid, 10);
         $this->reportToMods($msgid);
         Http::fake();
-        $before = DB::selectOne('SELECT ST_AsText(polygon) AS wkt, tick FROM rippling_reach WHERE msgid = ?', [$msgid]);
+        $before = DB::selectOne('SELECT polygon_cells AS cells, tick FROM rippling_reach WHERE msgid = ?', [$msgid]);
 
         $stats = $this->service()->process(false, 500);
 
         $this->assertSame(1, $stats['reach_capped']);
         $row = DB::selectOne(
-            'SELECT tick, ST_Equals(polygon, ST_GeomFromText(?, 3857)) AS same_poly
+            'SELECT tick, polygon_cells = ? AS same_poly
                FROM rippling_reach WHERE msgid = ?',
-            [$before->wkt, $msgid]
+            [$before->cells, $msgid]
         );
         $this->assertSame(1, (int) $row->same_poly, 'flagged post polygon frozen');
         $this->assertSame((int) $before->tick, (int) $row->tick);

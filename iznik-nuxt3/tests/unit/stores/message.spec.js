@@ -814,6 +814,9 @@ describe('message store - rejectFromOversight()', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    // The refresh keeps only copies on groups this moderator moderates, so say so
+    // explicitly rather than relying on whatever an earlier test left on the mock.
+    useAuthStore.mockReturnValue({ user: { id: 99 }, member: () => 'Moderator' })
   })
 
   it('marks the post pulled back and keeps it, refreshed, as Pending', async () => {
