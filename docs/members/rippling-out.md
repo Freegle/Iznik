@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-02
+last_reviewed: 2026-10-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/components/DistanceSliders.vue
