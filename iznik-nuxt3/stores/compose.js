@@ -291,10 +291,21 @@ export const useComposeStore = defineStore('compose', {
         data.ai_declined = true
       }
 
-      const ret = await this.$api.message.submit(
-        data,
-        (d) => d?.error !== 403 // 403 = posting prohibited/banned (mod choice, not a server error)
-      )
+      let ret
+      try {
+        ret = await this.$api.message.submit(
+          data,
+          (d) => d?.error !== 403 // 403 = posting prohibited/banned (mod choice, not a server error)
+        )
+      } catch (e) {
+        // The web app can go live before the API that has PUT /message/submit. The
+        // handler never answers 404, so a 404 means the route does not exist yet:
+        // use the multi-step flow. Every other error surfaces unchanged.
+        if (e?.response?.status === 404) {
+          return await this.submitMultiStep(message, email, options)
+        }
+        throw e
+      }
 
       // For unauthenticated users the server creates the account and returns
       // auth tokens — store them so the user is logged in afterwards.
@@ -304,6 +315,35 @@ export const useComposeStore = defineStore('compose', {
       }
 
       return ret // { id, groupid, newuser?, newpassword? }
+    },
+    // Multi-step submit (draft, then join and post) for an API without
+    // PUT /message/submit. Photos carried inline by uid are given server ids first,
+    // because a draft takes attachment ids.
+    async submitMultiStep(message, email, options = {}) {
+      const attachments = []
+      for (const a of message.attachments || []) {
+        if (a.id && typeof a.id === 'number') {
+          attachments.push(a)
+        } else if (a.ouruid || a.externaluid) {
+          const img = await this.$api.image.post({
+            externaluid: a.ouruid || a.externaluid,
+            externalmods: a.externalmods,
+          })
+          attachments.push({ ...a, id: img.id })
+        }
+      }
+
+      const id = await this.createDraft({ ...message, attachments }, email)
+      const submitOptions = { ...options }
+      if (submitOptions.deadline) {
+        submitOptions.deadline = String(submitOptions.deadline).substring(0, 10)
+      }
+      const { groupid, newuser, newpassword } = await this.submitDraft(
+        id,
+        email,
+        submitOptions
+      )
+      return { id, groupid, newuser, newpassword }
     },
     // Defer a submit until the user has logged in — used when their email is
     // already registered so we must force a login first. Persisted (whole store

@@ -753,6 +753,89 @@ describe('compose store', () => {
       expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
     })
 
+    describe('API without PUT /message/submit', () => {
+      const notFound = () =>
+        Object.assign(new Error('API Error'), { response: { status: 404 } })
+
+      it('submitSingle falls back to draft + join-and-post on a 404', async () => {
+        const store = useComposeStore()
+        store.init({ public: {} })
+        store.postcode = { id: 123 }
+        store.group = 10
+        mockMessageSubmit.mockRejectedValue(notFound())
+        mockImagePost.mockResolvedValue({ id: 555 })
+        mockMessagePut.mockResolvedValue({ id: 77 })
+        mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+
+        const ret = await store.submitSingle(
+          {
+            type: 'Offer',
+            item: 'Sofa',
+            description: 'Good',
+            availablenow: 1,
+            attachments: [{ ouruid: 'uid-a' }],
+          },
+          'a@b.com',
+          { deadline: '2026-07-01T00:00:00.000Z' }
+        )
+
+        expect(ret).toEqual({
+          id: 77,
+          groupid: 10,
+          newuser: undefined,
+          newpassword: undefined,
+        })
+        expect(mockImagePost).toHaveBeenCalledWith(
+          expect.objectContaining({ externaluid: 'uid-a' })
+        )
+        expect(mockMessagePut).toHaveBeenCalledWith(
+          expect.objectContaining({
+            collection: 'Draft',
+            attachments: [555],
+            item: 'Sofa',
+          })
+        )
+        expect(mockJoinAndPost).toHaveBeenCalledWith(
+          77,
+          'a@b.com',
+          expect.objectContaining({ deadline: '2026-07-01' })
+        )
+      })
+
+      it('resumePendingSubmit also falls back on a 404', async () => {
+        const store = useComposeStore()
+        store.init({ public: {} })
+        store.postcode = { id: 123 }
+        store.group = 10
+        mockMessageSubmit.mockRejectedValue(notFound())
+        mockMessagePut.mockResolvedValue({ id: 78 })
+        mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+        store.setPendingSubmit({ type: 'Offer', item: 'Sofa' }, 'a@b.com')
+
+        const ret = await store.resumePendingSubmit()
+
+        expect(ret.id).toBe(78)
+        expect(mockMessagePut).toHaveBeenCalledTimes(1)
+        expect(mockJoinAndPost).toHaveBeenCalledTimes(1)
+      })
+
+      it('does not fall back on a 403', async () => {
+        const store = useComposeStore()
+        store.init({ public: {} })
+        store.postcode = { id: 123 }
+        store.group = 10
+        mockMessageSubmit.mockRejectedValue(
+          Object.assign(new Error('API Error'), { response: { status: 403 } })
+        )
+
+        await expect(
+          store.submitSingle({ type: 'Offer', item: 'Sofa' }, 'a@b.com')
+        ).rejects.toThrow('API Error')
+        expect(mockMessagePut).not.toHaveBeenCalled()
+        expect(mockJoinAndPost).not.toHaveBeenCalled()
+      })
+    })
+
     it('resumePendingSubmit is a no-op while a submit is already in flight', async () => {
       const store = useComposeStore()
       store.init({ public: {} })
