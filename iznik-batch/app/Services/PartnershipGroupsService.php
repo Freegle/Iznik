@@ -13,8 +13,9 @@ use Illuminate\Support\Facades\DB;
  * is the daily run that means a community set up inside the boundary later is covered without
  * anyone having to open the page. The two must agree:
  *
- *   - Boundary rows follow the boundary: added when a community comes inside it, dropped
- *     when one no longer is.
+ *   - Boundary rows follow the boundary: added when a community overlaps it significantly
+ *     (AuthorityStatsService::isSignificantOverlap), dropped when one no longer does. A
+ *     community that only grazes the edge is not listed, though the stats page still counts it.
  *   - Added rows (put in by hand) and Removed rows (left out by hand) are never changed.
  *   - Every covered community has a groups_sponsorship row, shown only while the deal is
  *     committed and visible.
@@ -37,7 +38,7 @@ class PartnershipGroupsService
             return ['added' => [], 'dropped' => []];
         }
 
-        $authority = $this->authorityStats->getAuthority((int) $partnership->authorityid);
+        $authority = $this->authorityStats->getSignificantGroups((int) $partnership->authorityid);
         $inside = [];
         foreach ($authority['groups'] ?? [] as $group) {
             $inside[$group['id']] = $group['overlap'];

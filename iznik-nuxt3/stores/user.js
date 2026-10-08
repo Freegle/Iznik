@@ -11,6 +11,8 @@ export const useUserStore = defineStore('user', {
   state: () => ({
     list: {},
     locationList: {},
+    // Why each result of the last support search matched (id -> reasons), beyond name/email/id.
+    searchMatches: {},
   }),
   actions: {
     init(config) {
@@ -26,6 +28,7 @@ export const useUserStore = defineStore('user', {
       console.log('uUS clear')
       this.list = {}
       this.locationList = {}
+      this.searchMatches = {}
       this.fetching = {}
       this.fetchingLocation = {}
     },
@@ -35,6 +38,7 @@ export const useUserStore = defineStore('user', {
     },
     async searchUsers(searchTerm) {
       const data = await api(this.config).user.search(searchTerm)
+      this.searchMatches = data?.matches || {}
       if (data?.users?.length) {
         // V2 API returns user IDs; fetch each user with modtools data.
         await Promise.all(

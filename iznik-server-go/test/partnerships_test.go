@@ -300,32 +300,88 @@ func TestPartnershipDetectsCoveredGroups(t *testing.T) {
 	assert.InDelta(t, 1.0, g["overlap"].(float64), 0.001)
 }
 
-// A community that only touches the boundary is covered, with the small share of it that is
-// inside - the same as the authority stats page, which counts that share of its figures.
-// Southend against Essex County is the real case; leaving it out is a decision for the team.
-func TestPartnershipCoversACommunityThatTouchesTheBoundaryWithItsShare(t *testing.T) {
-	prefix := uniquePrefix("PartnershipGraze")
-	_, token := partnershipsUser(t, prefix)
-	authorityID := createPartnershipAuthority(t, prefix)
-
+// createGrazingGroup makes a community that is mostly east of the test authority's -3 edge:
+// 0.02 of its width is inside, and it covers a sliver of the authority. Southend against
+// Essex County is the real case.
+func createGrazingGroup(t *testing.T, prefix string) uint64 {
 	db := database.DBConn
-	// Mostly east of the authority's -3 edge: 0.02 of its 1.0 width is inside, and it covers
-	// a sliver of the authority.
 	name := "TestPGroupGraze_" + prefix
 	db.Exec(fmt.Sprintf("INSERT INTO `groups` (nameshort, namefull, type, onhere, publish, onmap, "+
 		"polyindex, lat, lng) VALUES (?, ?, 'Freegle', 1, 1, 1, "+
 		"ST_GeomFromText('POLYGON((-3.02 55.5, -2.02 55.5, -2.02 55.6, -3.02 55.6, -3.02 55.5))', %d), 55.55, -2.5)",
 		utils.SRID), name, name)
-	var grazeID uint64
-	db.Raw("SELECT id FROM `groups` WHERE nameshort = ?", name).Scan(&grazeID)
-	require.NotZero(t, grazeID)
+	var id uint64
+	db.Raw("SELECT id FROM `groups` WHERE nameshort = ?", name).Scan(&id)
+	require.NotZero(t, id)
+
+	return id
+}
+
+// A community that only grazes the boundary is not covered: listing Southend as part of Essex
+// County's deal over 1% of its area is not honest. Communities added by hand are unaffected.
+func TestPartnershipIgnoresACommunityThatOnlyGrazesTheBoundary(t *testing.T) {
+	prefix := uniquePrefix("PartnershipGraze")
+	_, token := partnershipsUser(t, prefix)
+	authorityID := createPartnershipAuthority(t, prefix)
+	insideID := createPartnershipGroup(t, prefix)
+	grazeID := createGrazingGroup(t, prefix)
 
 	id := createPartnership(t, token, authorityID, defaultBody(authorityID))
 
+	assert.NotNil(t, findGroup(getPartnership(t, token, id), insideID))
+	assert.Nil(t, findGroup(getPartnership(t, token, id), grazeID))
+	assert.Equal(t, int64(0), sponsorshipCount(grazeID))
+}
+
+// A grazing community can still be added by hand, and then counts in full.
+func TestPartnershipCanAddAGrazingCommunityByHand(t *testing.T) {
+	prefix := uniquePrefix("PartnershipGrazeAdd")
+	_, token := partnershipsUser(t, prefix)
+	authorityID := createPartnershipAuthority(t, prefix)
+	grazeID := createGrazingGroup(t, prefix)
+
+	id := createPartnership(t, token, authorityID, defaultBody(authorityID))
+	patchGroup(t, token, id, fmt.Sprintf(`{"action":"Add","groupid":%d}`, grazeID))
+
 	g := findGroup(getPartnership(t, token, id), grazeID)
 	require.NotNil(t, g)
-	assert.Equal(t, "Boundary", g["source"])
-	assert.InDelta(t, 0.02, g["overlap"].(float64), 0.005)
+	assert.Equal(t, "Added", g["source"])
+}
+
+// The authority stats page still lists the grazing community, weighted by its small share:
+// that is intended. It is flagged so the Partnerships page can leave it out.
+func TestAuthorityStatsPageStillListsAGrazingCommunity(t *testing.T) {
+	prefix := uniquePrefix("AuthorityGraze")
+	authorityID := createPartnershipAuthority(t, prefix)
+	insideID := createPartnershipGroup(t, prefix)
+	grazeID := createGrazingGroup(t, prefix)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/authority/%d", authorityID), nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var body struct {
+		Groups []struct {
+			ID          uint64  `json:"id"`
+			Overlap     float64 `json:"overlap"`
+			Coverage    float64 `json:"coverage"`
+			Significant bool    `json:"significant"`
+		} `json:"groups"`
+	}
+	require.NoError(t, json2.NewDecoder(resp.Body).Decode(&body))
+
+	found := map[uint64]bool{}
+	for _, g := range body.Groups {
+		found[g.ID] = g.Significant
+		if g.ID == grazeID {
+			assert.InDelta(t, 0.02, g.Overlap, 0.005)
+			assert.Less(t, g.Coverage, 0.05)
+		}
+	}
+
+	assert.Contains(t, found, grazeID, "the stats page keeps every community that touches the council")
+	assert.False(t, found[grazeID])
+	assert.True(t, found[insideID])
 }
 
 func TestPartnershipCreateCanLeaveOutAndAddCommunities(t *testing.T) {

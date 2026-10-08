@@ -157,6 +157,14 @@ genuinely on different lines.
 
 ## CI failures that are about the build, not the branch
 
+- **"Build containers" fails with `additional privileges requested: pass "--allow=network.host"`**:
+  the runner has docker-buildx 0.38 or later, which refuses our `network: host` builds. The
+  Hetzner runner is built from `scripts/hetzner/cloud-init.yaml` **on whichever branch's pipeline
+  provisioned it**, so one push to a branch older than the buildx pin brings up a bad runner and
+  every queued build on it fails, master included. Check `docker buildx version` on the runner
+  (`ssh -i ~/.ssh/hetzner_ci root@<ip>`), downgrade it to the pinned version, re-run the failed
+  workflows, and merge master into the branch that provisioned it.
+
 - **Docker Hub rate limits** mean the pull-through mirror is only wired up for the self-hosted
   runner, so a job that lands elsewhere pulls directly and is throttled.
 - **A new compose service that is not in the orb's explicit build list** is never built, and

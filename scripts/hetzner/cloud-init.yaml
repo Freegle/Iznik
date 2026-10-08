@@ -81,8 +81,12 @@ runcmd:
   - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" > /etc/apt/sources.list.d/docker.list
   - apt-get update -qq
   - DVER='5:27.5.1-1~ubuntu.24.04~noble'
-  - apt-get install -y -qq docker-ce=$DVER docker-ce-cli=$DVER containerd.io docker-compose-plugin sshpass jq
-  - apt-mark hold docker-ce docker-ce-cli containerd.io
+  # buildx is pinned too: 0.38.0 refuses compose builds that use network: host unless every build
+  # passes --allow=network.host, so every image build in CI fails at "Build containers".
+  - BXVER='0.37.1-1~ubuntu.24.04~noble'
+  - CPVER='5.6.0-1~ubuntu.24.04~noble'
+  - apt-get install -y -qq docker-ce=$DVER docker-ce-cli=$DVER containerd.io docker-buildx-plugin=$BXVER docker-compose-plugin=$CPVER sshpass jq
+  - apt-mark hold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   - ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 2>/dev/null || true
   - systemctl enable --now docker
   - sysctl -w vm.overcommit_memory=1 || true

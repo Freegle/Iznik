@@ -30,6 +30,9 @@ class AuthorityStatsService
     // Only Freegle groups, published and on the map, count towards an authority.
     public const GROUP_FREEGLE = 'Freegle';
 
+    // A community overlaps a council significantly at this share, either way round.
+    public const SIGNIFICANT_OVERLAP = 0.05;
+
     // Fallback location (roughly the centre of the UK) used when a member's
     // location cannot be resolved any other way.
     private const DEFAULT_LAT = 53.9450;
@@ -256,7 +259,13 @@ class AuthorityStatsService
                     ELSE ST_Area(polyindex) / ST_Area(ST_Intersection(polyindex, COALESCE(simplified, polygon)))
                     END
                 ELSE 0
-                END AS overlap2
+                END AS overlap2,
+                CASE WHEN ST_GeometryType(ST_Intersection(polyindex, COALESCE(simplified, polygon))) IN ('POLYGON', 'MULTIPOLYGON') THEN
+                    CASE WHEN polyindex = COALESCE(simplified, polygon) THEN 1
+                    ELSE ST_Area(ST_Intersection(polyindex, COALESCE(simplified, polygon))) / ST_Area(COALESCE(simplified, polygon))
+                    END
+                ELSE 0
+                END AS coverage
             FROM `groups`
             INNER JOIN authorities ON ( polyindex = COALESCE(simplified, polygon) OR ST_Intersects(polyindex, COALESCE(simplified, polygon)) )
             WHERE type = ? AND publish = 1 AND onmap = 1 AND authorities.id = ?",
@@ -272,17 +281,54 @@ class AuthorityStatsService
                 $overlap = 1.0;
             }
 
-            // Keep groups with a meaningful overlap in either direction.
+            // Note overlap2 is area(group) / area(intersection), which is never below 1 for a
+            // group that touches the authority, so this keeps every touching group: the stats
+            // page weights each by its share, and a sliver adds a matching sliver. That is the
+            // intended behaviour (see 55a0e407e), so do not "fix" it here; the Partnerships
+            // list narrows it with getSignificantGroups() instead.
             if ($overlap >= 0.05 || $overlap2 >= 0.05) {
                 $groups[] = [
                     'id' => (int) $row->id,
                     'namedisplay' => $row->namefull ?: $row->nameshort,
                     'overlap' => $overlap,
+                    'coverage' => (float) $row->coverage,
                 ];
             }
         }
 
         return ['name' => $auth->name, 'groups' => $groups];
+    }
+
+    /**
+     * Whether a community overlaps a council enough to be listed as covered by its partnership:
+     * at least 5% of the community lies inside the boundary, or the community covers at least 5%
+     * of the council. The second leg keeps a big community that holds a small council; the first
+     * keeps a small community wholly inside a big council. Mirrors authority.Significant in Go.
+     */
+    public static function isSignificantOverlap(float $overlap, float $coverage): bool
+    {
+        return $overlap >= self::SIGNIFICANT_OVERLAP || $coverage >= self::SIGNIFICANT_OVERLAP;
+    }
+
+    /**
+     * Like getAuthority(), but only the communities that overlap the council significantly.
+     * The Partnerships page and its daily sync list these; the stats page keeps them all.
+     *
+     * @return array{name:string, groups:array<int, array{id:int, namedisplay:string, overlap:float, coverage:float}>}|null
+     */
+    public function getSignificantGroups(int $id): ?array
+    {
+        $authority = $this->getAuthority($id);
+        if ($authority === null) {
+            return null;
+        }
+
+        $authority['groups'] = array_values(array_filter(
+            $authority['groups'],
+            static fn (array $g) => self::isSignificantOverlap($g['overlap'], $g['coverage'])
+        ));
+
+        return $authority;
     }
 
     /**

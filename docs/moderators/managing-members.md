@@ -1,9 +1,10 @@
 ---
-last_reviewed: 2026-09-30
+last_reviewed: 2026-10-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
   - iznik-nuxt3/modtools/pages/chats/**
+  - iznik-nuxt3/modtools/layouts/default.vue
   - iznik-nuxt3/modtools/pages/spammers.vue
   - iznik-nuxt3/modtools/components/ModMember*.vue
   - iznik-nuxt3/modtools/components/ModRelatedMember.vue
@@ -85,6 +86,11 @@ they have fixed it is the right move.
 Freegle's unusual-behaviour checks, across all your communities. For each, you see notes,
 spammer status, whether they are active in places far apart, whether they have changed
 location repeatedly, bouncing-email status and ban history, plus a postcode tester.
+
+The count beside **Member Review** in the menu is red for members nobody has dealt with yet,
+and blue for members who are held by a moderator or flagged in a community where you are not
+an active moderator. Once you have reviewed or held everything, the red count goes and only
+blue is left.
 
 Treat these as prompts to look, not verdicts. There is no rule against joining several
 communities or posting enthusiastically. Ban only with clear evidence of harm, and prefer
