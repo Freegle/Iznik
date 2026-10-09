@@ -48,6 +48,57 @@ class LogRotationService
     }
 
     /**
+     * Archive and empty the live, appended-to log files directly in $dir.
+     *
+     * Per-command cron logs are written with append semantics, so they only
+     * grow. Each non-empty "*.log" is gzipped to "<name>.log.<stamp>.gz" and
+     * then truncated in place (copytruncate): the writers hold O_APPEND
+     * handles, so their next write lands at the start of the emptied file and
+     * nothing is lost to a deleted inode. Lines written between the copy and
+     * the truncate are lost, which is the accepted copytruncate trade-off.
+     * The archives are pruned by age like any other old log.
+     *
+     * @param  string|null  $stamp  Archive suffix; defaults to the current date and time.
+     * @return array{rotated:int, bytes:int, files:list<string>}
+     */
+    public function rotateLive(string $dir, bool $dryRun = false, ?string $stamp = null): array
+    {
+        $rotated = 0;
+        $bytes = 0;
+        $files = [];
+        $stamp ??= date('Ymd-His');
+
+        foreach ($this->listFiles($dir) as $path) {
+            // Only direct children: the archives and anything nested are left alone.
+            if (dirname($path) !== rtrim($dir, '/') || !str_ends_with($path, '.log')) {
+                continue;
+            }
+            $size = @filesize($path);
+            if (!$size) {
+                continue;
+            }
+
+            $rotated++;
+            $bytes += $size;
+            $files[] = $path;
+
+            if ($dryRun) {
+                continue;
+            }
+
+            if ($this->gzipFile($path, $path.'.'.$stamp.'.gz')) {
+                $handle = @fopen($path, 'r+');
+                if ($handle !== false) {
+                    ftruncate($handle, 0);
+                    fclose($handle);
+                }
+            }
+        }
+
+        return ['rotated' => $rotated, 'bytes' => $bytes, 'files' => $files];
+    }
+
+    /**
      * Gzip-compress rotated (non-live) log files in $dir.
      *
      * Targets files named like "*.log" or "*.log.<n>" (e.g. supervisor backups)

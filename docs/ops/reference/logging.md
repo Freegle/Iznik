@@ -134,6 +134,12 @@ labels and `message` becomes the JSON body.
 This exists because a file survives Loki being down or slow, where a direct push does not.
 Logrotate keeps the files bounded (step 6 below).
 
+**Batch container files.** Each scheduled command also appends its output to
+`storage/logs/cron/<command>.log`. The daily `logs:rotate` job (`LogRotationService::rotateLive`)
+gzips every non-empty cron log to `<name>.log.<date>-<time>.gz` and truncates it in place, so the
+scheduler's open append handle keeps working. Archives are pruned after 7 days. Supervisor rotates
+`scheduler.log`, `worker.log`, `spooler_*.log` and `mail-receiver.log` itself (50MB, 5 backups).
+
 ### 3. Container output on the edge host: Alloy via the Docker socket
 
 `alloy-edge.alloy`, run under the `edge` compose profile. It discovers containers on the Docker
