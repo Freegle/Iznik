@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-08
+last_reviewed: 2026-10-09
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/server/utils/sitemap.ts
@@ -8,6 +8,9 @@ covers:
   - iznik-nuxt3/composables/useBuildHead.js
   - iznik-nuxt3/composables/useMessageJsonLd.js
   - iznik-nuxt3/pages/message/[id].vue
+  - iznik-nuxt3/pages/explore/[[id]].vue
+  - iznik-nuxt3/pages/explore/[groupid]/[[msgid]].vue
+  - iznik-nuxt3/composables/exploreTitle.js
   - iznik-nuxt3/public/robots.txt
   - iznik-server-go/message/sitemap.go
   - iznik-batch/app/Services/MessageSpatialService.php
@@ -137,6 +140,9 @@ subject for up to 200 recent live posts.
 That endpoint is deliberately **anonymous** — unlike `GET /group/:id/message` it
 never folds in the caller's own pending posts, because its output is rendered into
 a page that gets cached and served to everyone.
+
+Community page titles are worded as the search people make: `Free stuff in Birmingham | Freegle`,
+built by `composables/exploreTitle.js` from the community name with its trailing "Freegle" removed.
 
 `/explore/**` is on a 600s ISR window, down from 3600s: a community page is the
 crawl path into that community's new posts, so an hour of cache meant a new post
