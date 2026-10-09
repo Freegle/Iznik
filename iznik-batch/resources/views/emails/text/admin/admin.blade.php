@@ -34,3 +34,6 @@ Don't want to receive these emails? Opt out: {!! $marketingOptOutUrl !!}
 
 ---
 Change your email settings: {!! $settingsUrl !!}
+
+{{ config('freegle.branding.name') }} is registered as a charity with HMRC (ref. XT32865) and is run by volunteers.
+Registered address: {{ config('freegle.branding.registered_address') }}

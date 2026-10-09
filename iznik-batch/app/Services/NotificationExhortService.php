@@ -33,7 +33,7 @@ class NotificationExhortService
         string $url,
         string $title,
         string $text,
-        string $activeSince = '5 minutes ago',
+        string $activeSince = '6 minutes ago',
         string $joinedBefore = '1 week ago',
         bool $dryRun = false
     ): int {

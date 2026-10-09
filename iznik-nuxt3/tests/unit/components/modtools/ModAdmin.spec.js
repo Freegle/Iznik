@@ -135,6 +135,7 @@ describe('ModAdmin', () => {
             template: '<div class="confirm-modal"><slot /></div>',
           },
           ExternalLink: { template: '<a><slot /></a>' },
+          ModClipboard: true,
           ModAdminPreviewLittleFreeShop2026: {
             template: '<div class="preview-stub" />',
           },
@@ -422,6 +423,7 @@ describe('ModAdmin', () => {
       await wrapper.vm.$nextTick()
       expect(wrapper.find('textarea#body').exists()).toBe(true)
       expect(wrapper.find('textarea#mjml').exists()).toBe(false)
+      expect(wrapper.find('.admin-footer-preview').exists()).toBe(false)
       await wrapper.vm.save()
       expect(mockAdminsStore.edit.mock.calls[0][0].mjml).toBe('')
     })
@@ -438,6 +440,9 @@ describe('ModAdmin', () => {
         'https://mjml.io/try-it-live'
       )
       expect(wrapper.find('textarea#mjml').element.value).toBe(mjml)
+      expect(wrapper.find('.admin-footer-preview').text()).toContain(
+        'HMRC (ref. XT32865)'
+      )
 
       // Changing only the MJML asks first.
       await wrapper

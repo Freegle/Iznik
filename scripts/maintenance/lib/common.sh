@@ -61,6 +61,7 @@ DRY=true
 FORCE_REBOOT=false
 IGNORE_WINDOW=false
 TARGET=""
+SLOT=""              # set for timer runs and the Docker-host resume: they report to housekeeping
 PROFILE=""
 PHASE="init"
 RUN_ID=""
@@ -246,6 +247,7 @@ alert_address() {
 
 send_alert() {  # send_alert <subject> <body>
   local subj="[freegle-maint] $1" body=$2 to
+  housekeeping_slot "$1" "$body"
   $DRY && [ "$MAINT_MAIL_DRY_RUN_SUMMARY" != 1 ] && return 0
   $DRY && subj="$subj (dry run)"
   to=$(alert_address)
@@ -260,6 +262,48 @@ send_alert() {  # send_alert <subject> <body>
     if [ -n "$RUN_DIR" ] && [ -s "$RUN_DIR/ledger.txt" ]; then echo; echo "== Ledger (state changes, with undo) =="; cat "$RUN_DIR/ledger.txt"; fi
     if [ -n "$RUN_DIR" ] && [ -s "$RUN_DIR/summary.txt" ]; then echo; echo "== Log =="; tail -n 200 "$RUN_DIR/summary.txt"; fi
   } | mail -s "$subj" "$to" || log error "mail command failed for: $subj"
+}
+
+# ---------------------------------------------------------------------------
+# Housekeeping: timer runs also report to the ModTools SysAdmin housekeeping tab
+# (housekeeper_tasks), through `artisan housekeeper:record` in batch-prod. A slot
+# that fails, is skipped, or stops running at all (overdue) shows there.
+# Reporting never fails a run: batch-prod can be down, for one.
+# ---------------------------------------------------------------------------
+MAINT_HOUSEKEEPING="${MAINT_HOUSEKEEPING:-1}"
+# A week plus the longest run, so a slot that did not run shows overdue.
+MAINT_HK_SLOT_HOURS="${MAINT_HK_SLOT_HOURS:-174}"
+# How long the rollout may sit with a host still on dry runs before it shows overdue.
+MAINT_HK_ROLLOUT_HOURS="${MAINT_HK_ROLLOUT_HOURS:-336}"
+
+housekeeping_record() {  # <task key> <success|failure> <summary> [artisan options...]; log on stdin
+  [ "$MAINT_HOUSEKEEPING" = 1 ] || return 0
+  local key=$1 st=$2 summary=$3; shift 3
+  timeout 60 docker exec -i "${MAINT_BATCH_CONTAINER:-freegledocker-batch-prod}" \
+    php artisan housekeeper:record "$key" "$st" "$summary" --log-stdin "$@" >/dev/null 2>&1 \
+    || { log warn "housekeeping: could not record $key"; return 1; }
+}
+
+slot_title() {  # <slot> -> "name|when"
+  case "$1" in
+    db) echo "OS patching: data nodes|Tuesday 04:40 UTC, db2 and db3 in alternate weeks";;
+    mail) echo "OS patching: mail relay|Wednesday 02:15 UTC, bulk2";;
+    docker) echo "OS patching: Docker host|Wednesday 23:35 UTC";;
+    arbitrator) echo "OS patching: arbitrator|Friday 04:40 UTC, db1";;
+    lb) echo "OS patching: load balancer|Monday 04:00 UK time";;
+  esac
+}
+
+housekeeping_slot() {  # <alert subject> <alert body>
+  [ -n "$SLOT" ] || return 0
+  local st summary t
+  case "$1" in "ok "*|"dry run ok "*) st=success;; *) st=failure;; esac
+  summary=$(printf '%s' "$2" | head -1 | cut -c1-400)
+  $DRY && case "$summary" in "Dry run"*) ;; *) summary="Dry run: $summary";; esac
+  t=$(slot_title "$SLOT")
+  { [ -n "$RUN_DIR" ] && tail -n 400 "$RUN_DIR/summary.txt" 2>/dev/null; } | housekeeping_record "freegle-maint-$SLOT" "$st" "$summary" \
+    --name="${t%%|*}" --description="${t#*|}. $($DRY && echo 'Dry run: not yet live.' || echo 'Live.') Runbook: docs/ops/runbooks/automated-host-maintenance.md" \
+    --interval-hours="$MAINT_HK_SLOT_HOURS"
 }
 
 # ---------------------------------------------------------------------------
@@ -341,6 +385,14 @@ monit_all_ok() {  # <host> <snapshot file>
   done < "$2"
   [ -z "$bad" ] || die "$1: monit services not OK:$bad"
   info "$1: monit all OK ($(wc -l < "$2") services)"
+}
+
+# Every service a profile will unmonitor or monitor must exist under that name. A dry run only
+# prints those commands, so without this a wrong name first fails after the drain has started.
+monit_has() {  # <host> <snapshot file> <svc...>
+  local h=$1 f=$2 s missing=""; shift 2
+  for s in "$@"; do grep -q "^$s|" "$f" || missing="$missing $s"; done
+  [ -z "$missing" ] || die "$h: no monit service named:$missing"
 }
 
 monit_unmonitor() {  # <host> <svc...>

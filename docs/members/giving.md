@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-03
+last_reviewed: 2026-10-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
@@ -36,7 +36,8 @@ reply, you pick someone, and they collect. This guide walks through the whole th
    optionally set a deadline.
 5. **Confirm who you are.** If you are logged in this is filled in already. If not, enter
    your email. If that email already belongs to an account, we ask you to log in rather
-   than create a duplicate.
+   than create a duplicate. Once you have logged in, your post is sent for you without
+   filling anything in again.
 6. Click **Freegle it!** Your post goes live and starts reaching people nearby.
 
 On a phone the steps are the same but split into photo, details, options and location

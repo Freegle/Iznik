@@ -188,14 +188,12 @@
                     anything inside <code>&lt; &gt;</code>, alone.
                   </p>
                   <p class="mb-0">
-                    To see how it looks, copy it into the
+                    To see how it looks, use the copy button under the box and
+                    paste into the
                     <ExternalLink :href="MJML_TRY_IT"
                       >MJML live editor</ExternalLink
-                    >
-                    with <code>&lt;mjml&gt;&lt;mj-body&gt;</code> before it and
-                    <code>&lt;/mj-body&gt;&lt;/mjml&gt;</code> after it. You can
-                    edit it there and paste it back. Your test email shows
-                    exactly what members will get.
+                    >. You can edit it there and paste your sections back. Your
+                    test email shows exactly what members will get.
                   </p>
                 </NoticeMessage>
                 <b-form-textarea
@@ -206,6 +204,7 @@
                   rows="15"
                   placeholder="<mj-section>...</mj-section>"
                 />
+                <ModAdminFooterPreview :mjml="admin.mjml || ''" class="mt-2" />
                 <b-button
                   variant="link"
                   size="sm"
@@ -383,6 +382,7 @@ import {
 } from '~/modtools/composables/useAdminContent'
 import { useAdminTestSend } from '~/modtools/composables/useAdminTestSend'
 import ModAdminTestSend from '~/modtools/components/ModAdminTestSend.vue'
+import ModAdminFooterPreview from '~/modtools/components/ModAdminFooterPreview.vue'
 
 const props = defineProps({
   id: {

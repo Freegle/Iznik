@@ -448,6 +448,18 @@ Schedule::command('mail:digest:mark-seen')
     ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('mail:digest:mark-seen'));
 
+// Apply the email tracking journal (image loads and pixel opens, appended by the Go delivery
+// handlers instead of locking each email's tracking row on every hit) to email_tracking and
+// email_tracking_images, then mark the posts of the digests it shows were opened as seen.
+// 01:35 UTC: inside the 21:00-05:00 trough, after the 01:00 job and well clear of the 03:00 spatial
+// rebuild cluster and the 03:50-04:35 backup drain window. A day of events is ~2.2M rows,
+// folded in 5,000-row transactions; runInBackground so it cannot hold up the minute scheduler.
+Schedule::command('mail:tracking:fold')
+    ->dailyAt('01:35')
+    ->withoutOverlapping(180)
+    ->sendOutputTo(cronLog('mail:tracking:fold'))
+    ->runInBackground();
+
 Schedule::command('mail:bounced')
     ->hourly()
     ->withoutOverlapping(120)
@@ -955,8 +967,15 @@ foreach (range(0, $reachMailShardCount - 1) as $reachShard) {
 // change since yesterday was not followed by reach mail, so a hook that is missed or wrong
 // costs a day rather than the mail. Two indexed queries over the last day; the reach pass's
 // drain does the containment work.
+//
+// It re-queues about 1,650 members a day, and the reach shards then spend 30 to 36 minutes
+// mailing them (about 3,000 CPU-seconds on the batch host and a burst on db2). At 05:23 UTC that
+// ran into the start of the 07:00 London daily digest in summer. 04:36 is the first minute after
+// the backup drain ends (a once-a-day job inside it is skipped), in the overnight trough, and
+// leaves the pass finished about 45 minutes before the digest. ReachCatchUpScheduleTest holds
+// both bounds.
 Schedule::command('ripple:reconcile-reach-members')
-    ->dailyAt('05:23')
+    ->dailyAt('04:36')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('ripple:reconcile-reach-members'))
     ->runInBackground();
@@ -1281,11 +1300,13 @@ Schedule::command('microvolunteering:notify')
     ->runInBackground();
 
 // Exhort recently-active established users with an on-site notification nudge
-// (default: "Tell us your Freegle story!"). The 90-day per-user cooldown means
-// running every minute over a 5-minute active window simply dedupes; matches V1.
+// (default: "Tell us your Freegle story!"). V1 ran it every minute over a 5-minute window, which
+// scans all of users each time (about 1.7 s on db2, no index serves lastaccess). Every five
+// minutes over a 6-minute window sees the same users, a few minutes later, with the 90-day
+// per-user cooldown absorbing the one minute of overlap.
 // V1: cron/user_exhort.php (every minute).
 Schedule::command('notifications:exhort')
-    ->everyMinute()
+    ->everyFiveMinutes()
     ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('notifications:exhort'))
     ->runInBackground();

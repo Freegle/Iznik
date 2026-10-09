@@ -3825,6 +3825,21 @@
     }
    }
   },
+  "/message/submit": {
+   "put": {
+    "description": "Creates, attaches photos, joins the group and posts a complete message in a single request. Logged-out callers supply an email, which finds or creates the account and returns a JWT.",
+    "tags": [
+     "message"
+    ],
+    "summary": "Submit a complete post in one call",
+    "operationId": "submitMessage",
+    "responses": {
+     "200": {
+      "description": "Success"
+     }
+    }
+   }
+  },
   "/message/tn/{tnpostid}": {
    "patch": {
     "description": "Updates ALL Freegle messages sharing the given Trash Nothing post ID. A single TN post\ncan be submitted to multiple Freegle groups, each producing a separate Freegle message\nrow \u2014 this endpoint updates every one of them in a single call. Used by partner\nintegrations where the Freegle message ID is not yet known (e.g. post held for moderation).",

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-08
+last_reviewed: 2026-10-09
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/settings/**
@@ -117,7 +117,10 @@ The message body is **plain text**, and it is required. HTML typed into it is re
 placeholders in angle brackets such as `<your names here>` are fine. If you know
 [MJML](https://mjml.io), you can also tick the box to add a **designed version**. Paste only the
 `<mj-section>` elements from inside `<mj-body>`. Freegle adds its own header, footer and
-unsubscribe links. Members whose email shows formatted mail get the designed version and
+unsubscribe links, and both versions end with the standard footer: the HMRC charity line and the
+registered address. That footer is shown under the MJML box, with a copy button that gives the
+designed version and the footer as one document for the
+[MJML live editor](https://mjml.io/try-it-live). Members whose email shows formatted mail get the designed version and
 everyone else gets the plain text, so both must say the same. Before it is sent, scripts, forms,
 embedded frames, event handlers and links that are not http, https, mailto or tel are removed.
 A designed version has no separate big button: put any buttons in the MJML.

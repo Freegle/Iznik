@@ -342,6 +342,22 @@ class AdminMailTest extends TestCase
         $this->assertStringContainsString('Test Group', $html);
     }
 
+    public function test_both_parts_carry_the_standard_charity_footer(): void
+    {
+        $mail = new AdminMail($this->createTestUser(), $this->makeAdmin([
+            'mjml' => '<mj-section><mj-column><mj-text>Designed</mj-text></mj-column></mj-section>',
+        ]), 'Test Group', 'mods@groups.ilovefreegle.org', 'testgroup');
+
+        $html = $mail->render();
+        $text = view('emails.text.admin.admin', $mail->buildViewData())->render();
+        $address = config('freegle.branding.registered_address');
+
+        foreach (['html' => $html, 'text' => $text] as $part => $body) {
+            $this->assertStringContainsString('registered as a charity with HMRC (ref. XT32865)', $body, $part);
+            $this->assertStringContainsString('Registered address: ' . $address, $body, $part);
+        }
+    }
+
     public function test_mjml_that_will_not_build_falls_back_to_the_text(): void
     {
         $admin = $this->makeAdmin([

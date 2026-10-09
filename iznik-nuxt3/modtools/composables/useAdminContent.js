@@ -12,6 +12,36 @@ const MAX_MJML_BYTES = 256 * 1024
 export const MJML_SITE = 'https://mjml.io'
 export const MJML_TRY_IT = 'https://mjml.io/try-it-live'
 
+// The standard footer every ADMIN gets, as in iznik-batch's emails/mjml/partials/footer.blade.php
+// (address from config/freegle.php branding.registered_address). Shown while composing so the
+// moderator sees what goes under their content; the batch adds the real one when it sends.
+export const FOOTER_CHARITY =
+  'Freegle is registered as a charity with HMRC (ref. XT32865) and is run by volunteers. Which is nice.'
+export const FOOTER_ADDRESS =
+  'Registered address: 64a North Road, Ormesby, Great Yarmouth, Norfolk NR29 3LE'
+
+const FOOTER_MJML = `<mj-section background-color="#f5f5f5" padding="20px">
+  <mj-column>
+    <mj-text font-size="12px" color="#666666" align="center" line-height="1.6">
+      This email was sent to member@example.com<br/>
+      <a href="#" style="color: #338808; font-weight: bold; text-decoration: none;">Change your email settings</a> &bull;
+      <a href="#" style="color: #338808; font-weight: bold; text-decoration: none;">Unsubscribe</a>
+    </mj-text>
+    <mj-divider border-color="#ddd" border-width="1px" padding="15px 40px"></mj-divider>
+    <mj-text font-size="11px" color="#666666" align="center" line-height="1.5">
+      ${FOOTER_CHARITY}<br/>
+      ${FOOTER_ADDRESS}
+    </mj-text>
+  </mj-column>
+</mj-section>`
+
+// The MJML part as a whole document for the MJML live editor, with the standard footer under it.
+export function mjmlForLiveEditor(mjml) {
+  return `<mjml>\n<mj-body background-color="#f4f4f4">\n${(
+    mjml || ''
+  ).trim()}\n${FOOTER_MJML}\n</mj-body>\n</mjml>\n`
+}
+
 // Returns a message if the plain-text part contains HTML, or null.
 export function textProblem(text) {
   const m = text ? text.match(HTML_TAG) : null

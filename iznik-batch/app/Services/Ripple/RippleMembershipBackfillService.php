@@ -124,6 +124,7 @@ class RippleMembershipBackfillService
             // rippled into (the backfill is not tied to a single post). Without this, backfilled
             // posters got the intro with no "welcome from the communities your post reached"
             // section. Only groups live here with a welcome configured are included.
+            // keep-raw: COALESCE() over two columns has no builder method.
             $welcomeGroups = array_map(
                 static fn ($r) => ['name' => $r->name, 'welcome' => $r->welcome],
                 DB::select(

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/emailtracking"
 	"github.com/freegle/iznik-server-go/router"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
@@ -234,6 +235,9 @@ func verifyRequiredTables() {
 }
 
 func TestMain(m *testing.M) {
+	// The delivery tests assert on the tracking row straight after a request, so run the handlers
+	// in direct-write mode. emailtracking_journal_test.go turns the journal on for its own cases.
+	emailtracking.SetJournalEnabled(false)
 	dropLegacyReachGeometry()
 	purgeStaleLockdownState()
 

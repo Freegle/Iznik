@@ -8,7 +8,8 @@
 # Patching always happens with garbd stopped, for the same reason.
 
 MAINT_ARB_APT_EXCLUDE="${MAINT_ARB_APT_EXCLUDE:-^percona-}"
-MAINT_ARB_SERVICE="${MAINT_ARB_SERVICE:-garb}"
+MAINT_ARB_SERVICE="${MAINT_ARB_SERVICE:-garb}"     # the systemd unit
+MAINT_ARB_MONIT="${MAINT_ARB_MONIT:-garbd}"         # the monit check, which is named after the process
 
 arb_run() {
   local A=$MAINT_ARBITRATOR n
@@ -29,6 +30,7 @@ arb_run() {
   { [ "$hm" -ge 345 ] && [ "$hm" -le 435 ]; } && die "inside the backup drain window"
   monit_snapshot "$A" "$RUN_DIR/monit-arb.before"
   monit_all_ok "$A" "$RUN_DIR/monit-arb.before"
+  monit_has "$A" "$RUN_DIR/monit-arb.before" "$MAINT_ARB_MONIT"
   svc_snapshot "$A" "$RUN_DIR/services-arb.before"
 
   phase plan
@@ -40,9 +42,9 @@ arb_run() {
   begin_drain
 
   phase stop-garbd
-  monit_unmonitor "$A" "$MAINT_ARB_SERVICE"
+  monit_unmonitor "$A" "$MAINT_ARB_MONIT"
   act "$A" "stop $MAINT_ARB_SERVICE cleanly" "systemctl stop $MAINT_ARB_SERVICE" || die "$A: could not stop $MAINT_ARB_SERVICE"
-  ledger "$A $MAINT_ARB_SERVICE stopped" "ssh $A 'systemctl start $MAINT_ARB_SERVICE && monit monitor $MAINT_ARB_SERVICE'"
+  ledger "$A $MAINT_ARB_SERVICE stopped" "ssh $A 'systemctl start $MAINT_ARB_SERVICE && monit monitor $MAINT_ARB_MONIT'"
   if ! $DRY; then
     sleep 15
     for n in $MAINT_DB_NODES; do wsrep_healthy "$n" $(( MAINT_DB_CLUSTER_SIZE - 1 )); done
@@ -69,7 +71,7 @@ arb_run() {
     [ "$(rq "$A" "systemctl is-active $MAINT_ARB_SERVICE")" = active ] || die "$A: $MAINT_ARB_SERVICE not active"
     for i in $(seq 1 30); do rq "$A" "monit summary >/dev/null 2>&1" && break; sleep 5; done
   fi
-  monit_monitor "$A" "$MAINT_ARB_SERVICE"
+  monit_monitor "$A" "$MAINT_ARB_MONIT"
   if ! $DRY; then
     for n in $MAINT_DB_NODES; do
       for _ in $(seq 1 24); do wsrep_read "$n"; [ "${W[wsrep_cluster_size]:-}" = "$MAINT_DB_CLUSTER_SIZE" ] && break; sleep 5; done

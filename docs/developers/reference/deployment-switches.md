@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-03
+last_reviewed: 2026-10-08
 owner: Freegle dev team
 covers:
   - iznik-batch/config/freegle.php

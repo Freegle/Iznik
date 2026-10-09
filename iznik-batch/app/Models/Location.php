@@ -93,6 +93,8 @@ class Location extends Model implements Auditable
         // Point built from the postcode's own lat/lng as POINT(lng lat) SRID 3857,
         // matching groupsNear()'s containment test (so no dependence on the SRID
         // stored on locations.geometry). FIELD() preserves the KNN nearest-first order.
+        // keep-raw: ST_Contains/ST_GeomFromText/CONCAT/FIELD() are spatial and
+        // string functions with no builder method.
         $loc = DB::selectOne(
             "SELECT p.name AS postcode, a.name AS area
              FROM locations p
@@ -146,6 +148,7 @@ class Location extends Model implements Auditable
         // polyindex polygons, those groups are authoritative and beat the centroid-
         // distance heuristic (V1 parity; fixes Discourse #9763 where a group with
         // a close centroid but non-containing polyindex shadowed the correct group).
+        // keep-raw: ST_Contains/ST_GeomFromText/haversine() have no builder method.
         $containing = DB::select(
             "SELECT id
              FROM `groups`
@@ -161,6 +164,7 @@ class Location extends Model implements Auditable
         }
 
         // No group polygon contains the point; fall back to centroid distance.
+        // keep-raw: haversine() has no builder method.
         $rows = DB::select(
             "SELECT id
              FROM `groups`

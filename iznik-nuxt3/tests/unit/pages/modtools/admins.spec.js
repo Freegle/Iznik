@@ -168,6 +168,7 @@ describe('admins.vue page', () => {
             props: ['modelValue'],
           },
           'v-icon': { template: '<span class="icon-stub" />' },
+          ModClipboard: true,
           ExternalLink: {
             template: '<a class="external-link" :href="href"><slot /></a>',
             props: ['href'],
@@ -466,6 +467,9 @@ describe('admins.vue page', () => {
       expect(wrapper.find('.mjml-part').html()).toContain('https://mjml.io')
       expect(wrapper.find('.mjml-part').html()).toContain(
         'https://mjml.io/try-it-live'
+      )
+      expect(wrapper.find('.admin-footer-preview').text()).toContain(
+        'Registered address'
       )
     })
 

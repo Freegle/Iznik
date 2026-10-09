@@ -1147,7 +1147,7 @@ rows, its latest row states its outcome.
     auto-join and `user:add-membership` in PHP - see `ReachMemberQueueService`). The same pass
     drains the queue, partitioned by `MOD(userid, shards)`, asking `mailNewlyReachedForPost`
     about each candidate post scoped to that one member. `ripple:reconcile-reach-members` runs
-    daily and re-queues anyone whose join or postcode change since yesterday has no ledger row
+    daily at 04:36 UTC (after the backup drain, so the pass it sets off finishes before the digest) and re-queues anyone whose join or postcode change since yesterday has no ledger row
     after it, so a missed hook costs a day, not the mail.
   The `rippling_reach_notified` ledger dedupes both feeds, so their overlap is harmless.
 - **Held replies:** a reply from outside the post's current reach is parked in
