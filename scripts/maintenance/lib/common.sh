@@ -387,6 +387,14 @@ monit_all_ok() {  # <host> <snapshot file>
   info "$1: monit all OK ($(wc -l < "$2") services)"
 }
 
+# Every service a profile will unmonitor or monitor must exist under that name. A dry run only
+# prints those commands, so without this a wrong name first fails after the drain has started.
+monit_has() {  # <host> <snapshot file> <svc...>
+  local h=$1 f=$2 s missing=""; shift 2
+  for s in "$@"; do grep -q "^$s|" "$f" || missing="$missing $s"; done
+  [ -z "$missing" ] || die "$h: no monit service named:$missing"
+}
+
 monit_unmonitor() {  # <host> <svc...>
   local h=$1; shift
   act "$h" "monit unmonitor $*" "for s in $*; do monit unmonitor \$s; done" || die "$h: monit unmonitor failed"

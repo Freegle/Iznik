@@ -139,6 +139,7 @@ db_preflight() {
     c=$(http_code "$h" "http://127.0.0.1:$MAINT_DB_ROUTING_INTERNAL_PORT$MAINT_DB_ROUTING_PROBE"); [ "$c" = 200 ] || die "$h: routing internal route answers $c"
     monit_snapshot "$h" "$RUN_DIR/monit-$(short_name "$h").before"
     monit_all_ok "$h" "$RUN_DIR/monit-$(short_name "$h").before"
+    [ "$h" = "$T" ] && monit_has "$h" "$RUN_DIR/monit-$(short_name "$h").before" iznik-server-go $MAINT_DB_MONIT_HOLD $MAINT_DB_MONIT_RESTORE
   done
   svc_snapshot "$T" "$RUN_DIR/services-$TS.before"
 
