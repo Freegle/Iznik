@@ -226,7 +226,7 @@ func calcEmailRates(totalSent, opened, clicked, linkedBounces int64) (openRate, 
 func Pixel(c *fiber.Ctx) error {
 	trackingID := c.Params("id")
 
-	recordOpen(trackingID, "pixel")
+	RecordPixelOpen(trackingID)
 
 	c.Set("Content-Type", "image/gif")
 	c.Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -364,58 +364,10 @@ func Click(c *fiber.Ctx) error {
 // @Param s query integer false "Scroll percentage"
 // @Success 302 {string} string "Redirect to original image"
 func Image(c *fiber.Ctx) error {
-	db := database.DBConn
-	trackingID := c.Params("id")
-
-	// Get tracking record
-	var tracking EmailTracking
-	result := db.Where("tracking_id = ?", trackingID).First(&tracking)
-
-	if result.Error == nil {
-		position := c.Query("p", "unknown")
-		scrollPercent := c.QueryInt("s", -1)
-
-		now := time.Now()
-
-		// If not opened yet, mark as opened via image. Guard the write in SQL,
-		// not just on the stale Go read: an email's images load near-together and
-		// all see OpenedAt==nil, so without "WHERE opened_at IS NULL" every one of
-		// them UPDATEs the same parent row and they serialise on its lock.
-		if tracking.OpenedAt == nil {
-			openedVia := "image"
-			db.Model(&tracking).Where("opened_at IS NULL").Updates(map[string]interface{}{
-				"opened_at":  now,
-				"opened_via": openedVia,
-			})
-		}
-
-		// Create image load record. This per-load row (with its position and
-		// estimated scroll percent) is the source of truth for image/scroll-depth
-		// analytics.
-		imageLoad := EmailTrackingImage{
-			EmailTrackingID: tracking.ID,
-			ImagePosition:   position,
-			LoadedAt:        now,
-		}
-
-		if scrollPercent >= 0 && scrollPercent <= 100 {
-			sp := uint8(scrollPercent)
-			imageLoad.EstimatedScrollPercent = &sp
-
-			// Update scroll depth if this is deeper.
-			if tracking.ScrollDepthPercent == nil || sp > *tracking.ScrollDepthPercent {
-				db.Model(&tracking).Update("scroll_depth_percent", sp)
-			}
-		}
-
-		db.Create(&imageLoad)
-
-		// Deliberately do NOT increment email_tracking.images_loaded. A per-hit
-		// counter UPDATE takes an exclusive lock on the parent row that every
-		// concurrent image load contends for (see ImageCompact) - and the old
-		// read-modify-write form here also lost updates. The count is unread and
-		// derivable as a COUNT over email_tracking_images, so it is not kept.
-	}
+	// Journalled, not written: see journal.go. The request does no database work at all, so the
+	// images of one email no longer queue on its parent row. The first-open stamp, the deepest
+	// scroll estimate and the per-load row are applied by the nightly mail:tracking:fold.
+	RecordImageLoad(c.Params("id"), c.Query("p", "unknown"), c.QueryInt("s", -1))
 
 	// Redirect to original image
 	urlEncoded := c.Query("url", "")
@@ -920,28 +872,6 @@ func UserEmails(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(responseMap)
-}
-
-// recordOpen records an email open event
-func recordOpen(trackingID string, via string) {
-	db := database.DBConn
-
-	var tracking EmailTracking
-	result := db.Where("tracking_id = ?", trackingID).First(&tracking)
-	if result.Error != nil {
-		return
-	}
-
-	// Only record first open
-	if tracking.OpenedAt != nil {
-		return
-	}
-
-	now := time.Now()
-	db.Model(&tracking).Updates(map[string]interface{}{
-		"opened_at":  now,
-		"opened_via": via,
-	})
 }
 
 // DailyStats represents statistics for a single day

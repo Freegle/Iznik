@@ -117,4 +117,51 @@ class DeliveryHealthServiceTest extends TestCase
 
         $this->assertSame([], $this->domains());
     }
+
+    public function test_a_collapse_is_still_reported_when_the_journal_is_empty(): void
+    {
+        // Sanity for the next two: with nothing waiting to be folded the window ends SETTLE_HOURS
+        // ago exactly as before.
+        DB::table('email_tracking_journal')->delete();
+        $this->seedSends('yahoo.example', 5, 600, 30.0);
+        $this->seedSends('yahoo.example', 0, 600, 0.0);
+
+        $this->assertSame(['yahoo.example'], $this->domains());
+    }
+
+    public function test_mail_whose_opens_are_still_in_the_unfolded_journal_is_not_judged(): void
+    {
+        // Image loads and pixel opens reach opened_at only when mail:tracking:fold has run. Mail
+        // sent after the oldest unfolded event shows no opens yet, which says nothing about
+        // delivery: counting it would read a healthy domain as collapsed.
+        DB::table('email_tracking_journal')->delete();
+        $this->seedSends('healthy.example', 5, 600, 30.0);
+        $this->seedSends('healthy.example', 0, 600, 0.0); // seedSends puts these 7h before "now"
+
+        DB::table('email_tracking_journal')->insert([
+            'ref' => 'anything',
+            'kind' => 2,
+            'loaded_at' => $this->now->copy()->subHours(10)->toDateTimeString(),
+        ]);
+
+        $this->assertSame([], $this->domains(), 'unopened-so-far mail after the fold boundary is not evidence');
+        DB::table('email_tracking_journal')->delete();
+    }
+
+    public function test_a_collapse_before_the_fold_boundary_is_still_caught(): void
+    {
+        DB::table('email_tracking_journal')->delete();
+        // Everything judged is older than the oldest unfolded event, so its opens are complete.
+        $this->seedSends('yahoo.example', 5, 600, 30.0);
+        $this->seedSends('yahoo.example', 0, 600, 0.0, hoursAgo: 12);
+
+        DB::table('email_tracking_journal')->insert([
+            'ref' => 'anything',
+            'kind' => 2,
+            'loaded_at' => $this->now->copy()->subHours(8)->toDateTimeString(),
+        ]);
+
+        $this->assertSame(['yahoo.example'], $this->domains());
+        DB::table('email_tracking_journal')->delete();
+    }
 }

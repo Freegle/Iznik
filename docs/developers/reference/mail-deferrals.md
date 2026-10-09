@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-28
+last_reviewed: 2026-10-08
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Mail/Deferrals/*.php
@@ -170,6 +170,10 @@ figure or against other domains, because open rates differ hugely and legitimate
 providers - `icloud.com` opens at 56% where `gmail.com` opens at 23% on the same mail - so any
 absolute threshold would either miss real outages at the top or cry wolf at the bottom.
 Domains that never report opens drop out by themselves, because their baseline is already zero.
+
+Opens reach `email_tracking.opened_at` via the overnight [tracking journal fold](./email-tracking-journal.md),
+so the window ends at the oldest unfolded journal event when that is earlier than six hours ago.
+Mail sent after it has had no chance to show an open yet and would otherwise read as a collapse.
 
 The two are reported as separate alerts on purpose. "A provider has stopped taking our mail"
 and "we are short of capacity" are different problems for different people. When the scan
