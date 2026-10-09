@@ -1288,11 +1288,13 @@ Schedule::command('microvolunteering:notify')
     ->runInBackground();
 
 // Exhort recently-active established users with an on-site notification nudge
-// (default: "Tell us your Freegle story!"). The 90-day per-user cooldown means
-// running every minute over a 5-minute active window simply dedupes; matches V1.
+// (default: "Tell us your Freegle story!"). V1 ran it every minute over a 5-minute window, which
+// scans all of users each time (about 1.7 s on db2, no index serves lastaccess). Every five
+// minutes over a 6-minute window sees the same users, a few minutes later, with the 90-day
+// per-user cooldown absorbing the one minute of overlap.
 // V1: cron/user_exhort.php (every minute).
 Schedule::command('notifications:exhort')
-    ->everyMinute()
+    ->everyFiveMinutes()
     ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('notifications:exhort'))
     ->runInBackground();
