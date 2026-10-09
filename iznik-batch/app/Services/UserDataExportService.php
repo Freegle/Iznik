@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Length;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -207,6 +209,14 @@ class UserDataExportService
                 'memberships.groupid',
                 'memberships.collection',
                 'memberships.added',
+                // keep-raw: `groupname` is the OUTPUT COLUMN NAME of a GDPR export field,
+                // consumed verbatim via (array) $e -> JSON payload. App\Database\Expressions
+                // has no alias concept: Builder::select() only honours an array-key alias for
+                // sub-selects (Closure|Builder|Relation), never for an Expression - confirmed
+                // live that `select(['groupname' => new Coalesce(...)])` silently drops the
+                // alias and the result row's key becomes the literal rendered SQL text instead
+                // of `groupname`. Re-wrapping in DB::raw('...AS groupname') to restore the
+                // alias would leave a raw call at this exact site, so nothing is gained.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
             )
             ->orderBy('memberships.added', 'asc')
@@ -224,6 +234,14 @@ class UserDataExportService
                 'memberships_history.groupid',
                 'memberships_history.collection',
                 'memberships_history.added',
+                // keep-raw: `groupname` is the OUTPUT COLUMN NAME of a GDPR export field,
+                // consumed verbatim via (array) $e -> JSON payload. App\Database\Expressions
+                // has no alias concept: Builder::select() only honours an array-key alias for
+                // sub-selects (Closure|Builder|Relation), never for an Expression - confirmed
+                // live that `select(['groupname' => new Coalesce(...)])` silently drops the
+                // alias and the result row's key becomes the literal rendered SQL text instead
+                // of `groupname`. Re-wrapping in DB::raw('...AS groupname') to restore the
+                // alias would leave a raw call at this exact site, so nothing is gained.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
             )
             ->orderBy('memberships_history.added', 'asc')
@@ -290,6 +308,14 @@ class UserDataExportService
                 'users_banned.date',
                 'users_banned.userid',
                 'users_emails.email',
+                // keep-raw: `groupname` is the OUTPUT COLUMN NAME of a GDPR export field,
+                // consumed verbatim via (array) $e -> JSON payload. App\Database\Expressions
+                // has no alias concept: Builder::select() only honours an array-key alias for
+                // sub-selects (Closure|Builder|Relation), never for an Expression - confirmed
+                // live that `select(['groupname' => new Coalesce(...)])` silently drops the
+                // alias and the result row's key becomes the literal rendered SQL text instead
+                // of `groupname`. Re-wrapping in DB::raw('...AS groupname') to restore the
+                // alias would leave a raw call at this exact site, so nothing is gained.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
             )
             ->orderBy('users_banned.date', 'asc')
@@ -427,6 +453,14 @@ class UserDataExportService
             ->leftJoin('groups', 'locations_excluded.groupid', '=', 'groups.id')
             ->leftJoin('locations', 'locations_excluded.locationid', '=', 'locations.id')
             ->select(
+                // keep-raw: `groupname` is the OUTPUT COLUMN NAME of a GDPR export field,
+                // consumed verbatim via (array) $e -> JSON payload. App\Database\Expressions
+                // has no alias concept: Builder::select() only honours an array-key alias for
+                // sub-selects (Closure|Builder|Relation), never for an Expression - confirmed
+                // live that `select(['groupname' => new Coalesce(...)])` silently drops the
+                // alias and the result row's key becomes the literal rendered SQL text instead
+                // of `groupname`. Re-wrapping in DB::raw('...AS groupname') to restore the
+                // alias would leave a raw call at this exact site, so nothing is gained.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname'),
                 'locations.name as location',
                 'locations_excluded.date'
@@ -454,6 +488,14 @@ class UserDataExportService
                 'messages.arrival',
                 'messages_groups.collection',
                 'messages_groups.groupid',
+                // keep-raw: `groupname` is the OUTPUT COLUMN NAME of a GDPR export field,
+                // consumed verbatim via (array) $e -> JSON payload. App\Database\Expressions
+                // has no alias concept: Builder::select() only honours an array-key alias for
+                // sub-selects (Closure|Builder|Relation), never for an Expression - confirmed
+                // live that `select(['groupname' => new Coalesce(...)])` silently drops the
+                // alias and the result row's key becomes the literal rendered SQL text instead
+                // of `groupname`. Re-wrapping in DB::raw('...AS groupname') to restore the
+                // alias would leave a raw call at this exact site, so nothing is gained.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
             )
             ->orderBy('messages.arrival', 'asc')
@@ -464,16 +506,31 @@ class UserDataExportService
 
     private function getChats(int $userId): array
     {
-        $chatIds = DB::select(
-            "SELECT DISTINCT chat_rooms.id FROM chat_rooms
-             INNER JOIN (
-                 SELECT DISTINCT chatid FROM chat_roster WHERE userid = ?
-                 UNION
-                 SELECT DISTINCT chatid FROM chat_messages WHERE userid = ? OR reviewedby = ?
-             ) t ON t.chatid = chat_rooms.id
-             ORDER BY chat_rooms.id ASC",
-            [$userId, $userId, $userId]
-        );
+        // The derived table: chats this user is in the roster of, UNIONed with
+        // chats they wrote in or moderated. ->union(), not unionAll: a chat
+        // matching both arms must appear once, or the export would duplicate it.
+        $sub = DB::table('chat_roster')
+            ->distinct()
+            ->select('chatid')
+            ->where('userid', $userId)
+            ->union(
+                DB::table('chat_messages')
+                    ->distinct()
+                    ->select('chatid')
+                    // Grouped OR: flat, it would bind against the whole WHERE.
+                    ->where(function ($q) use ($userId) {
+                        $q->where('userid', $userId)
+                          ->orWhere('reviewedby', $userId);
+                    })
+            );
+
+        $chatIds = DB::table('chat_rooms')
+            ->distinct()
+            ->select('chat_rooms.id')
+            ->joinSub($sub, 't', 't.chatid', '=', 'chat_rooms.id')
+            ->orderBy('chat_rooms.id')
+            ->get()
+            ->all();
 
         $chats = [];
 
@@ -562,7 +619,7 @@ class UserDataExportService
     {
         return DB::table('users_aboutme')
             ->where('userid', $userId)
-            ->whereRaw('LENGTH(text) > 5')
+            ->where(new Comparison(new Length('text'), '>', 5))
             ->select('timestamp', 'text')
             ->orderBy('timestamp', 'asc')
             ->get()

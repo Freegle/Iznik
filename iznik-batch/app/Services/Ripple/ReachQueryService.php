@@ -2,6 +2,12 @@
 
 namespace App\Services\Ripple;
 
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Point;
+use App\Database\Expressions\StContains;
+use App\Database\Expressions\StGeometryType;
+use App\Database\Expressions\StSrid;
+use App\Database\Expressions\Value;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 

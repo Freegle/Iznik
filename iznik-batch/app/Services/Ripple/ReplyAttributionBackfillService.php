@@ -86,6 +86,16 @@ class ReplyAttributionBackfillService
              * the attribution CASE rather than referencing the just-assigned columns: in a
              * multi-table UPDATE, MySQL does not guarantee assignments see earlier ones.
              */
+            // keep-raw: a multi-table UPDATE ... JOIN (derived subquery LIMIT {chunk}) whose
+            // SET clause assigns correlated EXISTS(...) subqueries directly as column values
+            // (was_notified, was_ripple_group_member, was_ripple_join, post_had_rippled) and a
+            // CASE WHEN expression (attribution). Correlated-subquery-as-UPDATE-value has no
+            // builder equivalent (Grammar::isExpression only accepts Expression, never a
+            // Builder - a sub-builder passed as a value gets bound as a serialised parameter,
+            // not inlined as SQL), and CASE WHEN in a SET list is unconvertible outright. It
+            // must also stay one atomic statement: splitting into SELECT-then-UPDATE would let
+            // the batch of (msgid,userid) rows and the EXISTS evidence drift apart between the
+            // read and the write, which is exactly the staleness this backfill exists to avoid.
             $affected = DB::affectingStatement("
                 UPDATE rippling_reply_attribution rra
                 JOIN (

@@ -2,6 +2,13 @@
 
 namespace App\Models;
 
+use App\Database\Expressions\Alias;
+use App\Database\Expressions\Arithmetic;
+use App\Database\Expressions\Coalesce;
+use App\Database\Expressions\DateDiff;
+use App\Database\Expressions\Greatest;
+use App\Database\Expressions\Now;
+use App\Database\Expressions\Value;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -68,11 +75,31 @@ class Job extends Model
             // pay, discounted by posting age (older WhatJobs postings are likelier
             // filled/closed): factor 1.0 when fresh, floored at 0.5 by ~7 days,
             // posted_at NULL -> fresh.
-            ->selectRaw('clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), posted_at), 0) * 0.07) AS tiebreak')
+            ->addSelect(new Alias(
+                new Arithmetic(
+                    'clickability',
+                    '*',
+                    new Greatest(
+                        Value::of(0.5),
+                        new Arithmetic(
+                            Value::of(1),
+                            '-',
+                            new Arithmetic(
+                                new Coalesce(new DateDiff(new Now(), 'posted_at'), Value::of(0)),
+                                '*',
+                                Value::of(0.07)
+                            )
+                        )
+                    )
+                ),
+                'tiebreak'
+            ))
             ->whereIn('id', $ids)
-            ->whereRaw('cpc >= ?', [self::MINIMUM_CPC])
+            ->where('cpc', '>=', self::MINIMUM_CPC)
             ->where('visible', 1)
-            ->orderByRaw('cpc DESC, tiebreak DESC, id ASC')
+            ->orderBy('cpc', 'desc')
+            ->orderBy('tiebreak', 'desc')
+            ->orderBy('id')
             ->get();
 
         // Dedup of duplicate WhatJobs postings (one recruitment ad spammed to many

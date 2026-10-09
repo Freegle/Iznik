@@ -37,6 +37,199 @@
       "reason": "Renumbered, not converted and not deleted. This id named MicrovolunteeringNotifyService::notifyForMessages' \"please review this post\" SELECT. The merge that brought PR #1257 and PR #1230 together added an `AND messages_groups.heldby IS NULL` predicate to it - the per-group hold fix - which changed the recorded SQL text and therefore the id hash, so the same call site now appears as 4f242de92f6d and this id has no code behind it. Left as raw-and-absent it inflates the raw count by one against a statement that does not exist, and it was that phantom which the ceiling was raised to 570 to accommodate. The work it represented is not discharged: 4f242de92f6d carries it forward, still raw and still counted.",
       "porting": "None of its own - see site 4f242de92f6d, which now names this statement and carries its porting note.",
       "category": "Master merge: renumbered by a predicate change"
+    },
+    {
+      "id": "8a4e5c1a5e2d",
+      "reason": "DB::raw('NOW()') as the assigned value in GiftAidClaimService's \"mark this donation claimed\" UPDATE. The statement around it IS converted (site 029b3600e99d) - this is only the value expression, and it has to stay raw because NOW() must be evaluated by MySQL. The non-raw alternative, ->update(['giftaidclaimed' => now()]), binds a timestamp taken from the PHP process instead, which moves the clock from the database to the application on a claimed-at field that HMRC submissions are built from. That is a real behaviour change bought for a cosmetic win in this inventory, so it is declined.",
+      "porting": "PostgreSQL: NOW() exists and behaves the same (transaction-start timestamp); no change needed. If the exact instant matters rather than the statement's transaction, clock_timestamp() is the closer equivalent - worth a look at porting time, not before.",
+      "category": "Value expression the database must evaluate"
+    },
+    {
+      "id": "4d1f7c861c51",
+      "reason": "WhatJobsService::geocodePostcode's bounding-box lookup selects SIX aliased aggregates in one statement - AVG(lat), AVG(lng), MIN(lat), MIN(lng), MAX(lat), MAX(lng). Laravel's builder has first-class aggregates (->avg/->min/->max) but each computes ONE value and issues its own statement; there is no non-raw way to select several aliased aggregates together. The only conversion available is ->select(DB::raw('AVG(lat) AS lat'), ...), and DB::raw is itself a raw site in this inventory - that would move the site from surface \"statement\" to surface \"expression\" and convert nothing. Splitting it into six separate queries is not equivalent either: it would turn one scan of the postcode rows into six.",
+      "porting": "PostgreSQL: AVG/MIN/MAX are standard and the statement ports unchanged. The LIKE on name and the IS NOT NULL guard are standard too. No dialect work needed.",
+      "category": "Multiple aliased aggregates in one statement"
+    },
+    {
+      "surface": "fragment",
+      "sqlMatches": "/JSON_EXTRACT|JSON_UNQUOTE|JSON_LENGTH|JSON_CONTAINS/i",
+      "reason": "MySQL JSON accessors inside an otherwise-ORM chain. Laravel does have a JSON where syntax (->where('settings->key', 1)), but it does NOT emit the same SQL: it wraps the extraction in json_unquote() and casts, so a predicate written as JSON_EXTRACT(settings, '$.k') = 1 changes meaning at the edges - notably for JSON true/false versus 1/0, and for a key that is absent rather than null, both of which appear in these very predicates (several read `= true`, several test IS NULL). Converting them would be a behaviour change dressed as a refactor, on settings that gate who gets mailed. They stay raw until someone ports them deliberately, with data to check against.",
+      "porting": "PostgreSQL: this is the single biggest dialect gap in this manifest. JSON_EXTRACT becomes -> / ->> and JSON_UNQUOTE disappears into ->>, but the NULL and boolean semantics differ again, so every one of these needs reading rather than substituting. Doing it behind a helper (one place that renders a settings predicate) is worth more than converting them in situ first.",
+      "category": "JSON column access"
+    },
+    {
+      "surface": "fragment",
+      "sqlMatches": "/\\b(COUNT|SUM|AVG|MIN|MAX|GROUP_CONCAT)\\s*\\(.*\\)\\s+AS\\s+/i",
+      "reason": "An aggregate given an alias inside a SELECT list. Laravel's ->count()/->sum()/->avg()/->min()/->max() are first-class but each computes ONE value and issues its own statement; there is no builder form for 'select these aggregates, aliased, alongside these columns'. The only conversion available is ->select(DB::raw('COUNT(*) AS cnt')), and DB::raw is itself a raw site in this inventory - the site would move from surface fragment to surface expression and nothing would be converted. Splitting one grouped scan into N separate aggregate queries is not equivalent either.",
+      "porting": "PostgreSQL: standard SQL, ports unchanged. GROUP_CONCAT is the exception - it becomes string_agg(expr, delim) with a different argument order, and any ORDER BY inside it moves too.",
+      "category": "Aliased aggregate in a select list"
+    },
+    {
+      "surface": "fragment",
+      "sqlMatches": "/ST_Contains|ST_GeomFromText|ST_Intersects|ST_Distance|ST_Within|haversine\\(/i",
+      "reason": "MySQL spatial functions and the project's own haversine() SQL function. The builder has no spatial vocabulary at all, so these can only ever be raw text; converting means DB::raw, which converts nothing. They are also the statements most likely to be index-sensitive, so rewriting their shape casually risks a table scan on locations.",
+      "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS is lng/lat) and will silently transpose coordinates if unhandled. haversine() is a project-defined MySQL function with no Postgres counterpart - port it as ST_DWithin on geography, which is both correct and index-assisted, rather than translating the arithmetic.",
+      "category": "Spatial predicate"
+    },
+    {
+      "surface": "expression",
+      "sqlMatches": "/JSON_EXTRACT|JSON_UNQUOTE|JSON_LENGTH|JSON_CONTAINS/i",
+      "reason": "MySQL JSON accessors inside an otherwise-ORM chain. Laravel does have a JSON where syntax (->where('settings->key', 1)), but it does NOT emit the same SQL: it wraps the extraction in json_unquote() and casts, so a predicate written as JSON_EXTRACT(settings, '$.k') = 1 changes meaning at the edges - notably for JSON true/false versus 1/0, and for a key that is absent rather than null, both of which appear in these very predicates (several read `= true`, several test IS NULL). Converting them would be a behaviour change dressed as a refactor, on settings that gate who gets mailed. They stay raw until someone ports them deliberately, with data to check against. Recorded separately for the expression surface (DB::raw) because the extractor classifies the two differently, but the construct - and the reason it cannot leave SQL - is identical.",
+      "porting": "PostgreSQL: this is the single biggest dialect gap in this manifest. JSON_EXTRACT becomes -> / ->> and JSON_UNQUOTE disappears into ->>, but the NULL and boolean semantics differ again, so every one of these needs reading rather than substituting. Doing it behind a helper (one place that renders a settings predicate) is worth more than converting them in situ first.",
+      "category": "JSON column access (expression)"
+    },
+    {
+      "surface": "expression",
+      "sqlMatches": "/\\b(COUNT|SUM|AVG|MIN|MAX|GROUP_CONCAT)\\s*\\(.*\\)\\s+AS\\s+/i",
+      "reason": "An aggregate given an alias inside a SELECT list. Laravel's ->count()/->sum()/->avg()/->min()/->max() are first-class but each computes ONE value and issues its own statement; there is no builder form for 'select these aggregates, aliased, alongside these columns'. The only conversion available is ->select(DB::raw('COUNT(*) AS cnt')), and DB::raw is itself a raw site in this inventory - the site would move from surface fragment to surface expression and nothing would be converted. Splitting one grouped scan into N separate aggregate queries is not equivalent either. Recorded separately for the expression surface (DB::raw) because the extractor classifies the two differently, but the construct - and the reason it cannot leave SQL - is identical.",
+      "porting": "PostgreSQL: standard SQL, ports unchanged. GROUP_CONCAT is the exception - it becomes string_agg(expr, delim) with a different argument order, and any ORDER BY inside it moves too.",
+      "category": "Aliased aggregate in a select list (expression)"
+    },
+    {
+      "surface": "expression",
+      "sqlMatches": "/ST_Contains|ST_GeomFromText|ST_Intersects|ST_Distance|ST_Within|haversine\\(/i",
+      "reason": "MySQL spatial functions and the project's own haversine() SQL function. The builder has no spatial vocabulary at all, so these can only ever be raw text; converting means DB::raw, which converts nothing. They are also the statements most likely to be index-sensitive, so rewriting their shape casually risks a table scan on locations. Recorded separately for the expression surface (DB::raw) because the extractor classifies the two differently, but the construct - and the reason it cannot leave SQL - is identical.",
+      "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS is lng/lat) and will silently transpose coordinates if unhandled. haversine() is a project-defined MySQL function with no Postgres counterpart - port it as ST_DWithin on geography, which is both correct and index-assisted, rather than translating the arithmetic.",
+      "category": "Spatial predicate (expression)"
+    },
+    {
+      "surface": "expression",
+      "sqlMatches": "/\\bRAND\\s*\\(|\\bNOW\\s*\\(|\\bCURDATE\\s*\\(|DATE_SUB|DATE_ADD|DATEDIFF|\\bYEAR\\s*\\(/i",
+      "reason": "Functions the DATABASE must evaluate: RAND() for sampling, and the clock/date arithmetic family (NOW, DATE_SUB, DATEDIFF, YEAR). The builder equivalents would compute the value in PHP and bind it, which moves the clock from the database to the application and changes what the query means under clock skew, timezone differences, or a long-running batch. DATEDIFF is the sharpest case: it counts CALENDAR DAY boundaries, so rewriting DATEDIFF(NOW(), t) < 2 as t >= now()->subDays(2) silently changes which rows match. These stay raw on correctness grounds, not convenience. Recorded separately for the expression surface (DB::raw) because the extractor classifies the two differently, but the construct - and the reason it cannot leave SQL - is identical.",
+      "porting": "PostgreSQL: NOW() and CURRENT_DATE carry over; RAND() becomes random(); DATE_SUB/DATE_ADD become interval arithmetic (t - interval '1 day'); DATEDIFF has no direct equivalent and becomes a date subtraction yielding an integer, which is the same calendar-day semantics. Each needs rewriting, none needs redesigning.",
+      "category": "Non-deterministic or clock function (expression)"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/^\\s*(CREATE|DROP|ALTER|TRUNCATE|RENAME)\\s/i",
+      "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+      "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+      "category": "Schema operation in application code"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/\\{\\{built at runtime/",
+      "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+      "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+      "category": "SQL assembled at runtime"
+    },
+    {
+      "sqlMatches": "/\\b(LEFT|RIGHT|SUBSTRING|SUBSTR|CONCAT|CONCAT_WS|COALESCE|IFNULL|NULLIF|GREATEST|LEAST|LOWER|UPPER|TRIM|REPLACE|CAST|IF)\\s*\\(/i",
+      "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+      "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+      "category": "Scalar SQL function over a column"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/^\\s*UPDATE\\s+IGNORE\\b/i",
+      "reason": "UPDATE IGNORE has no query-builder form. Laravel provides insertOrIgnore() for INSERT IGNORE - so the INSERT side of this pattern IS convertible and is not covered by this rule - but there is no updateOrIgnore(), and the modifier is load-bearing here rather than decorative: TnDedupCommand repoints messages_history and messages_postings rows at a surviving message id, and IGNORE is what lets the statement skip the rows that would collide with an existing (msgid, ...) unique key instead of aborting the whole update. Reproducing that in the builder means either pre-filtering the collisions with a second query (a different statement with a race between the two) or catching the integrity error per row. Both are worse than the statement that is there.",
+      "porting": "PostgreSQL: no IGNORE modifier exists. The equivalent is an explicit predicate excluding the rows that would collide, or ON CONFLICT DO NOTHING where the operation can be expressed as an upsert. This needs a per-statement rewrite with the unique key in mind, not a mechanical substitution.",
+      "category": "UPDATE IGNORE"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/^\\s*SELECT\\s+NOW\\(\\)\\s+AS\\s+\\w+\\s*$/i",
+      "reason": "A statement whose entire select list is NOW() and which reads from no table - MigrateReachBoundsSchemaCommand uses it to stamp the database's clock either side of a long schema step. DB::table() needs a table, and there is none; the builder has no from-less select. Taking the time in PHP instead defeats the purpose, which is specifically to read the DATABASE's clock rather than the application's - the command is comparing timings across a migration that may span replicas.",
+      "porting": "PostgreSQL: SELECT NOW() works identically with no FROM clause. No change needed.",
+      "category": "From-less clock read"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/^\\s*(INSERT|REPLACE|UPDATE)\\b[\\s\\S]*\\b(NOW|CURDATE|CURTIME|CURRENT_DATE|CURRENT_TIMESTAMP|UTC_TIMESTAMP|UTC_DATE)\\s*\\(/i",
+      "reason": "A write that stores the DATABASE's clock - VALUES (..., NOW()) or SET x = NOW(), and the rest of that family - CURDATE, CURTIME, CURRENT_TIMESTAMP, UTC_TIMESTAMP. Named as a family rather than enumerated one at a time because the first version of this rule said only NOW() and missed CURDATE() sitting in the very next statement. The builder can express the statement but not the value: ->update(['x' => DB::raw('NOW()')]) keeps a raw site, and ->update(['x' => now()]) binds a timestamp taken from the PHP process instead. That second form is the one that looks like a clean conversion and is not, because it moves the clock from the database to the application - across a batch host whose time can drift from the cluster's, on columns (validatetime, giftaidclaimed, latestmessage) that later get compared against other database-generated timestamps. The individual case that established this is site 029b3600e99d, GiftAidClaimService's claimed-at stamp, declined for the same reason before this rule existed; the rule generalises that decision rather than inventing it.",
+      "porting": "PostgreSQL: NOW() exists with the same transaction-start semantics, so these port unchanged. If a true wall-clock instant is wanted rather than the transaction's, clock_timestamp() is the closer equivalent - a question worth asking per column at porting time, not before.",
+      "category": "Write storing the database clock"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/SELECT\\s+(?:[^;]*?,\\s*(?:COUNT|SUM|AVG|MIN|MAX|GROUP_CONCAT)\\s*\\([^)]*\\)\\s+AS\\b|(?:COUNT|SUM|AVG|MIN|MAX|GROUP_CONCAT)\\s*\\([^)]*\\)\\s+AS\\s+\\w+\\s*,)/is",
+      "reason": "A SELECT whose list mixes plain columns WITH an aliased aggregate - 'SELECT userid, COUNT(*) AS count FROM ...'. This is deliberately NOT the same case as an aggregate-only statement: 'SELECT COUNT(*) AS n FROM t' converts cleanly to ->count(), and several such sites in this migration did. The difference is that ->count()/->sum() return a SCALAR and issue their own statement; the moment a real column has to come back alongside the aggregate, the builder has no form for it and the only route is ->select('userid', DB::raw('COUNT(*) as count')) - where DB::raw is itself a raw site here, so the site changes surface and nothing is converted. These are also the statements most likely to carry a GROUP BY, which is where Layer 1 rendering-equality would stop being sufficient evidence anyway.",
+      "porting": "PostgreSQL: standard SQL and ports unchanged, with the usual GROUP_CONCAT -> string_agg exception. Worth revisiting as a group when the builder question is reopened: if these ever move to the ORM it will be through a repository method returning a typed row, not through the query builder as it stands.",
+      "category": "Aggregate alongside columns in one SELECT"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/^\\s*REPLACE\\s+INTO\\b/i",
+      "reason": "REPLACE INTO has no query-builder form at all - Laravel offers insert, insertOrIgnore and upsert, and none of them emit it. Nor is upsert() a drop-in substitute, which is the trap worth naming: REPLACE DELETES the conflicting row and inserts a new one, so columns absent from the statement revert to their defaults and any ON DELETE CASCADE fires; ON DUPLICATE KEY UPDATE modifies the existing row in place and leaves untouched columns alone. On the stats table that difference is invisible in normal running and would surface as silently reset columns, so substituting upsert() here would be a behaviour change disguised as a conversion.",
+      "porting": "PostgreSQL: no REPLACE INTO. The closest equivalent is INSERT ... ON CONFLICT DO UPDATE, which has the ON DUPLICATE KEY UPDATE semantics rather than the delete-and-reinsert ones - so porting these means deciding, per statement, which behaviour was actually wanted. Worth doing deliberately at that point rather than assuming the current one was chosen on purpose.",
+      "category": "REPLACE INTO"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/\\bSET\\b[^;]*?\\b(\\w+)\\s*=\\s*\\1\\b/i",
+      "reason": "An UPDATE that assigns a column to ITSELF - 'SET inner_bound = NULL, updated_at = updated_at'. That looks like dead code and is the opposite: rippling_reach.updated_at carries ON UPDATE CURRENT_TIMESTAMP, so any UPDATE touching the row would normally bump it. Naming the column in the SET list with its own value suppresses that, letting the bounds be cleared WITHOUT making the row look freshly updated - which the delta/shadow copier keys off. The builder cannot express a self-assignment: ->update(['updated_at' => 'updated_at']) binds the string, and DB::raw('updated_at') is itself a raw site here, so the site would change surface and convert nothing. Worth more than a count: anyone 'tidying' this away would silently change what the copier picks up.",
+      "porting": "PostgreSQL: there is no ON UPDATE CURRENT_TIMESTAMP - the behaviour is implemented with a trigger, so the suppression trick does not carry over at all. On port, the column stops auto-updating and the self-assignment becomes genuinely redundant; whether the trigger should then EXCLUDE this update path is the real question, and it must be answered deliberately rather than inherited.",
+      "category": "Self-assignment suppressing an auto-update column"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/\\bIN\\s*\\(\\s*\\w+\\.\\w+\\s*,\\s*\\w+\\.\\w+\\s*\\)/i",
+      "reason": "An IN whose list is COLUMNS rather than values - 'messages_by.userid IN (chat_rooms.user1, chat_rooms.user2)', meaning 'this user is either side of the chat'. whereIn() binds its array, so passing the column names would compare the userid against the literal strings 'chat_rooms.user1' and 'chat_rooms.user2' - which MySQL evaluates rather than rejects, so the query would run, match nothing, and look correct. whereColumn handles one column pair, not membership of a list of them, and there is no whereColumnIn. The only route is whereRaw, itself a raw site here.",
+      "porting": "PostgreSQL: 'x IN (a, b)' over columns is standard SQL and ports unchanged; it can also be written 'x = ANY(ARRAY[a, b])' if that reads better. No dialect work needed - the obstacle here is the query builder, not the database.",
+      "category": "IN over a column list"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/^\\s*(INSERT|REPLACE)\\b[\\s\\S]*\\bSELECT\\s+\\?/i",
+      "reason": "An INSERT ... SELECT whose select list begins with a BOUND LITERAL rather than a column - 'SELECT ?, groupid, collection, ... FROM messages_groups WHERE msgid = ?', copying one message's group rows onto another message's id. Laravel has insertUsing()/insertOrIgnoreUsing() for insert-from-select, so the shape is supported; what is not is selecting a placeholder. ->select() takes column names, and the only ways to put a bound literal in a select list are selectRaw() or DB::raw(), both raw sites here - so the site would change surface and convert nothing. Restructuring it (read the rows, then insert them) is a different statement and loses the atomicity the INSERT...SELECT gives inside its transaction.",
+      "porting": "PostgreSQL: INSERT ... SELECT with a literal in the select list is standard and ports unchanged; the IGNORE modifier becomes ON CONFLICT DO NOTHING. The obstacle here is the query builder, not the database.",
+      "category": "INSERT ... SELECT with a bound literal"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/\\b(DATE_SUB|DATE_ADD|DATEDIFF|TIMESTAMPDIFF|INTERVAL\\s+\\?)\\b/i",
+      "reason": "A statement whose PREDICATE does date arithmetic in SQL - 'cr.latestmessage >= DATE_SUB(NOW(), INTERVAL ? DAY)'. The builder has no form for it: ->where('latestmessage', '>=', now()->subDays($d)) computes the cutoff in PHP and binds it, which moves the clock from the database to the application. That is not cosmetic on a batch job - the process may start hours before the statement runs, and on a long queue drain the two answers differ. DATEDIFF is worse still, since it counts CALENDAR DAY boundaries rather than 24-hour spans, so no binding of a computed datetime reproduces it. Deliberately scoped to date ARITHMETIC, not to any mention of NOW(): a statement that merely writes NOW() is covered by its own rule, and one that compares against a plain bound datetime converts fine.",
+      "porting": "PostgreSQL: DATE_SUB/DATE_ADD become interval arithmetic (t - interval '1 day'), TIMESTAMPDIFF becomes an age()/extract() pair, and DATEDIFF becomes a date subtraction returning an integer - which preserves the calendar-day semantics. Mechanical per statement, but each needs reading rather than substituting.",
+      "category": "Date arithmetic in a predicate"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/\\bST_[A-Za-z]+\\s*\\(|haversine\\(|JSON_TABLE/i",
+      "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the whole ST_* spatial family - not only the predicates (ST_Contains, ST_Within) but the accessors and constructors too (ST_X, ST_Y, ST_Centroid, ST_SRID, ST_GeometryType), which appear in DoogalService's coordinate maintenance - plus the project's own haversine() SQL function and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+      "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+      "category": "Spatial or JSON_TABLE statement"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/\\bSET\\b[^;]*?=\\s*\\(\\s*SELECT\\b/i",
+      "reason": "An UPDATE whose SET value is a correlated subquery - 'SET latestmessage = (SELECT MAX(date) FROM chat_messages WHERE chatid = ?)'. Laravel's ->update() takes values, not queries: a subquery can only get in there via DB::raw, itself a raw site. Splitting it into a read then a write is not equivalent either - it opens a window in which the subquery's answer can change, on a statement whose whole job is to recompute a denormalised column from the rows it summarises.",
+      "porting": "PostgreSQL: a scalar subquery in SET is standard and ports unchanged. Postgres additionally offers UPDATE ... FROM, which is often clearer for this shape - worth considering at port time, but it is a rewrite rather than a translation.",
+      "category": "Correlated subquery as an UPDATE value"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/LAST_INSERT_ID\\s*\\(/i",
+      "reason": "INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id). The assignment looks like a no-op and is the whole point: it makes MySQL report the EXISTING row's id through LAST_INSERT_ID() when the insert collides, so one statement means 'give me the id of this item, creating it if new'. Neither upsert() nor insertOrIgnore() reproduces that - upsert() cannot express the LAST_INSERT_ID call without DB::raw, and insertOrIgnore() returns nothing useful on a collision, so the caller would need a follow-up SELECT. That follow-up is exactly the read-after-write this project has been bitten by before: on a read/write split it can land on a replica that has not seen the insert yet (the 9832 bug class), which is why the Go side kept eleven equivalent sites raw for the same reason.",
+      "porting": "PostgreSQL: LAST_INSERT_ID() does not exist and the idiom is unnecessary - INSERT ... ON CONFLICT DO UPDATE ... RETURNING id returns the id directly, for both the inserted and the conflicting row. This is one of the few sites that gets simpler on Postgres.",
+      "category": "LAST_INSERT_ID id-readback idiom"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/^\\s*INSERT\\s+IGNORE\\b[\\s\\S]*ON\\s+DUPLICATE\\s+KEY\\s+UPDATE/i",
+      "reason": "INSERT IGNORE combined WITH ON DUPLICATE KEY UPDATE. Laravel can express either alone - insertOrIgnore() and upsert() - but not both: upsert() emits 'insert ... on duplicate key update' with no IGNORE, and that is not a cosmetic loss. Once ON DUPLICATE KEY UPDATE is present the IGNORE no longer governs duplicate keys at all; what it still does is downgrade OTHER errors on the row - a foreign-key violation, a truncated value - from a failure into a warning. Dropping it turns statements that currently skip a bad row into statements that abort the surrounding work, which on ChatExpectedService's reply tracking would fail a batch run rather than lose one row.",
+      "porting": "PostgreSQL: neither modifier exists in this form. ON CONFLICT DO UPDATE covers the duplicate-key half; the error-tolerance half has no equivalent and has to be decided explicitly - either accept that these rows now raise, or filter the offending cases beforehand. Worth deciding per statement rather than inheriting, since the current behaviour may itself be accidental.",
+      "category": "INSERT IGNORE with ON DUPLICATE KEY UPDATE"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/\\bUPDATE\\b[\\s\\S]*?\\b(\\w+)\\s*=\\s*\\1\\s*[+\\-]|ON\\s+DUPLICATE\\s+KEY\\s+UPDATE[\\s\\S]*?\\b(\\w+)\\s*=\\s*\\2\\s*[+\\-]/i",
+      "reason": "A counter increment expressed in SQL - 'ON DUPLICATE KEY UPDATE count = count + ?'. The value is a function OF THE EXISTING ROW, which is exactly what makes it correct under concurrency: the database reads and writes it inside one statement, so two workers incrementing the same metric row cannot lose an update. Laravel's ->increment() exists for a bare UPDATE but not inside an upsert's update clause, where the only route is DB::raw - a raw site here. Reading the current value and writing back a computed one is NOT a conversion of this: it is the lost-update bug the SQL form exists to avoid, and these are event-metric counters written from several concurrent batch paths.",
+      "porting": "PostgreSQL: 'count = count + ?' inside ON CONFLICT DO UPDATE is standard, written against the EXCLUDED pseudo-row where the new value is needed. Ports directly, with the same concurrency guarantee.",
+      "category": "SQL-side counter increment"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/JSON_EXTRACT|JSON_UNQUOTE|JSON_LENGTH|JSON_CONTAINS/i",
+      "reason": "Statements built on MySQL JSON accessors - the same position as the fragment-surface rule of that name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. The reason is if anything sharper here: MessageIllustrationsService compares JSON_EXTRACT(...) against TRUE and FALSE and separately tests IS NULL, and Laravel's JSON where syntax wraps the extraction in json_unquote() with different semantics for exactly those three cases. Converting would change which duplicate AI illustrations get deleted.",
+      "porting": "PostgreSQL: JSON_EXTRACT becomes -> / ->> and JSON_UNQUOTE disappears into ->>, but the NULL and boolean semantics differ again, so each needs reading rather than substituting. Doing it behind one helper that renders a JSON predicate is worth more than converting them in place.",
+      "category": "JSON column access (statement)"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/@\\w+\\s*:=/",
+      "reason": "MySQL user variables used for procedural row numbering - '@row_num := @row_num + 1'. This is imperative state threaded through a SELECT to emulate a window function, and the query builder has no concept of it at all; nor is the ordering of assignment across rows something any ORM can promise. It is also the one construct here that MySQL itself deprecates in favour of window functions, so the right fix is a rewrite to ROW_NUMBER() OVER (...) - a behaviour-preserving change worth making deliberately, with its own test, not as a by-product of an ORM migration.",
+      "porting": "PostgreSQL: user variables do not exist in any form, so this MUST be rewritten as a window function before it can port - ROW_NUMBER() OVER (ORDER BY ...). MySQL 8 supports the same syntax, so the rewrite can be done and verified on MySQL first and then ports unchanged.",
+      "category": "MySQL user variable"
     }
   ]
 }
