@@ -224,6 +224,7 @@
                     <div v-if="mjmlError" class="text-danger fw-bold">
                       {{ mjmlError }}
                     </div>
+                    <ModAdminFooterPreview :mjml="mjml || ''" class="mt-2" />
                   </div>
                 </div>
                 <!-- A designed (MJML) version carries its own buttons. -->
@@ -348,6 +349,7 @@ import {
   MJML_SITE,
   MJML_TRY_IT,
 } from '~/modtools/composables/useAdminContent'
+import ModAdminFooterPreview from '~/modtools/components/ModAdminFooterPreview.vue'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
 

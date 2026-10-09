@@ -4,6 +4,9 @@ import {
   mjmlProblem,
   isSingleEmail,
   apiMessage,
+  mjmlForLiveEditor,
+  FOOTER_CHARITY,
+  FOOTER_ADDRESS,
 } from '~/modtools/composables/useAdminContent'
 
 const section =
@@ -68,5 +71,16 @@ describe('useAdminContent', () => {
     )
     expect(apiMessage({}, 'F')).toBe('F')
     expect(apiMessage({ response: { data: { message: ' ' } } }, 'F')).toBe('F')
+  })
+
+  it('makes a whole MJML document with the standard footer under the sections', () => {
+    const doc = mjmlForLiveEditor('  ' + section + '\n')
+    expect(doc.startsWith('<mjml>')).toBe(true)
+    expect(doc.trim().endsWith('</mj-body>\n</mjml>')).toBe(true)
+    expect(doc).toContain(FOOTER_CHARITY)
+    expect(doc).toContain(FOOTER_ADDRESS)
+    expect(doc.indexOf(section)).toBeLessThan(doc.indexOf(FOOTER_CHARITY))
+    expect(FOOTER_CHARITY).toContain('HMRC (ref. XT32865)')
+    expect(FOOTER_ADDRESS).toContain('Ormesby')
   })
 })
