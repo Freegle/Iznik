@@ -955,8 +955,15 @@ foreach (range(0, $reachMailShardCount - 1) as $reachShard) {
 // change since yesterday was not followed by reach mail, so a hook that is missed or wrong
 // costs a day rather than the mail. Two indexed queries over the last day; the reach pass's
 // drain does the containment work.
+//
+// It re-queues about 1,650 members a day, and the reach shards then spend 30 to 36 minutes
+// mailing them (about 3,000 CPU-seconds on the batch host and a burst on db2). At 05:23 UTC that
+// ran into the start of the 07:00 London daily digest in summer. 04:36 is the first minute after
+// the backup drain ends (a once-a-day job inside it is skipped), in the overnight trough, and
+// leaves the pass finished about 45 minutes before the digest. ReachCatchUpScheduleTest holds
+// both bounds.
 Schedule::command('ripple:reconcile-reach-members')
-    ->dailyAt('05:23')
+    ->dailyAt('04:36')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('ripple:reconcile-reach-members'))
     ->runInBackground();
