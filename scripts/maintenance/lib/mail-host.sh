@@ -58,6 +58,7 @@ mail_run() {
     || die "a bulk mail command is running in batch-prod"
   monit_snapshot "$M" "$RUN_DIR/monit-mail.before"
   monit_all_ok "$M" "$RUN_DIR/monit-mail.before"
+  monit_has "$M" "$RUN_DIR/monit-mail.before" $MAINT_MAIL_MONIT
   svc_snapshot "$M" "$RUN_DIR/services-mail.before"
 
   phase plan
