@@ -127,10 +127,16 @@ describe('navbar counts refresh when the page comes back to life', () => {
     vi.useRealTimers()
   })
 
-  it('fetches the counts on mount, with the member\'s browse settings', async () => {
+  it("fetches the counts on mount, with the member's browse settings", async () => {
     await mountNavbar()
     expect(mockMessageFetchCount).toHaveBeenCalledTimes(1)
-    expect(mockMessageFetchCount).toHaveBeenCalledWith('nearby', 20.6, false, 'Offer', 7)
+    expect(mockMessageFetchCount).toHaveBeenCalledWith(
+      'nearby',
+      20.6,
+      false,
+      'Offer',
+      7
+    )
   })
 
   it('fetches again the moment the document becomes visible', async () => {

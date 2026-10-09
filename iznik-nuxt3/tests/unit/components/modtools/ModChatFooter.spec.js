@@ -648,7 +648,9 @@ describe('ModChatFooter', () => {
       await flushPromises()
 
       expect(wrapper.find('[data-test="refer-failed"]').exists()).toBe(true)
-      expect(wrapper.find('[data-test="refer-failed"]').text()).toContain('support@ilovefreegle.org')
+      expect(wrapper.find('[data-test="refer-failed"]').text()).toContain(
+        'support@ilovefreegle.org'
+      )
       expect(wrapper.find('[data-test="refer-sent"]').exists()).toBe(false)
     })
   })

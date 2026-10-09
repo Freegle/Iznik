@@ -30,8 +30,8 @@
         <h5>Communities covered</h5>
         <p class="text-muted small">
           Every community that overlaps the council boundary significantly is
-          covered, including any set up later. One that only touches the edge
-          is not. The percentage is how much of it lies inside the boundary; the
+          covered, including any set up later. One that only touches the edge is
+          not. The percentage is how much of it lies inside the boundary; the
           statistics count that share of it. These are the communities the
           statistics report on.
         </p>
@@ -214,20 +214,41 @@
 
     <b-row class="align-items-end g-2">
       <b-col cols="6" md="3">
-        <label class="small mb-0">Invoice date</label>
-        <b-form-input v-model="newPayment.date" type="date" size="sm" />
+        <label :for="`${formId}-invoice-date`" class="small mb-0"
+          >Invoice date</label
+        >
+        <b-form-input
+          :id="`${formId}-invoice-date`"
+          v-model="newPayment.date"
+          type="date"
+          size="sm"
+        />
       </b-col>
       <b-col cols="6" md="2">
-        <label class="small mb-0">Amount (£)</label>
-        <b-form-input v-model="newPayment.amount" type="number" size="sm" />
+        <label :for="`${formId}-amount`" class="small mb-0">Amount (£)</label>
+        <b-form-input
+          :id="`${formId}-amount`"
+          v-model="newPayment.amount"
+          type="number"
+          size="sm"
+        />
       </b-col>
       <b-col cols="6" md="3">
-        <label class="small mb-0">Reference</label>
-        <b-form-input v-model="newPayment.reference" size="sm" />
+        <label :for="`${formId}-reference`" class="small mb-0">Reference</label>
+        <b-form-input
+          :id="`${formId}-reference`"
+          v-model="newPayment.reference"
+          size="sm"
+        />
       </b-col>
       <b-col cols="6" md="2">
-        <label class="small mb-0">Paid on</label>
-        <b-form-input v-model="newPayment.paid" type="date" size="sm" />
+        <label :for="`${formId}-paid-on`" class="small mb-0">Paid on</label>
+        <b-form-input
+          :id="`${formId}-paid-on`"
+          v-model="newPayment.paid"
+          type="date"
+          size="sm"
+        />
       </b-col>
       <b-col cols="12" md="2">
         <SpinButton
@@ -286,7 +307,7 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, useId } from 'vue'
 import { usePartnershipsStore } from '~/stores/partnerships'
 import {
   CONTACT_ROLES,
@@ -297,6 +318,9 @@ import {
   renewalAskDate,
   statusInfo,
 } from '~/modtools/composables/usePartnershipFormat'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const props = defineProps({
   id: {

@@ -47,9 +47,10 @@
     </div>
 
     <!-- Wants: editable quantity. -->
-    <label class="cand__wants">
+    <label :for="`${formId}-wants`" class="cand__wants">
       <span class="cand__collabel">Wants</span>
       <b-form-input
+        :id="`${formId}-wants`"
         v-model.number="qty"
         type="number"
         min="0"
@@ -159,7 +160,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, useId } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
 import ClearanceChatModal from '~/components/ClearanceChatModal'
@@ -170,6 +171,9 @@ import {
   isNeedsYouState,
   formatScore,
 } from '~/composables/useClearance'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const props = defineProps({
   messageId: { type: Number, required: true },

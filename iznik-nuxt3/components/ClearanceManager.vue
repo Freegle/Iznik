@@ -171,12 +171,16 @@
           <v-icon v-else icon="link" /> Get an update link to share
         </b-button>
         <div v-else data-testid="clearance-sharelink-ready">
-          <label class="small text-muted d-block mb-1">
+          <label
+            :for="`${formId}-sharelink`"
+            class="small text-muted d-block mb-1"
+          >
             Send this to whoever manages the items - they can update what's left
             (available/taken and how many) without logging in:
           </label>
           <div class="d-flex gap-2 align-items-center">
             <b-form-input
+              :id="`${formId}-sharelink`"
               :model-value="shareLink"
               readonly
               class="flex-grow-1"
@@ -208,7 +212,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, useId } from 'vue'
 import { useRouter, useRuntimeConfig, useNuxtApp } from '#imports'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
@@ -220,6 +224,9 @@ import {
   allocatedQuantity,
   distinctInterestedUsers,
 } from '~/composables/useClearance'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const props = defineProps({
   // The bulk offer's message id.

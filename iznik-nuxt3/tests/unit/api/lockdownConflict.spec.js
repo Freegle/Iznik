@@ -89,9 +89,9 @@ describe('runLockdownAware', () => {
   })
 
   it('returns the result untouched on success', async () => {
-    await expect(
-      runLockdownAware(() => Promise.resolve('done'))
-    ).resolves.toBe('done')
+    await expect(runLockdownAware(() => Promise.resolve('done'))).resolves.toBe(
+      'done'
+    )
   })
 })
 

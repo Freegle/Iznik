@@ -92,7 +92,7 @@
             />
           </div>
           <div v-if="oldoptions" class="giftaid-form__section">
-            <label class="giftaid-form__label">This declaration covers</label>
+            <div class="giftaid-form__label">This declaration covers</div>
             <div class="giftaid-form__radios">
               <b-form-radio
                 v-model="period"

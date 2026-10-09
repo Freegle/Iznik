@@ -50,9 +50,7 @@ test.describe('Profile page (/profile/[id])', () => {
     await expect(page.locator('.user-name')).toContainText('Profile Owner', {
       timeout: timeouts.ui.appearance,
     })
-    await expect(page.locator('.member-since')).toContainText(
-      'Freegler since'
-    )
+    await expect(page.locator('.member-since')).toContainText('Freegler since')
 
     // A brand new signup has no location set, so the location row is absent.
     await expect(page.locator('.location-row')).toHaveCount(0)

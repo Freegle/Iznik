@@ -18,7 +18,7 @@
       </div>
 
       <div v-if="!closed && postcodeValid" class="form-section">
-        <label class="form-label">Your local community:</label>
+        <div class="form-label">Your local community:</div>
         <ComposeGroup />
         <PostPersonalInfoWarning :group="group" :text="postText" />
       </div>

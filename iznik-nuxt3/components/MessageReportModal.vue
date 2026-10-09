@@ -28,7 +28,7 @@
         </p>
 
         <div class="report-reasons">
-          <label class="form-label">What's wrong with this post?</label>
+          <div class="form-label">What's wrong with this post?</div>
           <div class="reason-options">
             <b-form-radio
               v-model="selectedReason"
@@ -62,9 +62,7 @@
         </div>
 
         <div v-if="showGroupSelector" class="report-groups">
-          <label class="form-label"
-            >Which communities should be notified?</label
-          >
+          <div class="form-label">Which communities should be notified?</div>
           <p class="report-groups-hint">
             This post is on several communities. As a moderator you can report
             it to more than one team.
@@ -88,8 +86,11 @@
         </div>
 
         <div class="report-details">
-          <label class="form-label">Additional details (optional)</label>
+          <label :for="`${formId}-additional-details-optio`" class="form-label"
+            >Additional details (optional)</label
+          >
           <b-form-textarea
+            :id="`${formId}-additional-details-optio`"
             v-model="additionalDetails"
             rows="3"
             placeholder="Please provide any additional information that might help our volunteers."
@@ -141,7 +142,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, useId } from 'vue'
 import { useRuntimeConfig } from 'nuxt/app'
 import { useMessageStore } from '~/stores/message'
 import { useChatStore } from '~/stores/chat'
@@ -149,6 +150,9 @@ import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
 import { useOurModal } from '~/composables/useOurModal'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const props = defineProps({
   id: {

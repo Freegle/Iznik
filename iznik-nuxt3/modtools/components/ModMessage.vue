@@ -73,10 +73,17 @@
                 v-else
                 class="flex-grow-1 ps-0 ps-md-2 pe-0 pe-md-2 fullsubject"
               >
-                <label class="me-2">Subject:</label>
-                <b-form-input v-model="editmessage.subject" size="lg" />
-                <label class="me-2">Post type:</label>
+                <label :for="`${formId}-subject`" class="me-2">Subject:</label>
+                <b-form-input
+                  :id="`${formId}-subject`"
+                  v-model="editmessage.subject"
+                  size="lg"
+                />
+                <label :for="`${formId}-post-type`" class="me-2"
+                  >Post type:</label
+                >
                 <b-form-select
+                  :id="`${formId}-post-type`"
                   v-model="editmessage.type"
                   :options="typeOptions"
                   class="type me-1"
@@ -835,7 +842,15 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import {
+  ref,
+  reactive,
+  computed,
+  watch,
+  onMounted,
+  onBeforeUnmount,
+  useId,
+} from 'vue'
 import Highlighter from 'vue-highlight-words'
 import ShowMore from '~/components/ShowMore.vue'
 
@@ -863,6 +878,9 @@ import {
   earliestArrivalGroupId,
   homeGroupId,
 } from '~/composables/rippleStatus'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const props = defineProps({
   messageid: {

@@ -17,13 +17,13 @@
       <div class="details-section">
         <!-- Item name - conversational style -->
         <div class="detail-card">
-          <label class="detail-label">
+          <div class="detail-label">
             {{
               type === 'Offer'
                 ? 'What are you giving away?'
                 : "Tell other freeglers what you'd like"
             }}
-          </label>
+          </div>
           <PostItem
             :id="id"
             ref="item"
@@ -53,7 +53,7 @@
 
         <!-- Quantity - only for offers -->
         <div v-if="type === 'Offer'" class="detail-card quantity-card">
-          <label class="detail-label">How many?</label>
+          <div class="detail-label">How many?</div>
           <NumberIncrementDecrement
             v-model="availablenow"
             :min="1"

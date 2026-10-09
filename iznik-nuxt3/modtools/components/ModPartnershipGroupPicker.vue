@@ -1,7 +1,10 @@
 <template>
   <div>
-    <label v-if="label" class="small mb-0">{{ label }}</label>
+    <label v-if="label" :for="`${formId}-label`" class="small mb-0">{{
+      label
+    }}</label>
     <b-form-input
+      :id="`${formId}-label`"
       v-model="search"
       size="sm"
       placeholder="Type part of a community's name"
@@ -25,8 +28,11 @@
   </div>
 </template>
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, useId } from 'vue'
 import { useModGroupStore } from '~/stores/modgroup'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 // Picks any Freegle community, not just those near a council - a council sometimes
 // sponsors a neighbouring community.

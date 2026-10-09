@@ -98,8 +98,9 @@
       @fetch="onFilterFetch"
     >
       <template #extra-filters>
-        <label class="filter-label">Type:</label>
+        <label :for="`${formId}-type`" class="filter-label">Type:</label>
         <b-form-select
+          :id="`${formId}-type`"
           v-model="emailType"
           :options="emailTypeOptions"
           size="sm"
@@ -579,8 +580,9 @@
     </p>
 
     <b-form class="user-form mb-3" @submit.prevent="fetchUserEmails">
-      <label class="filter-label me-2">User:</label>
+      <label :for="`${formId}-user`" class="filter-label me-2">User:</label>
       <b-form-input
+        :id="`${formId}-user`"
         v-model="userIdOrEmail"
         type="text"
         size="sm"
@@ -683,12 +685,15 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, useId } from 'vue'
 import { GChart } from 'vue-google-charts'
 import { useEmailTrackingStore } from '~/modtools/stores/emailtracking'
 import ModEmailDateFilter from '~/modtools/components/ModEmailDateFilter.vue'
 import ModEmailStatCard from '~/modtools/components/ModEmailStatCard.vue'
 import { useEmailDateFormat } from '~/modtools/composables/useEmailDateFormat'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const emailTrackingStore = useEmailTrackingStore()
 const { formatEmailDate } = useEmailDateFormat()

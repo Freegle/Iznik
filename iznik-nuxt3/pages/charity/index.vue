@@ -226,8 +226,14 @@
             </div>
 
             <div class="form-group">
-              <label class="form-label">Type of organisation</label>
-              <b-form-radio-group v-model="form.orgType" stacked>
+              <label :for="`${formId}-type-of-organisation`" class="form-label"
+                >Type of organisation</label
+              >
+              <b-form-radio-group
+                :id="`${formId}-type-of-organisation`"
+                v-model="form.orgType"
+                stacked
+              >
                 <b-form-radio value="registered">
                   Registered charity
                 </b-form-radio>
@@ -360,11 +366,14 @@
 </template>
 
 <script setup>
-import { reactive, ref, computed } from 'vue'
+import { reactive, ref, computed, useId } from 'vue'
 import { useRoute } from '#imports'
 import { buildHead } from '~/composables/useBuildHead'
 import api from '~/api'
 import CharityBadge from '~/components/CharityBadge.vue'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const runtimeConfig = useRuntimeConfig()
 const route = useRoute()
