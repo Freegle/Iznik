@@ -144,8 +144,8 @@ the subject. *Approve and send to all members* stays unavailable until the test 
 change after the test needs a new test. The exception is a copy of a suggested ADMIN that nobody
 has changed, which can be approved without a test.
 
-The **Previous** tab shows the sent ADMINs of one community, so choose the community first. The
-Pending tab lists only what is waiting for review.
+The **Previous** tab loads only when you open it, newest first, and loads more as you scroll; you
+can narrow it to one community. The Pending tab lists only what is waiting for review.
 
 ## Logs and maps
 

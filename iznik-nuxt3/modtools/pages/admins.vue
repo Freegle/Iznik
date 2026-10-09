@@ -309,7 +309,12 @@
             <template #title>
               <h2 class="ms-2 me-2" @click="fetchPrevious">Previous</h2>
             </template>
-            <ModGroupSelect v-model="groupidprevious" modonly class="mb-2" />
+            <ModGroupSelect
+              v-model="groupidprevious"
+              all
+              modonly
+              class="mb-2"
+            />
             <p>
               If an ADMIN shows as queued for send, it usually takes a few
               minutes. If we are sending a lot of ADMINs it can take a few
@@ -328,8 +333,16 @@
                 @copy="copyAdmin($event)"
               />
             </div>
-            <div v-else-if="groupidprevious > 0">No previous ADMINs.</div>
-            <div v-else>Choose a community to see its previous ADMINs.</div>
+            <div v-else-if="previousDone">No previous ADMINs.</div>
+            <infinite-loading
+              :identifier="previousBump"
+              :distance="distance"
+              @infinite="loadMorePrevious"
+            >
+              <template #spinner><span /></template>
+              <template #complete><span /></template>
+              <template #no-results><span /></template>
+            </infinite-loading>
           </b-tab>
         </b-tabs>
       </div>
@@ -385,6 +398,13 @@ const selectedTemplate = ref(null)
 const useMjml = ref(false)
 const mjml = ref('')
 const createError = ref(null)
+const previousCursor = ref(null)
+const previousDone = ref(false)
+const previousStarted = ref(false)
+const previousBump = ref(0)
+
+const PREVIOUS_PAGE = 10
+const distance = 200
 
 // Pre-designed admin-email templates, keyed by template id (see the template <select> above).
 // Empty now the one-off "Little Free Shop 2026" campaign is over; the mechanism stays for future
@@ -464,20 +484,62 @@ const previous = computed(() => {
 
 // Watchers
 watch(groupidshow, (newval) => {
-  fetchAdmins(newval, true)
+  fetchAdmins(newval)
 })
 
-watch(groupidprevious, (newval) => {
-  fetchAdmins(newval, false)
+// The chooser reports "all communities" as 0 when it first appears; that is not a change.
+watch(groupidprevious, (newval, oldval) => {
+  if ((newval || 0) !== (oldval || 0)) {
+    resetPrevious()
+  }
 })
 
 // Methods
 function fetchPending() {
-  fetchAdmins(groupidshow.value, true)
+  fetchAdmins(groupidshow.value)
 }
 
+// The history is the whole archive (over a thousand ADMINs), so it is read a page at a time as
+// the moderator scrolls, and nothing is fetched until the Previous tab is opened.
+function resetPrevious() {
+  adminsStore.clear()
+  previousCursor.value = null
+  previousDone.value = false
+  previousBump.value++
+}
+
+// The first time the tab opens, the list below starts loading by itself; after that, opening it
+// again starts the list over from the newest.
 function fetchPrevious() {
-  fetchAdmins(groupidprevious.value, false)
+  if (previousStarted.value) {
+    resetPrevious()
+  }
+}
+
+async function loadMorePrevious($state) {
+  previousStarted.value = true
+
+  try {
+    const page = await adminsStore.fetch({
+      groupid: groupidprevious.value,
+      pending: false,
+      limit: PREVIOUS_PAGE,
+      before: previousCursor.value || undefined,
+    })
+
+    if (page?.length) {
+      previousCursor.value = page[page.length - 1].id
+    }
+
+    if (!page || page.length < PREVIOUS_PAGE) {
+      previousDone.value = true
+      $state.complete()
+    } else {
+      $state.loaded()
+    }
+  } catch (e) {
+    $state.error()
+  }
 }
 
 // Returns a message if the content can't be sent yet, or null.
@@ -545,18 +607,11 @@ async function create() {
   checkWork(true)
 }
 
-// Pending and previous ADMINs are fetched separately. The history runs to over a thousand ADMINs
-// (about 2MB) across all communities, so it is only fetched for a chosen community.
-async function fetchAdmins(groupid, pending) {
+async function fetchAdmins(groupid) {
   await adminsStore.clear()
-
-  if (!pending && !(groupid > 0)) {
-    return
-  }
-
   await adminsStore.fetch({
     groupid,
-    pending,
+    pending: true,
   })
 }
 
@@ -593,7 +648,7 @@ function copyAdmin(admin) {
 
 // Lifecycle - mounted
 onMounted(() => {
-  fetchAdmins(groupidshow.value, true)
+  fetchAdmins(groupidshow.value)
 })
 </script>
 <style scoped>
