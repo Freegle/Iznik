@@ -171,6 +171,7 @@ export default defineNuxtPlugin(() => {
       classes: entry.classes,
       href: entry.href,
       input_type: entry.inputType,
+      interactive: entry.interactive,
       direction: entry.direction,
       distance: entry.distance,
       scroll_y: entry.scrollY,
@@ -227,11 +228,25 @@ export function extractElementInfo(el) {
     classes: getCleanClasses(target),
     href: target.href ? stripQueryParams(target.href) : null,
     inputType: target.type || null,
+    interactive: isInherentlyInteractive(target),
   }
 }
 
+// Clicks on these are form or navigation interactions whether or not a text label could be found,
+// so analysis must not count them as dead clicks.
+const INTERACTIVE_TAGS = new Set(['button', 'a', 'select', 'textarea', 'input'])
+
+function isInherentlyInteractive(el) {
+  return INTERACTIVE_TAGS.has(el.tagName.toLowerCase())
+}
+
 function getVueComponentName(el) {
-  // Vue 3: walk up to find component.
+  // Production builds stamp each component's root element with data-component (see
+  // build/componentNameTransform.js).
+  const stamped = el.closest?.('[data-component]')?.dataset?.component
+  if (stamped) return stamped
+
+  // Dev builds: Vue 3 keeps the component on the element, so walk up to find it.
   let current = el
   while (current && current !== document.body) {
     // Vue 3 attaches component to __vueParentComponent.
@@ -257,11 +272,28 @@ function getLabel(el) {
     el.getAttribute('title') ||
     el.getAttribute('data-label') ||
     getVisibleText(el) ||
+    getAssociatedLabelText(el) ||
     el.getAttribute('alt') ||
     el.getAttribute('placeholder') ||
     el.getAttribute('name') ||
     null
   )
+}
+
+// Form controls are usually labelled by a separate <label for="id"> or by a wrapping <label>,
+// not by their own text.
+function getAssociatedLabelText(el) {
+  let label = null
+
+  if (el.id) {
+    label = [...el.ownerDocument.getElementsByTagName('label')].find(
+      (l) => l.htmlFor === el.id
+    )
+  }
+
+  label = label || el.closest?.('label')
+
+  return label && label !== el ? getVisibleText(label) : null
 }
 
 function getVisibleText(el) {

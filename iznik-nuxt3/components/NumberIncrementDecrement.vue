@@ -1,5 +1,8 @@
 <template>
-  <div class="d-flex flex-column text-center width position-relative">
+  <div
+    ref="wrapper"
+    class="d-flex flex-column text-center width position-relative"
+  >
     <label
       :for="$id('spinbutton')"
       :class="{
@@ -28,6 +31,7 @@
 </template>
 <script setup>
 import VueNumberInput from '@chenfengyuan/vue-number-input'
+import { ref, onMounted } from '#imports'
 import { uid } from '~/composables/useId'
 
 defineProps({
@@ -68,6 +72,18 @@ defineProps({
 })
 
 const emit = defineEmits(['update:modelValue'])
+
+// The library's +/- buttons are icon-only and unlabelled, so name them for screen readers.
+const wrapper = ref(null)
+
+onMounted(() => {
+  wrapper.value
+    ?.querySelector('.vue-number-input__button--minus')
+    ?.setAttribute('aria-label', 'Decrease')
+  wrapper.value
+    ?.querySelector('.vue-number-input__button--plus')
+    ?.setAttribute('aria-label', 'Increase')
+})
 
 const $id = (type) => {
   return uid(type)
