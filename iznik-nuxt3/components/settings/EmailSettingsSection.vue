@@ -18,8 +18,12 @@
       <div v-if="simpleSettings && !showAdvanced">
         <!-- Simple settings -->
         <div class="setting-row">
-          <label>Email level:</label>
-          <b-form-select v-model="simpleEmailSettingLocal" class="email-select">
+          <label :for="`${formId}-email-level`">Email level:</label>
+          <b-form-select
+            :id="`${formId}-email-level`"
+            v-model="simpleEmailSettingLocal"
+            class="email-select"
+          >
             <b-form-select-option value="None">Off</b-form-select-option>
             <b-form-select-option value="Basic">Basic</b-form-select-option>
             <b-form-select-option value="Full">Standard</b-form-select-option>
@@ -177,13 +181,16 @@
 </template>
 
 <script setup>
-import { ref, computed, defineEmits, watch } from 'vue'
+import { ref, computed, defineEmits, watch, useId } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 import SettingsGroup from '~/components/SettingsGroup'
 import SettingsEmailInfo from '~/components/SettingsEmailInfo'
 import NoticeMessage from '~/components/NoticeMessage'
 import OurToggle from '~/components/OurToggle'
 import { useMe } from '~/composables/useMe'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const { me, myGroups } = useMe()
 

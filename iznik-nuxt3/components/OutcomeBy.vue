@@ -1,9 +1,9 @@
 <template>
   <div>
     <div v-if="!several">
-      <label :class="'strong ' + (chooseError ? 'text-danger' : '')">
+      <div :class="'strong ' + (chooseError ? 'text-danger' : '')">
         Please tell us who took this item:
-      </label>
+      </div>
     </div>
     <div
       v-for="user in currentlySelectedUsers"
@@ -28,10 +28,7 @@
           <UserRatings v-if="user.userid > 0" :id="user.userid" size="md" />
         </div>
       </div>
-      <div
-        v-if="isBulk"
-        :class="'took ' + (availablenow <= 1 ? 'd-none' : '')"
-      >
+      <div v-if="isBulk" :class="'took ' + (availablenow <= 1 ? 'd-none' : '')">
         <NumberIncrementDecrement
           v-model="user.count"
           label="Number taken"
@@ -84,9 +81,7 @@
     </div>
     <p class="mt-2 text-muted small">
       This helps us identify reliable freeglers.
-      <span v-if="several"
-        >You can save and come back later if you like.</span
-      >
+      <span v-if="several">You can save and come back later if you like.</span>
     </p>
   </div>
 </template>
@@ -274,8 +269,7 @@ function userOptions(small) {
   if (!currentlySelectedUsers.value.find((u) => u.userid === null)) {
     options.push({
       value: 0,
-      html:
-        several.value ? '<em>Other people</em>' : '<em>Someone else</em>',
+      html: several.value ? '<em>Other people</em>' : '<em>Someone else</em>',
     })
   }
 
@@ -399,7 +393,6 @@ select {
     // this element: those are !important and silently beat the auto margin.
     margin-left: auto;
   }
-
 
   .remove-taker {
     // The right-edge element on an ordinary post, where a bulk post has the
