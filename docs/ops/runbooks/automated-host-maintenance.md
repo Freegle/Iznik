@@ -1,8 +1,9 @@
 ---
-last_reviewed: 2026-10-07
+last_reviewed: 2026-10-08
 owner: Freegle ops
 covers:
   - scripts/maintenance/**
+  - iznik-batch/app/Console/Commands/Housekeeper/**
 ---
 
 # Automated host maintenance
@@ -41,11 +42,15 @@ outside its start window.
 
 | Slot | When | Machine | Why this time |
 |---|---|---|---|
+| `lb` | Monday 04:00 UK time | the load balancer | The overnight low, when its reboot outage is accepted. |
 | `db` | Tuesday 04:40 | db2 in even weeks, db3 in odd weeks | After the backup drain and the backup's desync on db2, before the morning digest. Each data node is done every other week, and never both in one week. |
 | `mail` | Wednesday 02:15 | bulk2 | The overnight low in outgoing mail, clear of the relay's own 05:00 log rotation. |
-| `arbitrator` | Thursday 04:40 | db1 | Two days clear of the data-node slot. |
-| `docker` | Saturday 23:35 | the Docker host | After the 23:00 jobs and before the 00:30 log rotation and 01:00 postcode remap. Saturday has no 23:00 digest. |
-| `lb` | Monday 04:00 UK time | the load balancer | The overnight low, when its reboot outage is accepted. A day clear of the Docker host and the data nodes, as the 20-hour gap between runs needs. |
+| `docker` | Wednesday 23:35 | the Docker host | After the 23:00 jobs and before the 00:30 log rotation and 01:00 postcode remap. Wednesday has no 23:00 digest. |
+| `arbitrator` | Friday 04:40 | db1 | Three days clear of the data-node slot. |
+
+Nothing runs at the weekend, the busiest time. Slots start at least 21 hours apart. A
+run refuses when the last live run finished less than 20 hours before, so a long run can
+push the next slot to the following week; the housekeeping tab then shows it failed.
 
 Weeks are counted from the Unix epoch, so the data nodes alternate strictly. A 53-week
 year does not repeat one. Swap the order with `MAINT_DB_ROTATION`.
@@ -230,6 +235,21 @@ the outcome, the ledger, and the run's log. Dry runs mail their summary too whil
 `MAINT_MAIL_DRY_RUN_SUMMARY=1`. A successful data-node run includes the API 5xx count
 per node over the run, from Loki.
 
+### In ModTools
+
+Each timer run also writes a row to the housekeeping list on the ModTools Sysadmin page,
+through `php artisan housekeeper:record` in batch-prod:
+
+| Task | Shows |
+|---|---|
+| `freegle-maint-<slot>` | The slot's last outcome and its log. A run that was skipped, stopped or failed shows as failed. A slot that has not run for a week and six hours shows overdue. |
+| `freegle-maint-rollout` | Which hosts are live and which are still dry runs. It is refreshed only when that set changes, so it shows overdue when no host has been made live for 14 days (`MAINT_HK_ROLLOUT_HOURS`). Once every host is live it is greyed out. |
+
+Runs started by hand with `freegle-maint run` do not write rows. `freegle-maint report`
+refreshes the rollout row straight away, for instance after editing `MAINT_LIVE_HOSTS`.
+Recording never fails a run. When batch-prod cannot be reached it logs a warning, and the
+mail still goes.
+
 ## Turning it on
 
 Each step is deliberate, and each machine is turned on separately.
@@ -264,6 +284,7 @@ cadence.
 | To | Run |
 |---|---|
 | See the state: pause, failure, lock, which data node is due, recent runs, timers | `freegle-maint status` |
+| Refresh the rollout row in ModTools after changing `MAINT_LIVE_HOSTS` | `freegle-maint report` |
 | Stop all maintenance from starting | `freegle-maint pause <reason>` (writes `/etc/freegle-maint/PAUSE`) |
 | Allow it again | `freegle-maint unpause` |
 | Release a failed run's lock, after dealing with it | `freegle-maint clear-failed` |
