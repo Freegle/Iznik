@@ -101,6 +101,7 @@
             class="h-100"
             enterkeyhint="enter"
             @keydown="typing"
+            @keydown.enter="sendOnShortcut"
             @focus="onFocus"
             @blur="onBlur"
           />
@@ -113,6 +114,7 @@
             enterkeyhint="send"
             :autocapitalize="autocapitalizeMode"
             @keydown="typing"
+            @keydown.enter="sendOnShortcut"
             @keydown.enter.exact.prevent
             @keyup.enter.exact="sendOnEnter"
             @keydown.enter.shift.exact.prevent="newline"
@@ -382,6 +384,7 @@ import { action } from '~/composables/useClientLog'
 import { useMe } from '~/composables/useMe'
 import { useTypewriter } from '~/composables/useTypewriter'
 import { isIOS } from '~/composables/useIsIOS'
+import { isSendShortcut } from '~/composables/chatSendShortcut'
 import JumpingDots from '~/components/JumpingDots.vue'
 import ChatNotice from '~/components/ChatNotice.vue'
 
@@ -794,6 +797,13 @@ const showInfo = () => {
 
 const sendOnEnter = () => {
   send()
+}
+
+const sendOnShortcut = (e) => {
+  if (isSendShortcut(e)) {
+    e.preventDefault()
+    send()
+  }
 }
 
 const send = async (callback) => {
