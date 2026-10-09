@@ -774,5 +774,29 @@ describe('ModMemberButtons', () => {
       expect(wrapper.vm.validActions).toContain('Leave Approved Member')
       expect(wrapper.vm.validActions).toContain('Delete Approved Member')
     })
+
+    function mailLabels(rippled) {
+      return mountComponent({
+        member: createMember({
+          collection: 'Approved',
+          mod_messaging_allowed: true,
+          rippled,
+        }),
+        modconfig: createModConfig(STDMSGS),
+        actions: true,
+      })
+        .findAll('button')
+        .map((b) => b.text())
+    }
+
+    // The Mail button sends the same 'Leave Approved Member' the server refuses, so it
+    // must go with the standard messages - it was missed when they were filtered.
+    it('offers no Mail button', () => {
+      expect(mailLabels(true)).not.toContain('Mail')
+    })
+
+    it('still offers Mail to an ordinary member', () => {
+      expect(mailLabels(false)).toContain('Mail')
+    })
   })
 })

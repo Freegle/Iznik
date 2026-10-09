@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-08
+last_reviewed: 2026-10-09
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -236,8 +236,8 @@ their case before the decision is made.
 
 Some members are on your list only because a post of theirs **rippled in**: rippling
 joins the poster so the post can live on your community. That is not a relationship with
-you, so such a member has no **Chat** button and no standard messages that only write to
-them, and the removal standard message shows a plain confirmation instead of a compose
+you, so such a member has no **Chat** or **Mail** button and no standard messages that
+only write to them, and the removal standard message shows a plain confirmation instead of a compose
 box. You can still remove or ban them, and it is logged as usual - quietly, since they
 never joined you. If they later join, or move into your area, the membership becomes an
 ordinary one. See [rippling out](rippling-out.md).
