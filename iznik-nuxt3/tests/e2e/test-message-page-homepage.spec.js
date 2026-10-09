@@ -13,6 +13,19 @@
 const { test, expect } = require('./fixtures')
 const { timeouts } = require('./config')
 
+// The remembered home page is written to localStorage ('misc' store, 'vals') when the page that
+// claims it hydrates. gotoAndVerify returns at domcontentloaded, before hydration, so a test that
+// navigates away straight afterwards can leave before the claim happens. Wait for the claim itself.
+async function waitForHomePage(page, value) {
+  await page.waitForFunction(
+    (expected) =>
+      JSON.parse(localStorage.getItem('misc') || '{}')?.vals?.lasthomepage ===
+      expected,
+    value,
+    { timeout: timeouts.navigation.default }
+  )
+}
+
 test.describe('Message page claims Browse as the home page', () => {
   test('back to / after viewing a message lands on Browse, not ChitChat', async ({
     page,
@@ -32,6 +45,7 @@ test.describe('Message page claims Browse as the home page', () => {
     // works: without this control step the real assertion below would pass
     // trivially if lasthomepage persistence were broken altogether.
     await page.gotoAndVerify('/chitchat', { maxRetries: 1 })
+    await waitForHomePage(page, 'news')
     await page.gotoAndVerify('/', { maxRetries: 1 })
     await expect(page).toHaveURL(/\/chitchat/, {
       timeout: timeouts.navigation.default,
@@ -39,6 +53,7 @@ test.describe('Message page claims Browse as the home page', () => {
 
     // Open the message page directly, as a digest email link does.
     await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
+    await waitForHomePage(page, 'mygroups')
 
     // Unwinding to / must now land on Browse (item context), not ChitChat.
     await page.gotoAndVerify('/', { maxRetries: 1 })
