@@ -4817,9 +4817,10 @@ func TestPostMessageRemoveByNotYourMessage(t *testing.T) {
 	assert.Equal(t, 403, resp.StatusCode, "Non-owner should not be able to RemoveBy")
 }
 
-func TestPostMessagePromiseCreatesChat(t *testing.T) {
-	// H1: Promise should create a chat room if none exists between the users.
-	prefix := uniquePrefix("msgw_prm_cc")
+func TestPostMessagePromiseRefusedWithoutChat(t *testing.T) {
+	// Promising needs an existing chat between the poster and the person: nothing is recorded
+	// and no chat is created for a stranger.
+	prefix := uniquePrefix("msgw_prm_nochat")
 	db := database.DBConn
 
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
@@ -4828,34 +4829,42 @@ func TestPostMessagePromiseCreatesChat(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
 
-	// Verify no chat room exists between these users.
-	var chatCount int64
-	db.Raw("SELECT COUNT(*) FROM chat_rooms WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
-		ownerID, otherID, otherID, ownerID).Scan(&chatCount)
-	assert.Equal(t, int64(0), chatCount)
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Promise", "userid": otherID})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 400, resp.StatusCode)
 
-	// Promise the item - should create a chat room.
-	body := map[string]interface{}{
-		"id":     msgID,
-		"action": "Promise",
-		"userid": otherID,
-	}
-	bodyBytes, _ := json.Marshal(body)
-	url := fmt.Sprintf("/api/message?jwt=%s", ownerToken)
-	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	var promises, chats int64
+	db.Raw("SELECT COUNT(*) FROM messages_promises WHERE msgid = ? AND userid = ?", msgID, otherID).Scan(&promises)
+	assert.Equal(t, int64(0), promises)
+	db.Raw("SELECT COUNT(*) FROM chat_rooms WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
+		ownerID, otherID, otherID, ownerID).Scan(&chats)
+	assert.Equal(t, int64(0), chats)
+}
+
+func TestPostMessagePromiseWithChatPostsPromisedMessage(t *testing.T) {
+	// A chat about some other post is enough: the promise goes into that chat.
+	prefix := uniquePrefix("msgw_prm_chat")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	chatID := CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Promise", "userid": otherID})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// Verify chat room was created.
-	db.Raw("SELECT COUNT(*) FROM chat_rooms WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
-		ownerID, otherID, otherID, ownerID).Scan(&chatCount)
-	assert.Equal(t, int64(1), chatCount)
-
-	// Verify chat message was created.
 	var chatMsgCount int64
-	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE refmsgid = ? AND type = 'Promised'", msgID).Scan(&chatMsgCount)
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND refmsgid = ? AND type = 'Promised'", chatID, msgID).Scan(&chatMsgCount)
 	assert.Equal(t, int64(1), chatMsgCount)
 }
 
@@ -5827,6 +5836,7 @@ func TestPostMessageDoublePromise(t *testing.T) {
 	otherID := CreateTestUser(t, prefix+"_other", "User")
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
 
 	body := map[string]interface{}{
 		"id":     msgID,
@@ -5858,8 +5868,10 @@ func TestPostMessageDoublePromise(t *testing.T) {
 }
 
 func TestPostMessageRenegeWithoutPromise(t *testing.T) {
-	// Renege when no promise exists should succeed without error.
+	// Renege when no promise exists succeeds but changes nothing: no reliability record against
+	// the user and no chat message to them.
 	prefix := uniquePrefix("msgw_rng_nop")
+	db := database.DBConn
 
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	_, ownerToken := CreateTestSession(t, ownerID)
@@ -5879,6 +5891,40 @@ func TestPostMessageRenegeWithoutPromise(t *testing.T) {
 	resp, err := getApp().Test(req)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode, "Renege without existing promise should succeed gracefully")
+
+	var renegeCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_reneged WHERE msgid = ? AND userid = ?", msgID, otherID).Scan(&renegeCount)
+	assert.Equal(t, int64(0), renegeCount, "No renege record without a promise")
+
+	var chatMsgCount int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE refmsgid = ? AND type = 'Reneged'", msgID).Scan(&chatMsgCount)
+	assert.Equal(t, int64(0), chatMsgCount, "No Reneged chat message without a promise")
+}
+
+func TestPostMessageRenegeTwiceRecordsOnce(t *testing.T) {
+	prefix := uniquePrefix("msgw_rng_twice")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
+	db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", msgID, otherID)
+
+	for i := 0; i < 2; i++ {
+		bodyBytes, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Renege", "userid": otherID})
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+
+	var renegeCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_reneged WHERE msgid = ? AND userid = ?", msgID, otherID).Scan(&renegeCount)
+	assert.Equal(t, int64(1), renegeCount)
 }
 
 func TestPostMessageOutcomeNoHappiness(t *testing.T) {
@@ -10970,6 +11016,7 @@ func TestPostMessagePromisePartner(t *testing.T) {
 	CreateTestMembership(t, ownerID, groupID, "Member")
 	otherID := CreateTestUser(t, prefix+"_other", "User")
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
 	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", prefix+"_owner@test.com", msgID)
 
 	key := insertTestPartnerKeyMsg(t, prefix, "test.com")
@@ -11046,6 +11093,7 @@ func TestPostMessagePromiseRenegePromisePartner(t *testing.T) {
 	CreateTestMembership(t, ownerID, groupID, "Member")
 	otherID := CreateTestUser(t, prefix+"_other", "User")
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
 	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", prefix+"_owner@test.com", msgID)
 
 	key := insertTestPartnerKeyMsg(t, prefix, "test.com")
