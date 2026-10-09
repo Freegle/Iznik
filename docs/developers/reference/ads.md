@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-08
+last_reviewed: 2026-10-09
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/components/ExternalDa.vue
@@ -80,6 +80,11 @@ Things to know before touching it:
   gate itself breaks.
 - Jobs are geocoded on ingest and the `jobs` table is also the geocode cache, so a wrong
   placement does not heal by itself.
+- **Order is pay first.** The API ranks the nearest jobs by cost per click, with clickability
+  only breaking ties, and the digest does the same (`Job::nearLocation`). `JobsDaSlot` takes
+  the top 20 and orders them at random weighted by pay (`composables/payWeightedOrder.js`, the
+  digest's own weighting), so several slots on one page differ but better-paid jobs still lead.
+  A uniform shuffle there would discard the ranking.
 
 ## The mobile app
 
