@@ -5858,8 +5858,10 @@ func TestPostMessageDoublePromise(t *testing.T) {
 }
 
 func TestPostMessageRenegeWithoutPromise(t *testing.T) {
-	// Renege when no promise exists should succeed without error.
+	// Renege when no promise exists succeeds but changes nothing: no reliability record against
+	// the user and no chat message to them.
 	prefix := uniquePrefix("msgw_rng_nop")
+	db := database.DBConn
 
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	_, ownerToken := CreateTestSession(t, ownerID)
@@ -5879,6 +5881,40 @@ func TestPostMessageRenegeWithoutPromise(t *testing.T) {
 	resp, err := getApp().Test(req)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode, "Renege without existing promise should succeed gracefully")
+
+	var renegeCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_reneged WHERE msgid = ? AND userid = ?", msgID, otherID).Scan(&renegeCount)
+	assert.Equal(t, int64(0), renegeCount, "No renege record without a promise")
+
+	var chatMsgCount int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE refmsgid = ? AND type = 'Reneged'", msgID).Scan(&chatMsgCount)
+	assert.Equal(t, int64(0), chatMsgCount, "No Reneged chat message without a promise")
+}
+
+func TestPostMessageRenegeTwiceRecordsOnce(t *testing.T) {
+	prefix := uniquePrefix("msgw_rng_twice")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
+	db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", msgID, otherID)
+
+	for i := 0; i < 2; i++ {
+		bodyBytes, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Renege", "userid": otherID})
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+
+	var renegeCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_reneged WHERE msgid = ? AND userid = ?", msgID, otherID).Scan(&renegeCount)
+	assert.Equal(t, int64(1), renegeCount)
 }
 
 func TestPostMessageOutcomeNoHappiness(t *testing.T) {
