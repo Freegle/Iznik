@@ -197,7 +197,10 @@ describe('admins.vue page', () => {
       // Wait for async operations
       await flushPromises()
       expect(mockAdminsStore.clear).toHaveBeenCalled()
-      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({ groupid: null })
+      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({
+        groupid: null,
+        pending: true,
+      })
     })
   })
 
@@ -316,10 +319,13 @@ describe('admins.vue page', () => {
       const wrapper = mountComponent()
       vi.clearAllMocks()
 
-      await wrapper.vm.fetchAdmins(123)
+      await wrapper.vm.fetchAdmins(123, true)
 
       expect(mockAdminsStore.clear).toHaveBeenCalled()
-      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({ groupid: 123 })
+      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({
+        groupid: 123,
+        pending: true,
+      })
     })
 
     it('fetchPending calls fetch with groupidshow', async () => {
@@ -329,7 +335,10 @@ describe('admins.vue page', () => {
 
       await wrapper.vm.fetchPending()
 
-      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({ groupid: 456 })
+      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({
+        groupid: 456,
+        pending: true,
+      })
     })
 
     it('fetchPrevious calls fetch with groupidprevious', async () => {
@@ -339,7 +348,29 @@ describe('admins.vue page', () => {
 
       await wrapper.vm.fetchPrevious()
 
-      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({ groupid: 789 })
+      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({
+        groupid: 789,
+        pending: false,
+      })
+    })
+
+    // The history is over a thousand ADMINs across all communities (about 2MB). It is only
+    // fetched for one community, never as a sweep.
+    it('fetchPrevious without a community fetches nothing', async () => {
+      const wrapper = mountComponent()
+      await flushPromises()
+      vi.clearAllMocks()
+
+      await wrapper.vm.fetchPrevious()
+
+      expect(mockAdminsStore.clear).toHaveBeenCalled()
+      expect(mockAdminsStore.fetch).not.toHaveBeenCalled()
+    })
+
+    it('does not render the previous tab until it is opened', () => {
+      const wrapper = mountComponent()
+
+      expect(wrapper.find('.tabs').attributes('lazy')).toBeDefined()
     })
   })
 
@@ -351,7 +382,10 @@ describe('admins.vue page', () => {
       wrapper.vm.groupidshow = 100
       await wrapper.vm.$nextTick()
 
-      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({ groupid: 100 })
+      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({
+        groupid: 100,
+        pending: true,
+      })
     })
 
     it('fetches when groupidprevious changes', async () => {
@@ -361,7 +395,10 @@ describe('admins.vue page', () => {
       wrapper.vm.groupidprevious = 200
       await wrapper.vm.$nextTick()
 
-      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({ groupid: 200 })
+      expect(mockAdminsStore.fetch).toHaveBeenCalledWith({
+        groupid: 200,
+        pending: false,
+      })
     })
   })
 

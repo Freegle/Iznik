@@ -3,7 +3,7 @@
     <div>
       <div>
         <ModHelpAdmins />
-        <b-tabs v-model="tabIndex" content-class="mt-3" card>
+        <b-tabs v-model="tabIndex" content-class="mt-3" card lazy>
           <b-tab active>
             <template #title>
               <h2 class="ms-2 me-2" @click="fetchPending">
@@ -329,6 +329,7 @@
               />
             </div>
             <div v-else-if="groupidprevious > 0">No previous ADMINs.</div>
+            <div v-else>Choose a community to see its previous ADMINs.</div>
           </b-tab>
         </b-tabs>
       </div>
@@ -463,20 +464,20 @@ const previous = computed(() => {
 
 // Watchers
 watch(groupidshow, (newval) => {
-  fetchAdmins(newval)
+  fetchAdmins(newval, true)
 })
 
 watch(groupidprevious, (newval) => {
-  fetchAdmins(newval)
+  fetchAdmins(newval, false)
 })
 
 // Methods
 function fetchPending() {
-  fetchAdmins(groupidshow.value)
+  fetchAdmins(groupidshow.value, true)
 }
 
 function fetchPrevious() {
-  fetchAdmins(groupidprevious.value)
+  fetchAdmins(groupidprevious.value, false)
 }
 
 // Returns a message if the content can't be sent yet, or null.
@@ -544,10 +545,18 @@ async function create() {
   checkWork(true)
 }
 
-async function fetchAdmins(groupid) {
+// Pending and previous ADMINs are fetched separately. The history runs to over a thousand ADMINs
+// (about 2MB) across all communities, so it is only fetched for a chosen community.
+async function fetchAdmins(groupid, pending) {
   await adminsStore.clear()
+
+  if (!pending && !(groupid > 0)) {
+    return
+  }
+
   await adminsStore.fetch({
     groupid,
+    pending,
   })
 }
 
@@ -584,7 +593,7 @@ function copyAdmin(admin) {
 
 // Lifecycle - mounted
 onMounted(() => {
-  fetchAdmins(groupidshow.value)
+  fetchAdmins(groupidshow.value, true)
 })
 </script>
 <style scoped>
