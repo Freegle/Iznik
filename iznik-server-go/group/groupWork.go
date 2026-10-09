@@ -371,16 +371,8 @@ func GetGroupWork(c *fiber.Ctx) error {
 			Select("mg.groupid, COUNT(DISTINCT mo.id) as count").
 			Joins("INNER JOIN messages_groups mg ON mg.msgid = mo.msgid").
 			Where("mo.timestamp >= ? AND mg.arrival >= ? AND mg.groupid IN ? AND mg.rippled_in = 0 "+
-				"AND mo.comments IS NOT NULL AND mo.comments != '' "+
-				"AND mo.comments != 'Sorry, this is no longer available.' "+
-				"AND mo.comments != 'Thanks, this has now been taken.' "+
-				"AND mo.comments != 'Thanks, I''m no longer looking for this.' "+
-				"AND mo.comments != 'Sorry, this has now been taken.' "+
-				"AND mo.comments != 'Thanks for the interest, but this has now been taken.' "+
-				"AND mo.comments != 'Thanks, these have now been taken.' "+
-				"AND mo.comments != 'Thanks, this has now been received.' "+
-				"AND mo.comments != 'Withdrawn on user unsubscribe' "+
-				"AND mo.comments != 'Auto-Expired' "+
+				// feedback: a real comment, not an automatic or empty one (indexed generated column).
+				"AND mo.feedback = 1 "+
 				"AND (mo.happiness = 'Happy' OR mo.happiness IS NULL) "+
 				"AND mo.reviewed = 0",
 				hapCutoff, hapCutoff, activeGroupIDs).
