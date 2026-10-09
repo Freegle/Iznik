@@ -5953,6 +5953,20 @@ func handlePromise(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		promisedTo = *req.Userid
 	}
 
+	// Only someone the poster already has a chat with can be promised the item. The client only
+	// offers repliers and chat contacts; this stops a direct API call promising to an arbitrary
+	// user.
+	if promisedTo != myid {
+		var chats int64
+		db.Table("chat_rooms").
+			Where("chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?))",
+				utils.CHAT_TYPE_USER2USER, myid, promisedTo, promisedTo, myid).
+			Limit(1).Count(&chats)
+		if chats == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "Can only promise to someone you have a chat with")
+		}
+	}
+
 	// REPLACE INTO - idempotent. Terms are optional: absent means NULL, exactly
 	// as before this column existed.
 	promise := map[string]interface{}{"msgid": req.ID, "userid": promisedTo}
