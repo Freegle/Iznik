@@ -5,6 +5,7 @@ import legacy from '@vitejs/plugin-legacy'
 import { sentryVitePlugin } from '@sentry/vite-plugin'
 import config from './config'
 import { branding } from './branding.config'
+import { componentNameTransform } from './build-plugins/componentNameTransform'
 
 // Cached, brand-aware page-title string used in both `app.head.title` and
 // the og:title / twitter:title meta tags so they stay in lockstep.
@@ -436,6 +437,9 @@ export default defineNuxtConfig({
       template: {
         compilerOptions: {
           isCustomElement: (tag) => tag.startsWith('add-'),
+          // Stamps data-component on each component's root element for interaction and impression
+          // tracking; production builds have no other record of component names.
+          nodeTransforms: [componentNameTransform],
         },
       },
     },
