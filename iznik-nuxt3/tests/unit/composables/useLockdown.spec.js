@@ -15,7 +15,10 @@ vi.mock('~/composables/useMe', () => ({
 const mockLockdownStore = {
   active: false,
   surfaces: {},
-  held: vi.fn((surface) => !!(mockLockdownStore.active && mockLockdownStore.surfaces?.[surface])),
+  held: vi.fn(
+    (surface) =>
+      !!(mockLockdownStore.active && mockLockdownStore.surfaces?.[surface])
+  ),
   get modsHeld() {
     return !!(this.active && this.surfaces?.mods)
   },

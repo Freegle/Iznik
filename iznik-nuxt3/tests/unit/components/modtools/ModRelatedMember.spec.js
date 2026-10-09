@@ -38,7 +38,11 @@ describe('ModRelatedMember', () => {
   const now = dayjs()
 
   // Create a pair entry (what memberStore.get returns) and populate userStore
-  function setupData(user1Overrides = {}, user2Overrides = {}, pairOverrides = {}) {
+  function setupData(
+    user1Overrides = {},
+    user2Overrides = {},
+    pairOverrides = {}
+  ) {
     const u1 = {
       id: 1,
       displayname: 'User One',
@@ -119,7 +123,8 @@ describe('ModRelatedMember', () => {
             props: ['variant'],
           },
           'b-alert': {
-            template: '<div class="alert" :data-variant="variant"><slot /></div>',
+            template:
+              '<div class="alert" :data-variant="variant"><slot /></div>',
             props: ['variant', 'show'],
           },
           'v-icon': {

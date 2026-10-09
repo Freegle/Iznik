@@ -1059,9 +1059,7 @@ describe('ModMessageButtons', () => {
         {},
         { groups: [{ groupid: 456, collection: 'Approved' }], outcomes: [] }
       )
-      const labels = wrapper
-        .findAll('.mod-message-button')
-        .map((b) => b.text())
+      const labels = wrapper.findAll('.mod-message-button').map((b) => b.text())
 
       expect(labels).not.toContain('Blank Reply')
       expect(wrapper.find('.mod-message-button.delete').exists()).toBe(false)
@@ -1078,9 +1076,7 @@ describe('ModMessageButtons', () => {
       expect(wrapper.find('.mod-message-button.revertedits').exists()).toBe(
         false
       )
-      const labels = wrapper
-        .findAll('.mod-message-button')
-        .map((b) => b.text())
+      const labels = wrapper.findAll('.mod-message-button').map((b) => b.text())
       expect(labels).not.toContain('Blank Reply')
     })
   })

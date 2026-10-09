@@ -211,9 +211,7 @@ test.describe('ModTools Edits Flow', () => {
     // fell through to All Communities and then spent three minutes polling a
     // view that cannot show this edit, failing on an assertion that named the
     // edits queue rather than the empty dropdown that caused it.
-    const targetOption = groupSelect.locator(
-      `option[value="${actualGroupId}"]`
-    )
+    const targetOption = groupSelect.locator(`option[value="${actualGroupId}"]`)
     await expect(targetOption).toHaveCount(1, {
       timeout: timeouts.ui.appearance,
     })

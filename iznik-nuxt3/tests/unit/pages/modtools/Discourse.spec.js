@@ -165,7 +165,9 @@ describe('Discourse Page', () => {
       const wrapper = mountComponent()
       await flushPromises()
 
-      expect(wrapper.text()).toContain("We couldn't verify your ModTools session")
+      expect(wrapper.text()).toContain(
+        "We couldn't verify your ModTools session"
+      )
       expect(wrapper.find('a[href="/login"]').exists()).toBe(true)
       expect(wrapper.find('.spinner-border').exists()).toBe(false)
       expect(cookieWrites).toHaveLength(0)
@@ -188,7 +190,9 @@ describe('Discourse Page', () => {
         'Discourse is only available to Freegle moderators'
       )
       expect(wrapper.text()).toContain('ask one of your community')
-      expect(wrapper.find('a[href="mailto:geeks@ilovefreegle.org"]').exists()).toBe(true)
+      expect(
+        wrapper.find('a[href="mailto:geeks@ilovefreegle.org"]').exists()
+      ).toBe(true)
       expect(wrapper.find('a[href="/"]').exists()).toBe(true)
       expect(wrapper.find('.spinner-border').exists()).toBe(false)
       expect(cookieWrites).toHaveLength(0)
@@ -202,7 +206,9 @@ describe('Discourse Page', () => {
       const wrapper = mountComponent()
       await flushPromises()
 
-      expect(wrapper.text()).toContain("We couldn't verify your ModTools session")
+      expect(wrapper.text()).toContain(
+        "We couldn't verify your ModTools session"
+      )
       expect(wrapper.find('a[href="/login"]').exists()).toBe(true)
       expect(cookieWrites).toHaveLength(0)
       expect(window.location.href).toBe('')
@@ -215,7 +221,9 @@ describe('Discourse Page', () => {
       const wrapper = mountComponent()
       await flushPromises()
 
-      expect(wrapper.text()).toContain("We couldn't verify your ModTools session")
+      expect(wrapper.text()).toContain(
+        "We couldn't verify your ModTools session"
+      )
       expect(window.location.href).toBe('')
     })
 
@@ -261,7 +269,9 @@ describe('Discourse Page', () => {
       const wrapper = await mountLoggedInWithChallenge()
       expect(window.location.href).toBe('')
       expect(cookieWrites).toHaveLength(0)
-      expect(wrapper.text()).toContain("We couldn't verify your ModTools session")
+      expect(wrapper.text()).toContain(
+        "We couldn't verify your ModTools session"
+      )
     })
 
     it('forgets retries older than a minute', async () => {
