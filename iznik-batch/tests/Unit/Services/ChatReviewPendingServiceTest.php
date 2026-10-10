@@ -9,6 +9,7 @@ use App\Models\Membership;
 use App\Services\ChatReviewPendingService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -199,9 +200,7 @@ class ChatReviewPendingServiceTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    /**
-     * @dataProvider modRoleProvider
-     */
+    #[DataProvider('modRoleProvider')]
     public function test_owner_and_moderator_roles_both_notified(string $role): void
     {
         Mail::fake();
