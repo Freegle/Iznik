@@ -2,11 +2,15 @@
 
 namespace Tests\Unit\Console;
 
+use App\Console\Kernel;
 use Illuminate\Console\Command;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Contracts\Console\Kernel as KernelContract;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Str;
 use ReflectionClass;
+use ReflectionMethod;
+use ReflectionProperty;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Finder\Finder;
 use Tests\TestCase;
@@ -104,6 +108,36 @@ class CommandNamesTest extends TestCase
         Artisan::all();
 
         $this->assertGreaterThan(20, count(app(Schedule::class)->events()));
+    }
+
+    /**
+     * The walk of app/Console/Commands happens once per process: the first boot
+     * does it, before any test runs, and every later boot reuses what it found.
+     * Forgetting the result makes the next load walk again, which is the only
+     * way the walk itself runs under a test.
+     */
+    public function test_commands_are_discovered_once_per_process_and_reused(): void
+    {
+        $kernel = app(KernelContract::class);
+        $this->assertInstanceOf(Kernel::class, $kernel);
+
+        $discovered = new ReflectionProperty(Kernel::class, 'discoveredCommands');
+        $saved = $discovered->getValue();
+
+        try {
+            $discovered->setValue(null, []);
+            (new ReflectionMethod($kernel, 'load'))->invoke($kernel, app_path('Console/Commands'));
+
+            $found = $discovered->getValue();
+            $this->assertCount(1, $found, 'one entry per set of paths walked');
+            $this->assertEqualsCanonicalizing($this->commandClasses(), array_values(reset($found)));
+
+            // A path that is not a directory is ignored, and walks nothing.
+            (new ReflectionMethod($kernel, 'load'))->invoke($kernel, app_path('Console/NoSuchDirectory'));
+            $this->assertCount(1, $discovered->getValue());
+        } finally {
+            $discovered->setValue(null, $saved);
+        }
     }
 
     public function test_command_names_are_unique(): void
