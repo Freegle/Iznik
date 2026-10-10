@@ -597,6 +597,50 @@ describe('ModAdmin', () => {
       })
     })
 
+    it('says beside Approve why it is waiting, until a test is sent', async () => {
+      const wrapper = mountComponent({ open: true }, { mjml })
+      await wrapper.vm.$nextTick()
+      const note = wrapper.find('.card-footer .approve-waits')
+      expect(note.text()).toContain('Approve is waiting for you to send')
+      expect(note.find('.go-to-test').exists()).toBe(true)
+
+      await wrapper.vm.sendTest()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.approve-waits').exists()).toBe(false)
+
+      wrapper.vm.admin.text = 'Edited after the test'
+      wrapper.vm.admin.mjml = mjml.replace('Designed', 'Edited')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.approve-waits').text()).toContain(
+        'changed this ADMIN since your test'
+      )
+    })
+
+    it('takes the moderator to the test box from beside Approve', async () => {
+      const box = document.createElement('input')
+      box.id = 'testemail-1'
+      box.scrollIntoView = vi.fn()
+      document.body.appendChild(box)
+      try {
+        const wrapper = mountComponent({ open: true }, { mjml })
+        await wrapper.vm.$nextTick()
+        await wrapper.find('.go-to-test').trigger('click')
+        expect(box.scrollIntoView).toHaveBeenCalled()
+        expect(document.activeElement).toBe(box)
+      } finally {
+        box.remove()
+      }
+    })
+
+    it('says nothing beside Approve when no test is needed', async () => {
+      const wrapper = mountComponent(
+        { open: true },
+        { parentid: 7, unedited: true, mjml }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.approve-waits').exists()).toBe(false)
+    })
+
     it('shows no test for a text-only ADMIN', async () => {
       const wrapper = mountComponent({ open: true })
       await wrapper.vm.$nextTick()
