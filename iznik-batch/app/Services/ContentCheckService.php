@@ -419,7 +419,7 @@ class ContentCheckService
                 ->where('kind', LockdownHoldsService::KIND_POST)
                 ->whereNull('outcome')
                 ->orderBy('id')
-                ->limit(LockdownHoldsService::RELEASE_BATCH_SIZE)
+                ->limit(LockdownHoldsService::releaseBatchSize())
                 ->get();
             if ($batch->isEmpty()) {
                 break;

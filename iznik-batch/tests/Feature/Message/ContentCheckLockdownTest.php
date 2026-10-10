@@ -237,8 +237,10 @@ class ContentCheckLockdownTest extends TestCase
         // decision path, just without the overhead of createTestGroup()/createTestUser()
         // per row that the other tests here use.
         // More than one batch, so the release has to go round more than once in one run.
+        // A small batch, so that takes tens of posts through the pipeline, not hundreds.
         // Three multi-row inserts rather than three round trips per post.
-        $total = LockdownHoldsService::RELEASE_BATCH_SIZE + 5;
+        config(['freegle.lockdown.release_batch_size' => 5]);
+        $total = LockdownHoldsService::releaseBatchSize() + 5;
         $rows = [];
         for ($i = 0; $i < $total; $i++) {
             $rows[] = [

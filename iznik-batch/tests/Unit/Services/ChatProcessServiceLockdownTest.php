@@ -97,7 +97,9 @@ class ChatProcessServiceLockdownTest extends TestCase
         $room = $this->createTestChatRoom($poster, $replier);
 
         // More than two batches, so the release has to go round more than once in one run.
-        $count = LockdownHoldsService::RELEASE_BATCH_SIZE * 2 + 50;
+        // A small batch, so that takes tens of messages through the pipeline, not hundreds.
+        config(['freegle.lockdown.release_batch_size' => 5]);
+        $count = LockdownHoldsService::releaseBatchSize() * 2 + 50;
 
         // The same rows createTestChatMessage() and hold() would make, in two
         // statements rather than 1,300 round trips. Ids come back in insertion
