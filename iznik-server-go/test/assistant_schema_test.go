@@ -22,6 +22,7 @@ func TestAssistantSchemaPromiseCarriesCount(t *testing.T) {
 	group := CreateTestGroup(t, "asstgrp")
 	CreateTestMembership(t, giver, group, "Member")
 	msgid := CreateTestMessage(t, giver, group, "OFFER: Four chairs (EH3)", 55.9, -3.2)
+	CreateTestChatRoom(t, giver, &taker, nil, "User2User")
 	_, token := CreateTestSession(t, giver)
 
 	body, _ := json.Marshal(map[string]interface{}{"id": msgid, "action": "Promise", "userid": taker, "count": 2})

@@ -95,9 +95,9 @@ func identityFor(c *fiber.Ctx, ip string) Identity {
 			id.LocationName = *row.Location
 		}
 		var community string
-		db.Table("memberships").Select("groups.namedisplay").
-			Joins("INNER JOIN groups ON groups.id = memberships.groupid").
-			Where("memberships.userid = ? AND groups.type = 'Freegle'", myid).
+		db.Table("memberships").Select("COALESCE(`groups`.namefull, `groups`.nameshort)").
+			Joins("INNER JOIN `groups` ON `groups`.id = memberships.groupid").
+			Where("memberships.userid = ? AND `groups`.type = 'Freegle'", myid).
 			Order("memberships.added DESC").Limit(1).Scan(&community)
 		id.Community = community
 		if anon := VerifyAnon(c.Get("X-Assistant-Anon")); anon != "" {
