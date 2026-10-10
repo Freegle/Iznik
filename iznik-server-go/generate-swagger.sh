@@ -126,14 +126,21 @@ mkdir -p "$(dirname "$SWAGGER_OUT")" 2>/dev/null
 cp "$TMP_SPEC" "$SWAGGER_OUT"
 echo "✅ Swagger spec generated successfully at $SWAGGER_OUT"
 
-# Validate the swagger spec
-echo "Validating the generated spec..."
-$SWAGGER_CMD validate "$SWAGGER_OUT"
-
-if [ $? -eq 0 ]; then
-    echo "✅ Swagger spec validation passed"
+# Validate the swagger spec. Advisory only: a spec with warnings is still installed
+# above, and the exit status is not changed by it. SWAGGER_SKIP_VALIDATE=1 leaves it
+# out, for a caller that only needs the spec (test/swagger_test.go, which asserts on
+# the generated file and spent a second of every test run on a report nobody reads).
+if [ -n "$SWAGGER_SKIP_VALIDATE" ]; then
+    echo "Skipping validation (SWAGGER_SKIP_VALIDATE is set)"
 else
-    echo "⚠️ Swagger spec validation has warnings"
+    echo "Validating the generated spec..."
+    $SWAGGER_CMD validate "$SWAGGER_OUT"
+
+    if [ $? -eq 0 ]; then
+        echo "✅ Swagger spec validation passed"
+    else
+        echo "⚠️ Swagger spec validation has warnings"
+    fi
 fi
 
 echo "The Swagger UI is available at http://localhost:8192/swagger/ when the server is running."

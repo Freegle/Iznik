@@ -33,10 +33,12 @@ func TestSwaggerGeneration(t *testing.T) {
 	swaggerJsonPath := filepath.Join(t.TempDir(), "swagger.json")
 
 	// Run the generate-swagger.sh script, writing to the temp path so the
-	// committed spec is left alone.
+	// committed spec is left alone. The script's closing `swagger validate` is
+	// skipped: it is advisory (warnings never fail the script), nothing below
+	// looks at its report, and it cost about a second of every run.
 	cmd := exec.Command("/bin/bash", swaggerScript)
 	cmd.Dir = rootDir
-	cmd.Env = append(os.Environ(), "SWAGGER_OUT="+swaggerJsonPath)
+	cmd.Env = append(os.Environ(), "SWAGGER_OUT="+swaggerJsonPath, "SWAGGER_SKIP_VALIDATE=1")
 	output, err := cmd.CombinedOutput()
 
 	// Output command result for debugging

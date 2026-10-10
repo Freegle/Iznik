@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount, enableAutoUnmount } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import BirthdayHero from '~/components/BirthdayHero.vue'
 
-// Unmount every wrapper after each test so the component's onBeforeUnmount
-// cancels its deferred IntersectionObserver setup timer. Without this the
-// 100ms setTimeout can outlive the file's happy-dom environment and throw
-// "IntersectionObserver is not defined" as an unhandled error (seen only in
-// CI timing) — restoring a global stub in afterEach cannot close that gap
-// because environment teardown wipes the globals anyway.
-enableAutoUnmount(afterEach)
+// Every wrapper is unmounted after each test by tests/unit/setup.ts, so the
+// component's onBeforeUnmount cancels its deferred IntersectionObserver setup
+// timer. Without that the 100ms setTimeout can outlive the file's happy-dom
+// environment and throw "IntersectionObserver is not defined" as an unhandled
+// error (seen only in CI timing); restoring a global stub in afterEach cannot
+// close that gap because environment teardown wipes the globals anyway.
 
 const mockGroupStore = {
   fetch: vi.fn(),

@@ -1,5 +1,5 @@
 import { vi, beforeEach, afterEach } from 'vitest'
-import { config } from '@vue/test-utils'
+import { config, enableAutoUnmount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import {
   ref,
@@ -65,11 +65,42 @@ const originalWarn = console.warn
 console.warn = (...args: unknown[]) => {
   const message = typeof args[0] === 'string' ? args[0] : ''
   if (message.includes('[Vue warn]')) {
+    // The sweep below unmounts every wrapper a test left mounted. A spec that
+    // already unmounted one itself makes Vue say so; that is not a defect in
+    // the component under test, so it is the one warning the sweep ignores.
+    if (
+      sweepingWrappers &&
+      message.includes('Cannot unmount an app that is not mounted')
+    ) {
+      return
+    }
     // Throw an error to fail the test
     throw new Error(`Vue warning should not occur in tests: ${args.join(' ')}`)
   }
   originalWarn.apply(console, args)
 }
+
+// ============================================
+// UNMOUNT EVERYTHING AFTER EACH TEST
+// ============================================
+// Most specs mount a fresh component per test and never unmount it, and most
+// drive the component through refs shared across the file (vi.hoisted mocks
+// reset in beforeEach). Every instance mounted so far is still alive and still
+// subscribed to those refs, so each reset re-rendered all of them before the
+// next test body ran: the file's cost grew with the square of its test count.
+// MessageExpanded.spec.js spent 36s in its tests that way and 2s without it.
+// Unmounting after each test is the same cleanup a page does when it leaves.
+let sweepingWrappers = false
+enableAutoUnmount((sweep) => {
+  afterEach(() => {
+    sweepingWrappers = true
+    try {
+      sweep()
+    } finally {
+      sweepingWrappers = false
+    }
+  })
+})
 
 // ============================================
 // NUXT COMPOSABLE GLOBALS (for auto-imports)

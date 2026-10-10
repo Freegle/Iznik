@@ -6,12 +6,27 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
+
+// The retry loops back off with a real sleep between attempts. Nothing in this file
+// is about how long that wait is, only that it happens and stays within range, so
+// the whole package records the waits instead of making them: before this, the file
+// spent over three seconds asleep.
+var recordedBackoffs []time.Duration
+
+func TestMain(m *testing.M) {
+	retrySleep = func(d time.Duration) {
+		recordedBackoffs = append(recordedBackoffs, d)
+	}
+	os.Exit(m.Run())
+}
 
 // helper: create a Fiber app with a retry-wrapped test handler.
 func testApp(handler fiber.Handler, maxRetries ...int) *fiber.App {
@@ -187,10 +202,18 @@ func TestRetry_AllRetriesExhausted(t *testing.T) {
 		return errors.New("MySQL server has gone away")
 	}, 3)
 
+	recordedBackoffs = nil
 	resp, _ := app.Test(httptest.NewRequest("GET", "/test", nil), 10000)
 	// After 1 initial + 3 retries = 4 calls, should fail.
 	assert.Equal(t, 500, resp.StatusCode)
 	assert.Equal(t, int32(4), atomic.LoadInt32(&calls))
+
+	// One backoff before each retry, each a jittered wait inside the configured range.
+	assert.Len(t, recordedBackoffs, 3)
+	for _, d := range recordedBackoffs {
+		assert.GreaterOrEqual(t, d, time.Duration(minBackoffMs)*time.Millisecond)
+		assert.Less(t, d, time.Duration(maxBackoffMs)*time.Millisecond)
+	}
 }
 
 func TestRetry_ResponseResetBetweenAttempts(t *testing.T) {
