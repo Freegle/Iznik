@@ -322,6 +322,7 @@ func GetGroupWork(c *fiber.Ctx) error {
 		db.Table("messages_edits me").
 			Select("mg.groupid, COUNT(DISTINCT me.msgid) as count").
 			Joins("INNER JOIN messages_groups mg ON mg.msgid = me.msgid").
+			Joins("INNER JOIN messages m ON m.id = me.msgid AND m.deleted IS NULL").
 			Where("mg.groupid IN ? AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY) AND mg.deleted = 0 AND mg.rippled_in = 0",
 				activeGroupIDs).
 			Group("mg.groupid").
