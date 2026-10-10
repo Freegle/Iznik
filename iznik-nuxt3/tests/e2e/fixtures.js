@@ -2324,7 +2324,26 @@ const testWithFixtures = test.extend({
             hasText: 'Welcome to Freegle',
           })
           try {
-            await welcomeModal.waitFor({ state: 'visible', timeout: 30000 })
+            // The modal lives in the reply pane, which the state machine
+            // unmounts when it routes to /chats/, so once the chat page is
+            // showing there is no modal coming and nothing to close. Stop
+            // then, rather than wait the whole modal timeout on the runs
+            // where the modal is not shown (67 seconds in a test that
+            // otherwise takes 30).
+            const arrived = await Promise.race([
+              welcomeModal
+                .waitFor({ state: 'visible', timeout: 30000 })
+                .then(() => true),
+              freshPage
+                .waitForURL('**/chats/**', { timeout: 30000 })
+                .then(() => false),
+            ])
+            if (!arrived) {
+              console.log(
+                'Chat page showing with no Welcome to Freegle modal, nothing to close'
+              )
+              return
+            }
             console.log('Welcome to Freegle modal appeared')
             const closeButton = welcomeModal.locator(
               '.btn:has-text("Close and Continue")'
