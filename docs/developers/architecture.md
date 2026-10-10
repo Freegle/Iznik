@@ -51,7 +51,7 @@ Freegle (internally "Iznik") is a monorepo. The main pieces:
 | `iznik-batch/` | Laravel batch processing: digests, notifications, scheduled jobs. Owns the database schema (migrations). | `iznik-batch/README.md` |
 | `iznik-routing-go/` | Go service for drive-time routing, used by rippling, browse and the sysadmin analytics; includes the reach engine (region labels instead of repeated searches - see `iznik-routing-go/REACH-ENGINE.md`), which also answers per-point drive-time evals without a full-graph sweep. | `iznik-routing-go/README.md` |
 | `iznik-spatial-go/` | Go service for spatial lookups (which community covers a point, etc). | `iznik-spatial-go/README.md` |
-| `status-nuxt/` | Development status dashboard and test runner. | - |
+| `status-nuxt/` | Development status dashboard and test runner; `server/api/tests/*.post.ts` run each suite inside its dev container. | - |
 | `freegle-app/` | A Kotlin Multiplatform native app. An experiment; it does not ship. See [./reference/mobile-app.md](./reference/mobile-app.md). | - |
 
 The mobile apps that members install are **Capacitor builds of `iznik-nuxt3/`** - the same
