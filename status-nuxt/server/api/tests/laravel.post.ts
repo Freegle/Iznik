@@ -75,10 +75,12 @@ export default defineEventHandler(async (event) => {
     echo "Stopping supervisor workers..."
     docker exec ${prefix}-batch supervisorctl stop all 2>&1 || true
 
-    # Set up fresh test database
+    # Make sure the test database exists. Its schema is built by
+    # tests/bootstrap.php, which runs migrate:fresh at the start of every PHPUnit
+    # run; running it here as well built the same schema twice, about ten seconds
+    # each time.
     echo "Setting up fresh test database..."
     docker exec ${prefix}-batch mysql -h percona -u root -piznik --skip-ssl -e "CREATE DATABASE IF NOT EXISTS iznik_batch_test" 2>&1
-    docker exec -e DB_DATABASE=iznik_batch_test ${prefix}-batch php artisan migrate:fresh --database=mysql --force 2>&1
 
     # Recompile Blade views from the working tree. Without this, a previously
     # compiled view (e.g. an old email template referencing a now-removed
