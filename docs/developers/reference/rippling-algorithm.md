@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-08
+last_reviewed: 2026-10-10
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -845,9 +845,10 @@ was posted to directly. `advanceDue` writes its status with `status <> 'held'`, 
 while a run is in flight survives it.
 
 `FreezeReachIfOriginPending` (`iznik-server-go/microvolunteering`) sets `status='held'` when a
-post's origin copy stops being live-Approved, typically Back to Pending. It is the only writer,
-and nothing clears it: the freeze exists precisely so that re-approving a copy cannot re-reach
-and re-notify.
+post's origin copy stops being live-Approved, typically Back to Pending. A home community's Back
+to pending freezes unconditionally (`FreezeReach`), because a hand-approved copy on a second home
+community can leave the origin Approved. Those are the only writers, and nothing clears it: the
+freeze exists precisely so that re-approving a copy cannot re-reach and re-notify.
 
 Freezing governs what we SEND, not who has been reached:
 
@@ -858,17 +859,39 @@ Freezing governs what we SEND, not who has been reached:
   a reply from them is still held. They have not been reached, and freezing does not alter that;
   the answer is the same one they would get on a post still expanding.
 
+### Back to pending spares hand-approved copies elsewhere
+
+`handleBackToPending` first lists the copies a moderator approved by hand on communities other
+than the ones the acting moderator is acting on (`moderatorApprovedElsewhere`: live, Approved,
+`approvedby IS NOT NULL`). Only `handleApprove` sets `approvedby`; the content check,
+auto-approve and the ripple insert leave it NULL. Those copies are left exactly as they are:
+Approved, `approvedby`/`approvedat` kept, no `needs_moderator`, no log. Every other live copy has
+its approval cleared and goes to Pending through `SendForReviewGroupsExcept`, and the acting
+moderator's own copies always do. The member-report quorum and a moderator's report call
+`SendForReviewAllGroups`, which spares nothing.
+
 ### Home Back to pending withdraws the copies (`rippling_blocked`)
 
 `handleBackToPending` (`iznik-server-go/message`) calls `withdrawRippledCopiesAndBlock` when the
 acting moderator moderates a group the post was posted to directly (`HomeGroups`,
-`rippled_in = 0`). Each rippled-in copy is retracted the way `retractRippledCopyInGroup` retracts
-one: soft-deleted, a Message/Deleted log to that group, and the poster's ripple-join membership
-(`rippled = 1`) removed when they have no other live post there, with no Group/Left. The post is
-then recorded in `rippling_blocked` (one row per post), and the home copies go to Pending as
-before. Back to pending from a receiving community's moderator, or the member-report quorum
-(`SendForReviewAllGroups`), withdraws nothing. `SendForReviewAllGroups` moves only live copies (Approved, not
-deleted) to Pending, so a withdrawn copy stays withdrawn and gets no Hold log.
+`rippled_in = 0`). Each rippled-in copy, other than a spared hand-approved one, is retracted the
+way `retractRippledCopyInGroup` retracts one: soft-deleted, a Message/Deleted log to that group,
+and the poster's ripple-join membership (`rippled = 1`) removed when they have no other live post
+there, with no Group/Left. The post is then recorded in `rippling_blocked` (one row per post),
+the home copies go to Pending, and the reach is frozen. Back to pending from a receiving
+community's moderator, or the member-report quorum (`SendForReviewAllGroups`), withdraws nothing.
+`SendForReviewAllGroups` moves only live copies (Approved, not deleted) to Pending, so a withdrawn
+copy stays withdrawn and gets no Hold log.
+
+A spared rippled-in copy survives the ripple engine while the home copy is Pending: the reach is
+`held`, so `retractOutOfReachCopies` and the opt-out retraction skip it, and
+`retractCopiesOrphanedByOriginRemoval` and `removeStaleAndRetract` spare a held reach whose home
+row is still Pending. Once the home copy is deleted or rejected, those retract it like any other
+copy. While the reach is held the post is out of the nearby feed, so a spared copy shows on its
+own community's listings (which filter on that community's `messages_groups` row), not nearby.
+
+When a receiving community sends a post back and the home copy is spared, the origin is still
+Approved, so the reach is not frozen and keeps expanding.
 
 `initialiseNew` never starts a reach for a post in `rippling_blocked`. That is what makes the
 block durable: the frozen reach row already stops expansion and every read path, but a repost

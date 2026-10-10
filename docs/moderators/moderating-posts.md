@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-03
+last_reviewed: 2026-10-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -128,7 +128,8 @@ reason shown on the post. The whole picture is in [rippling out](rippling-out.md
 
 If the post's **home** community sends it back to pending, the post is withdrawn from your
 community and never ripples to you again, even if they approve it. There is nothing for you to
-do: it does not arrive in your pending list.
+do: it does not arrive in your pending list. The exception is a copy one of your moderators
+has already approved by hand: that stays live on your community, because you have reviewed it.
 
 ### Safeguarding flags
 
@@ -205,16 +206,23 @@ network-wide:
   post, it moves back to Pending on **every** community it is on, is hidden from members,
   and stops rippling while under review. Each community's moderators then decide on their
   own copy.
-- **A moderator reporting**, or moving a post **Back to Pending** in ModTools, counts on
-  its own - no quorum needed - and pulls the post to Pending everywhere it has reached. The
-  exception is a moderator of the post's **home** community moving it back to pending: that
-  withdraws it from every community it rippled into instead, and it never ripples again.
+- **A moderator reporting** counts on its own - no quorum needed - and pulls the post to
+  Pending everywhere it has reached.
+- **A moderator moving a post Back to Pending** in ModTools pulls it to Pending everywhere it
+  has reached, except on a community whose own moderator has already approved it by hand:
+  that copy stays live, because that community has reviewed it. Your own copies always go
+  back. When it is a moderator of the post's **home** community, the copies on the
+  communities it rippled into are withdrawn instead of going to Pending, and it never
+  ripples again; a rippled-in copy that community's moderator approved by hand still stays.
 
 A copy moved **Back to Pending** (other than by the home community) waits for a moderator of
 that community. Nothing approves it
 automatically: not the content check, not the auto-approval for posts that rippled in, and not
 the post being approved again on its home community. Approve or reject it as you would any
 other pending post.
+
+A post approved automatically (by the content check, by auto-approval, or by rippling in)
+has not been approved by hand, so it is pulled back.
 
 In all these cases the copies are **kept**, each community decides independently, and
 re-approving a copy does **not** re-notify members or re-ripple from scratch. Rejecting a

@@ -404,8 +404,9 @@ click - so a rippled copy may linger very briefly before it disappears.
 
 (**Back to Pending** works differently from Delete/Reject. From the home community it withdraws
 the rippled copies at once and the post never ripples again; from anywhere else it keeps each
-community's copy for per-group review and does **not** re-ripple on re-approval - see
-**Reporting a post** below.)
+community's copy for per-group review and does **not** re-ripple on re-approval. Either way, a
+copy a community's own moderator has already approved by hand stays live there - see
+**Moving a post back to pending in ModTools** below.)
 
 While a post is in that frozen state we stop advertising it: it is not included in daily
 digests, immediate emails or phone notifications, because it is under review and we should
@@ -506,15 +507,22 @@ rejected it.
 ### Moving a post back to pending in ModTools
 
 You don't have to go via the Freegle site at all. Moving a post from **Approved back to
-Pending** in **ModTools** - the ordinary moderation action - now does the same thing as a
-report: it pulls the post to Pending on **every** community it is on (its home community and
-every rippled copy), not just yours.
+Pending** in **ModTools** - the ordinary moderation action - pulls the post to Pending on
+every community it is on (its home community and every rippled copy), not just yours.
 
-So one moderator catching a problem in ModTools takes the post off the board **everywhere**
-for review, instead of leaving live copies stranded on the neighbouring communities you
-cannot see. As with a report, the copies are **kept** (not deleted), each community approves
-or rejects its own, and **re-approving brings a copy back without re-notifying members or
-re-rippling from scratch**.
+So one moderator catching a problem in ModTools takes the post off the board for review,
+instead of leaving live copies stranded on the neighbouring communities you cannot see. As
+with a report, the copies are **kept** (not deleted), each community approves or rejects its
+own, and **re-approving brings a copy back without re-notifying members or re-rippling from
+scratch**.
+
+**A copy another community's moderator has already approved by hand stays live.** That
+community has reviewed the post, so it is not asked to again: its copy stays Approved, still
+shows as approved by that moderator, and nothing about it appears in their pending list or
+their logs. This applies to the home community's copy too, when one of its moderators
+approved it. A copy that went live without a moderator approving it - by the content check,
+by auto-approval, or by rippling in - is pulled back. Your own community's copy always goes
+back, whoever approved it.
 
 If you only moderate a community it rippled into, your Back to Pending does not stop anyone
 else approving theirs.
@@ -523,13 +531,18 @@ else approving theirs.
 home community is where the poster posted, and its moderators have taken the decision, so the
 neighbouring communities are not each given a copy to decide again. The post is **withdrawn**
 from every community it rippled into, straight away, and their logs say it was withdrawn
-because the home community sent it back. It does **not** appear in their pending lists.
+because the home community sent it back. It does **not** appear in their pending lists. A
+community whose own moderator had already approved its copy by hand keeps it live.
 
 The post then **never ripples again**: not when the home community approves it, and not after
-the poster reposts it or it expires and is reposted. It stays on its home community only.
+the poster reposts it or it expires and is reposted. It stays on its home community, and on any
+community that kept its hand-approved copy.
 
 A Back to Pending by a moderator of a community the post only rippled **into**, and a
 report by members, withdraw nothing. Those copies stay independent, as described above.
+
+A report by members, or by a moderator, is not a moderator's review of each copy, so it pulls
+every copy back to Pending, hand-approved ones included.
 
 ---
 

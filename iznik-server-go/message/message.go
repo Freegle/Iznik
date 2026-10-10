@@ -3167,30 +3167,39 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
 		Update("heldby", myid)
 
-	// Pull the WHOLE post back to Pending, not just this mod's groups: a moderator moving
-	// any copy back to pending takes the post off the board on EVERY community it is on
-	// (home + rippled-out copies), so it is never left stranded and still visible on the
-	// neighbouring communities. Each community then approves or rejects its own copy
-	// independently. Clear approvedby/approvedat on every live copy first, then flip to
-	// Pending.
-	db.Table("messages_groups").Where("msgid = ? AND collection = ?", req.ID, utils.COLLECTION_APPROVED).
-		Updates(map[string]interface{}{"approvedby": gorm.Expr("NULL"), "approvedat": gorm.Expr("NULL")})
+	// A copy on another community that one of its own moderators has approved by hand stays
+	// Approved, with its approvedby/approvedat: that community has reviewed the post and is
+	// not asked to again. Everything else is pulled back.
+	kept := moderatorApprovedElsewhere(db, req.ID, authorizedGroups)
+
+	// Pull the rest of the post back to Pending, not just this mod's groups: a moderator
+	// moving any copy back to pending takes the post off the board on every community that
+	// has not reviewed it (home + rippled-out copies), so it is never left stranded and still
+	// visible on the neighbouring communities. Each community then approves or rejects its
+	// own copy independently. Clear approvedby/approvedat on every copy being pulled back
+	// first, then flip to Pending.
+	unapprove := db.Table("messages_groups").Where("msgid = ? AND collection = ?", req.ID, utils.COLLECTION_APPROVED)
+	if len(kept) > 0 {
+		unapprove = unapprove.Where("groupid NOT IN ?", kept)
+	}
+	unapprove.Updates(map[string]interface{}{"approvedby": gorm.Expr("NULL"), "approvedat": gorm.Expr("NULL")})
 	// The groups this moderator acted on get their own log and mod notification below;
 	// every other group whose copy is pulled back (rippled copies elsewhere) gets a Hold
 	// log from SendForReviewAllGroups, so its moderators can see why the post is back in
-	// their queue and who did it (Discourse 10102).
+	// their queue and who did it (Discourse 10102). A kept copy gets no log.
 	//
 	// When the acting moderator moderates the post's HOME community, the post is withdrawn
-	// from every community it rippled into and never ripples again (Discourse 9808/849): the
-	// home community has taken the decision, so the receiving communities' moderators are not
-	// given a copy each to decide again. A Back to pending from a receiving community's own
-	// moderator, or by a members' report quorum, withdraws nothing: those copies stay
-	// independent and come back to Pending for their own moderators.
+	// from every community it rippled into that has not reviewed it, and never ripples again
+	// (Discourse 9808/849): the home community has taken the decision, so the receiving
+	// communities' moderators are not given a copy each to decide again. A Back to pending
+	// from a receiving community's own moderator, or by a members' report quorum, withdraws
+	// nothing: those copies stay independent and come back to Pending for their own
+	// moderators.
 	fromHome := actingOnHomeGroup(db, req.ID, authorizedGroups)
 	if fromHome {
-		withdrawRippledCopiesAndBlock(db, req.ID, myid)
+		withdrawRippledCopiesAndBlock(db, req.ID, myid, kept)
 	}
-	flipped := microvolunteering.SendForReviewAllGroupsWithRippledReason(db, req.ID, "A moderator moved this post back to pending for review.", "", &myid, authorizedGroups)
+	flipped := microvolunteering.SendForReviewGroupsExcept(db, req.ID, "A moderator moved this post back to pending for review.", "", &myid, authorizedGroups, kept)
 
 	// Every copy pulled back, and the copy this moderator acted on, now waits for a
 	// moderator of its own group: needs_moderator stops the content check and auto-approve
@@ -3201,8 +3210,14 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 
 	// Freeze the ripple once the origin is Pending: the copies persist for per-group
 	// moderation and a later re-approval brings a copy back without re-rippling or
-	// re-notifying members.
-	microvolunteering.FreezeReachIfOriginPending(db, req.ID)
+	// re-notifying members. A home send-back freezes it outright: a kept copy on a second
+	// home community leaves the origin Approved, and the post must still never spread
+	// further.
+	if fromHome {
+		microvolunteering.FreezeReach(db, req.ID)
+	} else {
+		microvolunteering.FreezeReachIfOriginPending(db, req.ID)
+	}
 
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
@@ -6690,23 +6705,45 @@ const rippleBlockedReason = "home sent back to pending"
 // withdraws the post from it.
 const withdrawnByHomeLogText = "Withdrawn: the home community moved this post back to pending, so it will not ripple here again."
 
+// moderatorApprovedElsewhere returns the groups, other than the ones the moderator is acting
+// on, where the post is live and Approved by a moderator's hand (approvedby set). Automatic
+// approvals and rippled-in copies leave approvedby NULL, so they are never in the list. Read
+// from the write host, because the caller writes on its answer and an approval made moments
+// earlier may not have reached the read node yet.
+func moderatorApprovedElsewhere(db *gorm.DB, msgid uint64, acting []uint64) []uint64 {
+	q := db.Clauses(dbresolver.Write).Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND collection = ? AND deleted = 0 AND approvedby IS NOT NULL", msgid, utils.COLLECTION_APPROVED)
+	if len(acting) > 0 {
+		q = q.Where("groupid NOT IN ?", acting)
+	}
+
+	var kept []uint64
+	q.Scan(&kept)
+
+	return kept
+}
+
 // withdrawRippledCopiesAndBlock takes a post out of every community it rippled into, the way
 // the ripple engine retracts a copy (ExpandService::retractRippledCopyInGroup): soft-delete the
 // copy, log Message/Deleted to that community, and remove the poster's ripple-join membership
 // when they have no other live post there. No Group/Left is written: a Left after a rippled
-// join reads as the poster opting out of that community for good.
+// join reads as the poster opting out of that community for good. A copy in keep, one that
+// community's own moderator approved by hand, is left live and Approved.
 //
 // It then records the post in rippling_blocked, which the ripple engine reads before starting a
 // reach, so a re-approval, a repost or an expiry and repost never ripples it out again. The
-// reach row itself is frozen by FreezeReachIfOriginPending once the home copy is Pending.
-func withdrawRippledCopiesAndBlock(db *gorm.DB, msgid, myid uint64) {
+// reach row itself is frozen by the caller.
+func withdrawRippledCopiesAndBlock(db *gorm.DB, msgid, myid uint64, keep []uint64) {
 	var fromuser uint64
 	db.Table("messages").Select("fromuser").Where("id = ?", msgid).Scan(&fromuser)
 
 	var rippled []uint64
-	db.Table("messages_groups").Select("groupid").
-		Where("msgid = ? AND rippled_in = 1 AND deleted = 0", msgid).
-		Scan(&rippled)
+	q := db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND rippled_in = 1 AND deleted = 0", msgid)
+	if len(keep) > 0 {
+		q = q.Where("groupid NOT IN ?", keep)
+	}
+	q.Scan(&rippled)
 
 	for _, gid := range rippled {
 		res := db.Table("messages_groups").

@@ -900,19 +900,30 @@ func SendForReviewAllGroups(db *gorm.DB, msgid uint64, reason string, byuser *ui
 // communities are told it was the home community. rippledReason "" means the same reason
 // everywhere.
 func SendForReviewAllGroupsWithRippledReason(db *gorm.DB, msgid uint64, reason string, rippledReason string, byuser *uint64, alreadyLogged []uint64) []uint64 {
+	return SendForReviewGroupsExcept(db, msgid, reason, rippledReason, byuser, alreadyLogged, nil)
+}
+
+// SendForReviewGroupsExcept is SendForReviewAllGroupsWithRippledReason that leaves the copies
+// on the groups in keep live and Approved, untouched and unlogged. A moderator's Back to
+// pending uses it to spare copies another community's moderator has already approved by hand.
+// A report quorum passes nothing and pulls every copy.
+func SendForReviewGroupsExcept(db *gorm.DB, msgid uint64, reason string, rippledReason string, byuser *uint64, alreadyLogged []uint64, keep []uint64) []uint64 {
 	if msgid == 0 {
 		return nil
 	}
 
 	var flipped []uint64
-	db.Table("messages_groups").Select("groupid").
-		Where("msgid = ? AND collection = ? AND deleted = 0", msgid, utils.COLLECTION_APPROVED).
-		Scan(&flipped)
+	q := db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND collection = ? AND deleted = 0", msgid, utils.COLLECTION_APPROVED)
+	if len(keep) > 0 {
+		q = q.Where("groupid NOT IN ?", keep)
+	}
+	q.Scan(&flipped)
 	if len(flipped) == 0 {
 		return nil
 	}
 
-	db.Table("messages_groups").Where("msgid = ? AND collection = ? AND deleted = 0", msgid, utils.COLLECTION_APPROVED).
+	db.Table("messages_groups").Where("msgid = ? AND groupid IN ? AND collection = ? AND deleted = 0", msgid, flipped, utils.COLLECTION_APPROVED).
 		Updates(map[string]interface{}{"collection": utils.COLLECTION_PENDING, "spamreason": reason})
 
 	var rippledGroups []uint64
@@ -977,6 +988,16 @@ func FreezeReachIfOriginPending(db *gorm.DB, msgid uint64) {
 		Where("msgid = ? AND rippled_in = 0 AND deleted = 0 AND collection = ?", msgid, utils.COLLECTION_APPROVED).
 		Count(&approvedOrigin)
 	if approvedOrigin > 0 {
+		return
+	}
+	FreezeReach(db, msgid)
+}
+
+// FreezeReach freezes a post's ripple whatever state its origin copies are in. A home
+// community's Back to pending uses it, because a copy on a second home community that its own
+// moderator approved by hand stays Approved, and the post must still never spread further.
+func FreezeReach(db *gorm.DB, msgid uint64) {
+	if msgid == 0 {
 		return
 	}
 	db.Table("rippling_reach").Where("msgid = ? AND status <> 'held'", msgid).
