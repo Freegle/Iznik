@@ -29,6 +29,7 @@ import (
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/amp"
 	"github.com/freegle/iznik-server-go/authority"
+	"github.com/freegle/iznik-server-go/automod"
 	"github.com/freegle/iznik-server-go/avatar"
 	"github.com/freegle/iznik-server-go/browse"
 	"github.com/freegle/iznik-server-go/changes"
@@ -58,6 +59,7 @@ import (
 	"github.com/freegle/iznik-server-go/membership"
 	"github.com/freegle/iznik-server-go/merge"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/moderation"
 
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
@@ -867,6 +869,7 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/locations", location.ExcludeLocation)
 
 		rg.Get("/modtools/messages", message.ListMessagesMT)
+		rg.Post("/modtools/messages/markchecked", message.MarkChecked)
 
 		// Message Sitemap
 		// @Router /message/sitemap [get]
@@ -1477,6 +1480,13 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 401 {object} fiber.Error "Unauthorized"
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/email/stats", emailtracking.Stats)
+
+		// Moderation analytics for the auto-approve approach (Admin/Support only).
+		rg.Get("/modtools/moderationstats", moderation.Stats)
+
+		// Automated review: a moderator marks one step wrong; the SysAdmin agreement report.
+		rg.Post("/modtools/automod/feedback", automod.Feedback)
+		rg.Get("/modtools/automod/agreement", automod.Agreement)
 
 		// Deferral suppressions (authenticated, admin only)
 		// @Router /modtools/email/deferrals [get]

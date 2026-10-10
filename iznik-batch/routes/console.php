@@ -277,6 +277,30 @@ Schedule::command('ripple:proximity-notes')
     ->appendOutputTo(cronLog('ripple:proximity-notes'))
     ->runInBackground();
 
+// Walk Pending posts in shadow/approve-trial groups (FREEGLE_AUTOMOD_SHADOW_GROUPS,
+// FREEGLE_AUTOAPPROVE_TRIAL_GROUPS) through the automod chart once their content check has
+// run, and record the verdict on messages_automod. Runs every minute, before
+// messages:auto-approve-clean, so that command's "clean" check has a fresh row to read.
+// Dark by default: AutomodMode::eligibleGroupIds() gates it inside the service. Overlap
+// expiry bounded (minutes) so a killed run can't leave a mutex behind indefinitely.
+Schedule::command('messages:automod')
+    ->everyMinute()
+    ->withoutOverlapping(15)
+    ->appendOutputTo(cronLog('messages:automod'))
+    ->runInBackground();
+
+// Auto-approve content-check-clean posts from NULL-status ("auto-moderated") members
+// after the configured delay (default 20 min), unless danger signals are present and
+// excluding a quality-check sample. Runs every minute so the window is honoured tightly.
+// Dark by default: FREEGLE_AUTOAPPROVE_ENABLED / FREEGLE_AUTOAPPROVE_TRIAL_GROUPS gate it
+// inside the service. Overlap expiry bounded (minutes) so a killed run can't leave a
+// mutex behind that stalls auto-approval for the default 24h.
+Schedule::command('messages:auto-approve-clean')
+    ->everyMinute()
+    ->withoutOverlapping(15)
+    ->appendOutputTo(cronLog('messages:auto-approve-clean'))
+    ->runInBackground();
+
 // Update UK spatial data - runs monthly.
 // Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
 // Signals Go spatial server to reload after update.

@@ -129,6 +129,37 @@ const SHOTS = [
     path: '/messages/pending',
   },
   {
+    // Post-moderation oversight: the Check queue, posts that published
+    // themselves and are waiting for a look.
+    audience: 'moderators',
+    name: 'check',
+    auth: 'mod',
+    app: 'mod',
+    path: '/messages/check',
+  },
+  {
+    // Automated review's decision on a Pending post: the one-line reason.
+    audience: 'moderators',
+    name: 'automod-line',
+    auth: 'mod',
+    app: 'mod',
+    path: '/messages/pending',
+    clip: '.automod-line:has-text("holding")',
+  },
+  {
+    // "Why?" opened: each question the flowchart asked, its answer and evidence.
+    audience: 'moderators',
+    name: 'automod-why',
+    auth: 'mod',
+    app: 'mod',
+    path: '/messages/pending',
+    // A held post, so the modal shows the question that held it.
+    click: '.automod-line:has-text("holding") .automod-line__why',
+    // Tall enough for the whole path, which is longer than a phone screen.
+    viewport: { width: 390, height: 1700 },
+    clip: '.modal.show .modal-dialog',
+  },
+  {
     audience: 'moderators',
     name: 'members',
     auth: 'mod',
@@ -211,18 +242,42 @@ async function capture(context, shot) {
   const outDir = resolve(DOCS_ROOT, shot.audience, 'assets')
   await mkdir(outDir, { recursive: true })
   const page = context.page
+  await page.setViewportSize(shot.viewport || cfg.viewport)
   await page.goto(base + shot.path, {
     waitUntil: 'networkidle',
     timeout: cfg.navTimeout,
   })
   // Settle animations and lazy content.
   await page.waitForTimeout(1500)
-  await page.screenshot({
+  // shot.click opens something first (a modal); shot.clip captures just that element
+  // rather than the whole page.
+  if (shot.click) {
+    // The list can re-render under the click (the work poll refreshes it), so retry until
+    // what the click should open has appeared.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await page.locator(shot.click).first().click()
+      try {
+        await page.locator(shot.clip).first().waitFor({ state: 'visible', timeout: 5000 })
+        break
+      } catch {
+        await page.waitForTimeout(1000)
+      }
+    }
+  }
+  const opts = {
     path: resolve(outDir, shot.name + '.png'),
     animations: 'disabled',
     caret: 'hide',
     mask: MASK.map((sel) => page.locator(sel)),
-  })
+  }
+  if (shot.clip) {
+    const el = page.locator(shot.clip).first()
+    await el.waitFor({ state: 'visible', timeout: 15000 })
+    await el.scrollIntoViewIfNeeded()
+    const box = await el.boundingBox()
+    opts.clip = { x: box.x, y: box.y, width: box.width, height: box.height }
+  }
+  await page.screenshot(opts)
   console.log(`  captured ${shot.audience}/${shot.name}.png  (${shot.path})`)
 }
 

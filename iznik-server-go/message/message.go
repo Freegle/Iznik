@@ -609,7 +609,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// issue because these messages were posted with the intention of being public. It also
 				// allows shared links to work even before moderation approval.
 				db.Table("messages_groups").
-					Select("groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in, mod_messaging_allowed, locked_by_home").
+					Select("groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in, mod_messaging_allowed, locked_by_home, quality_sample, autoapprove_hold_until, needs_moderator").
 					Where("msgid = ? AND deleted = 0", id).Scan(&messageGroups)
 				effectiveHomeLocks(messageGroups)
 
@@ -746,6 +746,21 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			isGroupMod := isMod
 			if !isGroupMod {
 				isGroupMod = isModForMessage(db, myid, idNum)
+			}
+
+			// A4. Auto-approve countdown: for Pending posts viewed by a moderator,
+			// compute the per-group autoapproveat estimate (clean-path delay or 48h
+			// fallback, capped by autoapprove_hold_until; nil if danger-signalled,
+			// spam, held, or not on an auto-approve path). Mirrors the eligibility of
+			// AutoApproveCleanService/AutoApproveService — see message/autoapproveat.go.
+			if isGroupMod && myid > 0 {
+				computeAutoapproveat(db, &message, messageGroups, id)
+			}
+
+			// Inline each group's stored automod decision (messages_groups[].automod) for a
+			// moderator of that specific group on an automod group - see populateAutomodDecisions.
+			if myid > 0 {
+				populateAutomodDecisions(db, myid, message.ID, messageGroups)
 			}
 
 			// Postings (history of which groups this message was on) are public information,

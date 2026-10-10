@@ -46,6 +46,8 @@ function mountComponent() {
         ModSysAdminRipplingDensity: stub('c-ripplingdensity'),
         ModSysAdminRipplingAnalytics: stub('c-rippling'),
         ModSysAdminSupportAI: stub('c-supportai'),
+        ModSysAdminModerationStats: stub('c-moderation'),
+        ModSysAdminAutomod: stub('c-automod'),
       },
     },
   })
@@ -57,7 +59,7 @@ describe('sysadmin page tab grouping', () => {
     mockRouteQuery.value = {}
   })
 
-  it('shows the grouped top-level tabs: Housekeeping, Cron Jobs, Mail, Behaviour, Rippling, AI Helper', async () => {
+  it('shows the grouped top-level tabs: Housekeeping, Cron Jobs, Mail, Behaviour, Rippling, AI Helper, Moderation', async () => {
     const wrapper = mountComponent()
     await flushPromises()
     const text = wrapper.text()
@@ -68,6 +70,7 @@ describe('sysadmin page tab grouping', () => {
       'Behaviour',
       'Rippling',
       'AI Helper',
+      'Moderation',
     ]) {
       expect(text).toContain(label)
     }
@@ -98,6 +101,7 @@ describe('sysadmin page tab grouping', () => {
     expect(wrapper.find('.c-housekeeping').exists()).toBe(true)
     expect(wrapper.find('.c-reengage').exists()).toBe(false)
     expect(wrapper.find('.c-emailstats').exists()).toBe(false)
+    expect(wrapper.find('.c-moderation').exists()).toBe(false)
   })
 
   it('deep-links ?tab=reengagement to the Behaviour tab and loads the effectiveness panel', async () => {
@@ -154,6 +158,20 @@ describe('sysadmin page tab grouping', () => {
     const wrapper = mountComponent()
     await flushPromises()
     expect(wrapper.find('.c-supportai').exists()).toBe(true)
+  })
+
+  it('deep-links ?tab=moderation to the Moderation tab', async () => {
+    mockRouteQuery.value = { tab: 'moderation' }
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.find('.c-moderation').exists()).toBe(true)
+  })
+
+  it('mounts the automated review agreement panel next to Moderation', async () => {
+    mockRouteQuery.value = { tab: 'moderation' }
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.find('.c-automod').exists()).toBe(true)
   })
 
   it('shows an access notice to non-admins', () => {

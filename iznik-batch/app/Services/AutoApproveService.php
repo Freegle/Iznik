@@ -133,6 +133,18 @@ class AutoApproveService
                     ->where('lh.kind', LockdownHoldsService::KIND_POST)
                     ->whereNull('lh.outcome');
             })
+            // Respect a moderator-set hold window (set by the Go Pending list fetch,
+            // extend-only to NOW()+10m) so a post a mod is actively reviewing is not
+            // auto-approved out from under them.
+            ->where(function ($q) {
+                $q->whereNull('messages_groups.autoapprove_hold_until')
+                    ->orWhere('messages_groups.autoapprove_hold_until', '<=', DB::raw('NOW()'));
+            })
+            // Posts held back as a manual quality-check sample stay held for a human:
+            // letting the 48h fallback sweep them up would silently drain the sample
+            // AutoApproveCleanService set aside, breaking the sample-vs-population
+            // error-rate comparison on the moderation stats.
+            ->where('messages_groups.quality_sample', 0)
             ->where(function ($q) {
                 // Normal posts: the 48h fallback (unchanged).
                 $q->where(function ($q2) {
@@ -345,16 +357,30 @@ class AutoApproveService
         // V1 approve(): UPDATE messages_groups SET collection='Approved', approvedby=whoAmId(),
         // approvedat=NOW(), arrival=NOW() WHERE msgid=? AND groupid=? AND collection!='Approved'
         // V1 whoAmId() returns NULL in cron context (no session).
-        DB::table('messages_groups')
+        $updated = DB::table('messages_groups')
             ->where('msgid', $candidate->msgid)
             ->where('groupid', $groupid)
             ->where('collection', '!=', MessageGroup::COLLECTION_APPROVED)
+            // Re-check the mod hold at write time: a moderator loading the Pending
+            // queue between the candidate query and this UPDATE bumps
+            // autoapprove_hold_until, and their guaranteed review window must win.
+            ->where(function ($q) {
+                $q->whereNull('autoapprove_hold_until')
+                    ->orWhere('autoapprove_hold_until', '<=', DB::raw('NOW()'));
+            })
             ->update([
                 'collection' => MessageGroup::COLLECTION_APPROVED,
                 'approvedby' => null,
                 'approvedat' => now(),
                 'arrival' => now(),
             ]);
+
+        if ($updated === 0) {
+            // Hold bumped mid-run, or someone else approved it first — either way the
+            // approval did not happen here, so no Autoapproved log (the moderation
+            // stats count those logs as real auto-approvals).
+            return;
+        }
 
         // V1 autoapprove() log: type=Message, subtype=Autoapproved.
         DB::table('logs')->insert([

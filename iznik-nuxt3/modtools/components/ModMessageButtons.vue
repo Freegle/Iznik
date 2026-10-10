@@ -97,6 +97,16 @@
         leave
         label="Blank Reply"
       />
+      <SpinButton
+        v-if="oversight && approved"
+        data-testid="oversight-reject"
+        variant="warning"
+        class="m-1"
+        icon-name="times"
+        label="Reject"
+        :flex="false"
+        @handle="rejectFromOversight"
+      />
       <ModMessageButton
         v-if="isHomeGroup && !modsHeld"
         :messageid="message.id"
@@ -254,6 +264,14 @@ const props = defineProps({
     required: false,
     default: true,
   },
+  // Set to true ONLY from the Check oversight page: shows a Reject button for Approved posts.
+  // It pulls the post back to Pending, held by this moderator, and the card turns into the
+  // usual Pending card so the moderator approves, edits or rejects it as normal.
+  oversight: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
 })
 
 const { modsHeld } = useLockdown()
@@ -401,6 +419,13 @@ function outcome(callback, type) {
     id: props.messageid,
     outcome: type,
   })
+  if (callback) callback()
+}
+
+// Oversight Reject button (Check page only): pull the post back to Pending via
+// markChecked({reject:true}); it stays in the list as a Pending card.
+async function rejectFromOversight(callback) {
+  await messageStore.rejectFromOversight(props.messageid, props.groupid)
   if (callback) callback()
 }
 </script>

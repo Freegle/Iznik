@@ -148,6 +148,9 @@ describe('PendingPage', () => {
           'client-only': {
             template: '<div><slot /></div>',
           },
+          ModHelpPending: {
+            template: '<div class="mod-help-pending" />',
+          },
           ScrollToTop: {
             template: '<div class="scroll-to-top" />',
           },

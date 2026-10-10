@@ -1,0 +1,285 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\BackgroundTask;
+use App\Models\Message;
+use App\Models\MessageAutomod;
+use App\Models\MessageGroup;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+
+/**
+ * Auto-approve content-check-clean posts from NULL-posting-status ("auto-moderated")
+ * members after a configurable delay (default 20 minutes).
+ *
+ * Members whose memberships.ourPostingStatus is NULL have never been given an explicit
+ * posting status. Historically NULL was treated as MODERATED, so their posts sat in
+ * Pending until a moderator acted or the 48-hour AutoApproveService fallback fired.
+ *
+ * This service reinterprets NULL as "auto-moderated": their posts are held in Pending for
+ * a short window — giving moderators and microvolunteers a chance to intervene — and are
+ * then released automatically. A configurable percentage is held back as a manual
+ * quality-check sample.
+ *
+ * Posts only become eligible once the automod chart (messages:automod, AutomodService)
+ * has reviewed them and recorded an approve verdict on messages_automod — see
+ * plans/active/automod-flowchart.md. That chart is what now applies the group-eligibility
+ * and member-danger-signal checks that used to live here directly (groupAllowsAutoApprove()
+ * and hasDangerSignals() were ported verbatim to AutomodFactsService::groupDisallows() and
+ * ::memberVeto()); this service no longer duplicates them. A row goes stale — and this
+ * service stops treating it as clean — the moment the post is edited after the chart last
+ * saw it (messages.editedat past messages_automod.created).
+ *
+ * Trusted members (DEFAULT/UNMODERATED) are unaffected — contentcheck already approves
+ * their clean posts immediately. Explicit MODERATED/PROHIBITED members are unaffected too.
+ */
+class AutoApproveCleanService
+{
+    /** How long a clean post waits in Pending before it publishes itself: the same for every community. */
+    public function delayMinutes(): int
+    {
+        return (int) config('freegle.autoapprove.delay_minutes', 20);
+    }
+
+    /** Share of otherwise-clean posts held back for a moderator's verdict: the same for every community. */
+    public function qualityCheckPercent(): int
+    {
+        return (int) config('freegle.autoapprove.quality_check_percent', 0);
+    }
+
+    /**
+     * Rollout gate for the clean-path auto-approve.
+     *
+     * @return int[]|null null  = enabled everywhere (subject to per-group checks);
+     *                    []    = fully off (the default — deploying this code is a no-op);
+     *                    [ids] = phased trial: enabled only for these groups.
+     */
+    public function enabledGroupIds(): ?array
+    {
+        if (config('freegle.autoapprove.enabled', false)) {
+            return null;
+        }
+
+        $csv = trim((string) config('freegle.autoapprove.trial_group_ids', ''));
+        if ($csv === '') {
+            return [];
+        }
+
+        return array_values(array_filter(array_map('intval', explode(',', $csv))));
+    }
+
+    /**
+     * Process all eligible pending messages.
+     *
+     * @return array{approved:int, held_quality:int, errors:int}
+     */
+    public function process(bool $dryRun = false): array
+    {
+        $stats = ['approved' => 0, 'held_quality' => 0, 'errors' => 0];
+
+        $enabledGroupIds = $this->enabledGroupIds();
+        if ($enabledGroupIds === []) {
+            // Feature dark (default): posts follow the pre-existing behaviour — Pending
+            // until a moderator acts or the 48h AutoApproveService fallback fires.
+            return $stats;
+        }
+
+        // One site-wide delay for every community (config freegle.autoapprove.delay_minutes).
+        // There is deliberately no per-community override: members get the same wait
+        // everywhere, and the Go countdown in autoapproveat.go assumes the same figure.
+        $candidates = DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->join('users as u', 'u.id', '=', 'm.fromuser')
+            ->join('memberships as mem', function ($j) {
+                $j->on('mem.userid', '=', 'm.fromuser')->on('mem.groupid', '=', 'mg.groupid');
+            })
+            ->join('groups as g', 'g.id', '=', 'mg.groupid')
+            ->select('mg.msgid', 'mg.groupid', 'm.fromuser', 'm.spamtype', 'm.subject', DB::raw('m.type as msgtype'))
+            ->where('mg.collection', MessageGroup::COLLECTION_PENDING)
+            ->whereNull('mg.heldby')
+            ->whereNull('m.heldby')
+            ->whereNull('mg.spamreason')
+            ->whereNull('m.spamreason')
+            // Never auto-approve a message that is in the Spam collection on ANY
+            // group (Discourse #9654). Spam-collection messages surface in the
+            // Pending review queue but must be actioned by a human — mirroring
+            // the identical guard in AutoApproveService.
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('messages_groups as spam_mg')
+                    ->whereColumn('spam_mg.msgid', 'mg.msgid')
+                    ->where('spam_mg.collection', MessageGroup::COLLECTION_SPAM)
+                    ->where('spam_mg.deleted', 0);
+            })
+            ->where('mg.deleted', 0)
+            ->whereNull('m.deleted')
+            ->whereNull('u.deleted')
+            ->whereNull('mem.ourPostingStatus')           // the auto-moderated tier
+            ->whereNotNull('mg.contentcheck_checked_at')   // content check has run ...
+            // ... and the automod chart (messages:automod) has since reviewed it and recorded
+            // an approve verdict that is still fresh — i.e. not superseded by a later edit.
+            // This replaces the old direct contentCleanSql()/groupAllowsAutoApprove()/
+            // hasDangerSignals() checks, which now live in AutomodFactsService instead
+            // (plans/active/automod-flowchart.md).
+            ->whereExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('messages_automod as ma')
+                    ->whereColumn('ma.msgid', 'mg.msgid')
+                    ->whereColumn('ma.groupid', 'mg.groupid')
+                    ->where('ma.verdict', MessageAutomod::VERDICT_APPROVE)
+                    // keep-raw: COALESCE against a nullable column (m.editedat) compared to
+                    // another column (ma.created) isn't expressible with whereColumn/where.
+                    ->whereRaw('ma.created >= COALESCE(m.editedat, ?)', ['1970-01-01 00:00:00']);
+            })
+            ->where('mg.quality_sample', 0)               // already-sampled rows are excluded entirely
+            ->where('mg.rippled_in', 0)                   // rippled-in rows belong to AutoApproveService (carries the Taken/Received + rippled_in_pending_hours + recentLogs-bypass guards)
+            // keep-raw: NOW() - INTERVAL keeps the comparison on the database clock, like the hold check below.
+            ->whereRaw('mg.arrival <= (NOW() - INTERVAL ? MINUTE)', [$this->delayMinutes()])
+            ->whereRaw(
+                '(mg.autoapprove_hold_until IS NULL OR mg.autoapprove_hold_until <= NOW())'
+            )
+            // Phased trial: while the master switch is off, only the listed groups take part.
+            ->when($enabledGroupIds !== null, function ($q) use ($enabledGroupIds) {
+                $q->whereIn('mg.groupid', $enabledGroupIds);
+            })
+            ->orderBy('mg.msgid')
+            ->orderBy('mg.groupid')
+            // Bound the per-tick batch like the sibling every-minute crons (ripple:expand
+            // etc.): a post-outage backlog drains at 500/minute instead of one huge run
+            // outliving its overlap mutex. Oldest msgids first, so the backlog is FIFO.
+            ->limit(500)
+            ->get();
+
+        foreach ($candidates as $row) {
+            try {
+                if ($this->isQualitySampled((int) $row->msgid)) {
+                    if (!$dryRun) {
+                        // Mark it as a quality-check sample so the moderation-stats
+                        // dashboard can compare the mod's verdict on the sample
+                        // against the auto-approved population's later error rate.
+                        DB::table('messages_groups')
+                            ->where('msgid', $row->msgid)
+                            ->where('groupid', $row->groupid)
+                            ->where('quality_sample', 0)
+                            ->update(['quality_sample' => 1]);
+                        $stats['held_quality']++;
+                    }
+                    continue;
+                }
+
+                if ($dryRun) {
+                    $stats['approved']++;
+                    Log::info("Dry run: would auto-approve clean message #{$row->msgid} on group #{$row->groupid}");
+                    continue;
+                }
+
+                $this->approve($row);
+                $stats['approved']++;
+            } catch (\Exception $e) {
+                Log::error("AutoApproveClean: error processing message #{$row->msgid}: " . $e->getMessage());
+                $stats['errors']++;
+            }
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Deterministically hold a site-wide percentage of otherwise-eligible posts in
+     * Pending so a moderator spot-checks the auto-approval quality. Deterministic on msgid
+     * so a held message never oscillates between runs. There is no per-community rate;
+     * the Go countdown (autoapproveat.go) reads the same env variable.
+     */
+    protected function isQualitySampled(int $msgid): bool
+    {
+        $percent = $this->qualityCheckPercent();
+        if ($percent <= 0) {
+            return false;
+        }
+        if ($percent >= 100) {
+            return true;
+        }
+
+        return (abs(crc32((string) $msgid)) % 100) < $percent;
+    }
+
+    /**
+     * Approve a message on a group. Mirrors AutoApproveService::approveOnGroup side effects
+     * (NULL approvedby, reset arrival, Autoapproved log, Ham recording) and additionally
+     * queues a freebie-alert task for Offers, matching the immediate contentcheck approval.
+     */
+    protected function approve(object $row): void
+    {
+        // notSpam parity: whitelist the subject when it was flagged for cross-group reuse.
+        if ($row->spamtype === 'SubjectUsedForDifferentGroups' && $row->subject) {
+            DB::table('spam_whitelist_subjects')->insertOrIgnore([
+                'subject' => AutoApproveService::getPrunedSubject($row->subject),
+                'comment' => 'Marked as not spam',
+            ]);
+        }
+
+        // notSpam parity: record HAM when the message had been marked spam.
+        if ($row->spamtype) {
+            DB::table('messages_spamham')->upsert(
+                ['msgid' => $row->msgid, 'spamham' => 'Ham'],
+                ['msgid'],
+                ['spamham']
+            );
+        }
+
+        DB::transaction(function () use ($row) {
+            DB::table('messages_groups')
+                ->where('msgid', $row->msgid)
+                ->where('groupid', $row->groupid)
+                ->where('collection', '!=', MessageGroup::COLLECTION_APPROVED)
+                ->update([
+                    'collection' => MessageGroup::COLLECTION_APPROVED,
+                    'approvedby' => null,            // NULL marks an auto-approval
+                    'approvedat' => now(),
+                    'arrival'    => now(),           // so the digest picks it up as new
+                ]);
+
+            DB::table('logs')->insert([
+                'timestamp' => now(),
+                'type'      => 'Message',
+                'subtype'   => 'Autoapproved',
+                'msgid'     => $row->msgid,
+                'groupid'   => $row->groupid,
+                'user'      => $row->fromuser,
+            ]);
+
+            if ($row->msgtype === Message::TYPE_OFFER) {
+                DB::table('background_tasks')->insert([
+                    'task_type' => BackgroundTask::TASK_FREEBIE_ALERTS_ADD,
+                    'data'      => json_encode(['msgid' => (int) $row->msgid]),
+                ]);
+            }
+
+            // Mirror the Go manual-approve path (addApprovedMessageToSpatialIndex): seed
+            // messages_spatial now so the post appears in browse/search — and becomes
+            // visible to the rippling engine — immediately, instead of waiting up to
+            // 5 minutes for the spatial reconciler cron. Re-checks Approved so it is a
+            // no-op if anything above did not land.
+            // keep-raw: INSERT ... SELECT with ST_GeomFromText and ON DUPLICATE KEY UPDATE; the builder's insertUsing cannot render the upsert clause.
+            DB::statement(
+                "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+                 SELECT m.id, ST_GeomFromText(CONCAT('POINT(', m.lng, ' ', m.lat, ')'), 3857),
+                        mg.groupid, m.type, mg.arrival
+                 FROM messages m
+                 INNER JOIN messages_groups mg ON mg.msgid = m.id
+                 LEFT JOIN messages_outcomes mo ON mo.msgid = m.id
+                 WHERE m.id = ? AND mg.groupid = ? AND mg.collection = 'Approved'
+                   AND mg.deleted = 0 AND m.deleted IS NULL
+                   AND m.lat IS NOT NULL AND m.lng IS NOT NULL
+                   AND NOT (m.lat = 0 AND m.lng = 0)
+                   AND mo.id IS NULL
+                 ON DUPLICATE KEY UPDATE point = VALUES(point), msgtype = VALUES(msgtype),
+                                         arrival = VALUES(arrival)",
+                [$row->msgid, $row->groupid]
+            );
+        });
+
+        Log::info("AutoApproveClean: approved message #{$row->msgid} on group #{$row->groupid}");
+    }
+}
