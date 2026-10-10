@@ -286,7 +286,7 @@ Schedule::command('ripple:proximity-notes')
 Schedule::command('messages:automod')
     ->everyMinute()
     ->withoutOverlapping(15)
-    ->sendOutputTo(cronLog('messages:automod'))
+    ->appendOutputTo(cronLog('messages:automod'))
     ->runInBackground();
 
 // Auto-approve content-check-clean posts from NULL-status ("auto-moderated") members
@@ -298,7 +298,7 @@ Schedule::command('messages:automod')
 Schedule::command('messages:auto-approve-clean')
     ->everyMinute()
     ->withoutOverlapping(15)
-    ->sendOutputTo(cronLog('messages:auto-approve-clean'))
+    ->appendOutputTo(cronLog('messages:auto-approve-clean'))
     ->runInBackground();
 
 // Update UK spatial data - runs monthly.
