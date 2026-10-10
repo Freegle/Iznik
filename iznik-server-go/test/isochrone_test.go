@@ -96,8 +96,11 @@ func TestEnsureIsochroneExistsWithDifferentTransports(t *testing.T) {
 	transports := []string{"Walk", "Cycle", "Drive"}
 	isoIDs := make(map[string]uint64)
 
+	// A small budget: the routing server computes all three polygons on every call,
+	// and the work grows with the budget (20 minutes took about 0.15s a call, 5 takes
+	// a few ms). The test is about one row per transport, not the size of the area.
 	for _, transport := range transports {
-		isoID := isochrone.EnsureIsochroneExists(locID, transport, 20)
+		isoID := isochrone.EnsureIsochroneExists(locID, transport, 5)
 		assert.Greater(t, isoID, uint64(0), "Should create isochrone for transport: "+transport)
 		isoIDs[transport] = isoID
 	}
@@ -119,7 +122,11 @@ func TestEnsureIsochroneExistsReturnsExisting(t *testing.T) {
 	prefix := uniquePrefix("ExistingIso")
 	db := database.DBConn
 
-	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 52.5200, 13.4050, ST_GeomFromText('POINT(13.4050 52.5200)', ?))", prefix+"_loc", utils.SRID)
+	// A point on the UK road graph. This used to be Berlin, which the routing server
+	// answers with an empty polygon, so the first call silently fell through to the
+	// Mapbox API: a real request to a third party, with the production key, in a test
+	// about reusing a row.
+	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 55.9533, -3.1883, ST_GeomFromText('POINT(-3.1883 55.9533)', ?))", prefix+"_loc", utils.SRID)
 	var locID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_loc").Scan(&locID)
 	assert.Greater(t, locID, uint64(0))
@@ -127,8 +134,8 @@ func TestEnsureIsochroneExistsReturnsExisting(t *testing.T) {
 	db.Exec("DELETE FROM isochrones WHERE locationid = ?", locID)
 
 	// Call ensureIsochroneExists twice with same parameters
-	isoID1 := isochrone.EnsureIsochroneExists(locID, "Cycle", 25)
-	isoID2 := isochrone.EnsureIsochroneExists(locID, "Cycle", 25)
+	isoID1 := isochrone.EnsureIsochroneExists(locID, "Cycle", 5)
+	isoID2 := isochrone.EnsureIsochroneExists(locID, "Cycle", 5)
 
 	// Should return the same ID both times
 	assert.Equal(t, isoID1, isoID2, "Should return existing isochrone ID, not create duplicate")
@@ -213,7 +220,8 @@ func TestEnsureIsochroneExistsDuplicateInsertIgnore(t *testing.T) {
 	prefix := uniquePrefix("EnsureDupe")
 	db := database.DBConn
 
-	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 52.5200, 13.4050, ST_GeomFromText('POINT(13.4050 52.5200)', ?))",
+	// A point on the UK road graph, for the same reason as TestEnsureIsochroneExistsReturnsExisting.
+	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 55.9533, -3.1883, ST_GeomFromText('POINT(-3.1883 55.9533)', ?))",
 		prefix+"_dupe_loc", utils.SRID)
 	var locID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_dupe_loc").Scan(&locID)
@@ -252,7 +260,10 @@ func TestEnsureIsochroneExistsMinutesVariation(t *testing.T) {
 
 	db.Exec("DELETE FROM isochrones WHERE locationid = ?", locID)
 
-	minuteValues := []int{5, 15, 25, 45}
+	// Four distinct budgets, kept small: the routing server's work grows with the
+	// budget (45 minutes' walking took 1.6s a call, 5 to 20 minutes a few ms to 0.15s)
+	// and the test is about one row per budget, not the size of the areas.
+	minuteValues := []int{5, 10, 15, 20}
 	isoIDs := make(map[int]uint64)
 
 	for _, mins := range minuteValues {
