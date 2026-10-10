@@ -117,7 +117,9 @@ export default defineEventHandler(async (event) => {
       if (line.match(/^\s*[✓✔]/)) {
         state.progress.passed++
         state.progress.completed++
-        const nameMatch = line.match(/[✓✔]\s+(.+?)(?:\s+\(\d+)/)
+        // The verbose reporter ends a test line with its duration as "12ms",
+        // older reporters with "(12ms)"; take the name from before either.
+        const nameMatch = line.match(/[✓✔]\s+(.+?)(?:\s+\(?\d+\s*ms\)?)?\s*$/)
         if (nameMatch) {
           state.progress.current = nameMatch[1].trim()
         }

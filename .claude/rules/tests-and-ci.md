@@ -169,6 +169,12 @@ genuinely on different lines.
 - **A spec that presses the lockdown holds every other spec's writes.** Keep it in the
   `lockdown` project, which runs as the teardown of `lockdown-order` after every other project
   has finished, and out of the `chromium` project's match.
+- **A unit spec's wrappers are unmounted after every test by `tests/unit/setup.ts`.** A wrapper
+  left mounted stays subscribed to the file's shared mock refs, so each `beforeEach` reset
+  re-renders every instance mounted so far before the next test body runs, and the file's time
+  grows with the square of its test count: 280ms per trivial test in MessageExpanded.spec.js,
+  18ms once unmounted. Do not mount in one test and read in the next, and do not call
+  `enableAutoUnmount` in a spec; a second call throws.
 
 ## CI failures that are about the build, not the branch
 
