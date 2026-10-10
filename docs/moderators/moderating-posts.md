@@ -1,17 +1,19 @@
 ---
-last_reviewed: 2026-10-03
+last_reviewed: 2026-10-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
   - iznik-nuxt3/modtools/components/ModMessage*.vue
   - iznik-nuxt3/modtools/components/ModStdMessageModal.vue
   - iznik-nuxt3/modtools/utils/stdMessageDirectives.js
+  - iznik-nuxt3/modtools/composables/multiGroupModeration.js
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-modtools-pending-messages.spec.js
   - iznik-nuxt3/tests/e2e/test-modtools-edits.spec.js
   - iznik-server-go/test/modtools_edits_rippled_in_test.go
   - iznik-server-go/test/modmessaging_test.go
   - iznik-server-go/test/modtools_searchmemb_test.go
+  - iznik-server-go/test/multigroup_moderation_test.go
   - iznik-batch/tests/Unit/Services/Ripple/**
 ---
 
@@ -29,7 +31,10 @@ appear, for the community (or all your communities) you have selected.
 
 The dropdown at the top of the page remembers what you picked, on that browser, and
 applies it again next time. The **Pending** count in the menu, on the other hand, counts
-posts across every community you moderate. So the two can disagree: if the community you
+posts across every community you moderate, each post once however many of your communities
+it is waiting on. The count beside each community in the dropdown counts the posts waiting
+on that community, so a post waiting on three of your communities adds one to each of them
+but one to the menu. The menu and the page can disagree: if the community you
 picked is quiet, the page is empty while the menu still shows a count. When that happens
 the page says so, names the community it is filtered to, and offers a button to go back
 to all your communities, which also clears the remembered choice.
@@ -60,6 +65,31 @@ For each post you can:
   refused with a message saying so rather than reported as done.
 - **Delete** or **Delete as Spam** (on your own community's posts).
 
+### A post pending on several of your communities
+
+If you moderate several neighbouring communities, the same post can be waiting on more than
+one of them - the communities it was posted to, and the ones it rippled into whose own rules
+held it. You see it once, and the card says **Pending on N of your communities**, with the
+communities listed.
+
+**Approve**, **Reject** and **Delete**, including a standard message that approves, rejects
+or deletes, then act on all of them in one go. You do not have to approve the same post once
+per community, and it does not come back for the next one. The member is told once, not once
+per community: if they are to get a message at all, it comes from the community you are
+looking at. A switch on the card narrows the buttons to just the community you are looking
+at, if you want to decide one community at a time.
+
+Some copies are left alone, and the card names them:
+
+- A copy **held by another volunteer** is theirs to decide. It keeps its hold and stays in
+  pending.
+- A copy that rippled in and is **waiting for its home community** (the home community sent
+  the post back to pending) cannot be approved until they approve theirs. If you also
+  moderate the home community and are approving its copy too, the waiting copies are
+  approved along with it.
+
+**Hold**, **Release** and **Delete as Spam** always act on the community you are looking at.
+
 If a post only breaks a small rule, prefer **editing it with a note** over rejecting it.
 Reject only for the core rules: a post must be **free** and **legal**.
 
@@ -80,8 +110,8 @@ ModTools tells you *why* a post needs a look, right on the post:
 - **Duplicate and cross-post detection** warns when the same subject was posted recently,
   or appears on another community.
 - **Rippling banners** explain when a post has rippled in from a neighbouring community
-  ("do not reject just for being out of area"), or has rippled out to several communities
-  (so approving here affects only your community). A **View rippling reach** map shows
+  ("do not reject just for being out of area"), or is on several of your communities but
+  waiting only on this one (so approving here affects only this community). A **View rippling reach** map shows
   where the post is or will be visible. The map is the post's full reach; an individual
   member inside it still only sees the post if it is within the travel time their own
   area justifies, which is further in the countryside than in a city - so "it is on the
@@ -128,7 +158,8 @@ reason shown on the post. The whole picture is in [rippling out](rippling-out.md
 
 If the post's **home** community sends it back to pending, the post is withdrawn from your
 community and never ripples to you again, even if they approve it. There is nothing for you to
-do: it does not arrive in your pending list.
+do: it does not arrive in your pending list. The exception is a copy one of your moderators
+has already approved by hand: that stays live on your community, because you have reviewed it.
 
 ### Safeguarding flags
 
@@ -205,16 +236,23 @@ network-wide:
   post, it moves back to Pending on **every** community it is on, is hidden from members,
   and stops rippling while under review. Each community's moderators then decide on their
   own copy.
-- **A moderator reporting**, or moving a post **Back to Pending** in ModTools, counts on
-  its own - no quorum needed - and pulls the post to Pending everywhere it has reached. The
-  exception is a moderator of the post's **home** community moving it back to pending: that
-  withdraws it from every community it rippled into instead, and it never ripples again.
+- **A moderator reporting** counts on its own - no quorum needed - and pulls the post to
+  Pending everywhere it has reached.
+- **A moderator moving a post Back to Pending** in ModTools pulls it to Pending everywhere it
+  has reached, except on a community whose own moderator has already approved it by hand:
+  that copy stays live, because that community has reviewed it. Your own copies always go
+  back. When it is a moderator of the post's **home** community, the copies on the
+  communities it rippled into are withdrawn instead of going to Pending, and it never
+  ripples again; a rippled-in copy that community's moderator approved by hand still stays.
 
 A copy moved **Back to Pending** (other than by the home community) waits for a moderator of
 that community. Nothing approves it
 automatically: not the content check, not the auto-approval for posts that rippled in, and not
 the post being approved again on its home community. Approve or reject it as you would any
 other pending post.
+
+A post approved automatically (by the content check, by auto-approval, or by rippling in)
+has not been approved by hand, so it is pulled back.
 
 In all these cases the copies are **kept**, each community decides independently, and
 re-approving a copy does **not** re-notify members or re-ripple from scratch. Rejecting a

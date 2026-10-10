@@ -345,8 +345,22 @@ describe('ModMessage', () => {
             props: ['modelValue', 'type', 'multiple'],
           },
           ModMessageButtons: {
+            name: 'ModMessageButtons',
             template: '<div class="mod-message-buttons"><slot /></div>',
-            props: ['messageid', 'modconfigid', 'editreview', 'cantpost'],
+            props: [
+              'messageid',
+              'modconfigid',
+              'editreview',
+              'cantpost',
+              'groupid',
+              'groupids',
+            ],
+          },
+          'b-form-checkbox': {
+            template:
+              '<label class="b-form-checkbox"><input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" /><slot /></label>',
+            props: ['modelValue', 'switch'],
+            emits: ['update:modelValue'],
           },
           ModMessageButton: {
             template: '<button class="mod-message-button"><slot /></button>',
@@ -1658,8 +1672,103 @@ describe('ModMessage', () => {
         mockMyModGroups.splice(1)
       })
 
-      it('warns that approving affects one community when moderating', () => {
-        const wrapper = mountComponent({}, { groups: twoGroups })
+      it('says the post is pending on both, and acts on both by default', async () => {
+        const wrapper = mountComponent(
+          { summary: false },
+          { groups: twoGroups }
+        )
+        await wrapper.vm.$nextTick()
+        const notice = wrapper.find('[data-test="multi-group-pending"]')
+        expect(notice.exists()).toBe(true)
+        expect(notice.text()).toContain('2 of your communities')
+        expect(
+          wrapper.find('[data-test="multi-group-mod-warning"]').exists()
+        ).toBe(false)
+
+        const buttons = wrapper.findComponent({ name: 'ModMessageButtons' })
+        expect(buttons.props('groupids')).toHaveLength(2)
+        expect(buttons.props('groupids')[0]).toBe(buttons.props('groupid'))
+      })
+
+      it('narrows to the community being looked at when the switch is turned off', async () => {
+        const wrapper = mountComponent(
+          { summary: false },
+          { groups: twoGroups }
+        )
+        await wrapper
+          .find('[data-test="multi-group-act-on-all"] input')
+          .setValue(false)
+
+        const buttons = wrapper.findComponent({ name: 'ModMessageButtons' })
+        expect(buttons.props('groupids')).toBeNull()
+        expect(
+          wrapper.find('[data-test="multi-group-mod-warning"]').text()
+        ).toContain('affects')
+      })
+
+      it('names a copy held by another volunteer and leaves it out', async () => {
+        const wrapper = mountComponent(
+          { summary: false },
+          {
+            groups: [twoGroups[0], { ...twoGroups[1], heldby: 4242 }],
+          }
+        )
+        await wrapper.vm.$nextTick()
+
+        expect(wrapper.find('[data-test="multi-group-held"]').text()).toContain(
+          'Group 790'
+        )
+        const buttons = wrapper.findComponent({ name: 'ModMessageButtons' })
+        expect(buttons.props('groupids')).toBeNull()
+      })
+
+      it('names a copy locked by the home community and leaves it out', async () => {
+        mockMyModGroups.push({ ...mockMyModGroups[0], id: 791 })
+        const wrapper = mountComponent(
+          { summary: false },
+          {
+            groups: [
+              { groupid: 500, collection: 'Pending', rippled_in: 0 },
+              {
+                groupid: 789,
+                collection: 'Pending',
+                rippled_in: 1,
+                locked_by_home: 0,
+              },
+              {
+                groupid: 790,
+                collection: 'Pending',
+                rippled_in: 1,
+                locked_by_home: 0,
+              },
+              {
+                groupid: 791,
+                collection: 'Pending',
+                rippled_in: 1,
+                locked_by_home: 1,
+              },
+            ],
+          }
+        )
+        await wrapper.vm.$nextTick()
+
+        expect(
+          wrapper.find('[data-test="multi-group-locked"]').text()
+        ).toContain('Group 791')
+        const buttons = wrapper.findComponent({ name: 'ModMessageButtons' })
+        expect([...buttons.props('groupids')].sort()).toEqual([789, 790])
+      })
+
+      it('still warns that only one community is affected when the other copy is live', () => {
+        const wrapper = mountComponent(
+          {},
+          {
+            groups: [twoGroups[0], { ...twoGroups[1], collection: 'Approved' }],
+          }
+        )
+        expect(wrapper.find('[data-test="multi-group-pending"]').exists()).toBe(
+          false
+        )
         expect(
           wrapper.find('[data-test="multi-group-mod-warning"]').exists()
         ).toBe(true)

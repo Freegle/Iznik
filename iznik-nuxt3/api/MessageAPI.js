@@ -11,6 +11,13 @@ function onBehalfOfQuery(userid) {
   return userid ? '?onbehalfof=' + encodeURIComponent(userid) : ''
 }
 
+// Approve, Reject and Delete can act on several of a moderator's communities at once. The
+// field is only sent when there are communities to name, so a single-community action
+// goes out exactly as it always has.
+function severalCommunities(groupids) {
+  return Array.isArray(groupids) && groupids.length ? { groupids } : {}
+}
+
 export default class MessageAPI extends BaseAPI {
   fetch(id, logError = true) {
     return this.$getv2('/message/' + id, {}, logError)
@@ -213,7 +220,16 @@ export default class MessageAPI extends BaseAPI {
     return null
   }
 
-  approve(id, groupid, subject = null, stdmsgid = null, body = null) {
+  // groupids, when given, is every community the action is to act on at once (the Go API's
+  // resolveActionGroups); without it the action is on groupid alone.
+  approve(
+    id,
+    groupid,
+    subject = null,
+    stdmsgid = null,
+    body = null,
+    groupids = null
+  ) {
     return this.$postv2(
       '/message',
       {
@@ -223,6 +239,7 @@ export default class MessageAPI extends BaseAPI {
         subject,
         stdmsgid,
         body,
+        ...severalCommunities(groupids),
       },
       notAHeldConflict
     )
@@ -251,7 +268,14 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
-  reject(id, groupid, subject = null, stdmsgid = null, body = null) {
+  reject(
+    id,
+    groupid,
+    subject = null,
+    stdmsgid = null,
+    body = null,
+    groupids = null
+  ) {
     return this.$postv2(
       '/message',
       {
@@ -261,12 +285,20 @@ export default class MessageAPI extends BaseAPI {
         subject,
         stdmsgid,
         body,
+        ...severalCommunities(groupids),
       },
       notAHeldConflict
     )
   }
 
-  delete(id, groupid, subject = null, stdmsgid = null, body = null) {
+  delete(
+    id,
+    groupid,
+    subject = null,
+    stdmsgid = null,
+    body = null,
+    groupids = null
+  ) {
     return this.$postv2(
       '/message',
       {
@@ -276,6 +308,7 @@ export default class MessageAPI extends BaseAPI {
         subject,
         stdmsgid,
         body,
+        ...severalCommunities(groupids),
       },
       notAHeldConflict
     )

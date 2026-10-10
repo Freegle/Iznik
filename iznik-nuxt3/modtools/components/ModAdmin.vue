@@ -308,6 +308,27 @@
       </b-card-body>
       <b-card-footer v-if="expanded && admin.pending">
         <p v-if="saveError" class="text-danger fw-bold">{{ saveError }}</p>
+        <p
+          v-if="!admin.heldby && needsTest && !tested"
+          class="text-danger mb-2 approve-waits"
+        >
+          <span v-if="testedKey">
+            You've changed this ADMIN since your test, so Approve is waiting for
+            a new test of the designed version.
+          </span>
+          <span v-else>
+            Approve is waiting for you to send yourself a test of the designed
+            version.
+          </span>
+          <b-button
+            variant="link"
+            size="sm"
+            class="p-0 align-baseline go-to-test"
+            @click="goToTest"
+          >
+            Go to the test
+          </b-button>
+        </p>
         <NoticeMessage v-if="oneSided" variant="warning" class="mb-2 one-sided">
           You've changed the {{ oneSided }} version but not the other one. Every
           member gets one of the two, so they should normally say the same.
@@ -627,6 +648,16 @@ function hold() {
 function release() {
   adminsStore.release({ id: admin.value.id })
   checkWork(true)
+}
+
+// The test box sits in the card body, a long scroll above the footer on a phone, so the
+// footer's note about a disabled Approve offers a way straight to it.
+function goToTest() {
+  const input = document.getElementById('testemail-' + admin.value.id)
+  if (input) {
+    input.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    input.focus({ preventScroll: true })
+  }
 }
 
 async function approve() {

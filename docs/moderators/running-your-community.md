@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-09
+last_reviewed: 2026-10-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/settings/**
@@ -141,8 +141,10 @@ Text-only ADMINs need no test. Give one email address (it starts as your own) an
 *Send one test to this address only*. That sends one email, to that
 address only, built exactly as a member of that community would get it, with "TEST:" in front of
 the subject. *Approve and send to all members* stays unavailable until the test is sent, and any
-change after the test needs a new test. The exception is a copy of a suggested ADMIN that nobody
-has changed, which can be approved without a test.
+change after the test needs a new test. While it is waiting, a line beside the button says so,
+with *Go to the test* to jump to the test box. The exception is a copy of a suggested ADMIN that
+nobody has changed, which can be approved without a test. A change to either version counts,
+including the plain-text one: after that the designed version needs a test too.
 
 The **Previous** tab loads only when you open it, newest first, and loads more as you scroll; you
 can narrow it to one community. The Pending tab lists only what is waiting for review.
