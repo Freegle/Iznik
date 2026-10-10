@@ -169,12 +169,16 @@ jobs:
                                 -e "s|\${HETZNER_SELF_TOKEN}|$HTOKEN|g" scripts/hetzner/cloud-init.yaml)
                 BODY=$(jq -n --arg n "$RUNNER_NAME" --arg u "$USER_DATA" \
                   '{name:$n, server_type:"cpx62", image:"ubuntu-24.04", location:"nbg1", ssh_keys:["hetzner-ci-runner"], user_data:$u, start_after_create:true}')
-                RESP=$(curl -sf -X POST "$HAPI/servers" -H "Authorization: Bearer $HTOKEN" -H "Content-Type: application/json" -d "$BODY" 2>/dev/null) || true
+                # No -f: on a refusal Hetzner says why in the body (e.g. a resource limit), and -f
+                # threw that away, leaving "provision failed:" with nothing after it.
+                RESP=$(curl -s -w '\n%{http_code}' -X POST "$HAPI/servers" -H "Authorization: Bearer $HTOKEN" -H "Content-Type: application/json" -d "$BODY" 2>&1) || true
+                HTTP_CODE=$(echo "$RESP" | tail -n 1)
+                RESP=$(echo "$RESP" | sed '$d')
                 SID=$(echo "$RESP" | jq -r '.server.id // empty' 2>/dev/null)
                 if [ -n "$SID" ]; then
                   echo "Created Hetzner server $SID; runner registers in ~4 min and claims the build."
                 else
-                  echo "WARNING: Hetzner provision failed: $(echo "$RESP" | jq -c '.error // .' 2>/dev/null) — job will queue on existing runners"
+                  echo "WARNING: Hetzner provision failed (HTTP $HTTP_CODE): $(echo "$RESP" | jq -c '.error // .' 2>/dev/null || echo "$RESP" | head -c 300) — job will queue on existing runners"
                 fi
               else
                 echo "At Hetzner runner cap ($MAX_RUNNERS) — job will queue on existing runners"

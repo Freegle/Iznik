@@ -28,6 +28,7 @@ write_files:
       [ -z "$TOKEN" ] && { echo "no self-token; self-destruct disabled"; exit 0; }
       SID="$(curl -s http://169.254.169.254/hetzner/v1/metadata/instance-id)"
       IDLE_MIN=10; REAP_WINDOW=10; MAX_UPTIME=9000; ZOMBIE_TASK_AGE=12600; idle_since=""
+      CAP_IDLE_MIN=5; cap_idle_since=""
       reap() { echo "self-destructing: $1 (uptime ${up}s)"; curl -s -X DELETE "https://api.hetzner.cloud/v1/servers/$SID" -H "Authorization: Bearer $TOKEN" -w "\nHTTP %{http_code}\n"; exit 0; }
       while true; do
         now="$(date +%s)"; up="$(awk '{print int($1)}' /proc/uptime)"
@@ -41,7 +42,16 @@ write_files:
         # its uptime, because one runner works through a queue of builds back to back and its uptime
         # says nothing about the job in hand. A job that never ends is killed when the job itself is
         # older than ZOMBIE_TASK_AGE; max_run_time is 2h, so a real build cannot reach it.
-        [ "$up" -ge "$MAX_UPTIME" ] && [ "$agent" -eq 0 ] && reap "uptime cap, no task agent"
+        # Past the cap, wait for CAP_IDLE_MIN minutes in a row with no task agent before deleting.
+        # Between two queued builds there is a gap of a minute or so while the launch agent claims
+        # the next one; deleting in that gap stranded every build still queued, because the
+        # pipelines that queued them had seen a live runner and provisioned none of their own.
+        if [ "$up" -ge "$MAX_UPTIME" ] && [ "$agent" -eq 0 ]; then
+          [ -z "$cap_idle_since" ] && cap_idle_since="$now"
+          [ $(( now - cap_idle_since )) -ge $(( CAP_IDLE_MIN*60 )) ] && reap "uptime cap, no task agent for ${CAP_IDLE_MIN}m"
+        else
+          cap_idle_since=""
+        fi
         [ "${task_age:-0}" -ge "$ZOMBIE_TASK_AGE" ] && reap "zombie job, task agent ${task_age}s old"
         # Busy = task agent running OR the freegle-ci compose stack is up (scoped by compose project).
         if [ "$agent" -eq 1 ] || docker ps -q --filter label=com.docker.compose.project=freegle-ci 2>/dev/null | grep -q .; then
