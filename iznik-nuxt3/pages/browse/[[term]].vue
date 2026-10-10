@@ -694,7 +694,7 @@ onMounted(async () => {
           const daysago = dayjs().diff(dayjs(me.value.added), 'days')
 
           if (daysago > 7) {
-            // Nudge to ask people to to introduce themselves.
+            // Nudge to ask people to introduce themselves.
             showAboutMeModal.value = true
           }
         } else {

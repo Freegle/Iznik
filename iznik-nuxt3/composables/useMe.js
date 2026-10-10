@@ -27,7 +27,7 @@ export async function fetchMe(hitServer, forceServer = false) {
   //
   // - hitServer = false
   //   - with await.  We must have the user info, but it's ok for them to be a little out of
-  //     date.  If we have it in hand we can return but fire off a server request to make sure is is up
+  //     date.  If we have it in hand we can return but fire off a server request to make sure it is up
   //     to date soon.  If we don't, we must hit the server and wait.
   //   - without await.  We just want to trigger an update but don't much care when it happens.
   //
