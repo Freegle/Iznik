@@ -1672,11 +1672,12 @@ describe('ModMessage', () => {
         mockMyModGroups.splice(1)
       })
 
-      it('says the post is pending on both, and acts on both by default', () => {
+      it('says the post is pending on both, and acts on both by default', async () => {
         const wrapper = mountComponent(
           { summary: false },
           { groups: twoGroups }
         )
+        await wrapper.vm.$nextTick()
         const notice = wrapper.find('[data-test="multi-group-pending"]')
         expect(notice.exists()).toBe(true)
         expect(notice.text()).toContain('2 of your communities')
@@ -1705,13 +1706,14 @@ describe('ModMessage', () => {
         ).toContain('affects')
       })
 
-      it('names a copy held by another volunteer and leaves it out', () => {
+      it('names a copy held by another volunteer and leaves it out', async () => {
         const wrapper = mountComponent(
           { summary: false },
           {
             groups: [twoGroups[0], { ...twoGroups[1], heldby: 4242 }],
           }
         )
+        await wrapper.vm.$nextTick()
 
         expect(wrapper.find('[data-test="multi-group-held"]').text()).toContain(
           'Group 790'
@@ -1720,7 +1722,7 @@ describe('ModMessage', () => {
         expect(buttons.props('groupids')).toBeNull()
       })
 
-      it('names a copy locked by the home community and leaves it out', () => {
+      it('names a copy locked by the home community and leaves it out', async () => {
         mockMyModGroups.push({ ...mockMyModGroups[0], id: 791 })
         const wrapper = mountComponent(
           { summary: false },
@@ -1748,6 +1750,7 @@ describe('ModMessage', () => {
             ],
           }
         )
+        await wrapper.vm.$nextTick()
 
         expect(
           wrapper.find('[data-test="multi-group-locked"]').text()
