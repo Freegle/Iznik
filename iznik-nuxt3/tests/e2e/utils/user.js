@@ -7,6 +7,7 @@ const path = require('path')
 const { expect } = require('@playwright/test')
 const { timeouts, DEFAULT_TEST_PASSWORD } = require('../config')
 const { SCREENSHOTS_DIR } = require('../config')
+const { trackFailedLoads, waitForAppMount } = require('./app-mount')
 const { waitForModal } = require('./ui')
 
 /**
@@ -197,21 +198,80 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     const desktopLogout = page.locator('#menu-option-logout')
     const mobileLogout = page.locator('text=Logout').filter({ visible: true })
 
-    // Briefly wait for a logout button to become visible. Right after
-    // signUpViaHomepage / loginViaHomepage the navbar may still be hydrating,
-    // and the synchronous isVisible() check below would miss it — causing a
-    // fall-through into the expensive gotoAndVerify('/') path that can hang
-    // for 200+ seconds under parallel CI load and burn the test budget
-    // (symptom: test-reply-flow-existing-user.spec.js 3.1 timing out at 20m
-    // after "No logout button visible").
-    await Promise.race([
-      desktopLogout
+    // The navbar only renders a logout control for a signed-in member, and it
+    // hydrates that state from the persisted auth in localStorage. So on a
+    // page with no app loaded (about:blank in a fresh context), or one with
+    // no stored auth and no logout button already in the DOM, there is
+    // nothing to wait for: waiting anyway cost the full ten seconds every
+    // time, and was the single largest cost in the suite. Anything that stops
+    // the check from answering (a navigation in flight, say) counts as
+    // "could be signed in" so the wait below still happens.
+    const couldBeSignedIn =
+      !page.isClosed() &&
+      page.url() !== 'about:blank' &&
+      (await Promise.race([
+        page
+          .evaluate(() => {
+            try {
+              const parsed = JSON.parse(localStorage.getItem('auth') || 'null')
+              if (parsed?.auth?.jwt || parsed?.auth?.persistent) return true
+            } catch {}
+            return !!document.querySelector('#menu-option-logout')
+          })
+          .catch(() => true),
+        new Promise((resolve) => setTimeout(() => resolve(true), 5000)),
+      ]))
+
+    // Right after signUpViaHomepage / loginViaHomepage the navbar may still be
+    // hydrating, and the synchronous isVisible() checks below would miss the
+    // logout control, causing a fall-through into the expensive goto('/')
+    // path that can hang for 200+ seconds under parallel CI load and burn the
+    // test budget (symptom: test-reply-flow-existing-user.spec.js 3.1 timing
+    // out at 20m after "No logout button visible"). So wait for the navbar to
+    // settle first. "Settled" is whichever of these renders first:
+    //   #menu-option-logout  desktop navbar, signed in
+    //   .userOptions         mobile navbar, signed in. Its Logout item sits
+    //                        inside this dropdown and is hidden until the
+    //                        dropdown is opened, so waiting for the item
+    //                        itself never returned on a mobile viewport
+    //   .test-signinbutton   either navbar, signed out
+    //   #loginModal          ModTools, signed out
+    //   a[href="/messages/pending"]  ModTools, signed in (its sidebar; the
+    //                        ModTools logout is not a control this helper
+    //                        clicks, it clears the session instead)
+    //   .nav-back-btn        a chat page on a mobile viewport, which has
+    //                        the chat's own bar instead of a navbar
+    // Waiting for the logout controls alone ran the whole ten seconds on
+    // every mobile-viewport call and every page without a navbar: fourteen
+    // times a run after the first fix, 287 times before it.
+    if (couldBeSignedIn) {
+      await page
+        .locator(
+          '#menu-option-logout, .userOptions, .test-signinbutton, #loginModal, a[href="/messages/pending"], .nav-back-btn'
+        )
+        .filter({ visible: true })
+        .first()
         .waitFor({ state: 'visible', timeout: 10000 })
-        .catch(() => {}),
-      mobileLogout
-        .waitFor({ state: 'visible', timeout: 10000 })
-        .catch(() => {}),
-    ])
+        .catch(async () => {
+          // Say what the page looked like, so the next person can see what
+          // kind of page falls through here instead of guessing.
+          const state = await page
+            .evaluate(() => ({
+              url: location.href,
+              width: innerWidth,
+              auth: !!localStorage.getItem('auth'),
+              mounted: !!document.getElementById('__nuxt')?.__vue_app__,
+            }))
+            .catch((e) => e.message.split('\n')[0])
+          console.log(
+            `[logoutIfLoggedIn] Navbar did not settle within 10s: ${JSON.stringify(
+              state
+            )}`
+          )
+        })
+    } else {
+      console.log('[logoutIfLoggedIn] Nobody signed in here, nothing to click')
+    }
 
     const isDesktopVisible = await desktopLogout
       .isVisible({ timeout: 5000 })
@@ -231,9 +291,14 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     if (isDesktopVisible) {
       console.log('Clicking desktop logout button')
       try {
-        // Use a bounded timeout so a non-actionable element (e.g. animating
-        // navbar under CI CPU load) doesn't burn the full action timeout.
-        await desktopLogout.click({ timeout: timeouts.ui.interaction })
+        // Bounded, and short: a click that is going to work lands in well
+        // under a second. The one that does not is being intercepted by
+        // something over the navbar (a modal left open by the reply flow,
+        // say) and will never become actionable, so every further second
+        // spent retrying is wasted before the JS click below does the job.
+        // At the full interaction timeout this cost fifteen seconds in each
+        // of the six reply-flow tests that hit it.
+        await desktopLogout.click({ timeout: 2000 })
       } catch {
         // Element is visible but failed actionability — JS click bypasses
         // stability checks while still dispatching the click event.
@@ -293,9 +358,17 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
         // Waiting for the sign-in button confirms Nuxt has fully hydrated the
         // logged-out state, at which point it is safe for the caller to navigate.
         // Unlike waitForLoadState('domcontentloaded'), this does not block on
-        // external scripts — it only depends on Vue/Nuxt hydration completing.
-        await page
-          .locator('.test-signinbutton')
+        // external scripts, it only depends on Vue/Nuxt hydration completing.
+        //
+        // ModTools has no sign-in button: its layout opens the login modal
+        // when nobody is signed in, so that is the logged-out signal there.
+        // Waiting for the Freegle button on a ModTools page just ran out the
+        // whole 15 seconds, twice in the lockdown spec alone.
+        const { modtoolsBaseUrl } = require('../config').environment
+        const loggedOutSignal = page.url().startsWith(modtoolsBaseUrl)
+          ? page.locator('#loginModal')
+          : page.locator('.test-signinbutton')
+        await loggedOutSignal
           .first()
           .waitFor({ state: 'visible', timeout: 15000 })
           .catch(() => {})
@@ -390,55 +463,48 @@ async function waitForEnabledSignInButton(page) {
   }
 
   // With SSR, buttons may be rendered disabled and only become enabled after
-  // Vue hydration. Poll until we find an enabled button or timeout.
+  // Vue hydration. Wait inside the browser for the first visible, enabled
+  // one: a single waitForFunction re-checks on every animation frame with
+  // no round trip per button per check, where a Node-side loop sleeping
+  // 200ms between checks cost two CDP calls per button per tick and
+  // added up to nine minutes over a run.
   const hydrationTimeout = timeouts.ui.hydration
-  const pollInterval = 200
-  const startTime = Date.now()
   let signInButton = null
 
-  while (Date.now() - startTime < hydrationTimeout) {
-    // Look for the first visible and enabled button
-    for (let i = 0; i < count; i++) {
-      const btn = buttons.nth(i)
+  const enabledIndex = await page
+    .waitForFunction(
+      () => {
+        const candidates = document.querySelectorAll('.test-signinbutton')
+        for (let i = 0; i < candidates.length; i++) {
+          const el = candidates[i]
+          const rect = el.getBoundingClientRect()
+          const visible =
+            rect.width > 0 &&
+            rect.height > 0 &&
+            getComputedStyle(el).visibility !== 'hidden'
+          if (!visible) continue
 
-      // Check if this button is visible
-      const isVisible = await btn.isVisible({ timeout: 500 }).catch(() => false)
+          // The same disabled states the old per-button check looked at.
+          if (el.disabled) continue
+          const disabledAttr = el.getAttribute('disabled')
+          if (disabledAttr === 'true' || disabledAttr === '') continue
+          if (el.classList.contains('disabled')) continue
 
-      if (isVisible) {
-        // Check if it's enabled by checking various disabled states
-        const isDisabled = await btn
-          .evaluate((el) => {
-            // For button elements, check the disabled property
-            if (el.disabled) return true
-
-            // For any element, check disabled attribute values
-            const disabledAttr = el.getAttribute('disabled')
-            if (disabledAttr === 'true' || disabledAttr === '') return true
-
-            // Check for disabled classes
-            if (el.classList.contains('disabled')) return true
-
-            return false
-          })
-          .catch(() => false)
-
-        if (!isDisabled) {
-          console.log(`Found visible, enabled button at index ${i}`)
-          signInButton = btn
-          break
+          // One-based, because waitForFunction keeps waiting on a falsy
+          // return and the first button is index 0.
+          return i + 1
         }
-      }
-    }
-
-    if (signInButton) {
-      break
-    }
-
-    // Wait before retrying - button may still be disabled during hydration
-    console.log(
-      'Sign-in button disabled (likely awaiting hydration), retrying...'
+        return null
+      },
+      null,
+      { timeout: hydrationTimeout }
     )
-    await page.waitForTimeout(pollInterval)
+    .then((handle) => handle.jsonValue())
+    .catch(() => null)
+
+  if (enabledIndex) {
+    console.log(`Found visible, enabled button at index ${enabledIndex - 1}`)
+    signInButton = buttons.nth(enabledIndex - 1)
   }
 
   if (!signInButton) {
@@ -1017,9 +1083,12 @@ async function loginViaHomepage(
     state: 'visible',
     timeout: timeouts.ui.appearance,
   })
-  console.log(`About to type email: ${email}`)
-  await emailInput.type(email)
-  console.log('Email typed successfully')
+  // fill() rather than type(): typing a character at a time makes
+  // EmailValidator re-run its domain check (a dns.google lookup) on every
+  // keystroke, which is work and noise this helper has no interest in.
+  console.log(`About to fill email: ${email}`)
+  await emailInput.fill(email)
+  console.log('Email filled successfully')
 
   // Fill in fullname field if we're in signup mode
   if (inSignupMode && finalFullnameVisible) {
@@ -1038,9 +1107,9 @@ async function loginViaHomepage(
     state: 'visible',
     timeout: timeouts.ui.appearance,
   })
-  console.log(`About to type password: [REDACTED ${password.length} chars]`)
-  await passwordInput.type(password)
-  console.log('Password typed successfully')
+  console.log(`About to fill password: [REDACTED ${password.length} chars]`)
+  await passwordInput.fill(password)
+  console.log('Password filled successfully')
 
   // DEBUG: Check form state after filling all fields
   console.log('=== FORM STATE AFTER FILLING ===')
@@ -1562,10 +1631,19 @@ async function loginViaModTools(page, email, password = 'freegle') {
 
   console.log(`Starting ModTools login for: ${email}`)
 
-  // Navigate to ModTools root — the layout shows LoginModal when not authenticated.
-  // Retry when a still-settling SPA navigation from the previous page (e.g. the
-  // Freegle site redirecting after logout) interrupts this goto — the same
-  // transient class gotoAndVerify tolerates.
+  // Navigate to ModTools root: the layout shows LoginModal when not
+  // authenticated. Retry when a still-settling SPA navigation from the
+  // previous page (e.g. the Freegle site redirecting after logout) interrupts
+  // this goto, the same transient class gotoAndVerify tolerates.
+  //
+  // Then wait for the client app to mount, which is what opens the modal.
+  // A page that lost a script chunk during the load (the ModTools root is
+  // served with no modal in it; the modal only exists once the app boots)
+  // never mounts, and two tests in one run each spent 200 seconds waiting
+  // for a modal on such a page. waitForAppMount reloads once and otherwise
+  // fails here naming the lost URLs (see app-mount.js).
+  trackFailedLoads(page)
+  const navigatedAt = Date.now()
   for (let attempt = 1; ; attempt++) {
     try {
       await page.goto(`${modtoolsBaseUrl}/`, {
@@ -1586,17 +1664,19 @@ async function loginViaModTools(page, email, password = 'freegle') {
       throw error
     }
   }
+  await waitForAppMount(page, `${modtoolsBaseUrl}/`, navigatedAt)
 
-  // Wait for the login modal's email field to be visible — this confirms both
-  // that Vue has hydrated and the modal is rendered. Playwright locators
-  // auto-retry across navigation/hydration, unlike page.waitForFunction.
+  // Wait for the login modal's email field to be visible: the layout opens
+  // the modal once it has asked the API who is signed in and been told
+  // nobody. Playwright locators auto-retry across navigation/hydration,
+  // unlike page.waitForFunction.
   const loginModal = page.locator('#loginModal')
   const emailField = loginModal
     .locator('input[type="email"], input[name="email"]')
     .first()
   await emailField.waitFor({
     state: 'visible',
-    timeout: timeouts.navigation.slowPage,
+    timeout: timeouts.ui.appearance,
   })
 
   // Wait for the submit button to stabilise in either login or signup mode.
@@ -1642,46 +1722,113 @@ async function loginViaModTools(page, email, password = 'freegle') {
     .toBe(true)
   console.log('Login modal is in login mode')
 
-  // Fill credentials — emailField already declared above (scoped to loginModal)
-  const passwordField = page
+  // Fill credentials. emailField is declared above; both are scoped to the
+  // modal so a password input anywhere else on the page cannot be the one
+  // that gets filled.
+  const passwordField = loginModal
     .locator('input[type="password"], input[name="password"]')
     .first()
 
-  console.log(`Typing email: ${email}`)
-  await emailField.fill(email)
+  for (let attempt = 1; ; attempt++) {
+    console.log(`Typing email: ${email}`)
+    await emailField.fill(email)
 
-  console.log('Typing password')
-  await passwordField.fill(password)
+    console.log('Typing password')
+    await passwordField.fill(password)
 
-  // Click the Log in button (never Join Freegle!)
-  await loginButton.first().click()
-  console.log('Clicked Log in button')
-
-  // Check for error messages before waiting for modal to close
-  // Some errors (like "We don't know that email address") keep the modal visible
-  try {
-    const errorSelector = '.alert-danger, .text-danger, .invalid-feedback'
-    const errorElement = page.locator(errorSelector)
-
-    if (
-      await errorElement
-        .isVisible({ timeout: timeouts.ui.appearance / 2 })
-        .catch(() => false)
-    ) {
-      const errorText = await errorElement.textContent()
-      console.error(`ModTools login failed with error: ${errorText}`)
-      return false
+    // About one ModTools login in forty was refused with "Please fill out
+    // the form.", which the modal says when its own email or password state
+    // is empty at submit, although both fields had just been filled. The
+    // cause is not yet known; a re-rendered form is the obvious candidate
+    // (new input elements would be empty), so check that the typed values
+    // are still in the modal's inputs right before clicking. If they are
+    // not, say so, and type them again: that log line is the evidence the
+    // next person needs. If they are and the modal still refuses, that is
+    // reported below as the failure it is, not retried.
+    const intact = await page.evaluate(
+      ({ email, password }) => {
+        const modal = document.getElementById('loginModal')
+        const e = modal?.querySelector(
+          'input[type="email"], input[name="email"]'
+        )
+        const p = modal?.querySelector(
+          'input[type="password"], input[name="password"]'
+        )
+        return !!e && !!p && e.value === email && p.value === password
+      },
+      { email, password }
+    )
+    if (!intact) {
+      if (attempt >= 3) {
+        throw new Error(
+          'ModTools login form lost its typed values three times in a row'
+        )
+      }
+      console.log(
+        `[loginViaModTools] Login form was re-rendered after typing (attempt ${attempt}), filling again`
+      )
+      continue
     }
-  } catch (e) {
-    // Continue if error check fails - modal might close successfully
-  }
 
-  // Wait for the modal to close (v-if="!loggedIn" removes it from DOM)
-  await loginModal.waitFor({
-    state: 'detached',
-    timeout: timeouts.navigation.slowPage,
-  })
-  console.log('Login modal closed — login successful')
+    // Click the Log in button (never Join Freegle!)
+    await loginButton.first().click()
+    console.log('Clicked Log in button')
+
+    // After the click one of two things happens: the modal is removed from
+    // the DOM (v-if="!loggedIn") once the login lands, or the form refuses
+    // and shows why ("We don't know that email address", "Please fill out
+    // the form."). Watch for either in one in-page check rather than
+    // glancing once for an error, which could miss a refusal rendered a
+    // tick later and then wait out the whole navigation budget for a modal
+    // that was never going to close.
+    const outcome = await page
+      .waitForFunction(
+        () => {
+          const modal = document.getElementById('loginModal')
+          if (!modal) return 'closed'
+          const errors = modal.querySelectorAll(
+            '.alert-danger, .text-danger, .invalid-feedback'
+          )
+          for (const el of errors) {
+            const text = (el.textContent || '').trim()
+            if (text && el.getBoundingClientRect().height > 0) {
+              return 'refused:' + text
+            }
+          }
+          return null
+        },
+        null,
+        { timeout: timeouts.navigation.slowPage }
+      )
+      .then((handle) => handle.jsonValue())
+
+    if (outcome === 'closed') break
+
+    const errorText = outcome.replace(/^refused:/, '')
+    if (/fill out the form/i.test(errorText)) {
+      // Record what the inputs held when the modal said they were empty.
+      const held = await page
+        .evaluate(() => {
+          const modal = document.getElementById('loginModal')
+          const e = modal?.querySelector(
+            'input[type="email"], input[name="email"]'
+          )
+          const p = modal?.querySelector(
+            'input[type="password"], input[name="password"]'
+          )
+          return { email: e?.value ?? null, passwordLength: p?.value?.length }
+        })
+        .catch(() => null)
+      console.error(
+        `[loginViaModTools] Modal refused with empty-form error although the inputs read ${JSON.stringify(
+          held
+        )}`
+      )
+    }
+    console.error(`ModTools login failed with error: ${errorText}`)
+    return false
+  }
+  console.log('Login modal closed, login successful')
 
   // Wait for the authenticated layout to render — the sidebar nav confirms login.
   // No full page reload happens (reloadNuxtApp was removed from app.vue);
