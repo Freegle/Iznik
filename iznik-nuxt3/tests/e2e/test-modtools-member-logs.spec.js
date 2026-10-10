@@ -96,14 +96,29 @@ test.describe('ModTools Member Logs', () => {
 
       // Track API calls to detect infinite looping
       let apiCallCount = 0
+      let lastLogRequestAt = 0
       page.on('request', (request) => {
         if (request.url().includes('/logs') || request.url().includes('log')) {
           apiCallCount++
+          lastLogRequestAt = Date.now()
         }
       })
 
-      // Wait for logs to load, then check that API calls stabilize
-      await page.waitForTimeout(timeouts.ui.appearance)
+      // A looping page keeps requesting; a healthy one requests the logs
+      // (GET /modtools/logs) and then goes quiet. So wait until at least one
+      // log request has been seen and none for five seconds, or the count
+      // has already blown past the limit (the loop, caught early), rather
+      // than sleeping for the whole appearance budget (67 seconds on this
+      // stack) and counting afterwards. A page that never asks for its logs
+      // at all now fails here instead of passing with a count of zero.
+      await expect
+        .poll(
+          () =>
+            apiCallCount >= 20 ||
+            (apiCallCount > 0 && Date.now() - lastLogRequestAt > 5000),
+          { timeout: timeouts.ui.appearance, intervals: [250] }
+        )
+        .toBe(true)
 
       // If loading infinitely, apiCallCount would be very high (>20).
       // A reasonable load should make fewer than 20 log API calls.
