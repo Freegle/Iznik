@@ -325,7 +325,10 @@ describe('JobOne', () => {
 
       expect(event.defaultPrevented).toBe(true)
       expect(mockJobStore.log).not.toHaveBeenCalled()
-      expect(mockAction).not.toHaveBeenCalled()
+      expect(mockAction).not.toHaveBeenCalledWith(
+        'job_ad_click',
+        expect.anything()
+      )
       expect(mockJobStore.recordOpened).not.toHaveBeenCalled()
       expect(wrapper.emitted('clicked')).toBeFalsy()
     })

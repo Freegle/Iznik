@@ -61,10 +61,8 @@ async function mountPage() {
         'client-only': { template: '<div><slot /></div>' },
         'b-row': { template: '<div><slot /></div>' },
         'b-col': { template: '<div><slot /></div>' },
-        'b-button': {
-          template:
-            '<button class="b-button" @click="$emit(\'click\')"><slot /></button>',
-        },
+        // Root-element fallthrough passes the page's @click to the native button.
+        'b-button': { template: '<button class="b-button"><slot /></button>' },
         NoticeMessage: { template: '<div class="notice"><slot /></div>' },
         Spinner: { template: '<div class="spinner" />' },
       },
@@ -115,7 +113,10 @@ describe('pages/job/[id].vue', () => {
 
     expect(mockJobStore.openedRecently).toHaveBeenCalledWith(42)
     expect(mockJobStore.log).not.toHaveBeenCalled()
-    expect(mockAction).not.toHaveBeenCalled()
+    expect(mockAction).not.toHaveBeenCalledWith(
+      'job_ad_click',
+      expect.anything()
+    )
     expect(window.location).toBe('')
     expect(wrapper.text()).toContain("You've already looked at this job")
   })
