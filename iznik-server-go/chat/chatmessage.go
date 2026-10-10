@@ -387,15 +387,18 @@ func GetChatMessages(c *fiber.Ctx) error {
 	// Check if user can see this chat and determine mod access.
 	// $modaccess is true when user is NOT user1/user2 but has mod/admin access.
 	db := database.DBConn
+	// Existence is the row, not its participants: a Mod2Mod room has user1 and user2 NULL.
 	type roomInfo struct {
-		User1   uint64
-		User2   uint64
-		Groupid uint64
+		ID       uint64
+		User1    uint64
+		User2    uint64
+		Groupid  uint64
+		Chattype string
 	}
 	var room roomInfo
-	db.Table("chat_rooms").Select("user1, user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&room)
+	db.Table("chat_rooms").Select("id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype").Where("id = ?", id).Scan(&room)
 
-	if room.User1 == 0 && room.User2 == 0 {
+	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
 	}
 
@@ -403,7 +406,7 @@ func GetChatMessages(c *fiber.Ctx) error {
 	modAccess := false
 
 	if !isParticipant {
-		if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
+		if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) || !mod2ModAllowed(myid, room.Chattype, room.Groupid) {
 			return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
 		}
 		modAccess = true
@@ -715,14 +718,16 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		// mods can also post to User2User chats if they moderate
 		// either user's group (used when adding mod messages from chat review).
 		type roomBasic struct {
-			User1   uint64
-			User2   uint64
-			Groupid uint64
+			ID       uint64
+			User1    uint64
+			User2    uint64
+			Groupid  uint64
+			Chattype string
 		}
 		var room roomBasic
-		db.Table("chat_rooms").Select("user1, user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&room)
+		db.Table("chat_rooms").Select("id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype").Where("id = ?", id).Scan(&room)
 
-		if room.User1 == 0 && room.User2 == 0 || !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
+		if room.ID == 0 || !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) || !mod2ModAllowed(myid, room.Chattype, room.Groupid) {
 			return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
 		}
 	}
@@ -1402,6 +1407,23 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 // =============================================================================
 // Review queue helpers
 // =============================================================================
+
+// mod2ModAllowed applies the extra Mod2Mod rule on top of canSeeChatRoom: the room is for the
+// group's active moderators, so a backup moderator (membership settings active:0) is left out,
+// as listChats leaves them out. Admin and Support keep access. Other chat types pass.
+func mod2ModAllowed(myid uint64, chattype string, groupid uint64) bool {
+	if chattype != utils.CHAT_TYPE_MOD2MOD || auth.IsAdminOrSupport(myid) {
+		return true
+	}
+
+	var active int64
+	database.DBConn.Table("memberships").
+		Where("userid = ? AND groupid = ? AND role IN (?, ?) "+
+			"AND (settings IS NULL OR LOCATE('\"active\"', settings) = 0 OR LOCATE('\"active\":1', settings) > 0)",
+			myid, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&active)
+
+	return active > 0
+}
 
 // canSeeChatRoom checks if a user can view a chat room.
 // Allows: direct participants, moderators of the chat's group, and moderators of any group
