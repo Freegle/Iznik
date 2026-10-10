@@ -86,6 +86,11 @@ RUN apt-get update \
     && claude --version \
     && rm -rf /var/lib/apt/lists/*
 
+# Opcache for the CLI (the base image enables it for web SAPIs only). Every
+# artisan run and every PHPUnit test boot otherwise re-parses bootstrap/app.php,
+# the config files and the route files. See the ini for the settings and why.
+COPY docker/php-cli-opcache.ini /usr/local/etc/php/conf.d/zz-php-cli-opcache.ini
+
 WORKDIR /var/www/html
 
 # Copy application files
