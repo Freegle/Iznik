@@ -75,8 +75,10 @@ func TestFetchDriveTimeBreakerOpensAndRecovers(t *testing.T) {
 		w.Write([]byte(`{"reachable":true,"drive_min":5}`))
 	})
 
+	// The cooloff only has to be long enough to tell "still open" from "cooled down";
+	// the wait below need only outlast it, and time.Sleep never returns early.
 	oldCooloff := driveTimeBreakerCooloff
-	driveTimeBreakerCooloff = 50 * time.Millisecond
+	driveTimeBreakerCooloff = 5 * time.Millisecond
 	defer func() { driveTimeBreakerCooloff = oldCooloff }()
 
 	for i := 0; i < int(driveTimeBreakerAfter); i++ {
@@ -92,7 +94,7 @@ func TestFetchDriveTimeBreakerOpensAndRecovers(t *testing.T) {
 
 	// After the cooldown a healthy server closes it again.
 	failing.Store(false)
-	time.Sleep(60 * time.Millisecond)
+	time.Sleep(2 * driveTimeBreakerCooloff)
 	dt, ok := FetchDriveTime(50.0, -1.0, 50.9, -1.9, 30)
 	assert.True(t, ok)
 	assert.True(t, dt.Reachable)
