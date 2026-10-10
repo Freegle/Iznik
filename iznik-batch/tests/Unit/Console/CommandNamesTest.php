@@ -3,6 +3,7 @@
 namespace Tests\Unit\Console;
 
 use Illuminate\Console\Command;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Str;
 use ReflectionClass;
@@ -76,6 +77,33 @@ class CommandNamesTest extends TestCase
 
         $this->assertSame([], $missing, "Commands without an #[AsCommand(name: ...)] attribute:\n  ".implode("\n  ", $missing));
         $this->assertSame([], $mismatched, "Commands whose attribute and signature disagree:\n  ".implode("\n  ", $mismatched));
+    }
+
+    /**
+     * routes/console.php is loaded when the schedule is first resolved, and
+     * when Artisan is built, whichever comes first, and only once: a second
+     * load would register every scheduled job twice.
+     */
+    public function test_the_schedule_is_defined_once_however_it_is_reached(): void
+    {
+        $schedule = app(Schedule::class);
+        $defined = count($schedule->events());
+        $this->assertGreaterThan(20, $defined, 'resolving the schedule loads routes/console.php');
+
+        Artisan::all();
+        $this->assertCount($defined, $schedule->events(), 'building Artisan does not load routes/console.php a second time');
+
+        $this->assertNotNull(
+            collect($schedule->events())->first(fn ($e) => str_contains((string) $e->command, 'mail:welcome:send')),
+            'the full Freegle schedule is what was loaded',
+        );
+    }
+
+    public function test_building_artisan_first_also_defines_the_schedule(): void
+    {
+        Artisan::all();
+
+        $this->assertGreaterThan(20, count(app(Schedule::class)->events()));
     }
 
     public function test_command_names_are_unique(): void

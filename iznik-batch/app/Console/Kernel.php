@@ -4,6 +4,7 @@ namespace App\Console;
 
 use Illuminate\Console\Application as Artisan;
 use Illuminate\Console\Command;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
 use Illuminate\Support\Arr;
 use ReflectionClass;
@@ -17,6 +18,91 @@ class Kernel extends ConsoleKernel
      * @var array<string, list<class-string<Command>>>
      */
     protected static array $discoveredCommands = [];
+
+    /**
+     * Whether routes/console.php (and any other command route file) has been
+     * loaded into this kernel's application.
+     */
+    protected bool $commandRoutesLoaded = false;
+
+    /**
+     * Whether this kernel has arranged for the route files to load when the
+     * schedule is first resolved.
+     */
+    protected bool $commandRoutesHooked = false;
+
+    /**
+     * Bootstrap the application for artisan commands.
+     *
+     * @return void
+     */
+    public function bootstrap()
+    {
+        parent::bootstrap();
+
+        if (! $this->commandRoutesHooked) {
+            $this->commandRoutesHooked = true;
+
+            // After the instance is stored, so that routes/console.php's own
+            // calls to the Schedule facade reach the same instance.
+            $this->app->afterResolving(Schedule::class, function () {
+                $this->loadCommandRoutes();
+            });
+        }
+    }
+
+    /**
+     * Discover the commands under the configured paths. The route files are
+     * left until something needs them: see loadCommandRoutes().
+     *
+     * @return void
+     */
+    protected function discoverCommands()
+    {
+        foreach ($this->commandPaths as $path) {
+            $this->load($path);
+        }
+    }
+
+    /**
+     * Get the Artisan application instance, with the route files loaded first
+     * so that anything they register with Artisan is in place.
+     *
+     * @return \Illuminate\Console\Application
+     */
+    protected function getArtisan()
+    {
+        $this->loadCommandRoutes();
+
+        return parent::getArtisan();
+    }
+
+    /**
+     * Load routes/console.php, once.
+     *
+     * The framework loads it on every boot. Ours defines 160-odd scheduled
+     * jobs and nothing else, so loading it is most of what a boot costs, and
+     * only a process that runs a command or reads the schedule has any use for
+     * it. Every artisan invocation does both, so for them nothing changes but
+     * the moment it happens. A test that boots the application and never
+     * touches Artisan or the schedule, which is most of them, skips it.
+     *
+     * @return void
+     */
+    protected function loadCommandRoutes()
+    {
+        if ($this->commandRoutesLoaded) {
+            return;
+        }
+
+        $this->commandRoutesLoaded = true;
+
+        foreach ($this->commandRoutePaths as $path) {
+            if (file_exists($path)) {
+                require $path;
+            }
+        }
+    }
 
     /**
      * Discover commands under the paths bootstrap/app.php configured, exactly
