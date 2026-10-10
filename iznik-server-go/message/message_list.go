@@ -14,6 +14,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // PaginationContext is the opaque cursor echoed between pages of the ModTools
@@ -435,13 +436,12 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	// extend-only: an existing hold further out is never shortened. Scope: Pending,
 	// heldby IS NULL, deleted=0, only the mod's groups.
 	if collection == utils.COLLECTION_PENDING && len(groupIDs) > 0 {
-		db.Exec(
-			"UPDATE messages_groups "+
-				"SET autoapprove_hold_until = GREATEST(COALESCE(autoapprove_hold_until, NOW()), NOW() + INTERVAL 10 MINUTE) "+
-				"WHERE msgid IN ? AND groupid IN ? "+
+		db.Table("messages_groups").
+			Where("msgid IN ? AND groupid IN ? "+
 				"AND collection = 'Pending' AND heldby IS NULL AND deleted = 0 AND rippled_in = 0",
-			msgIDs, groupIDs,
-		)
+				msgIDs, groupIDs).
+			Update("autoapprove_hold_until",
+				gorm.Expr("GREATEST(COALESCE(autoapprove_hold_until, NOW()), NOW() + INTERVAL 10 MINUTE)"))
 	}
 
 	// Build pagination context from last ID.

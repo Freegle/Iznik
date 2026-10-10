@@ -136,9 +136,10 @@ class AutoApproveService
             // Respect a moderator-set hold window (set by the Go Pending list fetch,
             // extend-only to NOW()+10m) so a post a mod is actively reviewing is not
             // auto-approved out from under them.
-            ->whereRaw(
-                '(messages_groups.autoapprove_hold_until IS NULL OR messages_groups.autoapprove_hold_until <= NOW())'
-            )
+            ->where(function ($q) {
+                $q->whereNull('messages_groups.autoapprove_hold_until')
+                    ->orWhere('messages_groups.autoapprove_hold_until', '<=', DB::raw('NOW()'));
+            })
             // Posts held back as a manual quality-check sample stay held for a human:
             // letting the 48h fallback sweep them up would silently drain the sample
             // AutoApproveCleanService set aside, breaking the sample-vs-population
@@ -363,7 +364,10 @@ class AutoApproveService
             // Re-check the mod hold at write time: a moderator loading the Pending
             // queue between the candidate query and this UPDATE bumps
             // autoapprove_hold_until, and their guaranteed review window must win.
-            ->whereRaw('(autoapprove_hold_until IS NULL OR autoapprove_hold_until <= NOW())')
+            ->where(function ($q) {
+                $q->whereNull('autoapprove_hold_until')
+                    ->orWhere('autoapprove_hold_until', '<=', DB::raw('NOW()'));
+            })
             ->update([
                 'collection' => MessageGroup::COLLECTION_APPROVED,
                 'approvedby' => null,

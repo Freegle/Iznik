@@ -247,14 +247,12 @@ func GetChallenge(c *fiber.Ctx) error {
 			Lng *float64
 		}
 		var rl locResult
-		db.Raw(`
-			SELECT
-				COALESCE(NULLIF(CAST(JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lat')) AS DECIMAL(11,7)), 0), l.lat) AS lat,
-				COALESCE(NULLIF(CAST(JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lng')) AS DECIMAL(11,7)), 0), l.lng) AS lng
-			FROM users u
-			LEFT JOIN locations l ON l.id = u.lastlocation
-			WHERE u.id = ?
-		`, userID).Scan(&rl)
+		db.Table("users u").
+			Select("COALESCE(NULLIF(CAST(JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lat')) AS DECIMAL(11,7)), 0), l.lat) AS lat, "+
+				"COALESCE(NULLIF(CAST(JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lng')) AS DECIMAL(11,7)), 0), l.lng) AS lng").
+			Joins("LEFT JOIN locations l ON l.id = u.lastlocation").
+			Where("u.id = ?", userID).
+			Scan(&rl)
 		reviewerLat = rl.Lat
 		reviewerLng = rl.Lng
 	}

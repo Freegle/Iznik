@@ -1238,15 +1238,16 @@ func GetSession(c *fiber.Ctx) error {
 			if len(trialGroupIDs) == 0 {
 				return
 			}
-			db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
-				"INNER JOIN messages m ON m.id = mg.msgid "+
-				"INNER JOIN users u ON u.id = m.fromuser "+
-				"INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "+
-				"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
-				"AND m.deleted IS NULL AND u.deleted IS NULL "+
-				"AND mg.approvedby IS NULL AND mg.rippled_in = 0 AND mem.ourPostingStatus IS NULL "+
-				checkedWindowSQL,
-				trialGroupIDs, utils.COLLECTION_APPROVED).Scan(&checked)
+			db.Table("messages_groups mg").Select("COUNT(*)").
+				Joins("INNER JOIN messages m ON m.id = mg.msgid").
+				Joins("INNER JOIN users u ON u.id = m.fromuser").
+				Joins("INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid").
+				Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
+					"AND m.deleted IS NULL AND u.deleted IS NULL "+
+					"AND mg.approvedby IS NULL AND mg.rippled_in = 0 AND mem.ourPostingStatus IS NULL "+
+					checkedWindowSQL,
+					trialGroupIDs, utils.COLLECTION_APPROVED).
+				Scan(&checked)
 		}()
 
 		// --- Spam messages (only for active groups) ---

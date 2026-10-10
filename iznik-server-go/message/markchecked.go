@@ -81,14 +81,21 @@ func MarkChecked(c *fiber.Ctx) error {
 			Groupid  uint64
 			Fromuser uint64
 		}
-		db.Raw("SELECT mg.msgid, mg.groupid, m.fromuser FROM messages_groups mg "+
-			"INNER JOIN messages m ON m.id = mg.msgid "+
-			"WHERE mg.msgid IN ? AND mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND mg.rippled_in = 0",
-			req.IDs, groupIDs, utils.COLLECTION_APPROVED).Scan(&hit)
+		db.Table("messages_groups mg").
+			Select("mg.msgid, mg.groupid, m.fromuser").
+			Joins("INNER JOIN messages m ON m.id = mg.msgid").
+			Where("mg.msgid IN ? AND mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND mg.rippled_in = 0",
+				req.IDs, groupIDs, utils.COLLECTION_APPROVED).
+			Scan(&hit)
 
-		r := db.Exec("UPDATE messages_groups SET collection = ?, heldby = ?, checkedat = NULL "+
-			"WHERE msgid IN ? AND groupid IN ? AND collection = ? AND deleted = 0 AND rippled_in = 0",
-			utils.COLLECTION_PENDING, myid, req.IDs, groupIDs, utils.COLLECTION_APPROVED)
+		r := db.Table("messages_groups").
+			Where("msgid IN ? AND groupid IN ? AND collection = ? AND deleted = 0 AND rippled_in = 0",
+				req.IDs, groupIDs, utils.COLLECTION_APPROVED).
+			Updates(map[string]interface{}{
+				"collection": utils.COLLECTION_PENDING,
+				"heldby":     myid,
+				"checkedat":  gorm.Expr("NULL"),
+			})
 
 		for _, h := range hit {
 			// Logged as a Hold, not a Rejected: nothing is decided yet. The moderation-stats
@@ -96,9 +103,16 @@ func MarkChecked(c *fiber.Ctx) error {
 			// to act on. If the moderator then rejects it, that Reject writes the Rejected
 			// log, which is what vetoes this member's next post from auto-publishing; if they
 			// approve it, the member is not penalised.
-			db.Exec("INSERT INTO logs (timestamp, type, subtype, msgid, groupid, user, byuser, text) "+
-				"VALUES (NOW(), 'Message', 'Hold', ?, ?, ?, ?, 'Pulled back from Check')",
-				h.Msgid, h.Groupid, h.Fromuser, myid)
+			db.Table("logs").Create(map[string]interface{}{
+				"timestamp": gorm.Expr("NOW()"),
+				"type":      "Message",
+				"subtype":   "Hold",
+				"msgid":     h.Msgid,
+				"groupid":   h.Groupid,
+				"user":      h.Fromuser,
+				"byuser":    myid,
+				"text":      "Pulled back from Check",
+			})
 
 			// Halt rippling immediately rather than waiting for the spatial prune +
 			// expand tick (up to ~6 minutes) to notice the post left the browsable set —
@@ -130,9 +144,13 @@ func MarkChecked(c *fiber.Ctx) error {
 		// bucket update below: rippled-in copies are not part of this group's
 		// oversight, and a checkedat stamped on one would corrupt the AutoModChecked
 		// analytic (it measures review of posts that auto-published HERE).
-		r := db.Exec("UPDATE messages_groups SET checkedat = NOW(), checkedby = ? "+
-			"WHERE msgid IN ? AND groupid IN ? AND collection = ? AND deleted = 0 AND checkedat IS NULL AND rippled_in = 0",
-			myid, req.IDs, groupIDs, utils.COLLECTION_APPROVED)
+		r := db.Table("messages_groups").
+			Where("msgid IN ? AND groupid IN ? AND collection = ? AND deleted = 0 AND checkedat IS NULL AND rippled_in = 0",
+				req.IDs, groupIDs, utils.COLLECTION_APPROVED).
+			Updates(map[string]interface{}{
+				"checkedat": gorm.Expr("NOW()"),
+				"checkedby": myid,
+			})
 		rowsAffected = r.RowsAffected
 	} else {
 		// Mark the whole bucket checked (the "mark all as checked" action). The
@@ -142,6 +160,7 @@ func MarkChecked(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "filter must be 'checked' (D10)")
 		}
 		statusWhere := "mem.ourPostingStatus IS NULL"
+		// keep-raw: multi-table UPDATE ... JOIN ... SET mg.col; GORM's Update cannot render a JOIN.
 		r := db.Exec("UPDATE messages_groups mg "+
 			"INNER JOIN messages m ON m.id = mg.msgid "+
 			"INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "+

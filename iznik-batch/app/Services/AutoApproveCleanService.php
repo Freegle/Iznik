@@ -261,6 +261,7 @@ class AutoApproveCleanService
             // visible to the rippling engine — immediately, instead of waiting up to
             // 5 minutes for the spatial reconciler cron. Re-checks Approved so it is a
             // no-op if anything above did not land.
+            // keep-raw: INSERT ... SELECT with ST_GeomFromText and ON DUPLICATE KEY UPDATE; the builder's insertUsing cannot render the upsert clause.
             DB::statement(
                 "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
                  SELECT m.id, ST_GeomFromText(CONCAT('POINT(', m.lng, ' ', m.lat, ')'), 3857),
