@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\EmailSpoolerService;
 use App\Services\LokiService;
+use App\Services\Mail\Incoming\SpamhausDblLookup;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Illuminate\Foundation\Testing\WithCachedConfig;
@@ -110,6 +111,12 @@ abstract class TestCase extends BaseTestCase
                 }
             };
         });
+
+        // The spam checks ask the Spamhaus DBL about every URL in a message, by
+        // DNS. Not from the test suite: the answer would come from the network,
+        // slowly, and say nothing about the code. Nothing is listed unless a
+        // test binds a lookup of its own.
+        $this->app->instance(SpamhausDblLookup::class, new SpamhausDblLookup(listed: []));
 
         // Force cache driver to 'array' and flush it, so rate-limit / throttle
         // entries (e.g. bounce_autoreply:<hash>) don't leak between tests.
