@@ -126,20 +126,24 @@ for the answer in `docs/` and in the code that actually runs - Go, Nuxt and Lara
 V1 PHP - and writes two to four sentences for somebody reading them once, on a phone. It emits
 `ANSWERS=[{topic, post, answer, confidence, link?}]`, or says a human should take it.
 
-`persist_question_answers` (in `COLLATE_RESULTS`) turns each answer into a reply **waiting for
-approval**, in the same `discourse_draft` table the fix replies use. Three things can stop an answer
-getting that far:
+`persist_question_answers` (in `COLLATE_RESULTS`) **posts** each answer to Discourse straight away, quoted
+and threaded under the question, and records it in the `discourse_draft` table (the same table the fix
+replies use) with `approved_at` and `posted_at` set. There is no human approval step. Four things can stop
+an answer getting that far:
 
 - the sub-agent says it is not confident, or asks for a human - the question is deferred, with the reason
 - the answer reads like documentation rather than English - it is thrown away and the question is asked
   again next time round. `.claude/pr-complexity.mjs`, the same scorer the Discourse posting hook uses,
   decides this (reading grade 11, sentences of 30 words). Two failures in a row defer it to a human.
 - there is nothing to quote, so the reply could not show what it answers
+- the post already has a reply on record, so nothing is posted twice
 
-Answers are sent from the **Replies to send** panel on the dashboard, not posted by the run. An
-answer is new prose asserting how Freegle works, so a person reads it before a moderator does.
-Rejecting one puts the question back in the queue, and the reason given is handed to the next
-attempt. Asking for missing detail is different and goes straight out: see below.
+If Discourse refuses the post, the row stays unposted and `post_pending_discourse_drafts` (in `LOAD_STATE`)
+retries it next iteration. `post_discourse_reply_draft` works the same way. Asking for missing detail is
+posted too: see below.
+
+To post whatever is still waiting by hand (for example drafts queued before replies were automatic), from
+`monitor-fsm`: `npx tsx scripts/post-pending-drafts.ts` (`--dry-run` lists them first).
 
 ### Reports that are too vague to act on
 
@@ -225,7 +229,7 @@ The `MONITOR_PHASE` env var can force `analysis` or `implementation` (the peak-h
 | `discourse_bug` | One row per reported bug (primary key: topic+post). Tracks state, PR number, rejection count, symptom tags, code area. |
 | `topic_cursor` | Per-topic read position — only new posts are fetched each iteration. |
 | `pr` | PRs the monitor has opened. Tracks CI state and deploy state. |
-| `discourse_draft` | "Please retest" reply drafts (queued → posted). |
+| `discourse_draft` | Discourse replies (queued → posted). A row with `posted_at` set is the record that the post was answered. |
 | `reviewer_feedback` | Human rejection notices and bug-reopen instructions. |
 | `iteration` | Audit log of every driver run (steps used, outcome, PR count). |
 | `kv` | Miscellaneous key-value (last coverage target, etc.). |
@@ -300,11 +304,11 @@ Each iteration has a hard cap of 40 steps. Real iterations typically use 15–25
 
 The driver lock at `/tmp/freegle-monitor-driver.lock` means only one driver can run at a time. If you see "another iteration is still running" and you know it's stale, remove the file: `rm /tmp/freegle-monitor-driver.lock`.
 
-### Discourse replies are not auto-posted during fixing
+### When Discourse replies are posted
 
 Post-fix Discourse replies are auto-posted (verbatim "AI Edward: possible fix applied, please retest and report back", plus a `Technical details:` link to the PR or commit) only **after the fix is confirmed live in production** — verified by comparing the PR's merge commit against `/api/version` (Go/Laravel) and the Netlify published-deploy SHA (frontend). During the fix pipeline the monitor does not post to Discourse.
 
-Discourse replies are posted as Edward_Hibbert (using the API key from `profile.json`). There is no per-reply human approval — the auto-post behaviour is enabled by design. If you want to suppress it in local/dev runs, set `SKIP_DISCOURSE_STATUS=1`.
+Discourse replies are posted as Edward_Hibbert (using the API key from `profile.json`). There is no per-reply human approval, for fix replies, question answers and reporter questions alike - the auto-post behaviour is enabled by design (standing decision, 2026-10-10). Every reply still has to pass its gates (confidence, plain-English scorer, a non-empty quote), and nothing is posted twice. If you want to suppress it in local/dev runs, set `SKIP_DISCOURSE_STATUS=1` for the status post, or `SKIP_DISCOURSE_POSTS=1` to make every reply post fail closed (rows stay unposted and go out on the first run without it).
 
 ### V1 PHP is dead code — the monitor knows this
 
