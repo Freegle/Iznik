@@ -45,13 +45,21 @@ Editing is the opposite: an edit mutates the single shared `messages` row, so it
 every group at once. That is a genuinely different mechanism rather than an inconsistency, and
 it is worth saying plainly to moderators who notice the asymmetry.
 
-## Back to pending pulls every copy, and automation must not put them back
+## Back to pending pulls every unreviewed copy, and automation must not put them back
 
-A moderator's Back to pending on any one group pulls the post back to Pending on **every**
-group it is on, the home copy included (`handleBackToPending`, `SendForReviewAllGroups`). Only
-the acting moderator's copy is held. Every copy pulled back is marked
-`messages_groups.needs_moderator`, and only a moderator's Approve clears it. The content check
-and auto-approve both skip a flagged copy.
+A moderator's Back to pending on any one group pulls the post back to Pending on every group
+it is on, the home copy included (`handleBackToPending`, `SendForReviewGroupsExcept`), **except**
+a copy on another community whose own moderator approved it by hand. That copy stays Approved
+with its `approvedby`/`approvedat`, gets no log, and is not withdrawn by a home send-back. The
+acting moderator's own copies always go back. Only the acting moderator's copy is held. Every
+copy pulled back is marked `messages_groups.needs_moderator`, and only a moderator's Approve
+clears it. The content check and auto-approve both skip a flagged copy.
+
+"Approved by hand" is `messages_groups.approvedby IS NOT NULL`, and that only holds because
+`handleApprove` is the one path that sets it: the content check and auto-approve write NULL and
+the ripple insert leaves it out. A new automatic approval path that stamps `approvedby` would make
+its copies survive every later Back to pending. A report quorum (`SendForReviewAllGroups`) is not
+a moderator's review and still pulls every copy.
 
 Before that flag existed, the content check re-approved every unheld copy a minute after the
 next edit, with no log entry, so a moderator's decision was quietly undone everywhere but on
