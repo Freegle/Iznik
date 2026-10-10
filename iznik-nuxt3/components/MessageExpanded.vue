@@ -18,7 +18,7 @@
       </Teleport>
 
       <!-- Close button for two-column layout (positioned at modal top-right) -->
-      <button class="close-button" @click.stop="goBack">
+      <button class="close-button" aria-label="Close" @click.stop="goBack">
         <v-icon icon="times" />
       </button>
 
@@ -27,7 +27,7 @@
         <!-- Photo Area with Ken Burns animation -->
         <div ref="photoAreaRef" class="photo-area" @click="showPhotosModal">
           <!-- Back button on photo (hidden in two-column) -->
-          <button class="back-button" @click.stop="goBack">
+          <button class="back-button" aria-label="Back" @click.stop="goBack">
             <v-icon icon="arrow-left" />
           </button>
 
@@ -616,7 +616,11 @@
     <!-- Map Modal - Full Screen -->
     <Teleport v-if="showMapModal" to="body">
       <div class="fullscreen-map-viewer">
-        <button class="map-back-button" @click="showMapModal = false">
+        <button
+          class="map-back-button"
+          aria-label="Close map"
+          @click="showMapModal = false"
+        >
           <v-icon icon="arrow-left" />
         </button>
         <client-only>

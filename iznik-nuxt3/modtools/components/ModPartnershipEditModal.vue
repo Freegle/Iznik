@@ -57,7 +57,7 @@
         </b-form-group>
 
         <div v-if="!partnership && chosenAuthority" class="mb-3">
-          <label class="form-label">Communities this deal covers</label>
+          <div class="form-label">Communities this deal covers</div>
           <p v-if="loadingBoundary" class="text-muted small">
             Working out which communities overlap the council boundary...
           </p>
@@ -262,7 +262,7 @@
           />
         </b-form-group>
 
-        <label class="form-label">Council contacts</label>
+        <div class="form-label">Council contacts</div>
         <p class="small text-muted mb-1">Everyone here gets the statistics.</p>
         <b-row
           v-for="(c, i) in contacts"

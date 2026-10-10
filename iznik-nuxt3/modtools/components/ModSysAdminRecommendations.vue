@@ -10,8 +10,9 @@
     </p>
 
     <div class="d-flex align-items-center mb-3">
-      <label class="me-2 mb-0">Period</label>
+      <label :for="`${formId}-period`" class="me-2 mb-0">Period</label>
       <b-form-select
+        :id="`${formId}-period`"
         v-model="days"
         :options="dayOptions"
         style="width: auto"
@@ -103,9 +104,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, useId } from 'vue'
 import { useRuntimeConfig } from '#imports'
 import api from '~/api'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const runtimeConfig = useRuntimeConfig()
 const apiInstance = api(runtimeConfig)

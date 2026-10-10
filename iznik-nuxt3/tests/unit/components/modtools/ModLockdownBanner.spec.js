@@ -45,9 +45,7 @@ describe('ModLockdownBanner', () => {
   it('uses the danger variant, not just a warning', () => {
     useLockdownStore.mockReturnValue({ active: true, reason: null })
 
-    expect(render().find('.notice').attributes('data-variant')).toBe(
-      'danger'
-    )
+    expect(render().find('.notice').attributes('data-variant')).toBe('danger')
   })
 
   it('includes the reason the presser gave, when there is one', () => {

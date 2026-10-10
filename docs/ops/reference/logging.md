@@ -134,6 +134,12 @@ labels and `message` becomes the JSON body.
 This exists because a file survives Loki being down or slow, where a direct push does not.
 Logrotate keeps the files bounded (step 6 below).
 
+**Batch container files.** Each scheduled command also appends its output to
+`storage/logs/cron/<command>.log`. The daily `logs:rotate` job (`LogRotationService::rotateLive`)
+gzips every non-empty cron log to `<name>.log.<date>-<time>.gz` and truncates it in place, so the
+scheduler's open append handle keeps working. Archives are pruned after 7 days. Supervisor rotates
+`scheduler.log`, `worker.log`, `spooler_*.log` and `mail-receiver.log` itself (50MB, 5 backups).
+
 ### 3. Container output on the edge host: Alloy via the Docker socket
 
 `alloy-edge.alloy`, run under the `edge` compose profile. It discovers containers on the Docker
@@ -259,6 +265,25 @@ users in their own groups. `buildLogQLQuery` assembles the LogQL, putting `sourc
 
 `POST /api/clientlog` is the ingestion side of `source="client"`: the browser posts batches of
 events, and apiv2 relays them with `source=client` plus an `event_type` label.
+
+### Component-level interaction and impression events
+
+Two client plugins feed per-component conversion figures:
+
+- `plugins/interactionCapture.client.js` logs clicks, scrolls and swipes as `event_type="interaction"`.
+  Each carries `component`, `tag`, `label` and `interactive`. `interactive` is true for a
+  `button`, `a`, `select`, `textarea` or `input`; leave those out when counting dead clicks, whether or
+  not a text label was found.
+- `plugins/impressionTracker.client.js` logs `event_type="impressions"` every 30 seconds, when the
+  member leaves a page and when the tab is hidden. `components` maps component name to the number of
+  times it scrolled into view since the last report. Only the first element of each component type on a
+  page is watched, so a long list counts as one component, not one per card.
+
+Both read the component name from `data-component` on the nearest enclosing element. The attribute is
+added at build time to the root element of every single-root component by
+`iznik-nuxt3/build-plugins/componentNameTransform.js` (wired in through `vite.vue.template.compilerOptions`
+in `nuxt.config.ts`), because production builds keep no component names of their own. Multi-root
+components, component roots and `<slot>` or `<template>` roots are not stamped.
 
 ---
 

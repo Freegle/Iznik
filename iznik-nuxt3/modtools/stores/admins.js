@@ -31,6 +31,7 @@ export const useAdminsStore = defineStore('admins', {
         for (const admin of admins) {
           this.list[admin.id] = admin
         }
+        return admins
       }
     },
     test(params) {

@@ -2,7 +2,7 @@
   <Teleport to="body">
     <div class="fullscreen-viewer" @click="handleBackgroundClick">
       <!-- Back button -->
-      <button class="back-button" @click.stop="close">
+      <button class="back-button" aria-label="Back" @click.stop="close">
         <v-icon icon="arrow-left" />
       </button>
 
@@ -36,6 +36,7 @@
       <button
         v-if="attachmentCount > 1 && currentIndex > 0"
         class="nav-arrow nav-arrow-left"
+        aria-label="Previous photo"
         @click.stop="goToImage(currentIndex - 1)"
       >
         <v-icon icon="chevron-left" />
@@ -43,6 +44,7 @@
       <button
         v-if="attachmentCount > 1 && currentIndex < attachmentCount - 1"
         class="nav-arrow nav-arrow-right"
+        aria-label="Next photo"
         @click.stop="goToImage(currentIndex + 1)"
       >
         <v-icon icon="chevron-right" />
@@ -97,7 +99,12 @@
 
       <!-- Desktop zoom slider -->
       <div class="zoom-controls" @click.stop>
-        <button class="zoom-btn" :disabled="currentScale <= 1" @click="zoomOut">
+        <button
+          class="zoom-btn"
+          aria-label="Zoom out"
+          :disabled="currentScale <= 1"
+          @click="zoomOut"
+        >
           <v-icon icon="minus" />
         </button>
         <div
@@ -108,7 +115,12 @@
           <div class="zoom-fill" :style="{ width: sliderPercent + '%' }" />
           <div class="zoom-thumb" :style="{ left: sliderPercent + '%' }" />
         </div>
-        <button class="zoom-btn" :disabled="currentScale >= 5" @click="zoomIn">
+        <button
+          class="zoom-btn"
+          aria-label="Zoom in"
+          :disabled="currentScale >= 5"
+          @click="zoomIn"
+        >
           <v-icon icon="plus" />
         </button>
         <span class="zoom-level">{{ currentScale.toFixed(1) }}x</span>

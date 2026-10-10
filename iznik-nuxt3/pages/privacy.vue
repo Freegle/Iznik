@@ -236,9 +236,8 @@
         <p>Here are the changes to this page.</p>
         <ul class>
           <li>
-            27/09/2026: Add section 2: during a security incident some
-            messages may be held and a small number reviewed by our
-            volunteers.
+            27/09/2026: Add section 2: during a security incident some messages
+            may be held and a small number reviewed by our volunteers.
           </li>
           <li>
             06/08/2026: Remove section 2.1 on voice descriptions. You can no

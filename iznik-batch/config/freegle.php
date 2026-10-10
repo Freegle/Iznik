@@ -1538,6 +1538,18 @@ return [
         // users:process-exports — exports are heavier, so a larger window.
         'exports_backlog_max_age_minutes' => (int) env('FREEGLE_MONITORING_EXPORTS_BACKLOG_MAX_AGE_MIN', 30),
 
+        // embeddings:generate — a live post that arrived more than this many minutes ago (but
+        // within the lookback below) and still has no embedding was passed over by several
+        // runs. More than the threshold of them breaches.
+        'embeddings_lag_max_age_minutes' => (int) env('FREEGLE_MONITORING_EMBEDDINGS_LAG_MAX_AGE_MIN', 30),
+        // Posts older than this are ignored by the lag check, so the few that can never be
+        // embedded do not hold it red.
+        'embeddings_lag_lookback_hours' => (int) env('FREEGLE_MONITORING_EMBEDDINGS_LAG_LOOKBACK_HOURS', 6),
+        'embeddings_lag_threshold' => (int) env('FREEGLE_MONITORING_EMBEDDINGS_LAG_THRESHOLD', 5),
+        // Minimum percentage of live posts in messages_spatial that must carry an embedding.
+        // Healthy is about 99%.
+        'embeddings_min_coverage_percent' => (float) env('FREEGLE_MONITORING_EMBEDDINGS_MIN_COVERAGE', 97),
+
         // integrations:sync-whatjobs — alert if jobs.seenat hasn't advanced
         // within this many hours (tolerates the overnight gap + slow cold runs).
         'whatjobs_max_age_hours' => (int) env('FREEGLE_MONITORING_WHATJOBS_MAX_AGE_HOURS', 24),

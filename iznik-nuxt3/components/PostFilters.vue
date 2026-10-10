@@ -273,7 +273,8 @@ watch(group, async (newVal) => {
   // choosing either whole-feed view clears it. Restoring a saved choice on load arrives here
   // through the selectedGroup prop as well, so only write when something actually changed -
   // otherwise every visit to Browse spends a save putting back what is already stored.
-  const savedId = parseInt(settings.browseGroup) > 0 ? parseInt(settings.browseGroup) : null
+  const savedId =
+    parseInt(settings.browseGroup) > 0 ? parseInt(settings.browseGroup) : null
   const wantId = newVal > 0 ? newVal : null
   const wantView =
     newVal === -1 ? 'nearby' : newVal === 0 ? 'mygroups' : settings.browseView

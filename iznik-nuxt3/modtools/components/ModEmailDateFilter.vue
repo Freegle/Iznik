@@ -1,8 +1,9 @@
 <template>
   <b-card class="mb-3 filter-card">
     <b-form class="filter-form" inline @submit.prevent="onFetch">
-      <label class="filter-label">Period:</label>
+      <label :for="`${formId}-period`" class="filter-label">Period:</label>
       <b-form-select
+        :id="`${formId}-period`"
         v-model="datePreset"
         :options="datePresetOptions"
         size="sm"
@@ -10,15 +11,17 @@
         @change="onPresetChange"
       />
       <template v-if="datePreset === 'custom'">
-        <label class="filter-label">From:</label>
+        <label :for="`${formId}-from`" class="filter-label">From:</label>
         <b-form-input
+          :id="`${formId}-from`"
           v-model="startDate"
           type="datetime-local"
           size="sm"
           style="width: 175px"
         />
-        <label class="filter-label">To:</label>
+        <label :for="`${formId}-to`" class="filter-label">To:</label>
         <b-form-input
+          :id="`${formId}-to`"
           v-model="endDate"
           type="datetime-local"
           size="sm"
@@ -38,7 +41,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, useId } from 'vue'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const props = defineProps({
   loading: {

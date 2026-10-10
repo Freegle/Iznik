@@ -950,21 +950,25 @@ describe('mobile store', () => {
       // the app that URL untouched; pushing it as a route landed on the error
       // page and then ChitChat, where one member typed her chat reply.
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      const fetchSpy = vi
-        .spyOn(globalThis, 'fetch')
-        .mockResolvedValue({
-          ok: true,
-          json: async () => ({ url: 'https://www.ilovefreegle.org/chats/21116632' }),
-        })
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          url: 'https://www.ilovefreegle.org/chats/21116632',
+        }),
+      })
 
-      await triggerDeepLink('https://www.ilovefreegle.org/e/d/r/abc123456789/reply/AQ/p0')
+      await triggerDeepLink(
+        'https://www.ilovefreegle.org/e/d/r/abc123456789/reply/AQ/p0'
+      )
 
       expect(fetchSpy).toHaveBeenCalledTimes(1)
       const asked = new URL(fetchSpy.mock.calls[0][0])
       expect(asked.pathname).toBe('/e/d/r/abc123456789/reply/AQ/p0')
       expect(asked.searchParams.get('format')).toBe('json')
       expect(mockRouterPush).toHaveBeenCalledWith('/chats/21116632')
-      expect(mockRouterPush).not.toHaveBeenCalledWith(expect.stringContaining('/e/'))
+      expect(mockRouterPush).not.toHaveBeenCalledWith(
+        expect.stringContaining('/e/')
+      )
       fetchSpy.mockRestore()
       logSpy.mockRestore()
     })
@@ -975,10 +979,14 @@ describe('mobile store', () => {
         .spyOn(globalThis, 'fetch')
         .mockRejectedValue(new Error('offline'))
 
-      await triggerDeepLink('https://www.ilovefreegle.org/e/d/r/abc123456789/reply/AQ/p0')
+      await triggerDeepLink(
+        'https://www.ilovefreegle.org/e/d/r/abc123456789/reply/AQ/p0'
+      )
 
       expect(mockRouterPush).toHaveBeenCalledWith('/')
-      expect(mockRouterPush).not.toHaveBeenCalledWith(expect.stringContaining('/e/'))
+      expect(mockRouterPush).not.toHaveBeenCalledWith(
+        expect.stringContaining('/e/')
+      )
       fetchSpy.mockRestore()
       logSpy.mockRestore()
     })

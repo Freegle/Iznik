@@ -585,6 +585,34 @@ describe('MyMessage', () => {
       expect(promiseBtn.length).toBe(0)
     })
 
+    it('keeps the Promise button when promised and the post offers several', async () => {
+      mockData.message.type = 'Offer'
+      mockData.message.promised = true
+      mockData.message.availableinitially = 4
+      mockData.message.outcomes = []
+      mockData.message.promises = [{ userid: 2 }]
+      mockUserStore.byId.mockReturnValue({ id: 2, displayname: 'Test User' })
+      const wrapper = await createWrapper()
+      const promiseBtn = wrapper
+        .findAll('.action-btn')
+        .filter((btn) => btn.text().trim() === 'Promise')
+      expect(promiseBtn.length).toBeGreaterThan(0)
+    })
+
+    it('names everyone the post is promised to', async () => {
+      mockData.message.type = 'Offer'
+      mockData.message.promised = true
+      mockData.message.availableinitially = 4
+      mockData.message.outcomes = []
+      mockData.message.promises = [{ userid: 2 }, { userid: 3 }]
+      mockUserStore.byId.mockImplementation((id) => ({
+        id,
+        displayname: id === 2 ? 'Bob' : 'Alice',
+      }))
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.desktop-promised').text()).toContain('Bob, Alice')
+    })
+
     it('shows Withdraw button when not completed', async () => {
       mockData.message.outcomes = []
       const wrapper = await createWrapper()

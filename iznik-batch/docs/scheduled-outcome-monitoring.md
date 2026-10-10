@@ -151,6 +151,8 @@ per ssh target in `FREEGLE_MONITORING_HOSTS` (see "Host health checks" above):
 | `memberships:process` | `BacklogCheck` | `memberships_history` `processingrequired=1` (by `added`) older than 15 min | Welcome-mail / review processing queue. |
 | `users:process-exports` | `BacklogCheck` | `users_exports` `completed IS NULL` (by `requested`) older than 30 min | GDPR exports are rare, so an empty queue is normal — only a genuinely-stuck export fires. |
 | `ripple:expand` | `BacklogCheck` | `rippling_reach` `status='expanding'` with `next_expansion_at` more than 24h past due, threshold 50 | The expander wedged for days in Aug 2026 (~10k rows overdue) with no alarm. A day past due is far beyond the deliberate overnight pause + morning catch-up, so day-late rows = a stalled engine or run lock, never scheduling jitter. Only active while `ripple.enabled`. |
+| `embeddings:generate` | `BacklogCheck` | live `messages_spatial` rows (`successful=0 AND promised=0`) with no `messages_embeddings` row, arrived 30 min to 6h ago, threshold 5 | Nothing throws when embedding falls behind; posts just vanish from vector search. The 6h horizon lets the few posts that can never be embedded age out. Thresholds in `freegle.monitoring.embeddings_lag_*`. |
+| `embeddings:generate coverage` | `CallbackCheck` | share of live `messages_spatial` rows carrying an embedding, floor 97% (healthy is about 99%) | Catches a slow slide the lag check cannot. Floor in `freegle.monitoring.embeddings_min_coverage_percent`. |
 | `spam:refresh-mobile-cidrs` | `FreshnessCheck` | `max(spam_whitelist_ips.date)` WHERE `comment LIKE 'UK mobile:%'`, ≤ 40 days | Monthly job; the 40-day floor tolerates the cadence. |
 | `integrations:sync-whatjobs` | `FreshnessCheck` | `max(jobs.seenat)`, ≤ 24h | Gated on `freegle.whatjobs.feed1` being set. 24h floor tolerates the 08:00–22:00 window + slow cold runs. |
 | `data:git-summary` | `CallbackCheck` (config) | unix timestamp in `config['git_summary_last_run']`, ≤ 10 days | Weekly. Missing key ⇒ skipped (may not have run since deploy); unparseable ⇒ breach. |
@@ -217,7 +219,6 @@ prioritised (each needs its exact "pending" predicate verified first):
 
 | Task | Backlog/freshness signal |
 |---|---|
-| `embeddings:generate` | messages awaiting embeddings (`messages_spatial successful=0 promised=0` minus `messages_embeddings`) — multi-table predicate, verify before adding |
 | `messages:update-spatial-index` / `messages:update-index` | newest indexed vs newest message |
 | `newsfeed:generate-link-previews` | `link_previews.retrieved` recency vs new URLs (quiet-period false-alarm risk) |
 | `microvolunteering:notify`, `chats:update-expected`, `users:update-modmails` | cursor recency |

@@ -1450,6 +1450,28 @@ commands:
               exit 1
             fi
 
+  lint-nuxt:
+    description: "Lint iznik-nuxt3 with eslint (errors fail the build, warnings do not)"
+    steps:
+      - run:
+          name: Lint iznik-nuxt3 (eslint)
+          command: |
+            # Runs in the dev container the Vitest runner uses: its image already holds the
+            # installed node_modules and the eslint config, so there is no second npm ci.
+            CONTAINER="${COMPOSE_PROJECT_NAME:-freegle}-modtools-dev-local"
+            if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+              echo "❌ $CONTAINER is not running - cannot lint"
+              docker ps --format '{{.Names}}'
+              exit 1
+            fi
+            echo "🔍 eslint . in $CONTAINER (errors only; warnings are hidden)"
+            if docker exec -w /app "$CONTAINER" npx eslint . --quiet; then
+              echo "✅ eslint found no errors"
+            else
+              echo "❌ eslint found errors (listed above). Run 'npx eslint --fix .' in iznik-nuxt3."
+              exit 1
+            fi
+
   run-vitest-tests:
     description: "Run Vitest unit tests for iznik-nuxt3 components"
     parameters:
@@ -2557,6 +2579,9 @@ jobs:
       # So we just need to wait for the application containers to be ready.
       - wait-for-basic-services
       - wait-for-prod-container
+
+      # Cheap and fails fast, so it runs before the Vitest and parallel suites.
+      - lint-nuxt
 
       # Run Vitest unit tests first (fast, fail-fast before slower tests)
       - run-vitest-tests:

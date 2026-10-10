@@ -82,7 +82,7 @@
 
       <!-- Quantity -->
       <div class="form-section">
-        <label class="form-label">How many are you giving away?</label>
+        <div class="form-label">How many are you giving away?</div>
         <NumberIncrementDecrement
           v-model="availablenow"
           :min="1"

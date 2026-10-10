@@ -9,8 +9,8 @@
       @handle="loadallgroups"
     />
     <div v-if="gotallgroups">
-      <label>From:</label>
-      <b-form-select v-model="from">
+      <label :for="`${formId}-from`">From:</label>
+      <b-form-select :id="`${formId}-from`" v-model="from">
         <option value="null">-- Please choose --</option>
         <option value="info">info@...</option>
         <option value="support">support@...</option>
@@ -24,29 +24,30 @@
         <option value="volunteers">volunteers@...</option>
         <option value="centralmods">volunteersupport@...</option>
       </b-form-select>
-      <label> To: </label>
+      <div class="field-caption">To:</div>
       <ModGroupSelect v-model="groupid" systemwide listall />
       <NoticeMessage v-if="groupid < 0" variant="danger" class="mt-2 mb-2">
         This will go to all groups.
       </NoticeMessage>
-      <label> Try hard? </label>
-      <b-form-select v-model="tryhard">
+      <label :for="`${formId}-try-hard`"> Try hard? </label>
+      <b-form-select :id="`${formId}-try-hard`" v-model="tryhard">
         <option :value="false">Just mail primary email</option>
         <option :value="true">Mail all email addresses we know</option>
       </b-form-select>
-      <label> Confirm receipt </label>
-      <b-form-select v-model="confirm">
+      <label :for="`${formId}-confirm-receipt`"> Confirm receipt </label>
+      <b-form-select :id="`${formId}-confirm-receipt`" v-model="confirm">
         <option :value="false">Don't ask to click</option>
         <option :value="true">Ask them to click to confirm receipt</option>
       </b-form-select>
-      <label>Subject</label>
+      <label :for="`${formId}-subject`">Subject</label>
       <b-form-input
+        :id="`${formId}-subject`"
         v-model="subject"
         placeholder="Brief subject of this message"
       />
-      <label>Text version</label>
-      <b-form-textarea v-model="text" rows="6" />
-      <label>HTML version (optional)</label>
+      <label :for="`${formId}-text-version`">Text version</label>
+      <b-form-textarea :id="`${formId}-text-version`" v-model="text" rows="6" />
+      <div class="field-caption">HTML version (optional)</div>
       <client-only>
         <div class="bg-white">
           <QuillEditor
@@ -112,7 +113,7 @@
   </div>
 </template>
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, useId } from 'vue'
 import { QuillEditor } from '@vueup/vue-quill'
 import '@vueup/vue-quill/dist/vue-quill.snow.css'
 import htmlEditButton from 'quill-html-edit-button'
@@ -120,6 +121,9 @@ import htmlEditButton from 'quill-html-edit-button'
 import ModAlertHistory from './ModAlertHistory'
 import { useAlertStore } from '~/stores/alert'
 import { useModGroupStore } from '~/stores/modgroup'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const alertStore = useAlertStore()
 const modGroupStore = useModGroupStore()
@@ -200,7 +204,8 @@ async function fetch() {
 }
 </script>
 <style scoped>
-label {
+label,
+.field-caption {
   font-weight: bold;
 }
 

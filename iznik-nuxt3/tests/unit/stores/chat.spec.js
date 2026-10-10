@@ -277,6 +277,39 @@ describe('chat store', () => {
       })
     })
 
+    it('treats a 409 on an image send as already sent', async () => {
+      const store = useChatStore()
+      store.config = {}
+      const err = new Error('Conflict')
+      err.response = { status: 409 }
+      mockSend.mockRejectedValueOnce(err)
+      mockFetchMessages.mockResolvedValue([])
+
+      await store.send(10, null, null, 2)
+
+      expect(mockFetchMessages).toHaveBeenCalled()
+    })
+
+    it('rethrows a 409 when no image was sent', async () => {
+      const store = useChatStore()
+      store.config = {}
+      const err = new Error('Conflict')
+      err.response = { status: 409 }
+      mockSend.mockRejectedValueOnce(err)
+
+      await expect(store.send(10, 'hi')).rejects.toThrow('Conflict')
+    })
+
+    it('rethrows other errors on an image send', async () => {
+      const store = useChatStore()
+      store.config = {}
+      const err = new Error('Bad image')
+      err.response = { status: 400 }
+      mockSend.mockRejectedValueOnce(err)
+
+      await expect(store.send(10, null, null, 2)).rejects.toThrow('Bad image')
+    })
+
     it('only sends replysource alongside a refmsgid (reply provenance, not chat chatter)', async () => {
       const store = useChatStore()
       store.config = {}
