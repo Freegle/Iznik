@@ -2,6 +2,7 @@ import BaseAPI from '@/api/BaseAPI'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 
 import { notAHeldConflict } from '~/api/heldConflict'
+import { notOutcomeAlreadyRecorded } from '~/api/outcomeConflict'
 
 // A ChitChat moderator posting on a member's behalf names the member here. The
 // server checks the caller is a ChitChat moderator and derives that member's
@@ -80,7 +81,11 @@ export default class MessageAPI extends BaseAPI {
   }
 
   update(event) {
-    return this.$postv2('/message', event)
+    return this.$postv2(
+      '/message',
+      event,
+      event?.action === 'Outcome' ? notOutcomeAlreadyRecorded : true
+    )
   }
 
   save(event) {
