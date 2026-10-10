@@ -1,5 +1,38 @@
-import { spawn, execSync } from 'child_process'
+import { spawn, execFile } from 'child_process'
+import { readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { dirname } from 'path'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
+
+// The progress bar needs a total. `vitest list` gives one, but it collects every spec
+// file to do so, which took about 40s of wall clock before the first test could start,
+// and the POST sat blocked on it. Each finished run reports its own total in the
+// summary line, so that is remembered here, per filter, and reused next time. Only a
+// run with nothing remembered lists, and it does so in the background while the
+// tests are already running.
+const TOTALS_FILE = '/tmp/freegle-tests/vitest-totals.json'
+
+function totalsKey(filter: string): string {
+  return filter || '*'
+}
+
+function readTotals(): Record<string, number> {
+  try {
+    return JSON.parse(readFileSync(TOTALS_FILE, 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+function rememberTotal(filter: string, total: number): void {
+  try {
+    mkdirSync(dirname(TOTALS_FILE), { recursive: true })
+    const totals = readTotals()
+    totals[totalsKey(filter)] = total
+    writeFileSync(TOTALS_FILE, JSON.stringify(totals))
+  } catch (e) {
+    console.error('could not remember vitest total:', e instanceof Error ? e.message : e)
+  }
+}
 
 export default defineEventHandler(async (event) => {
   console.log('Starting Vitest tests...')
@@ -24,25 +57,13 @@ export default defineEventHandler(async (event) => {
   const prefix = process.env.COMPOSE_PROJECT_NAME || 'freegle'
   const container = `${prefix}-modtools-dev-local`
 
-  // Count total tests upfront via `vitest list` so the progress bar is meaningful
-  let totalTests = 0
-  try {
-    const filterListArg = filter ? ` "${filter}"` : ''
-    const listOutput = execSync(
-      `docker exec ${container} sh -c 'cd /app && npx vitest list${filterListArg} 2>&1'`,
-      { encoding: 'utf8', timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
-    )
-    // vitest list outputs one line per test as "file > suite > test name"
-    totalTests = listOutput.split('\n').filter(l => l.includes(' > ')).length
-  } catch (e) {
-    console.error('vitest list failed:', e instanceof Error ? e.message : e)
-  }
+  const knownTotal = readTotals()[totalsKey(filter)] || 0
 
   setTestState('vitest', {
     status: 'running',
     message: 'Starting Vitest...',
     logs: '',
-    progress: { completed: 0, total: totalTests, passed: 0, failed: 0, current: '' },
+    progress: { completed: 0, total: knownTotal, passed: 0, failed: 0, current: '' },
     startTime: Date.now(),
     endTime: null,
   })
@@ -55,12 +76,41 @@ export default defineEventHandler(async (event) => {
     docker exec -w /app ${container} sh -c '${testCmd}'
   `], { stdio: 'pipe' })
 
+  if (!knownTotal) {
+    // Nothing remembered for this filter yet: count the tests in the background so
+    // the bar gets a total part-way through this run, and the summary line (which
+    // is authoritative) gets remembered for the next one either way.
+    const filterListArg = filter ? ` "${filter}"` : ''
+    execFile(
+      'docker',
+      ['exec', container, 'sh', '-c', `cd /app && npx vitest list${filterListArg} 2>&1`],
+      { encoding: 'utf8', timeout: 600000, maxBuffer: 10 * 1024 * 1024 },
+      (err, stdout) => {
+        if (err) {
+          console.error('vitest list failed:', err.message)
+          return
+        }
+        // vitest list outputs one line per test as "file > suite > test name"
+        const listed = String(stdout).split('\n').filter(l => l.includes(' > ')).length
+        const state = getTestState('vitest')
+        if (listed > 0 && state.status === 'running' && !state.progress.total) {
+          state.progress.total = listed
+          setTestState('vitest', state)
+        }
+      },
+    )
+  }
+
   testProcess.stdout.on('data', (data) => {
     const text = data.toString()
     appendTestLogs('vitest', text)
 
     const state = getTestState('vitest')
-    const lines = text.split('\n')
+    // The verbose reporter colours its output even without a terminal, so each
+    // line starts with an escape sequence rather than the tick the patterns
+    // below look for. Strip the colours before matching, or the bar sits at
+    // zero until the summary line arrives.
+    const lines = text.replace(/\x1b\[[0-9;]*m/g, '').split('\n')
 
     for (const line of lines) {
       // Match pass: ✓ test name (duration)
@@ -115,6 +165,9 @@ export default defineEventHandler(async (event) => {
   testProcess.on('close', (code) => {
     const state = getTestState('vitest')
     const p = state.progress
+    if (p.total > 0) {
+      rememberTotal(filter, p.total)
+    }
     setTestState('vitest', {
       status: code === 0 ? 'completed' : 'failed',
       success: code === 0,
