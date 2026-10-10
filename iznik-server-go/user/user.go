@@ -3849,8 +3849,15 @@ func GetUserMembershipHistory(c *fiber.Ctx) error {
 		Text        string     `json:"text"`
 	}
 
+	// FORCE INDEX (user): without it the optimiser drives from `groups` and reads each
+	// group's logs through the `group` index, believing a few dozen rows per group. On the
+	// production logs table that is close to a full scan; one member's history ran for over
+	// an hour, and a moderator's ModTools retrying it stacked 164 copies on the write node.
+	// Through `user` it reads only this member's own log rows. The hint names an index, so
+	// TestUserMembershipHistory runs this SQL: a renamed `user` index fails that test rather
+	// than every request. The index comes from the create_logs_table migration.
 	var history []MembershipHistoryRow
-	db.Table("logs l").
+	db.Table("logs l FORCE INDEX (user)").
 		Select("l.timestamp, l.subtype AS type, l.groupid, g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay, COALESCE(l.text,'') AS text").
 		Joins("INNER JOIN `groups` g ON g.id = l.groupid").
 		Where("l.user = ? AND l.type = 'Group' AND l.subtype IN ('Joined','Approved','Rejected','Applied','Left')", targetid).
