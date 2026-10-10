@@ -4064,70 +4064,6 @@ type housekeeperTasksResponse struct {
 //	200: successResponse
 //	401: errorResponse
 
-// swagger:route GET /chat/{id}/commongroups chat getChatCommonGroups
-// Get groups common to both chat participants
-//
-// Returns groups that both chat participants are members of.
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Chat ID
-//     required: true
-//     type: integer
-//
-// Responses:
-//
-//	200: successResponse
-
-// swagger:route GET /config/admin/concern_keywords config listConcernKeywords
-// List concern keywords
-//
-// Returns all concern keywords (moderation keyword list, successor to worry_words and spam_keywords).
-//
-// Parameters:
-//   + name: scope
-//     in: query
-//     description: Filter by scope (global or group)
-//     required: false
-//     type: string
-//   + name: group_id
-//     in: query
-//     description: Filter by group ID
-//     required: false
-//     type: integer
-//
-// Responses:
-//
-//	200: successResponse
-
-// swagger:route POST /config/admin/concern_keywords config createConcernKeyword
-// Create concern keyword
-//
-// Creates a new concern keyword.
-//
-// Responses:
-//
-//	200: successResponse
-//	400: errorResponse
-
-// swagger:route DELETE /config/admin/concern_keywords/{id} config deleteConcernKeyword
-// Delete concern keyword
-//
-// Deletes a concern keyword by ID.
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Concern keyword ID
-//     required: true
-//     type: integer
-//
-// Responses:
-//
-//	200: successResponse
-//	404: errorResponse
-
 // swagger:route GET /discourse_sso sso discourseSSO
 // Discourse SSO login
 //
@@ -4585,22 +4521,6 @@ type housekeeperTasksResponse struct {
 //	200: successResponse
 //	403: errorResponse
 
-// swagger:route GET /user/{id}/applied user getUserApplied
-// Get user applied jobs/events
-//
-// Returns items the user has applied to.
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: User ID
-//     required: true
-//     type: integer
-//
-// Responses:
-//
-//	200: successResponse
-
 // swagger:route GET /user/{id}/bans user getUserBans
 // Get user bans
 //
@@ -4653,22 +4573,6 @@ type housekeeperTasksResponse struct {
 // Get user login history
 //
 // Returns login history for the given user.
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: User ID
-//     required: true
-//     type: integer
-//
-// Responses:
-//
-//	200: successResponse
-
-// swagger:route GET /user/{id}/membershiphistory user getUserMembershipHistory
-// Get user membership history
-//
-// Returns group membership history for the given user.
 //
 // Parameters:
 //   + name: id
@@ -4916,23 +4820,6 @@ type housekeeperTasksResponse struct {
 //     description: Category: digest, events, volunteering, newsletter, relevant, chat, notifications, engagement or all
 //     required: true
 //     type: string
-//
-// Responses:
-//
-//	200: successResponse
-
-// swagger:route GET /group/{id}/message/summary group getGroupMessageSummaries
-// Get id + subject for a group's live posts
-//
-// Backs the server-rendered, crawlable post list on the community page
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Group ID
-//     required: true
-//     type: integer
-//     format: int64
 //
 // Responses:
 //
@@ -5199,30 +5086,6 @@ type housekeeperTasksResponse struct {
 //	401: errorResponse
 //	403: errorResponse
 
-// swagger:route PATCH /partnership/{id}/group partnerships patchPartnershipGroups
-// Change the groups a partnership covers
-//
-// Adds or removes a group from a partnership, or re-derives the whole list from
-// the authority boundary. Partnerships team, Support or Admin only.
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Partnership ID
-//     required: true
-//     type: integer
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-//	400: errorResponse
-//	401: errorResponse
-//	403: errorResponse
-//	404: errorResponse
-
 // swagger:route PUT /partnership/{id}/year partnerships putPartnershipYears
 // Set the financial-year split of a partnership
 //
@@ -5419,3 +5282,111 @@ type housekeeperTasksResponse struct {
 //	401: errorResponse
 //	403: errorResponse
 //	404: errorResponse
+
+// swagger:route GET /modtools/members modtools listMembers
+// List members for moderation
+//
+// Returns the national member list (moderators only), filtered by collection and search.
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/members/{id} modtools getMember
+// Get a member's moderation card
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route PATCH /modtools/members/{id} modtools patchMember
+// Update a member's moderation settings
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route POST /modtools/members/{id}/ban modtools banMember
+// Ban a member site-wide
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route DELETE /modtools/members/{id}/ban modtools unbanMember
+// Lift a member's ban
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route POST /modtools/members/{id}/flag/clear modtools clearMemberFlag
+// Clear a member's review flag
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/outcomes modtools listOutcomes
+// List completed outcomes for review
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route PATCH /modtools/outcomes/{id} modtools reviewOutcome
+// Mark an outcome reviewed
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Outcome ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse

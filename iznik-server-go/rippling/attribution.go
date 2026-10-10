@@ -32,10 +32,9 @@ const (
 // msgCol/userCol are the caller's outer columns to correlate against; the fragment owns the
 // aliases og/mem, so it can be nested anywhere those two are free.
 func EstablishedOriginMemberExists(msgCol, userCol string) string {
-	return `EXISTS(SELECT 1 FROM messages_groups og
-	                  INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ` + userCol + `
-	                    AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0
-	                  WHERE og.msgid = ` + msgCol + ` AND og.rippled_in = 0 AND og.deleted = 0)`
+	// There are no communities or memberships any more, so nobody is an established member of
+	// a post's origin group: every reply is ripple-attributed.
+	return "(1 = 0)"
 }
 
 // DeriveAttribution runs the attribution ladder over the evidence bits captured at reply time

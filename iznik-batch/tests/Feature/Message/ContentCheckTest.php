@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Message;
 
+use App\Models\Group;
+use App\Models\MessageGroup;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\ContentCheckService;
@@ -1792,4 +1794,135 @@ class ContentCheckTest extends TestCase
         $this->assertNull($row->contentcheck_reasons,
             'an approved post carries no hold reasons');
     }
+
+    public function test_greeting_with_http_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Hello! Check this deal', 'Visit http://example.com for more info');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_greeting_in_subject_with_link_in_body_flags(): void
+    {
+        $result = $this->service->checkGreetingSpam('Hi there', 'More details at https://www.example.com/offer');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_hey_greeting_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Hey!', 'Check http://spam.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_good_morning_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Good morning everyone', 'Visit our site http://deals.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_sup_greeting_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Sup guys', 'Check out https://example.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_greetings_greeting_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Greetings', 'Visit http://spam.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_good_afternoon_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Good afternoon friends', 'www.example.com has deals');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_good_evening_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Good evening', 'Check http://example.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_hello_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Hello', 'http://example.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_salutations_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Salutations', 'Visit https://example.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_greeting_without_link_returns_null(): void
+    {
+        $result = $this->service->checkGreetingSpam('Hello friend', 'Collection from SW1A 1AA please');
+
+        $this->assertNull($result);
+    }
+
+    public function test_no_greeting_with_link_returns_null(): void
+    {
+        $result = $this->service->checkGreetingSpam('OFFER: Sofa', 'Visit http://example.com');
+
+        $this->assertNull($result);
+    }
+
+    public function test_greeting_case_insensitive(): void
+    {
+        $result = $this->service->checkGreetingSpam('HELLO', 'http://spam.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 }

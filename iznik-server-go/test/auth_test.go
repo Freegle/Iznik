@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"github.com/golang-jwt/jwt/v4"
+	"os"
 )
 
 func TestAuth(t *testing.T) {
@@ -265,4 +267,23 @@ func TestHasPermission(t *testing.T) {
 	assert.True(t, auth.HasPermission(userMulti, auth.PERM_NEWSLETTER))
 	assert.True(t, auth.HasPermission(userMulti, auth.PERM_SPAM_ADMIN))
 	assert.False(t, auth.HasPermission(userMulti, auth.PERM_TEAMS))
+}
+
+func TestExpiredJWT(t *testing.T) {
+	// Create a user for this test
+	prefix := uniquePrefix("expired")
+	userID, _ := CreateFullTestUser(t, prefix)
+	id := strconv.FormatUint(userID, 10)
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"id":  id,
+		"exp": time.Date(2015, 10, 10, 12, 0, 0, 0, time.UTC).Unix(),
+	})
+
+	// Sign and get the complete encoded token as a string using the secret
+	tokenString, _ := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
+
+	// Expired token is ignored
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user/"+id+"/publiclocation?jwt="+tokenString, nil))
+	assert.Equal(t, 200, resp.StatusCode)
 }

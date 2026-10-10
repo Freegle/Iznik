@@ -1502,6 +1502,10 @@ class ChatNotificationServiceTest extends TestCase
             'status' => ChatRoster::STATUS_CLOSED,
         ]);
 
+        // Moderators are national, so fixture moderators would also be notified.
+        DB::table('users')->whereIn('systemrole', ['Moderator', 'Support', 'Admin'])
+            ->where('id', '!=', $moderator->id)->update(['systemrole' => 'User']);
+
         $this->createTestChatMessage($room, $member, ['date' => now()->subMinutes(5)]);
 
         $count = $this->service->notifyByEmail(ChatRoom::TYPE_USER2MOD, $room->id);

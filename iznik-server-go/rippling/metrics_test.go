@@ -19,8 +19,6 @@ func TestReplySourceSplitSQL_Shape(t *testing.T) {
 	assert.Contains(t, sql, "THEN 'home'")
 	assert.Contains(t, sql, "WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn")
 	assert.Contains(t, sql, "THEN 'ripple_notified'")
-	assert.Contains(t, sql, "WHEN EXISTS(SELECT 1 FROM messages_groups mgr")
-	assert.Contains(t, sql, "THEN 'ripple_group'")
 	assert.Contains(t, sql, "THEN 'ripple_join'")
 	assert.Contains(t, sql, "ELSE 'unknown'")
 
@@ -46,52 +44,6 @@ func TestReplySourceSplitSQL_Shape(t *testing.T) {
 	if assert.True(t, fromIdx >= 0 && whereIdx > fromIdx) {
 		between := sql[fromIdx+len("FROM rippling_reply_attribution rra") : whereIdx]
 		assert.Empty(t, strings.TrimSpace(between))
-	}
-}
-
-// The live derivation reads the frozen was_home_member bit, which on rows captured before this
-// fix was set for ripple-created auto-joins too. Such a row must not read as home: the member is
-// only in the group because an earlier ripple put them there. The derivation therefore qualifies
-// the home rung by the surviving membership's PROVENANCE, and keeps the rungs in ladder order -
-// ripple_join sits below notified and group, exactly as in DeriveAttribution.
-func TestReplySourceSplitSQL_RippleJoinRefinesTheFrozenHomeBit(t *testing.T) {
-	sql := ReplySourceSplitSQL("")
-
-	homeIdx := strings.Index(sql, "THEN 'home'")
-	notifiedIdx := strings.Index(sql, "THEN 'ripple_notified'")
-	groupIdx := strings.Index(sql, "THEN 'ripple_group'")
-	joinIdx := strings.Index(sql, "THEN 'ripple_join'")
-	unknownIdx := strings.Index(sql, "ELSE 'unknown'")
-	if assert.True(t, homeIdx >= 0 && notifiedIdx >= 0 && groupIdx >= 0 && joinIdx >= 0) {
-		assert.Less(t, homeIdx, notifiedIdx, "ladder order: home first")
-		assert.Less(t, notifiedIdx, groupIdx)
-		assert.Less(t, groupIdx, joinIdx, "ripple_join ranks below ripple_group, as in DeriveAttribution")
-		assert.Less(t, joinIdx, unknownIdx)
-	}
-
-	// Both halves of "only a ripple-created membership backs the home bit" must be present:
-	// a ripple-created origin membership exists, AND no ordinary one does.
-	assert.Contains(t, sql, "memj.rippled = 1",
-		"ripple_join needs a ripple-created origin membership")
-	assert.Contains(t, sql, "memo.rippled = 0",
-		"...and no ordinary origin membership, else it is genuinely home")
-
-	// The home rung is guarded by the negation of that same test, so a row whose only surviving
-	// origin membership is a ripple-join can never fall through to home.
-	assert.Contains(t, sql, "rra.was_home_member = 1 AND NOT (",
-		"the frozen home bit is qualified, not trusted blindly")
-}
-
-func TestReplySourceSplitSQL_SrcGroupSplicedIntoFROM(t *testing.T) {
-	srcGroup := " JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
-	sql := ReplySourceSplitSQL(srcGroup)
-
-	assert.Contains(t, sql, "FROM rippling_reply_attribution rra"+srcGroup)
-	// The join must land before the WHERE window, not after.
-	joinIdx := strings.Index(sql, "JOIN messages_groups mg")
-	whereIdx := strings.Index(sql, "WHERE rra.replied_at")
-	if assert.True(t, joinIdx >= 0 && whereIdx >= 0, "both the JOIN and WHERE clause must be present") {
-		assert.Less(t, joinIdx, whereIdx, "srcGroup JOIN must precede the replied_at WHERE window")
 	}
 }
 

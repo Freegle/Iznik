@@ -217,24 +217,9 @@ func TestGetSession(t *testing.T) {
 	assert.Equal(t, float64(userID), me["id"])
 	assert.NotEmpty(t, me["systemrole"])
 
-	// groups should be an array with at least one entry containing only membership-specific fields.
-	groups, ok := result["groups"].([]interface{})
-	assert.True(t, ok, "groups should be an array")
-	assert.GreaterOrEqual(t, len(groups), 1)
-
-	// Verify the session response only contains membership-specific fields, not group-level data.
-	g0, ok := groups[0].(map[string]interface{})
-	assert.True(t, ok, "group entry should be a map")
-	assert.NotNil(t, g0["groupid"], "should have groupid")
-	assert.NotNil(t, g0["role"], "should have role")
-	// Join date is membership-specific: the feed uses it to fold a community's header up after the first week.
-	assert.NotNil(t, g0["added"], "should have added")
-	_, addedErr := time.Parse(time.RFC3339, g0["added"].(string))
-	assert.NoError(t, addedErr, "added should be an RFC3339 timestamp")
-	assert.Nil(t, g0["nameshort"], "should NOT have nameshort (group-level)")
-	assert.Nil(t, g0["namedisplay"], "should NOT have namedisplay (group-level)")
-	assert.Nil(t, g0["type"], "should NOT have type (group-level)")
-	assert.Nil(t, g0["region"], "should NOT have region (group-level)")
+	// There are no communities, so the session carries no groups.
+	_, hasGroups := result["groups"]
+	assert.False(t, hasGroups, "the session should carry no groups")
 
 	// emails should be an array with at least one entry.
 	emails, ok := result["emails"].([]interface{})
@@ -1585,7 +1570,7 @@ func TestPostSessionForgetMod(t *testing.T) {
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(2), result["ret"])
-	assert.Contains(t, result["status"], "demote")
+	assert.Contains(t, result["status"], "stand down")
 
 	// Verify user is NOT deleted.
 	db := database.DBConn
@@ -1694,6 +1679,10 @@ func TestWorkCountStoriesDateFilter(t *testing.T) {
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
+	// Moderators are one national pool, so the count covers other tests' data too:
+	// assert on the change this story makes.
+	before := getSessionWork(t, token)["stories"].(float64)
+
 	// Create a member with a story dated 60 days ago (outside 31-day window).
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 	var storyID uint64
@@ -1705,24 +1694,7 @@ func TestWorkCountStoriesDateFilter(t *testing.T) {
 
 	work := getSessionWork(t, token)
 	stories := work["stories"].(float64)
-	assert.Equal(t, float64(0), stories, "Should NOT count story older than 31 days")
-}
-
-func TestWorkCountStoriesGroupFilter(t *testing.T) {
-	prefix := uniquePrefix("wc_stories_grp")
-	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	PromoteTestUserToModerator(t, modID)
-	_, token := CreateTestSession(t, modID)
-
-	// Create a member in a DIFFERENT group that the mod doesn't moderate.
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	storyID := CreateTestStory(t, memberID, "Other group story", "Not my group", false, false)
-	defer db.Exec("DELETE FROM users_stories WHERE id = ?", storyID)
-
-	work := getSessionWork(t, token)
-	stories := work["stories"].(float64)
-	assert.Equal(t, float64(0), stories, "Should NOT count story from non-moderated group")
+	assert.Equal(t, before, stories, "Should NOT count story older than 31 days")
 }
 
 // ---------------------------------------------------------------------------
@@ -1829,6 +1801,8 @@ func TestWorkCountHappinessAutoCommentExcluded(t *testing.T) {
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
+	before := getSessionWork(t, token)["happiness"].(float64)
+
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 	msgID := CreateTestMessage(t, memberID, "OFFER: Auto comment item", 55.95, -3.19)
 
@@ -1862,7 +1836,7 @@ func TestWorkCountHappinessAutoCommentExcluded(t *testing.T) {
 
 	work := getSessionWork(t, token)
 	happiness := work["happiness"].(float64)
-	assert.Equal(t, float64(0), happiness, "Should exclude all auto-generated comments")
+	assert.Equal(t, before, happiness, "Should exclude all auto-generated comments")
 }
 
 // ---------------------------------------------------------------------------
@@ -2246,39 +2220,6 @@ func TestWorkCountChatReviewRecipientMatching(t *testing.T) {
 	chatreview := work["chatreview"].(float64)
 	assert.GreaterOrEqual(t, chatreview, float64(1),
 		"Should count chat where RECIPIENT is in mod's group")
-}
-
-func TestWorkCountChatReviewSenderOnlyNotCounted(t *testing.T) {
-	prefix := uniquePrefix("wc_chat_sender")
-	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	PromoteTestUserToModerator(t, modID)
-	_, token := CreateTestSession(t, modID)
-
-	// user1 is in the mod's group, user2 is in a different group.
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-
-	// user1 (member of mod's group) sends a message TO user2 (non-member).
-	// Recipient is user2 → NOT in mod's group.
-	// Sender is user1 → in mod's group but is the SENDER, not recipient.
-	// With recipient matching this should NOT count (primary path).
-	// It may count via secondary path (sender fallback when recipient not a member),
-	// but only if recipient is not a member of ANY Freegle group.
-	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
-	var msgID uint64
-	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, reviewrejected) "+
-		"VALUES (?, ?, 'Message from group member', NOW(), 1, 0)", chatID, user1ID)
-	db.Raw("SELECT id FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1", chatID).Scan(&msgID)
-	defer db.Exec("DELETE FROM chat_messages WHERE id = ?", msgID)
-
-	work := getSessionWork(t, token)
-	// The recipient (user2) IS a member of otherGroup (not mod's group).
-	// V1 logic: Case 1 fails (recipient not in mod's groups), Case 2 fails
-	// (recipient HAS memberships). So this should NOT be counted.
-	chatreview := work["chatreview"].(float64)
-	assert.Equal(t, float64(0), chatreview,
-		"Chat where sender is in mod's group but recipient is in another group should NOT count")
 }
 
 // ---------------------------------------------------------------------------

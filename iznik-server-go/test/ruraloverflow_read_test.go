@@ -9,11 +9,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/stretchr/testify/assert"
+
 )
 
 // The overflow rings as ways IN on every read surface. The mail path deliberately
@@ -273,4 +276,71 @@ func TestReachBlocked_FrozenReachStillBlocksThoseOutsideIt(t *testing.T) {
 	blocked = message.ReachBlockedSet(viewerID, []uint64{msgID}, 51.5, -0.1)
 	assert.True(t, blocked[msgID],
 		"a frozen reach still blocks someone outside it: they have not been reached")
+}
+
+// TestBrowseScopedSearch_RingAdmittedPostSearchable: a post the feed shows via the
+// viewer's band ring must also be findable by searching - scrollable-but-unsearchable
+// was the search half of the incident.
+func TestBrowseScopedSearch_RingAdmittedPostSearchable(t *testing.T) {
+	t.Setenv("RIPPLE_RURAL_ACCESS_ENABLED", "1")
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+	db := database.DBConn
+	ringSchemaExec(t)
+
+	prefix := uniquePrefix("ringsearch")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	subject := "Quibblewick Chair ring admits viewer (ringsearch)"
+	ringed := CreateTestMessage(t, posterID, subject, 51.5, -0.1)
+	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", ringed)
+
+	// Search is pure vector: seed the in-memory embedding store with an antiparallel
+	// vector so the post is found only through the lexical guarantee, and mock the
+	// sidecar for the query embedding.
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: ringed, Msgtype: "Offer", Lat: 51.5, Lng: -0.1,
+			Subject: subject, Arrival: time.Now(), SubjectVec: makeAntiparallelVec(20.0)},
+	})
+	t.Cleanup(func() { embedding.Global.SetEntries(nil) })
+	queryVec := makeTestVec(2.0)
+	server := mockSidecarReturning(t, queryVec[:])
+	t.Cleanup(server.Close)
+	embedding.SetSidecarURL(server.URL)
+	t.Cleanup(func() { embedding.SetSidecarURL("") })
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", ringed)
+
+	farReachWithSparseRing(t, ringed)
+	stubRingIndex(t, "$.rural.sparse", ringed)
+
+	// A sparse-band viewer the ring covers.
+	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), "+
+		"'$.mylocation', JSON_OBJECT('lat', 51.5, 'lng', -0.1), "+
+		"'$.browseDensityBand', 'sparse') WHERE id = ?", viewerID)
+
+	// A dense-band viewer at the same spot: the post carries only a sparse ring, so
+	// their band earns them nothing and the far polygon excludes them.
+	denseID, denseToken := CreateFullTestUser(t, prefix+"_dense")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), "+
+		"'$.mylocation', JSON_OBJECT('lat', 51.5, 'lng', -0.1), "+
+		"'$.browseDensityBand', 'dense') WHERE id = ?", denseID)
+
+	words := message.GetWords(subject)
+	search := func(tok string) map[uint64]bool {
+		resp, _ := getApp().Test(httptest.NewRequest("GET",
+			"/api/message/search/"+words[0]+"?browse=1&jwt="+tok, nil), 60000)
+		assert.Equal(t, 200, resp.StatusCode)
+		var results []message.SearchResult
+		json2.Unmarshal(rsp(resp), &results)
+		got := map[uint64]bool{}
+		for _, r := range results {
+			got[r.Msgid] = true
+		}
+		return got
+	}
+
+	assert.True(t, search(token)[ringed],
+		"browse-scoped search finds a post whose ring admits the viewer's band")
+	assert.False(t, search(denseToken)[ringed],
+		"a band the post carries no ring for is still excluded by the far polygon")
 }

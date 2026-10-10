@@ -19,14 +19,17 @@ The tests are split across multiple files to enable parallel execution across fi
 ## Test Matrix
 
 ```
-┌──────────────────────────┬─────────────────┬─────────────────┬─────────────────┐
-│      User State          │  Message Page   │   Browse Page   │  Explore Page   │
-├──────────────────────────┼─────────────────┼─────────────────┼─────────────────┤
-│ Logged In                │ Test 1.1        │ Test 1.2        │ Test 1.3        │
-│ New User (Registration)  │ Test 2.1        │ Test 2.2        │ Test 2.3        │
-│ Existing User (Login)    │ Test 3.1        │ Test 3.2        │ Test 3.3        │
-│ Social Sign-In           │ Test 4.1*       │ (simulated)     │ (simulated)     │
-└──────────────────────────┴─────────────────┴─────────────────┴─────────────────┘
+┌──────────────────────────┬─────────────────┬─────────────────┐
+│      User State          │  Message Page   │   Browse Page   │
+├──────────────────────────┼─────────────────┼─────────────────┤
+│ Logged In                │ Test 1.1        │ Test 1.2        │
+│ New User (Registration)  │ Test 2.1        │ (signed in only)│
+│ Existing User (Login)    │ Test 3.1        │ (signed in only)│
+│ Social Sign-In           │ Test 4.1*       │ (simulated)     │
+└──────────────────────────┴─────────────────┴─────────────────┘
+
+Browse needs a signed-in member with a location, and there are no explore pages, so a
+visitor who is not signed in reaches a post from its message page.
 
 * Test 4.1 simulates social login by testing the loginCount key bump mechanism
   that triggers after OAuth completes. This verifies the reply state survives
@@ -64,8 +67,6 @@ Common helper functions are in `utils/reply-helpers.js`:
 - `waitForAuthInLocalStorage(page)` - Wait for auth tokens in localStorage
 - `waitForAuthHydration(page)` - Wait for page to stabilize after auth
 - `dismissLoginModalIfPresent(page)` - Dismiss signup modal on browse/explore
-- `navigateToMessageViaBrowse(page, messageId, groupName, itemText)` - Navigate via browse
-- `navigateToMessageViaExplore(page, groupName)` - Navigate via explore
 - `clickReplyButton(page)` - Click Reply and expand reply section
 - `fillReplyForm(page, { email, replyText, collectText })` - Fill reply form
 - `clickSendAndWait(page, { expectWelcomeModal })` - Send and wait for navigation

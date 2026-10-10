@@ -15,12 +15,6 @@ func TestCommunityEvent_InvalidID(t *testing.T) {
 	assert.Equal(t, 404, resp.StatusCode)
 }
 
-func TestCommunityEvent_InvalidGroupID(t *testing.T) {
-	// Non-existent group should return empty array
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/communityevent/group/999999999", nil))
-	assert.Equal(t, 200, resp.StatusCode)
-}
-
 func TestCommunityEvent_V2Path(t *testing.T) {
 	// Verify v2 paths work
 	prefix := uniquePrefix("eventv2")

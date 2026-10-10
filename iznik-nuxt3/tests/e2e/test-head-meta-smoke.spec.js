@@ -44,25 +44,6 @@ test.describe('Rendered head/meta smoke tests', () => {
     })
   })
 
-  test('explore page renders its own title and canonical link', async ({
-    page,
-  }) => {
-    await page.gotoAndVerify('/explore', {
-      timeout: timeouts.navigation.initial,
-    })
-
-    const title = await page.title()
-    expect(title.length).toBeGreaterThan(5)
-
-    const canonicals = page.locator('head link[rel="canonical"]')
-    await expect(canonicals).toHaveCount(1)
-    const canonical = await canonicals.getAttribute('href')
-    expect(canonical).toContain('/explore')
-
-    const descriptions = page.locator('head meta[name="description"]')
-    await expect(descriptions).toHaveCount(1)
-  })
-
   test('no-navbar layout page hides the navbar (route.meta.layout contract)', async ({
     page,
   }) => {

@@ -127,7 +127,7 @@ class ReengageMailRenderTest extends TestCase
 
         $this->assertStringContainsString('Welcome to Freegle', $text);
         $this->assertStringContainsString('Offer something', $text);
-        $this->assertStringContainsString('Your local Freegle volunteer', $text);
+        $this->assertStringContainsString('The Freegle team', $text);
         $this->assertStringNotContainsString('<mj-', $text);
     }
 

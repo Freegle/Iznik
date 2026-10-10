@@ -179,11 +179,11 @@ func applyUnsubscribe(db *gorm.DB, uid uint64, unsubType string) {
 	for _, one := range wanted {
 		switch one {
 		case UnsubDigest:
-			db.Exec("UPDATE memberships SET emailfrequency = 0 WHERE userid = ? AND emailfrequency != 0", uid)
+			db.Exec("UPDATE users SET emailfrequency = 0 WHERE id = ? AND emailfrequency != 0", uid)
 		case UnsubEvents:
-			db.Exec("UPDATE memberships SET eventsallowed = 0 WHERE userid = ? AND eventsallowed != 0", uid)
+			db.Exec("UPDATE users SET eventsallowed = 0 WHERE id = ? AND eventsallowed != 0", uid)
 		case UnsubVolunteering:
-			db.Exec("UPDATE memberships SET volunteeringallowed = 0 WHERE userid = ? AND volunteeringallowed != 0", uid)
+			db.Exec("UPDATE users SET volunteeringallowed = 0 WHERE id = ? AND volunteeringallowed != 0", uid)
 		case UnsubNewsletter:
 			db.Exec("UPDATE users SET newslettersallowed = 0 WHERE id = ?", uid)
 		case UnsubRelevant:

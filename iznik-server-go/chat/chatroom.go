@@ -394,10 +394,8 @@ func PutChatRoom(c *fiber.Ctx) error {
 		// national moderator role; a member always gets their own room.
 		chatUserID := myid
 		modOpeningMembersChat := req.Userid > 0 && req.Userid != myid
-		if modOpeningMembersChat {
-			if !auth.IsModerator(myid) {
-				return fiber.NewError(fiber.StatusForbidden, "Not a moderator")
-			}
+		if modOpeningMembersChat && auth.IsModerator(myid) {
+			// A non-moderator naming someone else's userid is ignored and gets their own room.
 			chatUserID = req.Userid
 		}
 

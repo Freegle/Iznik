@@ -677,29 +677,6 @@ class ExpandServiceTest extends TestCase
         $this->assertNotNull(DB::table('rippling_reach')->where('msgid', $msgid)->first());
     }
 
-    /**
-     * The retraction is scoped to the opted-out community: a post on a community that still
-     * ripples keeps its reach and its copies when some OTHER community opts out.
-     */
-    public function test_retraction_leaves_posts_on_other_communities_alone(): void
-    {
-        $this->fakeRouting(3);
-        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
-
-        $this->service()->process(false, 500);
-        $this->assertNotNull(DB::table('rippling_reach')->where('msgid', $msgid)->first());
-
-        // An unrelated community opts out.
-        DB::table('groups')->where('id', $other->id)->update(['settings' => '{"rippling": {"out": 0}}']);
-
-        $this->service()->process(false, 500);
-
-        $this->assertNotNull(
-            DB::table('rippling_reach')->where('msgid', $msgid)->first(),
-            'a post on a community that still ripples is untouched by another community opting out'
-        );
-    }
-
     /** Seed $count DISTINCT users each leaving an Interested chat reply on the post. */
     private function seedInterestedRepliers(int $msgid, int $count): void
     {
@@ -876,10 +853,6 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(50, (int) $last['cumulative_users'], 'stored schedule now caps at 50');
         $this->assertSame('2020-01-01 00:00:00', (string) $after->updated_at, 'updated_at preserved (no reach-mail trigger)');
 
-        // Crosspost-breadth stat is reported and the cap never widens reach.
-        $this->assertArrayHasKey('groups_before', $r);
-        $this->assertArrayHasKey('groups_after', $r);
-        $this->assertGreaterThanOrEqual($r['groups_after'], $r['groups_before']);
     }
 
     public function test_reposted_pre_go_live_post_gets_reach_after_spatial_refresh(): void

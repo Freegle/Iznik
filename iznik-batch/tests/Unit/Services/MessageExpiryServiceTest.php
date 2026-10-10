@@ -419,7 +419,7 @@ class MessageExpiryServiceTest extends TestCase
         $user = $this->createTestUser();
         DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
 
-        $message = $this->createTestMessage($user, ['arrival' => now()->subDays(31)]);
+        $message = $this->createTestMessage($user, ['arrival' => now()->subDays(95)]);
 
         DB::table('messages_spatial')->insert([
             'msgid' => $message->id,

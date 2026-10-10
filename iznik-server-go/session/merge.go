@@ -28,16 +28,6 @@ func MergeUserAccounts(db *gorm.DB, survivor uint64, loser uint64) error {
 			return err
 		}
 
-		// The survivor may already belong to some of the loser's groups —
-		// IGNORE skips those, then the leftovers are removed.
-		if err := tx.Table("memberships").Clauses(clause.Update{Modifier: "IGNORE"}).
-			Where("userid = ?", loser).Update("userid", survivor).Error; err != nil {
-			return err
-		}
-		if err := tx.Table("memberships").Where("userid = ?", loser).Delete(nil).Error; err != nil {
-			return err
-		}
-
 		return tx.Table("users").Where("id = ?", loser).Update("deleted", gorm.Expr("NOW()")).Error
 	})
 }

@@ -2,6 +2,10 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\ChatMessage;
+use App\Models\Group;
+use App\Models\Membership;
+use App\Models\MessageGroup;
 use App\Models\ChatRoom;
 use App\Models\Message;
 use App\Models\User;
@@ -24,6 +28,13 @@ class PushNotificationServiceTest extends TestCase
     {
         parent::setUp();
         $this->service = new PushNotificationService;
+
+        // Moderation work is counted sitewide, so fixture work (pending and spam posts, pending
+        // volunteering ops) is set aside and each test counts only what it creates.
+        DB::table('messages')->whereIn('collection', ['Pending', 'Spam'])->update(['deleted' => now()]);
+        DB::table('volunteering')->update(['pending' => 0]);
+        // Moderators are national too, so fixture moderators would be push recipients.
+        DB::table('users')->whereIn('systemrole', ['Moderator', 'Support', 'Admin'])->update(['systemrole' => 'User']);
     }
 
     /**
@@ -1536,4 +1547,400 @@ class PushNotificationServiceTest extends TestCase
         $rejected = $this->createTestChatMessage($room, $sender, ['reviewrequired' => 1, 'reviewrejected' => 1]);
         $this->assertEquals([], $this->service->getChatMessageRecipients($rejected->id)['fd'], 'a rejected message is never pushed');
     }
+
+    /**
+     * ModTools Android pushes must include a `notification` block.
+     *
+     * Without it, FCM hands a data-only push to the app's listener and the
+     * notification never appears in the system tray — the bug that made
+     * real mod-work pushes invisible while the forceVisible test push worked.
+     */
+    public function test_buildAndroidFcmMessage_includes_notification_block_for_modtools(): void
+    {
+        $payload = [
+            'title' => '3 messages pending',
+            'message' => 'Open ModTools to review',
+            'channel_id' => 'modtools',
+        ];
+
+        $arr = $this->invokeBuildAndroidFcmMessage('tok-mt', $payload, false);
+
+        $this->assertArrayHasKey('notification', $arr,
+            'ModTools Android push must include a notification block so Android raises it in the tray');
+        $this->assertSame('3 messages pending', $arr['notification']['title']);
+        $this->assertSame('Open ModTools to review', $arr['notification']['body']);
+        $this->assertSame('tok-mt', $arr['token']);
+        $this->assertSame($payload, $arr['data'],
+            'Existing data payload (channel_id, badge, etc.) must still be present');
+    }
+
+    /**
+     * Non-modtools Android pushes without forceVisible stay data-only.
+     *
+     * This protects the user-app chat path (notifyIndividualMessages) which
+     * relies on data-only messages with action buttons built by the app.
+     */
+    public function test_buildAndroidFcmMessage_omits_notification_block_for_non_modtools(): void
+    {
+        $payload = [
+            'title' => 'New chat message',
+            'message' => 'Hello',
+            'channel_id' => 'chat_messages',
+        ];
+
+        $arr = $this->invokeBuildAndroidFcmMessage('tok-chat', $payload, false);
+
+        $this->assertArrayNotHasKey('notification', $arr,
+            'Non-modtools push (no forceVisible) must remain data-only');
+    }
+
+    /**
+     * forceVisible (used by the test-push command) always adds the block,
+     * regardless of channel.
+     */
+    public function test_buildAndroidFcmMessage_forceVisible_adds_notification_block(): void
+    {
+        $payload = [
+            'title' => 'Test',
+            'message' => 'Hello',
+            'channel_id' => 'chat_messages',
+        ];
+
+        $arr = $this->invokeBuildAndroidFcmMessage('tok', $payload, true);
+
+        $this->assertArrayHasKey('notification', $arr);
+    }
+
+    /**
+     * Empty-title payload (e.g. zero-count modtools push to clear the badge)
+     * must NOT add a notification block — we don't want an empty tray entry.
+     */
+    public function test_buildAndroidFcmMessage_skips_notification_block_when_title_empty(): void
+    {
+        $payload = [
+            'title' => '',
+            'message' => '',
+            'channel_id' => 'modtools',
+        ];
+
+        $arr = $this->invokeBuildAndroidFcmMessage('tok', $payload, false);
+
+        $this->assertArrayNotHasKey('notification', $arr,
+            'Zero-count clear-badge pushes have empty title and must not show in the tray');
+    }
+
+    /**
+     * Visible ModTools push: priority high and notification.tag set so the
+     * latest "N pending" entry replaces the previous one in the tray.
+     */
+    public function test_buildAndroidConfig_visible_modtools_gets_high_priority_and_tag(): void
+    {
+        $payload = [
+            'title' => '3 messages pending',
+            'message' => 'Open ModTools to review',
+            'channel_id' => 'modtools',
+        ];
+
+        $cfg = $this->invokeBuildAndroidConfig(123, $payload, false);
+
+        $this->assertSame('high', $cfg['priority']);
+        $this->assertSame(['tag' => 'modtools-123'], $cfg['notification']);
+    }
+
+    /**
+     * Zero-work ModTools push (empty title) must be truly silent: data-only,
+     * normal priority, no AndroidConfig.notification. Setting
+     * AndroidConfig.notification on a data-only payload promotes it to a
+     * notification message on some devices/Capacitor builds and surfaces an
+     * empty tray entry — the bug we're fixing.
+     */
+    public function test_buildAndroidConfig_zero_count_modtools_is_silent(): void
+    {
+        $payload = [
+            'title' => '',
+            'message' => '',
+            'channel_id' => 'modtools',
+        ];
+
+        $cfg = $this->invokeBuildAndroidConfig(123, $payload, false);
+
+        $this->assertSame('normal', $cfg['priority'],
+            'Silent badge-clear pushes should not wake the device with high priority');
+        $this->assertArrayNotHasKey('notification', $cfg,
+            'AndroidConfig.notification must be absent for data-only clear-badge pushes');
+    }
+
+    /**
+     * forceVisible (test-push command) always rides high priority even for
+     * non-modtools channels, but never gets the modtools tag.
+     */
+    public function test_buildAndroidConfig_forceVisible_high_priority_no_tag_for_non_modtools(): void
+    {
+        $payload = [
+            'title' => 'Test',
+            'message' => 'Hello',
+            'channel_id' => 'chat_messages',
+        ];
+
+        $cfg = $this->invokeBuildAndroidConfig(123, $payload, true);
+
+        $this->assertSame('high', $cfg['priority']);
+        $this->assertArrayNotHasKey('notification', $cfg);
+    }
+
+    /**
+     * iOS must replace the previous ModTools banner rather than stack another one.
+     * Android already does this via notification.tag; iOS needs apns-collapse-id, whose
+     * absence is why the fan-out showed up as three banners and beeps at once.
+     */
+    public function test_buildApnsConfig_modtools_collapses_to_one_banner(): void
+    {
+        $payload = [
+            'title' => '2 pending messages',
+            'message' => 'Open ModTools to review',
+            'channel_id' => 'modtools',
+            'count' => '2',
+        ];
+
+        $cfg = $this->invokeBuildApnsConfig(123, $payload);
+
+        $this->assertSame('modtools-123', $cfg['headers']['apns-collapse-id'],
+            'ModTools pushes must collapse onto the same banner, matching the Android tag');
+        $this->assertSame('modtools', $cfg['payload']['aps']['thread-id']);
+        $this->assertSame(2, $cfg['payload']['aps']['badge']);
+        $this->assertSame('10', $cfg['headers']['apns-priority']);
+    }
+
+    /**
+     * The silent badge-clear push has no banner to collapse onto.
+     */
+    public function test_buildApnsConfig_zero_count_modtools_does_not_collapse(): void
+    {
+        $payload = [
+            'title' => '',
+            'message' => '',
+            'channel_id' => 'modtools',
+            'count' => '0',
+        ];
+
+        $cfg = $this->invokeBuildApnsConfig(123, $payload);
+
+        $this->assertArrayNotHasKey('apns-collapse-id', $cfg['headers']);
+        $this->assertSame(0, $cfg['payload']['aps']['badge']);
+    }
+
+    /**
+     * Chat and new-post pushes are about a specific chat or post: collapsing them would
+     * replace an unread one with the next and lose it.
+     */
+    public function test_buildApnsConfig_non_modtools_pushes_never_collapse(): void
+    {
+        $payload = [
+            'title' => 'New chat message',
+            'message' => 'Hello',
+            'channel_id' => 'chat_messages',
+            'count' => '1',
+        ];
+
+        $cfg = $this->invokeBuildApnsConfig(123, $payload);
+
+        $this->assertArrayNotHasKey('apns-collapse-id', $cfg['headers']);
+        $this->assertArrayNotHasKey('thread-id', $cfg['payload']['aps']);
+    }
+
+    /**
+     * The NSE flag the rich daily-posts notification depends on must survive the
+     * extraction of this config out of sendFcm().
+     */
+    public function test_buildApnsConfig_new_posts_keeps_mutable_content(): void
+    {
+        $payload = [
+            'title' => '5 new posts near you',
+            'message' => 'Have a look',
+            'category' => PushNotificationService::CATEGORY_NEW_POSTS,
+            'count' => '5',
+        ];
+
+        $cfg = $this->invokeBuildApnsConfig(123, $payload);
+
+        $this->assertSame(1, $cfg['payload']['aps']['mutable-content'],
+            'NEW_POSTS must still wake the notification service extension');
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    /**
+     * The app pushes the payload route into vue-router, so it must be a path.
+     * The stories exhort is scheduled with a full URL in users_notifications.url,
+     * which would otherwise be routed to verbatim and land on a 404.
+     */
+    public function test_buildUserNotificationPayload_strips_site_from_absolute_notification_url(): void
+    {
+        $user = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'url' => rtrim(config('freegle.sites.user'), '/') . '/stories',
+            'title' => 'Tell us your Freegle story!',
+            'text' => 'We love to hear why people Freegle.',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        $payload = $this->service->buildUserNotificationPayload($user->id);
+
+        $this->assertSame('/stories', $payload['route'],
+            'Absolute notification URLs on our own site must become a router path');
+    }
+
+    public function test_buildUserNotificationPayload_keeps_relative_notification_url(): void
+    {
+        $user = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'url' => '/microvolunteering/message/123',
+            'title' => 'Can you help?',
+            'text' => 'Check this post.',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        $payload = $this->service->buildUserNotificationPayload($user->id);
+
+        $this->assertSame('/microvolunteering/message/123', $payload['route'],
+            'Relative notification URLs must be passed through unchanged');
+    }
+
+    /**
+     * Sanity check: a recent, non-spam unseen notification does count, so the
+     * exclusion tests below aren't vacuously true.
+     */
+    public function test_consumerUnreadCounts_counts_recent_unseen_notification(): void
+    {
+        $user = $this->createTestUser();
+        $sender = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'fromuser' => $sender->id,
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'seen' => 0,
+            'timestamp' => now()->subDays(1),
+        ]);
+
+        [, $notifcount] = $this->service->consumerUnreadCounts($user->id);
+
+        $this->assertEquals(1, $notifcount, 'A recent unseen notification must count towards the badge');
+    }
+
+    /**
+     * A notification older than the in-app bell's 90-day window can never be
+     * marked seen there (NotificationOne.vue's markSeen() only fires for a
+     * notification actually rendered in the list), so it must not permanently
+     * inflate the app-icon badge.
+     */
+    public function test_consumerUnreadCounts_excludes_notification_older_than_bell_window(): void
+    {
+        $user = $this->createTestUser();
+        $sender = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'fromuser' => $sender->id,
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'seen' => 0,
+            'timestamp' => now()->subDays(200),
+        ]);
+
+        [, $notifcount] = $this->service->consumerUnreadCounts($user->id);
+
+        $this->assertEquals(0, $notifcount,
+            'A notification the member can never see in the bell must not inflate the badge (Discourse #9953)');
+    }
+
+    /**
+     * Notifications from a spam/pending-add sender are hidden from the in-app
+     * bell (notification.Count()/List() LEFT JOIN spam_users) and from the
+     * chaseup mailer (NotificationChaseUpService::SPAM_COLLECTIONS) - the
+     * push-computed badge must exclude them too.
+     */
+    public function test_consumerUnreadCounts_excludes_notification_from_spam_sender(): void
+    {
+        $user = $this->createTestUser();
+        $spammer = $this->createTestUser();
+
+        DB::table('spam_users')->insert([
+            'userid' => $spammer->id,
+            'byuserid' => $user->id,
+            'collection' => 'Spammer',
+        ]);
+
+        DB::table('users_notifications')->insert([
+            'fromuser' => $spammer->id,
+            'touser' => $user->id,
+            'type' => 'CommentOnYourPost',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        [, $notifcount] = $this->service->consumerUnreadCounts($user->id);
+
+        $this->assertEquals(0, $notifcount,
+            'A notification from a spam-flagged sender must not inflate the badge (Discourse #9953)');
+    }
+
+    /**
+     * A Whitelisted spam_users row must not exclude the sender's notifications -
+     * only Spammer/PendingAdd hide a notification from the bell.
+     */
+    public function test_consumerUnreadCounts_does_not_exclude_whitelisted_sender(): void
+    {
+        $user = $this->createTestUser();
+        $sender = $this->createTestUser();
+
+        DB::table('spam_users')->insert([
+            'userid' => $sender->id,
+            'byuserid' => $user->id,
+            'collection' => 'Whitelisted',
+        ]);
+
+        DB::table('users_notifications')->insert([
+            'fromuser' => $sender->id,
+            'touser' => $user->id,
+            'type' => 'CommentOnYourPost',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        [, $notifcount] = $this->service->consumerUnreadCounts($user->id);
+
+        $this->assertEquals(1, $notifcount,
+            'Whitelisted is not a spam collection and must not exclude the notification');
+    }
+
 }

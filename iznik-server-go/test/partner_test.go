@@ -247,3 +247,71 @@ func TestPartnerPutMemberRefusesInvalidKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 403, resp.StatusCode)
 }
+
+// The sibling lookup is scoped to the partner's own domain and to the exact TN
+// username: a partner must not reach an account whose alias merely starts with
+// the same characters, nor one in a different domain.
+func TestFindTNSiblingsScopedToUsernameAndDomain(t *testing.T) {
+	prefix := uniquePrefix("partner_scope")
+	db := database.DBConn
+
+	mine := CreateTestUser(t, prefix+"_mine", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", mine, prefix+"-g1@test.com")
+
+	sib := CreateTestUser(t, prefix+"_sib", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", sib, prefix+"-g2@test.com")
+
+	// The shape that actually bites: a LONGER username whose own alias still
+	// matches the shorter one's "<username>-g%" narrowing, because the % runs on
+	// past the end of the name. iznik-batch merged two unrelated members this way
+	// on 2026-09-13, so the exact-username test is load-bearing, not belt and braces.
+	longer := CreateTestUser(t, prefix+"_longer", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", longer, prefix+"-gomes-g3@test.com")
+
+	// Right username, wrong domain - outside the partner's reach.
+	otherDomain := CreateTestUser(t, prefix+"_other", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", otherDomain, prefix+"-g4@elsewhere.com")
+
+	got := user.FindTNSiblings(db, prefix+"-g1@test.com")
+	assert.Contains(t, got, sib, "the sibling sharing the TN username must be found")
+	assert.NotContains(t, got, longer, "a longer username that shares a prefix is a different member")
+	assert.NotContains(t, got, otherDomain, "a different domain is outside the partner's reach")
+	assert.NotContains(t, got, mine, "the account the alias itself resolves to is not its own sibling")
+
+	// A non-TN-shaped address has no siblings at all.
+	assert.Empty(t, user.FindTNSiblings(db, "plain@test.com"))
+}
+
+// Pin what the two columns HOLD, which nothing did before: the direction was
+// got wrong once and every test stayed green.
+//
+// V1's User::addEmail writes canonMail($email) and strrev(canonMail($email)) at
+// both its insert sites, and canonMail strips the -gNNNN suffix and the dots out
+// of the domain on purpose ("the format we have historically used"). So for a
+// partner alias both columns derive from the canon, and every per-group alias of
+// one member reduces to the same pair.
+func TestCreatePartnerUserStoresV1CanonAndBackwards(t *testing.T) {
+	prefix := uniquePrefix("partner_canon")
+	db := database.DBConn
+
+	email := prefix + "-g4707@user.trashnothing.com"
+	userID, err := user.CreatePartnerUser(db, 0, email)
+	require.NoError(t, err)
+
+	var row struct {
+		Canon     string `gorm:"column:canon"`
+		Backwards string `gorm:"column:backwards"`
+	}
+	db.Table("users_emails").Select("canon, backwards").
+		Where("userid = ? AND email = ?", userID, email).Scan(&row)
+
+	wantCanon := prefix + "@usertrashnothingcom"
+	assert.Equal(t, wantCanon, row.Canon,
+		"canon drops the per-group suffix and the domain dots, so a member's aliases agree")
+	assert.Equal(t, user.ReverseString(wantCanon), row.Backwards,
+		"backwards is REVERSE(canon), the definition V1 writes")
+
+	// A second alias of the same member must reduce to the same canon, which is
+	// what stops it minting another account.
+	assert.Equal(t, wantCanon, user.CanonicalizePartnerEmail(prefix+"-g1586@user.trashnothing.com"))
+}

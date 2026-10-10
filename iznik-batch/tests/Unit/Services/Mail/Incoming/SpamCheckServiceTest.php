@@ -236,8 +236,7 @@ class SpamCheckServiceTest extends TestCase
     public function test_our_domain_spoofing_in_url_detected(): void
     {
         $result = $this->service->checkSpamKeywords(
-            'Visit http://evil.groups.ilovefreegle.org/phishing',
-            [SpamCheckService::ACTION_SPAM]
+            'Visit http://evil.groups.ilovefreegle.org/phishing'
         );
 
         $this->assertNotNull($result);

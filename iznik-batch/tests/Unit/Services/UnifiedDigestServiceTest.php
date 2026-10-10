@@ -30,6 +30,12 @@ class UnifiedDigestServiceTest extends TestCase
         // Rippling ships dark; enable it so the reach-coordination ledger path is exercised.
         config(['freegle.ripple.enabled' => true]);
         $this->fakeRingIndex();
+
+        // Digests are not scoped to a community, so fixture posts would be candidates for every
+        // recipient. Age them out so each test digests only the posts it creates.
+        DB::table('messages')->update(['arrival' => now()->subYear()]);
+        // Recipients are sitewide too, so fixture members are taken off digests.
+        DB::table('users')->update(['emailfrequency' => 0]);
     }
 
     public function test_completed_came_and_went_posts_are_deduplicated_like_live(): void

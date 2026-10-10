@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\MessageGroup;
+use ReflectionClass;
 use App\Models\Message;
 use App\Services\ContentCheckService;
 use App\Services\ContentEmbeddingService;
@@ -510,5 +512,110 @@ class ContentCheckServiceTest extends TestCase
         $result = $this->service->checkMoneySymbols('', "Worth \xc2\xa3200");
         $this->assertNotNull($result);
     }
+
+
+    private function callPrivate(string $method, mixed ...$args): mixed
+    {
+        $ref = new ReflectionClass($this->service);
+        $m = $ref->getMethod($method);
+        $m->setAccessible(true);
+        return $m->invoke($this->service, ...$args);
+    }
+
+    #[DataProvider('damerauLevenshteinProvider')]
+    public function test_damerau_levenshtein(string $a, string $b, int $expected): void
+    {
+        $dist = $this->callPrivate('damerauLevenshtein', $a, $b);
+        $this->assertSame($expected, $dist);
+    }
+
+    public function test_inflection_variants_no_cvc_when_ends_vowel(): void
+    {
+        // "true" ends in vowel 'e' — no CVC doubling
+        $variants = $this->callPrivate('inflectionVariants', 'true');
+        $this->assertNotContains('trueed', $variants);
+        $this->assertNotContains('trueing', $variants);
+    }
+
+    public function test_matches_fuzzy_exact_match(): void
+    {
+        // Tested indirectly via checkVagueItem or via reflection
+        $result = $this->callPrivate('matchesFuzzy', 'free stuff', 'stuff');
+        $this->assertTrue($result);
+    }
+
+    public function test_matches_fuzzy_plural_inflection(): void
+    {
+        $result = $this->callPrivate('matchesFuzzy', 'selling drugs', 'sell');
+        $this->assertTrue($result);
+    }
+
+    public function test_matches_fuzzy_strips_edge_punctuation(): void
+    {
+        $result = $this->callPrivate('matchesFuzzy', 'free (stuff)', 'stuff');
+        $this->assertTrue($result);
+    }
+
+    public function test_matches_fuzzy_no_match(): void
+    {
+        $result = $this->callPrivate('matchesFuzzy', 'clean offer sofa', 'heroin');
+        $this->assertFalse($result);
+    }
+
+    public function test_matches_fuzzy_rejects_initial_consonant_swap(): void
+    {
+        // "hangers" vs "bangers" differ at position 0 — should NOT match
+        $result = $this->callPrivate('matchesFuzzy', 'coat hangers', 'bangers');
+        $this->assertFalse($result);
+    }
+
+    #[DataProvider('greetingSpamProvider')]
+    public function test_check_greeting_spam(string $subject, string $body, bool $expectFlag): void
+    {
+        $result = $this->service->checkGreetingSpam($subject, $body);
+
+        if ($expectFlag) {
+            $this->assertNotNull($result);
+            $this->assertSame(ContentCheckService::CHECK_GREETING_SPAM, $result['check']);
+            $this->assertSame('flag', $result['action']);
+        } else {
+            $this->assertNull($result);
+        }
+    }
+
+    public function test_matches_fuzzy_multiword_phrase_no_match_when_absent(): void
+    {
+        $result = $this->callPrivate('matchesFuzzy', 'free sofa in good condition', 'discounted price');
+        $this->assertFalse($result);
+    }
+
+    public function test_check_greeting_spam_good_afternoon_with_link(): void
+    {
+        $result = $this->service->checkGreetingSpam('', 'Good afternoon, visit https://buy.com now');
+        $this->assertNotNull($result);
+        $this->assertSame(ContentCheckService::CHECK_GREETING_SPAM, $result['check']);
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 }

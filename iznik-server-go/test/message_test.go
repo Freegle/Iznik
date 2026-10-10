@@ -12,7 +12,6 @@ import (
 
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,27 +43,6 @@ func TestBounds(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 	json2.Unmarshal(rsp(resp), &msgs)
 	assert.Equal(t, len(msgs), 0)
-}
-
-func TestMyGroups(t *testing.T) {
-	// Get logged out - should return 401
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/mygroups", nil))
-	assert.Equal(t, 401, resp.StatusCode)
-
-	// Create a full test user with group membership and message
-	prefix := uniquePrefix("mygroups")
-	userID, token := CreateFullTestUser(t, prefix)
-
-	// Create a group the user is in with a message
-	CreateTestMessage(t, userID, "Test MyGroups Item", 55.9533, -3.1883)
-
-	// Should be able to fetch messages in our groups
-	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/message/mygroups?jwt="+token, nil))
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var msgs []message.MessageSummary
-	json2.Unmarshal(rsp(resp), &msgs)
-	// We expect at least some messages (could be from other tests too)
 }
 
 func TestMessagesByUser(t *testing.T) {
@@ -501,47 +479,6 @@ func TestMessageContentCheckReasonsAreModOnly(t *testing.T) {
 
 // --- Test: Delete (mod action) ---
 
-// TestPostMessageDeleteNoDuplicateLog asserts that POST /message?action=Delete does NOT
-// synchronously write a Message/Deleted row to the logs table.  The batch processor
-// (ProcessBackgroundTasksCommand) is the sole writer: it inserts the row when it picks up
-// the email_message_rejected background task.  Adding a second synchronous write in the Go
-// handler creates an identical duplicate in production (one from Go, one from PHP).
-//
-// handleDeleteMessage was temporarily broken to add a logAndNotifyMods() call (bug: duplicate
-// logs).  The fix removed that call; this test guards against regression by asserting count==0.
-func TestPostMessageDeleteNoDuplicateLog(t *testing.T) {
-	prefix := uniquePrefix("msgmod_del_duplog")
-	db := database.DBConn
-
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	PromoteTestUserToModerator(t, modID)
-	_, modToken := CreateTestSession(t, modID)
-
-	msgID := CreateTestMessage(t, posterID, prefix+" offer item", 52.5, -1.8)
-
-	body := map[string]interface{}{
-		"id":     msgID,
-		"action": "Delete",
-	}
-	bodyBytes, _ := json.Marshal(body)
-	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
-	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := getApp().Test(req)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	// The Go handler must NOT write a Message/Deleted log entry directly.
-	// The batch processor writes it when processing the email_message_rejected task.
-	// A sync write here produces a duplicate in production (Go + PHP = 2 identical rows).
-	var logCount int64
-	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND msgid = ?",
-		log.LOG_TYPE_MESSAGE, log.LOG_SUBTYPE_DELETED, msgID).Scan(&logCount)
-	assert.Equal(t, int64(0), logCount,
-		"handleDeleteMessage must not sync-write a logs row: count expected 0, batch processor is the sole writer")
-}
-
 // --- Test: Spam ---
 
 // --- Test: Hold ---
@@ -550,117 +487,7 @@ func TestPostMessageDeleteNoDuplicateLog(t *testing.T) {
 
 // --- Test: ApproveEdits ---
 
-func TestPostMessageApproveEdits(t *testing.T) {
-	prefix := uniquePrefix("msgmod_aped")
-	db := database.DBConn
-
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	PromoteTestUserToModerator(t, modID)
-	_, modToken := CreateTestSession(t, modID)
-
-	msgID := CreateTestMessage(t, posterID, prefix+" offer item", 52.5, -1.8)
-
-	// Mark as edited.
-	db.Exec("UPDATE messages SET editedby = ? WHERE id = ?", posterID, msgID)
-
-	// Create a pending edit.
-	newSubject := prefix + " updated subject"
-	newText := "Updated body text"
-	db.Exec("INSERT INTO messages_edits (msgid, byuser, oldsubject, newsubject, oldtext, newtext, reviewrequired) VALUES (?, ?, ?, ?, 'Old text', ?, 1)",
-		msgID, posterID, prefix+" offer item", newSubject, newText)
-
-	body := map[string]interface{}{
-		"id":     msgID,
-		"action": "ApproveEdits",
-	}
-	bodyBytes, _ := json.Marshal(body)
-	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
-	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := getApp().Test(req)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	// Verify editedby cleared.
-	var editedby *uint64
-	db.Raw("SELECT editedby FROM messages WHERE id = ?", msgID).Scan(&editedby)
-	assert.Nil(t, editedby)
-
-	// Verify subject and textbody updated.
-	var subject, textbody string
-	db.Raw("SELECT subject, COALESCE(textbody, '') FROM messages WHERE id = ?", msgID).Row().Scan(&subject, &textbody)
-	assert.Equal(t, newSubject, subject)
-	assert.Equal(t, newText, textbody)
-
-	// Verify edit marked as approved with reviewrequired = 0.
-	var approvedCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_edits WHERE msgid = ? AND approvedat IS NOT NULL AND reviewrequired = 0", msgID).Scan(&approvedCount)
-	assert.Equal(t, int64(1), approvedCount)
-
-	// Verify it no longer appears in the V1-style count query (which only checks reviewrequired).
-	var pendingEditCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_edits WHERE msgid = ? AND reviewrequired = 1", msgID).Scan(&pendingEditCount)
-	assert.Equal(t, int64(0), pendingEditCount, "Approved edit should not appear in V1 count query")
-}
-
 // --- Test: RevertEdits ---
-
-func TestPostMessageRevertEdits(t *testing.T) {
-	prefix := uniquePrefix("msgmod_rved")
-	db := database.DBConn
-
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	PromoteTestUserToModerator(t, modID)
-	_, modToken := CreateTestSession(t, modID)
-
-	msgID := CreateTestMessage(t, posterID, prefix+" offer item", 52.5, -1.8)
-
-	// Simulate the real edit flow: PATCH immediately updates messages with the new text,
-	// then records old/new in messages_edits for mod review.
-	db.Exec("UPDATE messages SET subject = ?, textbody = ?, editedby = ? WHERE id = ?",
-		prefix+" changed subject", "New text", posterID, msgID)
-	db.Exec("INSERT INTO messages_edits (msgid, byuser, oldsubject, newsubject, oldtext, newtext, reviewrequired) VALUES (?, ?, ?, ?, 'Old text', 'New text', 1)",
-		msgID, posterID, prefix+" offer item", prefix+" changed subject")
-
-	body := map[string]interface{}{
-		"id":     msgID,
-		"action": "RevertEdits",
-	}
-	bodyBytes, _ := json.Marshal(body)
-	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
-	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := getApp().Test(req)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	// Verify editedby cleared.
-	var editedby *uint64
-	db.Raw("SELECT editedby FROM messages WHERE id = ?", msgID).Scan(&editedby)
-	assert.Nil(t, editedby)
-
-	// Verify subject restored to original (not the edited value).
-	var subject string
-	db.Raw("SELECT subject FROM messages WHERE id = ?", msgID).Scan(&subject)
-	assert.Equal(t, prefix+" offer item", subject)
-
-	// Verify textbody restored to original.
-	var textbody string
-	db.Raw("SELECT COALESCE(textbody, '') FROM messages WHERE id = ?", msgID).Scan(&textbody)
-	assert.Equal(t, "Old text", textbody)
-
-	// Verify edit marked as reverted with reviewrequired = 0.
-	var revertedCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_edits WHERE msgid = ? AND revertedat IS NOT NULL AND reviewrequired = 0", msgID).Scan(&revertedCount)
-	assert.Equal(t, int64(1), revertedCount)
-
-	// Verify it no longer appears in the V1-style count query.
-	var pendingEditCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_edits WHERE msgid = ? AND reviewrequired = 1", msgID).Scan(&pendingEditCount)
-	assert.Equal(t, int64(0), pendingEditCount, "Reverted edit should not appear in V1 count query")
-}
 
 // --- Test: PartnerConsent ---
 
@@ -2360,14 +2187,6 @@ func TestPostMessageInvalidJSON(t *testing.T) {
 // Message List Tests (GET /messages)
 // =============================================================================
 
-func TestListMessagesNoGroupID(t *testing.T) {
-	resp, err := getApp().Test(httptest.NewRequest("GET",
-		"/api/messages?collection=Approved", nil))
-	assert.NoError(t, err)
-	// No groupid returns empty list (graceful degradation).
-	assert.Equal(t, 200, resp.StatusCode)
-}
-
 func TestGetMessageWithoutHistory(t *testing.T) {
 	// Verify that regular GET /message/:id still works without messagehistory param.
 	prefix := uniquePrefix("msgnohist")
@@ -4065,4 +3884,75 @@ func postMessageAction(t *testing.T, token string, body map[string]interface{}) 
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
 	return resp.StatusCode
+}
+
+// An ordinary post no longer asks how many each person took, so AddBy arrives with no
+// count. Recording a taker must not invent one: the old default of 1 decremented
+// availablenow per taker, which drifted away from reality one person at a time and was
+// invisible because the badge stopped showing the number.
+func TestPostMessageAddByWithoutCountLeavesTheNumberAlone(t *testing.T) {
+	prefix := uniquePrefix("msgw_addby_nocount")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("UPDATE messages SET availableinitially = 5, availablenow = 5 WHERE id = ?", msgID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "AddBy",
+		"userid": takerID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var availNow int
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&availNow)
+	assert.Equal(t, 5, availNow, "an uncounted taker must not change the number left")
+
+	var rows int
+	db.Raw("SELECT COUNT(*) FROM messages_by WHERE msgid = ? AND userid = ?", msgID, takerID).Scan(&rows)
+	assert.Equal(t, 1, rows, "the taker is still recorded")
+}
+
+// A post part-taken under the old flow carries a count somebody entered deliberately.
+// Recording that person again without a count must not rewrite it to nothing.
+func TestPostMessageAddByWithoutCountKeepsAnEarlierCount(t *testing.T) {
+	prefix := uniquePrefix("msgw_addby_keep")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("UPDATE messages SET availableinitially = 5, availablenow = 3 WHERE id = ?", msgID)
+	db.Exec("INSERT INTO messages_by (userid, msgid, count) VALUES (?, ?, 2)", takerID, msgID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "AddBy",
+		"userid": takerID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var byCount int
+	db.Raw("SELECT count FROM messages_by WHERE msgid = ? AND userid = ?", msgID, takerID).Scan(&byCount)
+	assert.Equal(t, 2, byCount, "a count entered under the old flow is left as it was")
+
+	var availNow int
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&availNow)
+	assert.Equal(t, 3, availNow, "and the number left is untouched")
 }

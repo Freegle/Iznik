@@ -385,15 +385,13 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 // (front-end migration plan Stage 4).
 
 // getFlagTypes maps the legacy query flags to image types, mirroring V1
-// image.php's flag checks and the vhost rewrite forms (gimg_→group,
-// nimg_→newsletter, cimg_→communityevent, oimg_→volunteering, simg_→story,
+// image.php's flag checks and the vhost rewrite forms (nimg_→newsletter, cimg_→communityevent, oimg_→volunteering, simg_→story,
 // fimg_→newsfeed, mimg_→chatmessage, uimg_→user, bimg_→noticeboard; plain
 // img_ is a message attachment).
 var getFlagTypes = []struct {
 	flag    string
 	imgType string
 }{
-	{"group", "Group"},
 	{"newsletter", "Newsletter"},
 	{"communityevent", "CommunityEvent"},
 	{"volunteering", "Volunteering"},
@@ -439,15 +437,8 @@ func siteURL() string {
 }
 
 // defaultImageURL is the fallback served when an image can't be resolved (unknown id,
-// missing row, or legacy data-column bytes we no longer serve). Group images fall back to
-// the Freegle logo: the person silhouette (/defaultprofile.png) wrongly implies the
-// community is a person and leaves communities whose icon is missing looking broken on the
-// explore list. Every other type keeps V1's default profile image.
+// missing row, or legacy data-column bytes we no longer serve): V1's default profile image.
 func defaultImageURL(imgType string) string {
-	if imgType == "Group" {
-		return siteURL() + "/icon.png"
-	}
-
 	return siteURL() + "/defaultprofile.png"
 }
 

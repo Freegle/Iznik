@@ -92,8 +92,7 @@ func GetModConfig(c *fiber.Ctx) error {
 	var configs []ModConfig
 	db.Table("mod_configs mc").
 		Select("DISTINCT mc.*").
-		Joins("LEFT JOIN memberships m ON m.configid = mc.id AND m.userid = ?", myid).
-		Where("mc.createdby = ? OR mc.`default` = 1 OR m.id IS NOT NULL", myid).
+		Where("mc.createdby = ? OR mc.`default` = 1 OR mc.id IN (SELECT modconfigid FROM users WHERE id = ?)", myid, myid).
 		Order("mc.name").
 		Scan(&configs)
 

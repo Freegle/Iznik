@@ -14,6 +14,9 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
         // Reviewers are picked from every active member, so the fixture members are made
         // inactive and each test sees only the members it creates.
         DB::table('users')->update(['lastaccess' => now()->subYear()]);
+
+        // Posts are not scoped to a community, so fixture posts are aged out of the day's window too.
+        DB::table('messages')->update(['arrival' => now()->subYear()]);
     }
 
     private function createUser(string $trustlevel = 'Basic'): int

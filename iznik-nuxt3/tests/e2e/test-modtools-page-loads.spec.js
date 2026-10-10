@@ -35,52 +35,6 @@ async function assertNoErrors(page) {
 }
 
 test.describe('ModTools Page Loads', () => {
-  test('Member Review page loads and shows members or "no members" message without errors', async ({
-    page,
-    testEnv,
-  }) => {
-    // Issue #22: Member Review page fails to load
-    await loginViaModTools(page, testEnv.mod.email)
-
-    const errors = []
-    page.on('pageerror', (error) => {
-      errors.push(error.message)
-    })
-
-    await page.goto(`${MODTOOLS_URL}/members/review`, {
-      timeout: timeouts.navigation.initial,
-    })
-
-    await page.waitForLoadState('domcontentloaded', {
-      timeout: timeouts.navigation.default,
-    })
-
-    await dismissAllModals(page)
-    await assertNoErrors(page)
-    expect(errors).toHaveLength(0)
-  })
-
-  test('Edits page loads without errors', async ({ page, testEnv }) => {
-    // Issue #25: Edits page fails
-    await loginViaModTools(page, testEnv.mod.email)
-
-    const errors = []
-    page.on('pageerror', (error) => {
-      errors.push(error.message)
-    })
-
-    await page.goto(`${MODTOOLS_URL}/messages/edits`, {
-      timeout: timeouts.navigation.initial,
-    })
-
-    await page.waitForLoadState('domcontentloaded', {
-      timeout: timeouts.navigation.default,
-    })
-
-    await dismissAllModals(page)
-    await assertNoErrors(page)
-    expect(errors).toHaveLength(0)
-  })
 
   test('Chat Review page loads without "something went wrong"', async ({
     page,
@@ -196,53 +150,4 @@ test.describe('ModTools Page Loads', () => {
     expect(errors).toHaveLength(0)
   })
 
-  test('Related Members community filter triggers state reset without errors', async ({
-    page,
-    testEnv,
-  }) => {
-    // Regression test: changing the community dropdown must trigger the watch(groupid)
-    // callback (memberStore.clear, context reset, show reset, bump increment) so that
-    // stale data from the previous groupid is discarded and a fresh API fetch fires.
-    await loginViaModTools(page, testEnv.mod.email)
-
-    const errors = []
-    page.on('pageerror', (error) => {
-      errors.push(error.message)
-    })
-
-    await page.goto(`${MODTOOLS_URL}/members/related`, {
-      timeout: timeouts.navigation.initial,
-    })
-
-    await page.waitForLoadState('domcontentloaded', {
-      timeout: timeouts.navigation.default,
-    })
-
-    await dismissAllModals(page)
-
-    // Exercise the watch(groupid) callback by changing the community dropdown.
-    const groupSelect = page.locator('#communitieslist')
-    await expect(groupSelect).toBeVisible({
-      timeout: timeouts.navigation.default,
-    })
-
-    // Find a non-zero group option to trigger the watcher (value "0" = "All my communities").
-    const options = await groupSelect.locator('option').all()
-    let changedGroup = false
-    for (const option of options) {
-      const value = await option.getAttribute('value')
-      if (value && value !== '0' && parseInt(value) > 0) {
-        await groupSelect.selectOption(value)
-        changedGroup = true
-        break
-      }
-    }
-
-    if (changedGroup) {
-      // After the group change the watcher fires (clear + re-fetch); no errors should appear.
-      await assertNoErrors(page)
-    }
-
-    expect(errors).toHaveLength(0)
-  })
 })

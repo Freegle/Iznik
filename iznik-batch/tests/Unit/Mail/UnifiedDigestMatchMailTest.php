@@ -69,16 +69,6 @@ class UnifiedDigestMatchMailTest extends TestCase
         $this->assertSame('OFFER: Bookcase (Ealing)', $this->spoolAndLoad($mail, 'a@example.com')['subject']);
     }
 
-    public function test_an_ordinary_immediate_digest_keeps_its_group_prefix(): void
-    {
-        // The prefix is not being removed from digests, only from match mail -
-        // otherwise this test would pass for the wrong reason.
-        [$mail] = $this->digestFor(null);
-
-        $this->assertStringStartsWith('[', $this->spoolAndLoad($mail, 'a@example.com')['subject']);
-        $this->assertStringContainsString('OFFER: Bookcase (Ealing)', $this->spoolAndLoad($mail, 'a@example.com')['subject']);
-    }
-
     public function test_an_open_post_of_theirs_is_named_as_the_reason(): void
     {
         [$mail] = $this->digestFor('wanted');

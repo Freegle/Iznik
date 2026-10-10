@@ -2184,7 +2184,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         });
     }
 
-    public function test_bcc_config_fallback_to_other_mod_config(): void
+    public function test_bcc_config_fallback_to_default_config(): void
     {
         Mail::fake();
 
@@ -2210,9 +2210,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             'network' => 'Freegle',
         ]);
 
-        DB::table('memberships')
-            ->where('userid', $modWithConfig->id)
-            ->update(['configid' => $configId]);
+        // The config is the site default, so a mod with no config of their own falls back to it.
+        DB::table('mod_configs')->where('id', $configId)->update(['default' => 1]);
 
         // modWithoutConfig has no configid set — should fall back.
         $msgId = DB::table('messages')->insertGetId([
@@ -2248,7 +2247,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         // Flush the spool so Mail::fake intercepts the actual SMTP send.
         $this->artisan('mail:spool:process')->assertSuccessful();
 
-        // Should still send BCC using the fallback config from the other mod.
+        // Should still send BCC using the default config.
         Mail::assertSent(ModStdMessageMail::class, 2);
         Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) {
             return collect($mail->to)->pluck('address')->contains('fallback-bcc@example.com');
@@ -2697,69 +2696,6 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     }
 
     /**
-     * A moderator of a group a post rippled INTO administers their own copy of it. Their
-     * removal must not be relayed to the freegler, who posted somewhere else and has never
-     * heard of that community (Discourse 10102). The group still gets its own moderation
-     * log entry and its volunteers still get their push, because the action DID happen
-     * there - it is only the correspondence that belongs to the home community.
-     */
-    public function test_mod_stdmsg_with_notifyposter_off_sends_no_mail_but_still_logs(): void
-    {
-        Mail::fake();
-
-        $poster = $this->createTestUser();
-        $this->createTestUserEmail($poster, ['preferred' => 1]);
-        $mod = $this->createTestUser(['fullname' => 'Carol Moderator']);
-
-        $msgId = DB::table('messages')->insertGetId([
-            'fromuser' => $poster->id,
-            'subject' => 'OFFER: brown rabbit (Longton ST3)',
-            'date' => now(),
-        ]);
-        DB::table('messages')->where('id', $msgId)->update([
-            'collection' => 'Rejected',
-        ]);
-
-        DB::table('background_tasks')->insert([
-            'task_type' => 'email_message_rejected',
-            'data' => json_encode([
-                'msgid' => $msgId,
-                'byuser' => $mod->id,
-                'subject' => 'Re: OFFER: brown rabbit (Longton ST3)',
-                'body' => 'We do not accept posts for living creatures.',
-                'stdmsgid' => 0,
-                'notifyposter' => 0,
-            ]),
-            'created_at' => now(),
-        ]);
-
-        $mockPush = $this->mock(PushNotificationService::class);
-        $mockPush->shouldReceive('notifyGroupMods')
-            ->once()
-            ->with(0)
-            ->andReturn(0);
-
-        $this->artisan('queue:background-tasks', [
-            '--max-iterations' => 1,
-            '--sleep' => 0,
-        ])->assertSuccessful();
-
-        $this->artisan('mail:spool:process')->assertSuccessful();
-
-        Mail::assertNotSent(ModStdMessageMail::class);
-
-        $log = DB::table('logs')
-            ->where('msgid', $msgId)
-            ->where('type', 'Message')
-            ->where('subtype', 'Rejected')
-            ->first();
-        $this->assertNotNull($log, 'the acting group still records what it did');
-
-        $this->assertEquals(0, DB::table('chat_messages')->where('refmsgid', $msgId)->count(),
-            'and no modmail chat is opened with the poster');
-    }
-
-    /**
      * The flag is absent on every task queued before this change and on every home-group
      * action, and absent must keep meaning "tell the poster".
      */
@@ -2805,42 +2741,6 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         Mail::assertSent(ModStdMessageMail::class);
     }
 
-    /**
-     * The member-facing half of the same rule: a group removes a member whose only tie to
-     * it is a post that rippled in, and says nothing to them (Discourse 10102).
-     */
-    public function test_member_stdmsg_with_notifyposter_off_sends_no_mail(): void
-    {
-        Mail::fake();
-
-        $member = $this->createTestUser();
-        $this->createTestUserEmail($member, ['preferred' => 1]);
-        $mod = $this->createTestUser(['fullname' => 'Carol Moderator']);
-
-        DB::table('background_tasks')->insert([
-            'task_type' => 'email_mod_stdmsg',
-            'data' => json_encode([
-                'userid' => $member->id,
-                'byuser' => $mod->id,
-                'subject' => 'Removed',
-                'body' => 'We do not accept posts for living creatures.',
-                'stdmsgid' => 0,
-                'action' => 'Delete Approved Member',
-                'notifyposter' => 0,
-            ]),
-            'created_at' => now(),
-        ]);
-
-        $this->artisan('queue:background-tasks', [
-            '--max-iterations' => 1,
-            '--sleep' => 0,
-        ])->assertSuccessful();
-
-        $this->artisan('mail:spool:process')->assertSuccessful();
-
-        Mail::assertNotSent(ModStdMessageMail::class);
-    }
-
     /** Absent still means notify, for every task queued before the flag existed. */
     public function test_member_stdmsg_without_notifyposter_still_mails(): void
     {
@@ -2872,4 +2772,26 @@ class ProcessBackgroundTasksCommandTest extends TestCase
 
         Mail::assertSent(ModStdMessageMail::class);
     }
+
+    /**
+     * An absent id must read as "not restricted", not as "restricted".
+     *
+     * A task whose payload carries no msgid or no userid tells us nothing about whether the
+     * person opted in, and these checks only ever REMOVE a moderator's ability to write to
+     * someone. Answering true on a missing id would silence perfectly ordinary standard
+     * messages whenever a payload was malformed or came from an older client.
+     */
+    public function test_missing_ids_read_as_unrestricted(): void
+    {
+        $command = new ProcessBackgroundTasksCommand();
+
+        foreach (['postIsUnaddressed', 'userIsUnaddressedOnly'] as $method) {
+            $check = new \ReflectionMethod(ProcessBackgroundTasksCommand::class, $method);
+            $check->setAccessible(true);
+
+            $this->assertFalse($check->invoke($command, 0), "{$method}(0) must not restrict");
+            $this->assertFalse($check->invoke($command, -1), "{$method}(-1) must not restrict");
+        }
+    }
+
 }

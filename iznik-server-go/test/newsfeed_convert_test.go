@@ -477,7 +477,7 @@ func TestNewsfeedConvertInfo_SaysWhenThePostWillAwaitApproval(t *testing.T) {
 		"a member with no posting status is moderated; the modal must be told the post will wait")
 
 	// An established member posts straight through, so no warning.
-	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ?", posterID)
+	db.Exec("UPDATE users SET postingstatus = 'DEFAULT' WHERE id = ?", posterID)
 
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/newsfeed/"+id+"/convertinfo?jwt="+modToken, nil))
 	assert.Equal(t, 200, resp.StatusCode)

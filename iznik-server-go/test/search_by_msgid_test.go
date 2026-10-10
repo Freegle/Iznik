@@ -3,7 +3,7 @@ package test
 // SearchByMsgID is how a search for a bare number finds the post with that id. It
 // survived the retirement of the keyword index, which rewrote the rest of search.go,
 // and it had no test of its own: nothing proved that it returns the post, that it
-// labels the match as an id match, or that a group filter is applied to it.
+// labels the match as an id match (there is no community filter any more).
 
 import (
 	"strconv"
@@ -21,7 +21,7 @@ func TestSearchByMsgID_FindsThePostAndLabelsItAnIDMatch(t *testing.T) {
 	userID := CreateTestUser(t, prefix, "User")
 	msgID := CreateTestMessage(t, userID, "OFFER: Deckchair "+prefix, 53.0, -2.0)
 
-	results := message.SearchByMsgID(db, msgID, nil)
+	results := message.SearchByMsgID(db, msgID)
 
 	if assert.Len(t, results, 1, "a search for the id should find that one post") {
 		// Msgid is what the API sends as "id"; ID is not selected by this query and is not serialised.
@@ -33,5 +33,5 @@ func TestSearchByMsgID_FindsThePostAndLabelsItAnIDMatch(t *testing.T) {
 
 func TestSearchByMsgID_FindsNothingForAnIDThatIsNotThere(t *testing.T) {
 	db := database.DBConn
-	assert.Empty(t, message.SearchByMsgID(db, 999999999999, nil))
+	assert.Empty(t, message.SearchByMsgID(db, 999999999999))
 }

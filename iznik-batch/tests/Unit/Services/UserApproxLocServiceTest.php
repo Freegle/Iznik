@@ -187,19 +187,6 @@ class UserApproxLocServiceTest extends TestCase
         $this->assertNull($this->row($user));
     }
 
-    public function test_skips_a_user_with_no_membership(): void
-    {
-        $user = $this->createTestUser();
-        DB::table('users')->where('id', $user->id)->update([
-            'lastaccess' => now()->subDay(),
-            'settings' => json_encode(['mylocation' => ['lat' => 51.5010, 'lng' => -0.1416]]),
-        ]);
-
-        $this->service->updateLocations();
-
-        $this->assertNull($this->row($user));
-    }
-
     public function test_skips_a_member_whose_lastaccess_predates_the_cutoff(): void
     {
         $user = $this->activeMember(['lastaccess' => now()->subDays(200)]);

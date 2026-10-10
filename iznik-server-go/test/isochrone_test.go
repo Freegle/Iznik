@@ -1,44 +1,17 @@
 package test
 
 import (
-	json2 "encoding/json"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/isochrone"
-	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
+	"github.com/freegle/iznik-server-go/message"
+	"net/http/httptest"
+	json2 "encoding/json"
 )
-
-func TestIsochrones(t *testing.T) {
-	// Logged out - should return 401
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message", nil))
-	assert.Equal(t, 401, resp.StatusCode)
-
-	prefix := uniquePrefix("iso")
-	userID, token := CreateFullTestUser(t, prefix)
-
-	// Get isochrones for user
-	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/isochrone?jwt="+token, nil))
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var isochrones []isochrone.Isochrones
-	json2.Unmarshal(rsp(resp), &isochrones)
-	assert.Greater(t, len(isochrones), 0)
-	assert.Equal(t, isochrones[0].Userid, userID)
-
-	// Create a message in the area for this test
-	CreateTestMessage(t, userID, "Test Message "+prefix, 55.9533, -3.1883)
-
-	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?jwt="+token, nil))
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var msgs []message.MessageSummary
-	json2.Unmarshal(rsp(resp), &msgs)
-}
 
 func TestMapboxWKTConversion(t *testing.T) {
 	// Test the GeoJSON-to-WKT conversion used by the Mapbox integration.
@@ -285,4 +258,21 @@ func TestEnsureIsochroneExistsMinutesVariation(t *testing.T) {
 		db.Exec("DELETE FROM isochrones WHERE id = ?", isoID)
 	}
 	db.Exec("DELETE FROM locations WHERE id = ?", locID)
+}
+
+func TestIsochrones(t *testing.T) {
+	// Logged out - should return 401
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message", nil))
+	assert.Equal(t, 401, resp.StatusCode)
+
+	prefix := uniquePrefix("iso")
+	userID, token := CreateFullTestUser(t, prefix)
+
+	CreateTestMessage(t, userID, "Test Message "+prefix, 55.9533, -3.1883)
+
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
 }

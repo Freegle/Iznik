@@ -4,7 +4,7 @@
  */
 
 const { test, expect } = require('./fixtures')
-const { timeouts, environment, selectors, breakpoints } = require('./config')
+const { timeouts, breakpoints } = require('./config')
 
 test.describe('Homepage tests', () => {
   // Test from the original home.spec.js
@@ -160,18 +160,6 @@ test.describe('Homepage tests', () => {
       .first()
       .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
     console.log(`[DEBUG] "Ask" button found in ${Date.now() - askStuffStart}ms`)
-
-    // 2. PlaceAutocomplete/location input should always be visible
-    console.log(
-      `[DEBUG] Waiting for location input with timeout ${timeouts.ui.appearance}ms`
-    )
-    const placeStart = Date.now()
-    await page
-      .locator('input[placeholder="Type your location"]')
-      .filter({ visible: true })
-      .first()
-      .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
-    console.log(`[DEBUG] Location input found in ${Date.now() - placeStart}ms`)
 
     // 3. Hero content checks - verify these BEFORE scrolling down to avoid
     // overflow:hidden on hero-viewport causing Playwright to report elements as hidden
@@ -386,50 +374,4 @@ test.describe('Homepage tests', () => {
   })
 
   // Separate test for PlaceAutocomplete to allow focused testing
-  test('PlaceAutocomplete should work correctly with configurable location', async ({
-    page,
-    setupTestPage,
-    waitForNuxtPageLoad,
-  }) => {
-    await setupTestPage({ path: '/', viewport: { width: 1280, height: 800 } })
-    await waitForNuxtPageLoad({ timeout: 30000 })
-
-    // Locate the PlaceAutocomplete input field (filter for visible to handle mobile/desktop variants)
-    const placeInput = page
-      .locator(selectors.placeAutocomplete.input)
-      .filter({ visible: true })
-      .first()
-    await placeInput.waitFor({
-      state: 'visible',
-      timeout: timeouts.ui.appearance,
-    })
-
-    // Clear any existing text and enter the test place
-    await placeInput.click()
-    await placeInput.fill(environment.place)
-
-    // Wait for autocomplete dropdown to appear (might take a moment for API response)
-    await page.waitForSelector(
-      `${selectors.placeAutocomplete.suggestionItem}:has-text("${environment.place}")`,
-      {
-        timeout: timeouts.ui.autocomplete,
-      }
-    )
-
-    // Select the matching location from the dropdown
-    const placeOption = page
-      .locator(
-        `${selectors.placeAutocomplete.suggestionItem}:has-text("${environment.place}")`
-      )
-      .first()
-    await placeOption.click()
-
-    // Wait for navigation to the explore page
-    await page.waitForURL(/\/explore\/place/, {
-      timeout: timeouts.navigation.default,
-    })
-
-    // Verify we're on the explore page with our location
-    expect(page.url()).toContain('/explore/place/')
-  })
 })

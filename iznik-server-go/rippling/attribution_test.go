@@ -73,27 +73,6 @@ func TestDeriveAttribution_Ladder(t *testing.T) {
 	}
 }
 
-// The "was already a member" test that every rippling stat leans on must ignore memberships
-// rippling ITSELF created (memberships.rippled = 1 - the auto-join written when the member's own
-// post rippled into that group). Counting those as pre-existing local membership makes rippling
-// look less effective than it is: the member is only in that group because of an earlier ripple.
-func TestEstablishedOriginMemberExists(t *testing.T) {
-	sql := EstablishedOriginMemberExists("cm.refmsgid", "cm.userid")
-
-	assert.Contains(t, sql, "mem.rippled = 0",
-		"ripple-created auto-joins must never count as pre-existing membership")
-	assert.Contains(t, sql, "og.rippled_in = 0",
-		"only ORIGIN groups count - a rippled-in copy's group is not the member's home")
-	assert.Contains(t, sql, "og.deleted = 0")
-	assert.Contains(t, sql, "mem.collection = 'Approved'")
-	assert.Contains(t, sql, "mem.added < og.arrival",
-		"established = joined before the post arrived, so a join-to-reply never counts")
-	assert.Contains(t, sql, "og.msgid = cm.refmsgid", "correlates on the caller's message column")
-	assert.Contains(t, sql, "mem.userid = cm.userid", "correlates on the caller's user column")
-	assert.True(t, strings.HasPrefix(strings.TrimSpace(sql), "EXISTS("),
-		"returns an EXISTS fragment the caller can negate")
-}
-
 // SanitizeClientSource validates the client-reported reply surface against
 // ^[a-z0-9][a-z0-9_-]{0,31}$ (max length 32) and returns nil for anything that
 // doesn't match, so the DB never receives arbitrary/injected strings.
@@ -147,4 +126,10 @@ func TestSanitizeClientSource_LengthBoundary(t *testing.T) {
 	assert.Len(t, over33, 33)
 	str33 := over33
 	assert.Nil(t, SanitizeClientSource(&str33))
+}
+
+// There are no memberships, so nobody is an established member of an origin group: the
+// fragment is constant false and never refers to the caller's columns.
+func TestEstablishedOriginMemberExists(t *testing.T) {
+	assert.Equal(t, "(1 = 0)", EstablishedOriginMemberExists("cm.refmsgid", "cm.userid"))
 }

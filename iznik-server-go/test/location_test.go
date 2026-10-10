@@ -13,6 +13,7 @@ import (
 	"github.com/freegle/iznik-server-go/location"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
+
 )
 
 func TestClosest(t *testing.T) {

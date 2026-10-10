@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 	"github.com/gofiber/fiber/v2"
+	url2 "net/url"
+	"os"
 )
 
 func TestListChatsDefaultIncludesUser2Mod(t *testing.T) {
@@ -1321,9 +1323,24 @@ func TestUnseenCountMTNotLoggedIn(t *testing.T) {
 	assert.Equal(t, float64(1), result["ret"])
 }
 
+// unseenModCount reads the moderator unseen-chat count. Moderators are one national pool, so
+// the count covers every moderator chat in the database, not just the ones a test created;
+// tests assert on the change they cause.
+func unseenModCount(t *testing.T, token string, chattypes string) float64 {
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chatrooms?count=true&chattypes=%s&jwt=%s", chattypes, token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+	return result["count"].(float64)
+}
+
 func TestUnseenCountMTZeroWhenSeen(t *testing.T) {
 	prefix := uniquePrefix("UnseenSeen")
 	modID, _, chatID, token := setupModChatData(t, prefix)
+
+	before := unseenModCount(t, token, "User2Mod,Mod2Mod")
 
 	db := database.DBConn
 	// Mark all as seen by creating/updating roster entry with lastmsgseen higher than any auto-increment ID.
@@ -1331,14 +1348,8 @@ func TestUnseenCountMTZeroWhenSeen(t *testing.T) {
 	db.Exec("INSERT INTO chat_roster (chatid, userid, lastmsgseen, status, date) VALUES (?, ?, 9999999999, 'Online', NOW()) ON DUPLICATE KEY UPDATE lastmsgseen = 9999999999",
 		chatID, modID)
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chatrooms?count=true&chattypes=User2Mod,Mod2Mod&jwt=%s", token), nil)
-	resp, _ := getApp().Test(req)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var result map[string]interface{}
-	json2.Unmarshal(rsp(resp), &result)
-	assert.Equal(t, float64(0), result["ret"])
-	assert.Equal(t, float64(0), result["count"])
+	// The chat's two unseen messages drop out of the national count.
+	assert.Equal(t, before-2, unseenModCount(t, token, "User2Mod,Mod2Mod"))
 }
 
 func TestFetchChatMT(t *testing.T) {
@@ -2161,6 +2172,8 @@ func TestUnseenCountMTAllSpamChatExcluded(t *testing.T) {
 	PromoteTestUserToModerator(t, mod2ID)
 
 	chatID := CreateTestMod2ModRoom(t)
+	_, token0 := CreateTestSession(t, mod2ID)
+	before := unseenModCount(t, token0, "Mod2Mod")
 
 	db := database.DBConn
 	// Create a message and mark the chat as having only invalid messages.
@@ -2168,17 +2181,8 @@ func TestUnseenCountMTAllSpamChatExcluded(t *testing.T) {
 		chatID, mod1ID)
 	db.Exec("UPDATE chat_rooms SET latestmessage = NOW(), msgvalid = 0, msginvalid = 1 WHERE id = ?", chatID)
 
-	_, token := CreateTestSession(t, mod2ID)
-
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chatrooms?count=true&chattypes=Mod2Mod&jwt=%s", token), nil)
-	resp, _ := getApp().Test(req)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var result map[string]interface{}
-	json2.Unmarshal(rsp(resp), &result)
-	assert.Equal(t, float64(0), result["ret"])
-	// All-spam chat should be excluded from count.
-	assert.Equal(t, float64(0), result["count"])
+	// All-spam chat should add nothing to the count.
+	assert.Equal(t, before, unseenModCount(t, token0, "Mod2Mod"))
 }
 
 func TestListChatsMTSearchMod2Mod(t *testing.T) {
@@ -3704,4 +3708,575 @@ func TestModeratorUnreadCountClearedByMarkAllRead(t *testing.T) {
 
 	assert.Equal(t, int64(0), countAfter,
 		"after markAllRead, unread count must be 0 (got %d: handleAllSeen skips chats with no roster entry)", countAfter)
+}
+
+func TestListChats(t *testing.T) {
+	// Create a full test user with chats
+	prefix := uniquePrefix("chat")
+	userID, token := CreateFullTestUser(t, prefix)
+
+	// Logged out - should return 401
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/chat?includeClosed=true", nil))
+	assert.Equal(t, 401, resp.StatusCode)
+
+	// Get chats for user
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var chats []chat.ChatRoomListEntry
+	json2.Unmarshal(rsp(resp), &chats)
+
+	// Should find chats
+	assert.Greater(t, len(chats), 0)
+
+	// Find a chat with a snippet
+	found := (uint64)(0)
+	for _, c := range chats {
+		if len(c.Snippet) > 0 {
+			found = c.ID
+		}
+	}
+	assert.Greater(t, found, (uint64)(0), "Should find a chat with a snippet for user %d", userID)
+
+	// Get with since param
+	url := "/api/chat?jwt=" + token + "&since=" + url2.QueryEscape(time.Now().Format(time.RFC3339))
+	resp, _ = getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Get with search param
+	url = "/api/chat?jwt=" + token + "&search=test"
+	resp, _ = getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Get the chat
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat/"+fmt.Sprint(found)+"?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var c chat.ChatRoomListEntry
+	json2.Unmarshal(rsp(resp), &c)
+	assert.Equal(t, found, c.ID)
+
+	// Get the messages
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat/"+fmt.Sprint(found)+"/message?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var messages []chat.ChatMessage
+	json2.Unmarshal(rsp(resp), &messages)
+	assert.Equal(t, found, messages[0].Chatid)
+
+	// Get an invalid chat - no auth
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat/"+fmt.Sprint(found), nil))
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+
+	// Invalid chat ID format
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat/z?jwt="+token, nil))
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+	// Non-existent chat
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat/1?jwt="+token, nil))
+	assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+
+	// Get invalid chat messages - no auth
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat/1/message", nil))
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+
+	// Non-existent chat messages
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat/1/message?jwt="+token, nil))
+	assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+
+	// Invalid chat ID format for messages
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat/z/message?jwt="+token, nil))
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
+
+func TestCreateChatMessage(t *testing.T) {
+	// Invalid chat id
+	resp, _ := getApp().Test(httptest.NewRequest("POST", "/api/chat/-1/message", nil))
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+	// Create a mod user with a User2Mod chat for testing
+	prefix := uniquePrefix("chatmsg")
+	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	PromoteTestUserToModerator(t, modUserID)
+	chatid := CreateTestChatRoom(t, modUserID, nil, "User2Mod")
+	CreateTestChatMessage(t, chatid, modUserID, "Initial message")
+	_, token := CreateTestSession(t, modUserID)
+
+	// Logged out
+	resp, _ = getApp().Test(httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message", nil))
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+
+	// Undecodable payload
+	request := httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message?jwt="+token, bytes.NewBuffer([]byte("Test")))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(request)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+	// Invalid payload
+	var payload chat.ChatMessage
+	s, _ := json2.Marshal(payload)
+	b := bytes.NewBuffer(s)
+	request = httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message?jwt="+token, b)
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(request)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+	// Valid payload
+	chatrsp := struct {
+		Id uint64 `json:"id"`
+	}{}
+
+	str := "Test basic message"
+	payload.Message = str
+	s, _ = json2.Marshal(payload)
+	b = bytes.NewBuffer(s)
+	request = httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message?jwt="+token, b)
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	json2.Unmarshal(rsp(resp), &chatrsp)
+	assert.Greater(t, chatrsp.Id, (uint64)(1))
+}
+
+func TestCreateChatMessageLoveJunk(t *testing.T) {
+	// Create test data for LoveJunk integration test
+	prefix := uniquePrefix("lovejunk")
+	userID := CreateTestUser(t, prefix, "User")
+
+	// Create a message with spaces in subject (required for LoveJunk)
+	msgID := CreateTestMessage(t, userID, "Test Offer Item", 55.9533, -3.1883)
+
+	var payload chat.ChatMessageLovejunk
+
+	payload.Refmsgid = &msgID
+	firstname := "Test"
+	payload.Firstname = &firstname
+	lastname := "User"
+	payload.Lastname = &lastname
+
+	// Use longer timeout for LoveJunk tests - DB lookups can be slow under CI load.
+	timeout := 5000
+
+	// Without ljuserid
+	s, _ := json2.Marshal(payload)
+	b := bytes.NewBuffer(s)
+	request := httptest.NewRequest("POST", "/api/chat/lovejunk", b)
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request, timeout)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+	// Without partnerkey
+	ljuserid := uint64(time.Now().UnixNano())
+	payload.Ljuserid = &ljuserid
+	s, _ = json2.Marshal(payload)
+	b = bytes.NewBuffer(s)
+	request = httptest.NewRequest("POST", "/api/chat/lovejunk", b)
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(request, timeout)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+	// With invalid partnerkey
+	payload.Partnerkey = "invalid"
+	s, _ = json2.Marshal(payload)
+	b = bytes.NewBuffer(s)
+	request = httptest.NewRequest("POST", "/api/chat/lovejunk", b)
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(request, timeout)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+
+	// Remaining tests require a valid LOVEJUNK_PARTNER_KEY env var.
+	partnerKey := os.Getenv("LOVEJUNK_PARTNER_KEY")
+	if partnerKey == "" {
+		t.Log("LOVEJUNK_PARTNER_KEY not set, skipping integration tests")
+		return
+	}
+
+	// With valid partnerkey but no message
+	payload.Partnerkey = partnerKey
+	s, _ = json2.Marshal(payload)
+	b = bytes.NewBuffer(s)
+	request = httptest.NewRequest("POST", "/api/chat/lovejunk", b)
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(request, timeout)
+	if !assert.NotNil(t, resp, "expected response for valid partnerkey with no message") {
+		return
+	}
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+	// Valid
+	payload.Message = "Test message"
+	loc := "EH3 6SS"
+	payload.PostcodePrefix = &loc
+	s, _ = json2.Marshal(payload)
+	b = bytes.NewBuffer(s)
+	request = httptest.NewRequest("POST", "/api/chat/lovejunk", b)
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(request, timeout)
+	if !assert.NotNil(t, resp, "expected response for valid LoveJunk request") {
+		return
+	}
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var ret chat.ChatMessageLovejunkResponse
+	json2.Unmarshal(rsp(resp), &ret)
+	assert.Greater(t, ret.Id, (uint64)(0))
+	assert.Greater(t, ret.Chatid, (uint64)(0))
+
+	// Initial reply
+	payload.Message = "Test initial reply"
+	payload.Initialreply = true
+	offerid := uint64(123)
+	payload.Offerid = &offerid
+	s, _ = json2.Marshal(payload)
+	b = bytes.NewBuffer(s)
+	request = httptest.NewRequest("POST", "/api/chat/lovejunk", b)
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(request, timeout)
+	if !assert.NotNil(t, resp, "expected response for initial reply") {
+		return
+	}
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	json2.Unmarshal(rsp(resp), &ret)
+	assert.Greater(t, ret.Id, (uint64)(0))
+	assert.Greater(t, ret.Chatid, (uint64)(0))
+	assert.Greater(t, ret.Userid, (uint64)(0))
+
+	// Fake a ban of the LJ user. Banning is member-wide (users.banned/bannedby),
+	// not per-group.
+	db := database.DBConn
+	db.Table("users").Where("id = ?", ret.Userid).
+		Updates(map[string]interface{}{"banned": gorm.Expr("NOW()"), "bannedby": ret.Userid})
+
+	// Shouldn't be able to reply
+	b = bytes.NewBuffer(s)
+	request = httptest.NewRequest("POST", "/api/chat/lovejunk", b)
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(request, timeout)
+	if !assert.NotNil(t, resp, "expected response for banned user") {
+		return
+	}
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
+func TestCreateChatMessageLoveJunkWithProfileUrl(t *testing.T) {
+	// LoveJunk user creation should store the profile URL as an avatar in users_images.
+	partnerKey := os.Getenv("LOVEJUNK_PARTNER_KEY")
+	if partnerKey == "" {
+		t.Log("LOVEJUNK_PARTNER_KEY not set, skipping integration test")
+		return
+	}
+
+	prefix := uniquePrefix("ljprofile")
+	userID := CreateTestUser(t, prefix, "User")
+	msgID := CreateTestMessage(t, userID, "Test Offer Profile", 55.9533, -3.1883)
+
+	ljuserid := uint64(time.Now().UnixNano())
+	firstname := "Profile"
+	lastname := "Test"
+	profileurl := "https://example.com/profile.jpg"
+
+	var payload chat.ChatMessageLovejunk
+	payload.Refmsgid = &msgID
+	payload.Ljuserid = &ljuserid
+	payload.Partnerkey = partnerKey
+	payload.Firstname = &firstname
+	payload.Lastname = &lastname
+	payload.Profileurl = &profileurl
+	payload.Message = "Test with profile"
+
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chat/lovejunk", bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request, 5000)
+	if !assert.NotNil(t, resp) {
+		return
+	}
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var ret chat.ChatMessageLovejunkResponse
+	json2.Unmarshal(rsp(resp), &ret)
+	assert.Greater(t, ret.Userid, uint64(0))
+
+	// Verify avatar was stored in users_images.
+	db := database.DBConn
+	var imageURL string
+	db.Raw("SELECT url FROM users_images WHERE userid = ? ORDER BY id DESC LIMIT 1", ret.Userid).Scan(&imageURL)
+	assert.Equal(t, "https://example.com/profile.jpg", imageURL)
+}
+
+func TestCreateChatMessageLoveJunkWithImageid(t *testing.T) {
+	// LoveJunk chat messages with an imageid should link the image to the message.
+	partnerKey := os.Getenv("LOVEJUNK_PARTNER_KEY")
+	if partnerKey == "" {
+		t.Log("LOVEJUNK_PARTNER_KEY not set, skipping integration test")
+		return
+	}
+
+	prefix := uniquePrefix("ljimage")
+	userID := CreateTestUser(t, prefix, "User")
+	msgID := CreateTestMessage(t, userID, "Test Offer Image", 55.9533, -3.1883)
+
+	// Create a chat_images row to link.
+	db := database.DBConn
+	db.Exec("INSERT INTO chat_images (externaluid) VALUES (?)", "test-lj-image-uid")
+	var imageID uint64
+	db.Raw("SELECT id FROM chat_images WHERE externaluid = 'test-lj-image-uid' ORDER BY id DESC LIMIT 1").Scan(&imageID)
+	assert.Greater(t, imageID, uint64(0))
+
+	ljuserid := uint64(time.Now().UnixNano())
+	firstname := "Image"
+	lastname := "Test"
+
+	var payload chat.ChatMessageLovejunk
+	payload.Refmsgid = &msgID
+	payload.Ljuserid = &ljuserid
+	payload.Partnerkey = partnerKey
+	payload.Firstname = &firstname
+	payload.Lastname = &lastname
+	payload.Message = "Test with image"
+	payload.Imageid = &imageID
+
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chat/lovejunk", bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request, 5000)
+	if !assert.NotNil(t, resp) {
+		return
+	}
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var ret chat.ChatMessageLovejunkResponse
+	json2.Unmarshal(rsp(resp), &ret)
+	assert.Greater(t, ret.Id, uint64(0))
+
+	// Verify image was linked to the chat message.
+	var linkedMsgID uint64
+	db.Raw("SELECT chatmsgid FROM chat_images WHERE id = ?", imageID).Scan(&linkedMsgID)
+	assert.Equal(t, ret.Id, linkedMsgID)
+}
+
+func TestPatchChatMessageNotLoggedIn(t *testing.T) {
+	payload := map[string]interface{}{
+		"id":            1,
+		"roomid":        1,
+		"replyexpected": true,
+	}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/chatmessages", bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestPatchChatMessageReplyExpected(t *testing.T) {
+	db := database.DBConn
+
+	// Create two users with a User2User chat
+	prefix := uniquePrefix("patchmsg")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
+	msgID := CreateTestChatMessage(t, chatID, user1ID, "Test message for RSVP")
+	_, token := CreateTestSession(t, user1ID)
+
+	// Set replyexpected = true
+	payload := map[string]interface{}{
+		"id":            msgID,
+		"roomid":        chatID,
+		"replyexpected": true,
+	}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/chatmessages?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// Verify in DB
+	var replyexpected *bool
+	db.Raw("SELECT replyexpected FROM chat_messages WHERE id = ?", msgID).Scan(&replyexpected)
+	assert.NotNil(t, replyexpected)
+	assert.True(t, *replyexpected)
+
+	// Set replyexpected = false
+	payload["replyexpected"] = false
+	s, _ = json2.Marshal(payload)
+	request = httptest.NewRequest("PATCH", "/api/chatmessages?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// Verify in DB
+	db.Raw("SELECT replyexpected FROM chat_messages WHERE id = ?", msgID).Scan(&replyexpected)
+	assert.NotNil(t, replyexpected)
+	assert.False(t, *replyexpected)
+}
+
+func TestPatchChatMessageNotYourMessage(t *testing.T) {
+	// Create two users with a User2User chat
+	prefix := uniquePrefix("patchnoturs")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
+	msgID := CreateTestChatMessage(t, chatID, user1ID, "User1's message")
+
+	// Log in as user2 and try to patch user1's message
+	_, token2 := CreateTestSession(t, user2ID)
+	payload := map[string]interface{}{
+		"id":            msgID,
+		"roomid":        chatID,
+		"replyexpected": true,
+	}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/chatmessages?jwt="+token2, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
+func TestPatchChatMessageNotFound(t *testing.T) {
+	prefix := uniquePrefix("patchnf")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	_, token := CreateTestSession(t, user1ID)
+
+	payload := map[string]interface{}{
+		"id":            999999999,
+		"roomid":        999999999,
+		"replyexpected": true,
+	}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/chatmessages?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+}
+
+func TestDeleteChatMessageNotLoggedIn(t *testing.T) {
+	request := httptest.NewRequest("DELETE", "/api/chatmessages?id=1", nil)
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestDeleteChatMessage(t *testing.T) {
+	db := database.DBConn
+
+	// Create two users with a User2User chat
+	prefix := uniquePrefix("delmsg")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
+	msgID := CreateTestChatMessage(t, chatID, user1ID, "Message to delete")
+	_, token := CreateTestSession(t, user1ID)
+
+	// Delete the message
+	request := httptest.NewRequest("DELETE", fmt.Sprintf("/api/chatmessages?id=%d&jwt=%s", msgID, token), nil)
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// Verify in DB - should be soft-deleted
+	var deleted int
+	var msgType string
+	db.Raw("SELECT deleted, type FROM chat_messages WHERE id = ?", msgID).Row().Scan(&deleted, &msgType)
+	assert.Equal(t, 1, deleted)
+	assert.Equal(t, "Default", msgType)
+}
+
+func TestDeleteChatMessageNotYours(t *testing.T) {
+	// Create two users with a User2User chat
+	prefix := uniquePrefix("delnoturs")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
+	msgID := CreateTestChatMessage(t, chatID, user1ID, "User1's message")
+
+	// Log in as user2 and try to delete user1's message
+	_, token2 := CreateTestSession(t, user2ID)
+	request := httptest.NewRequest("DELETE", fmt.Sprintf("/api/chatmessages?id=%d&jwt=%s", msgID, token2), nil)
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
+func TestDeleteChatMessageNotFound(t *testing.T) {
+	prefix := uniquePrefix("delnf")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	_, token := CreateTestSession(t, user1ID)
+
+	request := httptest.NewRequest("DELETE", fmt.Sprintf("/api/chatmessages?id=999999999&jwt=%s", token), nil)
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
+}
+
+// The button's main use: a moderator of the community refers a member-to-mods chat. The
+// moderator is never a participant of such a chat, so a participants-only check refused
+// every one of these with a 403 (Discourse 10199, 2026-09-25).
+func TestReferToSupportByGroupModerator(t *testing.T) {
+	prefix := uniquePrefix("refersupport_mod")
+	db := database.DBConn
+	memberID := CreateTestUser(t, prefix+"_m", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	chatid := CreateTestChatRoom(t, memberID, nil, "User2Mod")
+	CreateTestChatMessage(t, chatid, memberID, "Hello mods")
+	_, token := CreateTestSession(t, modID)
+
+	payload := map[string]interface{}{"id": chatid, "action": "ReferToSupport", "modtools": true}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'refer_to_support' AND JSON_EXTRACT(data, '$.chatid') = ? AND JSON_EXTRACT(data, '$.userid') = ?", chatid, modID).Scan(&taskCount)
+	assert.Equal(t, int64(1), taskCount, "the referral must be queued under the moderator who asked")
+}
+
+func TestFetchUser2UserChatAsGroupMod(t *testing.T) {
+	// A moderator who isn't a participant should be able to view a User2User chat
+	// if either participant is a member of a group the mod moderates.
+	// This matches PHP ChatRoom::canSee() behavior.
+	prefix := uniquePrefix("U2UModView")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, processingsuccessful, reviewrequired, reviewrejected) VALUES (?, ?, 'Test msg', NOW(), 1, 0, 0)",
+		chatID, user1ID)
+	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatID)
+
+	_, modToken := CreateTestSession(t, modID)
+
+	// Mod should be able to view this chat.
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chat/%d?jwt=%s", chatID, modToken), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var chatroom map[string]interface{}
+	json2.Unmarshal(rsp(resp), &chatroom)
+	assert.Equal(t, float64(chatID), chatroom["id"])
+}
+
+func TestReportNoGroupNotMember(t *testing.T) {
+	prefix := uniquePrefix("reportnogroupnm")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	outsiderID := CreateTestUser(t, prefix+"_out", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
+	_, token := CreateTestSession(t, outsiderID)
+
+	payload := map[string]interface{}{"id": chatid, "action": "ReportNoGroup", "reason": "Spam"}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
+func TestCommonGroupsChatNotFound(t *testing.T) {
+	prefix := uniquePrefix("commongroupsnf")
+	uid := CreateTestUser(t, prefix+"_u", "User")
+	_, token := CreateTestSession(t, uid)
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		"/api/chat/999999999/commongroups?jwt="+token, nil))
+	assert.Equal(t, 404, resp.StatusCode)
 }

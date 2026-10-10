@@ -280,29 +280,6 @@ func TestPartnershipRenewalAndBulkDiscount(t *testing.T) {
 	assert.Nil(t, p["fullprice"], "zero means there was no bulk discount")
 }
 
-func TestPartnershipUploadedLogoBecomesADeliveryURL(t *testing.T) {
-	prefix := uniquePrefix("PartnershipLogo")
-	_, token := partnershipsUser(t, prefix)
-	authorityID := createPartnershipAuthority(t, prefix)
-
-	db := database.DBConn
-	uid := "freegletusd-" + prefix
-	db.Exec("INSERT INTO groups_images (externaluid, contenttype) VALUES (?, 'image/jpeg')", uid)
-	var imageID uint64
-	db.Raw("SELECT id FROM groups_images WHERE externaluid = ?", uid).Scan(&imageID)
-	require.NotZero(t, imageID)
-	t.Cleanup(func() { db.Exec("DELETE FROM groups_images WHERE id = ?", imageID) })
-
-	id := createPartnership(t, token, authorityID, fmt.Sprintf(
-		`{"authorityid":%d,"startdate":"2026-04-01","enddate":"2027-03-31","imageid":%d}`, authorityID, imageID))
-
-	p := getPartnership(t, token, id)["partnership"].(map[string]interface{})
-	require.NotNil(t, p["imageurl"])
-	assert.Contains(t, p["imageurl"], "?url=")
-	assert.Contains(t, p["imageurl"], prefix, "the delivery URL points at the uploaded file")
-	assert.NotContains(t, p["imageurl"], "freegletusd-")
-}
-
 func TestPartnershipHistoryListsEveryDealWithTheCouncil(t *testing.T) {
 	prefix := uniquePrefix("PartnershipHistory")
 	_, token := partnershipsUser(t, prefix)

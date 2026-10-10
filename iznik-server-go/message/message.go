@@ -479,9 +479,11 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					// have been seen IS its arrival — no more per-group MIN to take.
 					"messages.arrival AS visible_since, " +
 					"messages.subject, messages.type, textbody, lat, lng, availablenow, availableinitially, locationid, " +
-					"deliverypossible, deadline, heldby, messages.source, messages.sourceheader, messages.fromaddr, messages.fromip, messages.fromcountry, messages.tnpostid, "
+					"deliverypossible, deadline, heldby, messages.source, messages.sourceheader, messages.fromaddr, messages.fromip, messages.fromcountry, messages.tnpostid, " +
+					"messages.collection, messages.approvedat, messages.rejectedat, messages.autoreposts, messages.lastautopostwarning, messages.lastchaseup, " +
+					"messages.contentcheck_checked_at AS contentcheck_checked_at, messages.contentcheck_reasons AS contentcheck_reasons, "
 				if isMod {
-					selectCols += "messages.message, "
+					selectCols += "messages.message, messages.approvedby, "
 				}
 				selectCols += "CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen"
 
@@ -1006,30 +1008,20 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			})
 		}
 
-		// Banned-blocked: the viewer is banned from every group the post is on. Only run
-		// the per-message check when the viewer actually has a ban somewhere.
+		// Banned-blocked: a ban is site-wide (users.banned), so a banned viewer is blocked
+		// from every post.
 		var banCount int64
-		db.Table("users_banned").Where("userid = ?", myid).Count(&banCount)
+		db.Table("users").Where("id = ? AND banned IS NOT NULL", myid).Count(&banCount)
 		if banCount > 0 {
-			var bannedBlocked []struct {
-				Msgid uint64 `gorm:"column:msgid"`
-			}
-			db.Table("messages_groups mg").
-				Select("mg.msgid").
-				Joins("LEFT JOIN users_banned ub ON ub.groupid = mg.groupid AND ub.userid = ?", myid).
-				Where("mg.msgid IN (?) AND mg.deleted = 0", ids).
-				Group("mg.msgid").
-				Having("COUNT(mg.groupid) = COUNT(ub.groupid)").
-				Scan(&bannedBlocked)
-			for _, b := range bannedBlocked {
-				blockedSet[b.Msgid] = true
+			for _, id := range ids {
+				blockedSet[id] = true
 
 				// A banned viewer is not waiting for the ripple, they are not
 				// getting through at all. Telling them when it would arrive would
 				// be a promise we have no intention of keeping, so drop any
 				// estimate the reach check produced for the same post.
-				delete(coverage, b.Msgid)
-				delete(finished, b.Msgid)
+				delete(coverage, id)
+				delete(finished, id)
 			}
 		}
 
@@ -1069,18 +1061,14 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 		if err1 == nil && err2 == nil {
 			msgs := []MessageSummary{}
 
-			selectCols := "messages.lat, messages.lng, messages.id, messages_groups.groupid, messages_groups.collection, messages.type, messages_groups.arrival, messages.date, " +
+			selectCols := "messages.lat, messages.lng, messages.id, messages.collection, messages.type, messages.arrival, messages.date, " +
 				"messages_spatial.id AS spatialid, " +
 				"EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id) AS hasoutcome, " +
 				"EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id AND outcome IN (?, ?)) AS successful, " +
 				"EXISTS(SELECT id FROM messages_promises WHERE messages_promises.msgid = messages.id) AS promised, "
 
-			whereTail := "fromuser = ? AND messages.deleted IS NULL AND users.deleted IS NULL AND messages_groups.deleted = 0 AND " +
-				// Rippling-out adds a messages_groups row (rippled_in=1) per group a post ripples
-				// into, so without this a rippled post appears once PER GROUP in My Posts. Restrict
-				// to the origin membership (rippled_in=0) so each of the user's own posts shows
-				// exactly once; the rippled-in copies are system propagation, not separate posts.
-				"messages_groups.rippled_in = 0 AND messages.type IN (?, ?)"
+			whereTail := "fromuser = ? AND messages.deleted IS NULL AND users.deleted IS NULL AND " +
+				"messages.type IN (?, ?)"
 
 			if myid > 0 && id == myid {
 				// Own messages are always treated as seen.
@@ -1090,7 +1078,6 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 				// TestTier3Shapes_2de07c2af78b, removed in d22ba1d6c).
 				tx := db.Table("messages").
 					Select(selectCols+"0 AS unseen", utils.TAKEN, utils.RECEIVED).
-					Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
 					Joins("INNER JOIN users ON users.id = messages.fromuser").
 					Joins("LEFT JOIN messages_spatial ON messages_spatial.msgid = messages.id").
 					Where(whereTail, id, utils.OFFER, utils.WANTED)
@@ -1098,10 +1085,10 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 					// The original spliced these as literal quoted text, not
 					// binds ("... IN ('"+COLLECTION_PENDING+"', '"+COLLECTION_REJECTED+"'))"),
 					// so the conversion matches that exactly here.
-					tx = tx.Having("((hasoutcome = 0 AND spatialid IS NOT NULL) OR messages_groups.collection IN ('" +
+					tx = tx.Having("((hasoutcome = 0 AND spatialid IS NOT NULL) OR messages.collection IN ('" +
 						utils.COLLECTION_PENDING + "', '" + utils.COLLECTION_REJECTED + "'))")
 				}
-				tx.Order("unseen DESC, messages_groups.arrival DESC").Scan(&msgs)
+				tx.Order("unseen DESC, messages.arrival DESC").Scan(&msgs)
 			} else {
 				// Another user - we are only interested in active and public messages.
 				//
@@ -1113,7 +1100,6 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 				tx := db.Table("messages").
 					Select(selectCols+"NOT EXISTS(SELECT msgid FROM messages_likes WHERE messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ?) AS unseen",
 						utils.TAKEN, utils.RECEIVED, myid, utils.MESSAGE_LIKES_VIEW).
-					Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
 					Joins("INNER JOIN users ON users.id = messages.fromuser")
 				if active {
 					// For our own user, we might have messages which are not public yet because they're pending,
@@ -1126,7 +1112,7 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 				if active {
 					tx = tx.Having("hasoutcome = 0")
 				}
-				tx.Order("unseen DESC, messages_groups.arrival DESC").Scan(&msgs)
+				tx.Order("unseen DESC, messages.arrival DESC").Scan(&msgs)
 			}
 
 			if active {
@@ -1305,51 +1291,14 @@ func Search(c *fiber.Ctx) error {
 
 	msgtype := c.Query("messagetype", "All")
 
-	groupidss := strings.Split(c.Query("groupids", ""), ",")
+	// There are no communities to scope a search to: it is geographic only. Kept as a nil
+	// slice so the shared helpers below keep one signature.
 	var groupids []uint64
 
-	if len(groupidss) > 0 {
-		for _, g := range groupidss {
-			gid, err := strconv.ParseUint(g, 10, 64)
-			if err == nil {
-				groupids = append(groupids, gid)
-			}
-		}
-	}
-
-	// ?originonly=true is the Approved Messages "Only this group's own posts (hide
-	// rippled-in)" box. The listing honoured it and a search with a term dropped it, so
-	// every result of a search could be a rippled-in copy (Discourse 9808/798). Applied
-	// at every return that carries results, like applyBrowseFilters.
-	originOnly := c.Query("originonly") == "true"
+	// ?originonly=true was the "hide rippled-in posts" box. A post is now one row with no
+	// per-community copies, so there is nothing to hide.
 	applyOriginOnly := func(rs []SearchResult) []SearchResult {
-		if !originOnly {
-			return rs
-		}
-		return dropRippledIn(db, rs, groupids)
-	}
-
-	// If groupids contains 0 ("All my communities" in ModTools), handle based on role:
-	// - Admin/Support: clear groupids so the search covers all groups (no filter).
-	// - Everyone else: replace with the user's actual memberships so they only see
-	//   messages from groups they belong to.
-	hasZero := false
-	for _, gid := range groupids {
-		if gid == 0 {
-			hasZero = true
-			break
-		}
-	}
-	if hasZero && myid > 0 {
-		if auth.IsAdminOrSupport(myid) {
-			groupids = nil
-		} else {
-			var userGroupIDs []uint64
-			db.Table("memberships").Select("groupid").Where("userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED).Scan(&userGroupIDs)
-			if len(userGroupIDs) > 0 {
-				groupids = userGroupIDs
-			}
-		}
+		return rs
 	}
 
 	// We want to record the search history, but we can do that in parallel to the actual search.
@@ -1362,7 +1311,7 @@ func Search(c *fiber.Ctx) error {
 
 		if myid > 0 {
 			db.Table("search_history").Create(map[string]interface{}{
-				"userid": myid, "term": term, "locationid": nil, "groups": c.Query("groupids", ""),
+				"userid": myid, "term": term, "locationid": nil, "groups": "",
 			})
 
 			db.Table("users_searches").Create(map[string]interface{}{
@@ -1370,7 +1319,7 @@ func Search(c *fiber.Ctx) error {
 			})
 		} else {
 			db.Table("search_history").Create(map[string]interface{}{
-				"userid": gorm.Expr("NULL"), "term": term, "locationid": nil, "groups": c.Query("groupids", ""),
+				"userid": gorm.Expr("NULL"), "term": term, "locationid": nil, "groups": "",
 			})
 		}
 	}()
@@ -1384,7 +1333,7 @@ func Search(c *fiber.Ctx) error {
 	// groupFilter, so a mod only gets the message if it is in their groups.
 	if idStr := strings.TrimPrefix(term, "#"); idStr != "" {
 		if msgid, err := strconv.ParseUint(idStr, 10, 64); err == nil {
-			byID := SearchByMsgID(db, msgid, groupids)
+			byID := SearchByMsgID(db, msgid)
 			if len(byID) > 0 {
 				wg.Wait()
 				return c.JSON(applyOriginOnly(byID))
@@ -2029,9 +1978,9 @@ func JoinAndPostAs(c *fiber.Ctx, caller uint64, author uint64, req PostMessageRe
 
 	// A site-wide ban blocks posting outright (users.banned/bannedby, which
 	// replaced the old per-group users_banned table).
-	var banned *time.Time
-	db.Table("users").Select("banned").Where("id = ?", myid).Scan(&banned)
-	if banned != nil {
+	var banned int64
+	db.Table("users").Where("id = ? AND banned IS NOT NULL", myid).Count(&banned)
+	if banned > 0 {
 		return fiber.NewError(fiber.StatusForbidden, "You are banned")
 	}
 
@@ -4327,7 +4276,8 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-// canModifyMessage checks if the user is the message poster or a moderator/owner of a group the message is on.
+// canModifyMessage checks if the user is the message poster or a moderator. Moderators are
+// a national pool, so any of them may act on any post.
 func canModifyMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 	var msgUserid uint64
 	db.Table("messages").Select("fromuser").Where("id = ?", msgid).Scan(&msgUserid)
@@ -4335,16 +4285,7 @@ func canModifyMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 		return true
 	}
 
-	// Otherwise a moderator/owner of a group the message was POSTED on. Outcomes and
-	// "taken by" are facts about the whole post, so a copy that merely rippled into a
-	// moderator's group (rippled_in = 1) gives them no standing here; their per-group
-	// actions (reject, delete, hold) are unaffected (Discourse 10102).
-	var modCount int64
-	db.Table("messages_groups mg").
-		Joins("JOIN memberships m ON mg.groupid = m.groupid").
-		Where("mg.msgid = ? AND mg.rippled_in = 0 AND m.userid = ? AND m.role IN (?, ?)", msgid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
-		Count(&modCount)
-	return modCount > 0
+	return auth.IsModerator(myid)
 }
 
 // handleAddBy records who is taking items from a message.

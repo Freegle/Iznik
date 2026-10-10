@@ -70,99 +70,38 @@ async function whatIsOnTop(page) {
   })
 }
 
-// Helper: sign up and join a group.
-async function signUpAndJoinGroup(page, testEmail, userName, groupName) {
-  const signupResult = await signUpViaHomepage(page, testEmail, userName)
-  expect(signupResult).toBeTruthy()
+// The seeded posts (scripts/test-fixtures.sql) are at this postcode. Browse shows posts
+// near the member, so a test that needs them on screen puts the member here.
+const SEEDED_POSTCODE = 'LS1 4AP'
 
-  await page.gotoAndVerify(`/explore/${groupName}`, {
+// Browse has no community to join: it shows what is near the member. Give the member a
+// location from the postcode prompt Browse shows when it does not know where they are.
+async function setBrowseLocation(page, postcode = SEEDED_POSTCODE) {
+  await page.gotoAndVerify('/browse', {
     timeout: timeouts.navigation.default,
   })
+  await dismissLoginModalIfPresent(page)
 
-  // After navigation, session may not have persisted. If a login modal appears,
-  // complete the login with the same credentials before proceeding.
-  const loginModal = page.locator(
-    '#loginModal, .modal-dialog:has-text("Join the Reuse Revolution")'
-  )
-  try {
-    await loginModal.waitFor({ state: 'visible', timeout: 3000 })
-    console.log(
-      'Login modal appeared after navigation — session not persisted, logging in'
-    )
-    // Close the modal and log in via the homepage flow
-    const closeButton = loginModal.locator(
-      '.btn-close, .close, button[aria-label="Close"]'
-    )
-    if ((await closeButton.count()) > 0) {
-      await closeButton.first().click()
-      await loginModal.waitFor({ state: 'hidden', timeout: 5000 })
-    }
-    const loginSuccess = await loginViaHomepage(page, testEmail)
-    expect(loginSuccess).toBeTruthy()
-    // Re-navigate to the explore page now that we're logged in
-    await page.gotoAndVerify(`/explore/${groupName}`, {
-      timeout: timeouts.navigation.default,
-    })
-  } catch {
-    // No login modal — session persisted correctly
-  }
-
-  // Check if we're already a member (Leave button visible) or need to join
-  const leaveButton = page
-    .locator('.btn:has-text("Leave")')
-    .filter({ visible: true })
-    .first()
-  const joinButton = page
-    .locator('.btn:has-text("Join this community")')
-    .filter({ visible: true })
-    .first()
-
-  // Wait for either Join or Leave to appear
-  await expect(joinButton.or(leaveButton)).toBeVisible({
-    timeout: timeouts.ui.appearance,
-  })
-
-  if (await leaveButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-    console.log(`Already a member of ${groupName}`)
+  const input = page.locator('.pcinp').filter({ visible: true }).first()
+  if (!(await input.isVisible({ timeout: 5000 }).catch(() => false))) {
+    // Browse already knows where they are.
     return
   }
 
-  await joinButton.click()
-
-  // After clicking Join, either Leave appears (success) or a login modal appears (auth lost)
-  await expect(leaveButton.or(loginModal)).toBeVisible({
-    timeout: timeouts.ui.appearance,
+  await input.fill(postcode)
+  await page
+    .locator('.validation-tick')
+    .first()
+    .waitFor({ state: 'visible', timeout: timeouts.api.default })
+  await expect(page.locator('.pcinp').filter({ visible: true })).toHaveCount(0, {
+    timeout: timeouts.api.default,
   })
+}
 
-  if (await loginModal.isVisible({ timeout: 5000 }).catch(() => false)) {
-    console.log(
-      'Login modal appeared after Join click — session lost, logging in'
-    )
-    const closeButton = loginModal.locator(
-      '.btn-close, .close, button[aria-label="Close"]'
-    )
-    if ((await closeButton.count()) > 0) {
-      await closeButton.first().click()
-      await loginModal.waitFor({ state: 'hidden', timeout: 5000 })
-    }
-    const loginSuccess = await loginViaHomepage(page, testEmail)
-    expect(loginSuccess).toBeTruthy()
-    // Re-navigate and join
-    await page.gotoAndVerify(`/explore/${groupName}`, {
-      timeout: timeouts.navigation.default,
-    })
-    await expect(joinButton.or(leaveButton)).toBeVisible({
-      timeout: timeouts.ui.appearance,
-    })
-    if (await leaveButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      console.log(`Already a member of ${groupName} after re-login`)
-      return
-    }
-    await joinButton.click()
-    await expect(leaveButton).toBeVisible({ timeout: timeouts.ui.appearance })
-  }
-
-  console.log(`Successfully joined ${groupName}`)
+async function signUpWithLocation(page, testEmail, userName) {
+  const signupResult = await signUpViaHomepage(page, testEmail, userName)
+  expect(signupResult).toBeTruthy()
+  await setBrowseLocation(page)
 }
 
 test.describe('Browse Page Tests', () => {
@@ -246,12 +185,7 @@ test.describe('Browse Page Tests', () => {
     testEmail,
     testEnv,
   }) => {
-    await signUpAndJoinGroup(
-      page,
-      testEmail,
-      'Search Test User',
-      testEnv.group.name
-    )
+    await signUpWithLocation(page, testEmail, 'Search Test User')
 
     // Test search with search term in URL
     console.log('Testing browse page with search term in URL')
@@ -259,11 +193,7 @@ test.describe('Browse Page Tests', () => {
       timeout: timeouts.navigation.default,
     })
 
-    // The browse page redirects to /explore when the user has no location set.
-    // Both /browse/furniture and /explore are valid outcomes — the page should
-    // load without errors either way.
-    const url = page.url()
-    expect(url.includes('furniture') || url.includes('explore')).toBeTruthy()
+    expect(page.url()).toContain('/browse/furniture')
 
     // Page should load without errors
     await page.locator('body').waitFor({ state: 'visible', timeout: 5000 })
@@ -275,12 +205,7 @@ test.describe('Browse Page Tests', () => {
     testEmail,
     testEnv,
   }) => {
-    await signUpAndJoinGroup(
-      page,
-      testEmail,
-      'Micro Test User',
-      testEnv.group.name
-    )
+    await signUpWithLocation(page, testEmail, 'Micro Test User')
 
     // Navigate to browse page
     await page.gotoAndVerify('/browse', {
@@ -290,12 +215,7 @@ test.describe('Browse Page Tests', () => {
     // Check for page content
     await page.locator('body').waitFor({ state: 'visible', timeout: 5000 })
 
-    // The browse page redirects to /explore when the user has no location set.
-    // Both /browse and /explore are valid outcomes for a new user with no isochrone.
-    const finalUrl = page.url()
-    expect(
-      finalUrl.includes('/browse') || finalUrl.includes('/explore')
-    ).toBeTruthy()
+    expect(page.url()).toContain('/browse')
   })
 
   test('should handle responsive behavior', async ({
@@ -304,12 +224,7 @@ test.describe('Browse Page Tests', () => {
     testEmail,
     testEnv,
   }) => {
-    await signUpAndJoinGroup(
-      page,
-      testEmail,
-      'Responsive Test User',
-      testEnv.group.name
-    )
+    await signUpWithLocation(page, testEmail, 'Responsive Test User')
 
     // Test different viewport sizes
     const viewports = [
@@ -344,17 +259,19 @@ test.describe('Browse Page Tests', () => {
   }) => {
     // The lg+ feed card is a row whose photo is a square, so the square's side is the
     // card's height. It used to be a fixed 200px, which put only two or three posts on a
-    // short screen; it now comes from the viewport height so six fit. Uses /explore, which
-    // shows the same cards and reliably has the seeded posts on it.
+    // short screen; it now comes from the viewport height so six fit. The member is put
+    // where the seeded posts are, so the feed has cards in it.
     const CARDS_WANTED = 6
     const CARD_GAP = 8 // .singlecolumn margin-bottom in ScrollGrid
     const MAX_PHOTO = 200 // what the size used to be fixed at, and still caps at
 
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
+    await setBrowseLocation(page)
+
     await page.setViewportSize({ width: 1280, height: 720 })
-    await page.gotoAndVerify(`/explore/${testEnv.group.name}`, {
+    await page.gotoAndVerify('/browse', {
       timeout: timeouts.navigation.default,
     })
-    await dismissLoginModalIfPresent(page)
 
     const short = await measureDesktopFeedCard(page)
     console.log('Short screen card:', JSON.stringify(short))
@@ -376,10 +293,9 @@ test.describe('Browse Page Tests', () => {
 
     // A taller screen gets a bigger photo, but never bigger than it used to be.
     await page.setViewportSize({ width: 1280, height: 1200 })
-    await page.gotoAndVerify(`/explore/${testEnv.group.name}`, {
+    await page.gotoAndVerify('/browse', {
       timeout: timeouts.navigation.default,
     })
-    await dismissLoginModalIfPresent(page)
 
     const tall = await measureDesktopFeedCard(page)
     console.log('Tall screen card:', JSON.stringify(tall))
@@ -394,12 +310,7 @@ test.describe('Browse Page Tests', () => {
     testEmail,
     testEnv,
   }) => {
-    await signUpAndJoinGroup(
-      page,
-      testEmail,
-      'Browse Test User',
-      testEnv.group.name
-    )
+    await signUpWithLocation(page, testEmail, 'Browse Test User')
 
     // Test general browse page
     console.log('Testing general browse page')
@@ -407,10 +318,7 @@ test.describe('Browse Page Tests', () => {
       timeout: timeouts.navigation.default,
     })
 
-    // Page should load successfully. A new user with no location set will be
-    // redirected to /explore (title "Explore Freegle"); a user with a location
-    // stays on /browse (title "Browse"). Accept either.
-    await expect(page).toHaveTitle(/Browse|Explore/, {
+    await expect(page).toHaveTitle(/Browse/, {
       timeout: timeouts.navigation.slowPage,
     })
 
@@ -428,11 +336,8 @@ test.describe('Browse Page Tests', () => {
   }) => {
     await loginViaHomepage(page, testEnv.mod.email, 'freegle')
 
-    // The group's own page lists its posts, so the card is there whatever the
-    // feed near the viewer holds, and the list is not re-searched underneath us.
-    await page.gotoAndVerify(`/explore/${testEnv.group.name}`, {
-      timeout: timeouts.navigation.default,
-    })
+    // The member is put where the seeded posts are, so the card is in the feed.
+    await setBrowseLocation(page)
 
     const card = page
       .locator(`#msg-${testEnv.messages.offer} .message-summary-mobile`)

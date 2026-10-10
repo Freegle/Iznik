@@ -477,23 +477,10 @@ type replyReachEvidence struct {
 // until the graded columns are migrated (production lags dev) it falls back to the legacy
 // was_home_member-only insert.
 func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach replyReachEvidence, clientSource *string) {
-	// Established member of an ORIGIN (non-rippled-in) group of the post, whose membership
-	// predates this reply by more than the join grace (300s)? A join made to reply
-	// (added ~ now) is excluded, and so is a membership rippling itself created - see
-	// wasRippleJoin below.
-	// BuildClauses
-	// override: see amp.go's ValidateToken for the mechanism and
-	// the retired ormharness's bareexists_test.go (removed in d22ba1d6c) for
-	// the proof.
-	var wasHome int
-	tx848af7d73bfe := db.Table("messages_groups").Select(
-		"EXISTS(SELECT 1 FROM messages_groups mg "+
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
-			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 0 "+
-			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
-		myid, utils.COLLECTION_APPROVED, refmsgid)
-	tx848af7d73bfe.Statement.BuildClauses = []string{"SELECT"}
-	tx848af7d73bfe.Scan(&wasHome)
+	// There are no communities or memberships, so nobody is an established member of an
+	// origin group, of a rippled-into group, or a ripple-created member: those three evidence
+	// bits are always 0 and every reply is ripple-attributed when the reach evidence says so.
+	wasHome, wasRippleGroup, wasRippleJoin := 0, 0, 0
 
 	// Did we send this user the ripple "new post near you" mail for this post? Keyed lookup on
 	// the notified ledger - the strongest direct ripple-delivery evidence.
@@ -506,55 +493,9 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	tx582f5b4bb7ce.Statement.BuildClauses = []string{"SELECT"}
 	tx582f5b4bb7ce.Scan(&wasNotified)
 
-	// Established member of a group the post rippled INTO: added before the rippled copy
-	// arrived, so they were already there when it rippled in and saw it in their own group's
-	// feed/digest because of the ripple. The cut is the copy's arrival, NOT the 300s grace:
-	// the join-to-reply flow can join the rippled copy's group, and a pre-arrival membership
-	// is the only sound "they were already there" test.
-	// Same
-	// BuildClauses mechanism as above.
-	var wasRippleGroup int
-	txfc0c6fd4f6df := db.Table("messages_groups").Select(
-		"EXISTS(SELECT 1 FROM messages_groups mg "+
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
-			"AND mem.collection = ? AND mem.added < mg.arrival "+
-			"WHERE mg.msgid = ? AND mg.rippled_in = 1 AND mg.deleted = 0)",
-		myid, utils.COLLECTION_APPROVED, refmsgid)
-	txfc0c6fd4f6df.Statement.BuildClauses = []string{"SELECT"}
-	txfc0c6fd4f6df.Scan(&wasRippleGroup)
-
-	// Member of an ORIGIN group of the post, but only via a membership RIPPLING created (their
-	// own post rippled into that group, so we auto-joined them - ExpandService in iznik-batch).
-	// They saw this post in that group's feed/digest, and they are only in that group because of
-	// an earlier ripple, so the reply belongs to rippling and not to home. Same 300s join grace
-	// as wasHome. Both bits can be set at once on a cross-post (one origin group joined
-	// ordinarily, another via a ripple); the ladder gives home precedence, because the ordinary
-	// membership alone would have shown them the post.
-	// Converted to the same BuildClauses form
-	// as its wasHome sibling above; the statement arrived from master as
-	// db.Raw, and the Go inventory holds raw at 0.
-	var wasRippleJoin int
-	tx9894f2a0d95d := db.Table("messages_groups").Select(
-		"EXISTS(SELECT 1 FROM messages_groups mg "+
-			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
-			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 1 "+
-			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
-		myid, utils.COLLECTION_APPROVED, refmsgid)
-	tx9894f2a0d95d.Statement.BuildClauses = []string{"SELECT"}
-	tx9894f2a0d95d.Scan(&wasRippleJoin)
-
-	// Had the post rippled AT ALL by reply time (a rippled-in copy, or a reach row)? This is
-	// the ladder's hard guard: when 0, the reply can never be ripple-attributed. Reuse the
-	// gate's reach lookup when it ran; only query rippling_reach (which may not exist yet -
-	// best-effort) when it didn't.
-	// Same
-	// BuildClauses mechanism as above.
+	// Had the post rippled AT ALL by reply time (a reach row)? This is the ladder's hard
+	// guard: when 0, the reply can never be ripple-attributed.
 	var postHadRippled int
-	tx461f55d25b16 := db.Table("messages_groups").Select(
-		"EXISTS(SELECT 1 FROM messages_groups WHERE msgid = ? AND rippled_in = 1 AND deleted = 0)",
-		refmsgid)
-	tx461f55d25b16.Statement.BuildClauses = []string{"SELECT"}
-	tx461f55d25b16.Scan(&postHadRippled)
 	if postHadRippled == 0 && reach.reachRows > 0 {
 		postHadRippled = 1
 	}
@@ -575,20 +516,7 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	var inOrigin, inReach *int
 	if reach.haveLocation {
 		v := 0
-		// Inside any origin group's catchment? polyindex is the group's DPA-or-CGA; groups
-		// with only a POINT placeholder can't contain anything and are excluded.
-		// ORM migration site 4fc47623d055 (Tier 2 keep-raw review; wrongly
-		// marked GENUINELY-RAW under "Spatial" - same BuildClauses mechanism
-		// as amp.go's bare-EXISTS conversions applies unchanged).
-		tx4fc47623d055 := db.Table("messages_groups").Select(
-			"EXISTS(SELECT 1 FROM messages_groups mg "+
-				"INNER JOIN `groups` g ON g.id = mg.groupid "+
-				"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0 "+
-				"AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT' "+
-				"AND ST_Contains(g.polyindex, ST_SRID(POINT(?, ?), ?)))",
-			refmsgid, reach.lng, reach.lat, utils.SRID)
-		tx4fc47623d055.Statement.BuildClauses = []string{"SELECT"}
-		tx4fc47623d055.Scan(&v)
+		// No origin group, so the replier is never inside one's catchment.
 		inOrigin = &v
 		if reach.checked {
 			r := 0
@@ -970,10 +898,10 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 	}
 
 	// Bans are a national attribute on the user now, not per-group.
-	var banned *time.Time
-	db.Table("users").Select("banned").Where("id = ?", myid).Scan(&banned)
+	var banned int64
+	db.Table("users").Where("id = ? AND banned IS NOT NULL", myid).Count(&banned)
 
-	if banned != nil {
+	if banned > 0 {
 		return fiber.NewError(fiber.StatusForbidden, "User banned")
 	}
 
@@ -1321,6 +1249,16 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 // review. Action on a held message is Reject only (see PostReviewChatMessage).
 func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	db := database.DBConn
+
+	// The review queue is moderators only.
+	if !auth.IsModerator(myid) {
+		return c.JSON(fiber.Map{
+			"ret":          0,
+			"status":       "Success",
+			"chatmessages": make([]interface{}, 0),
+			"chatreports":  make([]interface{}, 0),
+		})
+	}
 
 	limit, _ := strconv.Atoi(c.Query("limit", "100"))
 	if limit <= 0 || limit > 1000 {

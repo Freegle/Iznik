@@ -103,20 +103,4 @@ test.describe('V2 API Page Tests', () => {
     await expect(page.locator('text=Something went wrong')).not.toBeVisible()
   })
 
-  test('Explore page for specific group exercises GET /api/v2/group/{id}', async ({
-    page,
-    waitForNuxtPageLoad,
-    testEnv,
-  }) => {
-    await page.gotoAndVerify(`/explore/${testEnv.group.name}`)
-    await waitForNuxtPageLoad({ timeout: timeouts.navigation.default })
-
-    // Should display the group name
-    await expect(
-      page.locator(`h4:has-text("${testEnv.group.name}")`).first()
-    ).toBeVisible({ timeout: timeouts.ui.appearance })
-
-    // Should not show an error page
-    await expect(page.locator('text=Something went wrong')).not.toBeVisible()
-  })
 })

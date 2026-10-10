@@ -516,23 +516,6 @@ class UserManagementServiceTest extends TestCase
         );
     }
 
-    public function test_update_lastaccess_from_membership(): void
-    {
-        $user = $this->createTestUser();
-
-        // Set lastaccess to well in the past.
-        DB::table('users')->where('id', $user->id)->update([
-            'lastaccess' => now()->subDays(30),
-        ]);
-
-        // Create a membership with recent added date.
-        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
-
-        $stats = $this->service->updateLastAccess();
-
-        $this->assertGreaterThanOrEqual(1, $stats['updated']);
-    }
-
     /**
      * The point of the window: activity older than it is left to the nightly pass, so
      * the hourly one stops joining users against the whole history of chat_messages

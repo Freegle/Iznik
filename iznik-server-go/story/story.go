@@ -194,15 +194,8 @@ func canModStory(myid uint64, storyID uint64) bool {
 		return true
 	}
 
-	// Check if moderator/owner on a group the story author is a member of.
-	var count int64
-	db.Table("memberships m1").
-		Joins("INNER JOIN memberships m2 ON m2.groupid = m1.groupid").
-		Where("m1.userid = ? AND m2.userid = ? AND m1.role IN (?, ?) AND m1.collection = ? AND m2.collection = ?",
-			myid, authorID, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED, utils.COLLECTION_APPROVED).
-		Count(&count)
-
-	return count > 0
+	// Moderators are a national pool: any of them may see any story.
+	return auth.IsModerator(myid)
 }
 
 // createStoryNewsfeedEntry creates a newsfeed entry when a story is reviewed and made public.

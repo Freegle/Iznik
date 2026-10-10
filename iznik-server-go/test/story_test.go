@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
+
 )
 
 func createTestStory(t *testing.T, userID uint64) uint64 {
@@ -88,15 +89,6 @@ func TestStory_UnreviewedHiddenFromAnon(t *testing.T) {
 
 func TestListStory(t *testing.T) {
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/story", nil))
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var ids []uint64
-	json2.Unmarshal(rsp(resp), &ids)
-}
-
-func TestGroupStory(t *testing.T) {
-	// Group 0 - should return empty
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/story/group/0", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var ids []uint64

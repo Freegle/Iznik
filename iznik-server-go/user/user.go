@@ -22,7 +22,6 @@ import (
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/reachqueue"
-	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -2042,12 +2041,6 @@ func ProcessSettingsUpdate(settingsJSON []byte, myid uint64, setClauses *[]strin
 			// Rippling-out: reach now follows declared location, so flag rapid location-hopping
 			// for moderator review (non-destructive).
 			CheckLocationChangeVelocity(db, myid)
-
-			// Someone who has moved into a community's area is an ordinary member of it, even
-			// if the only reason they had a membership was a post of theirs rippling in. Clear
-			// the ripple flag on those memberships so that community's moderators can deal with
-			// them normally again (Discourse 10102).
-			rippling.ClearRippledMembershipsAtLocationID(db, myid, newLocID)
 		}
 	}
 
@@ -2463,56 +2456,13 @@ func handleUnbounce(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-// LogGroupLeftForApprovedMemberships writes a per-group (Group, Left) audit log
-// for every Approved membership the user currently holds. V1 emits one such log
-// per group when the user actually leaves: at grace-period expiry the
-// processForgets cron calls User::forget(), which iterates the memberships and
-// calls User::removeMembership() per group, each writing a Left log
-// (User.php:1087-1095). V2 instead bulk-deletes approved memberships eagerly at
-// delete time, so by the time the cleanup cron runs there is nothing left to
-// iterate and the Left logs would never be written — at any point. We therefore
-// emit them here, immediately before the bulk delete. byUser is the actor recorded
-// in the log; pass 0 to record byuser as NULL (e.g. the partner flow, which has no
-// acting Freegle user).
-func LogGroupLeftForApprovedMemberships(db *gorm.DB, targetID uint64, byUser uint64) {
-	var groupids []uint64
-	db.Table("memberships").Select("groupid").Where("userid = ? AND collection = ?",
-		targetID, utils.COLLECTION_APPROVED).Scan(&groupids)
-	for _, groupid := range groupids {
-		if byUser == 0 {
-			db.Table("logs").Create(map[string]interface{}{
-				"timestamp": gorm.Expr("NOW()"),
-				"type":      log2.LOG_TYPE_GROUP,
-				"subtype":   log2.LOG_SUBTYPE_LEFT,
-				"user":      targetID,
-				"byuser":    gorm.Expr("NULL"),
-				"groupid":   groupid,
-			})
-		} else {
-			db.Table("logs").Create(map[string]interface{}{
-				"timestamp": gorm.Expr("NOW()"),
-				"type":      log2.LOG_TYPE_GROUP,
-				"subtype":   log2.LOG_SUBTYPE_LEFT,
-				"user":      targetID,
-				"byuser":    byUser,
-				"groupid":   groupid,
-			})
-		}
-	}
-}
-
-// softLimboUser puts a user into a recoverable "limbo": it removes their approved
-// memberships (so they drop out of group member lists), marks the account deleted
+// softLimboUser puts a user into a recoverable "limbo": it marks the account deleted
 // (a 14-day grace period before users:cleanup runs forgetUser), and logs a
 // User/Deleted entry. The user can recover by logging back in within the grace
 // period. Shared by self-delete (DELETE /user) and the Support-tools Unsubscribe
 // action (POST /user action=Unsubscribe) so both behave identically. byUser is the
 // actor recorded in the log (the user themselves, or the support volunteer).
 func softLimboUser(db *gorm.DB, targetID uint64, byUser uint64) {
-	// V1 parity: record a per-group (Group, Left) audit log before the eager bulk
-	// delete drops the memberships (see LogGroupLeftForApprovedMemberships).
-	LogGroupLeftForApprovedMemberships(db, targetID, byUser)
-	db.Table("memberships").Where("userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED).Delete(nil)
 	db.Table("users").Where("id = ?", targetID).Update("deleted", gorm.Expr("NOW()"))
 	db.Table("logs").Create(map[string]interface{}{
 		"timestamp": gorm.Expr("NOW()"),
@@ -2668,71 +2618,8 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to merge emails")
 	}
 
-	// Membership merge: V1 parity (max role, older date, non-null attrs from id1).
-	roleWeight := map[string]int{"Non-member": 0, "Member": 1, "Moderator": 2, "Owner": 3}
-
-	type MembershipRow struct {
-		ID       uint64
-		Groupid  uint64
-		Role     string
-		Added    string
-		Configid *uint64
-		Settings *string
-		Heldby   *uint64
-	}
-
-	var id1Membs []MembershipRow
-	tx.Table("memberships").Select("id, groupid, role, added, configid, settings, heldby").
-		Where("userid = ?", id1).Scan(&id1Membs)
-
-	for _, m1 := range id1Membs {
-		var id2Memb MembershipRow
-		tx.Table("memberships").Select("id, groupid, role, added, configid, settings, heldby").
-			Where("userid = ? AND groupid = ?", id2, m1.Groupid).Scan(&id2Memb)
-
-		if id2Memb.ID == 0 {
-			// id2 not in this group — just reassign.
-			if err := tx.Table("memberships").Where("id = ?", m1.ID).Update("userid", id2).Error; err != nil {
-				return fiber.NewError(fiber.StatusInternalServerError, "Failed to transfer membership")
-			}
-		} else {
-			// Both are members — take max role.
-			newRole := id2Memb.Role
-			if roleWeight[m1.Role] > roleWeight[id2Memb.Role] {
-				newRole = m1.Role
-			}
-			tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).Update("role", newRole)
-			// Take older added date (SQL JOIN to avoid Go datetime string formatting).
-			// Genuine multi-table UPDATE...JOIN: Table()-verbatim JOIN text +
-			// explicit clause.Set, same mechanism as session/merge.go's
-			// mergeChatRooms conversion. Proven by the retired ormharness's
-			// updatejoin_replace_test.go TestUpdateJoin_SelfJoinWithLeastExpr
-			// (removed in d22ba1d6c).
-			tx.Table("memberships m2 JOIN memberships m1 ON m1.userid = ? AND m1.groupid = m2.groupid", id1).
-				Clauses(clause.Set{
-					{Column: clause.Column{Table: "m2", Name: "added"}, Value: gorm.Expr("LEAST(m2.added, m1.added)")},
-				}).
-				Where("m2.userid = ? AND m2.groupid = ?", id2, m1.Groupid).
-				Updates(map[string]interface{}{})
-			// Take non-null attrs from id1 if id2 doesn't have them.
-			if m1.Configid != nil {
-				tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).
-					Update("configid", gorm.Expr("COALESCE(configid, ?)", *m1.Configid))
-			}
-			if m1.Settings != nil {
-				tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).
-					Update("settings", gorm.Expr("COALESCE(settings, ?)", *m1.Settings))
-			}
-			if m1.Heldby != nil {
-				tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).
-					Update("heldby", gorm.Expr("COALESCE(heldby, ?)", *m1.Heldby))
-			}
-			// Delete the now-redundant id1 row.
-			tx.Table("memberships").Where("id = ?", m1.ID).Delete(nil)
-		}
-	}
-	// Clean up any remaining id1 memberships.
-	tx.Table("memberships").Where("userid = ?", id1).Delete(nil)
+	// Site-wide member attributes (email frequency, ban, posting status) live on users, and
+	// id2 keeps its own. There are no memberships to merge.
 
 	// ── SECTION B: messages, history, chat, sessions, logins ────────────────────
 
@@ -2742,7 +2629,6 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	}
 	// History tables.
 	tx.Table("messages_history").Where("fromuser = ?", id1).Update("fromuser", id2)
-	tx.Table("memberships_history").Where("userid = ?", id1).Update("userid", id2)
 	// Log references.
 	tx.Table("logs").Where("user = ?", id1).Update("user", id2)
 	tx.Table("logs").Where("byuser = ?", id1).Update("byuser", id2)
@@ -2753,17 +2639,16 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 		Chattype      string
 		User1         uint64
 		User2         *uint64
-		Groupid       *uint64
 		Latestmessage *string
 	}
 	var id1Rooms []ChatRoomRow
-	tx.Table("chat_rooms").Select("id, chattype, user1, user2, groupid, latestmessage").
+	tx.Table("chat_rooms").Select("id, chattype, user1, user2, latestmessage").
 		Where("(user1 = ? OR user2 = ?) AND chattype IN ('User2User','User2Mod')", id1, id1).Scan(&id1Rooms)
 	for _, room := range id1Rooms {
 		var existingID uint64
 		if room.Chattype == "User2Mod" {
 			tx.Table("chat_rooms").Select("id").
-				Where("user1 = ? AND groupid = ? AND chattype = 'User2Mod'", id2, room.Groupid).Scan(&existingID)
+				Where("user1 = ? AND chattype = 'User2Mod'", id2).Scan(&existingID)
 		} else {
 			var otherUserID uint64
 			if room.User1 == id1 {
@@ -2926,16 +2811,9 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	tx.Table("communityevents").Where("userid = ?", id1).Update("userid", id2)
 	tx.Table("communityevents").Where("heldby = ?", id1).Update("heldby", id2)
 
-	// Bans: move id1's bans to id2, then delete memberships for groups id2 is now banned from.
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("userid = ?", id1).Update("userid", id2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("byuser = ?", id1).Update("byuser", id2)
-
-	type MergeBanRow struct{ Groupid uint64 }
-	var mergeBans []MergeBanRow
-	tx.Table("users_banned").Select("groupid").Where("userid = ?", id2).Scan(&mergeBans)
-	for _, ban := range mergeBans {
-		tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, ban.Groupid).Delete(nil)
-	}
+	// Bans: a ban is site-wide on users now. id2 keeps its own; otherwise it inherits id1's.
+	tx.Exec("UPDATE users u2 JOIN users u1 ON u1.id = ? SET u2.banned = u1.banned, u2.bannedby = u1.bannedby "+
+		"WHERE u2.id = ? AND u2.banned IS NULL AND u1.banned IS NOT NULL", id1, id2)
 
 	// Giftaid: keep the most favourable declaration (V1 parity).
 	giftaidWeight := map[string]int{
@@ -3044,12 +2922,11 @@ func GetUserChatrooms(c *fiber.Ctx) error {
 		Chattype string     `json:"chattype"`
 		User1    uint64     `json:"user1"`
 		User2    uint64     `json:"user2"`
-		Groupid  uint64     `json:"groupid"`
 		Lastdate *time.Time `json:"lastdate"`
 	}
 
 	var rooms []ChatroomRow
-	db.Table("chat_rooms").Select("id, chattype, user1, user2, COALESCE(groupid, 0) AS groupid, latestmessage AS lastdate").
+	db.Table("chat_rooms").Select("id, chattype, user1, user2, latestmessage AS lastdate").
 		Where("(user1 = ? OR user2 = ?)", targetid, targetid).Order("latestmessage DESC").Scan(&rooms)
 
 	if rooms == nil {
@@ -3107,22 +2984,17 @@ func GetUserBans(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	type BanRow struct {
-		Groupid uint64     `json:"groupid"`
-		Group   string     `json:"group"`
 		Date    *time.Time `json:"date"`
 		Byuser  *uint64    `json:"byuser"`
 		Byemail *string    `json:"byemail"`
 	}
 
+	// A ban is a site-wide column on users now, not a row per community.
 	var bans []BanRow
-	db.Table("users_banned ub").
-		Select("ub.groupid, "+
-			"COALESCE(g.namefull, g.nameshort) AS `group`, "+
-			"ub.date, ub.byuser, "+
-			"(SELECT ue.email FROM users_emails ue WHERE ue.userid = ub.byuser AND ue.preferred = 1 LIMIT 1) AS byemail").
-		Joins("LEFT JOIN `groups` g ON g.id = ub.groupid").
-		Where("ub.userid = ?", targetid).
-		Order("ub.date DESC").
+	db.Table("users u").
+		Select("u.banned AS date, u.bannedby AS byuser, "+
+			"(SELECT ue.email FROM users_emails ue WHERE ue.userid = u.bannedby AND ue.preferred = 1 LIMIT 1) AS byemail").
+		Where("u.id = ? AND u.banned IS NOT NULL", targetid).
 		Scan(&bans)
 
 	if bans == nil {
@@ -3201,26 +3073,15 @@ func GetUserReplies(c *fiber.Ctx) error {
 		whereArgs = append(whereArgs, msgtype)
 	}
 
-	// One row per post, matching the replies badge beside the modal, which counts
-	// COUNT(DISTINCT cm.refmsgid). Both joins below fan out, and SELECT DISTINCT cannot
-	// collapse them because the fanned-out columns are themselves selected:
-	//
-	//   - messages_groups holds a row per group the post reached, and rippling adds one
-	//     (rippled_in = 1) per receiving group with its own arrival. A post rippling
-	//     outwards over a day therefore yielded one row per distinct ripple time.
-	//     MIN(mg.arrival) is the origin arrival, i.e. when the post was actually made.
-	//     Grouping rather than filtering on rippled_in = 0 because a few posts carry no
-	//     origin row at all and filtering would drop them from the list entirely.
-	//   - messages_outcomes holds a row per outcome, so a post Withdrawn and then Taken
-	//     doubled again. The subquery takes the most recent, as GetUserMessageHistory does.
+	// One row per post. messages_outcomes holds a row per outcome, so the subquery takes the
+	// most recent, as GetUserMessageHistory does; arrival is the post's own clock.
 	tx := db.Table("chat_messages cm").
-		Select("m.id, m.subject, m.type, MIN(mg.arrival) AS arrival, "+
+		Select("m.id, m.subject, m.type, m.arrival AS arrival, "+
 			"(SELECT mo.outcome FROM messages_outcomes mo WHERE mo.msgid = m.id "+
 			"ORDER BY mo.timestamp DESC LIMIT 1) AS outcome").
 		Joins("INNER JOIN messages m ON m.id = cm.refmsgid").
-		Joins("INNER JOIN messages_groups mg ON mg.msgid = m.id").
 		Where(whereSQL, whereArgs...).
-		Group("m.id, m.subject, m.type")
+		Group("m.id, m.subject, m.type, m.arrival")
 
 	var replies []ReplyRow
 	tx.Order("arrival DESC").Limit(100).Scan(&replies)

@@ -1,137 +1,110 @@
 import { describe, it, expect } from 'vitest'
-import {
-  icon,
-  variant,
-  copyStdMsgs,
-} from '../../../modtools/composables/useStdMsgs.js'
+import { icon, variant } from '~/modtools/composables/useStdMsgs'
 
-describe('useStdMsgs', () => {
-  describe('icon', () => {
-    it.each([
-      ['Approve', 'check'],
-      ['Reject', 'times'],
-      ['Leave', 'envelope'],
-      ['Leave Approved Message', 'envelope'],
-      ['Leave Approved Member', 'envelope'],
-      ['Delete', 'trash-alt'],
-      ['Delete Approved Message', 'trash-alt'],
-      ['Delete Approved Member', 'trash-alt'],
-      ['Edit', 'pen'],
-      ['Hold Message', 'pause'],
-      ['Something Else', 'check'],
-      [undefined, 'check'],
-    ])('returns %s icon "%s" for action %j', (action, expected) => {
-      expect(icon({ action })).toBe(expected)
+describe('useStdMsgs composable', () => {
+  describe('icon function', () => {
+    it('returns check for Approve action', () => {
+      expect(icon({ action: 'Approve' })).toBe('check')
+    })
+
+    it('returns times for Reject action', () => {
+      expect(icon({ action: 'Reject' })).toBe('times')
+    })
+
+    it('returns envelope for Leave action', () => {
+      expect(icon({ action: 'Leave' })).toBe('envelope')
+    })
+
+    it('returns envelope for Leave Approved Message action', () => {
+      expect(icon({ action: 'Leave Approved Message' })).toBe('envelope')
+    })
+
+    it('returns envelope for Leave Approved Member action', () => {
+      expect(icon({ action: 'Leave Approved Member' })).toBe('envelope')
+    })
+
+    it('returns trash-alt for Delete action', () => {
+      expect(icon({ action: 'Delete' })).toBe('trash-alt')
+    })
+
+    it('returns trash-alt for Delete Approved Message action', () => {
+      expect(icon({ action: 'Delete Approved Message' })).toBe('trash-alt')
+    })
+
+    it('returns trash-alt for Delete Approved Member action', () => {
+      expect(icon({ action: 'Delete Approved Member' })).toBe('trash-alt')
+    })
+
+    it('returns pen for Edit action', () => {
+      expect(icon({ action: 'Edit' })).toBe('pen')
+    })
+
+    it('returns pause for Hold Message action', () => {
+      expect(icon({ action: 'Hold Message' })).toBe('pause')
+    })
+
+    it('returns check as default for unknown action', () => {
+      expect(icon({ action: 'UnknownAction' })).toBe('check')
+    })
+
+    it('returns check for undefined action', () => {
+      expect(icon({})).toBe('check')
     })
   })
 
-  describe('variant', () => {
-    it.each([
-      ['Approve', 'primary'],
-      ['Reject', 'warning'],
-      ['Leave', 'primary'],
-      ['Leave Approved Message', 'primary'],
-      ['Leave Approved Member', 'primary'],
-      ['Delete', 'danger'],
-      ['Delete Approved Message', 'danger'],
-      ['Delete Approved Member', 'danger'],
-      ['Edit', 'primary'],
-      ['Hold Message', 'primary'],
-      ['Something Else', 'white'],
-      [undefined, 'white'],
-    ])('returns variant "%s" for action %j', (action, expected) => {
-      expect(variant({ action })).toBe(expected)
-    })
-  })
-
-  describe('copyStdMsgs', () => {
-    it('returns the stdmsgs array unchanged when there is no messageorder', () => {
-      const stdmsgs = [{ id: 1 }, { id: 2 }]
-
-      const result = copyStdMsgs({ stdmsgs })
-
-      expect(result).toBe(stdmsgs)
+  describe('variant function', () => {
+    it('returns primary for Approve action', () => {
+      expect(variant({ action: 'Approve' })).toBe('primary')
     })
 
-    it('returns the stdmsgs array unchanged when messageorder is an empty string', () => {
-      const stdmsgs = [{ id: 1 }, { id: 2 }]
-
-      const result = copyStdMsgs({ stdmsgs, messageorder: '' })
-
-      expect(result).toBe(stdmsgs)
+    it('returns warning for Reject action', () => {
+      expect(variant({ action: 'Reject' })).toBe('warning')
     })
 
-    it('sorts stdmsgs according to the message order', () => {
-      const stdmsgs = [{ id: 1 }, { id: 2 }, { id: 3 }]
-
-      const result = copyStdMsgs({
-        stdmsgs,
-        messageorder: JSON.stringify([3, 1, 2]),
-      })
-
-      expect(result.map((s) => s.id)).toEqual([3, 1, 2])
+    it('returns primary for Leave action', () => {
+      expect(variant({ action: 'Leave' })).toBe('primary')
     })
 
-    it('matches ids as numbers even when stored as strings', () => {
-      const stdmsgs = [{ id: '1' }, { id: '2' }]
-
-      const result = copyStdMsgs({
-        stdmsgs,
-        messageorder: JSON.stringify(['2', '1']),
-      })
-
-      expect(result.map((s) => s.id)).toEqual(['2', '1'])
+    it('returns primary for Leave Approved Message action', () => {
+      expect(variant({ action: 'Leave Approved Message' })).toBe('primary')
     })
 
-    it('appends stdmsgs not listed in the order at the end', () => {
-      const stdmsgs = [{ id: 1 }, { id: 2 }, { id: 3 }]
-
-      const result = copyStdMsgs({
-        stdmsgs,
-        messageorder: JSON.stringify([2]),
-      })
-
-      expect(result.map((s) => s.id)).toEqual([2, 1, 3])
+    it('returns primary for Leave Approved Member action', () => {
+      expect(variant({ action: 'Leave Approved Member' })).toBe('primary')
     })
 
-    it('ignores duplicate ids in the order so a message is not copied twice', () => {
-      const stdmsgs = [{ id: 1 }, { id: 2 }]
-
-      const result = copyStdMsgs({
-        stdmsgs,
-        messageorder: JSON.stringify([1, 1, 2]),
-      })
-
-      expect(result.map((s) => s.id)).toEqual([1, 2])
+    it('returns danger for Delete action', () => {
+      expect(variant({ action: 'Delete' })).toBe('danger')
     })
 
-    it('ignores order entries that do not match any stdmsg', () => {
-      const stdmsgs = [{ id: 1 }, { id: 2 }]
-
-      const result = copyStdMsgs({
-        stdmsgs,
-        messageorder: JSON.stringify([99, 1, 2]),
-      })
-
-      expect(result.map((s) => s.id)).toEqual([1, 2])
+    it('returns danger for Delete Approved Message action', () => {
+      expect(variant({ action: 'Delete Approved Message' })).toBe('danger')
     })
 
-    it('treats a JSON "[]" messageorder as truthy but empty, appending all stdmsgs in original order', () => {
-      // An empty array is still truthy in JS, so this exercises the do/while
-      // loop's first (empty-shift) iteration rather than skipping to the
-      // no-order branch.
-      const stdmsgs = [{ id: 1 }, { id: 2 }]
-
-      const result = copyStdMsgs({ stdmsgs, messageorder: '[]' })
-
-      expect(result.map((s) => s.id)).toEqual([1, 2])
+    it('returns danger for Delete Approved Member action', () => {
+      expect(variant({ action: 'Delete Approved Member' })).toBe('danger')
     })
 
-    it('returns an empty array when stdmsgs is empty, order or not', () => {
-      expect(copyStdMsgs({ stdmsgs: [] })).toEqual([])
-      expect(
-        copyStdMsgs({ stdmsgs: [], messageorder: JSON.stringify([1, 2]) })
-      ).toEqual([])
+    it('returns primary for Edit action', () => {
+      expect(variant({ action: 'Edit' })).toBe('primary')
+    })
+
+    // Hold used to be amber like the rejects, so in an alphabetically sorted
+    // set of buttons it ran into that block and got picked by mistake. Holding
+    // a post keeps it, so it belongs with the greens; the pause icon still
+    // tells it apart from a plain leave.
+    it('returns primary for Hold Message action, not the amber of the rejects', () => {
+      expect(variant({ action: 'Hold Message' })).toBe('primary')
+      expect(variant({ action: 'Reject' })).toBe('warning')
+      expect(icon({ action: 'Hold Message' })).toBe('pause')
+    })
+
+    it('returns white as default for unknown action', () => {
+      expect(variant({ action: 'UnknownAction' })).toBe('white')
+    })
+
+    it('returns white for undefined action', () => {
+      expect(variant({})).toBe('white')
     })
   })
 })

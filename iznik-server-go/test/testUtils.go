@@ -684,6 +684,9 @@ func CreateFullTestUser(t *testing.T, prefix string) (uint64, string) {
 	// Create another user for user-to-user chat
 	otherUserID := CreateTestUser(t, prefix+"_other", "User")
 
+	// A declared area, which is what the public location is read from.
+	database.DBConn.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings, '{}'), '$.mylocation.area', JSON_OBJECT('name', 'Edinburgh')) WHERE id = ?", userID)
+
 	// Create address and isochrone
 	CreateTestAddress(t, userID)
 	CreateTestIsochrone(t, userID, 55.9533, -3.1883)

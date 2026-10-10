@@ -178,27 +178,12 @@ func ReplySourceInnerFrom(srcGroup string) string {
 	// memberships: a ripple-created one present AND no ordinary one. When BOTH are absent (the
 	// member has left since) this is false and the frozen bit's answer of home stands - decay
 	// must not silently demote a genuine home reply.
-	rippleJoinOnly := `(EXISTS(SELECT 1 FROM messages_groups mgj
-	                   INNER JOIN memberships memj ON memj.groupid = mgj.groupid
-	                     AND memj.userid = rra.userid AND memj.collection = 'Approved'
-	                     AND memj.added < mgj.arrival AND memj.rippled = 1
-	                   WHERE mgj.msgid = rra.msgid AND mgj.rippled_in = 0 AND mgj.deleted = 0)
-	              AND NOT EXISTS(SELECT 1 FROM messages_groups mgo
-	                   INNER JOIN memberships memo ON memo.groupid = mgo.groupid
-	                     AND memo.userid = rra.userid AND memo.collection = 'Approved'
-	                     AND memo.added < mgo.arrival AND memo.rippled = 0
-	                   WHERE mgo.msgid = rra.msgid AND mgo.rippled_in = 0 AND mgo.deleted = 0))`
+	rippleJoinOnly := `(1 = 0)`
 	derive := `CASE
 	       WHEN rra.was_home_member = 1 AND NOT ` + rippleJoinOnly + ` THEN 'home'
 	       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn
 	                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid
 	                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'
-	       WHEN EXISTS(SELECT 1 FROM messages_groups mgr
-	                   INNER JOIN memberships mem ON mem.groupid = mgr.groupid
-	                     AND mem.userid = rra.userid AND mem.collection = 'Approved'
-	                     AND mem.added < mgr.arrival
-	                   WHERE mgr.msgid = rra.msgid AND mgr.rippled_in = 1
-	                     AND mgr.deleted = 0 AND mgr.arrival <= rra.replied_at) THEN 'ripple_group'
 	       WHEN ` + rippleJoinOnly + ` THEN 'ripple_join'
 	       ELSE 'unknown'
 	       END`
@@ -318,7 +303,8 @@ func Metrics(c *fiber.Ctx) error {
 	// Optional ?groupid= scopes the reply-source split to replies on posts ORIGINATING in that
 	// group (its rippled_in=0 messages_groups row), so results read per place - dense Croydon
 	// won't look like rural Ribble Valley. 0 = all groups. Each scoped query takes one gid arg.
-	gid := c.QueryInt("groupid", 0)
+	// There are no communities to scope to; any ?groupid= is ignored.
+	gid := 0
 	// Optional ?start= & ?end= bound the windowed sections; default to the last 30 days.
 	// This is what lets you read a group's before vs after rippling went on.
 	start := c.Query("start")
@@ -330,9 +316,6 @@ func Metrics(c *fiber.Ctx) error {
 		end = time.Now().Format("2006-01-02 15:04:05")
 	}
 	srcGroup := ""
-	if gid > 0 {
-		srcGroup = " JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
-	}
 	// Per-query args: the group filter (when set) sits in a JOIN before the date-bounded WHERE,
 	// so gid comes first, then start, end.
 	gargs := func() []interface{} {
@@ -512,20 +495,7 @@ func Metrics(c *fiber.Ctx) error {
 		return err
 	})
 
-	// (2) Groups whose posts rippled inside the window - the ?groupid= filter options.
-	// Bounded by the window (rippling_reach.created_at, its clustered-by-time column) rather than
-	// scanning every reach row ever written: the list is a filter for the windowed sections above,
-	// so groups that did not ripple in the window have nothing to filter to. Defensive: empty
-	// while rippling is dark.
-	section("groups", func() error {
-		return db.Table("rippling_reach rr").
-			Select("DISTINCT g.id AS id, g.nameshort AS name").
-			Joins("JOIN messages_groups mg ON mg.msgid = rr.msgid AND mg.rippled_in = 0 AND mg.deleted = 0").
-			Joins("JOIN `groups` g ON g.id = mg.groupid").
-			Where("rr.created_at >= ? AND rr.created_at < ?", start, end).
-			Order("g.nameshort").
-			Scan(&groupOpts).Error
-	})
+	// (2) There are no communities to filter by any more.
 
 	wg.Wait()
 

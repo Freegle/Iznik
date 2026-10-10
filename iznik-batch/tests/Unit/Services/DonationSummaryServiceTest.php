@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\Group;
+use App\Models\Membership;
 use App\Mail\Donation\DonationSummaryMail;
 use App\Services\DonationSummaryService;
 use Illuminate\Support\Facades\DB;
@@ -153,4 +155,25 @@ class DonationSummaryServiceTest extends TestCase
                 && str_contains($mail->htmlContent, '&lt;script&gt;');
         });
     }
+
+    public function test_does_not_check_birthday_when_donation_has_no_userid(): void
+    {
+        Mail::fake();
+
+        // No userid on the donation - donorHasBirthdayGroup should never run,
+        // regardless of any birthday groups that may exist in the database.
+        $this->insertDonation(['userid' => null, 'GrossAmount' => 8.00]);
+
+        $result = $this->service->sendDailySummary();
+
+        $this->assertSame(1, $result['donations']);
+        Mail::assertSent(DonationSummaryMail::class, function ($mail) {
+            return !str_contains($mail->htmlContent, 'Birthday?');
+        });
+    }
+
+
+
+
+
 }

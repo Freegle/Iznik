@@ -35,47 +35,6 @@ async function assertNoErrors(page) {
 }
 
 test.describe('ModTools Dashboard', () => {
-  test('after login, groups should be visible (not empty)', async ({
-    page,
-    testEnv,
-  }) => {
-    // Issue #2/#4: groups list empty after login
-    await loginViaModTools(page, testEnv.mod.email)
-
-    await page.goto(`${MODTOOLS_URL}/messages/pending`, {
-      timeout: timeouts.navigation.initial,
-    })
-
-    await dismissAllModals(page)
-
-    const groupSelect = page.locator('#communitieslist')
-    await expect(groupSelect).toBeVisible({
-      timeout: timeouts.navigation.slowPage,
-    })
-
-    // The group dropdown should have at least one group option (value !== '0').
-    // Dismiss modals on each poll iteration as they can appear after initial page load.
-    await expect
-      .poll(
-        async () => {
-          await dismissAllModals(page)
-          const options = await groupSelect.locator('option').all()
-          let groupCount = 0
-          for (const option of options) {
-            const value = await option.getAttribute('value')
-            if (value && value !== '0') {
-              groupCount++
-            }
-          }
-          return groupCount
-        },
-        {
-          message: 'Expected at least one group in the dropdown',
-          timeout: timeouts.navigation.slowPage,
-        }
-      )
-      .toBeGreaterThan(0)
-  })
 
   test('dashboard loads without errors', async ({ page, testEnv }) => {
     await loginViaModTools(page, testEnv.mod.email)
@@ -86,7 +45,7 @@ test.describe('ModTools Dashboard', () => {
       errors.push(error.message)
     })
 
-    await page.goto(`${MODTOOLS_URL}/modtools/dashboard`, {
+    await page.goto(`${MODTOOLS_URL}/`, {
       timeout: timeouts.navigation.initial,
     })
 

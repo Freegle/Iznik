@@ -495,6 +495,23 @@ const test = base.test.extend({
       }
     })
 
+    // Micro-volunteering is national, so every member older than a week is invited to
+    // it, in a modal over the first page they open. The seeded test members are that
+    // old, and the invite would cover whatever a test is about to click. Record a
+    // recent ask so the invite waits; the reply gate does not depend on this.
+    await page.addInitScript(() => {
+      try {
+        const misc = JSON.parse(localStorage.getItem('misc') || '{}')
+        misc.vals = misc.vals || {}
+        if (!misc.vals.microvolunteeringlastask) {
+          misc.vals.microvolunteeringlastask = new Date().toISOString()
+          localStorage.setItem('misc', JSON.stringify(misc))
+        }
+      } catch {
+        // No storage (e.g. an opaque origin): nothing to do.
+      }
+    })
+
     // Detect Nuxt SSR error pages on every load — catches cases where direct
     // page.goto() bypasses gotoAndVerify. Logs a [CRITICAL-SSR-ERROR] marker
     // that the CI "Evaluate overall test results" step scans for and surfaces

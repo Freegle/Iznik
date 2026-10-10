@@ -14,6 +14,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
+
 )
 
 const testDiscourseSecret = "test_discourse_secret_123"
@@ -151,4 +152,47 @@ func TestDiscourseSSO_DeadSession_ShowsSessionError(t *testing.T) {
 	cookieData, _ := json.Marshal(map[string]interface{}{"id": 999999999, "series": "1", "token": "no-such-token"})
 	location := ssoRequestWithCookie(t, url.QueryEscape(string(cookieData)))
 	assert.Equal(t, "https://modtools.org/discourse?ssoerror=session", location)
+}
+
+// A live session for an account that is a plain member - the shape left
+// behind when a moderator demotes themselves to Member and leaves - must be
+// told it is not a moderator, not bounced back to retry.
+func TestDiscourseSSO_MemberOnly_ShowsNotModError(t *testing.T) {
+	prefix := uniquePrefix("discoursesso_member")
+	os.Setenv("DISCOURSE_SECRET", testDiscourseSecret)
+	defer os.Unsetenv("DISCOURSE_SECRET")
+
+	userID := CreateTestUser(t, prefix, "User")
+	sessionID, _ := CreateTestSession(t, userID)
+
+	location := ssoRequestWithCookie(t, ssoCookieFor(t, sessionID))
+	assert.Equal(t, "https://modtools.org/discourse?ssoerror=notmod", location)
+}
+
+// The other half of the double gate: an Owner membership does not sign in an
+// account whose system role has not been raised.
+func TestDiscourseSSO_OwnerMembershipWithUserSystemrole_ShowsNotModError(t *testing.T) {
+	prefix := uniquePrefix("discoursesso_ownerusr")
+	os.Setenv("DISCOURSE_SECRET", testDiscourseSecret)
+	defer os.Unsetenv("DISCOURSE_SECRET")
+
+	userID := CreateTestUser(t, prefix, "User")
+	sessionID, _ := CreateTestSession(t, userID)
+
+	location := ssoRequestWithCookie(t, ssoCookieFor(t, sessionID))
+	assert.Equal(t, "https://modtools.org/discourse?ssoerror=notmod", location)
+}
+
+// An Owner is signed in exactly like a Moderator.
+func TestDiscourseSSO_Owner_SignsIn(t *testing.T) {
+	prefix := uniquePrefix("discoursesso_owner")
+	os.Setenv("DISCOURSE_SECRET", testDiscourseSecret)
+	defer os.Unsetenv("DISCOURSE_SECRET")
+
+	userID := CreateTestUser(t, prefix, "Moderator")
+	sessionID, _ := CreateTestSession(t, userID)
+
+	location := ssoRequestWithCookie(t, ssoCookieFor(t, sessionID))
+	assert.Contains(t, location, "discourse.ilovefreegle.org/session/sso_login")
+	assert.NotContains(t, location, "ssoerror")
 }

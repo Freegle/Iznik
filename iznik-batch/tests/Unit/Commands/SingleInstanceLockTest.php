@@ -70,4 +70,25 @@ class SingleInstanceLockTest extends TestCase
         );
         $after->release();
     }
+
+    /**
+     * ripple:proximity-notes gates on config BEFORE taking the lock, so a
+     * disabled run must not block on - or consume - the lock at all.
+     */
+    public function test_proximity_notes_config_gate_precedes_the_lock(): void
+    {
+        config(['freegle.ripple.proximity_notes' => false]);
+
+        $held = Cache::lock('ripple:proximity-notes:run', 30);
+        $this->assertTrue($held->get(), 'precondition: hold the lock');
+
+        try {
+            $this->artisan('ripple:proximity-notes')
+                ->doesntExpectOutputToContain('Another run is in progress')
+                ->assertExitCode(0);
+        } finally {
+            $held->release();
+        }
+    }
+
 }

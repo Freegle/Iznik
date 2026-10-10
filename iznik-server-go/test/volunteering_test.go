@@ -16,12 +16,6 @@ func TestVolunteering_InvalidID(t *testing.T) {
 	assert.Equal(t, 404, resp.StatusCode)
 }
 
-func TestVolunteering_InvalidGroupID(t *testing.T) {
-	// Non-existent group should return empty array
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/volunteering/group/999999999", nil))
-	assert.Equal(t, 200, resp.StatusCode)
-}
-
 func TestVolunteering_V2Path(t *testing.T) {
 	// Verify v2 paths work
 	prefix := uniquePrefix("volv2")

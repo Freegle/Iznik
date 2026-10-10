@@ -38,40 +38,12 @@ test.describe('ModTools Member Logs', () => {
       errors.push(error.message)
     })
 
-    // Navigate to approved members (always has data, unlike pending)
-    await page.goto(`${MODTOOLS_URL}/members/approved`, {
+    // Moderators are national: open the test member directly by id rather than
+    // choosing a community and paging through its members.
+    await page.goto(`${MODTOOLS_URL}/members/approved/${testEnv.user.id}`, {
       timeout: timeouts.navigation.initial,
     })
-
-    const groupSelect = page.locator('#communitieslist')
-    await expect(groupSelect).toBeVisible({
-      timeout: timeouts.navigation.slowPage,
-    })
-
     await dismissAllModals(page)
-
-    // Select the first available group
-    let targetGroupValue = null
-    await expect
-      .poll(
-        async () => {
-          const options = await groupSelect.locator('option').all()
-          for (const option of options) {
-            const value = await option.getAttribute('value')
-            if (value && value !== '0' && !value.includes('Please')) {
-              targetGroupValue = value
-              return true
-            }
-          }
-          return false
-        },
-        {
-          message: 'Waiting for group options',
-          timeout: timeouts.navigation.slowPage,
-        }
-      )
-      .toBe(true)
-    await groupSelect.selectOption(targetGroupValue)
 
     // Wait for member cards to load
     const memberCards = page.locator('.card, .list-group-item')
@@ -120,40 +92,12 @@ test.describe('ModTools Member Logs', () => {
     // Issue #15: member logs missing subject lines
     await loginViaModTools(page, testEnv.mod.email)
 
-    // Navigate to approved members (always has data)
-    await page.goto(`${MODTOOLS_URL}/members/approved`, {
+    // Moderators are national: open the test member directly by id rather than
+    // choosing a community and paging through its members.
+    await page.goto(`${MODTOOLS_URL}/members/approved/${testEnv.user.id}`, {
       timeout: timeouts.navigation.initial,
     })
-
-    const groupSelect = page.locator('#communitieslist')
-    await expect(groupSelect).toBeVisible({
-      timeout: timeouts.navigation.slowPage,
-    })
-
     await dismissAllModals(page)
-
-    // Select the first available group
-    let targetGroupValue = null
-    await expect
-      .poll(
-        async () => {
-          const options = await groupSelect.locator('option').all()
-          for (const option of options) {
-            const value = await option.getAttribute('value')
-            if (value && value !== '0' && !value.includes('Please')) {
-              targetGroupValue = value
-              return true
-            }
-          }
-          return false
-        },
-        {
-          message: 'Waiting for group options',
-          timeout: timeouts.navigation.slowPage,
-        }
-      )
-      .toBe(true)
-    await groupSelect.selectOption(targetGroupValue)
 
     // Wait for member cards to load
     const memberCards = page.locator('.card, .list-group-item')

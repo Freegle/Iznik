@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/gofiber/fiber/v2"
+
 )
 
 func TestDeleted(t *testing.T) {
@@ -2067,33 +2068,6 @@ func TestPostUserMergeByModerator(t *testing.T) {
 	assert.Equal(t, int64(1), cnt2, "id2 (kept) must still exist")
 }
 
-func TestPostUserMergeByModeratorForbiddenForOutsideUser(t *testing.T) {
-	// A moderator cannot merge users they don't moderate.
-	prefix := uniquePrefix("mergemodout")
-
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	_, modToken := CreateTestSession(t, modID)
-
-	PromoteTestUserToModerator(t, modID)
-
-	// user1 is in the mod's group, user2 is not.
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	// user2 intentionally not added to the group.
-
-	payload := map[string]interface{}{
-		"action": "Merge",
-		"id1":    user1ID,
-		"id2":    user2ID,
-	}
-	s, _ := json.Marshal(payload)
-	request := httptest.NewRequest("POST", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
-	request.Header.Set("Content-Type", "application/json")
-	resp, err := getApp().Test(request)
-	assert.NoError(t, err)
-	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
-}
-
 // Tests for the support tools endpoints (GET /api/user/:id/*).
 // All endpoints require the caller to be a moderator of a group the target belongs to.
 
@@ -2271,7 +2245,7 @@ func TestSupportEndpoints_AllReturn403ForNonMod(t *testing.T) {
 
 	endpoints := []string{
 		"chatrooms", "emailhistory", "bans", "newsfeed",
-		"applied", "membershiphistory", "logins",
+		"logins",
 	}
 
 	for _, ep := range endpoints {
@@ -2934,13 +2908,9 @@ func TestPublicLocation_ResponseStructure(t *testing.T) {
 	// Verify the response has expected keys.
 	_, hasLocation := result["location"]
 	_, hasDisplay := result["display"]
-	_, hasGroupid := result["groupid"]
-	_, hasGroupname := result["groupname"]
 
 	assert.True(t, hasLocation, "Response should have 'location' field")
 	assert.True(t, hasDisplay, "Response should have 'display' field")
-	assert.True(t, hasGroupid, "Response should have 'groupid' field")
-	assert.True(t, hasGroupname, "Response should have 'groupname' field")
 }
 
 // =============================================================================

@@ -831,6 +831,24 @@ describe('message store - fetchMessagesMT()', () => {
     expect(result).toBeUndefined()
   })
 
+  it('takes the id from each row of the national listing', async () => {
+    const store = useMessageStore()
+    store.init({})
+    mockFetchMessages.mockResolvedValue({
+      messages: [
+        { id: 7, subject: 'OFFER: Sofa' },
+        { id: 8, subject: 'WANTED: Chair' },
+      ],
+    })
+    store.fetchMT = vi.fn().mockImplementation(({ id }) => ({ id }))
+
+    const ids = await store.fetchMessagesMT({ filter: 'published', since: 24 })
+
+    expect(ids).toEqual([7, 8])
+    expect(store.fetchMT).toHaveBeenCalledWith({ id: 7 })
+    expect(store.list[8]).toEqual({ id: 8, subject: '' })
+  })
+
   it('does not overwrite context for a Draft collection fetch', async () => {
     const store = useMessageStore()
     store.init({})

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 )
+
 // postChatmessages sends a POST to /api/chatmessages with a JSON body.
 func postChatmessages(t *testing.T, path string, body map[string]interface{}, token string) *http.Response {
 	t.Helper()
@@ -30,4 +31,3 @@ func postChatmessages(t *testing.T, path string, body map[string]interface{}, to
 
 	return resp
 }
-

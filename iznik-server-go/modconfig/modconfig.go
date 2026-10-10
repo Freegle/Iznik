@@ -9,7 +9,6 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/user"
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
@@ -91,15 +90,8 @@ func canSee(myid uint64, cfg *ModConfig) bool {
 	if cfg.Default == 1 {
 		return true
 	}
-	// Used by mods on groups they moderate.
-	var count int64
-	database.DBConn.Table("memberships m1").
-		Select("COUNT(*)").
-		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
-		Where("m1.userid = ? AND m1.role IN (?, ?) AND m2.configid = ? AND m2.role IN (?, ?)",
-			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
-		Scan(&count)
-	return count > 0
+	// Moderators are a national pool, so any moderator can see any config.
+	return auth.IsModerator(myid)
 }
 
 // configColumns is the explicit column list for mod_configs queries.
@@ -164,34 +156,24 @@ func GetModConfig(c *fiber.Ctx) error {
 	} else if cfg.Default == 1 {
 		cansee = "Default"
 	} else {
-		// Shared - find who is using it on a group we both moderate.
-		type SharedInfo struct {
-			Userid  uint64
-			Groupid uint64
-		}
-		var shared SharedInfo
-		db.Table("memberships m1").
-			Select("m2.userid, m2.groupid").
-			Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
-			Where("m1.userid = ? AND m1.role IN (?, ?) AND m2.configid = ? AND m2.role IN (?, ?) AND m2.userid != ?",
-				myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid).
-			Limit(1).
-			Scan(&shared)
+		// Shared - another moderator is using it.
+		var sharedUser uint64
+		db.Table("users").Select("id").
+			Where("modconfigid = ? AND id != ?", cfg.ID, myid).
+			Limit(1).Scan(&sharedUser)
 
-		if shared.Userid > 0 {
+		if sharedUser > 0 && auth.IsModerator(myid) {
 			cansee = "Shared"
-			sharedbyid = shared.Userid
-			sharedonid = shared.Groupid
+			sharedbyid = sharedUser
 		}
 	}
 
 	// Compute "using" - user IDs of moderators currently using this config.
 	var usingUserIDs []uint64
-	db.Table("memberships m").
-		Distinct("m.userid").
-		Where("m.configid = ? AND m.role IN (?, ?)", cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+	db.Table("users").
+		Where("modconfigid = ?", cfg.ID).
 		Limit(10).
-		Pluck("userid", &usingUserIDs)
+		Pluck("id", &usingUserIDs)
 
 	if usingUserIDs == nil {
 		usingUserIDs = []uint64{}
@@ -281,15 +263,10 @@ func listModConfigs(c *fiber.Ctx) error {
 				"SELECT "+configColumns+" FROM mod_configs WHERE `default` = 1 "+
 				"UNION "+
 				"SELECT "+configColumns+" FROM mod_configs WHERE id IN ("+
-				"SELECT m1.configid FROM memberships m1 "+
-				"WHERE m1.configid IS NOT NULL AND m1.role IN (?, ?) "+
-				"AND m1.groupid IN ("+
-				"SELECT m2.groupid FROM memberships m2 "+
-				"WHERE m2.userid = ? AND m2.role IN (?, ?)"+
-				")"+
+				"SELECT modconfigid FROM users WHERE modconfigid IS NOT NULL"+
 				") "+
 				"ORDER BY name",
-			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER)
+			myid)
 		tx.Statement.BuildClauses = []string{"SELECT"}
 		tx.Scan(&configs)
 	}
@@ -641,7 +618,7 @@ func DeleteModConfig(c *fiber.Ctx) error {
 
 	// Check if still in use.
 	var inUse int64
-	db.Table("memberships").Where("configid = ? AND role IN (?, ?)", id, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&inUse)
+	db.Table("users").Where("modconfigid = ?", id).Count(&inUse)
 	if inUse > 0 {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"ret": 5, "status": "Config still in use"})
 	}

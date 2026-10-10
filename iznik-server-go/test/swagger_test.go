@@ -66,7 +66,7 @@ func TestSwaggerGeneration(t *testing.T) {
 	// Check for specific critical paths
 	criticalPaths := []string{
 		"/message/{ids}",
-		"/message/mygroups/{id}",
+		"/modtools/members/{id}",
 		"/user/{id}",
 	}
 

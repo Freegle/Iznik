@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -84,23 +85,13 @@ func GetDashboard(c *fiber.Ctx) error {
 
 	groupIDs := resolveGroupIDs(myid, uint64(groupID), systemwide, allgroups)
 
-	// Asking for one community and for everything at once is a contradiction, and
-	// resolveGroupIDs settles it by taking the community. Settle it the same way here, so
-	// the components that branch on this agree with the groups they were handed. Left as
-	// it was, group=5&systemwide=true would work out the figures for the whole network
-	// and then file them under community 5.
-	if groupID > 0 {
-		systemwide = false
-	}
+	// There are no communities: every figure is national, whatever scope was asked for.
+	systemwide = true
+	_ = allgroups
+	_ = groupID
 
-	// Check if user is a moderator (for mod-only components).
-	isMod := false
-	if myid > 0 && len(groupIDs) > 0 {
-		var modCount int64
-		db.Table("memberships").Where("userid = ? AND role IN (?, ?) AND groupid IN ?",
-			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, groupIDs).Count(&modCount)
-		isMod = modCount > 0
-	}
+	// Moderators are a national pool (for mod-only components).
+	isMod := myid > 0 && auth.IsModerator(myid)
 
 	// Component-based (new style).
 	// Accept both "components=X,Y" and "components[]=X&components[]=Y" query styles.
@@ -136,12 +127,7 @@ func GetDashboard(c *fiber.Ctx) error {
 	dashboard["newmembers"] = 0
 	dashboard["newmessages"] = 0
 
-	if len(groupIDs) > 0 {
-		// Bounded rewrite of a single COUNT(DISTINCT messages.id) JOIN messages_groups
-		// statement (70-81s over a year-plus range, caught live on db3): windowed
-		// messages_groups walk, then batched primary-key existence counts. This legacy count
-		// has no messages.arrival condition - the INNER JOIN only required the messages row
-		// to exist - so the batched count is unfiltered.
+	{
 		ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
 		defer cancel()
 		bdb := db.WithContext(ctx)
@@ -154,12 +140,7 @@ func GetDashboard(c *fiber.Ctx) error {
 		dashboard["newmessages"] = msgCount
 
 		var memCount int64
-		// Converted together with its
-		// identical sibling in getRecentCounts below: leaving one of two
-		// textually identical statements raw is the configuration that
-		// renumbers the survivor's site ID (ratchet gate h).
-		db.Table("memberships").Where("groupid IN ? AND added >= ? AND added <= ?",
-			groupIDs, startQ, endQ).Count(&memCount)
+		db.Table("users").Where("added >= ? AND added <= ?", startQ, endQ).Count(&memCount)
 		dashboard["newmembers"] = memCount
 	}
 
@@ -255,9 +236,6 @@ func rangeDaysBetween(startQ, endQ string) int {
 func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
 	db := database.DBConn
 	result := map[string]int64{"newmembers": 0, "newmessages": 0}
-	if len(groupIDs) == 0 {
-		return result
-	}
 
 	// Bounded rewrite of a single COUNT(DISTINCT messages.id) JOIN messages_groups statement,
 	// which over a systemwide/year-plus range scanned for 70-81s (caught live on db3): walk the
@@ -275,8 +253,7 @@ func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
 
 	// Identical sibling of
 	// 770ce1ca6e09 above in GetDashboard; converted together (ratchet gate h).
-	db.Table("memberships").Where("groupid IN ? AND added >= ? AND added <= ?",
-		groupIDs, startQ, endQ).Count(&newmembers)
+	db.Table("users").Where("added >= ? AND added <= ?", startQ, endQ).Count(&newmembers)
 
 	result["newmessages"] = newmessages
 	result["newmembers"] = newmembers
@@ -285,9 +262,6 @@ func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
 }
 
 func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []map[string]interface{} {
-	if len(groupIDs) == 0 {
-		return []map[string]interface{}{}
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
 	defer cancel()
 	db := database.DBConn.WithContext(ctx)
@@ -332,36 +306,6 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 			db.Table("messages m").
 				Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = m.id AND type = ?) AS views, m.id, m.subject", utils.MESSAGE_LIKES_VIEW).
 				Where("m.arrival >= ? AND m.arrival "+arrivalCmp+" ? AND m.deleted IS NULL", win.Start, win.End).
-				Order("views DESC").
-				Limit(5).
-				Scan(&winPosts)
-			posts = append(posts, winPosts...)
-		}
-	} else {
-		// For specific groups, correlated subquery with messages_groups filter
-		// (existing groupid index).
-		//
-		// rippled_in = 0 restricts to each post's ORIGIN group row. Rippling-out adds
-		// an Approved messages_groups row (rippled_in = 1) per group a post reaches, so
-		// without this filter a post rippled into several of a moderator's groups would
-		// appear once per group (duplicates under allgroups) and posts merely rippled
-		// INTO a group would pollute that group's own popular list. GROUP BY mg.msgid
-		// additionally collapses genuine multi-group (crossposted) origin rows so each
-		// post is listed once. Same native-only pattern as the stats/IP-abuse/edit-queue
-		// fixes (fa60c39b0, 4b6d7b3c3). A crossposted origin can straddle two windows
-		// and surface in both; the merge below dedups by id.
-		for _, win := range arrivalWindows(startQ, endQ) {
-			arrivalCmp := "<"
-			if win.LastInclusive {
-				arrivalCmp = "<="
-			}
-			var winPosts []PostRow
-			db.Table("messages_groups mg").
-				Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = mg.msgid AND type = ?) AS views, mg.msgid AS id, MIN(m.subject) AS subject", utils.MESSAGE_LIKES_VIEW).
-				Joins("INNER JOIN messages m ON m.id = mg.msgid").
-				Where("mg.arrival >= ? AND mg.arrival "+arrivalCmp+" ? AND mg.groupid IN (?) AND mg.collection = ? AND mg.rippled_in = 0",
-					win.Start, win.End, groupIDs, utils.COLLECTION_APPROVED).
-				Group("mg.msgid").
 				Order("views DESC").
 				Limit(5).
 				Scan(&winPosts)
@@ -423,9 +367,6 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 // deduplicated msgids, so scopedMessageIDs' DISTINCT set (no multiplicity) preserves the old
 // counts for crossposted messages.
 func getUsersPosting(groupIDs []uint64, startQ, endQ string) []map[string]interface{} {
-	if len(groupIDs) == 0 {
-		return []map[string]interface{}{}
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
 	defer cancel()
 	db := database.DBConn.WithContext(ctx)
@@ -550,11 +491,11 @@ func scopedMessageIDs(db *gorm.DB, groupIDs []uint64, startQ, endQ string) ([]ui
 
 	for _, w := range arrivalWindows(startQ, endQ) {
 		var msgids []uint64
-		q := db.Table("messages_groups").Select("msgid")
+		q := db.Table("messages").Select("id")
 		if w.LastInclusive {
-			q = q.Where("arrival >= ? AND arrival <= ? AND groupid IN ?", w.Start, w.End, groupIDs)
+			q = q.Where("arrival >= ? AND arrival <= ? AND deleted IS NULL", w.Start, w.End)
 		} else {
-			q = q.Where("arrival >= ? AND arrival < ? AND groupid IN ?", w.Start, w.End, groupIDs)
+			q = q.Where("arrival >= ? AND arrival < ? AND deleted IS NULL", w.Start, w.End)
 		}
 		if err := q.Scan(&msgids).Error; err != nil {
 			return nil, false
@@ -592,9 +533,6 @@ func countMessagesByID(db *gorm.DB, ids []uint64, startQ, endQ string, arrivalFi
 }
 
 func getUsersReplying(groupIDs []uint64, startQ, endQ string) []map[string]interface{} {
-	if len(groupIDs) == 0 {
-		return []map[string]interface{}{}
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
 	defer cancel()
 	db := database.DBConn.WithContext(ctx)
@@ -637,11 +575,11 @@ func repliedMessageMultiplicity(db *gorm.DB, groupIDs []uint64, startQ, endQ str
 
 	for _, w := range arrivalWindows(startQ, endQ) {
 		var msgids []uint64
-		q := db.Table("messages_groups").Select("msgid")
+		q := db.Table("messages").Select("id")
 		if w.LastInclusive {
-			q = q.Where("arrival >= ? AND arrival <= ? AND groupid IN ?", w.Start, w.End, groupIDs)
+			q = q.Where("arrival >= ? AND arrival <= ? AND deleted IS NULL", w.Start, w.End)
 		} else {
-			q = q.Where("arrival >= ? AND arrival < ? AND groupid IN ?", w.Start, w.End, groupIDs)
+			q = q.Where("arrival >= ? AND arrival < ? AND deleted IS NULL", w.Start, w.End)
 		}
 		if err := q.Scan(&msgids).Error; err != nil {
 			// Fail the whole component (empty top-5, like the replaced single
@@ -759,34 +697,22 @@ func topUserCounts(totals map[uint64]int, limit int) []userCount {
 
 func getModeratorsActive(groupIDs []uint64) []map[string]interface{} {
 	db := database.DBConn
-	if len(groupIDs) == 0 {
-		return []map[string]interface{}{}
-	}
 
 	type ModRow struct {
 		Userid     uint64
 		Lastactive *string
 	}
 
-	// MAX(arrival) rather than ORDER BY approvedat DESC LIMIT 1: the covering
-	// index is lastapproved (approvedby, groupid, arrival), so MAX over its
-	// suffix resolves each membership's subquery as a single index seek.
-	// Sorting by approvedat - which is NOT in any index - forced a read and
-	// filesort of the mod's entire approval history PER MEMBERSHIP ROW: a
-	// support dashboard spanning ~450 groups (~1,200 rows) ran 8-12 MINUTES,
-	// and reloads stacked 19+ copies, pinning db3's CPU (recurring monit
-	// alerts, worst captured 725s). For "when was this mod last active",
-	// the arrival of the last message they approved is the same signal.
-	//
-	// The 30s ceiling is the backstop: if this ever regresses, the query dies
-	// instead of stacking - a missing widget beats a downed write node.
+	// When a moderator was last active is the arrival of the last message they approved.
+	// The 30s ceiling is the backstop: if this ever regresses, the query dies instead of
+	// stacking.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	var mods []ModRow
-	db.WithContext(ctx).Table("memberships").
-		Select("userid, (SELECT MAX(messages_groups.arrival) FROM messages_groups WHERE messages_groups.approvedby = memberships.userid AND messages_groups.groupid = memberships.groupid) AS lastactive").
-		Where("groupid IN (?) AND role IN (?, ?)", groupIDs, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+	db.WithContext(ctx).Table("users").
+		Select("id AS userid, (SELECT MAX(messages.arrival) FROM messages WHERE messages.approvedby = users.id) AS lastactive").
+		Where("systemrole IN (?, ?, ?)", utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN).
 		Having("lastactive IS NOT NULL").
 		Scan(&mods)
 
@@ -829,9 +755,6 @@ func getModeratorsActive(groupIDs []uint64) []map[string]interface{} {
 // We parse each and sum the Offer/Wanted totals.
 func getMessageBreakdown(groupIDs []uint64, startQ, endQ string) map[string]int64 {
 	db := database.DBConn
-	if len(groupIDs) == 0 {
-		return map[string]int64{}
-	}
 
 	type BreakdownRow struct {
 		Breakdown *string
@@ -839,8 +762,8 @@ func getMessageBreakdown(groupIDs []uint64, startQ, endQ string) map[string]int6
 
 	var rows []BreakdownRow
 	db.Table("stats").Select("breakdown").
-		Where("type = 'MessageBreakdown' AND groupid IN ? AND date >= ? AND date <= ?",
-			groupIDs, startQ, endQ).Scan(&rows)
+		Where("type = 'MessageBreakdown' AND date >= ? AND date <= ?",
+			startQ, endQ).Scan(&rows)
 
 	result := map[string]int64{"Offer": 0, "Wanted": 0}
 	for _, r := range rows {
@@ -860,9 +783,6 @@ func getMessageBreakdown(groupIDs []uint64, startQ, endQ string) map[string]int6
 // getStatsTimeSeries reads from the pre-computed stats table.
 func getStatsTimeSeries(component string, groupIDs []uint64, startQ, endQ string) []map[string]interface{} {
 	db := database.DBConn
-	if len(groupIDs) == 0 {
-		return []map[string]interface{}{}
-	}
 
 	// Map component names to stats table types.
 	statsType := component
@@ -890,7 +810,7 @@ func getStatsTimeSeries(component string, groupIDs []uint64, startQ, endQ string
 
 	var rows []StatsRow
 	db.Table("stats").Select("date, SUM(count) AS count").
-		Where("type = ? AND groupid IN ? AND date >= ? AND date <= ?", statsType, groupIDs, startQ, endQ).
+		Where("type = ? AND date >= ? AND date <= ?", statsType, startQ, endQ).
 		Group("date").Order("date ASC").Scan(&rows)
 
 	result := make([]map[string]interface{}, len(rows))
@@ -921,14 +841,6 @@ func getDonations(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 		db.Table("users_donations").
 			Select("SUM(GrossAmount) AS count, DATE(timestamp) AS date").
 			Where("timestamp >= ? AND timestamp <= ?", startQ, endQ).
-			Group("date").
-			Order("date ASC").
-			Scan(&rows)
-	} else if len(groupIDs) > 0 {
-		db.Table("users_donations").
-			Select("SUM(GrossAmount) AS count, DATE(timestamp) AS date").
-			Where("userid IN (SELECT DISTINCT userid FROM memberships WHERE groupid IN (?)) AND timestamp >= ? AND timestamp <= ?",
-				groupIDs, startQ, endQ).
 			Group("date").
 			Order("date ASC").
 			Scan(&rows)
@@ -971,10 +883,6 @@ var happinessTypes = []string{"Happy", "Fine", "Unhappy"}
 // systemwide year on production, which is paid once per scope per cache window rather
 // than on every dashboard load.
 func getHappiness(groupIDs []uint64, startQ, endQ string, systemwide bool) []map[string]interface{} {
-	if !systemwide && len(groupIDs) == 0 {
-		return []map[string]interface{}{}
-	}
-
 	// Every other component that was slow enough to need caching also bounds itself, so
 	// that one stuck query can't hold up the request. That matters more now they share
 	// results: callers asking for the same figures wait on the first one to finish
@@ -1001,14 +909,6 @@ func getHappiness(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 		// needed. It also means a rating still counts when the post it was left on has
 		// since been deleted or moved between communities, which the join would drop.
 		q = q.Select("COUNT(*) AS count, messages_outcomes.happiness")
-	} else {
-		// Per-community, the listings table is the only thing that says which community a
-		// rating belongs to, so the join has to be here. rippled_in = 0 picks the
-		// community the post was written in; counting the copies it rippled out to as
-		// well was what made these figures four times too high.
-		q = q.Select("COUNT(DISTINCT messages_outcomes.id) AS count, messages_outcomes.happiness").
-			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages_outcomes.msgid AND messages_groups.rippled_in = 0").
-			Where("messages_groups.groupid IN (?)", groupIDs)
 	}
 
 	q.Group("messages_outcomes.happiness").Scan(&rows)
@@ -1078,18 +978,8 @@ func getDiscourseTopics() interface{} {
 
 // resolveGroupIDs determines which groups to query based on parameters.
 func resolveGroupIDs(myid uint64, groupID uint64, systemwide, allgroups bool) []uint64 {
-	var groupIDs []uint64
-
-	if groupID > 0 {
-		groupIDs = []uint64{groupID}
-	} else if systemwide {
-		database.DBConn.Table("groups").Select("id").Where("publish = 1 AND onhere = 1").Scan(&groupIDs)
-	} else if allgroups && myid > 0 {
-		database.DBConn.Table("memberships").Select("groupid").
-			Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
-			Scan(&groupIDs)
-	}
-	return groupIDs
+	// There are no communities: every dashboard figure is national, so there is no scope list.
+	return []uint64{}
 }
 
 func parseRelativeDate(s string) time.Time {

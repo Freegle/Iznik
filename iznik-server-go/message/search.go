@@ -94,7 +94,6 @@ type SearchResult struct {
 	ID        uint64    `json:"-" gorm:"primary_key"`
 	Msgid     uint64    `json:"id"`
 	Arrival   time.Time `json:"arrival"`
-	Groupid   uint64    `json:"groupid"`
 	Lat       float64   `json:"lat"`
 	Lng       float64   `json:"lng"`
 	Tag       string    `json:"-"`
@@ -164,21 +163,9 @@ func GetWords(search string) []string {
 	return filtered
 }
 
+// groupFilter used to restrict a search to a set of communities. There are none any more.
 func groupFilter(groupids []uint64) string {
-	ret := ""
-
-	if len(groupids) > 0 {
-		ret = " AND EXISTS (SELECT 1 FROM messages_groups mg WHERE mg.msgid = messages_spatial.msgid AND mg.groupid IN ("
-		for i, id := range groupids {
-			if i > 0 {
-				ret += ","
-			}
-			ret += strconv.FormatUint(id, 10)
-		}
-		ret += ") AND mg.collection = 'Approved' AND mg.deleted = 0) "
-	}
-
-	return ret
+	return ""
 }
 
 // nearbyFeedMsgIDs returns the msgids of the posts that make up the member's Nearby browse
@@ -323,30 +310,15 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 }
 
 // SearchByMsgID returns the message with the given id as a single-element search
-// result, restricted to the supplied groups (nil groupids = no restriction, as
-// used for admin/support). Returns nil if the message does not exist or is not in
-// one of those groups. This lets "search by message id" return the exact message
+// result. Returns nil if the message does not exist. This lets "search by message id" return the exact message
 // rather than word-matching the digits against message text.
-func SearchByMsgID(db *gorm.DB, msgid uint64, groupids []uint64) []SearchResult {
+func SearchByMsgID(db *gorm.DB, msgid uint64) []SearchResult {
 	var results []SearchResult
-
-	// len(groupids)>0
-	// is the only toggle - 2 possible rendered forms, both proven by the
-	// retired ormharness (shapes.json / TestTier3Shapes_a5e382bd3536,
-	// removed in d22ba1d6c). Unlike groupFilter (still used unchanged by
-	// GetWords*), the group-id list here is bound via GORM's native IN (?)
-	// slice-bind rather than spliced as literal text (plan 7.5), so an
-	// arbitrary-length group list is a single well-defined bind, not an
-	// extra shape dimension.
 	whereSQL := "messages_spatial.msgid = ?"
 	whereArgs := []interface{}{msgid}
-	if len(groupids) > 0 {
-		whereSQL += " AND EXISTS (SELECT 1 FROM messages_groups mg WHERE mg.msgid = messages_spatial.msgid AND mg.groupid IN (?) AND mg.collection = 'Approved' AND mg.deleted = 0)"
-		whereArgs = append(whereArgs, groupids)
-	}
 
 	db.Table("messages_spatial").
-		Select("messages_spatial.msgid, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype AS type, ST_Y(point) AS lat, ST_X(point) AS lng").
+		Select("messages_spatial.msgid, messages_spatial.arrival, messages_spatial.msgtype AS type, ST_Y(point) AS lat, ST_X(point) AS lng").
 		Where(whereSQL, whereArgs...).
 		Limit(1).
 		Scan(&results)
@@ -437,38 +409,3 @@ func searchReachArmIDs(db *gorm.DB, lng, lat float64) []uint64 {
 	return reachIDs
 }
 
-// dropRippledIn keeps only the results one of the given groups holds as its OWN post:
-// a messages_groups row with rippled_in = 0 on that group. It is the search arm of the
-// Approved Messages "Only this group's own posts (hide rippled-in)" filter
-// (?originonly=true), whose listing arm is the mg.rippled_in = 0 clause in
-// message_list.go. No groups means nothing to scope to, so nothing is dropped.
-func dropRippledIn(db *gorm.DB, results []SearchResult, groupids []uint64) []SearchResult {
-	if len(results) == 0 || len(groupids) == 0 {
-		return results
-	}
-
-	ids := make([]uint64, 0, len(results))
-	for _, r := range results {
-		ids = append(ids, r.Msgid)
-	}
-
-	var own []uint64
-	db.Table("messages_groups").
-		Select("DISTINCT msgid").
-		Where("msgid IN ? AND groupid IN ? AND rippled_in = 0 AND deleted = 0", ids, groupids).
-		Scan(&own)
-
-	keep := make(map[uint64]bool, len(own))
-	for _, id := range own {
-		keep[id] = true
-	}
-
-	kept := results[:0]
-	for _, r := range results {
-		if keep[r.Msgid] {
-			kept = append(kept, r)
-		}
-	}
-
-	return kept
-}

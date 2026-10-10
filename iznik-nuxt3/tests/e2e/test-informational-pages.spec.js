@@ -151,7 +151,7 @@ test.describe('Charity partner signup page', () => {
     await page.gotoAndVerify('/charity')
     await waitForNuxtPageLoad({ timeout: timeouts.navigation.default })
 
-    await expect(page.locator('a[href="/explore"]')).toBeVisible({
+    await expect(page.locator('a[href="/"]', { hasText: 'Sign up as an individual' })).toBeVisible({
       timeout: timeouts.ui.appearance,
     })
   })

@@ -367,7 +367,7 @@ func fetchDriveSample(db *gorm.DB, start, end, stratumSQL string, sampleN int) [
 		"FROM rippling_reach rr " +
 		"JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' " +
 		"WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0" + stratumSQL +
-		" AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)" +
+		" AND 1 = 1" +
 		" AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested')" +
 		" ORDER BY RAND() LIMIT ?" +
 		") samp"
@@ -505,7 +505,7 @@ func Analytics(c *fiber.Ctx) error {
 			"FROM rippling_reach rr "+
 			"JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' "+
 			"WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0%s "+
-			"AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)"+
+			"AND 1 = 1"+
 			") d", ReplyHorizonHours, stratumSQL)
 
 		db.Table(innerCounts, start, end).
@@ -547,7 +547,7 @@ func Analytics(c *fiber.Ctx) error {
 				") THEN 1 ELSE 0 END), 0) AS additional").
 			Joins("JOIN rippling_reach rr ON rr.msgid = hr.msgid AND rr.total_freeglers > 0"+stratumSQL).
 			Joins("JOIN messages m ON m.id = hr.msgid AND m.type = 'Offer'").
-			Where("hr.created_at >= ? AND hr.created_at < ? AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = hr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)", start, end).
+			Where("hr.created_at >= ? AND hr.created_at < ? AND 1 = 1", start, end).
 			Row()
 		// Read the two aggregates positionally. Scan() into a struct silently left
 		// both at zero here — the aggregates carry no model to map onto — and a
@@ -774,7 +774,7 @@ func trendSeries(db *gorm.DB, start, end, stratumSQL string) []TrendRow {
 		"FROM rippling_reach rr "+
 		"JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' "+
 		"WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0%s "+
-		"AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)"+
+		"AND 1 = 1"+
 		") d", ReplyHorizonHours, ReplyHorizonHours, TakenHorizonDays, stratumSQL)
 
 	rows := []TrendRow{}
@@ -928,7 +928,7 @@ func rippledOutSection(db *gorm.DB, start, end, stratumSQL string) Section3Rippl
 			    JOIN rippling_reach rr ON rr.msgid = cm.refmsgid AND rr.total_freeglers > 0`+stratumSQL+`
 			    JOIN messages m ON m.id = cm.refmsgid AND m.type = 'Offer'
 			    WHERE cm.type = 'Interested' AND cm.date >= ? AND cm.date < ?
-			      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = cm.refmsgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
+			      AND 1 = 1
 			) d`, w[0], w[1]).Scan(&chunk).Error; err != nil {
 				// Zero the whole metric, matching the unchunked query's
 				// all-or-nothing failure shape - a partially-summed total
@@ -963,15 +963,10 @@ func rippledOutSection(db *gorm.DB, start, end, stratumSQL string) Section3Rippl
 			    FROM rippling_reach rr
 			    JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer'
 			    WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0`+stratumSQL+`
-			      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
+			      AND 1 = 1
 			      AND EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid)
 			      AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested')
-			      AND NOT EXISTS(
-			          SELECT 1 FROM chat_messages ch
-			          INNER JOIN messages_groups og ON og.msgid = ch.refmsgid AND og.rippled_in = 0 AND og.deleted = 0
-			          INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ch.userid
-			            AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0
-			          WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested')
+
 			) x`, w[0], w[1]).Scan(&chunkRescued).Error; err != nil {
 				// As above: all-or-nothing rather than a silent undercount.
 				rescued = 0

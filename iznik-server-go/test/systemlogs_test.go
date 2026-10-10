@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
 )
 
 func init() {
@@ -182,5 +183,35 @@ func TestSystemLogsCounts_ModeratorAccess(t *testing.T) {
 	if ok {
 		assert.NotEqual(t, 401, code)
 		assert.NotEqual(t, 403, code)
+	}
+}
+
+func TestSystemLogs_ModeratorCannotViewUnrelatedUser(t *testing.T) {
+	prefix := uniquePrefix("syslogs_moduser")
+	modUserID := CreateTestUser(t, prefix+"_mod", "User")
+	_, modToken := CreateTestSession(t, modUserID)
+
+	// Create a user who is NOT in the moderator's group.
+	otherUserID := CreateTestUser(t, prefix+"_other", "User")
+
+	// Moderator should not be able to view logs for a user not in their groups.
+	code, ok := testSystemLogsRequest(t, fmt.Sprintf("/api/modtools/systemlogs?jwt=%s&userid=%d", modToken, otherUserID))
+	if ok {
+		assert.Equal(t, 403, code)
+	}
+}
+
+func TestSystemLogs_SupportBypassesGroupCheck(t *testing.T) {
+	prefix := uniquePrefix("syslogs_supbypass")
+	supportUserID := CreateTestUser(t, prefix+"_sup", "Support")
+	_, supToken := CreateTestSession(t, supportUserID)
+
+	// Create any user.
+	otherUserID := CreateTestUser(t, prefix+"_other", "User")
+
+	// Support should bypass group membership checks.
+	code, ok := testSystemLogsRequest(t, fmt.Sprintf("/api/modtools/systemlogs?jwt=%s&userid=%d", supToken, otherUserID))
+	if ok {
+		assert.NotEqual(t, 403, code, "Support should bypass group check")
 	}
 }

@@ -661,7 +661,10 @@ export const useMessageStore = defineStore('message', {
 
       const data = await api(this.config).message.fetchMessages(params)
       if (!data.messages || data.messages.length === 0) return
-      const messageIDs = data.messages // Now returns IDs only (uint64 array)
+      // The national listing returns rows ({ id, subject, ... }); other lists return ids.
+      const messageIDs = data.messages.map((m) =>
+        typeof m === 'object' ? m.id : m
+      )
       const context = data.context // Can be undefined if search complete
 
       if (params.collection !== 'Draft') {

@@ -8,7 +8,6 @@ package partner
 import (
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/location"
@@ -67,9 +66,9 @@ func PutMember(c *fiber.Ctx) error {
 	// The ban is site-wide now; there is no per-area membership to check
 	// instead. A banned member must get a genuine failure, not a fake
 	// success that lets the partner believe the join worked.
-	var banned *time.Time
-	db.Table("users").Select("banned").Where("id = ?", userid).Scan(&banned)
-	if banned != nil {
+	var banned int64
+	db.Table("users").Where("id = ? AND banned IS NOT NULL", userid).Count(&banned)
+	if banned > 0 {
 		return fiber.NewError(fiber.StatusForbidden, "Member is banned")
 	}
 

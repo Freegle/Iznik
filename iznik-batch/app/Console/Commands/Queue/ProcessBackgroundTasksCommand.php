@@ -1361,7 +1361,7 @@ class ProcessBackgroundTasksCommand extends Command
             'latitude' => $msg->lat,
             'longitude' => $msg->lng,
             'images' => $images,
-            'created_at' => $group->arrival,
+            'created_at' => $msg->arrival,
         ];
 
         $apiUrl = config('freegle.freebie_alerts.api_url');

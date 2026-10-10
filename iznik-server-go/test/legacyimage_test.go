@@ -105,35 +105,6 @@ func TestLegacyImageArchived(t *testing.T) {
 	assert.Contains(t, loc, url.QueryEscape(fmt.Sprintf("img_%d.jpg", id)))
 }
 
-func TestLegacyImageArchivedGroupNotArchivable(t *testing.T) {
-	// Group images were never archived to Azure in V1 (no prefix in the
-	// Attachment::canRedirect switch), so an archived flag on one must fall
-	// through to the default rather than fabricate an archive URL. Group defaults
-	// are the Freegle logo, not the person silhouette (see TestLegacyImageGroupFallsBackToLogo).
-	id := insertLegacyRow(t,
-		"INSERT INTO groups_images (archived, contenttype) VALUES (1, ?)", "image/jpeg")
-
-	status, loc := legacyImageGet(t, fmt.Sprintf("?id=%d&group=1", id))
-	assert.Equal(t, fiber.StatusFound, status)
-	assert.Contains(t, loc, "/icon.png")
-	assert.NotContains(t, loc, "/defaultprofile.png")
-}
-
-func TestLegacyImageGroupFallsBackToLogo(t *testing.T) {
-	// A group whose image can't be served (here: a legacy data-column row with no
-	// external upload) must fall back to the Freegle logo, NOT the person silhouette.
-	// Serving /defaultprofile.png made communities with a stale profile id show a
-	// grey person on the explore list (the image 200s, so the front-end's broken-image
-	// fallback to the logo never fired). Communities are not people.
-	id := insertLegacyRow(t,
-		"INSERT INTO groups_images (contenttype) VALUES (?)", "image/jpeg")
-
-	status, loc := legacyImageGet(t, fmt.Sprintf("?id=%d&group=1", id))
-	assert.Equal(t, fiber.StatusFound, status)
-	assert.Contains(t, loc, "/icon.png")
-	assert.NotContains(t, loc, "/defaultprofile.png")
-}
-
 func TestLegacyImageNoBytesRowFallsBack(t *testing.T) {
 	// A row with no external upload AND no data bytes (nothing to serve) falls back
 	// to the default profile image.
@@ -148,13 +119,13 @@ func TestLegacyImageNoBytesRowFallsBack(t *testing.T) {
 func TestLegacyImageDataBlobServed(t *testing.T) {
 	// A pre-tusd row whose bytes live in the legacy `data` column must be SERVED
 	// from the DB, not redirected to the default. Retiring V1's image.php dropped
-	// this, leaving ~85% of group logos (still blob-stored) showing the Freegle
+	// this, leaving most blob-stored images (still blob-stored) showing the Freegle
 	// logo. We serve the bytes with the row's content type.
 	blob := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03} // PNG magic + a few bytes
 	id := insertLegacyRow(t,
-		"INSERT INTO groups_images (contenttype, data) VALUES (?, ?)", "image/png", blob)
+		"INSERT INTO users_images (contenttype, data) VALUES (?, ?)", "image/png", blob)
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/image?id=%d&group=1", id), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/image?id=%d&user=1", id), nil)
 	resp, err := getApp().Test(req)
 	assert.NoError(t, err)
 	// Served inline (200), not a redirect to the default.

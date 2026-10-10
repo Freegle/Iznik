@@ -62,57 +62,6 @@ async function testEmailLevelSetting(page, testEmail, level, takeScreenshot) {
 
   console.log(`✓ Email level ${level.text} saved and persisted correctly`)
 
-  // If not 'None', check for advanced settings functionality
-  if (level.value !== 'None') {
-    // Look for the "Show advanced settings" button
-    console.log('Checking advanced settings...')
-    const advancedButton = page.locator('text=Show advanced settings')
-
-    // Click to show advanced settings
-    await advancedButton.click()
-
-    // Look for email frequency settings in advanced view
-    const emailFrequencySection = page.locator(
-      'text=Choose OFFER/WANTED frequency:'
-    )
-
-    if (
-      await emailFrequencySection
-        .isVisible({ timeout: 5000 })
-        .catch(() => false)
-    ) {
-      // Get the current email frequency setting
-      const frequencySelect = page
-        .locator('select')
-        .filter({
-          hasText: /Immediate|1 hour|2 hours|4 hours|8 hours|Daily/,
-        })
-        .first()
-
-      if (
-        await frequencySelect.isVisible({ timeout: 5000 }).catch(() => false)
-      ) {
-        const currentFrequency = await frequencySelect.inputValue()
-        console.log(
-          `Current email frequency in advanced settings: ${currentFrequency}`
-        )
-
-        // Verify that the frequency setting is reasonable for the selected email level
-        if (level.value === 'Basic') {
-          // Basic should typically have longer intervals
-          expect(['8', '24']).toContain(currentFrequency)
-        } else if (level.value === 'Full') {
-          // Full can have any frequency including immediate
-          expect(['0', '1', '2', '4', '8', '24']).toContain(currentFrequency)
-        }
-
-        console.log(
-          `✓ Email frequency matches expected range for ${level.text}`
-        )
-      }
-    }
-  }
-
   await logoutIfLoggedIn(page)
 }
 

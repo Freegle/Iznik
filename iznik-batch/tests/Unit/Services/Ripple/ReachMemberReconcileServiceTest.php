@@ -35,7 +35,7 @@ class ReachMemberReconcileServiceTest extends TestCase
         $user = $this->createTestUser();
         $poster = $this->createTestUser();
         $msg = $this->createTestMessage($poster);
-        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1, 'added' => now()->subHours(20)]);
         DB::table('rippling_reach_notified')->insert([
             'msgid' => $msg->id, 'userid' => $user->id, 'notified_at' => now()->subHours(19),
         ]);
@@ -48,7 +48,7 @@ class ReachMemberReconcileServiceTest extends TestCase
     public function test_a_join_older_than_the_lookback_is_not_queued(): void
     {
         $user = $this->createTestUser();
-        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
+        DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1, 'added' => now()->subDays(3)]);
 
         (new ReachMemberReconcileService())->reconcile();
 

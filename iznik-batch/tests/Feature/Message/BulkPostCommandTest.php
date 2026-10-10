@@ -25,7 +25,6 @@ class BulkPostCommandTest extends TestCase
         $user = $this->createTestUser();
         $this->email = $user->emails()->where('preferred', 1)->first()->email;
 
-        // Create a test group.
         DB::table('users')->where('id', $user->id)->update(['emailfrequency' => -1]);
 
         // Create a postcode location.
@@ -37,8 +36,6 @@ class BulkPostCommandTest extends TestCase
             'lng' => -0.1372,
         ]);
 
-        // Store group name for later lookups.
-        $this->app->instance('test.group', $group);
         $this->app->instance('test.user', $user);
     }
 
@@ -94,13 +91,10 @@ class BulkPostCommandTest extends TestCase
         $this->writePhoto('clock.jpg');
         $this->writePhoto('sofa.jpg');
 
-        $group = $this->app->make('test.group');
-
         $result = $this->withoutMockingConsoleOutput()->artisan('messages:bulk-post', [
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
             '--dry-run' => true,
         ]);
 
@@ -110,7 +104,7 @@ class BulkPostCommandTest extends TestCase
         $this->assertStringContainsString('qty: 6', $output);
         $this->assertStringContainsString('Red Sofa', $output);
         $this->assertStringContainsString('2 posts', $output);
-        $this->assertStringContainsString('PENDING', $output);
+        $this->assertStringContainsString('held for the automatic content check', $output);
         $this->assertEquals(0, $result);
     }
 
@@ -184,13 +178,10 @@ class BulkPostCommandTest extends TestCase
         $this->writeCsv([['Sofa', 1, 'nonexistent.jpg']]);
         $this->writeBody();
 
-        $group = $this->app->make('test.group');
-
         $this->artisan('messages:bulk-post', [
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
         ])
             ->expectsOutputToContain('Missing photo: nonexistent.jpg')
             ->assertExitCode(1);
@@ -205,13 +196,10 @@ class BulkPostCommandTest extends TestCase
         $this->writePhoto('chair1.jpg');
         $this->writePhoto('chair2.jpg');
 
-        $group = $this->app->make('test.group');
-
         $result = $this->withoutMockingConsoleOutput()->artisan('messages:bulk-post', [
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
             '--dry-run' => true,
         ]);
 
@@ -231,13 +219,10 @@ class BulkPostCommandTest extends TestCase
         $this->writePhoto('desk1.jpg');
         $this->writePhoto('desk2.jpg');
 
-        $group = $this->app->make('test.group');
-
         $this->artisan('messages:bulk-post', [
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
             '--dry-run' => true,
         ])
             ->expectsOutputToContain('Desk')
@@ -255,13 +240,10 @@ class BulkPostCommandTest extends TestCase
         $this->writeBody();
         $this->writePhoto('sofa.jpg');
 
-        $group = $this->app->make('test.group');
-
         $this->artisan('messages:bulk-post', [
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
             '--dry-run' => true,
         ])
             ->expectsOutputToContain('2 posts')
@@ -276,8 +258,6 @@ class BulkPostCommandTest extends TestCase
         ]);
         $this->writeBody('Furniture from Mind in Brighton.');
         $this->writePhoto('sofa.jpg');
-
-        $group = $this->app->make('test.group');
 
         // Mock TUS: create file (201) + verify (200) + upload (204)
         TusService::fake([
@@ -300,7 +280,6 @@ class BulkPostCommandTest extends TestCase
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
         ])
             ->expectsOutputToContain('Authenticated')
             ->expectsOutputToContain('Red Sofa')
@@ -318,8 +297,6 @@ class BulkPostCommandTest extends TestCase
         ]);
         $this->writeBody('Test body.');
 
-        $group = $this->app->make('test.group');
-
         FreegleApiClient::fake([
             ['body' => ['ret' => 0, 'jwt' => 'test-jwt-token']],   // Auth
             ['body' => ['ret' => 0, 'id' => 10001]],                // PUT /message for Red Sofa
@@ -330,7 +307,6 @@ class BulkPostCommandTest extends TestCase
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
             '--first' => true,
         ])
             ->expectsOutputToContain('Red Sofa')
@@ -344,8 +320,6 @@ class BulkPostCommandTest extends TestCase
         $this->writeCsv([['Sofa', 1, '']]);
         $this->writeBody();
 
-        $group = $this->app->make('test.group');
-
         FreegleApiClient::fake([
             ['body' => ['ret' => 3, 'status' => 'Login failed']],
         ]);
@@ -354,7 +328,6 @@ class BulkPostCommandTest extends TestCase
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
         ])
             ->expectsOutputToContain('Failed to authenticate')
             ->assertExitCode(1);
@@ -367,13 +340,10 @@ class BulkPostCommandTest extends TestCase
         ]);
         $this->writeBody();
 
-        $group = $this->app->make('test.group');
-
         $this->artisan('messages:bulk-post', [
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
             '--dry-run' => true,
         ])
             ->expectsOutputToContain('defaulting to 1')
@@ -388,13 +358,10 @@ class BulkPostCommandTest extends TestCase
         ]);
         $this->writeBody();
 
-        $group = $this->app->make('test.group');
-
         $result = $this->withoutMockingConsoleOutput()->artisan('messages:bulk-post', [
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
             '--dry-run' => true,
         ]);
 
@@ -411,48 +378,15 @@ class BulkPostCommandTest extends TestCase
         ]);
         $this->writeBody();
 
-        $group = $this->app->make('test.group');
-
         $this->artisan('messages:bulk-post', [
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
             '--dry-run' => true,
         ])
             ->expectsOutputToContain('Red Sofa')
             ->doesntExpectOutputToContain('qty:')
             ->assertExitCode(0);
-    }
-
-    public function test_auto_detects_nearest_group(): void
-    {
-        $this->writeCsv([['Sofa', 1, '']]);
-        $this->writeBody();
-
-        $this->artisan('messages:bulk-post', [
-            'folder' => $this->folder,
-            '--email' => $this->email,
-            '--postcode' => 'BN1 1AA',
-            '--dry-run' => true,
-        ])
-            ->expectsOutputToContain('Auto-detected nearest group')
-            ->assertExitCode(0);
-    }
-
-    public function test_fails_if_group_not_found(): void
-    {
-        $this->writeCsv([['Sofa', 1, '']]);
-        $this->writeBody();
-
-        $this->artisan('messages:bulk-post', [
-            'folder' => $this->folder,
-            '--email' => $this->email,
-            '--postcode' => 'BN1 1AA',
-            '--group' => 'NonexistentGroup_'.uniqid(),
-        ])
-            ->expectsOutputToContain('Group not found')
-            ->assertExitCode(1);
     }
 
     public function test_deadline_shown_in_dry_run(): void
@@ -465,197 +399,15 @@ class BulkPostCommandTest extends TestCase
         fclose($handle);
         $this->writeBody();
 
-        $group = $this->app->make('test.group');
-
         $result = $this->withoutMockingConsoleOutput()->artisan('messages:bulk-post', [
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
             '--dry-run' => true,
         ]);
 
         $output = \Artisan::output();
         $this->assertStringContainsString('deadline: 2026-04-03', $output);
-        $this->assertEquals(0, $result);
-    }
-
-    public function test_cross_post_groups_shown_in_dry_run(): void
-    {
-        $this->writeCsv([['Sofa', 1, '']]);
-        $this->writeBody();
-
-        $primaryGroup = $this->app->make('test.group');
-
-        $result = $this->withoutMockingConsoleOutput()->artisan('messages:bulk-post', [
-            'folder'              => $this->folder,
-            '--email'             => $this->email,
-            '--postcode'          => 'BN1 1AA',
-            '--group'             => $primaryGroup->nameshort,
-            '--cross-post-groups' => $crossGroup->nameshort,
-            '--dry-run'           => true,
-        ]);
-
-        $output = \Artisan::output();
-        $this->assertStringContainsString($crossGroup->nameshort, $output);
-        $this->assertStringContainsString('cross-post', $output);
-        $this->assertStringContainsString('1 items × 2 groups = 2 posts', $output);
-        $this->assertEquals(0, $result);
-    }
-
-    public function test_skip_primary_group_dry_run_excludes_primary(): void
-    {
-        $this->writeCsv([['Sofa', 1, '']]);
-        $this->writeBody();
-
-        $primaryGroup = $this->app->make('test.group');
-
-        $result = $this->withoutMockingConsoleOutput()->artisan('messages:bulk-post', [
-            'folder'               => $this->folder,
-            '--email'              => $this->email,
-            '--postcode'           => 'BN1 1AA',
-            '--group'              => $primaryGroup->nameshort,
-            '--cross-post-groups'  => $crossGroup->nameshort,
-            '--skip-primary-group' => true,
-            '--dry-run'            => true,
-        ]);
-
-        $output = \Artisan::output();
-        $this->assertStringContainsString('[SKIPPED]', $output);
-        $this->assertStringContainsString('1 items × 1 groups = 1 posts', $output);
-        $this->assertEquals(0, $result);
-    }
-
-    public function test_skip_primary_group_without_cross_post_groups_fails(): void
-    {
-        $this->writeCsv([['Sofa', 1, '']]);
-        $this->writeBody();
-
-        $group = $this->app->make('test.group');
-
-        $this->artisan('messages:bulk-post', [
-            'folder'               => $this->folder,
-            '--email'              => $this->email,
-            '--postcode'           => 'BN1 1AA',
-            '--group'              => $group->nameshort,
-            '--skip-primary-group' => true,
-        ])
-            ->expectsOutputToContain('--skip-primary-group requires --cross-post-groups')
-            ->assertExitCode(1);
-    }
-
-    public function test_cross_posting_posts_to_each_group_with_modified_body(): void
-    {
-        $this->writeCsv([['Red Sofa', 1, '']]);
-        $this->writeBody('Original body text.');
-
-        $primaryGroup = $this->app->make('test.group');
-
-        FreegleApiClient::fake([
-            ['body' => ['ret' => 0, 'jwt' => 'test-jwt-token']],  // Auth
-            ['body' => ['ret' => 0, 'id' => 10001]],               // PUT /message — primary group
-            ['body' => ['ret' => 0]],                               // POST JoinAndPost — primary group
-            ['body' => ['ret' => 0, 'id' => 10002]],               // PUT /message — cross-post group
-            ['body' => ['ret' => 0]],                               // POST JoinAndPost — cross-post group
-        ]);
-
-        $this->artisan('messages:bulk-post', [
-            'folder'              => $this->folder,
-            '--email'             => $this->email,
-            '--postcode'          => 'BN1 1AA',
-            '--group'             => $primaryGroup->nameshort,
-            '--cross-post-groups' => $crossGroup->nameshort,
-        ])
-            ->expectsOutputToContain($crossGroup->nameshort)
-            ->expectsOutputToContain('2 posted, 0 failed')
-            ->assertExitCode(0);
-    }
-
-    public function test_skip_primary_posts_only_to_cross_post_groups(): void
-    {
-        $this->writeCsv([['Red Sofa', 1, '']]);
-        $this->writeBody('Original body text.');
-
-        $primaryGroup = $this->app->make('test.group');
-
-        FreegleApiClient::fake([
-            ['body' => ['ret' => 0, 'jwt' => 'test-jwt-token']],  // Auth
-            ['body' => ['ret' => 0, 'id' => 10002]],               // PUT /message — cross-post group only
-            ['body' => ['ret' => 0]],                               // POST JoinAndPost — cross-post group only
-        ]);
-
-        $this->artisan('messages:bulk-post', [
-            'folder'               => $this->folder,
-            '--email'              => $this->email,
-            '--postcode'           => 'BN1 1AA',
-            '--group'              => $primaryGroup->nameshort,
-            '--cross-post-groups'  => $crossGroup->nameshort,
-            '--skip-primary-group' => true,
-        ])
-            ->expectsOutputToContain('1 posted, 0 failed')
-            ->expectsOutputToContain($crossGroup->nameshort)
-            ->assertExitCode(0);
-    }
-
-    public function test_cross_post_warns_and_skips_unknown_group(): void
-    {
-        $this->writeCsv([['Sofa', 1, '']]);
-        $this->writeBody();
-
-        $group = $this->app->make('test.group');
-
-        $this->artisan('messages:bulk-post', [
-            'folder'             => $this->folder,
-            '--email'            => $this->email,
-            '--postcode'         => 'BN1 1AA',
-            '--group'            => $group->nameshort,
-            '--cross-post-groups' => 'NonexistentGroup_'.uniqid(),
-            '--dry-run'          => true,
-        ])
-            ->expectsOutputToContain('Cross-post group not found')
-            ->assertExitCode(0);
-    }
-
-    public function test_cross_post_warns_and_skips_when_same_as_primary(): void
-    {
-        $this->writeCsv([['Sofa', 1, '']]);
-        $this->writeBody();
-
-        $group = $this->app->make('test.group');
-
-        $this->artisan('messages:bulk-post', [
-            'folder'             => $this->folder,
-            '--email'            => $this->email,
-            '--postcode'         => 'BN1 1AA',
-            '--group'            => $group->nameshort,
-            '--cross-post-groups' => $group->nameshort,
-            '--dry-run'          => true,
-        ])
-            ->expectsOutputToContain('same as the primary group')
-            ->assertExitCode(0);
-    }
-
-    public function test_cross_post_falls_back_to_nameshort_when_namedisplay_empty(): void
-    {
-        $this->writeCsv([['Sofa', 1, '']]);
-        $this->writeBody('Original body.');
-
-        // Create a primary group with empty namedisplay; nameshort is auto-generated.
-
-        // Summary line must show nameshort (not blank) in the X-post prefix notice.
-        $result = $this->withoutMockingConsoleOutput()->artisan('messages:bulk-post', [
-            'folder'              => $this->folder,
-            '--email'             => $this->email,
-            '--postcode'          => 'BN1 1AA',
-            '--group'             => $primaryGroup->nameshort,
-            '--cross-post-groups' => $crossGroup->nameshort,
-            '--dry-run'           => true,
-        ]);
-
-        $output = \Artisan::output();
-        // Should show the nameshort in the group summary line, not a blank.
-        $this->assertStringContainsString($primaryGroup->nameshort, $output);
-        $this->assertStringNotContainsString('no takers so far on .', $output);
         $this->assertEquals(0, $result);
     }
 
@@ -667,13 +419,10 @@ class BulkPostCommandTest extends TestCase
         fclose($handle);
         $this->writeBody();
 
-        $group = $this->app->make('test.group');
-
         $this->artisan('messages:bulk-post', [
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
         ])
             ->expectsOutputToContain('Invalid deadline')
             ->assertExitCode(1);
@@ -685,13 +434,10 @@ class BulkPostCommandTest extends TestCase
         $this->writeCsv([['Sofa', 1, '']]);
         $this->writeBody();
 
-        $group = $this->app->make('test.group');
-
         $this->artisan('messages:bulk-post', [
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
             '--dry-run' => true,
         ])
             ->expectsOutputToContain('Sofa')
@@ -705,8 +451,6 @@ class BulkPostCommandTest extends TestCase
             ['Table', 1, ''],
         ]);
         $this->writeBody();
-
-        $group = $this->app->make('test.group');
 
         FreegleApiClient::fake([
             // Auth
@@ -723,7 +467,6 @@ class BulkPostCommandTest extends TestCase
             'folder' => $this->folder,
             '--email' => $this->email,
             '--postcode' => 'BN1 1AA',
-            '--group' => $group->nameshort,
         ])
             ->expectsOutputToContain('1 posted, 1 failed')
             ->assertExitCode(1);

@@ -1,22 +1,17 @@
 // Package partnerships backs the ModTools Partnerships page: the sponsorship deals we have
-// with local authorities, the groups each one covers, the money involved, and the on-demand
+// with local authorities, the money involved, and the on-demand
 // generation of the quarterly statistics spreadsheets councils receive.
 //
-// A partnership is held against an authority rather than a group, because that is how the
-// deal is actually done. The groups it covers are derived from the authority/group boundary
-// overlap and cached in partnerships_groups; each covered group gets a groups_sponsorship
-// row so the member site shows the council as a sponsor.
+// A partnership is held against an authority. There are no communities to link it to any
+// more, so it is a record of the deal and its money only.
 package partnerships
 
 import (
 	"sort"
 	"strconv"
 	"time"
-
 	"github.com/freegle/iznik-server-go/auth"
-	"github.com/freegle/iznik-server-go/authority"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -95,7 +90,6 @@ type Partnership struct {
 	Visible   bool     `json:"visible"`
 
 	// Derived, for the list view.
-	Groupcount int     `json:"groupcount"`
 	Invoiced   float64 `json:"invoiced"`
 	Paid       float64 `json:"paid"`
 	Expired    bool    `json:"expired"`
@@ -108,17 +102,6 @@ type Contact struct {
 	Name  *string `json:"name"`
 	Email *string `json:"email"`
 	Role  string  `json:"role"`
-}
-
-// Group is one Freegle group covered by a partnership, or left out of it by hand.
-type Group struct {
-	Groupid     uint64 `json:"groupid"`
-	Nameshort   string `json:"nameshort"`
-	Namedisplay string `json:"namedisplay"`
-	Source      string `json:"source"`
-	// Fraction of the group inside the council boundary; null for a group outside it.
-	Overlap       *float64 `json:"overlap"`
-	Sponsorshipid *uint64  `json:"sponsorshipid"`
 }
 
 // HistoryEntry is one deal with the same council, for the history list.
@@ -190,7 +173,6 @@ func selectList() string {
 		"DATE_FORMAT(partnerships.enddate, " + dateFmt + ") AS enddate, partnerships.amount, " +
 		"partnerships.status, partnerships.renewal, partnerships.fullprice, " +
 		"partnerships.notes, partnerships.visible, " +
-		"(SELECT COUNT(*) FROM partnerships_groups pg WHERE pg.partnershipid = partnerships.id AND pg.source != 'Removed') AS groupcount, " +
 		"COALESCE((SELECT SUM(amount) FROM partnerships_payments pp WHERE pp.partnershipid = partnerships.id), 0) AS invoiced, " +
 		"COALESCE((SELECT SUM(amount) FROM partnerships_payments pp WHERE pp.partnershipid = partnerships.id AND pp.paid IS NOT NULL), 0) AS paid, " +
 		"partnerships.enddate < CURDATE() AS expired, " +
@@ -256,7 +238,6 @@ func Single(c *fiber.Ctx) error {
 		"status":      "Success",
 		"partnership": p,
 		"contacts":    contactsFor(id),
-		"groups":      groupsFor(id),
 		"years":       years,
 		// Whether the split above was agreed year by year or worked out pro-rata, so the
 		// page can say which it is showing.
@@ -316,26 +297,6 @@ func load(id uint64) Partnership {
 		Scan(&p)
 
 	return p
-}
-
-// groupsFor lists the groups a partnership covers, and those left out of it by hand.
-func groupsFor(id uint64) []Group {
-	db := database.DBConn
-
-	var groups []Group
-	db.Table("partnerships_groups pg").
-		Select("pg.groupid, g.nameshort, COALESCE(NULLIF(g.namefull, ''), g.nameshort) AS namedisplay, "+
-			"pg.source, pg.overlap, pg.sponsorshipid").
-		Joins("INNER JOIN `groups` g ON g.id = pg.groupid").
-		Where("pg.partnershipid = ?", id).
-		Order("namedisplay ASC").
-		Scan(&groups)
-
-	if groups == nil {
-		groups = []Group{}
-	}
-
-	return groups
 }
 
 // yearsFor returns how the deal's value falls into financial years, and whether that split
@@ -399,7 +360,6 @@ type createRequest struct {
 	Imageurl    *string          `json:"imageurl"`
 	// An uploaded logo: the id of the image row the uploader created. It is turned into a
 	// delivery URL and stored as imageurl.
-	Imageid   utils.FlexUint64   `json:"imageid"`
 	Startdate *string            `json:"startdate"`
 	Enddate   *string            `json:"enddate"`
 	Amount    *utils.FlexFloat64 `json:"amount"`
@@ -414,8 +374,6 @@ type createRequest struct {
 	Contacts *[]contactRequest `json:"contacts"`
 	// Only on create: communities inside the boundary to leave out, and communities outside
 	// it to add, chosen before the deal was saved.
-	Excludegroupids []utils.FlexUint64 `json:"excludegroupids"`
-	Includegroupids []utils.FlexUint64 `json:"includegroupids"`
 }
 
 type contactRequest struct {
@@ -443,22 +401,6 @@ func (req *createRequest) validate() string {
 	}
 
 	return ""
-}
-
-// uploadedImageURL turns the id of an uploaded logo into the URL members' browsers fetch
-// it from. The uploader files a logo as an unattached group image.
-func uploadedImageURL(db *gorm.DB, imageid uint64) string {
-	var img struct {
-		Externaluid  *string
-		Externalmods *string
-	}
-	db.Table("groups_images").Select("externaluid, externalmods").Where("id = ?", imageid).Scan(&img)
-
-	if img.Externaluid == nil || *img.Externaluid == "" {
-		return ""
-	}
-
-	return misc.GetImageDeliveryUrl(*img.Externaluid, stringOr(img.Externalmods, ""))
 }
 
 // saveContacts replaces a partnership's contacts. Rows with neither a name nor an email are
@@ -536,11 +478,6 @@ func Create(c *fiber.Ctx) error {
 	}
 
 	var imageurl interface{} = req.Imageurl
-	if req.Imageid != 0 {
-		if url := uploadedImageURL(db, uint64(req.Imageid)); url != "" {
-			imageurl = url
-		}
-	}
 
 	row := map[string]interface{}{
 		"authorityid": uint64(req.Authorityid),
@@ -569,18 +506,6 @@ func Create(c *fiber.Ctx) error {
 	if req.Contacts != nil {
 		saveContacts(db, id, *req.Contacts)
 	}
-
-	detectGroups(db, id, uint64(req.Authorityid))
-
-	for _, gid := range req.Excludegroupids {
-		removeGroup(db, id, uint64(gid))
-	}
-
-	for _, gid := range req.Includegroupids {
-		addGroup(db, id, uint64(gid))
-	}
-
-	syncSponsorships(db, id)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": id})
 }
@@ -634,12 +559,6 @@ func Update(c *fiber.Ctx) error {
 	setNullableString(updates, "renewal", req.Renewal)
 	setNullableString(updates, "notes", req.Notes)
 
-	if req.Imageid != 0 {
-		if url := uploadedImageURL(db, uint64(req.Imageid)); url != "" {
-			updates["imageurl"] = url
-		}
-	}
-
 	if req.Amount != nil {
 		updates["amount"] = float64(*req.Amount)
 	}
@@ -669,19 +588,10 @@ func Update(c *fiber.Ctx) error {
 		db.Table("partnerships").Where("id = ?", id).Updates(updates)
 	}
 
-	if authorityChanged {
-		removeSponsorships(db, id)
-		db.Table("partnerships_groups").Where("partnershipid = ?", id).Delete(nil)
-		detectGroups(db, id, uint64(req.Authorityid))
-	}
-
-	syncSponsorships(db, id)
-
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-// Delete removes a partnership. Its sponsorship rows go too, so the council stops appearing
-// on the member site straight away; years, payments and group links cascade in the schema.
+// Delete removes a partnership. Years and payments cascade in the schema.
 //
 // @Summary Delete a partnership
 // @Tags partnerships
@@ -700,69 +610,9 @@ func Delete(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	removeSponsorships(db, id)
 	db.Table("partnerships").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
-}
-
-// PatchGroups adds a group to a partnership (or puts back one that was left out), leaves one
-// out, or re-checks the list against the authority boundary. Any group can be added, not
-// just those inside the boundary: a council sometimes sponsors a neighbouring community.
-//
-// @Summary Change the groups a partnership covers
-// @Tags partnerships
-// @Accept json
-// @Produce json
-// @Param id path integer true "Partnership ID"
-// @Success 200 {object} map[string]interface{}
-// @Router /api/partnership/{id}/group [patch]
-func PatchGroups(c *fiber.Ctx) error {
-	if _, err := requireUser(c); err != nil {
-		return err
-	}
-
-	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
-	if id == 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Missing id"})
-	}
-
-	var req struct {
-		Action  string           `json:"action"`
-		Groupid utils.FlexUint64 `json:"groupid"`
-	}
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Invalid body"})
-	}
-
-	db := database.DBConn
-
-	var authorityid uint64
-	db.Table("partnerships").Select("authorityid").Where("id = ?", id).Scan(&authorityid)
-	if authorityid == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Not found"})
-	}
-
-	switch req.Action {
-	case "Add":
-		if req.Groupid == 0 {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Missing groupid"})
-		}
-		addGroup(db, id, uint64(req.Groupid))
-	case "Remove":
-		if req.Groupid == 0 {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Missing groupid"})
-		}
-		removeGroup(db, id, uint64(req.Groupid))
-	case "Redetect":
-		detectGroups(db, id, authorityid)
-	default:
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Unknown action"})
-	}
-
-	syncSponsorships(db, id)
-
-	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "groups": groupsFor(id)})
 }
 
 // PutYears replaces the explicit financial-year split for a multi-year deal. Sending an
@@ -1076,228 +926,6 @@ func Summary(c *fiber.Ctx) error {
 			"years":  years,
 		},
 	})
-}
-
-// detectGroups brings partnerships_groups into line with the authority boundary: a new
-// community inside it is covered, a Boundary community no longer inside it is dropped, and
-// every row's overlap is refreshed. Communities added or left out by hand stay as they are,
-// so re-checking never undoes a decision someone made.
-func detectGroups(db *gorm.DB, partnershipid uint64, authorityid uint64) {
-	inside := map[uint64]float64{}
-	for _, g := range authority.GroupsForAuthority(authorityid) {
-		inside[g.ID] = g.Overlap
-	}
-
-	var rows []struct {
-		Groupid uint64
-		Source  string
-	}
-	db.Table("partnerships_groups").Select("groupid, source").
-		Where("partnershipid = ?", partnershipid).Scan(&rows)
-
-	have := map[uint64]bool{}
-	for _, r := range rows {
-		have[r.Groupid] = true
-		overlap, ok := inside[r.Groupid]
-
-		if !ok {
-			if r.Source == SourceBoundary {
-				removeSponsorshipForGroup(db, partnershipid, r.Groupid)
-				db.Table("partnerships_groups").
-					Where("partnershipid = ? AND groupid = ?", partnershipid, r.Groupid).Delete(nil)
-			} else {
-				setOverlap(db, partnershipid, r.Groupid, nil)
-			}
-
-			continue
-		}
-
-		setOverlap(db, partnershipid, r.Groupid, &overlap)
-	}
-
-	for gid, overlap := range inside {
-		if !have[gid] {
-			db.Table("partnerships_groups").Create(map[string]interface{}{
-				"partnershipid": partnershipid,
-				"groupid":       gid,
-				"source":        SourceBoundary,
-				"overlap":       overlap,
-			})
-		}
-	}
-}
-
-func setOverlap(db *gorm.DB, partnershipid uint64, groupid uint64, overlap *float64) {
-	var v interface{}
-	if overlap != nil {
-		v = *overlap
-	}
-
-	db.Table("partnerships_groups").
-		Where("partnershipid = ? AND groupid = ?", partnershipid, groupid).
-		Update("overlap", v)
-}
-
-// addGroup covers a group: a new row for a group added by hand, or putting back one that was
-// left out. A group inside the boundary goes back to being a Boundary row; one outside it is
-// Added, and counts in full in the statistics.
-func addGroup(db *gorm.DB, partnershipid uint64, groupid uint64) {
-	var existing struct {
-		Source  string
-		Overlap *float64
-	}
-	db.Table("partnerships_groups").Select("source, overlap").
-		Where("partnershipid = ? AND groupid = ?", partnershipid, groupid).Scan(&existing)
-
-	source := SourceAdded
-	if existing.Overlap != nil {
-		source = SourceBoundary
-	}
-
-	if existing.Source != "" {
-		if existing.Source == SourceRemoved {
-			db.Table("partnerships_groups").
-				Where("partnershipid = ? AND groupid = ?", partnershipid, groupid).
-				Update("source", source)
-		}
-
-		return
-	}
-
-	db.Table("partnerships_groups").Create(map[string]interface{}{
-		"partnershipid": partnershipid,
-		"groupid":       groupid,
-		"source":        source,
-	})
-}
-
-// removeGroup leaves a group out. One added by hand simply goes; one inside the boundary is
-// kept as Removed so that the next boundary check does not bring it back.
-func removeGroup(db *gorm.DB, partnershipid uint64, groupid uint64) {
-	removeSponsorshipForGroup(db, partnershipid, groupid)
-
-	var source string
-	db.Table("partnerships_groups").Select("source").
-		Where("partnershipid = ? AND groupid = ?", partnershipid, groupid).Scan(&source)
-
-	row := db.Table("partnerships_groups").Where("partnershipid = ? AND groupid = ?", partnershipid, groupid)
-
-	switch source {
-	case SourceAdded:
-		row.Delete(nil)
-	case SourceBoundary:
-		row.Updates(map[string]interface{}{"source": SourceRemoved, "sponsorshipid": nil})
-	}
-}
-
-// syncSponsorships writes one groups_sponsorship row per covered group, so the member site
-// shows the council as a sponsor of every group the deal covers.
-//
-// The row is only visible once the deal is committed: a quote or an agreement in principle
-// is a conversation, not something to advertise.
-func syncSponsorships(db *gorm.DB, partnershipid uint64) {
-	var p struct {
-		Name        string
-		Tagline     *string
-		Description *string
-		Linkurl     *string
-		Imageurl    *string
-		Startdate   string
-		Enddate     string
-		Amount      float64
-		Status      string
-		Notes       *string
-		Visible     bool
-	}
-
-	db.Table("partnerships").
-		Select("name, tagline, description, linkurl, imageurl, "+
-			"DATE_FORMAT(startdate, "+dateFmt+") AS startdate, DATE_FORMAT(enddate, "+dateFmt+") AS enddate, "+
-			"amount, status, notes, visible").
-		Where("id = ?", partnershipid).
-		Scan(&p)
-
-	if p.Name == "" {
-		return
-	}
-
-	// groups_sponsorship has room for a single contact; the first waste-team contact is the
-	// one who would want to hear about the sponsorship.
-	var contact struct {
-		Name  *string
-		Email *string
-	}
-	db.Table("partnerships_contacts").Select("name, email").
-		Where("partnershipid = ?", partnershipid).
-		Order("role = 'Waste' DESC, id ASC").Limit(1).Scan(&contact)
-
-	// groups_sponsorship requires a contact, and orders sponsors by amount.
-	fields := map[string]interface{}{
-		"name":         p.Name,
-		"linkurl":      p.Linkurl,
-		"startdate":    p.Startdate,
-		"enddate":      p.Enddate,
-		"contactname":  stringOr(contact.Name, ""),
-		"contactemail": stringOr(contact.Email, ""),
-		"amount":       int(p.Amount),
-		"notes":        p.Notes,
-		"imageurl":     p.Imageurl,
-		"visible":      p.Visible && Committed(p.Status),
-		"tagline":      p.Tagline,
-		"description":  p.Description,
-	}
-
-	var links []struct {
-		Groupid       uint64
-		Sponsorshipid *uint64
-	}
-	db.Table("partnerships_groups").
-		Select("groupid, sponsorshipid").
-		Where("partnershipid = ? AND source != ?", partnershipid, SourceRemoved).
-		Scan(&links)
-
-	for _, link := range links {
-		if link.Sponsorshipid != nil {
-			db.Table("groups_sponsorship").Where("id = ?", *link.Sponsorshipid).Updates(fields)
-
-			continue
-		}
-
-		row := map[string]interface{}{"groupid": link.Groupid}
-		for k, v := range fields {
-			row[k] = v
-		}
-
-		if err := db.Table("groups_sponsorship").Create(row).Error; err != nil {
-			continue
-		}
-
-		newIDInt, _ := row["@id"].(int64)
-		db.Table("partnerships_groups").
-			Where("partnershipid = ? AND groupid = ?", partnershipid, link.Groupid).
-			Update("sponsorshipid", uint64(newIDInt))
-	}
-}
-
-// sponsorshipIDs is the subquery of the sponsorship rows a partnership created.
-func sponsorshipIDs(db *gorm.DB, partnershipid uint64) *gorm.DB {
-	return db.Table("partnerships_groups").
-		Select("sponsorshipid").
-		Where("partnershipid = ? AND sponsorshipid IS NOT NULL", partnershipid)
-}
-
-// removeSponsorships deletes every groups_sponsorship row this partnership created.
-func removeSponsorships(db *gorm.DB, partnershipid uint64) {
-	db.Table("groups_sponsorship").
-		Where("id IN (?)", sponsorshipIDs(db, partnershipid)).
-		Delete(nil)
-}
-
-// removeSponsorshipForGroup drops the sponsorship for one group leaving a partnership.
-func removeSponsorshipForGroup(db *gorm.DB, partnershipid uint64, groupid uint64) {
-	db.Table("groups_sponsorship").
-		Where("id IN (?)", sponsorshipIDs(db, partnershipid).Where("groupid = ?", groupid)).
-		Delete(nil)
 }
 
 // --- small helpers -------------------------------------------------------------------

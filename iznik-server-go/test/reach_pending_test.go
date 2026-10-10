@@ -8,6 +8,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/stretchr/testify/assert"
+
 )
 
 // A post is not live until its reach has been calculated. Rippling starts a post
@@ -49,8 +50,7 @@ func feedHasMessage(t *testing.T, url string, msgid uint64) bool {
 }
 
 // The member's own post is theirs to see the moment they post it, so the filter
-// exempts the author. The own-posts arm of the mygroups feed cannot cover that
-// on its own: it only serves posts not yet in messages_spatial.
+// exempts the author. 
 func TestPendingReachNeverHidesYourOwnPost(t *testing.T) {
 	db := database.DBConn
 
@@ -65,8 +65,6 @@ func TestPendingReachNeverHidesYourOwnPost(t *testing.T) {
 	// exemption does any work.
 	db.Exec("UPDATE messages SET arrival = NOW() WHERE id = ?", msgID)
 
-	assert.True(t, feedHasMessage(t, "/api/message/mygroups?jwt="+token, msgID),
-		"a member sees their own post before its reach is calculated")
 	assert.True(t, feedHasMessage(t,
 		"/api/message/inbounds?swlat=51.4&swlng=-0.2&nelat=51.6&nelng=0.0&jwt="+token, msgID),
 		"a member sees their own post on the map before its reach is calculated")

@@ -135,31 +135,6 @@ func TestGroupFilter_NilSlice(t *testing.T) {
 	assert.Equal(t, "", groupFilter(nil))
 }
 
-func TestGroupFilter_SingleID(t *testing.T) {
-	result := groupFilter([]uint64{123})
-	assert.Contains(t, result, "123")
-	// Group filtering routes through messages_groups (a message can be in several
-	// groups; messages_spatial stores only one), not messages_spatial.groupid.
-	assert.Contains(t, result, "messages_groups")
-	assert.Contains(t, result, "mg.groupid IN (")
-}
-
-func TestGroupFilter_MultipleIDs(t *testing.T) {
-	result := groupFilter([]uint64{1, 2, 3})
-	assert.Contains(t, result, "1,2,3")
-}
-
-func TestGroupFilter_ClosingParen(t *testing.T) {
-	result := groupFilter([]uint64{5, 10})
-	assert.True(t, strings.HasSuffix(strings.TrimRight(result, " "), ")"),
-		"result should end with closing paren: %q", result)
-}
-
-func TestGroupFilter_LargeIDs(t *testing.T) {
-	result := groupFilter([]uint64{^uint64(0)})
-	assert.Contains(t, result, "18446744073709551615")
-}
-
 // ── fingerprintVec ────────────────────────────────────────────────────────────
 
 func TestFingerprintVec_EmptySlice(t *testing.T) {
