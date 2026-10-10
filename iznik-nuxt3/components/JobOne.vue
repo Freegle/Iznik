@@ -3,7 +3,7 @@
     v-if="job"
     ref="jobElement"
     class="job-item"
-    @click="clicked"
+    @click.capture="clicked"
     @mouseenter="handleMouseEnter"
   >
     <ExternalLink :href="job.url" class="job-link">
@@ -279,7 +279,17 @@ function handleMouseEnter() {
   }
 }
 
-function clicked() {
+function clicked(event) {
+  // Captured before the link sees it, so a tap we drop opens nothing. WhatJobs does not pay
+  // for a repeat click on the same advert, and counts it against the first one, so a second
+  // tap a moment after opening an advert (a double-tap, or a tap on the slot as it swaps)
+  // and a tap on an advert already opened today go nowhere.
+  if (jobStore.isDoubleTap() || jobStore.openedRecently(job.value.id)) {
+    event?.preventDefault()
+    event?.stopPropagation()
+    return
+  }
+
   // page = the route NAME we're on at click time (jobs, browse-term, message-id, ...),
   // derived from the router that's already in scope. It's orthogonal to placement: the same
   // slot appears on every page, so this is what tells us which page earns the most. Route
@@ -310,6 +320,9 @@ function clicked() {
     source: 'website',
     page,
   })
+
+  // Swap this advert out of the ad slots once the browser has followed the link.
+  jobStore.recordOpened(job.value.id)
 
   // Notify parent so it can show the follow-up modal with more jobs.
   emit('clicked', job.value.id)

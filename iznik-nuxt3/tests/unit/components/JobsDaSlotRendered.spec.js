@@ -33,6 +33,10 @@ vi.mock('~/stores/job', () => ({
     get list() {
       return jobState.list
     },
+    // The ad slots read the list without the adverts this device opened recently.
+    get available() {
+      return jobState.list
+    },
     get blocked() {
       return jobState.blocked
     },

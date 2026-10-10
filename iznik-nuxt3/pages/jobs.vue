@@ -97,7 +97,7 @@ const location = ref(me.value?.settings?.mylocation?.name || null)
 const category = ref(null)
 const busy = ref(false)
 
-const list = computed(() => jobStore.list)
+const list = computed(() => jobStore.available)
 const blocked = computed(() => jobStore.blocked)
 
 const categories = computed(() => {

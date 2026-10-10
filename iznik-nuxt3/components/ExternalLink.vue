@@ -23,9 +23,13 @@ const target = computed(() => {
   return props.href?.startsWith('mailto') ? '_self' : '_blank'
 })
 
-function openInBrowser() {
+function openInBrowser(event) {
   const mobileStore = useMobileStore()
   if (mobileStore.isApp) {
+    // Returning false from a Vue handler does not cancel the click, so without this the
+    // link opens as well and the page is opened twice - for a job advert, two clicks of
+    // which WhatJobs pays for neither.
+    event?.preventDefault()
     const url = carefulHref.value
     import('@capacitor/app-launcher').then(({ AppLauncher }) => {
       AppLauncher.openUrl({ url })
