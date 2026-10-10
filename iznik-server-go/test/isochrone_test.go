@@ -56,8 +56,15 @@ func TestEnsureIsochroneExistsWithValidLocation(t *testing.T) {
 	prefix := uniquePrefix("EnsureValid")
 	db := database.DBConn
 
-	// Create a location with lat/lng
-	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 51.5074, -0.1278, ST_GeomFromText('POINT(-0.1278 51.5074)', ?))", prefix+"_loc", utils.SRID)
+	// Every EnsureIsochroneExists test below uses this point in Bristol. It has to be on
+	// the road graph of whichever extract the routing server has loaded, or the server
+	// answers with an empty polygon and EnsureIsochroneExists quietly falls through to
+	// the Mapbox API with the production key. Locally the server loads the whole UK, so
+	// Edinburgh and London were on the graph; in CI it boots on the committed Bristol
+	// extract (see the spatial setup in .circleci/orb/freegle-tests.yml), so those two
+	// were off it and every CI run went to Mapbox after all. Bristol is on both, and is
+	// the point iznik-routing-go's own tests use against that extract.
+	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 51.4545, -2.5879, ST_GeomFromText('POINT(-2.5879 51.4545)', ?))", prefix+"_loc", utils.SRID)
 	var locID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_loc").Scan(&locID)
 	assert.Greater(t, locID, uint64(0))
@@ -86,7 +93,7 @@ func TestEnsureIsochroneExistsWithDifferentTransports(t *testing.T) {
 	prefix := uniquePrefix("TransportTest")
 	db := database.DBConn
 
-	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 55.9533, -3.1883, ST_GeomFromText('POINT(-3.1883 55.9533)', ?))", prefix+"_loc", utils.SRID)
+	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 51.4545, -2.5879, ST_GeomFromText('POINT(-2.5879 51.4545)', ?))", prefix+"_loc", utils.SRID)
 	var locID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_loc").Scan(&locID)
 	assert.Greater(t, locID, uint64(0))
@@ -122,11 +129,11 @@ func TestEnsureIsochroneExistsReturnsExisting(t *testing.T) {
 	prefix := uniquePrefix("ExistingIso")
 	db := database.DBConn
 
-	// A point on the UK road graph. This used to be Berlin, which the routing server
-	// answers with an empty polygon, so the first call silently fell through to the
-	// Mapbox API: a real request to a third party, with the production key, in a test
-	// about reusing a row.
-	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 55.9533, -3.1883, ST_GeomFromText('POINT(-3.1883 55.9533)', ?))", prefix+"_loc", utils.SRID)
+	// The Bristol point, for the reason given in TestEnsureIsochroneExistsWithValidLocation.
+	// This used to be Berlin, which is off every extract, so the first call silently fell
+	// through to the Mapbox API: a real request to a third party, with the production
+	// key, in a test about reusing a row.
+	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 51.4545, -2.5879, ST_GeomFromText('POINT(-2.5879 51.4545)', ?))", prefix+"_loc", utils.SRID)
 	var locID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_loc").Scan(&locID)
 	assert.Greater(t, locID, uint64(0))
@@ -161,7 +168,7 @@ func TestEnsureIsochroneExistsWithNullGeometryLocation(t *testing.T) {
 	db := database.DBConn
 
 	// Create location with NULL geometry but valid lat/lng
-	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Postcode', 51.5074, -0.1278)", prefix+"_null_loc")
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Postcode', 51.4545, -2.5879)", prefix+"_null_loc")
 	var locID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_null_loc").Scan(&locID)
 	assert.Greater(t, locID, uint64(0))
@@ -190,7 +197,7 @@ func TestEnsureIsochroneExistsWithPointGeometry(t *testing.T) {
 	db := database.DBConn
 
 	// Create location with only POINT geometry
-	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 55.9533, -3.1883, ST_GeomFromText('POINT(-3.1883 55.9533)', ?))",
+	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 51.4545, -2.5879, ST_GeomFromText('POINT(-2.5879 51.4545)', ?))",
 		prefix+"_point_loc", utils.SRID)
 	var locID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_point_loc").Scan(&locID)
@@ -220,8 +227,8 @@ func TestEnsureIsochroneExistsDuplicateInsertIgnore(t *testing.T) {
 	prefix := uniquePrefix("EnsureDupe")
 	db := database.DBConn
 
-	// A point on the UK road graph, for the same reason as TestEnsureIsochroneExistsReturnsExisting.
-	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 55.9533, -3.1883, ST_GeomFromText('POINT(-3.1883 55.9533)', ?))",
+	// The Bristol point, for the reason given in TestEnsureIsochroneExistsWithValidLocation.
+	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 51.4545, -2.5879, ST_GeomFromText('POINT(-2.5879 51.4545)', ?))",
 		prefix+"_dupe_loc", utils.SRID)
 	var locID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_dupe_loc").Scan(&locID)
@@ -252,7 +259,7 @@ func TestEnsureIsochroneExistsMinutesVariation(t *testing.T) {
 	prefix := uniquePrefix("EnsureMinutes")
 	db := database.DBConn
 
-	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 51.5074, -0.1278, ST_GeomFromText('POINT(-0.1278 51.5074)', ?))",
+	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 51.4545, -2.5879, ST_GeomFromText('POINT(-2.5879 51.4545)', ?))",
 		prefix+"_loc", utils.SRID)
 	var locID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_loc").Scan(&locID)
