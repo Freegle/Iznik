@@ -132,6 +132,26 @@ describe('ModTeamMember', () => {
       expect(wrapper.emitted('removed')).toHaveLength(1)
     })
 
+    // Without the catch this rejects, the row stays as it is and the
+    // rejection lands in the global handler instead.
+    it('remove emits removed even when the server refuses', async () => {
+      mockSupportOrAdmin.value = true
+      mockRemove.mockRejectedValueOnce({
+        response: { status: 401, data: { error: 401, message: 'no' } },
+      })
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      const wrapper = mountComponent()
+      try {
+        await wrapper.vm.remove()
+        expect(wrapper.emitted('removed')).toHaveLength(1)
+        expect(consoleError).toHaveBeenCalled()
+      } finally {
+        consoleError.mockRestore()
+      }
+    })
+
     it('clicking remove button triggers remove', async () => {
       mockSupportOrAdmin.value = true
       const wrapper = mountComponent()
