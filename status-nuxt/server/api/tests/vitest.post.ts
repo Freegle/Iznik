@@ -1,14 +1,17 @@
-import { spawn, execFile } from 'child_process'
+import { spawn } from 'child_process'
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { dirname } from 'path'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
 
-// The progress bar needs a total. `vitest list` gives one, but it collects every spec
-// file to do so, which took about 40s of wall clock before the first test could start,
-// and the POST sat blocked on it. Each finished run reports its own total in the
-// summary line, so that is remembered here, per filter, and reused next time. Only a
-// run with nothing remembered lists, and it does so in the background while the
-// tests are already running.
+// The progress bar wants a total. This runner used to get one from `vitest list`,
+// which collects every spec file to count the tests: about 40s of wall clock with the
+// POST blocked on it, and when that was moved into the background it ran in the same
+// container as the tests and competed with the workers for CPU. Nothing lists now.
+// Each finished run reports its own total in its summary line, which is remembered
+// here per filter and used as the next run's total from the start; a run with nothing
+// remembered shows progress without a total until the summary arrives. The file is in
+// the status container's /tmp, so a recreate forgets it and the next run is a first run
+// again, which costs nothing.
 const TOTALS_FILE = '/tmp/freegle-tests/vitest-totals.json'
 
 function totalsKey(filter: string): string {
@@ -76,31 +79,6 @@ export default defineEventHandler(async (event) => {
     docker exec -w /app ${container} sh -c '${testCmd}'
   `], { stdio: 'pipe' })
 
-  if (!knownTotal) {
-    // Nothing remembered for this filter yet: count the tests in the background so
-    // the bar gets a total part-way through this run, and the summary line (which
-    // is authoritative) gets remembered for the next one either way.
-    const filterListArg = filter ? ` "${filter}"` : ''
-    execFile(
-      'docker',
-      ['exec', container, 'sh', '-c', `cd /app && npx vitest list${filterListArg} 2>&1`],
-      { encoding: 'utf8', timeout: 600000, maxBuffer: 10 * 1024 * 1024 },
-      (err, stdout) => {
-        if (err) {
-          console.error('vitest list failed:', err.message)
-          return
-        }
-        // vitest list outputs one line per test as "file > suite > test name"
-        const listed = String(stdout).split('\n').filter(l => l.includes(' > ')).length
-        const state = getTestState('vitest')
-        if (listed > 0 && state.status === 'running' && !state.progress.total) {
-          state.progress.total = listed
-          setTestState('vitest', state)
-        }
-      },
-    )
-  }
-
   testProcess.stdout.on('data', (data) => {
     const text = data.toString()
     appendTestLogs('vitest', text)
@@ -113,8 +91,15 @@ export default defineEventHandler(async (event) => {
     const lines = text.replace(/\x1b\[[0-9;]*m/g, '').split('\n')
 
     for (const line of lines) {
-      // Match pass: ✓ test name (duration)
-      if (line.match(/^\s*[✓✔]/)) {
+      // The verbose reporter prints one line per test, as
+      //   ✓ tests/unit/x.spec.js > Suite > test name 12ms
+      // In Vitest 4 that is all it prints per test (its printTestModule is empty),
+      // but the default reporter and older verbose ones also print a line per
+      // finished file, "✓ tests/unit/x.spec.js (30 tests) 123ms" or "(30)", which
+      // starts with a tick too and would be counted as a pass. Only lines with " > "
+      // between the file and the suite are tests; a file line just names the file.
+      const isTestLine = line.includes(' > ')
+      if (isTestLine && line.match(/^\s*[✓✔]/)) {
         state.progress.passed++
         state.progress.completed++
         // The verbose reporter ends a test line with its duration as "12ms",
@@ -125,7 +110,7 @@ export default defineEventHandler(async (event) => {
         }
       }
       // Match fail: × test name or ✗ test name
-      if (line.match(/^\s*[×✗✘]/)) {
+      if (isTestLine && line.match(/^\s*[×✗✘]/)) {
         state.progress.failed++
         state.progress.completed++
       }
@@ -145,8 +130,9 @@ export default defineEventHandler(async (event) => {
         // Summary is authoritative — update completed from passed+failed
         state.progress.completed = state.progress.passed + state.progress.failed
       }
-      // Match test file progress: e.g. "✓ tests/unit/components/modtools/ModMessage.spec.js (30)"
-      const fileMatch = line.match(/[✓✔]\s+(tests\/\S+)\s+\((\d+)\)/)
+      // A finished file, from a reporter that prints them: "(30 tests)", "(30)" from
+      // older ones, "(30 tests | 2 failed)" when some failed.
+      const fileMatch = line.match(/^\s*[✓✔×✗✘❯]\s+(tests\/\S+)\s+\((\d+)(?:\s+tests?)?[^)]*\)/)
       if (fileMatch) {
         state.progress.current = fileMatch[1]
       }

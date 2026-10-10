@@ -75,11 +75,16 @@ func TestFetchDriveTimeBreakerOpensAndRecovers(t *testing.T) {
 		w.Write([]byte(`{"reachable":true,"drive_min":5}`))
 	})
 
-	// The cooloff only has to be long enough to tell "still open" from "cooled down";
-	// the wait below need only outlast it, and time.Sleep never returns early.
-	oldCooloff := driveTimeBreakerCooloff
-	driveTimeBreakerCooloff = 5 * time.Millisecond
-	defer func() { driveTimeBreakerCooloff = oldCooloff }()
+	// The breaker reads its clock through driveTimeNow, so the test holds time still
+	// while it checks the breaker is open and then moves it past the cooloff, with the
+	// real 30 second cooloff left as it is. Shortening the cooloff and sleeping was racy
+	// in the unsafe direction: the "still open" call below had to reach the breaker
+	// within the shortened cooloff of the third failure, and a scheduler preemption
+	// under -race takes longer than a few milliseconds, which let the call through.
+	now := time.Now()
+	oldNow := driveTimeNow
+	driveTimeNow = func() time.Time { return now }
+	defer func() { driveTimeNow = oldNow }()
 
 	for i := 0; i < int(driveTimeBreakerAfter); i++ {
 		_, ok := FetchDriveTime(50.0, -1.0, 50.1, float64(i)*0.01, 30)
@@ -92,9 +97,15 @@ func TestFetchDriveTimeBreakerOpensAndRecovers(t *testing.T) {
 	assert.False(t, ok)
 	assert.Equal(t, int32(driveTimeBreakerAfter), hits.Load(), "open breaker must not call upstream")
 
-	// After the cooldown a healthy server closes it again.
+	// Just inside the cooloff it is still open.
+	now = now.Add(driveTimeBreakerCooloff - time.Nanosecond)
+	_, ok = FetchDriveTime(50.0, -1.0, 50.9, -1.9, 30)
+	assert.False(t, ok)
+	assert.Equal(t, int32(driveTimeBreakerAfter), hits.Load(), "breaker must stay open until the cooloff has passed")
+
+	// Once the cooloff has passed a healthy server closes it again.
 	failing.Store(false)
-	time.Sleep(2 * driveTimeBreakerCooloff)
+	now = now.Add(time.Nanosecond)
 	dt, ok := FetchDriveTime(50.0, -1.0, 50.9, -1.9, 30)
 	assert.True(t, ok)
 	assert.True(t, dt.Reachable)
