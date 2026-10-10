@@ -1,12 +1,12 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense, ref } from 'vue'
 import PostMap from '~/components/PostMap.vue'
 
-// Unmount each test's wrapper afterwards. PostMap watches the shared nearby-store bounds
-// ref; without cleanup a wrapper from a previous test stays mounted and re-runs its
-// getMessages() when a later test changes that ref, polluting call-count assertions.
-enableAutoUnmount(afterEach)
+// Each test's wrapper is unmounted afterwards by tests/unit/setup.ts. PostMap watches the
+// shared nearby-store bounds ref; without cleanup a wrapper from a previous test stays
+// mounted and re-runs its getMessages() when a later test changes that ref, polluting
+// call-count assertions.
 
 // Hoisted mock values for reactive store state
 const {
