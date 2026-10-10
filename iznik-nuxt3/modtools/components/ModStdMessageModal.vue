@@ -54,6 +54,16 @@
           <b-form-input v-model="subject" class="mt-2" />
         </b-input-group>
       </div>
+      <NoticeMessage
+        v-if="severalCommunitiesVerb"
+        variant="info"
+        class="mt-2 mb-1"
+        data-test="stdmsg-several-communities"
+      >
+        This will {{ severalCommunitiesVerb }} the post on
+        {{ groupids.length }} of your communities. The member gets this message
+        once, not once for each community.
+      </NoticeMessage>
       <NoticeMessage v-if="warning" variant="warning" class="mt-1 mb-1">
         <p>Please check your message in case it needs updating:</p>
         <p>
@@ -344,6 +354,13 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  // Every community an Approve, Reject or Delete is to act on at once, groupid first; null
+  // for groupid alone. The member gets this message once, not once per community.
+  groupids: {
+    type: Array,
+    required: false,
+    default: null,
+  },
 })
 
 const { modal, show, hide } = useOurModal()
@@ -580,6 +597,25 @@ const editLink = computed(() =>
     ? 'https://trashnothing.com/user/posts'
     : 'https://www.ilovefreegle.org/myposts'
 )
+
+// The actions that act on every community in groupids, and the notice saying so.
+const SEVERAL_COMMUNITY_ACTIONS = {
+  Approve: 'approve',
+  Reject: 'reject',
+  Delete: 'delete',
+  'Delete Approved Message': 'delete',
+}
+
+const severalCommunitiesVerb = computed(() => {
+  if (!(props.groupids?.length > 1)) return null
+  return SEVERAL_COMMUNITY_ACTIONS[stdmsg.value?.action] || null
+})
+
+// The extra argument the message store takes to act on several communities, or none, so a
+// single-community action is called exactly as it always has been.
+function severalCommunitiesArgs() {
+  return severalCommunitiesVerb.value ? [props.groupids] : []
+}
 
 const processLabel = computed(() => {
   switch (stdmsg.value?.action) {
@@ -1051,7 +1087,8 @@ async function process(callback) {
           groupid.value,
           subj,
           stdmsg.value.id,
-          bodyText
+          bodyText,
+          ...severalCommunitiesArgs()
         )
         break
       case 'Leave':
@@ -1119,19 +1156,25 @@ async function process(callback) {
           groupid.value,
           subj,
           stdmsg.value.id,
-          bodyText
+          bodyText,
+          ...severalCommunitiesArgs()
         )
         break
       case 'Delete':
-      case 'Delete Approved Message':
-        await messageStore.delete({
+      case 'Delete Approved Message': {
+        const params = {
           id: message.value.id,
           groupid: groupid.value,
           subject: subj,
           body: bodyText,
           stdmsgid: stdmsg.value.id,
-        })
+        }
+        if (severalCommunitiesVerb.value) {
+          params.groupids = props.groupids
+        }
+        await messageStore.delete(params)
         break
+      }
       case 'Delete Member':
       case 'Delete Approved Member':
         await memberStore.delete({

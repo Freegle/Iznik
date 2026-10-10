@@ -889,3 +889,69 @@ func TestGroupWorkPendingContentCheckFilter(t *testing.T) {
 	assert.Equal(t, int64(1), g.Pendingother,
 		"a held post counts even before the content check has run")
 }
+
+// A post pending on several of a moderator's communities is one piece of work: one Approve
+// in ModTools deals with every copy. The per-community breakdown still lists it under each
+// community, but the moderator's own totals (the ModTools badge, read from the session)
+// count it once.
+func TestPendingCountsAPostOncePerModerator(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("gwdistinct")
+
+	g1 := CreateTestGroup(t, prefix+"_g1")
+	g2 := CreateTestGroup(t, prefix+"_g2")
+	g3 := CreateTestGroup(t, prefix+"_g3")
+	backup := CreateTestGroup(t, prefix+"_backup")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	holderID := CreateTestUser(t, prefix+"_holder", "User")
+	for _, gid := range []uint64{g1, g2, g3} {
+		CreateTestMembership(t, modID, gid, "Moderator")
+	}
+	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, 'Moderator', ?)",
+		modID, backup, `{"active":0}`)
+	_, token := CreateTestSession(t, modID)
+
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+
+	// One post waiting on all three active communities.
+	var spread uint64
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Pending on three', 'Test body', 'Test body')", senderID)
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&spread)
+	for _, gid := range []uint64{g1, g2, g3} {
+		db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, NOW())", spread, gid)
+	}
+
+	// One post held by another moderator on an active community and pending on the backup
+	// one: both are blue work, and it is still one post.
+	var held uint64
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Held and backup', 'Test body', 'Test body')", senderID)
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&held)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, heldby, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, ?, NOW())", held, g1, holderID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, NOW())", held, backup)
+
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", spread, held)
+	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", spread, held)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result []group.GroupWork
+	json2.Unmarshal(rsp(resp), &result)
+
+	byGroup := map[uint64]group.GroupWork{}
+	for _, w := range result {
+		byGroup[w.Groupid] = w
+	}
+
+	for _, gid := range []uint64{g1, g2, g3} {
+		assert.Equal(t, int64(1), byGroup[gid].Pending, "the post still shows under each community it is pending on")
+	}
+	assert.Equal(t, int64(1), byGroup[g1].Pendingother, "the held copy shows under its community")
+	assert.Equal(t, int64(1), byGroup[backup].Pendingother, "and the backup copy under its own")
+
+	work := getSessionWork(t, token)
+	assert.Equal(t, float64(1), work["pending"].(float64),
+		"one post pending on three communities is one piece of work for the moderator")
+	assert.Equal(t, float64(1), work["pendingother"].(float64),
+		"a post that is held on one community and pending on a backup one is counted once")
+}

@@ -887,4 +887,78 @@ describe('ModStdMessageModal', () => {
       expect(out).toBe('Edit here: https://www.ilovefreegle.org/myposts')
     })
   })
+  // A post pending on several of a moderator's communities: the card hands the modal every
+  // community to act on, and an Approve, Reject or Delete acts on all of them while the
+  // member is written to once.
+  describe('acting on several communities', () => {
+    const LONG =
+      ' Thanks - this has been checked and everything is in order now.'
+
+    async function send(wrapper) {
+      await wrapper.vm.fillin()
+      wrapper.vm.body += LONG
+      await wrapper.vm.process()
+    }
+
+    it('approves on every community and says so', async () => {
+      const wrapper = mountComponent({ groupid: 123, groupids: [123, 124] })
+      expect(
+        wrapper.find('[data-test="stdmsg-several-communities"]').text()
+      ).toContain('2 of your communities')
+
+      await send(wrapper)
+
+      const args = mockMessageStore.approve.mock.calls[0]
+      expect(args[0]).toBe(101)
+      expect(args[1]).toBe(123)
+      expect(args[5]).toEqual([123, 124])
+    })
+
+    it('rejects on every community', async () => {
+      const wrapper = mountComponent(
+        { groupid: 123, groupids: [123, 124] },
+        { stdmsgData: createStdmsg({ action: 'Reject' }) }
+      )
+      await send(wrapper)
+
+      expect(mockMessageStore.reject.mock.calls[0][5]).toEqual([123, 124])
+    })
+
+    it('deletes from every community', async () => {
+      const wrapper = mountComponent(
+        { groupid: 123, groupids: [123, 124] },
+        { stdmsgData: createStdmsg({ action: 'Delete' }) }
+      )
+      await send(wrapper)
+
+      expect(mockMessageStore.delete.mock.calls[0][0].groupids).toEqual([
+        123, 124,
+      ])
+    })
+
+    it('calls the store exactly as before for one community', async () => {
+      const wrapper = mountComponent({ groupid: 123 })
+      expect(
+        wrapper.find('[data-test="stdmsg-several-communities"]').exists()
+      ).toBe(false)
+
+      await send(wrapper)
+
+      expect(mockMessageStore.approve.mock.calls[0]).toHaveLength(5)
+    })
+
+    it('leaves a reply to the member on its own community', async () => {
+      const wrapper = mountComponent(
+        { groupid: 123, groupids: [123, 124] },
+        { stdmsgData: createStdmsg({ action: 'Leave' }) }
+      )
+      expect(
+        wrapper.find('[data-test="stdmsg-several-communities"]').exists()
+      ).toBe(false)
+
+      await send(wrapper)
+
+      expect(mockMessageStore.reply.mock.calls[0][0].groupid).toBe(123)
+    })
+  })
 })

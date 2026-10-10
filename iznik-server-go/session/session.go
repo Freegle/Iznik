@@ -1164,6 +1164,14 @@ func GetSession(c *fiber.Ctx) error {
 		// content). Messages that have not yet been content-checked may still be
 		// auto-approved and must not trigger a phantom notification or inflate the
 		// badge count. Discourse #9481 post 563.
+		//
+		// Each count is of POSTS, not of copies. A post pending on several of this
+		// moderator's communities has a messages_groups row on each, and one Approve in
+		// ModTools now deals with all of them, so counting rows told a moderator running a
+		// dozen neighbouring communities she had seven times the work she did. The
+		// per-community breakdown (/group/work) still counts the post under every
+		// community it is pending on. COUNT(DISTINCT mg.msgid) reads the same rows as
+		// COUNT(*) did - the dedupe is over the handful of pending rows found, not a scan.
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
@@ -1174,36 +1182,40 @@ func GetSession(c *fiber.Ctx) error {
 					Joins("INNER JOIN users u ON u.id = m.fromuser").
 					Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NULL AND mg.contentcheck_checked_at IS NOT NULL",
 						activeGroupIDs, utils.COLLECTION_PENDING).
-					Count(&pending)
-				// Held pending in active groups → pendingother (blue). No
-				// contentcheck_checked_at filter here: that filter exists so a post which
-				// might still auto-approve does not raise a phantom badge, which only
-				// applies while nobody has claimed it. A held post has been claimed by a
-				// moderator, will never auto-approve, and is already showing in their list
-				// as "Held by ..." — dropping it left mods with a badge lower than the
-				// number of held posts in front of them (Discourse 9481/635).
-				var heldActive int64
-				db.Table("messages_groups mg").
-					Joins("INNER JOIN messages m ON m.id = mg.msgid").
-					Joins("INNER JOIN users u ON u.id = m.fromuser").
-					Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NOT NULL",
-						activeGroupIDs, utils.COLLECTION_PENDING).
-					Count(&heldActive)
-				pendingother += heldActive
+					Select("COUNT(DISTINCT mg.msgid)").
+					Scan(&pending)
+			}
+
+			// pendingother (blue) is two kinds of copy, counted together so a post that is
+			// one kind on one community and the other kind on another counts once:
+			//
+			// - Held pending in active groups. No contentcheck_checked_at filter here: that
+			//   filter exists so a post which might still auto-approve does not raise a
+			//   phantom badge, which only applies while nobody has claimed it. A held post
+			//   has been claimed by a moderator, will never auto-approve, and is already
+			//   showing in their list as "Held by ..." — dropping it left mods with a badge
+			//   lower than the number of held posts in front of them (Discourse 9481/635).
+			// - All pending in inactive groups. Same rule as above: an unchecked post might
+			//   still auto-approve so it waits for the content check, but a held one is
+			//   claimed work and always counts.
+			var otherConds []string
+			var otherArgs []interface{}
+			if len(activeGroupIDs) > 0 {
+				otherConds = append(otherConds, "(mg.groupid IN ? AND mg.heldby IS NOT NULL)")
+				otherArgs = append(otherArgs, activeGroupIDs)
 			}
 			if len(inactiveGroupIDs) > 0 {
-				// All pending in inactive groups → pendingother (blue). Same rule as
-				// above: an unchecked post might still auto-approve so it waits for the
-				// content check, but a held one is claimed work and always counts.
-				var inact int64
-				db.Table("messages_groups mg").
-					Joins("INNER JOIN messages m ON m.id = mg.msgid").
-					Joins("INNER JOIN users u ON u.id = m.fromuser").
-					Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND (mg.contentcheck_checked_at IS NOT NULL OR mg.heldby IS NOT NULL)",
-						inactiveGroupIDs, utils.COLLECTION_PENDING).
-					Count(&inact)
-				pendingother += inact
+				otherConds = append(otherConds, "(mg.groupid IN ? AND (mg.contentcheck_checked_at IS NOT NULL OR mg.heldby IS NOT NULL))")
+				otherArgs = append(otherArgs, inactiveGroupIDs)
 			}
+			db.Table("messages_groups mg").
+				Joins("INNER JOIN messages m ON m.id = mg.msgid").
+				Joins("INNER JOIN users u ON u.id = m.fromuser").
+				Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL",
+					modGroupIDs, utils.COLLECTION_PENDING).
+				Where("("+strings.Join(otherConds, " OR ")+")", otherArgs...).
+				Select("COUNT(DISTINCT mg.msgid)").
+				Scan(&pendingother)
 		}()
 
 		// --- Spam messages (only for active groups) ---

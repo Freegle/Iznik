@@ -19,6 +19,12 @@ const BATCH_DELAY = 50
 // Refetch a cached message after this long, in case its state has changed.
 const CACHE_TTL_SECONDS = 600
 
+// The extra argument the message API takes to act on several communities at once, or none,
+// so a single-community action is called exactly as it always has been.
+function severalCommunities(groupids) {
+  return groupids ? [groupids] : []
+}
+
 export const useMessageStore = defineStore('message', {
   state: () => ({
     list: {},
@@ -790,11 +796,20 @@ export const useMessageStore = defineStore('message', {
           params.groupid,
           params.subject,
           params.stdmsgid,
-          params.body
+          params.body,
+          ...severalCommunities(params.groupids)
         )
       )
 
-      delete this.list[params.id]
+      if (params.groupids) {
+        // Deleted from several communities at once: any copy left (held by somebody
+        // else, or locked by the home community) is theirs to deal with.
+        await this.refreshOrRemoveFromMTList(params.id, {
+          severalCommunities: true,
+        })
+      } else {
+        delete this.list[params.id]
+      }
     },
     async approveedits(params) {
       await api(this.config).message.approveEdits(params.id)
@@ -819,7 +834,12 @@ export const useMessageStore = defineStore('message', {
     // the review queue - so the next group's copy is immediately actionable without reloading the
     // pending page (Discourse 9862). Only drop it once nothing's left. The review-queue states
     // match ModMessage's own predicate; mirrors hold()/release()'s re-fetch, but conditional.
-    async refreshOrRemoveFromMTList(id) {
+    //
+    // After an action on several communities at once (severalCommunities), the copies it
+    // left alone - held by another moderator, or locked by the home community - do not keep
+    // the card: they were named on it and are not this moderator's to act on, so keeping it
+    // would show the post again as if nothing had happened.
+    async refreshOrRemoveFromMTList(id, { severalCommunities = false } = {}) {
       let message
       try {
         message = await this.fetchMT({ id }, false)
@@ -833,10 +853,22 @@ export const useMessageStore = defineStore('message', {
       const moderates = (g) =>
         typeof authStore?.member !== 'function' ||
         ['Moderator', 'Owner'].includes(authStore.member(g.groupid))
+      const myid = parseInt(authStore?.user?.id)
+      const leftAlone = (g) => {
+        if (!severalCommunities) return false
+        const holder = parseInt(
+          g.heldby && typeof g.heldby === 'object' ? g.heldby.id : g.heldby
+        )
+        return (
+          (Boolean(holder) && holder !== myid) ||
+          parseInt(g.locked_by_home) === 1
+        )
+      }
       const stillInReviewQueue = !!message?.groups?.some(
         (g) =>
           ['Pending', 'PendingOther', 'Spam'].includes(g.collection) &&
-          moderates(g)
+          moderates(g) &&
+          !leftAlone(g)
       )
       if (stillInReviewQueue) {
         this.list[message.id] = message
@@ -870,14 +902,25 @@ export const useMessageStore = defineStore('message', {
         throw held
       }
     },
-    async approve(id, groupid, subject, stdmsgid, body) {
+    // groupids, when given, approves (or below, rejects) on every one of those communities
+    // at once; see the Go API's resolveActionGroups.
+    async approve(id, groupid, subject, stdmsgid, body, groupids) {
       const msg = this.byId(id)
       const fromuser = msg?.fromuser
 
       await this.runHoldAware(id, () =>
-        api(this.config).message.approve(id, groupid, subject, stdmsgid, body)
+        api(this.config).message.approve(
+          id,
+          groupid,
+          subject,
+          stdmsgid,
+          body,
+          ...severalCommunities(groupids)
+        )
       )
-      await this.refreshOrRemoveFromMTList(id)
+      await this.refreshOrRemoveFromMTList(id, {
+        severalCommunities: Boolean(groupids),
+      })
 
       // Re-fetch the sender so posting status changes from stdmsg take effect.
       if (fromuser) {
@@ -887,14 +930,23 @@ export const useMessageStore = defineStore('message', {
         }
       }
     },
-    async reject(id, groupid, subject, stdmsgid, body) {
+    async reject(id, groupid, subject, stdmsgid, body, groupids) {
       const msg = this.byId(id)
       const fromuser = msg?.fromuser
 
       await this.runHoldAware(id, () =>
-        api(this.config).message.reject(id, groupid, subject, stdmsgid, body)
+        api(this.config).message.reject(
+          id,
+          groupid,
+          subject,
+          stdmsgid,
+          body,
+          ...severalCommunities(groupids)
+        )
       )
-      await this.refreshOrRemoveFromMTList(id)
+      await this.refreshOrRemoveFromMTList(id, {
+        severalCommunities: Boolean(groupids),
+      })
 
       if (fromuser) {
         const uid = typeof fromuser === 'number' ? fromuser : fromuser.id

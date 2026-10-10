@@ -30,10 +30,14 @@
       />
     </div>
     <div v-else-if="pending || spam" class="d-inline">
+      <!-- Approve, Reject, Delete and the standard messages act on every community in
+           groupids when there is more than one; Hold, Release and Delete as Spam stay on
+           this community. -->
       <ModMessageButton
         v-if="canApprove"
         :messageid="message.id"
         :groupid="groupid"
+        :groupids="groupids"
         variant="primary"
         icon="check"
         approve
@@ -43,6 +47,7 @@
         v-if="!modsHeld"
         :messageid="message.id"
         :groupid="groupid"
+        :groupids="groupids"
         :is-home-group="isHomeGroup"
         :no-member-message="!modMessagingAllowed"
         variant="warning"
@@ -54,6 +59,7 @@
         v-if="isHomeGroup && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
+        :groupids="groupids"
         variant="danger"
         icon="trash-alt"
         delete
@@ -169,6 +175,7 @@
         :stdmsgid="stdmsg.id"
         :messageid="message.id"
         :groupid="groupid"
+        :groupids="pending || spam ? groupids : null"
         :is-home-group="isHomeGroup"
         :autosend="Boolean(stdmsg.autosend && allowAutoSend)"
       />
@@ -233,6 +240,13 @@ const props = defineProps({
   },
   groupid: {
     type: Number,
+    required: false,
+    default: null,
+  },
+  // Every community a pending post's Approve, Reject and Delete act on at once, groupid
+  // first; null for this community alone. See modtools/composables/multiGroupModeration.js.
+  groupids: {
+    type: Array,
     required: false,
     default: null,
   },
