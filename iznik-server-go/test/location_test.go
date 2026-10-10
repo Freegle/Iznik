@@ -22,12 +22,21 @@ import (
 // queueing takes and still could not promise it had happened.
 func waitForRemapTask(t *testing.T, locID any) int64 {
 	t.Helper()
+	return waitForRemapTasks(t, locID, 1)
+}
+
+// waitForRemapTasks is waitForRemapTask for a handler that queues more than one task,
+// each from its own goroutine: an update to a non-overlapping polygon queues one for
+// the old area and one for the new. Returning on the first row would let the test's
+// cleanup DELETE run before the second INSERT landed and leave that row behind.
+func waitForRemapTasks(t *testing.T, locID any, atLeast int64) int64 {
+	t.Helper()
 	db := database.DBConn
 	var count int64
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID).Scan(&count)
-		if count > 0 || time.Now().After(deadline) {
+		if count >= atLeast || time.Now().After(deadline) {
 			return count
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -947,10 +956,10 @@ func TestLocationRemapMultipleTasksOnNonOverlappingUpdate(t *testing.T) {
 	updateResp, _ := getApp().Test(updateReq)
 	assert.Equal(t, 200, updateResp.StatusCode)
 
-	// Wait for async task queueing
-	taskCount := waitForRemapTask(t, locID)
-	// Should be 2 tasks (old polygon + new polygon) for non-overlapping case
-	assert.Greater(t, taskCount, int64(0), "Should queue remap tasks for non-overlapping geometry update")
+	// Two tasks are queued, one for the old polygon and one for the new, each from its
+	// own goroutine, so wait for both before asserting or cleaning up.
+	taskCount := waitForRemapTasks(t, locID, 2)
+	assert.Equal(t, int64(2), taskCount, "Should queue a remap task for each of the old and new areas")
 
 	// Cleanup
 	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
