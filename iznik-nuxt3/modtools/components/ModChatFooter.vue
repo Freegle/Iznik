@@ -79,6 +79,7 @@
           placeholder="Type here..."
           enterkeyhint="enter"
           @keydown="typing"
+          @keydown.enter="sendOnShortcut"
           @focus="markRead"
         />
         <b-form-textarea
@@ -91,6 +92,7 @@
           enterkeyhint="send"
           autocapitalize="none"
           @keydown="typing"
+          @keydown.enter="sendOnShortcut"
           @keydown.enter.exact.prevent
           @keyup.enter.exact="sendOnEnter"
           @keydown.enter.shift.exact.prevent="newline"
@@ -456,6 +458,7 @@ import { untwem } from '~/composables/useTwem'
 import 'floating-vue/dist/style.css'
 import Api from '~/api'
 import { useMe } from '~/composables/useMe'
+import { isSendShortcut } from '~/composables/chatSendShortcut'
 import { useUserStore } from '~/stores/user'
 import { useNuxtApp } from '#app'
 const { $api } = useNuxtApp()
@@ -825,6 +828,13 @@ const showInfo = () => {
 
 const sendOnEnter = () => {
   send()
+}
+
+const sendOnShortcut = (e) => {
+  if (isSendShortcut(e)) {
+    e.preventDefault()
+    send()
+  }
 }
 
 const send = async (callback) => {
