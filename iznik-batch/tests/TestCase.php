@@ -13,6 +13,10 @@ use App\Models\UserEmail;
 use App\Services\EmailSpoolerService;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\SpamhausDblLookup;
+use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Foundation\Application;
+use Illuminate\Foundation\Bootstrap\LoadEnvironmentVariables;
+use Illuminate\Foundation\Testing\CachedState;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Illuminate\Foundation\Testing\WithCachedConfig;
@@ -33,6 +37,54 @@ abstract class TestCase extends BaseTestCase
     // kept and handed to every later boot. A test's config([...]) changes still
     // apply to that test's own application only, as before.
     use WithCachedConfig;
+
+    /**
+     * Whether a boot in this process has already read the environment file.
+     */
+    private static bool $environmentLoaded = false;
+
+    /**
+     * Boot an application for a test, as the framework does, except that only
+     * the first boot in the process reads .env.testing.
+     *
+     * Dotenv writes what it reads into the process environment ($_ENV, $_SERVER
+     * and putenv) and never overwrites a value already there, so every boot
+     * after the first parsed the file to change nothing, about 0.65ms a time
+     * over 7,000-odd tests. From the second boot on, the bootstrapper that
+     * reads it is replaced with one that does nothing. phpunit.xml's own <env>
+     * values are in the environment before the first boot either way, and a
+     * test's config([...]) changes still apply to its own application only.
+     *
+     * The body mirrors the framework's createApplication(), keeping its
+     * WithCachedConfig handling. WithCachedRoutes is not supported here.
+     *
+     * @return \Illuminate\Foundation\Application
+     */
+    public function createApplication()
+    {
+        $app = require Application::inferBasePath().'/bootstrap/app.php';
+
+        $this->traitsUsedByTest = array_flip(class_uses_recursive(static::class));
+
+        if (isset(CachedState::$cachedConfig) &&
+            isset($this->traitsUsedByTest[WithCachedConfig::class])) {
+            $this->markConfigCached($app);
+        }
+
+        if (self::$environmentLoaded) {
+            $app->bind(LoadEnvironmentVariables::class, fn () => new class
+            {
+                public function bootstrap(): void
+                {
+                }
+            });
+        }
+        self::$environmentLoaded = true;
+
+        $app->make(Kernel::class)->bootstrap();
+
+        return $app;
+    }
 
     /**
      * Saved PHPUnit error/exception handler stack from before Laravel's setUp.
