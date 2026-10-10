@@ -543,6 +543,48 @@
     }
    }
   },
+  "/assistant/turn": {
+   "post": {
+    "description": "One turn of the Freegle chat assistant, streamed as server-sent events",
+    "tags": [
+     "assistant"
+    ],
+    "operationId": "assistantTurn",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     }
+    }
+   }
+  },
+  "/assistant/widgets": {
+   "get": {
+    "description": "Chips and cards attached to assistant chat messages",
+    "tags": [
+     "assistant"
+    ],
+    "operationId": "assistantWidgets",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     }
+    }
+   }
+  },
+  "/assistant/workflow": {
+   "get": {
+    "description": "The ai-flower workflow definition the assistant runs",
+    "tags": [
+     "assistant"
+    ],
+    "operationId": "assistantWorkflow",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     }
+    }
+   }
+  },
   "/authority": {
    "get": {
     "description": "Searches authorities by name",
@@ -1842,49 +1884,18 @@
   },
   "/drivedistance": {
    "post": {
-    "description": "Returns road drive minutes and miles from the logged-in member's approximate location to up to 100 target points, in one batched call, computed by the routing server's reach engine. Fails soft: targets the engine cannot answer come back with null minutes and the caller keeps showing crow-flies distance. Requires authentication.",
+    "description": "Returns road drive minutes and miles from the logged-in member's approximate\nlocation to up to 100 target points, in one batched call, computed by the\nrouting server's reach engine. Fails soft: targets the engine cannot answer\ncome back with null minutes and the caller keeps showing crow-flies distance.\nRequires authentication.",
     "tags": [
      "drivedistance"
     ],
     "summary": "Road drive time and distance to a batch of points",
     "operationId": "postDriveDistance",
-    "parameters": [
-     {
-      "name": "Body",
-      "in": "body",
-      "required": true,
-      "schema": {
-       "type": "object",
-       "properties": {
-        "points": {
-         "type": "array",
-         "items": {
-          "type": "object",
-          "properties": {
-           "id": {
-            "type": "integer"
-           },
-           "lat": {
-            "type": "number",
-            "format": "double"
-           },
-           "lng": {
-            "type": "number",
-            "format": "double"
-           }
-          }
-         }
-        }
-       }
-      }
-     }
-    ],
     "responses": {
      "200": {
-      "description": "results: [{id, mins, miles}] with null mins/miles for unanswerable targets"
+      "$ref": "#/responses/genericResponse"
      },
      "401": {
-      "description": "Not logged in"
+      "$ref": "#/responses/errorResponse"
      }
     }
    }
@@ -2072,7 +2083,7 @@
   },
   "/electricals/stats": {
    "get": {
-    "description": "Returns the most recent electricals statistics payload. Answers 404 rather than an empty object when nothing has been generated yet, so a page can tell \"not yet\" from \"nothing\".",
+    "description": "Returns the most recent electricals statistics payload. Answers 404 rather\nthan an empty object when nothing has been generated yet, so a page can tell\n\"not yet\" from \"nothing\".",
     "tags": [
      "electricals"
     ],
@@ -3223,7 +3234,7 @@
   },
   "/lockdown": {
    "get": {
-    "description": "Returns the current member-facing notice text, if any. Never reveals whether a lockdown is active or which areas are held.",
+    "description": "Returns the current member-facing notice text, if any. Never reveals whether a\nlockdown is active or which areas are held.",
     "tags": [
      "lockdown"
     ],
@@ -3236,7 +3247,7 @@
     }
    },
    "patch": {
-    "description": "press, surfaces, notice, liftall or close. Support/Admin only. Each writes a new row and returns the new state.",
+    "description": "press, surfaces, notice, liftall or close. Support/Admin only. Each writes a new\nrow and returns the new state.",
     "tags": [
      "lockdown"
     ],
@@ -3561,7 +3572,7 @@
     ]
    },
    "post": {
-    "description": "Handles message actions: Promise, Renege, OutcomeIntended, Outcome, AddBy, RemoveBy, View,\nApprove, Reject, Delete, Spam, Hold, Release, ApproveEdits, RevertEdits, PartnerConsent,\nReply, JoinAndPost, Move, BackToPending, RejectToDraft.\n\nWhen tnpostid is supplied instead of id, the action is applied to ALL Freegle messages\nsharing that TN post ID (a TN post can be submitted to multiple Freegle groups, each\nproducing a separate Freegle message row).",
+    "description": "Handles message actions: Promise, Renege, OutcomeIntended, Outcome, AddBy, RemoveBy, View,\nApprove, Reject, Delete, Spam, Hold, Release, ApproveEdits, RevertEdits, PartnerConsent,\nReply, JoinAndPost, Move, BackToPending, RejectToDraft, Report.\n\nWhen tnpostid is supplied instead of id, the action is applied to ALL Freegle messages\nsharing that TN post ID (a TN post can be submitted to multiple Freegle groups, each\nproducing a separate Freegle message row).",
     "tags": [
      "message"
     ],
@@ -4084,17 +4095,12 @@
   },
   "/messages/clearcount": {
    "post": {
-    "description": "Marks the member's whole browse feed as cleared, without needing the client to enumerate posts. Moves one watermark rather than writing a view row per post. Requires authentication.",
+    "description": "Marks the member's whole browse feed as cleared, without needing the client\nto enumerate posts. Moves one watermark rather than writing a view row per\npost. Requires authentication.",
     "tags": [
      "messages"
     ],
     "summary": "Clear the browse unread count",
     "operationId": "clearBrowseCount",
-    "security": [
-     {
-      "BearerAuth": []
-     }
-    ],
     "responses": {
      "200": {
       "$ref": "#/responses/successResponse"
@@ -4102,7 +4108,12 @@
      "401": {
       "$ref": "#/responses/errorResponse"
      }
-    }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
    }
   },
   "/messages/markseen": {
@@ -4418,17 +4429,12 @@
   },
   "/modtools/email/deferrals": {
    "get": {
-    "description": "Support's view of a deferral episode: which providers have stopped accepting our mail, since when, and which members are affected. Support or Admin only.",
+    "description": "Support's view of a deferral episode: which providers have stopped accepting\nour mail, since when, and which members are affected. Support or Admin only.",
     "tags": [
      "modtools"
     ],
     "summary": "List members whose mail is currently delayed",
     "operationId": "getEmailDeferrals",
-    "security": [
-     {
-      "BearerAuth": []
-     }
-    ],
     "responses": {
      "200": {
       "$ref": "#/responses/genericResponse"
@@ -4436,7 +4442,12 @@
      "403": {
       "$ref": "#/responses/errorResponse"
      }
-    }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
    }
   },
   "/modtools/email/stats": {
@@ -4702,7 +4713,7 @@
   },
   "/modtools/lockdown/held": {
    "get": {
-    "description": "Chat messages, posts or ChitChat posts still held by the current lockdown, newest first, 50 per page. Support/Admin only.",
+    "description": "Chat messages, posts or ChitChat posts still held by the current lockdown, newest\nfirst, 50 per page. Support/Admin only.",
     "tags": [
      "lockdown"
     ],
@@ -4784,7 +4795,7 @@
   },
   "/modtools/lockdown/stats": {
    "get": {
-    "description": "Counts of what is held and released, the email queue, what leaked, and batch loop acknowledgements. Support/Admin only.",
+    "description": "Counts of what is held and released, the email queue, what leaked, and batch loop\nacknowledgements. Support/Admin only.",
     "tags": [
      "lockdown"
     ],
@@ -6932,11 +6943,6 @@
   },
   "/supportai/runs": {
    "get": {
-    "security": [
-     {
-      "BearerAuth": []
-     }
-    ],
     "description": "Returns runs of the AI Support Helper most recent first, without transcripts. Page back with before=\u003cid\u003e; filter with rating=up|down|unrated. Support/Admin only.",
     "tags": [
      "supportai"
@@ -6953,14 +6959,14 @@
      "403": {
       "$ref": "#/responses/errorResponse"
      }
-    }
-   },
-   "post": {
+    },
     "security": [
      {
       "BearerAuth": []
      }
-    ],
+    ]
+   },
+   "post": {
     "description": "Stores one question put to the helper with its answer, transcript, usage and subscription quota before and after. The asking volunteer is taken from the JWT. Support/Admin only.",
     "tags": [
      "supportai"
@@ -6980,14 +6986,14 @@
      "403": {
       "$ref": "#/responses/errorResponse"
      }
-    }
-   },
-   "patch": {
+    },
     "security": [
      {
       "BearerAuth": []
      }
-    ],
+    ]
+   },
+   "patch": {
     "description": "Sets a thumbs up (1) or down (-1) with an optional comment, or clears the rating (0). Support/Admin only.",
     "tags": [
      "supportai"
@@ -7010,16 +7016,16 @@
      "404": {
       "$ref": "#/responses/errorResponse"
      }
-    }
-   }
-  },
-  "/supportai/runs/{id}": {
-   "get": {
+    },
     "security": [
      {
       "BearerAuth": []
      }
-    ],
+    ]
+   }
+  },
+  "/supportai/runs/{id}": {
+   "get": {
     "description": "Returns one run in full, transcript included. Support/Admin only.",
     "tags": [
      "supportai"
@@ -7042,7 +7048,12 @@
      "404": {
       "$ref": "#/responses/errorResponse"
      }
-    }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
    }
   },
   "/team": {
@@ -8519,6 +8530,10 @@
   "Admin": {
    "type": "object",
    "properties": {
+    "activeonly": {
+     "type": "boolean",
+     "x-go-name": "Activeonly"
+    },
     "complete": {
      "type": "string",
      "format": "date-time",
@@ -8530,9 +8545,7 @@
      "x-go-name": "Created"
     },
     "createdby": {
-     "type": "integer",
-     "format": "uint64",
-     "x-go-name": "Createdby"
+     "$ref": "#/definitions/AdminUser"
     },
     "ctalink": {
      "type": "string",
@@ -8555,6 +8568,11 @@
      "format": "uint64",
      "x-go-name": "Groupid"
     },
+    "heldat": {
+     "type": "string",
+     "format": "date-time",
+     "x-go-name": "Heldat"
+    },
     "heldby": {
      "type": "integer",
      "format": "uint64",
@@ -8565,9 +8583,28 @@
      "format": "uint64",
      "x-go-name": "ID"
     },
+    "mjml": {
+     "description": "Mjml is the optional MJML version of the body, used for the HTML part. Text stays the plain-text part.",
+     "type": "string",
+     "x-go-name": "Mjml"
+    },
+    "modguidance": {
+     "type": "string",
+     "x-go-name": "Modguidance"
+    },
+    "parentid": {
+     "type": "integer",
+     "format": "uint64",
+     "x-go-name": "Parentid"
+    },
     "pending": {
      "type": "boolean",
      "x-go-name": "Pending"
+    },
+    "sendafter": {
+     "type": "string",
+     "format": "date-time",
+     "x-go-name": "Sendafter"
     },
     "subject": {
      "type": "string",
@@ -8580,6 +8617,27 @@
     "text": {
      "type": "string",
      "x-go-name": "Text"
+    },
+    "unedited": {
+     "description": "Unedited is set on a copy of a suggested ADMIN that is still exactly as suggested; it can be\napproved without a test.",
+     "type": "boolean",
+     "x-go-name": "Unedited"
+    }
+   },
+   "x-go-package": "github.com/freegle/iznik-server-go/admin"
+  },
+  "AdminUser": {
+   "type": "object",
+   "title": "AdminUser is the creator of an admin, as V1 returned it.",
+   "properties": {
+    "displayname": {
+     "type": "string",
+     "x-go-name": "Displayname"
+    },
+    "id": {
+     "type": "integer",
+     "format": "uint64",
+     "x-go-name": "ID"
     }
    },
    "x-go-package": "github.com/freegle/iznik-server-go/admin"
@@ -8713,6 +8771,12 @@
    "type": "object",
    "title": "Group represents a Freegle group overlapping with an authority.",
    "properties": {
+    "coverage": {
+     "description": "Coverage is the share of the authority this group covers.",
+     "type": "number",
+     "format": "double",
+     "x-go-name": "Coverage"
+    },
     "id": {
      "type": "integer",
      "format": "uint64",
@@ -8753,6 +8817,11 @@
     "poly": {
      "type": "string",
      "x-go-name": "Poly"
+    },
+    "significant": {
+     "description": "Significant says whether the overlap is big enough for a Partnerships deal to list the\ngroup as covered. The stats page still counts every group in the list.",
+     "type": "boolean",
+     "x-go-name": "Significant"
     }
    },
    "x-go-package": "github.com/freegle/iznik-server-go/authority"
@@ -8913,13 +8982,6 @@
       "$ref": "#/definitions/Photo"
      },
      "x-go-name": "Photos"
-    },
-    "terms": {
-     "type": "array",
-     "items": {
-      "$ref": "#/definitions/SearchTerm"
-     },
-     "x-go-name": "Terms"
     },
     "type": {
      "type": "string",
@@ -9902,6 +9964,11 @@
      "type": "string",
      "x-go-name": "MailDelayedSince"
     },
+    "mod_messaging_allowed": {
+     "description": "False when every post this person has made is a TN post placed on a Freegle\ncommunity they never chose - they have not joined Freegle in any sense a moderator\ncan act on, so ModTools shows a notice instead of the Chat / Mail / standard-message\nbuttons. True for everyone else, including a TN poster who has ALSO posted normally.\nDerived, not stored: see modmessaging.UsersUnaddressedOnly.",
+     "type": "boolean",
+     "x-go-name": "ModMessagingAllowed"
+    },
     "ourpostingstatus": {
      "type": "string",
      "x-go-name": "OurPostingStatus"
@@ -10548,6 +10615,11 @@
      "format": "int64",
      "x-go-name": "Pendingvolunteering"
     },
+    "pendingvolunteeringother": {
+     "type": "integer",
+     "format": "int64",
+     "x-go-name": "Pendingvolunteeringother"
+    },
     "relatedmembers": {
      "type": "integer",
      "format": "int64",
@@ -10836,6 +10908,11 @@
      "type": "number",
      "format": "double",
      "x-go-name": "Lng"
+    },
+    "mod_messaging_allowed": {
+     "description": "ModMessagingAllowed: see Message.ModMessagingAllowed. Reduced from Groups by\nmodMessagingAllowed() so the queue does not have to re-derive it per card.",
+     "type": "boolean",
+     "x-go-name": "ModMessagingAllowed"
     },
     "replycount": {
      "type": "integer",
@@ -11235,6 +11312,12 @@
      "format": "uint64",
      "x-go-name": "Heldby"
     },
+    "heldreplies": {
+     "description": "Replies held for a volunteer to check, shown only to the poster so \"no replies\nyet\" is never said over a reply the site is sitting on.",
+     "type": "integer",
+     "format": "int64",
+     "x-go-name": "Heldreplies"
+    },
     "id": {
      "type": "integer",
      "format": "uint64",
@@ -11256,9 +11339,19 @@
     "location": {
      "$ref": "#/definitions/Location"
     },
+    "lockdownheld": {
+     "description": "Lockdownheld: section 10.6/10.12 of the lockdown plan. True while this post has an\nunresolved lockdown_holds row (kind='post') - inserted by the Laravel batch lockdown:tick\nservice, not by this API - so ModTools can label the pending card \"held by lockdown\"\nrather than showing it as an ordinary pending post. See lockdown.ItemHeld.",
+     "type": "boolean",
+     "x-go-name": "Lockdownheld"
+    },
     "message": {
      "type": "string",
      "x-go-name": "RawMessage"
+    },
+    "mod_messaging_allowed": {
+     "description": "ModMessagingAllowed is false for a TN post placed on a Freegle community the poster\nnever chose (its origin messages_groups row has mod_messaging_allowed = 0). ModTools\nthen offers Approve and Delete but not Edit, Blank Reply or any standard message,\nbecause there is nobody on the other end who agreed to hear from that community.\nTrue for every ordinary post. Message-level rather than per-group: the poster either\nasked to be on Freegle or did not, so a moderator looking at a rippled-in copy gets\nthe origin row's answer too.",
+     "type": "boolean",
+     "x-go-name": "ModMessagingAllowed"
     },
     "outcomes": {
      "type": "array",
@@ -11266,6 +11359,11 @@
       "$ref": "#/definitions/MessageOutcome"
      },
      "x-go-name": "MessageOutcomes"
+    },
+    "partgone": {
+     "description": "Partgone is true once somebody has been recorded as having taken some of a\nmulti-item post. It is a fact about takers, not arithmetic on the two counts\nabove: an ordinary poster is no longer asked how many each person took, so\navailablenow stops tracking reality the moment the first person is recorded.\nBulk offers still count items out one by one and use the numbers instead.",
+     "type": "boolean",
+     "x-go-name": "Partgone"
     },
     "postings": {
      "type": "array",
@@ -11545,6 +11643,17 @@
      "format": "uint64",
      "x-go-name": "Heldby"
     },
+    "locked_by_home": {
+     "description": "LockedByHome is stored 1 on a rippled-in copy pulled back by a moderator of the post's\nhome community. In the payload it is the EFFECTIVE lock (effectiveHomeLocks): still 1\nonly while the home copy exists and is not Approved, so ModTools can say the home\ncommunity is reviewing the post and that this copy cannot be approved yet.",
+     "type": "integer",
+     "format": "uint8",
+     "x-go-name": "LockedByHome"
+    },
+    "mod_messaging_allowed": {
+     "description": "ModMessagingAllowed is whether mods on this group may message the poster of this\nmessage directly. Defaults true for ordinary Freegle posts; TN API ingestion sets\nit false unless TN told us the poster consented for this group (see\nPostSyncer::processPost / GroupPostIngestionService in iznik-batch).",
+     "type": "boolean",
+     "x-go-name": "ModMessagingAllowed"
+    },
     "msgid": {
      "type": "integer",
      "format": "uint64",
@@ -11598,6 +11707,11 @@
      "type": "integer",
      "format": "uint64",
      "x-go-name": "Heldby"
+    },
+    "mod_messaging_allowed": {
+     "description": "ModMessagingAllowed: see MessageGroup.ModMessagingAllowed. Carried here so the mod\nqueue can work out, without a second fetch per post, which posts it must not offer\nEdit / Blank Reply / standard messages for.",
+     "type": "boolean",
+     "x-go-name": "ModMessagingAllowed"
     },
     "rippled_in": {
      "description": "RippledIn marks a row created by the rippling engine; the mod queue uses it to show\nthe rippled-in banner authoritatively (see MessageGroup.RippledIn). (9808/303)",
@@ -11679,6 +11793,12 @@
      "type": "integer",
      "format": "uint64",
      "x-go-name": "Acceptedby"
+    },
+    "count": {
+     "description": "How many were promised to this user; nil reads as 1.",
+     "type": "integer",
+     "format": "int64",
+     "x-go-name": "Count"
     },
     "id": {
      "type": "integer",
@@ -11978,6 +12098,11 @@
     "location": {
      "type": "string",
      "x-go-name": "Location"
+    },
+    "lockdownheld": {
+     "description": "Lockdownheld: see NewsfeedSummary.Lockdownheld. Populated the same way, from\nlockdown.ItemHeld(\"chitchat\", ...), on the full-detail thread fetch.",
+     "type": "boolean",
+     "x-go-name": "Lockdownheld"
     },
     "loved": {
      "type": "boolean",
@@ -12737,22 +12862,6 @@
    },
    "x-go-package": "github.com/freegle/iznik-server-go/authority"
   },
-  "SearchTerm": {
-   "description": "SearchTerm represents a search term for matching",
-   "type": "object",
-   "properties": {
-    "id": {
-     "type": "integer",
-     "format": "uint64",
-     "x-go-name": "ID"
-    },
-    "term": {
-     "type": "string",
-     "x-go-name": "Term"
-    }
-   },
-   "x-go-package": "github.com/freegle/iznik-server-go/microvolunteering"
-  },
   "Shortlink": {
    "type": "object",
    "properties": {
@@ -13018,6 +13127,12 @@
      "format": "uint64",
      "x-go-name": "ID"
     },
+    "msgid": {
+     "description": "Which post the collection time is for; nil for trysts made before this existed.",
+     "type": "integer",
+     "format": "uint64",
+     "x-go-name": "Msgid"
+    },
     "user1": {
      "type": "integer",
      "format": "uint64",
@@ -13244,6 +13359,11 @@
     },
     "profile": {
      "$ref": "#/definitions/UserProfile"
+    },
+    "redacted": {
+     "description": "Set when the name, photo and about-me were withheld (see hideTNIdentityFromAnonymous),\nso a client that cached this copy before logging in knows to fetch it again.",
+     "type": "boolean",
+     "x-go-name": "Redacted"
     },
     "relevantallowed": {
      "type": "boolean",
