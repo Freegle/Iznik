@@ -45,6 +45,9 @@ type Challenge struct {
 	URL      *string            `json:"url,omitempty"`
 	AIImage  *AIImageChallenge  `json:"aiimage,omitempty"`
 	EEELabel *EEELabelChallenge `json:"eeelabel,omitempty"`
+	// Graded is set when the task's answer is already settled by other members and the
+	// member's answer will be marked (see graded.go). Used by the reply gate.
+	Graded bool `json:"graded,omitempty"`
 }
 
 // Photo represents a photo for rotation challenge
@@ -196,6 +199,15 @@ func GetChallenge(c *fiber.Ctx) error {
 			Joins("INNER JOIN `groups` ON memberships.groupid = `groups`.id").
 			Where("userid = ? AND type = ?", userID, utils.GROUP_TYPE_FREEGLE).
 			Scan(&groupIDs)
+	}
+
+	// Experiment: a graded task, whose answer other members have already settled. The
+	// reply gate asks for one of these and nothing else.
+	if c.Query("graded") == "1" || c.Query("graded") == "true" {
+		if challenge := getGradedMessageChallenge(db, userID, groupIDs); challenge != nil {
+			return c.JSON(challenge)
+		}
+		return c.JSON(fiber.Map{})
 	}
 
 	// Try Invite challenge first
@@ -673,6 +685,9 @@ func PostResponse(c *fiber.Ctx) error {
 						// work a Pending queue, so pending it would strand it live in
 						// browse forever. At quorum it comes off the platform instead.
 						modmessaging.RemoveUnaddressedPost(db, req.Msgid)
+					} else if ReportsResolve() {
+						// Experiment: the quorum is final. See resolve.go.
+						ResolveReports(db, req.Msgid)
 					} else {
 						// Quorum reached — pull the post back to Pending on ALL the
 						// groups it is live on (home + rippled-out copies), so every
@@ -682,6 +697,13 @@ func PostResponse(c *fiber.Ctx) error {
 						FreezeReachIfOriginPending(db, req.Msgid)
 					}
 				}
+			}
+
+			// Experiment: say whether the answer matched the settled verdict, so a graded
+			// task can tell the member and the reply gate can open. Absent when the post
+			// is not settled.
+			if graded := Grade(db, req.Msgid, myid, response); graded != nil {
+				return c.JSON(fiber.Map{"ret": 0, "status": "Success", "graded": *graded})
 			}
 		}
 
@@ -1076,11 +1098,21 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 
 	// A moderator's report is quorum on its own: pull the post to Pending everywhere.
 	if reporterIsModOf(db, reporterID, groupid) {
+		if ReportsResolve() {
+			// Experiment: a moderator's report is final. See resolve.go.
+			ResolveReports(db, msgid)
+			return
+		}
 		SendForReviewAllGroups(db, msgid, reason, nil, nil)
 	} else {
 		// Aggregate quorum (all distinct Reject verdicts, reports or in-app checks)
 		// pulls the post to Pending on every community it is on.
 		if distinctRejectCount(db, msgid) >= int64(ApprovalQuorum) {
+			if ReportsResolve() {
+				// Experiment: the quorum is final. See resolve.go.
+				ResolveReports(db, msgid)
+				return
+			}
 			SendForReviewAllGroups(db, msgid, reason, nil, nil)
 		}
 	}
