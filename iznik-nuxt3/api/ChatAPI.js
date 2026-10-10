@@ -59,7 +59,14 @@ export default class ChatAPI extends BaseAPI {
   }
 
   async send(data) {
-    return await this.$postv2('/chat/' + data.roomid + '/message', data)
+    // The server refuses to attach one uploaded image to a second message (409 "Image already
+    // used"). The earlier send is the message the chat shows and stores/chat.js treats the
+    // repeat as sent, so keep that one response out of Sentry.
+    return await this.$postv2(
+      '/chat/' + data.roomid + '/message',
+      data,
+      (body) => !(data?.imageid && body?.message === 'Image already used')
+    )
   }
 
   // Moderation actions on chat messages (approve, reject, hold, release, redact).
