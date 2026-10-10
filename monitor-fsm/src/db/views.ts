@@ -40,7 +40,7 @@ export async function renderDraftsMd(db: DB, path = DRAFTS_PATH): Promise<void> 
   const lines: string[] = [
     '# Discourse Reply Drafts',
     '',
-    'Queued for human approval. NEVER auto-posted. Copy-paste into Discourse after review.',
+    'Drafts that have not gone out yet. They are posted automatically on the next iteration; a draft listed here has failed to post or is waiting for its retry.',
     '',
   ]
   for (const d of pending) {
@@ -106,7 +106,7 @@ export async function renderSummaryMd(db: DB, path = SUMMARY_PATH): Promise<void
     lines.push('')
   }
 
-  lines.push('## Pending Discourse drafts (awaiting approval)', '')
+  lines.push('## Discourse drafts not yet posted', '')
   if (pending.length === 0) {
     lines.push('*None.*', '')
   } else {

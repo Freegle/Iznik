@@ -553,6 +553,47 @@ export function recordPostedReply(db: DB, draft: {
   return Number(info.lastInsertRowid)
 }
 
+/** True when a reply to this reporting post has already gone out to Discourse. */
+export function hasPostedDraft(db: DB, topic: number, post: number, exceptId?: number): boolean {
+  return !!db.prepare(`
+    SELECT 1 FROM discourse_draft
+    WHERE topic = ? AND post = ? AND posted_at IS NOT NULL AND id != ?
+    LIMIT 1
+  `).get(topic, post, exceptId ?? -1)
+}
+
+/** A draft that exists for this post and has not been turned down, whether or not it has been sent. */
+export function hasLiveDraft(db: DB, topic: number, post: number): boolean {
+  return !!db.prepare(`
+    SELECT 1 FROM discourse_draft
+    WHERE topic = ? AND post = ? AND rejected_at IS NULL
+    LIMIT 1
+  `).get(topic, post)
+}
+
+/** Stamp a draft as approved and sent. Approval is implicit once the quality gates have passed. */
+export function markDraftPosted(db: DB, id: number): void {
+  db.prepare(`
+    UPDATE discourse_draft
+    SET approved_at = COALESCE(approved_at, datetime('now')), posted_at = datetime('now')
+    WHERE id = ?
+  `).run(id)
+}
+
+/** Stamp a draft as approved without sending it, so the next iteration's retry picks it up. */
+export function markDraftApproved(db: DB, id: number): void {
+  db.prepare(`UPDATE discourse_draft SET approved_at = COALESCE(approved_at, datetime('now')) WHERE id = ?`).run(id)
+}
+
+/** Drafts that have not gone out and have not been turned down: the retry queue. */
+export function listUnpostedDrafts(db: DB): DiscourseDraftRow[] {
+  return db.prepare(`
+    SELECT * FROM discourse_draft
+    WHERE posted_at IS NULL AND rejected_at IS NULL
+    ORDER BY queued_at, id
+  `).all() as DiscourseDraftRow[]
+}
+
 export function listPendingDrafts(db: DB): DiscourseDraftRow[] {
   return db.prepare(`
     SELECT * FROM discourse_draft
