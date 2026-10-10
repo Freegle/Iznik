@@ -4,6 +4,7 @@ namespace Tests\Unit\Services;
 
 use App\Services\WhatJobsService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
@@ -915,6 +916,27 @@ class WhatJobsServiceTest extends TestCase
             if (! $jobsHasIndex()) {
                 DB::statement('ALTER TABLE jobs ADD INDEX visible_cpc (visible, cpc)');
             }
+        }
+    }
+
+    /**
+     * 2026-10-10 04:40: the existence check read db2 while it lagged (donating the nightly backup),
+     * saw no index on the jobs_new the write node had just created with one, and the add failed
+     * with 1061 and stopped the sync. Adding an index that is already there must be a no-op.
+     */
+    public function test_adding_visible_cpc_twice_is_harmless(): void
+    {
+        $svc = new WhatJobsService();
+
+        try {
+            $svc->prepareTempTable();
+            $this->assertTrue(Schema::hasIndex('jobs_new', 'visible_cpc'));
+
+            $svc->addVisibleCpcIndex();
+
+            $this->assertTrue(Schema::hasIndex('jobs_new', 'visible_cpc'));
+        } finally {
+            DB::statement('DROP TABLE IF EXISTS jobs_new');
         }
     }
 }
