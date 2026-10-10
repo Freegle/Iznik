@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { defineComponent, ref } from 'vue'
+import { defineComponent, ref, customRef } from 'vue'
 import {
   useReplyStateMachine,
   ReplyState,
   ReplyEvent,
 } from '~/composables/useReplyStateMachine'
+import { action as mockAction } from '~/composables/useClientLog'
 
 // ============================================================
 // vi.hoisted() — spy functions must be available before vi.mock() factories run
@@ -1589,5 +1590,770 @@ describe('reach gate (rippling-out reply eligibility)', () => {
     expect(result.state.value).toBe(ReplyState.ERROR)
     // Not the reach message — a different 403 must not be mislabelled as "closest first".
     expect(result.error.value).not.toContain(CLOSEST)
+  })
+})
+
+// ============================================================
+// Error classification (isNotInReachError / isAuthError), exercised through the
+// catch block of handleJoinGroup, handleCreateChat and handleAuthentication.
+// ============================================================
+
+describe('error classification', () => {
+  const CLOSEST = 'closest to it first'
+
+  function httpError(message, props) {
+    return Object.assign(new Error(message), props)
+  }
+
+  // outcome: 'reach' = graceful reach message, no login; 'auth' = forced re-login;
+  // 'generic' = plain ERROR state with the error text.
+  const rows = [
+    [
+      'top-level status 403 + not_in_reach in Error.message',
+      httpError('not_in_reach', { status: 403 }),
+      'reach',
+    ],
+    [
+      'response.status 403 + not_in_reach in response.data.message',
+      httpError('Request failed', {
+        response: {
+          status: 403,
+          data: { error: 403, message: 'not_in_reach' },
+        },
+      }),
+      'reach',
+    ],
+    [
+      '403 + string response body containing not_in_reach',
+      httpError('Request failed', {
+        status: 403,
+        response: { data: 'not_in_reach' },
+      }),
+      'reach',
+    ],
+    [
+      '403 + object body on error.data (no response)',
+      httpError('Request failed', {
+        status: 403,
+        data: { message: 'not_in_reach' },
+      }),
+      'reach',
+    ],
+    [
+      '403 "User banned from group" is not a reach block',
+      httpError('Request failed', {
+        status: 403,
+        response: { status: 403, data: { message: 'User banned from group' } },
+      }),
+      'generic',
+    ],
+    [
+      '403 with no body at all',
+      httpError('Forbidden', { status: 403 }),
+      'generic',
+    ],
+    [
+      '403 with null response body',
+      httpError('Forbidden', {
+        status: 403,
+        response: { status: 403, data: null },
+      }),
+      'generic',
+    ],
+    [
+      'not_in_reach text on a non-403 status',
+      httpError('not_in_reach', { status: 500 }),
+      'generic',
+    ],
+    ['plain Error', new Error('boom'), 'generic'],
+    ['Error with empty message', new Error(''), 'generic'],
+    ['empty-string rejection (falsy error)', '', 'generic'],
+    ['status 401', httpError('Request failed', { status: 401 }), 'auth'],
+    [
+      'response.status 401',
+      httpError('Request failed', { response: { status: 401 } }),
+      'auth',
+    ],
+    ['message "not logged in"', new Error('You are not logged in'), 'auth'],
+    ['message "unauthorized"', new Error('unauthorized'), 'auth'],
+    ['message "session expired"', new Error('session expired'), 'auth'],
+    ['message "login required"', new Error('login required'), 'auth'],
+    ['string rejection falls back to toString()', 'unauthorized', 'auth'],
+  ]
+
+  function expectOutcome(result, outcome) {
+    if (outcome === 'reach') {
+      expect(result.state.value).toBe(ReplyState.ERROR)
+      expect(result.error.value).toContain(CLOSEST)
+      expect(mockForceLogin.value).toBe(false)
+      expect(mockAction).toHaveBeenCalledWith('reply_blocked_not_in_reach', {
+        message_id: MSG_ID,
+      })
+    } else if (outcome === 'auth') {
+      expect(result.state.value).toBe(ReplyState.AUTHENTICATING)
+      expect(mockForceLogin.value).toBe(true)
+    } else {
+      expect(result.state.value).toBe(ReplyState.ERROR)
+      expect(result.error.value).not.toContain(CLOSEST)
+      expect(mockForceLogin.value).toBe(false)
+    }
+  }
+
+  async function submitLoggedIn() {
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    mockMyGroupsValue = { 0: { id: 100 } }
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    const callback = vi.fn()
+    await result.submit(callback)
+    await flushPromises()
+    return { result, callback }
+  }
+
+  it.each(rows)('handleJoinGroup: %s', async (_name, err, outcome) => {
+    mockMessageFetch.mockRejectedValue(err)
+    const { result, callback } = await submitLoggedIn()
+    expectOutcome(result, outcome)
+    expect(callback).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(rows)('handleCreateChat: %s', async (_name, err, outcome) => {
+    mockReplyToPostFn.mockRejectedValue(err)
+    const { result, callback } = await submitLoggedIn()
+    expectOutcome(result, outcome)
+    expect(callback).toHaveBeenCalledTimes(1)
+  })
+
+  describe('handleAuthentication', () => {
+    async function submitAnonymous(userAdd) {
+      const { result } = mountComposable(MSG_ID, userAdd)
+      result.setRefs({
+        form: makeFormRef(true),
+        chatButton: makeChatButtonRef(),
+      })
+      result.startTyping()
+      result.replyText.value = 'Hello'
+      result.email.value = 'a@example.com'
+      result.emailValid.value = true
+      const callback = vi.fn()
+      await result.submit(callback)
+      await flushPromises()
+      return { result, callback }
+    }
+
+    it('not_in_reach shows the reach message without forcing login', async () => {
+      const { result, callback } = await submitAnonymous(
+        vi.fn().mockRejectedValue(httpError('not_in_reach', { status: 403 }))
+      )
+      expectOutcome(result, 'reach')
+      expect(callback).toHaveBeenCalledTimes(1)
+    })
+
+    it('auth error goes back to AUTHENTICATING and forces login', async () => {
+      const { result, callback } = await submitAnonymous(
+        vi.fn().mockRejectedValue(httpError('nope', { status: 401 }))
+      )
+      expectOutcome(result, 'auth')
+      expect(callback).toHaveBeenCalledTimes(1)
+    })
+
+    it('any other error assumes an existing user and forces login', async () => {
+      const { result, callback } = await submitAnonymous(
+        vi.fn().mockRejectedValue(new Error('network down'))
+      )
+      expect(mockForceLogin.value).toBe(true)
+      expect(result.state.value).toBe(ReplyState.AUTHENTICATING)
+      expect(callback).toHaveBeenCalledTimes(1)
+    })
+
+    it('existing user (no password in response) forces login', async () => {
+      const { result, callback } = await submitAnonymous(
+        vi.fn().mockResolvedValue({ password: null })
+      )
+      expect(mockForceLogin.value).toBe(true)
+      expect(result.isNewUser.value).toBe(false)
+      expect(callback).toHaveBeenCalledTimes(1)
+    })
+
+    it('new user registers, sets auth tokens, fetches me and joins', async () => {
+      mockMyidValue = 77
+      mockMeValue = null
+      const { result } = await submitAnonymous(
+        vi.fn().mockResolvedValue({
+          password: 'pw',
+          jwt: 'jwt',
+          persistent: { userid: 77 },
+        })
+      )
+      expect(result.isNewUser.value).toBe(true)
+      expect(result.newUserPassword.value).toBe('pw')
+      expect(mockLoggedInEver.value).toBe(true)
+      expect(mockAuthStore.setAuth).toHaveBeenCalledWith('jwt', { userid: 77 })
+      expect(mockFetchMeFn).toHaveBeenCalledWith(true)
+      expect(result.state.value).toBe(ReplyState.SHOWING_WELCOME)
+    })
+
+    it('new user without jwt/persistent does not set auth', async () => {
+      mockMyidValue = 77
+      const { result } = await submitAnonymous(
+        vi.fn().mockResolvedValue({ password: 'pw' })
+      )
+      expect(mockAuthStore.setAuth).not.toHaveBeenCalled()
+      expect(result.isNewUser.value).toBe(true)
+    })
+  })
+})
+
+// ============================================================
+// closestGroupToReplier edge cases
+// ============================================================
+
+describe('closestGroupToReplier edge cases', () => {
+  async function joinWith({ me, groups, fetchImpl }) {
+    mockMeValue = me
+    mockMyidValue = 10
+    mockMyGroupsValue = {}
+    mockMessageFetch.mockResolvedValue({ id: MSG_ID, groups })
+    mockGroupFetch.mockImplementation(
+      fetchImpl || (() => Promise.resolve(null))
+    )
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    await result.submit()
+    await flushPromises()
+    return result
+  }
+
+  const G = (id, lat, lng) => ({ id, lat, lng })
+
+  it.each([
+    [
+      'single group: forced, no store lookup',
+      { id: 10, lat: 51.5, lng: -0.1 },
+      [{ groupid: 5 }],
+      null,
+      5,
+      false,
+    ],
+    [
+      'no replier location: last group',
+      { id: 10 },
+      [{ groupid: 5 }, { groupid: 6 }],
+      null,
+      6,
+      false,
+    ],
+    [
+      'replier lat/lng both 0: last group',
+      { id: 10, lat: 0, lng: 0 },
+      [{ groupid: 5 }, { groupid: 6 }],
+      null,
+      6,
+      false,
+    ],
+    [
+      'store returns null for some groups: nearest of the rest',
+      { id: 10, lat: 51.5, lng: -0.1 },
+      [{ groupid: 5 }, { groupid: 6 }, { groupid: 7 }],
+      (id) =>
+        Promise.resolve(
+          { 5: null, 6: G(6, 55.9, -3.2), 7: G(7, 52.5, -1.9) }[id]
+        ),
+      7,
+      true,
+    ],
+    [
+      'store returns null for all groups: fallback to last',
+      { id: 10, lat: 51.5, lng: -0.1 },
+      [{ groupid: 5 }, { groupid: 6 }],
+      () => Promise.resolve(null),
+      6,
+      true,
+    ],
+    [
+      'all milesAway null (groups lack lat/lng): fallback to last',
+      { id: 10, lat: 51.5, lng: -0.1 },
+      [{ groupid: 5 }, { groupid: 6 }],
+      (id) => Promise.resolve({ id }),
+      6,
+      true,
+    ],
+    [
+      'one group without lat/lng is skipped',
+      { id: 10, lat: 51.5, lng: -0.1 },
+      [{ groupid: 5 }, { groupid: 6 }],
+      (id) => Promise.resolve({ 5: { id: 5 }, 6: G(6, 55.9, -3.2) }[id]),
+      6,
+      true,
+    ],
+  ])('%s', async (_n, me, groups, fetchImpl, expectedId, expectLookup) => {
+    await joinWith({ me, groups, fetchImpl })
+    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(10, expectedId, false)
+    expect(mockGroupFetch).toHaveBeenCalledTimes(
+      expectLookup ? groups.length : 0
+    )
+  })
+
+  it('handles a null myGroups (treated as not a member)', async () => {
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    mockMyGroupsValue = null
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    await result.submit()
+    await flushPromises()
+    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(10, 100, false)
+  })
+})
+
+// ============================================================
+// handleJoinGroup / submit edge cases
+// ============================================================
+
+describe('handleJoinGroup guards', () => {
+  it('no myid: handleAuthError and callback', async () => {
+    mockMeValue = { id: 10 }
+    mockMyidValue = null
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    const cb = vi.fn()
+    await result.submit(cb)
+    await flushPromises()
+    expect(result.state.value).toBe(ReplyState.AUTHENTICATING)
+    expect(mockForceLogin.value).toBe(true)
+    expect(cb).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['groups undefined', { id: MSG_ID }],
+    ['groups empty', { id: MSG_ID, groups: [] }],
+    ['message null', null],
+  ])('ERROR when %s', async (_n, msg) => {
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    mockMessageFetch.mockResolvedValue(msg)
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    const cb = vi.fn()
+    await result.submit(cb)
+    await flushPromises()
+    expect(result.state.value).toBe(ReplyState.ERROR)
+    expect(result.error.value).toBe('Message has no groups')
+    expect(cb).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('submit: email revalidation and late refs', () => {
+  function anonymous() {
+    const { result } = mountComposable()
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    result.email.value = 'a@example.com'
+    return result
+  }
+
+  it('awaits the email validator and proceeds when it makes the email valid', async () => {
+    const result = anonymous()
+    const validator = {
+      validate: vi.fn().mockImplementation(async () => {
+        result.emailValid.value = true
+      }),
+      focus: vi.fn(),
+    }
+    result.setRefs({
+      form: makeFormRef(true),
+      emailValidator: validator,
+      chatButton: makeChatButtonRef(),
+    })
+    await result.submit()
+    await flushPromises()
+    expect(validator.validate).toHaveBeenCalled()
+    expect(validator.focus).not.toHaveBeenCalled()
+    // Reached handleAuthentication (default mock: existing user -> forced login).
+    expect(result.state.value).toBe(ReplyState.AUTHENTICATING)
+    expect(mockForceLogin.value).toBe(true)
+  })
+
+  it('tolerates the email validator throwing, then focuses it and returns to COMPOSING', async () => {
+    const result = anonymous()
+    const validator = {
+      validate: vi.fn().mockRejectedValue(new Error('dns')),
+      focus: vi.fn(),
+    }
+    result.setRefs({ form: makeFormRef(true), emailValidator: validator })
+    const cb = vi.fn()
+    await result.submit(cb)
+    await flushPromises()
+    expect(validator.focus).toHaveBeenCalled()
+    expect(result.state.value).toBe(ReplyState.COMPOSING)
+    expect(cb).toHaveBeenCalledTimes(1)
+  })
+
+  it('invalid email with no validator ref goes to COMPOSING', async () => {
+    const result = anonymous()
+    result.setRefs({ form: makeFormRef(true) })
+    await result.submit()
+    await flushPromises()
+    expect(result.state.value).toBe(ReplyState.COMPOSING)
+  })
+
+  it('waits for a late chat button ref instead of failing', async () => {
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    mockMyGroupsValue = { 0: { id: 100 } }
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true) })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    const p = result.submit()
+    await flushPromises()
+    expect(mockReplyToPostFn).not.toHaveBeenCalled()
+    result.setRefs({ chatButton: makeChatButtonRef() })
+    await p
+    await flushPromises()
+    expect(mockReplyToPostFn).toHaveBeenCalled()
+    expect(result.state.value).toBe(ReplyState.COMPLETED)
+  })
+})
+
+// ============================================================
+// handleCreateChat outcomes
+// ============================================================
+
+describe('handleCreateChat outcomes', () => {
+  async function send(replyResult, { newUser = false } = {}) {
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    mockMyGroupsValue = { 0: { id: 100 } }
+    mockReplyToPostFn.mockResolvedValue(replyResult)
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.setReplySource('browse')
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    if (newUser) result.isNewUser.value = true
+    const cb = vi.fn()
+    await result.submit(cb)
+    await flushPromises()
+    return { result, cb }
+  }
+
+  it.each([
+    ['truthy, existing user', MSG_ID, false, ReplyState.COMPLETED, 'existing'],
+    ['truthy, new user', MSG_ID, true, ReplyState.SHOWING_WELCOME, 'new'],
+    ['falsy', 0, false, ReplyState.ERROR, null],
+    ['null', null, false, ReplyState.ERROR, null],
+  ])('%s', async (_n, ret, newUser, expectedState, userType) => {
+    const { result, cb } = await send(ret, { newUser })
+    expect(result.state.value).toBe(expectedState)
+    expect(cb).toHaveBeenCalledTimes(1)
+    if (userType) {
+      expect(mockAction).toHaveBeenCalledWith('reply_sent', {
+        message_id: MSG_ID,
+        user_type: userType,
+        is_new_user: newUser,
+        reply_source: 'browse',
+      })
+    } else {
+      expect(result.error.value).toContain('may be stale')
+    }
+  })
+
+  it('closeWelcomeModal moves SHOWING_WELCOME to COMPLETED and clears persisted reply', async () => {
+    const { result } = await send(MSG_ID, { newUser: true })
+    mockClearReply.mockClear()
+    result.closeWelcomeModal()
+    expect(result.state.value).toBe(ReplyState.COMPLETED)
+    expect(result.isComplete.value).toBe(true)
+    expect(mockClearReply).toHaveBeenCalled()
+  })
+})
+
+// ============================================================
+// onLoginSuccess
+// ============================================================
+
+describe('onLoginSuccess', () => {
+  it('falls back to COMPOSING if resuming from AUTHENTICATING throws', async () => {
+    mockMyidValue = null // handleJoinGroup -> handleAuthError -> sets forceLogin
+    const throwing = customRef(() => ({
+      get: () => false,
+      set: () => {
+        throw new Error('boom')
+      },
+    }))
+    mockAuthStore.forceLogin = throwing
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    result.state.value = ReplyState.AUTHENTICATING
+    await result.onLoginSuccess()
+    await flushPromises()
+    expect(result.state.value).toBe(ReplyState.COMPOSING)
+  })
+})
+
+// ============================================================
+// initialize: remaining branches
+// ============================================================
+
+describe('initialize: remaining branches', () => {
+  function saved(state) {
+    mockReplyMsgId = MSG_ID
+    mockReplyMessage = 'Saved text'
+    mockReplyingAt = Date.now()
+    mockMachineState = state
+  }
+
+  it('saved reply with no replyingAt timestamp is stale: discarded and cleared', () => {
+    saved(ReplyState.COMPOSING)
+    mockReplyingAt = null
+    const { result } = mountComposable()
+    result.initialize()
+    expect(result.state.value).toBe(ReplyState.IDLE)
+    expect(mockClearReply).toHaveBeenCalled()
+  })
+
+  it('saved reply older than 24h is stale', () => {
+    saved(ReplyState.COMPOSING)
+    mockReplyingAt = Date.now() - 24 * 60 * 60 * 1000 - 1
+    const { result } = mountComposable()
+    result.initialize()
+    expect(result.state.value).toBe(ReplyState.IDLE)
+    expect(mockClearReply).toHaveBeenCalled()
+  })
+
+  it('saved reply just under 24h is resumed', () => {
+    saved(ReplyState.COMPOSING)
+    mockReplyingAt = Date.now() - 23 * 60 * 60 * 1000
+    const { result } = mountComposable()
+    result.initialize()
+    expect(result.state.value).toBe(ReplyState.COMPOSING)
+    expect(result.replyText.value).toBe('Saved text')
+  })
+
+  it('splits collection times out of the saved message (and tolerates an empty one)', () => {
+    saved(ReplyState.COMPOSING)
+    mockReplyMessage = 'Hi\r\n\r\nPossible collection times: '
+    const { result } = mountComposable()
+    result.initialize()
+    expect(result.replyText.value).toBe('Hi')
+    expect(result.collectText.value).toBe('')
+  })
+
+  it('splits non-empty collection times', () => {
+    saved(ReplyState.COMPOSING)
+    mockReplyMessage = 'Hi\r\n\r\nPossible collection times: Mon'
+    const { result } = mountComposable()
+    result.initialize()
+    expect(result.collectText.value).toBe('Mon')
+  })
+
+  it.each([
+    [ReplyState.SHOWING_WELCOME, true, ReplyState.SHOWING_WELCOME],
+    [ReplyState.SHOWING_WELCOME, false, ReplyState.SHOWING_WELCOME],
+    [ReplyState.COMPLETED, true, ReplyState.IDLE],
+    [ReplyState.ERROR, false, ReplyState.COMPOSING],
+    [ReplyState.COMPOSING, false, ReplyState.COMPOSING],
+    [ReplyState.VALIDATING, true, ReplyState.COMPOSING],
+    [ReplyState.AUTHENTICATING, true, ReplyState.COMPOSING],
+    [ReplyState.AUTHENTICATING, false, ReplyState.COMPOSING],
+    [ReplyState.JOINING_GROUP, true, ReplyState.COMPOSING],
+    [ReplyState.JOINING_GROUP, false, ReplyState.COMPOSING],
+    [ReplyState.CREATING_CHAT, true, ReplyState.COMPOSING],
+    [ReplyState.CREATING_CHAT, false, ReplyState.COMPOSING],
+    [ReplyState.SENDING, true, ReplyState.COMPOSING],
+    [ReplyState.SENDING, false, ReplyState.COMPOSING],
+    ['SOMETHING_ELSE', false, ReplyState.COMPOSING],
+    [null, true, ReplyState.COMPOSING],
+  ])(
+    'saved state %s (logged in: %s) -> %s',
+    (savedState, loggedIn, expected) => {
+      saved(savedState)
+      mockMeValue = loggedIn ? { id: 10 } : null
+      const { result } = mountComposable()
+      result.initialize()
+      expect(result.state.value).toBe(expected)
+      expect(result.getDebugInfo().initialized).toBe(true)
+      if (savedState === ReplyState.SHOWING_WELCOME) {
+        expect(result.isNewUser.value).toBe(true)
+      }
+    }
+  )
+
+  it('restores isNewUser from the store for resumable states', () => {
+    saved(ReplyState.COMPOSING)
+    mockReplyIsNewUser = true
+    const { result } = mountComposable()
+    result.initialize()
+    expect(result.isNewUser.value).toBe(true)
+  })
+
+  it('a saved reply for a different message starts fresh', () => {
+    saved(ReplyState.COMPOSING)
+    mockReplyMsgId = 999
+    const { result } = mountComposable()
+    result.initialize()
+    expect(result.state.value).toBe(ReplyState.IDLE)
+    expect(result.replyText.value).toBe('')
+    expect(mockClearReply).not.toHaveBeenCalled()
+  })
+
+  it('second initialize() is a no-op', () => {
+    const { result } = mountComposable()
+    result.initialize()
+    result.state.value = ReplyState.COMPOSING
+    result.initialize()
+    expect(result.state.value).toBe(ReplyState.COMPOSING)
+  })
+
+  it.each([
+    ['message only', { m: 'draft', c: null, e: null }],
+    ['collect only', { m: null, c: 'Mon', e: null }],
+    ['email only', { m: null, c: null, e: 'a@example.com' }],
+  ])('resumes a fresh composing draft with %s', (_n, { m, c, e }) => {
+    mockDraftMsgId = MSG_ID
+    mockDraftMessage = m
+    mockDraftCollect = c
+    mockDraftEmail = e
+    mockDraftAt = Date.now()
+    const { result } = mountComposable()
+    result.initialize()
+    expect(result.state.value).toBe(ReplyState.COMPOSING)
+    expect(result.replyText.value).toBe(m || '')
+    expect(result.collectText.value).toBe(c || '')
+    expect(result.email.value).toBe(e || '')
+  })
+
+  it.each([
+    ['older than 24h', Date.now() - 25 * 60 * 60 * 1000],
+    ['no draftAt', null],
+  ])('discards a stale composing draft (%s)', (_n, at) => {
+    mockDraftMsgId = MSG_ID
+    mockDraftMessage = 'old'
+    mockDraftAt = at
+    const { result } = mountComposable()
+    result.initialize()
+    expect(result.state.value).toBe(ReplyState.IDLE)
+    expect(mockClearDraft).toHaveBeenCalled()
+    expect(result.replyText.value).toBe('')
+  })
+
+  it('ignores an empty draft for this message', () => {
+    mockDraftMsgId = MSG_ID
+    mockDraftAt = Date.now()
+    const { result } = mountComposable()
+    result.initialize()
+    expect(result.state.value).toBe(ReplyState.IDLE)
+  })
+})
+
+// ============================================================
+// Remaining helpers
+// ============================================================
+
+describe('helpers and lifecycle', () => {
+  it('setReplySource is sent with the submit analytics and saved to the store', async () => {
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(false) })
+    result.setReplySource('explore')
+    result.startTyping()
+    result.replyText.value = 'Hi'
+    await result.submit()
+    expect(mockAction).toHaveBeenCalledWith(
+      'reply_submit',
+      expect.objectContaining({ reply_source: 'explore' })
+    )
+  })
+
+  it('setRefs with only an email validator still initializes once', () => {
+    const { result } = mountComposable()
+    result.setRefs({ emailValidator: { validate: vi.fn() } })
+    expect(result.getDebugInfo().initialized).toBe(true)
+    result.setRefs({})
+    expect(result.getDebugInfo().initialized).toBe(true)
+  })
+
+  it('saveReplyToStore (via submit) appends collection times and source', async () => {
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    mockMyGroupsValue = { 0: { id: 100 } }
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.setReplySource('browse')
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    result.collectText.value = 'Weekends'
+    // Make the send fail so the saved reply is not cleared on COMPLETED.
+    mockReplyToPostFn.mockResolvedValue(false)
+    await result.submit()
+    await flushPromises()
+    expect(mockReplyMsgId).toBe(MSG_ID)
+    expect(mockReplyMessage).toBe(
+      'Hello\r\n\r\nPossible collection times: Weekends'
+    )
+    expect(mockReplyingAt).toBeTruthy()
+  })
+
+  it('submit with a form whose validate() throws falls back to COMPOSING', async () => {
+    const { result } = mountComposable()
+    result.setRefs({
+      form: { validate: vi.fn().mockRejectedValue(new Error('x')) },
+    })
+    result.startTyping()
+    const cb = vi.fn()
+    await result.submit(cb)
+    expect(result.state.value).toBe(ReplyState.COMPOSING)
+    expect(cb).toHaveBeenCalledTimes(1)
+  })
+
+  it('submit is blocked while processing and calls the callback', async () => {
+    const { result } = mountComposable()
+    result.state.value = ReplyState.JOINING_GROUP
+    const cb = vi.fn()
+    await result.submit(cb)
+    expect(cb).toHaveBeenCalledTimes(1)
+    expect(mockAction).toHaveBeenCalledWith(
+      'reply_submit_blocked',
+      expect.objectContaining({ reason: 'canSend_false' })
+    )
+  })
+
+  it('startTyping only acts from IDLE', () => {
+    const { result } = mountComposable()
+    result.state.value = ReplyState.ERROR
+    result.startTyping()
+    expect(result.state.value).toBe(ReplyState.ERROR)
+  })
+
+  it('closeWelcomeModal does nothing outside SHOWING_WELCOME', () => {
+    const { result } = mountComposable()
+    result.closeWelcomeModal()
+    expect(result.state.value).toBe(ReplyState.IDLE)
+  })
+
+  it('reset clears everything and the processing timeout', () => {
+    const { result } = mountComposable()
+    result.state.value = ReplyState.IDLE
+    result.isNewUser.value = true
+    result.newUserPassword.value = 'pw'
+    result.reset()
+    expect(result.isNewUser.value).toBe(false)
+    expect(result.newUserPassword.value).toBeNull()
+    expect(result.error.value).toBeNull()
+    expect(result.previousState.value).toBeNull()
+    expect(mockClearReply).toHaveBeenCalled()
   })
 })
