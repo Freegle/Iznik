@@ -5,7 +5,13 @@ namespace Tests\Feature\Command;
 use App\Console\Commands\Deploy\RefreshCommand;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Process\Exceptions\ProcessTimedOutException;
+use Illuminate\Process\Factory as ProcessFactory;
+use Illuminate\Process\PendingProcess;
+use Illuminate\Process\ProcessResult;
 use Illuminate\Support\Facades\Process;
+use Symfony\Component\Process\Exception\ProcessTimedOutException as SymfonyTimeoutException;
+use Symfony\Component\Process\Process as SymfonyProcess;
 use Tests\TestCase;
 
 class DeployRefreshCommandTest extends TestCase
@@ -78,6 +84,42 @@ class DeployRefreshCommandTest extends TestCase
             ->assertSuccessful();
 
         Process::assertRan(fn ($process) => str_contains($process->command, 'supervisorctl restart mail-spooler:*'));
+    }
+
+    public function test_supervisor_restart_timing_out_warns_and_continues(): void
+    {
+        // A restart waits for the program to stop (up to its stopwaitsecs) and
+        // start again. If that outlasts the command's timeout, the deploy must
+        // still finish and record its version, as it did when a restart failed.
+        $symfony = new SymfonyProcess(['supervisorctl', 'restart', 'mail-spooler:*']);
+        $symfony->setTimeout(RefreshCommand::RESTART_TIMEOUT_SECONDS);
+        // setUp()'s catch-all fake would answer first; start from a fresh factory.
+        Process::swap(new ProcessFactory);
+        $restart = null;
+        Process::fake([
+            'which supervisorctl*' => Process::result(output: '/usr/bin/supervisorctl'),
+            // A process that throws is not recorded, so the restart is captured here.
+            'supervisorctl restart *' => function (PendingProcess $process) use (&$restart, $symfony) {
+                $restart = $process;
+
+                throw new ProcessTimedOutException(
+                    new SymfonyTimeoutException($symfony, SymfonyTimeoutException::TYPE_GENERAL),
+                    new ProcessResult($symfony),
+                );
+            },
+        ]);
+        Cache::forget(RefreshCommand::VERSION_CACHE_KEY);
+
+        $this->artisan('deploy:refresh')
+            ->expectsOutput('Restarting supervisor programs...')
+            ->expectsOutputToContain('⚠ mail-spooler:*: restart did not finish within '.RefreshCommand::RESTART_TIMEOUT_SECONDS.'s')
+            ->expectsOutput('Done!')
+            ->assertSuccessful();
+
+        $this->assertNotNull($restart, 'the restart was attempted');
+        $this->assertStringContainsString('supervisorctl restart mail-spooler:*', $restart->command);
+        $this->assertSame(RefreshCommand::RESTART_TIMEOUT_SECONDS, $restart->timeout, 'longer than the spooler\'s stopwaitsecs plus a start');
+        $this->assertNotNull(Cache::get(RefreshCommand::VERSION_CACHE_KEY), 'the deploy still records its version');
     }
 
     public function test_records_deployed_version(): void

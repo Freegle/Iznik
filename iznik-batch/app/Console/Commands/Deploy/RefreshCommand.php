@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Process\Exceptions\ProcessTimedOutException;
 use Illuminate\Support\Facades\Process;
 use Symfony\Component\Console\Attribute\AsCommand;
 
@@ -20,6 +21,14 @@ class RefreshCommand extends Command
      * Cache key for storing last deployed version.
      */
     public const VERSION_CACHE_KEY = 'deploy:last_version';
+
+    /**
+     * How long to wait for supervisorctl to restart a program. A restart stops
+     * the program, waiting up to its stopwaitsecs (60s for the spooler, which
+     * may be mid-batch), then starts it. The Process facade's default is 60s,
+     * which the stop alone can use up; exec() before it had no limit at all.
+     */
+    public const RESTART_TIMEOUT_SECONDS = 130;
 
     /**
      * Supervisor programs to restart.
@@ -171,7 +180,15 @@ class RefreshCommand extends Command
 
     protected function restartProgram(string $program): void
     {
-        $result = Process::run("supervisorctl restart {$program} 2>&1");
+        try {
+            $result = Process::timeout(self::RESTART_TIMEOUT_SECONDS)->run("supervisorctl restart {$program} 2>&1");
+        } catch (ProcessTimedOutException $e) {
+            // Warn and carry on, as a failed restart does: the deploy still
+            // records its version, and the spooler is checked separately.
+            $this->line("  <comment>⚠</comment> {$program}: restart did not finish within ".self::RESTART_TIMEOUT_SECONDS.'s');
+
+            return;
+        }
 
         if ($result->successful()) {
             $this->line("  <info>✓</info> {$program}");
