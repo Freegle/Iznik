@@ -14,6 +14,7 @@ use App\Services\EmailSpoolerService;
 use App\Services\LokiService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+use Illuminate\Foundation\Testing\WithCachedConfig;
 use Illuminate\Mail\Mailable;
 
 abstract class TestCase extends BaseTestCase
@@ -21,6 +22,16 @@ abstract class TestCase extends BaseTestCase
     // Use DatabaseTransactions for serial PHPUnit execution.
     // This rolls back each test's changes, ensuring test isolation.
     use DatabaseTransactions;
+
+    // Every test boots a fresh application. Without this each boot re-reads the
+    // .env file and all 36 config files (ours and the framework's defaults they
+    // merge with). The config is the same on every boot: phpunit.xml fixes the
+    // environment before the first test and nothing changes it afterwards, and
+    // the tests that do alter the environment require the config file directly
+    // rather than going through the application. So the first boot's config is
+    // kept and handed to every later boot. A test's config([...]) changes still
+    // apply to that test's own application only, as before.
+    use WithCachedConfig;
 
     /**
      * Saved PHPUnit error/exception handler stack from before Laravel's setUp.
