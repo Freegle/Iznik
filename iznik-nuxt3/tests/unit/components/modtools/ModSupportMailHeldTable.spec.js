@@ -49,7 +49,8 @@ describe('ModSupportMailHeldTable', () => {
         {
           userid: 2,
           email: 'b@icloude.com',
-          reason: 'connect to icloude.com[17.253.142.4]:25: Connection timed out',
+          reason:
+            'connect to icloude.com[17.253.142.4]:25: Connection timed out',
         },
       ])
     )

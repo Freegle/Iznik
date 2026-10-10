@@ -4,7 +4,7 @@
     <div class="app-content">
       <!-- Delivery option -->
       <div class="form-section">
-        <label class="form-label">Could you deliver?</label>
+        <div class="form-label">Could you deliver?</div>
         <div class="toggle-options">
           <button
             class="toggle-btn"
@@ -25,7 +25,7 @@
 
       <!-- Deadline option -->
       <div class="form-section">
-        <label class="form-label">Is there a deadline?</label>
+        <div class="form-label">Is there a deadline?</div>
         <div class="toggle-options">
           <button
             class="toggle-btn"

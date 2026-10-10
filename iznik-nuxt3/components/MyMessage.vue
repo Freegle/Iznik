@@ -345,7 +345,7 @@
                     message.type === 'Offer' &&
                     !taken &&
                     !withdrawn &&
-                    !isPromised
+                    canPromiseMore
                   "
                   class="action-btn action-btn--secondary"
                   title="Promise to someone"
@@ -439,7 +439,7 @@
                   message.type === 'Offer' &&
                   !taken &&
                   !withdrawn &&
-                  !isPromised
+                  canPromiseMore
                 "
                 class="action-btn action-btn--secondary"
                 @click="openPromiseModal"
@@ -882,11 +882,10 @@ const promisedTo = computed(() => {
   return ret
 })
 
+// Everyone the post is promised to: an offer of several things can be promised to several
+// people, and the poster needs to see all of them.
 const promisedToName = computed(() => {
-  if (promisedTo.value.length > 0) {
-    return promisedTo.value[0].name
-  }
-  return ''
+  return promisedTo.value.map((p) => p.name).join(', ')
 })
 
 const promisedToUsers = computed(() => {
@@ -900,6 +899,12 @@ const promisedToUsers = computed(() => {
 
 const isPromised = computed(() => {
   return message.value?.promised && !message.value?.outcomes?.length
+})
+
+// The Promise button stays once something is promised if the post offers more than one thing, so
+// the poster can promise the rest to someone else.
+const canPromiseMore = computed(() => {
+  return !isPromised.value || (message.value?.availableinitially ?? 1) > 1
 })
 
 // The v2 API returns this as `repostat`; V1 called it `canrepostat`. We read the

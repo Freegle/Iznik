@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-08
+last_reviewed: 2026-10-09
 owner: Freegle dev team
 covers:
   - docs/ops/reference/circleci.md
@@ -34,6 +34,9 @@ flowchart LR
    New raw SQL is kept out by the `.claude/check-raw-sql.sh` hook while editing and by the
    `check-raw-sql` CircleCI job, which runs the same script in `--diff origin/master` mode
    over the branch. A line marked `// keep-raw: <reason>` is allowed.
+   `eslint .` over `iznik-nuxt3` runs as its own step, `Lint iznik-nuxt3 (eslint)`, in the dev
+   container the Vitest runner uses, before Vitest starts. Errors fail the build; warnings are
+   hidden. Fix them with `npx eslint --fix .` in `iznik-nuxt3`.
 2. **On green, `master` auto-merges to `production`.** This is automatic only when all
    tests pass.
 3. **`production` deploys the frontends.** Two Netlify sites build from the same

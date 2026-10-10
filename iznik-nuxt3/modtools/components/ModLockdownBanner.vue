@@ -5,7 +5,9 @@
     class="mb-2 text-center"
   >
     <v-icon icon="triangle-exclamation" class="me-1" />
-    Lockdown is active{{ lockdownStore.reason ? ': ' + lockdownStore.reason : '.' }}
+    Lockdown is active{{
+      lockdownStore.reason ? ': ' + lockdownStore.reason : '.'
+    }}
     Only the basic Approve buttons are shown while it holds.
   </NoticeMessage>
 </template>

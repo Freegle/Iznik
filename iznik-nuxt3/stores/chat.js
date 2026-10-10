@@ -451,7 +451,14 @@ export const useChatStore = defineStore('chat', {
         data.replysource = replysource
       }
 
-      await api(this.config).chat.send(data)
+      try {
+        await api(this.config).chat.send(data)
+      } catch (e) {
+        // The server refuses to attach one uploaded image to a second message (409). The
+        // earlier send of the same image is the message the chat shows, so a repeat is
+        // not a failure for the user.
+        if (!(imageid && e?.response?.status === 409)) throw e
+      }
 
       // Update the snippet in the chat list entry so it shows immediately.
       if (message && this.listByChatId[chatid]) {

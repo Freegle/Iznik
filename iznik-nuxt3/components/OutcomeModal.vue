@@ -58,7 +58,7 @@
           @took-users="took"
         />
         <div v-if="showSplitChoice" class="mt-3">
-          <label class="strong">Is that everything?</label>
+          <div class="strong">Is that everything?</div>
           <b-button-group class="d-block mt-1">
             <b-button
               :variant="allGone ? 'primary' : 'secondary'"
@@ -86,10 +86,11 @@
         <div
           v-if="type === 'Taken' && tookUsers?.length && otherRepliers?.length"
         >
-          <label class="strong">
+          <label :for="`${formId}-message-for-other-people`" class="strong">
             Message for other people who replied (optional):
           </label>
           <b-form-textarea
+            :id="`${formId}-message-for-other-people`"
             v-model="completionMessage"
             :rows="3"
             :max-rows="6"
@@ -103,9 +104,9 @@
         </div>
         <hr class="mb-0" />
         <div>
-          <label class="mt-3 strong">
+          <div class="mt-3 strong">
             How do you feel about freegling just now?
-          </label>
+          </div>
           <b-button-group class="d-none d-md-block mt-1">
             <b-button
               :pressed="happiness === 'Happy'"
@@ -173,8 +174,14 @@
           with other freeglers.
         </NoticeMessage>
         <div>
-          <label class="mt-4 strong"> It went well/badly because: </label>
+          <label
+            :for="`${formId}-it-went-well-badly-becau`"
+            class="mt-4 strong"
+          >
+            It went well/badly because:
+          </label>
           <b-form-textarea
+            :id="`${formId}-it-went-well-badly-becau`"
             v-model="comments"
             rows="3"
             max-rows="6"
@@ -222,7 +229,7 @@
   </b-modal>
 </template>
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, useId } from 'vue'
 import OutcomeBy from './OutcomeBy'
 import MessageAvailability from './MessageAvailability'
 import SpinButton from './SpinButton'
@@ -230,6 +237,9 @@ import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
 import NoticeMessage from '~/components/NoticeMessage'
 import { useOurModal } from '~/composables/useOurModal'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const props = defineProps({
   id: {

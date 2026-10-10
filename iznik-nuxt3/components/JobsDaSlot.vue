@@ -58,6 +58,7 @@ import {
 import { useJobStore } from '~/stores/job'
 import { useAuthStore } from '~/stores/auth'
 import { useJobsFollowUpModal } from '~/composables/useJobsFollowUpModal'
+import { payWeightedOrder } from '~/composables/payWeightedOrder'
 const JobOne = defineAsyncComponent(() => import('./JobOne'))
 const JobsFollowUpModal = defineAsyncComponent(
   () => import('./JobsFollowUpModal')
@@ -165,17 +166,10 @@ const blocked = computed(() => {
 })
 
 const list = computed(() => {
-  // Return the list in a random order - we might have multiple ad slots per page.  By taking the top 20 we've
-  // already selected a set which is a balance between close and well-paid.
-  const list = jobStore?.list.slice(0, 20)
-  for (let i = list.length - 1; i >= 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    const temp = list[i]
-    list[i] = list[j]
-    list[j] = temp
-  }
-
-  return list
+  // The API ranks the nearest jobs by pay. Take its top 20, then order them at random so
+  // several ad slots on one page differ - weighted by pay, so the ranking still shows. A
+  // uniform shuffle would throw the pay order away.
+  return payWeightedOrder(jobStore?.list.slice(0, 20))
 })
 
 const displayedJobs = computed(() => {

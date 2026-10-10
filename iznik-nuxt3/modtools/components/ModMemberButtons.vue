@@ -120,8 +120,11 @@
         spamignore
         label="Ignore"
       />
+      <!-- Not for a membership rippling created: there is nobody here to write to, and the
+           server refuses the send (Discourse 10102), as it does for the standard messages
+           filtered out in validActions. -->
       <ModMemberButton
-        v-if="modMessagingAllowed"
+        v-if="modMessagingAllowed && !member.rippled"
         class="ms-1 me-1"
         :userid="member.userid"
         :groupid="member.groupid"

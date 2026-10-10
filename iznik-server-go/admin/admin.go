@@ -160,6 +160,9 @@ func GetAdmin(c *fiber.Ctx) error {
 	return c.JSON(admin)
 }
 
+// maxAdminPage is the most ADMINs one request returns when it asks for a page.
+const maxAdminPage = 100
+
 // ListAdmins handles GET /admin - list admins for groups the user moderates.
 //
 // @Summary List admin messages
@@ -177,6 +180,14 @@ func ListAdmins(c *fiber.Ctx) error {
 
 	groupidParam, _ := strconv.ParseUint(c.Query("groupid", "0"), 10, 64)
 	pendingParam := c.Query("pending", "")
+
+	// The Previous tab pages through the history: limit caps a page and before continues after
+	// the last ADMIN of the previous one (the list is newest first).
+	limit, _ := strconv.Atoi(c.Query("limit", "0"))
+	if limit > maxAdminPage {
+		limit = maxAdminPage
+	}
+	beforeID, _ := strconv.ParseUint(c.Query("before", "0"), 10, 64)
 
 	// Build query: admins for the relevant group(s). We deliberately do NOT filter on
 	// `complete` - the ModTools "Previous" tab is the archive of *sent* admins (which have
@@ -223,8 +234,17 @@ func ListAdmins(c *fiber.Ctx) error {
 		tx = tx.Where("a.pending = 0")
 	}
 
+	if beforeID > 0 {
+		tx = tx.Where("(a.created, a.id) < (SELECT b.created, b.id FROM admins b WHERE b.id = ?)", beforeID)
+	}
+
+	tx = tx.Order("a.created DESC, a.id DESC")
+	if limit > 0 {
+		tx = tx.Limit(limit)
+	}
+
 	var admins []Admin
-	tx.Order("a.created DESC, a.id DESC").Scan(&admins)
+	tx.Scan(&admins)
 
 	if admins == nil {
 		admins = make([]Admin, 0)

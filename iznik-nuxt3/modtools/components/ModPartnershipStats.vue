@@ -10,15 +10,24 @@
 
     <b-row class="align-items-end g-2 mb-2">
       <b-col cols="12" md="5">
-        <label class="small mb-0">Councils</label>
-        <b-form-select v-model="selected" :options="councilOptions" multiple />
+        <label :for="`${formId}-councils`" class="small mb-0">Councils</label>
+        <b-form-select
+          :id="`${formId}-councils`"
+          v-model="selected"
+          :options="councilOptions"
+          multiple
+        />
         <p class="small text-muted mb-0">
           Hold Ctrl (or Cmd) to pick more than one.
         </p>
       </b-col>
       <b-col cols="12" md="4">
-        <label class="small mb-0">Quarter</label>
-        <b-form-select v-model="quarter" :options="quarterOptions" />
+        <label :for="`${formId}-quarter`" class="small mb-0">Quarter</label>
+        <b-form-select
+          :id="`${formId}-quarter`"
+          v-model="quarter"
+          :options="quarterOptions"
+        />
       </b-col>
       <b-col cols="12" md="3">
         <SpinButton
@@ -97,10 +106,13 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, useId } from 'vue'
 import { useRuntimeConfig } from '#imports'
 import { usePartnershipsStore } from '~/stores/partnerships'
 import { useAuthStore } from '~/stores/auth'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const props = defineProps({
   // The councils we have deals with: [{ authorityid, authorityname }, ...].

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { nextTick } from 'vue'
 import api from '~/api'
 import { APIError } from '~/api/APIErrors'
+import { isOutcomeAlreadyRecorded } from '~/api/outcomeConflict'
 import { useAuthStore } from '~/stores/auth'
 import { useUserStore } from '~/stores/user'
 import { useNearbyStore } from '~/stores/nearby'
@@ -461,7 +462,19 @@ export const useMessageStore = defineStore('message', {
     async update(params) {
       const authStore = useAuthStore()
       const userUid = authStore.user?.id
-      const data = await api(this.config).message.update(params)
+      let data
+
+      try {
+        data = await api(this.config).message.update(params)
+      } catch (e) {
+        if (params.action !== 'Outcome' || !isOutcomeAlreadyRecorded(e)) {
+          throw e
+        }
+
+        // The post already has an outcome, so what the member asked for is done. Fall through
+        // to the refetch so our stale copy shows it and the post moves to their old posts.
+        data = {}
+      }
 
       if (data.deleted) {
         // This can happen if we withdraw a post while it is pending.

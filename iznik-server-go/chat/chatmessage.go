@@ -610,6 +610,49 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	})
 }
 
+// errChatImageTaken means the image was linked to another chat message first.
+var errChatImageTaken = fiber.NewError(fiber.StatusConflict, "Image already used")
+
+// checkChatImageUnused rejects an imageid that does not exist (400) or is already attached to
+// a chat message (409). One image belongs to one message: when that message is deleted its
+// chat_images row goes with it, and every other message pointing at the image is left empty.
+func checkChatImageUnused(db *gorm.DB, imageid uint64) error {
+	var img struct {
+		ID        uint64
+		Chatmsgid *uint64
+	}
+	db.Table("chat_images").Select("id, chatmsgid").Where("id = ?", imageid).Limit(1).Scan(&img)
+
+	if img.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid imageid")
+	}
+
+	var used int64
+	db.Table("chat_messages").Where("imageid = ?", imageid).Limit(1).Count(&used)
+
+	if img.Chatmsgid != nil || used > 0 {
+		return errChatImageTaken
+	}
+
+	return nil
+}
+
+// linkChatImage attaches the image to the message. The WHERE chatmsgid IS NULL makes the claim
+// atomic, so of two concurrent sends of the same image only one affects a row.
+func linkChatImage(db *gorm.DB, imageid uint64, msgid uint64) error {
+	res := db.Table("chat_images").Where("id = ? AND chatmsgid IS NULL", imageid).Update("chatmsgid", msgid)
+
+	if res.Error != nil {
+		return res.Error
+	}
+
+	if res.RowsAffected == 0 {
+		return errChatImageTaken
+	}
+
+	return nil
+}
+
 func CreateChatMessage(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	db := database.DBConn
@@ -701,6 +744,12 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		txa74101bfbfa2.Scan(&refExists)
 		if refExists == 0 {
 			return fiber.NewError(fiber.StatusNotFound, "refmsg_gone")
+		}
+	}
+
+	if payload.Imageid != nil {
+		if err := checkChatImageUnused(db, *payload.Imageid); err != nil {
+			return err
 		}
 	}
 
@@ -872,12 +921,33 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	payload.Type = chattype
 	payload.Processingrequired = true
 	payload.Date = time.Now()
-	if result := db.Create(&payload); result.Error != nil {
+	// The image claim shares a transaction with the insert, so a send that loses the race for
+	// the image leaves no message behind.
+	createErr := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&payload).Error; err != nil {
+			return err
+		}
+
+		if payload.Imageid != nil {
+			// This also stops the image being purged in purge_chats.
+			return linkChatImage(tx, *payload.Imageid, payload.ID)
+		}
+
+		return nil
+	})
+
+	if createErr == errChatImageTaken || (payload.Imageid != nil && database.IsDeadlockOrLockTimeout(createErr)) {
+		// Concurrent sends of one image take shared locks on its row through the
+		// chat_messages FK and deadlock on the claim; the loser has lost the race either way.
+		return errChatImageTaken
+	}
+
+	if createErr != nil {
 		// Don't swallow the underlying DB error: without this, FK violations (e.g. a purged
 		// refmsgid/chatid) and any other insert failure vanish — the access log drops 500s and
 		// nothing reaches Sentry, leaving the user's "Oh Dear" undiagnosable.
 		stdlog.Printf("Failed to create chat message in chat %d for user %d (refmsgid=%v): %v",
-			id, myid, payload.Refmsgid, result.Error)
+			id, myid, payload.Refmsgid, createErr)
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
 	}
 	newid := payload.ID
@@ -997,16 +1067,6 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// blocks the report.
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2MOD {
 		microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, roomGroupid, payload.Message)
-	}
-
-	if payload.Imageid != nil {
-		// Update the chat image to link it to this chat message.  This also stops it being purged in
-		// purge_chats.
-		// Converted together with its
-		// identical twin in CreateChatMessageLoveJunk (8eddd54c5c0b): a half-
-		// converted pair renumbers the survivor's site ID, so gate (h) refuses
-		// the split state.
-		db.Table("chat_images").Where("id = ?", *payload.Imageid).Update("chatmsgid", newid)
 	}
 
 	// If anyone has closed this chat, reopen it so it reappears in their list.
@@ -1141,6 +1201,12 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Message must be non-empty")
 	}
 
+	if payload.Imageid != nil {
+		if err := checkChatImageUnused(db, *payload.Imageid); err != nil {
+			return err
+		}
+	}
+
 	// Create a chat message, but flagged as needing processing.
 	var cm ChatMessage
 	cm.Userid = myid
@@ -1150,18 +1216,28 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 	cm.Date = time.Now()
 	cm.Message = payload.Message
 	cm.Refmsgid = payload.Refmsgid
-	db.Create(&cm)
-	newid := cm.ID
 
-	if newid == 0 {
-		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
+	// As in CreateChatMessage, the image claim and the insert succeed or fail together.
+	createErr := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&cm).Error; err != nil {
+			return err
+		}
+
+		if payload.Imageid != nil {
+			return linkChatImage(tx, *payload.Imageid, cm.ID)
+		}
+
+		return nil
+	})
+
+	if createErr == errChatImageTaken || (payload.Imageid != nil && database.IsDeadlockOrLockTimeout(createErr)) {
+		return errChatImageTaken
 	}
 
-	if payload.Imageid != nil {
-		// Link the chat image to this message, matching CreateChatMessage behaviour.
-		// Converted together with its
-		// identical twin in CreateChatMessage (b443c0f36dd2).
-		db.Table("chat_images").Where("id = ?", *payload.Imageid).Update("chatmsgid", newid)
+	newid := cm.ID
+
+	if createErr != nil || newid == 0 {
+		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
 	}
 
 	var ret ChatMessageLovejunkResponse

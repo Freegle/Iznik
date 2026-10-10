@@ -5953,6 +5953,20 @@ func handlePromise(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		promisedTo = *req.Userid
 	}
 
+	// Only someone the poster already has a chat with can be promised the item. The client only
+	// offers repliers and chat contacts; this stops a direct API call promising to an arbitrary
+	// user.
+	if promisedTo != myid {
+		var chats int64
+		db.Table("chat_rooms").
+			Where("chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?))",
+				utils.CHAT_TYPE_USER2USER, myid, promisedTo, promisedTo, myid).
+			Limit(1).Count(&chats)
+		if chats == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "Can only promise to someone you have a chat with")
+		}
+	}
+
 	// REPLACE INTO - idempotent. Terms are optional: absent means NULL, exactly
 	// as before this column existed.
 	promise := map[string]interface{}{"msgid": req.ID, "userid": promisedTo}
@@ -6000,7 +6014,8 @@ func handleAcceptAgreement(c *fiber.Ctx, myid uint64, req PostMessageRequest) er
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-// handleRenege removes a promise and records reliability data.
+// handleRenege removes a promise and records reliability data. Reneging on someone who was
+// never promised the item is a no-op: no reliability record and no chat message.
 func handleRenege(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 
@@ -6028,13 +6043,16 @@ func handleRenege(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 // posts a Reneged chat message - unless the promise was to themselves, which
 // carries no record and no chat message.
 func renegePromise(db *gorm.DB, promiser uint64, promisedTo uint64, msgid uint64) {
-	if promisedTo != promiser {
-		db.Table("messages_reneged").Create(map[string]interface{}{"userid": promisedTo, "msgid": msgid})
+	// A renege only means something against an existing promise. Deleting it first and acting on
+	// the rows affected means a direct API call, or two at once, cannot write messages_reneged
+	// rows against someone who was never promised the item, damaging their reliability.
+	res := db.Table("messages_promises").Where("msgid = ? AND userid = ?", msgid, promisedTo).Delete(nil)
+	if res.Error != nil || res.RowsAffected == 0 {
+		return
 	}
 
-	db.Table("messages_promises").Where("msgid = ? AND userid = ?", msgid, promisedTo).Delete(nil)
-
 	if promisedTo != promiser {
+		db.Table("messages_reneged").Create(map[string]interface{}{"userid": promisedTo, "msgid": msgid})
 		createSystemChatMessage(db, promiser, promisedTo, msgid, utils.CHAT_MESSAGE_RENEGED)
 	}
 }

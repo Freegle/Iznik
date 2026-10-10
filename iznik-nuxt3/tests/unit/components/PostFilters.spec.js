@@ -770,14 +770,20 @@ describe('PostFilters', () => {
       // saved community. Saying "-- Nearby --" over a feed filtered to one is the same
       // mismatch, wearing the other face.
       mockMe.value.settings.browseGroup = 1
-      const wrapper = createWrapper({ forceShowFilters: true, selectedGroup: 1 })
+      const wrapper = createWrapper({
+        forceShowFilters: true,
+        selectedGroup: 1,
+      })
 
       expect(wrapper.findComponent('.group-select').props('modelValue')).toBe(1)
     })
 
     it('clears the remembered community when the member goes back to Nearby', async () => {
       mockMe.value.settings.browseGroup = 1
-      const wrapper = createWrapper({ forceShowFilters: true, selectedGroup: 1 })
+      const wrapper = createWrapper({
+        forceShowFilters: true,
+        selectedGroup: 1,
+      })
 
       pickGroup(wrapper, -1)
       await flushPromises()
@@ -793,7 +799,10 @@ describe('PostFilters', () => {
 
     it('clears it for all my communities too', async () => {
       mockMe.value.settings.browseGroup = 1
-      const wrapper = createWrapper({ forceShowFilters: true, selectedGroup: 1 })
+      const wrapper = createWrapper({
+        forceShowFilters: true,
+        selectedGroup: 1,
+      })
 
       pickGroup(wrapper, 0)
       await flushPromises()

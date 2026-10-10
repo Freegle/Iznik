@@ -822,3 +822,47 @@ func TestDeleteAdminPermissions(t *testing.T) {
 	assert.Equal(t, 200, deleteAdminStatus(t, ownerToken, id))
 	assert.False(t, adminExists(id))
 }
+
+// The Previous tab loads the history a page at a time: limit caps the page and before continues
+// from the last ADMIN of the previous page, newest first.
+func TestListAdminsPages(t *testing.T) {
+	prefix := uniquePrefix("adm_page")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	db := database.DBConn
+
+	ids := []uint64{}
+	for i := 0; i < 5; i++ {
+		id := createTestAdmin(t, modID, groupID, fmt.Sprintf("Paged %s %d", prefix, i))
+		db.Exec("UPDATE admins SET pending = 0, created = DATE_SUB(NOW(), INTERVAL ? HOUR) WHERE id = ?", 5-i, id)
+		ids = append(ids, id)
+	}
+	defer db.Exec("DELETE FROM admins WHERE groupid = ?", groupID)
+
+	page := func(url string) []uint64 {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", url+"&jwt="+modToken, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var result []map[string]interface{}
+		json2.Unmarshal(rsp(resp), &result)
+		got := []uint64{}
+		for _, a := range result {
+			got = append(got, uint64(a["id"].(float64)))
+		}
+		return got
+	}
+
+	base := fmt.Sprintf("/api/modtools/admin?groupid=%d&pending=false", groupID)
+
+	first := page(base + "&limit=2")
+	assert.Equal(t, []uint64{ids[4], ids[3]}, first, "newest two")
+
+	second := page(fmt.Sprintf("%s&limit=2&before=%d", base, first[len(first)-1]))
+	assert.Equal(t, []uint64{ids[2], ids[1]}, second, "next two")
+
+	third := page(fmt.Sprintf("%s&limit=2&before=%d", base, second[len(second)-1]))
+	assert.Equal(t, []uint64{ids[0]}, third, "the last one")
+
+	assert.Len(t, page(base), 5, "no limit still returns everything")
+}

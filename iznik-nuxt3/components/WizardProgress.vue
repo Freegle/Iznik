@@ -5,7 +5,7 @@
       <div class="wizard__progress">
         <div class="wizard__progress-bar" />
       </div>
-      <a href="#" class="wizard__dot" />
+      <a href="#" class="wizard__dot" aria-label="Step 1: What is it?" />
       <div class="wizard__info text-center">What is it?</div>
     </div>
     <div class="wizard__step" :class="{ active: activeStage === 2 }">
@@ -13,7 +13,7 @@
       <div class="wizard__progress">
         <div class="wizard__progress-bar" />
       </div>
-      <a href="#" class="wizard__dot" />
+      <a href="#" class="wizard__dot" aria-label="Step 2: Where are you?" />
       <div class="wizard__info text-center">Where are you?</div>
     </div>
     <div class="wizard__step" :class="{ active: activeStage === 3 }">
@@ -21,7 +21,7 @@
       <div class="wizard__progress">
         <div class="wizard__progress-bar" />
       </div>
-      <a href="#" class="wizard__dot" />
+      <a href="#" class="wizard__dot" aria-label="Step 3: Who are you?" />
       <div class="wizard__info text-center">Who are you?</div>
     </div>
   </div>

@@ -199,6 +199,78 @@ class ScheduledOutcomeRegistry
 
             // ---- Cursor/queue: is a worker stuck (backlog piling up)? -------
 
+            // embeddings:generate (every 5 min) embeds each live post in messages_spatial that
+            // has no messages_embeddings row; without one the post is invisible to vector
+            // search and to the matched-posts email. Nothing throws when it falls behind, so
+            // two checks watch it from outside, on the exact predicate the command uses.
+            //
+            // Lag: a post that arrived between the lookback horizon and the max age and still
+            // has no embedding was passed over by several runs. The horizon matters: a
+            // handful of posts can never be embedded (about 0.8% of live posts at the last
+            // count), and once they age past it they stop counting, so they cannot hold the
+            // check red forever.
+            (new BacklogCheck(
+                'embeddings:generate',
+                'messages_spatial as ms',
+                'ms.arrival',
+                (int) config('freegle.monitoring.embeddings_lag_max_age_minutes', 30),
+                fn ($q) => $q
+                    ->leftJoin('messages_embeddings as me', 'me.msgid', '=', 'ms.msgid')
+                    ->whereNull('me.msgid')
+                    ->where('ms.successful', 0)
+                    ->where('ms.promised', 0)
+                    ->where('ms.arrival', '>=', Carbon::now()->subHours(
+                        (int) config('freegle.monitoring.embeddings_lag_lookback_hours', 6)
+                    )),
+                (int) config('freegle.monitoring.embeddings_lag_threshold', 5),
+            ))
+                ->describedAs('New live posts getting embedded for vector search')
+                ->inCategory('cursor-staleness'),
+
+            // Coverage: the share of live posts that carry an embedding. This catches the slow
+            // slide the lag check cannot, such as the embedder failing on a class of posts, or
+            // a model change that leaves old rows behind.
+            (new CallbackCheck(
+                'embeddings:generate coverage',
+                function (CarbonInterface $now) {
+                    $slug = 'embeddings:generate coverage';
+
+                    $live = DB::table('messages_spatial')
+                        ->where('successful', 0)
+                        ->where('promised', 0)
+                        ->count();
+
+                    if ($live === 0) {
+                        return OutcomeResult::skipped($slug, 'no live posts in messages_spatial');
+                    }
+
+                    $embedded = DB::table('messages_spatial as ms')
+                        ->join('messages_embeddings as me', 'me.msgid', '=', 'ms.msgid')
+                        ->where('ms.successful', 0)
+                        ->where('ms.promised', 0)
+                        ->count();
+
+                    $percent = round(100 * $embedded / $live, 1);
+                    $floor = (float) config('freegle.monitoring.embeddings_min_coverage_percent', 97);
+                    $missing = $live - $embedded;
+
+                    if ($percent < $floor) {
+                        return OutcomeResult::breach(
+                            $slug,
+                            "only {$percent}% of {$live} live posts have an embedding "
+                            ."({$missing} missing, floor {$floor}%) - is embeddings:generate failing?"
+                        );
+                    }
+
+                    return OutcomeResult::ok(
+                        $slug,
+                        "{$percent}% of {$live} live posts have an embedding (floor {$floor}%)"
+                    );
+                }
+            ))
+                ->describedAs('Live posts carrying a subject embedding')
+                ->inCategory('cursor-staleness'),
+
             // queue:background-tasks drains the Go-API -> Laravel task bridge.
             (new BacklogCheck(
                 'queue:background-tasks',
