@@ -8,7 +8,9 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Process;
 use RuntimeException;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'spatial:update-data')]
 class UpdateSpatialDataCommand extends Command
 {
     /**

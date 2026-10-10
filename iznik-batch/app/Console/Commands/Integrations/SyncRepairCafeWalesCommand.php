@@ -6,7 +6,9 @@ use App\Services\RepairCafeWalesService;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'integrations:sync-repaircafewales')]
 class SyncRepairCafeWalesCommand extends Command
 {
     protected $signature = 'integrations:sync-repaircafewales

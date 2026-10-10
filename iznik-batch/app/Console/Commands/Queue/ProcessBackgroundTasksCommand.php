@@ -34,6 +34,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Processes background tasks queued by the Go API server.
@@ -43,6 +44,7 @@ use Illuminate\Support\Str;
  *
  * Runs as a daemon via supervisor or the Laravel scheduler.
  */
+#[AsCommand(name: 'queue:background-tasks')]
 class ProcessBackgroundTasksCommand extends Command
 {
     use GracefulShutdown;

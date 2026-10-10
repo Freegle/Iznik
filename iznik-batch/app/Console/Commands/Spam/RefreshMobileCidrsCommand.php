@@ -4,7 +4,9 @@ namespace App\Console\Commands\Spam;
 
 use App\Services\MobileNetworkService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'spam:refresh-mobile-cidrs')]
 class RefreshMobileCidrsCommand extends Command
 {
     protected $signature = 'spam:refresh-mobile-cidrs';

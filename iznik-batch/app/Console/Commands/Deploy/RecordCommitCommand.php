@@ -4,6 +4,7 @@ namespace App\Console\Commands\Deploy;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Record the currently-deployed Laravel git commit SHA into the config table
@@ -18,6 +19,7 @@ use Illuminate\Support\Facades\DB;
  * The monitor-fsm "verified-live" gate compares this against a merged PR's commit
  * to decide a fix is actually live before replying on the reporter's Discourse post.
  */
+#[AsCommand(name: 'deploy:record-commit')]
 class RecordCommitCommand extends Command
 {
     protected $signature = 'deploy:record-commit';

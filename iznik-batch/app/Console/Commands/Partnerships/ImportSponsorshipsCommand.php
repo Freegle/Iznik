@@ -5,6 +5,7 @@ namespace App\Console\Commands\Partnerships;
 use App\Services\AuthorityStatsService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Brings council sponsorships set up before the Partnerships page existed onto it, so the
@@ -22,6 +23,7 @@ use Illuminate\Support\Facades\DB;
  *   php artisan partnerships:import-sponsorships --dry-run
  *   php artisan partnerships:import-sponsorships --map="Norfolk Recycles=12345"
  */
+#[AsCommand(name: 'partnerships:import-sponsorships')]
 class ImportSponsorshipsCommand extends Command
 {
     protected $signature = 'partnerships:import-sponsorships

@@ -8,7 +8,9 @@ use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'groups:alert-no-messages')]
 class AlertNoMessagesCommand extends Command
 {
     use LogsBatchJob;

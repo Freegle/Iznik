@@ -5,6 +5,7 @@ namespace App\Console\Commands\Eee;
 use App\Services\ElectricalsStatsService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Generate the payload for the public /electricals page.
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\DB;
  *   php artisan electricals:stats
  *   php artisan electricals:stats --dry-run --pretty
  */
+#[AsCommand(name: 'electricals:stats')]
 class ElectricalsStatsCommand extends Command
 {
     protected $signature = 'electricals:stats

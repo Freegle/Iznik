@@ -6,7 +6,9 @@ use App\Console\Concerns\PreventsOverlapping;
 use App\Services\GiftAidClaimService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'donations:update-giftaid')]
 class UpdateGiftAidCommand extends Command
 {
     use PreventsOverlapping;

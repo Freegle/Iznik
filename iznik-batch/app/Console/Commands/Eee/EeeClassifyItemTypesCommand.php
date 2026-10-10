@@ -7,6 +7,7 @@ use App\Services\EeeSqliteService;
 use App\Services\EeeVisionService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Build the item-type lookup cache by sampling images per type.
@@ -18,6 +19,7 @@ use Illuminate\Support\Facades\DB;
  *   php artisan eee:classify-item-types --limit=500 --force
  *   php artisan eee:classify-item-types --limit=5 --dry-run
  */
+#[AsCommand(name: 'eee:classify-item-types')]
 class EeeClassifyItemTypesCommand extends Command
 {
     protected $signature = 'eee:classify-item-types

@@ -5,7 +5,9 @@ namespace App\Console\Commands\Newsfeed;
 use App\Services\NewsfeedLinkPreviewService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'newsfeed:generate-link-previews')]
 class GenerateLinkPreviewsCommand extends Command
 {
     protected $signature = 'newsfeed:generate-link-previews

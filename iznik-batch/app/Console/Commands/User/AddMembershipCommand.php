@@ -5,7 +5,9 @@ namespace App\Console\Commands\User;
 use Illuminate\Console\Command;
 use App\Services\Ripple\ReachMemberQueueService;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'user:add-membership')]
 class AddMembershipCommand extends Command
 {
     protected $signature = 'user:add-membership

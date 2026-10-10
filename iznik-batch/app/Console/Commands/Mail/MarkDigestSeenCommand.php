@@ -4,6 +4,7 @@ namespace App\Console\Commands\Mail;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Turn "the member opened/clicked a digest" into a per-(member, post) "seen" signal.
@@ -25,6 +26,7 @@ use Illuminate\Support\Facades\DB;
  * clicks and AMP opens promptly but image opens late; the fold command calls this one over a
  * look-back long enough to cover every open it applied.
  */
+#[AsCommand(name: 'mail:digest:mark-seen')]
 class MarkDigestSeenCommand extends Command
 {
     protected $signature = 'mail:digest:mark-seen

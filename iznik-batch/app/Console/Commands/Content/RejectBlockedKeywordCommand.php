@@ -6,6 +6,7 @@ use App\Services\BlockedKeywordBackfillService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Re-applies Freegle-wide 'block' concern keywords to recent chat messages and posts.
@@ -14,6 +15,7 @@ use Illuminate\Support\Facades\DB;
  * concern_keyword_backfill task for the last 24 hours). This command is the manual form:
  * a wider window, a dry run, or one keyword at a time.
  */
+#[AsCommand(name: 'content:reject-blocked-keyword')]
 class RejectBlockedKeywordCommand extends Command
 {
     protected $signature = 'content:reject-blocked-keyword

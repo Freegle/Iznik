@@ -5,7 +5,9 @@ namespace App\Console\Commands\Donation;
 use App\Services\DonationService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:donations:thank')]
 class ThankDonorsCommand extends Command
 {
     /**

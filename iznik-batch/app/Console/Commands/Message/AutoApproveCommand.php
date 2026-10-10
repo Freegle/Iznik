@@ -6,7 +6,9 @@ use App\Services\AutoApproveService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'messages:auto-approve')]
 class AutoApproveCommand extends Command
 {
     use GracefulShutdown;

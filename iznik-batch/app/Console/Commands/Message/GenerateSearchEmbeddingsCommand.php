@@ -8,6 +8,7 @@ use App\Traits\SingleInstanceLock;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Embeds saved search terms that have no row in users_searches_embeddings, or
@@ -21,6 +22,7 @@ use Illuminate\Support\Facades\Log;
  * cosines sit on the same scale and the matched-posts threshold means the same
  * thing against both. See EmbeddingService::processSearches.
  */
+#[AsCommand(name: 'embeddings:searches')]
 class GenerateSearchEmbeddingsCommand extends Command
 {
     use GracefulShutdown;

@@ -7,7 +7,9 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Process;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'deploy:refresh')]
 class RefreshCommand extends Command
 {
     protected $signature = 'deploy:refresh';

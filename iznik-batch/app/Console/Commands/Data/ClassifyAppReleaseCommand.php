@@ -6,6 +6,7 @@ use App\Services\AppReleaseClassifierService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Command to classify app release urgency and optionally send notification.
@@ -19,6 +20,7 @@ use Illuminate\Support\Facades\Log;
  *
  * Use --json to get machine-readable output for CI integration.
  */
+#[AsCommand(name: 'data:classify-app-release')]
 class ClassifyAppReleaseCommand extends Command
 {
     use GracefulShutdown;

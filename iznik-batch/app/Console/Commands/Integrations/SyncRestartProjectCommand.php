@@ -6,7 +6,9 @@ use App\Services\RestartProjectService;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'integrations:sync-restartproject')]
 class SyncRestartProjectCommand extends Command
 {
     protected $signature = 'integrations:sync-restartproject

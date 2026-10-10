@@ -8,6 +8,7 @@ use App\Monitoring\HostCommandRunner;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Takes the nightly physical database backup, replacing the shell script that has lived on
@@ -44,6 +45,7 @@ use Illuminate\Support\Facades\Mail;
  *    take is fatal. A backup taken on a node still inside flow control stalls the whole
  *    cluster's writes for the duration, which is worse than no backup.
  */
+#[AsCommand(name: 'backup:database')]
 class DatabaseBackupCommand extends Command
 {
     protected $signature = 'backup:database

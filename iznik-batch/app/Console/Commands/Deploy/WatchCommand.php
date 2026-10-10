@@ -4,7 +4,9 @@ namespace App\Console\Commands\Deploy;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'deploy:watch')]
 class WatchCommand extends Command
 {
     protected $signature = 'deploy:watch

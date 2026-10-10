@@ -4,12 +4,14 @@ namespace App\Console\Commands\Location;
 
 use App\Services\DoogalService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Add new UK postcodes and refresh changed lat/lng from the Doogal Code-Point
  * dataset. Faithful migration of V1 scripts/cli/doogal.php and the cron/doogal
  * wrapper (which downloaded + unzipped the CSV before running it).
  */
+#[AsCommand(name: 'locations:update-postcodes')]
 class UpdatePostcodesCommand extends Command
 {
     protected $signature = 'locations:update-postcodes

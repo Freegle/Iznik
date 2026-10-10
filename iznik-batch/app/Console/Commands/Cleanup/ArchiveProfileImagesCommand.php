@@ -5,7 +5,9 @@ namespace App\Console\Commands\Cleanup;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'cleanup:archive-profile-images')]
 class ArchiveProfileImagesCommand extends Command
 {
     protected $signature = 'cleanup:archive-profile-images

@@ -10,6 +10,7 @@ use App\Services\UnifiedDigestService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Send the daily new-posts push notification.
@@ -25,6 +26,7 @@ use Illuminate\Support\Facades\Log;
  * Once-per-London-day guard prevents duplicate sends if the scheduler fires
  * multiple times. An explicit --user bypasses the guard and the allowlist.
  */
+#[AsCommand(name: 'push:daily-posts')]
 class SendDailyPostsPushCommand extends Command
 {
     use GracefulShutdown;

@@ -5,6 +5,7 @@ namespace App\Console\Commands\Eee;
 use App\Services\EeeSqliteService;
 use App\Services\EeeVisionService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Re-run API calls for canonical sample images where key fields are null.
@@ -20,6 +21,7 @@ use Illuminate\Console\Command;
  *   php artisan eee:retry-completeness --fields=brand,model_number
  *   php artisan eee:retry-completeness --prompt-version=1.4.1 --dry-run
  */
+#[AsCommand(name: 'eee:retry-completeness')]
 class EeeRetryCompletenessCommand extends Command
 {
     protected $signature = 'eee:retry-completeness

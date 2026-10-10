@@ -7,7 +7,9 @@ use App\Services\EngageUpdateService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'users:update-engagement')]
 class UpdateEngagementCommand extends Command
 {
     use PreventsOverlapping;

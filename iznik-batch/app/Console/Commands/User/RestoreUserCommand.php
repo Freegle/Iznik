@@ -5,6 +5,7 @@ namespace App\Console\Commands\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Restore a user from a JSON dump file produced by user:dump.
@@ -13,6 +14,7 @@ use Illuminate\Support\Facades\Log;
  *
  * Usage: php artisan user:restore --input=/tmp/user-dump.json
  */
+#[AsCommand(name: 'user:restore')]
 class RestoreUserCommand extends Command
 {
     protected $signature = 'user:restore

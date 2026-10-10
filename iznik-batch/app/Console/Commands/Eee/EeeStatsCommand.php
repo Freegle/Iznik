@@ -5,6 +5,7 @@ namespace App\Console\Commands\Eee;
 use App\Services\EeeSqliteService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Config;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Generate the EEE stats JSON consumed by the public stats web page.
@@ -15,6 +16,7 @@ use Illuminate\Support\Facades\Config;
  *
  *   php artisan eee:stats --output=storage/app/public/eee-stats.json
  */
+#[AsCommand(name: 'eee:stats')]
 class EeeStatsCommand extends Command
 {
     protected $signature = 'eee:stats

@@ -5,7 +5,9 @@ namespace App\Console\Commands\Group;
 use App\Services\GroupStatsService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'groups:update-stats')]
 class UpdateStatsCommand extends Command
 {
     protected $signature = 'groups:update-stats

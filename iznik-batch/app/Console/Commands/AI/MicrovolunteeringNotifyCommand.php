@@ -6,7 +6,9 @@ use App\Services\MicrovolunteeringNotifyService;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'microvolunteering:notify')]
 class MicrovolunteeringNotifyCommand extends Command
 {
     use LogsBatchJob;

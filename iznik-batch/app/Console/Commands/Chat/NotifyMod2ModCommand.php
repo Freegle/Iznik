@@ -9,7 +9,9 @@ use App\Services\EmailSpoolerService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:chat:mod2mod')]
 class NotifyMod2ModCommand extends Command
 {
     use GracefulShutdown;

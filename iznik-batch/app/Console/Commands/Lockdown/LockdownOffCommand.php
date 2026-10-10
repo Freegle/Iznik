@@ -5,6 +5,7 @@ namespace App\Console\Commands\Lockdown;
 use App\Services\Lockdown\LockdownFilterSpoolService;
 use App\Services\Lockdown\LockdownService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Lift some or all surfaces, or close the incident outright (plan
@@ -26,6 +27,7 @@ use Illuminate\Console\Command;
  * accepted from a marked actor before the press remains the manual runbook step (section
  * 10.14: postsuper on the relay host).
  */
+#[AsCommand(name: 'lockdown:off')]
 class LockdownOffCommand extends Command
 {
     protected $signature = 'lockdown:off

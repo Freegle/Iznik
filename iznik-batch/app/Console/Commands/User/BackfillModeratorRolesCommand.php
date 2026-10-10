@@ -7,6 +7,7 @@ use App\Traits\GracefulShutdown;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * One-off backfill: demote users whose users.systemrole is 'Moderator' but who
@@ -15,6 +16,7 @@ use Illuminate\Support\Facades\Log;
  * The ongoing fix now lives in the Go API (user.SyncSystemRole on leave/ban);
  * this command clears the ~800 rows that accumulated while it was missing.
  */
+#[AsCommand(name: 'users:backfill-moderator-roles')]
 class BackfillModeratorRolesCommand extends Command
 {
     use GracefulShutdown, LogsBatchJob;

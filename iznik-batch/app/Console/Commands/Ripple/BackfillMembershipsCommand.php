@@ -6,6 +6,7 @@ use App\Console\Concerns\PreventsOverlapping;
 use App\Services\Ripple\RippleMembershipBackfillService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Backfill the Rippling Out auto-join mitigations onto members auto-joined before they existed:
@@ -13,6 +14,7 @@ use Illuminate\Support\Facades\Log;
  * (once per user). DRY-RUN BY DEFAULT - reports what it would do and changes nothing; pass --send
  * to actually apply changes and send the intro emails.
  */
+#[AsCommand(name: 'ripple:backfill-memberships')]
 class BackfillMembershipsCommand extends Command
 {
     use PreventsOverlapping;

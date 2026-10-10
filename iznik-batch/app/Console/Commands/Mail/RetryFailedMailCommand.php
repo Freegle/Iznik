@@ -5,6 +5,7 @@ namespace App\Console\Commands\Mail;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Re-drive mail SpoolMail jobs that have landed in failed_jobs.
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\DB;
  *
  * Scoped to SpoolMail jobs so it won't disturb any other failed jobs.
  */
+#[AsCommand(name: 'mail:retry-failed')]
 class RetryFailedMailCommand extends Command
 {
     protected $signature = 'mail:retry-failed

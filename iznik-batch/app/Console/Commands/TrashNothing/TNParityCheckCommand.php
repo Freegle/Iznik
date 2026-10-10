@@ -12,6 +12,7 @@ use App\Services\TrashNothing\Sync\PostSyncer;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * On-demand parity check: runs the legacy email path and the new API path
@@ -45,6 +46,7 @@ use Illuminate\Support\Facades\Log;
  *     each WAN round trip is also the dominant cost of a wide date window.
  * SpamAssassin is skipped when FREEGLE_TRASHNOTHING_SECRET is configured.
  */
+#[AsCommand(name: 'tn:parity-check')]
 class TNParityCheckCommand extends Command
 {
     private const POST_ID_PREFIX = 'post_id=';
