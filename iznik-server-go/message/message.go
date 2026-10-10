@@ -6707,9 +6707,11 @@ const withdrawnByHomeLogText = "Withdrawn: the home community moved this post ba
 
 // moderatorApprovedElsewhere returns the groups, other than the ones the moderator is acting
 // on, where the post is live and Approved by a moderator's hand (approvedby set). Automatic
-// approvals and rippled-in copies leave approvedby NULL, so they are never in the list.
+// approvals and rippled-in copies leave approvedby NULL, so they are never in the list. Read
+// from the write host, because the caller writes on its answer and an approval made moments
+// earlier may not have reached the read node yet.
 func moderatorApprovedElsewhere(db *gorm.DB, msgid uint64, acting []uint64) []uint64 {
-	q := db.Table("messages_groups").Select("groupid").
+	q := db.Clauses(dbresolver.Write).Table("messages_groups").Select("groupid").
 		Where("msgid = ? AND collection = ? AND deleted = 0 AND approvedby IS NOT NULL", msgid, utils.COLLECTION_APPROVED)
 	if len(acting) > 0 {
 		q = q.Where("groupid NOT IN ?", acting)
