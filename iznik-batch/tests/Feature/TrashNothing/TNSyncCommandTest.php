@@ -25,6 +25,15 @@ use Tests\TestCase;
  * memory accumulation. 28+ artisan() calls in one process exhaust the heap
  * because PHP's zend_mm doubles its segment size on each expansion attempt.
  */
+/**
+ * Runs in one process, like every other class. It used to run each test in its
+ * own process, and before that to force a garbage collection around each test,
+ * to get round memory that accumulated across artisan() calls in early versions
+ * of the command. Neither is needed now, and both were expensive: a process per
+ * test cost a PHP start and an application boot each, and a forced collection
+ * late in the suite walks the hundreds of megabytes of coverage data PHPUnit is
+ * holding by then, about 150ms a time.
+ */
 class TNSyncCommandTest extends TestCase
 {
     private const DATE_SYNC = '2026-03-20T10:00:00+00:00';
@@ -37,14 +46,6 @@ class TNSyncCommandTest extends TestCase
 
     protected function setUp(): void
     {
-        // Free cyclic garbage from the previous test (or a crashed test that skipped tearDown).
-        // Each artisan() call boots a full Laravel kernel with many cyclic references that
-        // PHP's reference counter won't collect automatically; gc_collect_cycles() does.
-        // With it the whole class runs in one process in under 60MB. It used to run each
-        // test in its own process to get round the memory that accumulated without it,
-        // which cost a full PHP start and application boot per test.
-        gc_collect_cycles();
-
         parent::setUp();
 
         // tn:sync logs as it goes. Swap in a NullLogger so none of that reaches the
@@ -68,11 +69,6 @@ class TNSyncCommandTest extends TestCase
         }
 
         parent::tearDown();
-
-        // Force collection of cyclic references left by Laravel's service container
-        // and Eloquent after each artisan() run, so they do not accumulate across the
-        // tests in this class. See setUp().
-        gc_collect_cycles();
     }
 
     // =========================================================================
