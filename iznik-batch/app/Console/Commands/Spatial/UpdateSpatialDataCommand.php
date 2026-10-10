@@ -259,8 +259,13 @@ class UpdateSpatialDataCommand extends Command
         }
 
         try {
+            // The escape argument is passed explicitly (as its long-standing
+            // default) because PHP 8.4 raises a deprecation on every call that
+            // relies on the default. Reading a 40,000-row file that way raised
+            // 40,000 deprecations, each routed through the error handler, which
+            // took four times longer than the parsing itself.
             // Read header
-            $header = fgetcsv($handle);
+            $header = fgetcsv($handle, escape: '\\');
             if (!$header || count($header) < 3) {
                 throw new RuntimeException("CSV header invalid or missing");
             }
@@ -277,7 +282,7 @@ class UpdateSpatialDataCommand extends Command
             $niRows = 0;
             $outOfBounds = 0;
 
-            while (($row = fgetcsv($handle)) !== false) {
+            while (($row = fgetcsv($handle, escape: '\\')) !== false) {
                 if (count($row) < 3) {
                     continue;
                 }

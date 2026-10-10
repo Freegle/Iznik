@@ -108,8 +108,10 @@ class NotifyUser2UserCommand extends Command
 
             if ($count > 0) {
                 $this->info("Sent {$count} notifications.");
-            } else {
-                // No messages to process, sleep before next iteration.
+            } elseif ($iteration < $maxIterations) {
+                // No messages to process, sleep before the next iteration. There is
+                // no next iteration after the last one, so do not sleep then: a
+                // --max-iterations=1 run used to idle for a second before exiting.
                 sleep(1);
             }
         } while ($iteration < $maxIterations);

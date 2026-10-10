@@ -113,7 +113,11 @@ class ProcessBackgroundTasksCommand extends Command
 
             $processed = $this->processIteration($limit, $pushService, $spooler, $shouldSpool);
 
-            if ($processed === 0) {
+            // Idle: sleep before polling again, unless this was the last iteration,
+            // in which case there is nothing to wait for. A --max-iterations=1 run
+            // used to idle for the full --sleep before exiting.
+            $lastIteration = $maxIterations > 0 && $iteration >= $maxIterations;
+            if ($processed === 0 && ! $lastIteration) {
                 sleep($sleepSeconds);
             }
         }

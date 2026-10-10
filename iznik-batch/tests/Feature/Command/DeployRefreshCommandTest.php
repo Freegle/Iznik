@@ -5,10 +5,23 @@ namespace Tests\Feature\Command;
 use App\Console\Commands\Deploy\RefreshCommand;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Process;
 use Tests\TestCase;
 
 class DeployRefreshCommandTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // deploy:refresh shells out to supervisorctl to restart the spooler
+        // workers. Inside the test container that is the real supervisor: it
+        // would start the workers the test runner deliberately stopped, and
+        // block on supervisor's startsecs for each. Fake the processes and
+        // assert on what was run instead.
+        Process::fake();
+    }
+
     /**
      * Test that deploy:refresh runs successfully and produces expected output.
      *
@@ -61,7 +74,10 @@ class DeployRefreshCommandTest extends TestCase
     {
         $this->artisan('deploy:refresh')
             ->expectsOutput('Restarting supervisor programs...')
+            ->expectsOutputToContain('✓ mail-spooler:*')
             ->assertSuccessful();
+
+        Process::assertRan(fn ($process) => str_contains($process->command, 'supervisorctl restart mail-spooler:*'));
     }
 
     public function test_records_deployed_version(): void

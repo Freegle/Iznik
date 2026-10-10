@@ -122,8 +122,9 @@ class NotifyMod2ModCommand extends Command
             } else {
                 if ($runOnce) {
                     $this->info("No messages to notify.");
-                } else {
-                    // No messages to process, sleep before next iteration.
+                } elseif ($iteration < $maxIterations) {
+                    // No messages to process, sleep before the next iteration. There
+                    // is no next iteration after the last one, so do not sleep then.
                     sleep(1);
                 }
             }

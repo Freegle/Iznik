@@ -5,6 +5,7 @@ namespace Tests\Feature\Spam;
 use App\Services\MobileNetworkService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Sleep;
 use Tests\TestCase;
 
 /**
@@ -96,6 +97,9 @@ class RefreshMobileCidrsCommandTest extends TestCase
     public function test_survives_ripestat_failure_for_one_asn(): void
     {
         DB::table('spam_whitelist_ips')->where('comment', 'like', 'UK mobile:%')->delete();
+        // Each failed RIPEstat call is retried after a 500ms pause. The retries
+        // still happen; only the pause between them is faked away.
+        Sleep::fake();
         // RIPEstat returns 500 — the command should not error out the whole run.
         Http::fake([
             'stat.ripe.net/*' => Http::response('upstream error', 500),
@@ -155,6 +159,9 @@ class RefreshMobileCidrsCommandTest extends TestCase
     public function test_survives_cloudflare_fetch_failure(): void
     {
         DB::table('spam_whitelist_ips')->where('comment', MobileNetworkService::CLOUDFLARE_COMMENT)->delete();
+        // The failed Cloudflare call is retried after a 500ms pause. The retry
+        // still happens; only the pause is faked away.
+        Sleep::fake();
         Http::fake([
             'stat.ripe.net/*' => Http::response([
                 'data' => ['prefixes' => [['prefix' => '149.254.0.0/16']]],

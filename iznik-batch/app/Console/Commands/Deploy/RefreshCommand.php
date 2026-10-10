@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Process;
 
 class RefreshCommand extends Command
 {
@@ -151,9 +152,11 @@ class RefreshCommand extends Command
         $this->newLine();
         $this->info('Restarting supervisor programs...');
 
-        // Check if supervisorctl is available.
-        exec('which supervisorctl 2>/dev/null', $output, $returnCode);
-        if ($returnCode !== 0) {
+        // Check if supervisorctl is available. Through the Process facade (not
+        // exec) so a test can Process::fake() it: a real restart from inside the
+        // test suite starts the container's spooler workers mid-run, and waits
+        // on supervisor's startsecs for each one.
+        if (! Process::run('which supervisorctl 2>/dev/null')->successful()) {
             $this->line('  <comment>⚠</comment> supervisorctl not available');
 
             return;
@@ -166,12 +169,12 @@ class RefreshCommand extends Command
 
     protected function restartProgram(string $program): void
     {
-        exec("supervisorctl restart {$program} 2>&1", $output, $returnCode);
+        $result = Process::run("supervisorctl restart {$program} 2>&1");
 
-        if ($returnCode === 0) {
+        if ($result->successful()) {
             $this->line("  <info>✓</info> {$program}");
         } else {
-            $this->line("  <comment>⚠</comment> {$program}: ".implode(' ', $output));
+            $this->line("  <comment>⚠</comment> {$program}: ".str_replace("\n", ' ', trim($result->output())));
         }
     }
 

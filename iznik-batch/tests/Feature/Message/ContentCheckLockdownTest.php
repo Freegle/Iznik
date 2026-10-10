@@ -237,10 +237,11 @@ class ContentCheckLockdownTest extends TestCase
         // decision path, just without the overhead of createTestGroup()/createTestUser()
         // per row that the other tests here use.
         // More than one batch, so the release has to go round more than once in one run.
+        // Three multi-row inserts rather than three round trips per post.
         $total = LockdownHoldsService::RELEASE_BATCH_SIZE + 5;
-        $msgids = [];
+        $rows = [];
         for ($i = 0; $i < $total; $i++) {
-            $msgid = DB::table('messages')->insertGetId([
+            $rows[] = [
                 'fromuser' => $user->id,
                 'type' => 'Offer',
                 'subject' => "OFFER: Pacing test item {$i} (SW1A)",
@@ -251,26 +252,27 @@ class ContentCheckLockdownTest extends TestCase
                 'source' => 'Platform',
                 'lat' => 51.50,
                 'lng' => -0.13,
-            ]);
-
-            DB::table('messages_groups')->insert([
-                'msgid' => $msgid,
-                'groupid' => $group->id,
-                'collection' => MessageGroup::COLLECTION_PENDING,
-                'arrival' => now()->subHours(2),
-                'deleted' => 0,
-            ]);
-
-            DB::table('lockdown_holds')->insert([
-                'lockdownid' => $this->lockdown->incidentId(),
-                'kind' => LockdownHoldsService::KIND_POST,
-                'refid' => $msgid,
-                'userid' => $user->id,
-                'created' => now(),
-            ]);
-
-            $msgids[] = $msgid;
+            ];
         }
+        DB::table('messages')->insert($rows);
+        $msgids = DB::table('messages')->where('fromuser', $user->id)->orderBy('id')->pluck('id')->all();
+        $this->assertCount($total, $msgids);
+
+        DB::table('messages_groups')->insert(array_map(fn ($msgid) => [
+            'msgid' => $msgid,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now()->subHours(2),
+            'deleted' => 0,
+        ], $msgids));
+
+        DB::table('lockdown_holds')->insert(array_map(fn ($msgid) => [
+            'lockdownid' => $this->lockdown->incidentId(),
+            'kind' => LockdownHoldsService::KIND_POST,
+            'refid' => $msgid,
+            'userid' => $user->id,
+            'created' => now(),
+        ], $msgids));
 
         $this->lockdown->setSurfaces(['posts' => false], null);
 

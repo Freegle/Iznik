@@ -4,6 +4,7 @@ namespace Tests\Unit\Services\WorkerPool;
 
 use App\Services\WorkerPool\BoundedPool;
 use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Sleep;
 use Tests\TestCase;
 
 /**
@@ -24,6 +25,11 @@ class BoundedPoolResilienceTest extends TestCase
     {
         parent::setUp();
         $this->testPoolName = 'test_resilience_'.uniqid('', true);
+
+        // Every Redis call here fails, so the pool retries each one with its real
+        // backoff (50ms then 200ms). The retries still happen; only the waiting
+        // between them is faked away.
+        Sleep::fake();
 
         // Reset the per-pool throttle so each test sees a fresh report window.
         $reflection = new \ReflectionClass(BoundedPool::class);
