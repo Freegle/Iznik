@@ -186,6 +186,18 @@ which carries `_ckyStore._categories` with a `cookies` list per slug; `other` is
 uncategorised group. `CookieYesPublishedBanner` reads it. The scan results are fine for
 scan age and page counts, and as a log line.
 
+## A schema check on the read connection can miss a table you just created
+
+`DB::select`/`selectOne` go to the read node, and DDL done a moment earlier on the write node
+may not have reached it - most of all while db2 donates the nightly 04:00 backup and lags. The
+WhatJobs sync checked `information_schema` for `jobs_new.visible_cpc` that way, saw nothing on a
+table the write node had just created with the index, and the add failed with 1061, stopping
+the 04:40 sync that feeds the morning digest (Sentry BATCH-9V, 2026-10-10).
+
+`Schema::hasIndex`/`hasColumn`/`getIndexes` read through `selectFromWriteConnection`; use them,
+or pass `false` as the third argument to `select`, for any check that follows your own DDL.
+Making the change itself tolerate "already there" is cheaper still.
+
 ## See also
 
 - `.claude/rules/go-api-traps.md` - the same class of silent wrong answer on the Go side.

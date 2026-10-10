@@ -16,6 +16,8 @@ use App\Database\Expressions\StAsText;
 use App\Database\Expressions\StEnvelope;
 use App\Database\Expressions\StGeomFromText;
 use App\Database\Expressions\Value;
+use Illuminate\Database\QueryException;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -1613,13 +1615,28 @@ class WhatJobsService
         // the empty replacement table, rather than by ALTER on the live 0.5 GB jobs table under
         // Galera. Once the first swap after deploy has run, every later jobs_new inherits it
         // through LIKE; the check keeps this a no-op from then on.
-        $hasIndex = DB::selectOne(
-            'SELECT COUNT(*) AS n FROM information_schema.statistics
-             WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?',
-            ['jobs_new', 'visible_cpc']
-        );
-        if ((int) ($hasIndex->n ?? 0) === 0) {
-            DB::statement('ALTER TABLE jobs_new ADD INDEX visible_cpc (visible, cpc)');
+        //
+        // The check must see the write node: jobs_new was created there a moment ago and the read
+        // node can lag it - badly while db2 donates the nightly backup, which is exactly when the
+        // 04:40 sync runs - so a read-node check saw no index and the add then failed on the write
+        // node with 1061. Schema::hasIndex reads through the write connection.
+        if (! Schema::hasIndex('jobs_new', 'visible_cpc')) {
+            $this->addVisibleCpcIndex();
+        }
+    }
+
+    /**
+     * Add visible_cpc to jobs_new, treating "already there" (MySQL 1061) as done: the index
+     * existing is the result wanted, whatever the check above saw.
+     */
+    public function addVisibleCpcIndex(): void
+    {
+        try {
+            Schema::table('jobs_new', fn (Blueprint $table) => $table->index(['visible', 'cpc'], 'visible_cpc'));
+        } catch (QueryException $e) {
+            if ((int) ($e->errorInfo[1] ?? 0) !== 1061) {
+                throw $e;
+            }
         }
     }
 
