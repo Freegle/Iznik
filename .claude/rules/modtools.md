@@ -186,3 +186,12 @@ days, has the request headers under `request_headers` and joins on `request_id`.
 `query_range`, `direction=forward`, at most 5000 lines per call; a line filter over the whole
 retention is slow and a paged pull across the busy hours will time out silently, so bound each
 call to a day or an hour.
+
+## A Mod2Mod chat has no user1 or user2
+
+A moderators' chat (`chattype = 'Mod2Mod'`) belongs to its group and has `user1` and `user2`
+NULL. Any check that treats "no user1 and no user2" as "the chat does not exist" returns 404 to
+every moderator, with the room and the access rules both fine. `GET /chat/:id/message` did this
+from 2026-03-20 (fd3a6c755), and posting from 2026-03-28 (70bdee1f4). Test existence by the row's
+`id`, then gate with `canSeeChatRoom` plus `mod2ModAllowed` (active moderators only, as
+`listChats`).
