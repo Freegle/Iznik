@@ -44,6 +44,7 @@
       :stdmsgaction="stdmsgAction"
       :messageid="message?.id"
       :groupid="groupid"
+      :groupids="groupids"
       :autosend="autosend"
       @hidden="showStdMsgModal = false"
     />
@@ -58,14 +59,14 @@
         <p v-if="noMemberMessage">
           This came from Trash Nothing and the person who posted it hasn't
           joined Freegle, so there's nobody to send a message to. Rejecting just
-          takes it off <strong>{{ groupName || 'your community' }}</strong
+          takes it off <strong>{{ removalScope }}</strong
           >.
         </p>
         <p v-else>
           This post first appeared on another community and rippled in to yours.
           Taking it off here just stops it appearing on
-          <strong>{{ groupName || 'your community' }}</strong> - it stays on the
-          community where it was first posted.
+          <strong>{{ removalScope }}</strong> - it stays on the community where
+          it was first posted.
         </p>
         <p v-if="!noMemberMessage" class="mb-0">
           The freegler won't be told, because they don't need to know unless
@@ -171,6 +172,14 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  // Every community Approve, Reject and Delete are to act on at once, the one being looked
+  // at first (see modtools/composables/multiGroupModeration.js). Null acts on groupid
+  // alone. Hold, Release and Delete as Spam always act on groupid alone.
+  groupids: {
+    type: Array,
+    required: false,
+    default: null,
+  },
   // Whether the group being moderated is the post's home/origin group. On a
   // rippled-in (non-home) group, anything that takes the post off this community
   // scopes to this group and sends no message to the freegler, so we skip the
@@ -251,6 +260,16 @@ const groupName = computed(() => {
   return g?.namedisplay || null
 })
 
+// What a removal with no message to the member takes the post off: this community, or all
+// the ones the action is acting on.
+const removalScope = computed(() => {
+  if (props.groupids?.length > 1) {
+    return props.groupids.length + ' of your communities'
+  }
+
+  return groupName.value || 'your community'
+})
+
 const spinclass = computed(() => {
   if (props.variant === 'primary') {
     // Primary buttons have "success" (green) class.
@@ -283,7 +302,18 @@ const confirmButton = computed(() => {
 })
 
 async function approveIt() {
-  await messageStore.approve(message.value.id, groupid.value)
+  if (props.groupids) {
+    await messageStore.approve(
+      message.value.id,
+      groupid.value,
+      null,
+      null,
+      null,
+      props.groupids
+    )
+  } else {
+    await messageStore.approve(message.value.id, groupid.value)
+  }
   refreshFromUser()
   checkWorkDeferGetMessages()
 }
@@ -292,11 +322,17 @@ function deleteIt() {
   showDeleteModal.value = true
 }
 
+// The store's delete parameters, naming every community when the action is on several.
+function deleteParams(extra = {}) {
+  const params = { id: message.value.id, groupid: groupid.value, ...extra }
+  if (props.groupids) {
+    params.groupids = props.groupids
+  }
+  return params
+}
+
 async function deleteConfirmed() {
-  await messageStore.delete({
-    id: message.value.id,
-    groupid: groupid.value,
-  })
+  await messageStore.delete(deleteParams())
   refreshFromUser()
   checkWorkDeferGetMessages()
 }
@@ -316,7 +352,16 @@ async function spamConfirmed() {
 // gone), so the confirmation carries out whichever the moderator asked for.
 async function scopedRemovalConfirmed() {
   if (scopedRemoval.value === 'delete') {
-    await messageStore.delete({ id: message.value.id, groupid: groupid.value })
+    await messageStore.delete(deleteParams())
+  } else if (props.groupids) {
+    await messageStore.reject(
+      message.value.id,
+      groupid.value,
+      '',
+      null,
+      '',
+      props.groupids
+    )
   } else {
     await messageStore.reject(message.value.id, groupid.value, '', null, '')
   }

@@ -497,7 +497,10 @@ A post being **held** (shown as "held by" a moderator) is **per community**, on 
 community's own Pending copy, and only applies while the copy is Pending. It is
 **independent**: a copy being held on one community has no effect on the same post's copy on
 any other community. You approve or reject your own community's copy regardless of whether
-another community has held, approved, or rejected theirs.
+another community has held, approved, or rejected theirs. If you moderate several of the
+communities a post is waiting on, one Approve, Reject or Delete on its card acts on all of
+your copies at once - see
+[a post pending on several of your communities](moderating-posts.md#a-post-pending-on-several-of-your-communities).
 
 Because each community's copy is independent and stays put, a reported post **cannot
 flip-flop**: one community approving it will never re-create a copy on a community that has

@@ -112,6 +112,7 @@ describe('ModMessageButtons', () => {
         class="mod-message-button"
         :data-stdmsgid="String(stdmsgid)"
         :data-no-member-message="String(noMemberMessage)"
+        :data-groupids="groupids ? groupids.join(',') : ''"
         :class="{
           [variant]: true,
           approve: approve === '' || approve === true,
@@ -142,6 +143,7 @@ describe('ModMessageButtons', () => {
         'leave',
         'isHomeGroup',
         'noMemberMessage',
+        'groupids',
       ],
     },
     SpinButton: {
@@ -1078,6 +1080,43 @@ describe('ModMessageButtons', () => {
       )
       const labels = wrapper.findAll('.mod-message-button').map((b) => b.text())
       expect(labels).not.toContain('Blank Reply')
+    })
+  })
+
+  // A post pending on several of the moderator's communities: Approve, Reject, Delete and
+  // the standard messages act on all of them; Hold, Release and Delete as Spam stay on the
+  // community being looked at.
+  describe('acting on several communities', () => {
+    beforeEach(() => {
+      mockModConfigStore.configsById = { 1: createModConfig() }
+    })
+
+    function groupidsOf(wrapper, label) {
+      const button = wrapper
+        .findAll('.mod-message-button')
+        .find((b) => b.text() === label)
+      return button?.attributes('data-groupids')
+    }
+
+    it('hands the communities to Approve, Reject, Delete and the standard messages only', () => {
+      const wrapper = mountComponent({
+        groupid: 456,
+        groupids: [456, 457],
+        modconfigid: 1,
+      })
+
+      expect(groupidsOf(wrapper, 'Approve')).toBe('456,457')
+      expect(groupidsOf(wrapper, 'Reject')).toBe('456,457')
+      expect(groupidsOf(wrapper, 'Delete')).toBe('456,457')
+      expect(groupidsOf(wrapper, 'Reject Message')).toBe('456,457')
+      expect(groupidsOf(wrapper, 'Hold')).toBe('')
+      expect(groupidsOf(wrapper, 'Delete as Spam')).toBe('')
+    })
+
+    it('hands nothing on when there is one community', () => {
+      const wrapper = mountComponent({ groupid: 456, modconfigid: 1 })
+
+      expect(groupidsOf(wrapper, 'Approve')).toBe('')
     })
   })
 })
