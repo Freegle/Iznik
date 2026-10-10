@@ -2,6 +2,7 @@ const fs = require('fs')
 const path = require('path')
 const { defineConfig, devices } = require('@playwright/test')
 const { timeouts } = require('./tests/e2e/config')
+const { coverageSourcePath } = require('./tests/e2e/coverage-source-path')
 
 // Check if we have an ordered test list
 const orderedTestsFile = path.join(__dirname, 'tests/e2e/ordered-tests.txt')
@@ -136,6 +137,10 @@ module.exports = defineConfig({
                 reports: ['lcovonly'],
                 lcov: true,
                 outputDir: 'coverage',
+                // Report ModTools-owned sources at modtools/<path> so they
+                // neither collide with the main app's same-named files nor sit
+                // at paths that do not exist; see coverage-source-path.js.
+                sourcePath: coverageSourcePath,
                 entryFilter: (entry) => {
                   // Filter out entries from external domains and problematic URLs
                   if (entry.url) {

@@ -94,7 +94,22 @@ Coverage checks fail on deltas no change caused, and chasing them wastes days:
 
 - A large aggregate swing is usually a **failed build uploading fewer flags** than a good one,
   not a real drop.
-- The Playwright flag wanders between builds and has discrete states it flips between.
+- **The Playwright flag used to flip between discrete states on identical code, because the main
+  app and ModTools share file paths.** ModTools extends the main app and overrides some files
+  under the same relative path (`app.vue`, `layouts/default.vue`, `pages/index.vue`,
+  `pages/communityevents/[[groupid]].vue`, `pages/giftaid.vue`, `pages/partnerships.vue`, ...).
+  monocart strips `../` from sourcemap sources and keys its output by that path alone, so
+  whichever app's version it handled last replaced the other. That is decided by the order test
+  workers finish, so the reported `layouts/default.vue` was sometimes the 79-line main file and
+  sometimes the 805-line ModTools one (74 relevant lines instead of 10, branch lines up to 613),
+  moving the flag by up to ~1 point with 0 failed, 0 skipped tests. `coverageSourcePath` in
+  `iznik-nuxt3/tests/e2e/coverage-source-path.js` reports ModTools-owned sources at their real
+  path (`modtools/<path>`), so both versions are kept and ModTools code counts; layer files it
+  merely bundles from the main tree keep their path. (Vitest does not have this problem: its
+  coverage globs use the real `modtools/...` paths.) If a build still moves, diff
+  per-file `relevant_line_count` between two Coveralls jobs (`coveralls.io/jobs/<id>/source_files.json`):
+  a file whose count changes is a path collision, a file whose count is stable but whose covered
+  count moves is spec timing.
 - A major version upgrade of a test runner re-baselines its measurement, so the first comparison
   against master is meaningless.
 - **A decrease on a branch that DOES change files of that language is still not automatically
