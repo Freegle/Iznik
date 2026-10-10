@@ -376,10 +376,11 @@ treat out+origin_area as NO verdict and let the cell grid - which holds the unio
 A member point that does not snap to the road network answers all-`nolabels` (200), and the
 Go client trips the shared routing breaker only on 5xx faults (404/503 are expected states);
 the PHP client carries the same 5-minute breaker the drive-metrics path uses, because the
-digest asks once per recipient. The Go breaker's cooloff (`driveTimeBreakerCooloff` in
-`iznik-server-go/rippling/drivetime.go`) is a package variable, which is how
-`drivetime_test.go` proves the breaker closes again after it without waiting 30 seconds:
-the test sets it to a few milliseconds and sleeps past that.
+digest asks once per recipient. The Go breaker reads its clock through a package variable
+(`driveTimeNow` in `iznik-server-go/rippling/drivetime.go`), which is how
+`drivetime_test.go` proves the breaker closes again after the cooloff without waiting 30
+seconds: the test swaps in a clock it moves by hand, so the cooloff itself stays at its
+real value and no sleep is involved.
 
 **No verdict is not a refusal.** A gate only refuses somebody the labels have actually
 ruled `out`. `nolabels`, a routing server that cannot be reached, a 503, a 4xx or an
