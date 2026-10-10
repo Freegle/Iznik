@@ -8,6 +8,7 @@ const { expect } = require('@playwright/test')
 const { timeouts, DEFAULT_TEST_PASSWORD } = require('../config')
 const { SCREENSHOTS_DIR } = require('../config')
 const { waitForModal } = require('./ui')
+const { classicModeCookie, defaultBaseURL } = require('./uiMode')
 
 /**
  * Remove any leftover modal backdrop.
@@ -126,6 +127,9 @@ async function clearSessionData(page) {
   try {
     const context = page.context()
     await context.clearCookies()
+    // Cookies gone means the front door is the chat shell again; these helpers
+    // drive the classic pages, so put that choice back.
+    await context.addCookies([classicModeCookie(defaultBaseURL())])
   } catch (e) {
     if (!/closed|Target .* closed/i.test(e.message)) {
       throw e
@@ -376,11 +380,39 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
  */
 async function waitForEnabledSignInButton(page) {
   const buttons = page.locator('.test-signinbutton')
-  // Wait for at least one element to be visible
-  await page
-    .locator('.test-signinbutton:visible')
-    .first()
-    .waitFor({ timeout: timeouts.ui.appearance })
+  const shell = page.locator('[data-testid="chat-shell"]')
+  const visibleButton = page.locator('.test-signinbutton:visible').first()
+  // A navigation started by a logout can still be landing while the classic
+  // cookie goes back, and if it lands on the chat shell there is no sign-in
+  // button to find. Whichever shows first decides: the shell means one more
+  // trip to the classic homepage, now that the cookie is in place.
+  await Promise.race([
+    visibleButton.waitFor({ timeout: timeouts.ui.appearance }).catch(() => {}),
+    shell.waitFor({ timeout: timeouts.ui.appearance }).catch(() => {}),
+  ])
+  if ((await shell.count().catch(() => 0)) > 0) {
+    console.log(
+      '[waitForEnabledSignInButton] chat shell showing; going back to the classic homepage'
+    )
+    await page.gotoAndVerify('/', {
+      timeout: timeouts.navigation.initial,
+      waitUntil: 'domcontentloaded',
+      maxRetries: 1,
+    })
+  }
+  try {
+    await visibleButton.waitFor({ timeout: timeouts.ui.appearance })
+  } catch (e) {
+    // Say what the page was, so a bare timeout in CI is not the only clue.
+    const url = page.url()
+    const title = await page.title().catch(() => '?')
+    const all = await buttons.count().catch(() => -1)
+    const onShell = (await shell.count().catch(() => 0)) > 0
+    console.log(
+      `[waitForEnabledSignInButton] no visible sign-in button at ${url} (title "${title}", ${all} in the DOM, chat shell: ${onShell})`
+    )
+    throw e
+  }
   const count = await buttons.count()
   console.log(`Found ${count} .test-signinbutton elements`)
 
@@ -758,7 +790,17 @@ async function loginViaHomepage(
   // waitUntil 'domcontentloaded': homepage GSI/FedCM scripts sometimes never
   // fire `load` in CI — see signUpViaHomepage for the full rationale.
   const currentUrl = page.url()
-  if (!currentUrl.endsWith('/') && !currentUrl.endsWith('/?')) {
+  // Already on the homepage is only good enough if it is the classic homepage: the
+  // chat shell may have been rendered before the classic cookie went back.
+  const onChatShell =
+    (await page
+      .locator('[data-testid="chat-shell"]')
+      .count()
+      .catch(() => 0)) > 0
+  if (
+    onChatShell ||
+    (!currentUrl.endsWith('/') && !currentUrl.endsWith('/?'))
+  ) {
     await page.gotoAndVerify('/', {
       timeout: timeouts.navigation.initial,
       waitUntil: 'domcontentloaded',

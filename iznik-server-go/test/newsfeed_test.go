@@ -2,16 +2,17 @@ package test
 
 import (
 	"bytes"
-	json2 "encoding/json"
 	"encoding/json"
+	json2 "encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
-	newsfeed2 "github.com/freegle/iznik-server-go/newsfeed"
 	"github.com/freegle/iznik-server-go/newsfeed"
+	newsfeed2 "github.com/freegle/iznik-server-go/newsfeed"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
@@ -1214,4 +1215,66 @@ func TestFeedEventsSortedByProximity(t *testing.T) {
 		assert.NotEqual(t, farEventID, item.ID,
 			"Far event (50km away) should be excluded: the 20 close events fill the proximity cap")
 	}
+}
+
+// A ChitChat post that trips a concern keyword is treated as reported: out of the
+// feeds pending review, a report row naming the words. The chat shell pins ChitChat
+// beside every member's chats, so this is the screening decision 11 of the chat-first
+// design asks for.
+func TestNewsfeedWorryWordPostIsReportedForReview(t *testing.T) {
+	prefix := uniquePrefix("nfwr_worry")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	db.Exec("INSERT INTO locations (name, lat, lng, type) VALUES (?, 52.2, -0.1, 'Polygon')", "TestLoc_"+prefix)
+	var locID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", "TestLoc_"+prefix).Scan(&locID)
+	if locID > 0 {
+		db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", locID, userID)
+	}
+	// Letters only: the matcher tokenises on word boundaries, so digits and underscores
+	// in a test prefix would split the keyword.
+	word := "zzworry" + lettersFromDigits(fmt.Sprint(userID))
+	db.Exec("INSERT IGNORE INTO concern_keywords (keyword, category, match_mode, scope, group_id) VALUES (?, 'review', 'fuzzy', 'global', 0)", word)
+
+	body := fmt.Sprintf(`{"message":"Anyone want some %s today"}`, word)
+	req := httptest.NewRequest("POST", "/api/newsfeed?jwt="+token, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var nfID uint64
+	db.Raw("SELECT id FROM newsfeed WHERE userid = ? AND message LIKE ? ORDER BY id DESC LIMIT 1", userID, "%"+word+"%").Scan(&nfID)
+	if !assert.NotZero(t, nfID, "the post is created, then held") {
+		return
+	}
+	var review int
+	db.Raw("SELECT reviewrequired FROM newsfeed WHERE id = ?", nfID).Scan(&review)
+	assert.Equal(t, 1, review, "a worry word takes the post out of the feed pending review")
+	var reason string
+	db.Raw("SELECT reason FROM newsfeed_reports WHERE newsfeedid = ? LIMIT 1", nfID).Scan(&reason)
+	assert.Contains(t, reason, word, "the report names the word that tripped it")
+
+	// A plain post is untouched.
+	body = fmt.Sprintf(`{"message":"Lovely day for a walk %s"}`, prefix)
+	req = httptest.NewRequest("POST", "/api/newsfeed?jwt="+token, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+	var plainID uint64
+	db.Raw("SELECT id FROM newsfeed WHERE userid = ? AND message LIKE ? ORDER BY id DESC LIMIT 1", userID, "Lovely day%").Scan(&plainID)
+	db.Raw("SELECT reviewrequired FROM newsfeed WHERE id = ?", plainID).Scan(&review)
+	assert.Equal(t, 0, review)
+}
+
+// lettersFromDigits turns "1234" into "bcde", for keywords that must survive word tokenising.
+func lettersFromDigits(digits string) string {
+	var b strings.Builder
+	for _, c := range digits {
+		if c >= '0' && c <= '9' {
+			b.WriteByte(byte('a' + (c - '0')))
+		}
+	}
+	return b.String()
 }

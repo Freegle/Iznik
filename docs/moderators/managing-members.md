@@ -171,8 +171,16 @@ earlier one is unreviewed, so a chat cannot get ahead of the queue.
 Approving a held message with **approve all future** turns the setting off for that member,
 so use plain approve if you want them to stay under review.
 
+Members using the chat version of Freegle talk to a Freegle assistant to give, ask and
+find their way around. What they type and what it replies is stored as an ordinary chat
+between the member and Freegle, so it shows in the member's chat history here like any
+other chat. The assistant never posts, replies or joins anything itself: a post it helps
+write goes through the same checks and moderation as one made on the website.
+
 (This is different from moderating the **ChitChat** discussion feed, which is done on the
-main Freegle site by the ChitChat Moderation team, not in ModTools.)
+main Freegle site by the ChitChat Moderation team, not in ModTools. ChitChat posts that
+trip a worry word are reported automatically to that team, with the words named, and stay
+out of the feed until the team has looked.)
 
 ## During a lockdown
 
