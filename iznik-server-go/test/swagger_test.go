@@ -33,9 +33,11 @@ func TestSwaggerGeneration(t *testing.T) {
 	swaggerJsonPath := filepath.Join(t.TempDir(), "swagger.json")
 
 	// Run the generate-swagger.sh script, writing to the temp path so the
-	// committed spec is left alone. The script's closing `swagger validate` is
-	// skipped: it is advisory (warnings never fail the script), nothing below
-	// looks at its report, and it cost about a second of every run.
+	// committed spec is left alone. The script's own closing `swagger validate`
+	// is skipped here because it is advisory: the script installs the spec and
+	// exits 0 whatever the validator says, so for years a spec that failed
+	// validation (a path parameter with no definition) went unnoticed. The
+	// validation that matters is the one below, whose result is asserted.
 	cmd := exec.Command("/bin/bash", swaggerScript)
 	cmd.Dir = rootDir
 	cmd.Env = append(os.Environ(), "SWAGGER_OUT="+swaggerJsonPath, "SWAGGER_SKIP_VALIDATE=1")
@@ -51,6 +53,20 @@ func TestSwaggerGeneration(t *testing.T) {
 	// Check that swagger.json was created
 	_, err = os.Stat(swaggerJsonPath)
 	assert.NoError(t, err, "swagger.json should be created")
+
+	// The generated spec must be valid Swagger 2.0. go-swagger's validator exits
+	// non-zero on an error such as a route whose {id} has no parameter definition,
+	// which is exactly the drift this test exists to catch.
+	swaggerBin, err := exec.LookPath("swagger")
+	if err != nil {
+		t.Fatalf("swagger binary not found on PATH, so the spec cannot be validated: %v", err)
+	}
+	validate := exec.Command(swaggerBin, "validate", swaggerJsonPath)
+	validate.Dir = rootDir
+	validateOutput, err := validate.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated swagger.json does not validate: %v\n%s", err, string(validateOutput))
+	}
 
 	// Read and parse swagger.json to verify it contains paths
 	swaggerJson, err := os.ReadFile(swaggerJsonPath)
