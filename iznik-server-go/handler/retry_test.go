@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,7 +22,12 @@ import (
 // spent over three seconds asleep.
 var recordedBackoffs []time.Duration
 
+// productionRetrySleep is what retrySleep held before the swap below, so a test can
+// check that outside the tests the retry loop really sleeps.
+var productionRetrySleep func(time.Duration)
+
 func TestMain(m *testing.M) {
+	productionRetrySleep = retrySleep
 	retrySleep = func(d time.Duration) {
 		recordedBackoffs = append(recordedBackoffs, d)
 	}
@@ -260,9 +266,29 @@ func TestRetry_DefaultMaxRetries(t *testing.T) {
 		return errors.New("Deadlock found")
 	}))
 
+	recordedBackoffs = nil
 	app.Test(httptest.NewRequest("GET", "/test", nil), 30000)
 	// 1 initial + 5 retries = 6 calls.
 	assert.Equal(t, int32(6), atomic.LoadInt32(&calls))
+
+	// The default path backs off before every retry too, each wait inside the range,
+	// and the waits are jittered rather than one fixed delay: two requests that
+	// collided on a deadlock must not retry in lockstep. Five equal waits from a
+	// 150-value range would happen about once in five hundred million runs.
+	assert.Len(t, recordedBackoffs, DefaultMaxRetries)
+	distinct := map[time.Duration]bool{}
+	for _, d := range recordedBackoffs {
+		assert.GreaterOrEqual(t, d, time.Duration(minBackoffMs)*time.Millisecond)
+		assert.Less(t, d, time.Duration(maxBackoffMs)*time.Millisecond)
+		distinct[d] = true
+	}
+	assert.Greater(t, len(distinct), 1, "backoff waits should vary between retries")
+}
+
+func TestRetry_ProductionSleepIsTimeSleep(t *testing.T) {
+	// The tests above record the waits instead of making them. This pins down that the
+	// retry loop the API actually runs does wait.
+	assert.Equal(t, reflect.ValueOf(time.Sleep).Pointer(), reflect.ValueOf(productionRetrySleep).Pointer())
 }
 
 func TestRetry_ZeroConfigUsesDefault(t *testing.T) {
