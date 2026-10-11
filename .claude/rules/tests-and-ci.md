@@ -184,6 +184,20 @@ genuinely on different lines.
   nothing. The harness (`tests/e2e/utils/app-mount.js`, used by `gotoAndVerify` and the
   ModTools login) now reloads such a page once and otherwise fails naming the URLs. Do not
   build images or start stacks on the host during a Playwright run you intend to believe.
+- **A Playwright result that says "N recovered: reload, login-refill"** passed only because the
+  harness recovered from something. Each recovery is a `[RECOVERED]` line in the log and an
+  annotation on the test. A reload after aborted chunk loads is host noise when it lines up with a
+  container event; without one, or several in a run, look for a server resetting connections.
+  A login refill means the ModTools login form lost what was typed before submit, about once in
+  forty logins, cause not yet found: a member could hit it too. It refills once, then fails.
+- **A Laravel test that fails with "left the process environment changed"** is not broken
+  itself. `.env.testing` is read once per process, so `TestCase` compares each test's environment
+  at teardown, puts it back, and fails the test that changed it. Restore what you `putenv` in the
+  test.
+- **`CompileTimeDeprecationsTest` failing** names a compile-time deprecation the suite would
+  otherwise never report: with opcache on for the CLI, a deprecation raised while compiling is
+  printed only on a cold cache and never reaches PHPUnit's report. It lints the tree with opcache
+  off.
 
 ## CI failures that are about the build, not the branch
 
