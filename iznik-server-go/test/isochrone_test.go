@@ -58,12 +58,12 @@ func TestEnsureIsochroneExistsWithValidLocation(t *testing.T) {
 
 	// Every EnsureIsochroneExists test below uses this point in Bristol. It has to be on
 	// the road graph of whichever extract the routing server has loaded, or the server
-	// answers with an empty polygon and EnsureIsochroneExists quietly falls through to
-	// the Mapbox API with the production key. Locally the server loads the whole UK, so
-	// Edinburgh and London were on the graph; in CI it boots on the committed Bristol
-	// extract (see the spatial setup in .circleci/orb/freegle-tests.yml), so those two
-	// were off it and every CI run went to Mapbox after all. Bristol is on both, and is
-	// the point iznik-routing-go's own tests use against that extract.
+	// answers with an empty polygon and EnsureIsochroneExists falls back. Locally the
+	// server loads the whole UK; in CI it boots on the committed Bristol extract (see the
+	// spatial setup in .circleci/orb/freegle-tests.yml), so Edinburgh and London were off
+	// it there. Bristol is on both, and is the point iznik-routing-go's own tests use
+	// against that extract. (The test package clears MAPBOX_KEY, so a fallback never
+	// reaches the real Mapbox API: see main_test.go.)
 	db.Exec("INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', 51.4545, -2.5879, ST_GeomFromText('POINT(-2.5879 51.4545)', ?))", prefix+"_loc", utils.SRID)
 	var locID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_loc").Scan(&locID)
@@ -72,20 +72,22 @@ func TestEnsureIsochroneExistsWithValidLocation(t *testing.T) {
 	// Clean up any existing isochrones for this location
 	db.Exec("DELETE FROM isochrones WHERE locationid = ?", locID)
 
-	// Call ensureIsochroneExists with Walk transport and 15 minutes
-	isoID := isochrone.EnsureIsochroneExists(locID, "Walk", 15)
+	// Drive, because it is the only mode the routing server answers: walk and cycle
+	// were dropped from it (rippling is a drive-time model), so a walk isochrone
+	// never comes from the router and falls back.
+	isoID := isochrone.EnsureIsochroneExists(locID, "Drive", 15)
 
 	// Should return a non-zero ID (either created or existing)
 	assert.Greater(t, isoID, uint64(0), "ensureIsochroneExists should return valid ID")
 
 	// Verify isochrone exists in database
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM isochrones WHERE id = ? AND locationid = ? AND transport = 'Walk' AND minutes = 15", isoID, locID).Scan(&count)
+	db.Raw("SELECT COUNT(*) FROM isochrones WHERE id = ? AND locationid = ? AND transport = 'Drive' AND minutes = 15", isoID, locID).Scan(&count)
 	assert.Equal(t, int64(1), count)
 
 	// It must have come from the routing server. Without this, a routing server that
-	// is down or has no data for this point still passes the test whenever a Mapbox
-	// key is present, by quietly falling through to Mapbox.
+	// is down or has no data for this point still passes the test, by quietly
+	// falling back to the location's own shape (or, with a key, to Mapbox).
 	var source string
 	db.Raw("SELECT COALESCE(source, '') FROM isochrones WHERE id = ?", isoID).Scan(&source)
 	assert.Equal(t, "RoutingServer", source, "the Bristol point should be answered by the routing server, not a fallback")

@@ -44,6 +44,13 @@ func init() {
 	// tests must not depend on that, nor on the production default. Pin an
 	// obviously-fake test host and assert image URLs against it (uploads.test).
 	os.Setenv("UPLOADS", "https://uploads.test/")
+	// No test may reach the real Mapbox API. The apiv2 container carries a real key,
+	// and the routing server answers drive isochrones only, so every walk or cycle
+	// isochrone a test asked for went to Mapbox, locally and in CI, spending the
+	// production key. Without a key they fall back to the location's own shape.
+	// TestEnsureIsochroneExistsFallsBackToMapbox sets a key of its own and answers
+	// api.mapbox.com itself.
+	os.Unsetenv("MAPBOX_KEY")
 
 	app = &TestApp{fiber.New()}
 	app.Use(user.NewAuthMiddleware(user.Config{}))
