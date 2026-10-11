@@ -329,6 +329,10 @@ const test = base.test.extend({
       // plus four draw checks). In Docker that script arrives late or not at
       // all, so a login modal left open under load trips it. Nothing of ours
       // is involved, as with the FedCM and gstatic entries around this one.
+      // The report itself is tested where it can be controlled: the "Google
+      // button" tests in tests/unit/components/LoginModal.spec.js check that it
+      // fires, that it waits while the script is loading, and that closing the
+      // modal stops it.
       /\[Exc?eption for Sentry\]:.*Google sign-in button did not draw/,
       /malformed JSON response:.*Error 400 \(Bad Request\)/, // Google API malformed JSON responses
       // CSP (Content Security Policy) violations - common in development/testing
@@ -2021,30 +2025,19 @@ const testWithFixtures = test.extend({
         }
 
         // Wait for the list to drop the post. Vue may re-render the whole list
-        // rather than detach one card, so watch the count rather than the
-        // card. This polls instead of sleeping for fixed settle times: the
-        // list usually catches up well inside a second, and the old
-        // three-to-five seconds of sleeps added up to minutes over a run.
-        // It is logged, not asserted, exactly as before.
-        let postsAfterWithdrawal = postsBeforeWait
-        try {
-          await base.expect
-            .poll(
-              async () => {
-                postsAfterWithdrawal = await page.locator(postSelector).count()
-                return postsAfterWithdrawal
-              },
-              { timeout: 5000 }
-            )
-            .toBeLessThan(postsBeforeWait)
-          console.log(
-            `✓ Post count decreased to ${postsAfterWithdrawal} - withdrawal successful`
-          )
-        } catch {
-          console.log(
-            `⚠ Warning: Post count did not decrease (still ${postsAfterWithdrawal}), but API call succeeded`
-          )
-        }
+        // rather than detach one card, so watch the count rather than the card.
+        // This polls instead of sleeping for fixed settle times: the list
+        // usually catches up well inside a second. It is an assertion: a
+        // withdrawal that leaves the post on the list has failed, and this
+        // used to log a warning and return true. In every green run all the
+        // withdrawals dropped the post, so this costs a healthy run nothing.
+        await base.expect
+          .poll(() => page.locator(postSelector).count(), {
+            message: `post "${item}" should leave the list after withdrawing it`,
+            timeout: timeouts.api.default,
+          })
+          .toBeLessThan(postsBeforeWait)
+        console.log('✓ Post count decreased - withdrawal successful')
 
         page.resetAllowedErrorPatterns()
         return true
@@ -2084,18 +2077,31 @@ const testWithFixtures = test.extend({
 
           // NewUserInfo saves through PATCH /session. Wait for that response
           // rather than a fixed second, so the test moves on as soon as the
-          // password really is saved and never before. Best effort, as the
-          // sleep it replaces was.
-          const saved = page
-            .waitForResponse(
-              (r) =>
-                r.request().method() === 'PATCH' &&
-                /\/api\/session(\?|$)/.test(r.url()),
-              { timeout: timeouts.api.default }
-            )
-            .catch(() => null)
+          // password really is saved and never before. A save that never
+          // happens, or that the server refuses, fails here: later steps log
+          // in with this password, and a silent miss would surface there as
+          // a confusing login failure.
+          const saved = page.waitForResponse(
+            (r) =>
+              r.request().method() === 'PATCH' &&
+              /\/api\/session(\?|$)/.test(r.url()),
+            { timeout: timeouts.api.default }
+          )
           await saveButton.click()
-          await saved
+          let response
+          try {
+            response = await saved
+          } catch (error) {
+            error.passwordSaveFailed = true
+            throw error
+          }
+          if (!response.ok()) {
+            const error = new Error(
+              `Saving the new password failed: PATCH /session returned ${response.status()}`
+            )
+            error.passwordSaveFailed = true
+            throw error
+          }
           console.log('Set password successfully')
           return true
         } else {
@@ -2103,6 +2109,9 @@ const testWithFixtures = test.extend({
           return false
         }
       } catch (error) {
+        // Not finding the password box is a normal outcome (the user may not need
+        // one). A save that was attempted and failed is not, and must reach the test.
+        if (error.passwordSaveFailed) throw error
         console.log('Password input not found or not needed:', error.message)
         return false
       }
