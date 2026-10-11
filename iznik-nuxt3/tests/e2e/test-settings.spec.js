@@ -310,16 +310,6 @@ test.describe('Settings Page - Email Level Settings', () => {
     await expect(feed).toContainText('road distance and travel time')
     await takeScreenshot('Distance sliders linked')
 
-    // The reach hint under the slider fetches once it scrolls into view, after a
-    // 350ms debounce. This member gave no location, so it must settle empty rather
-    // than pulse "Finding nearby places" or invent a reach. Nothing on the page
-    // changes when the debounce fires, so give it a fixed moment past it.
-    const hint = feed.locator('.nearby-towns').first()
-    await hint.scrollIntoViewIfNeeded()
-    await page.waitForTimeout(500)
-    await expect(hint).not.toContainText('Finding nearby places')
-    await expect(hint).toHaveText('')
-
     // Watch for a save that writes the OUTBOUND keys specifically, rather than any PATCH at all:
     // the settings page has other things that can save, and an unrelated one landing in this
     // window would fail the test for the wrong reason. The claim being tested is narrow - that
@@ -359,6 +349,16 @@ test.describe('Settings Page - Email Level Settings', () => {
     await page.reload()
     await feed.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
     await expect(feed.locator('input[type="range"]')).toHaveCount(1)
+
+    // The reach hint under the slider fetches once it is in view, after a 350ms
+    // debounce. This member gave no location, so it must settle empty rather than
+    // pulse "Finding nearby places" or invent a reach. Nothing on the page changes
+    // when the debounce fires, so give it a fixed moment past it.
+    const hint = feed.locator('.nearby-towns').first()
+    await hint.scrollIntoViewIfNeeded()
+    await page.waitForTimeout(500)
+    await expect(hint).not.toContainText('Finding nearby places')
+    await expect(hint).toHaveText('')
 
     console.log(
       '✓ Split reveals a second slider and persists nothing until it is used'
