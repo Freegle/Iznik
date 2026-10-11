@@ -153,6 +153,16 @@ export default defineEventHandler(async (event) => {
   testProcess.on('close', (code) => {
     const state = getTestState('vitest')
     const p = state.progress
+    // A run whose total fell since the last one at the same filter has lost tests: a
+    // spec that no longer parses counts as one failed file and its tests vanish, and
+    // a deleted file just vanishes. Pass or fail is still the exit code; this makes
+    // the drop visible in the log rather than only in a progress bar.
+    if (knownTotal > 0 && p.total > 0 && p.total < knownTotal) {
+      appendTestLogs(
+        'vitest',
+        `\nNOTE: this run has ${p.total} tests; the previous run with the same filter had ${knownTotal}. ${knownTotal - p.total} fewer.\n`
+      )
+    }
     if (p.total > 0) {
       rememberTotal(filter, p.total)
     }
