@@ -13,7 +13,11 @@ const {
 } = require('./config')
 const logger = require('./logger')
 const { logoutIfLoggedIn } = require('./utils/user')
-const { trackFailedLoads, waitForAppMount } = require('./utils/app-mount')
+const {
+  trackFailedLoads,
+  waitForAppMount,
+  noteRecovery,
+} = require('./utils/app-mount')
 
 const NUXT_TEST_UTILS_AVAILABLE = (() => {
   try {
@@ -242,8 +246,29 @@ const test = base.test.extend({
 
   // Override the page fixture to use our isolated context
   page: async ({ context }, use, testInfo) => {
-    // Create a page in our isolated context
-    const page = await context.newPage()
+    // Create a page in our isolated context. Opening a page takes well under
+    // a second, but Chromium has been seen to leave newPage() unanswered until
+    // the ten-minute test timeout, before any of our code runs. Bound it and
+    // ask once more; the retry is reported as a recovery, so a run where it
+    // happens says so. A first page that turns up late is closed.
+    const NEW_PAGE_WAIT = 60000
+    const first = context.newPage()
+    let timer
+    let page = await Promise.race([
+      first,
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), NEW_PAGE_WAIT)
+      }),
+    ])
+    clearTimeout(timer)
+    if (!page) {
+      noteRecovery(
+        'new-page',
+        `context.newPage() unanswered after ${NEW_PAGE_WAIT / 1000}s, asked again`
+      )
+      first.then((late) => late.close()).catch(() => {})
+      page = await context.newPage()
+    }
     console.log(`Created new page in isolated context`)
 
     // From the first request: a lost script chunk is what gotoAndVerify
@@ -1953,76 +1978,31 @@ const testWithFixtures = test.extend({
           await withdrawButton.click()
         }
 
-        // Look for any modals that might appear
-        const modalSelectors = [
-          '.modal',
-          '.swal2-popup',
-          '.confirm-modal',
-          '[role="dialog"]',
-        ]
+        // The confirmation is OutcomeModal, an async component, so it can
+        // arrive late while its chunk loads: wait for it rather than probe with
+        // isVisible(), which ignores its timeout. Every withdraw path in
+        // MyMessage opens this modal, so its absence fails the withdrawal.
+        const dialog = page
+          .locator('[role="dialog"], .modal')
+          .filter({ visible: true })
+          .filter({ has: page.locator('.btn:has-text("Withdraw")') })
+          .first()
+        await dialog.waitFor({
+          state: 'visible',
+          timeout: timeouts.ui.appearance,
+        })
+        console.log('Found withdraw confirmation modal')
 
-        let modalFound = false
-        for (const modalSelector of modalSelectors) {
-          try {
-            const modal = page.locator(modalSelector).filter({ visible: true })
-            const isVisible = await modal
-              .isVisible({ timeout: timeouts.ui.interaction })
-              .catch(() => false)
-            if (isVisible) {
-              console.log(`Found modal: ${modalSelector}`)
-              modalFound = true
+        const confirmButton = dialog
+          .locator('.btn:has-text("Withdraw")')
+          .filter({ visible: true })
+          .last()
 
-              // Look for confirmation buttons within this modal
-              const confirmSelectors = [
-                `${modalSelector} .btn:has-text("Withdraw")`,
-                `${modalSelector} .btn:has-text("Yes")`,
-                `${modalSelector} .btn:has-text("Confirm")`,
-                `${modalSelector} .btn:has-text("OK")`,
-                `${modalSelector} .btn-primary`,
-                `${modalSelector} .swal2-confirm`,
-              ]
+        // Withdrawing pending posts can cause legitimate "not found" errors when refetching
+        page.addAllowedErrorPattern(/the server responded with a status of 404/)
 
-              let confirmClicked = false
-              for (const confirmSelector of confirmSelectors) {
-                try {
-                  const confirmButton = page
-                    .locator(confirmSelector)
-                    .filter({ visible: true })
-                  const confirmVisible = await confirmButton
-                    .isVisible({ timeout: timeouts.ui.interaction / 10 })
-                    .catch(() => false)
-                  if (confirmVisible) {
-                    console.log(
-                      `Clicking confirmation button: ${confirmSelector}`
-                    )
-
-                    // Withdrawing pending posts can cause legitimate "not found" errors when refetching
-                    page.addAllowedErrorPattern(
-                      /the server responded with a status of 404/
-                    )
-
-                    await confirmButton.click()
-                    confirmClicked = true
-                    break
-                  }
-                } catch (error) {
-                  // Continue to next selector
-                }
-              }
-
-              if (!confirmClicked) {
-                console.log(`Modal found but no confirmation button clicked`)
-              }
-              break
-            }
-          } catch (error) {
-            // Continue to next modal selector
-          }
-        }
-
-        if (!modalFound) {
-          console.log('No confirmation modal found - withdrawal may be direct')
-        }
+        console.log('Clicking confirmation button in withdraw modal')
+        await confirmButton.click()
 
         // Wait for the list to drop the post. Vue may re-render the whole list
         // rather than detach one card, so watch the count rather than the card.

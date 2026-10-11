@@ -190,6 +190,9 @@ genuinely on different lines.
   container event; without one, or several in a run, look for a server resetting connections.
   A login refill means the ModTools login form lost what was typed before submit, about once in
   forty logins, cause not yet found: a member could hit it too. It refills once, then fails.
+  A new-page recovery means Chromium left `context.newPage()` unanswered for a minute before any
+  test code ran. Seen once in three runs, with no container event, memory pressure or crash
+  logged; the fixture asks once more. More than one in a run is worth chasing in Chromium.
 - **A Laravel test that fails with "left the process environment changed"** is not broken
   itself. `.env.testing` is read once per process, so `TestCase` compares each test's environment
   at teardown, puts it back, and fails the test that changed it. Restore what you `putenv` in the
