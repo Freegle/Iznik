@@ -6,7 +6,7 @@
         You can see which community and area a postcode will map to.
         <b
           >Postcode changes within an area you change should take effect
-          immediately, but ones outside the areas may may take overnight before
+          immediately, but ones outside the areas may take overnight before
           postcode mapping is updated.</b
         >
       </p>

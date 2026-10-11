@@ -39,8 +39,8 @@
         <b-form-input v-model="user10" :placeholder="placeholders[10]" />
         <b-form-input v-model="user11" :placeholder="placeholders[11]" />
         <p class="mt-2">
-          You can choose for this note to be be alerted to other groups, which
-          will put the member in <em>Member->Review</em>
+          You can choose for this note to be alerted to other groups, which will
+          put the member in <em>Member->Review</em>
           if they are an existing member or join a group. Please use this only
           for serious issues.
         </p>
