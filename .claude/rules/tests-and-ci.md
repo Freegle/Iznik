@@ -193,6 +193,12 @@ genuinely on different lines.
   A new-page recovery means Chromium left `context.newPage()` unanswered for a minute before any
   test code ran. Seen once in three runs, with no container event, memory pressure or crash
   logged; the fixture asks once more. More than one in a run is worth chasing in Chromium.
+- **Compare Playwright coverage file by file, never by its totals.** The number of lines the
+  coverage file counts changes from run to run on the same code (19,843 in one run, 27,657 in
+  another), so total lines hit can rise or fall by thousands with nothing changed. Per file, two
+  master runs still differ in about 14 files, LoginModal alone by 20 lines. A file that loses
+  coverage in a few runs and not others is a test that ends before something async finishes:
+  make it wait for that thing and check it.
 - **A Laravel test that fails with "left the process environment changed"** is not broken
   itself. `.env.testing` is read once per process, so `TestCase` compares each test's environment
   at teardown, puts it back, and fails the test that changed it. Restore what you `putenv` in the
