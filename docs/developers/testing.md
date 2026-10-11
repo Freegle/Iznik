@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-20
+last_reviewed: 2026-10-11
 owner: Freegle dev team
 covers:
   - docs/developers/reference/coding-standards.md
@@ -55,6 +55,28 @@ not hard-coded timeouts; timeout constants live in `tests/e2e/config.js`. See
 
 The documentation screenshots reuse this same setup - see
 [../screenshots/README.md](../screenshots/README.md).
+
+## Keeping the suites fast
+
+The suites were halved in October 2026 by making the tests do less waiting, not by running
+more of them at once, so the gain holds on a slower CI machine. Keep it that way:
+
+- **Wait for the thing, not for time.** A fixed sleep costs its full length on every run.
+  Poll for the condition instead, and make the poll fail when it times out.
+- **Fake the clock or the sleep, then assert on it.** Go code reads time and sleeps through
+  package variables a test can swap (`handler/retry.go`, `rippling/drivetime.go`); Laravel code
+  sleeps through the `Sleep` facade. When a test fakes the waiting away, it must still check
+  the waits that would have happened (`Sleep::assertSequence`, the recorded backoffs).
+- **Unit specs unmount after every test** (`tests/unit/setup.ts`). A wrapper left mounted is
+  re-rendered by every later test in the file.
+- **Playwright tests start in a fresh browser context**, so there is nobody to log out at the
+  start of a test. The harness reloads a page whose script loads were aborted by the host, and
+  records it as a recovery that the run's result names.
+- **A Laravel process reads `.env.testing` and builds config once**, and a test that leaves
+  the environment changed fails.
+
+Speed must never come from checking less. Before merging a change that makes a test faster,
+ask what the test proved before and what it proves now.
 
 ## Test data and databases
 
