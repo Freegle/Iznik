@@ -1,0 +1,173 @@
+name: Run CI for a fork PR
+
+# Why this exists
+#
+# CircleCI refuses to run a pull request from a fork on our self-hosted runner
+# ("Forked prs not allowed to run on OSS projects", reason oss-fork-on-runner),
+# so build-and-test fails at once on every outside contributor's PR without
+# running anything. That refusal is a security control, not a bug: a fork's code
+# would run on a runner that is reused between builds, next to the project's
+# secrets. So the answer is not to switch it off. It is to let a maintainer who
+# has READ the PR choose to run it, by applying the "Run CI" label.
+#
+# What the label does
+#
+# This job points a branch ci/pr-<number> in this repo at the PR's head commit.
+# CircleCI builds that branch as an ordinary push and reports on the same commit,
+# so the result appears on the PR. The label is then removed: it approves one
+# commit, not the PR, and any later push needs a fresh review and a fresh label.
+#
+# Applying the label means "I have read every line of this PR and I am content
+# for it to run with our CI secrets on our runner". Nothing here can make
+# unreviewed code safe to run.
+#
+# Defences, each against a specific attack
+#
+#  - pull_request_target with NO checkout of the PR. This trigger runs the copy
+#    of this file on master with a write token; checking out or running the
+#    PR's code here would hand that token to the contributor.
+#    *** Never add a checkout, an npm install or any build step to this file. ***
+#    The only values taken from the PR are its number and head commit, both
+#    validated before use, and both passed through env, never interpolated into
+#    a script.
+#  - Only someone with write access may approve: the labeller's permission is
+#    checked through the API, because triage users can also apply labels.
+#  - The commit mirrored is the head at the moment of labelling, and it must
+#    still be the PR's head. A contributor who pushes between the review and the
+#    label gets a refusal, not a run of the new code.
+#  - A PR that touches what CI itself executes is refused: the CircleCI config
+#    is read from the commit being built, and compose files, Dockerfiles, the
+#    scripts and the status container (which holds the Docker socket) decide
+#    what runs with which secrets. So are dependency manifests and lockfiles:
+#    npm, composer and go fetch and run third-party code during the build, and a
+#    lockfile entry pointing at a hostile package cannot be judged by reading
+#    the diff. A maintainer must push such a PR themselves.
+#    (GitHub's token also cannot create a ref to a commit that changes
+#    .github/workflows.)
+#  - The branch is created through the Git refs API with GITHUB_TOKEN. GitHub
+#    already holds every PR commit in this repo, so nothing is fetched, and a
+#    ref created with GITHUB_TOKEN does not start any GitHub Actions run, so
+#    the mirrored code never runs our own workflows.
+#  - When the PR closes, the branch is deleted.
+
+on:
+  pull_request_target:
+    types: [labeled, closed]
+
+permissions: {}
+
+concurrency:
+  group: fork-pr-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  LABEL: Run CI
+
+jobs:
+  mirror:
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'Run CI' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Check the approval and mirror the approved commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          SENDER: ${{ github.event.sender.login }}
+        run: |
+          set -euo pipefail
+
+          refuse() {
+            echo "::error::$1"
+            gh api -X DELETE "repos/$REPO/issues/$PR/labels/Run%20CI" >/dev/null 2>&1 || true
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="CI was not started for this PR: $1" >/dev/null
+            exit 1
+          }
+
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "bad PR number"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "bad commit id"; exit 1; }
+
+          perm=$(gh api "repos/$REPO/collaborators/$SENDER/permission" --jq .permission 2>/dev/null || echo none)
+          case "$perm" in
+            admin|maintain|write) ;;
+            *) refuse "the label was applied by someone without write access ($perm). A maintainer must review the PR and apply it." ;;
+          esac
+
+          head=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)
+          if [ "$head" != "$SHA" ]; then
+            refuse "the PR's head moved from ${SHA:0:9} to ${head:0:9} after the label was applied, so the new commits have not been approved. Review them and apply the label again."
+          fi
+
+          # Files that decide what CI runs and with which secrets.
+          blocked=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' \
+            | grep -E '^(\.circleci/|\.github/|scripts/|status-nuxt/)|(^|/)docker-compose[^/]*\.ya?ml$|(^|/)Dockerfile(\.[^/]*)?$|(^|/)(package(-lock)?\.json|npm-shrinkwrap\.json|\.npmrc|composer\.(json|lock)|go\.(mod|sum))$' || true)
+          if [ -n "$blocked" ]; then
+            list=$(printf '%s' "$blocked" | head -20 | sed 's/^/- /')
+            refuse "it changes files that control what CI runs and with which secrets, so it cannot be started from a label. A maintainer must review it and push it to a branch in this repository themselves.
+          $list"
+          fi
+
+          branch="ci/pr-$PR"
+          if gh api "repos/$REPO/git/ref/heads/$branch" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$REPO/git/refs/heads/$branch" -f sha="$SHA" -F force=true >/dev/null
+          else
+            gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$branch" -f sha="$SHA" >/dev/null
+          fi
+          echo "Mirrored $SHA to $branch"
+          echo "BRANCH=$branch" >> "$GITHUB_ENV"
+
+          # One approval, one commit: take the label off so a later push needs a new one.
+          gh api -X DELETE "repos/$REPO/issues/$PR/labels/Run%20CI" >/dev/null 2>&1 || true
+          gh api -X POST "repos/$REPO/issues/$PR/comments" \
+            -f body="CI started for commit ${SHA:0:9} (approved by @$SENDER), on branch \`$branch\`. Its result is reported on this PR. A later push needs a fresh review and the \"Run CI\" label again." >/dev/null
+
+      - name: Make sure CircleCI picked the branch up
+        env:
+          CIRCLE_TOKEN: ${{ secrets.CIRCLECI_TOKEN }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # CircleCI normally sees the new ref through its webhook. If no pipeline
+          # for this commit has appeared after two minutes, start one through the
+          # API, so the PR is never left waiting on a build nobody started.
+          for _ in $(seq 1 12); do
+            sleep 10
+            found=$(curl -sf -H "Circle-Token: $CIRCLE_TOKEN" \
+              "https://circleci.com/api/v2/project/gh/${GITHUB_REPOSITORY}/pipeline?branch=${BRANCH}" \
+              | jq -r --arg sha "$SHA" '[.items[] | select(.vcs.revision == $sha)] | length' || echo 0)
+            if [ "${found:-0}" -gt 0 ]; then
+              echo "CircleCI pipeline found for ${SHA:0:9}"
+              exit 0
+            fi
+          done
+          echo "No pipeline after two minutes; starting one through the API"
+          curl -sf -X POST -H "Circle-Token: $CIRCLE_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"branch\":\"${BRANCH}\"}" \
+            "https://circleci.com/api/v2/project/gh/${GITHUB_REPOSITORY}/pipeline"
+
+  cleanup:
+    if: >-
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Delete the mirror branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          [[ "$PR" =~ ^[0-9]+$ ]] || exit 1
+          gh api -X DELETE "repos/$REPO/git/refs/heads/ci/pr-$PR" >/dev/null 2>&1 \
+            && echo "Deleted ci/pr-$PR" || echo "No ci/pr-$PR branch to delete"
