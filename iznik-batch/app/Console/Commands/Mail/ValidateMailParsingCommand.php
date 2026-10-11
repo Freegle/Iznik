@@ -5,6 +5,7 @@ namespace App\Console\Commands\Mail;
 use App\Services\Mail\Incoming\MailParserService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Validates that Laravel mail parsing produces identical results to the PHP implementation.
@@ -18,6 +19,7 @@ use Illuminate\Support\Facades\DB;
  *   php artisan mail:validate-parsing --message-id=12345
  *   php artisan mail:validate-parsing --dry-run  # Show what would be validated
  */
+#[AsCommand(name: 'mail:validate-parsing')]
 class ValidateMailParsingCommand extends Command
 {
     protected $signature = 'mail:validate-parsing

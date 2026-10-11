@@ -23,7 +23,7 @@ class ReplyAttributionBackfillServiceTest extends TestCase
         $this->service = new ReplyAttributionBackfillService();
     }
 
-    private function insertLegacyRow(int $msgid, int $userid, int $wasHome, string $repliedAt = null): void
+    private function insertLegacyRow(int $msgid, int $userid, int $wasHome, ?string $repliedAt = null): void
     {
         DB::table('rippling_reply_attribution')->insert([
             'msgid' => $msgid,

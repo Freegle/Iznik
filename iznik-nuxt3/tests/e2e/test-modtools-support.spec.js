@@ -149,6 +149,26 @@ test.describe('ModTools Support Tools', () => {
 
     await searchInput.first().fill(testEnv.user.email)
 
+    // Expanding the record fetches the support extras, each from its own
+    // endpoint. Listen before clicking so none is missed.
+    const extras = [
+      'chatrooms',
+      'emailhistory',
+      'bans',
+      'newsfeed',
+      'applied',
+      'membershiphistory',
+      'logins',
+    ]
+    const extraResponses = extras.map((name) =>
+      page.waitForResponse(
+        (r) =>
+          new RegExp(`/user/\\d+/${name}(\\?|$)`).test(r.url()) &&
+          r.request().method() === 'GET',
+        { timeout: timeouts.navigation.slowPage }
+      )
+    )
+
     // Click Find user
     const findButton = page.locator('button:has-text("Find user")')
     await findButton.click()
@@ -167,6 +187,17 @@ test.describe('ModTools Support Tools', () => {
     await expect(membershipCard.first()).toBeVisible({
       timeout: timeouts.navigation.slowPage,
     })
+
+    // Every extra must load. Without this the test ended as soon as the
+    // memberships showed, and whether the chats, logins and history had
+    // arrived (and so were exercised at all) depended on timing.
+    for (const [i, response] of (await Promise.all(extraResponses)).entries()) {
+      expect(response.status(), `GET /user/:id/${extras[i]}`).toBe(200)
+    }
+    // Let Vue render what arrived before the test ends.
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
+    )
 
     await assertNoErrors(page)
   })

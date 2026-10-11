@@ -5,7 +5,9 @@ namespace App\Console\Commands\Group;
 use App\Services\GroupBoundaryService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'groups:check-boundaries')]
 class CheckBoundariesCommand extends Command
 {
     protected $signature = 'groups:check-boundaries

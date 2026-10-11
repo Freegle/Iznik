@@ -500,7 +500,11 @@ test.describe('Lockdown switch', () => {
         {
           message: 'Waiting for the Held by lockdown label on the pending card',
           timeout: timeouts.background,
-          intervals: [10000, 15000, 20000],
+          // The hold row lands on the next lockdown:tick, which the test
+          // runner fires every couple of seconds; each check here is itself
+          // a reload, so the interval is only how long to sit idle between
+          // checks. Ten to twenty seconds of idling was most of this wait.
+          intervals: [2000, 3000, 5000],
         }
       )
       .toBe(true)
@@ -554,7 +558,7 @@ test.describe('Lockdown switch', () => {
         {
           message: "Waiting for A's reply to be listed under What is held",
           timeout: timeouts.background,
-          intervals: [5000, 10000],
+          intervals: [2000, 3000],
         }
       )
       .toBe(true)
@@ -687,7 +691,7 @@ test.describe('Lockdown switch', () => {
         {
           message: 'Waiting for B to see the reply after lift',
           timeout: timeouts.background,
-          intervals: [10000, 15000, 20000],
+          intervals: [2000, 3000, 5000],
         }
       )
       .toBe(true)

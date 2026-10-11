@@ -9,6 +9,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Backfill the messages_items links that the V2 incoming-mail migration stopped
@@ -20,6 +21,7 @@ use Illuminate\Support\Facades\Log;
  * @see App\Services\ItemService
  * @see App\Services\StatsGenerationService
  */
+#[AsCommand(name: 'messages:backfill-items')]
 class BackfillItemsCommand extends Command
 {
     protected $signature = 'messages:backfill-items

@@ -4,6 +4,7 @@ namespace Tests\Unit\Services;
 
 use App\Mail\Message\DeadlineReached;
 use App\Models\Message;
+use App\Models\MessageGroup;
 use App\Models\MessageOutcome;
 use App\Services\MessageExpiryService;
 use Illuminate\Support\Facades\DB;
@@ -206,11 +207,34 @@ class MessageExpiryServiceTest extends TestCase
         $deadline = now()->subDays(1)->format('Y-m-d');
         $wanted = MessageExpiryService::EXPIRE_CHUNK + 2;
 
+        // The same rows createTestMessage() would make, inserted in two
+        // statements rather than four queries per post: this test is about
+        // the count, and 2,000 round trips to make 502 posts was most of its
+        // running time.
+        $rows = [];
         for ($i = 0; $i < $wanted; $i++) {
-            $message = $this->createTestMessage($user, $group);
-            $message->deadline = $deadline;
-            $message->save();
+            $rows[] = [
+                'type' => Message::TYPE_OFFER,
+                'fromuser' => $user->id,
+                'subject' => 'OFFER: Test Item (TestLocation)',
+                'textbody' => 'This is a test offer message.',
+                'source' => 'Platform',
+                'date' => now(),
+                'arrival' => now(),
+                'lat' => $group->lat,
+                'lng' => $group->lng,
+                'deadline' => $deadline,
+            ];
         }
+        DB::table('messages')->insert($rows);
+        $msgids = DB::table('messages')->where('fromuser', $user->id)->pluck('id');
+        $this->assertCount($wanted, $msgids);
+        DB::table('messages_groups')->insert($msgids->map(fn ($id) => [
+            'msgid' => $id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now(),
+        ])->all());
 
         // Dry run: this is about the chunking, and writing 502 outcomes and
         // sending 502 mails to prove it would only make the test slow.

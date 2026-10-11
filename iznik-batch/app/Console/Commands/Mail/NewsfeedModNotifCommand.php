@@ -5,7 +5,9 @@ namespace App\Console\Commands\Mail;
 use App\Services\NewsfeedModNotifService;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:newsfeed-mod-notif')]
 class NewsfeedModNotifCommand extends Command
 {
     use LogsBatchJob;

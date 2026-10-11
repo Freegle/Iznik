@@ -13,7 +13,9 @@ use App\Mail\Traits\FeatureFlags;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:ai-image-review:digest')]
 class SendAIImageReviewDigestCommand extends Command
 {
     use FeatureFlags;

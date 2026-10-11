@@ -4,7 +4,9 @@ namespace App\Console\Commands\Notification;
 
 use App\Services\NotificationExhortService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'notifications:exhort')]
 class ExhortUsersCommand extends Command
 {
     protected $signature = 'notifications:exhort

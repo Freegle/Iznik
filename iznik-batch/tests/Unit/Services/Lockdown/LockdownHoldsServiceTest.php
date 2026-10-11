@@ -62,6 +62,19 @@ class LockdownHoldsServiceTest extends TestCase
         ]);
     }
 
+    public function test_production_releases_in_batches_of_300(): void
+    {
+        // The release tests set a batch of 5 so that going round more than once
+        // takes tens of rows, not hundreds. Production sets nothing, so it must
+        // fall back to the constant, and the constant must stay what was chosen.
+        $lockdown = config('freegle.lockdown', []);
+        unset($lockdown['release_batch_size']);
+        config(['freegle.lockdown' => $lockdown]);
+
+        $this->assertSame(300, LockdownHoldsService::RELEASE_BATCH_SIZE);
+        $this->assertSame(LockdownHoldsService::RELEASE_BATCH_SIZE, LockdownHoldsService::releaseBatchSize());
+    }
+
     public function test_nothing_recorded_with_no_lockdown(): void
     {
         $this->assertSame(['chat' => 0, 'post' => 0], $this->holds->createHolds());
@@ -212,8 +225,10 @@ class LockdownHoldsServiceTest extends TestCase
         $this->lockdown->press(null, 'wave');
         $user = $this->createTestUser();
 
-        // More than one batch, so the release has to go round more than once.
-        $count = LockdownHoldsService::RELEASE_BATCH_SIZE + 10;
+        // More than one batch, so the release has to go round more than once. A small
+        // batch, so that takes tens of posts rather than hundreds.
+        config(['freegle.lockdown.release_batch_size' => 5]);
+        $count = LockdownHoldsService::releaseBatchSize() + 10;
         $ids = [];
         for ($i = 0; $i < $count; $i++) {
             $ids[] = $nfid = $this->makeNewsfeedPost($user);
@@ -252,7 +267,10 @@ class LockdownHoldsServiceTest extends TestCase
     {
         $this->lockdown->press(null, 'wave');
         $user = $this->createTestUser();
-        $count = LockdownHoldsService::RELEASE_BATCH_SIZE + 10;
+        // A small batch, so that a release stopped after its first batch leaves
+        // tens of posts held rather than hundreds.
+        config(['freegle.lockdown.release_batch_size' => 5]);
+        $count = LockdownHoldsService::releaseBatchSize() + 10;
         for ($i = 0; $i < $count; $i++) {
             $this->holdChitChat($this->makeNewsfeedPost($user), $user->id);
         }
@@ -276,7 +294,7 @@ class LockdownHoldsServiceTest extends TestCase
 
         $released = (new LockdownHoldsService($lockdown))->releaseChitChatHolds();
 
-        $this->assertSame(LockdownHoldsService::RELEASE_BATCH_SIZE, $released, 'stops at the next batch once held again');
+        $this->assertSame(LockdownHoldsService::releaseBatchSize(), $released, 'stops at the next batch once held again');
         $this->assertSame(10, DB::table('lockdown_holds')->whereNull('outcome')->count());
     }
 }

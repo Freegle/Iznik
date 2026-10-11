@@ -7,6 +7,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\Process\Process;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Weekly Layer-3 monitoring of the ripple notification algorithm.
@@ -25,6 +26,7 @@ use Symfony\Component\Process\Process;
  * and why this is the right way to monitor the algorithm without depending
  * on data the algorithm itself produced.
  */
+#[AsCommand(name: 'ripple:monitor')]
 class MonitorAlgorithmCommand extends Command
 {
     protected $signature = 'ripple:monitor

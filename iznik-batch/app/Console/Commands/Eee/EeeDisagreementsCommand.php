@@ -5,6 +5,7 @@ namespace App\Console\Commands\Eee;
 use App\Services\EeeSqliteService;
 use App\Services\EeeVisionService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Export messages where models disagreed on EEE classification.
@@ -15,6 +16,7 @@ use Illuminate\Console\Command;
  *   php artisan eee:disagreements
  *   php artisan eee:disagreements --output=disagreements.csv --limit=100
  */
+#[AsCommand(name: 'eee:disagreements')]
 class EeeDisagreementsCommand extends Command
 {
     protected $signature = 'eee:disagreements

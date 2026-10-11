@@ -9,6 +9,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\Mime\Address;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Send the per-organisation intro email for a bulk offer ("clearance") via the
@@ -25,6 +26,7 @@ use Symfony\Component\Mime\Address;
  * Suppression (PECR): rows whose suppressed_until is in the future (e.g. an
  * org that replied UNSUBSCRIBE) are skipped.
  */
+#[AsCommand(name: 'bulkoffer:send-outreach')]
 class SendOutreachCommand extends Command
 {
     protected $signature = 'bulkoffer:send-outreach

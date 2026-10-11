@@ -4,7 +4,9 @@ namespace App\Console\Commands\User;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'user:demerge')]
 class DemergeUserCommand extends Command
 {
     protected $signature = 'user:demerge

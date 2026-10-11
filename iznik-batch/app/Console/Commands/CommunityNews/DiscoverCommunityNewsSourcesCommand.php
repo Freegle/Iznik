@@ -4,7 +4,9 @@ namespace App\Console\Commands\CommunityNews;
 
 use App\Services\CommunityNews\CommunityNewsSourceService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'community-news:discover-sources')]
 class DiscoverCommunityNewsSourcesCommand extends Command
 {
     protected $signature = 'community-news:discover-sources

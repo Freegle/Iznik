@@ -7,6 +7,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Keep ai_images.usage_count in step with how many posts actually use each AI image.
@@ -29,6 +30,7 @@ use Illuminate\Support\Facades\Schema;
  * the AI image tool, not a number anything acts on, and the same figure was already up to
  * an hour stale.
  */
+#[AsCommand(name: 'ai:usage-counts:update')]
 class UpdateAIImageUsageCountsCommand extends Command
 {
     protected $signature = 'ai:usage-counts:update

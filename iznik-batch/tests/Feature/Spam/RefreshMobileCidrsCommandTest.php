@@ -5,6 +5,7 @@ namespace Tests\Feature\Spam;
 use App\Services\MobileNetworkService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Sleep;
 use Tests\TestCase;
 
 /**
@@ -96,6 +97,9 @@ class RefreshMobileCidrsCommandTest extends TestCase
     public function test_survives_ripestat_failure_for_one_asn(): void
     {
         DB::table('spam_whitelist_ips')->where('comment', 'like', 'UK mobile:%')->delete();
+        // Each failed RIPEstat call is retried after a 500ms pause. The retries
+        // still happen; only the pause between them is faked away.
+        Sleep::fake();
         // RIPEstat returns 500 — the command should not error out the whole run.
         Http::fake([
             'stat.ripe.net/*' => Http::response('upstream error', 500),
@@ -108,6 +112,12 @@ class RefreshMobileCidrsCommandTest extends TestCase
             0,
             DB::table('spam_whitelist_ips')->where('comment', 'like', 'UK mobile:%')->count()
         );
+
+        // The comment above is a claim; these hold it: two attempts at RIPEstat for
+        // each carrier, with one 500ms pause between them.
+        $asns = count(MobileNetworkService::UK_MOBILE_ASNS);
+        $this->assertCount($asns * 2, Http::recorded(fn ($request) => str_contains($request->url(), 'stat.ripe.net')));
+        Sleep::assertSequence(array_fill(0, $asns, Sleep::usleep(500000)));
     }
 
     public function test_service_targets_the_uk_mobile_mnos(): void
@@ -155,6 +165,9 @@ class RefreshMobileCidrsCommandTest extends TestCase
     public function test_survives_cloudflare_fetch_failure(): void
     {
         DB::table('spam_whitelist_ips')->where('comment', MobileNetworkService::CLOUDFLARE_COMMENT)->delete();
+        // The failed Cloudflare call is retried after a 500ms pause. The retry
+        // still happens; only the pause is faked away.
+        Sleep::fake();
         Http::fake([
             'stat.ripe.net/*' => Http::response([
                 'data' => ['prefixes' => [['prefix' => '149.254.0.0/16']]],
@@ -169,6 +182,12 @@ class RefreshMobileCidrsCommandTest extends TestCase
             0,
             DB::table('spam_whitelist_ips')->where('comment', MobileNetworkService::CLOUDFLARE_COMMENT)->count()
         );
+
+        // And the retry the comment above describes did happen: two attempts at
+        // Cloudflare with one 500ms pause, and no pause for the carriers, which
+        // answered first time.
+        $this->assertCount(2, Http::recorded(fn ($request) => str_contains($request->url(), 'www.cloudflare.com/ips-v4')));
+        Sleep::assertSequence([Sleep::usleep(500000)]);
     }
 
     // ── RFC 6598 CGNAT constant ───────────────────────────────────────────────

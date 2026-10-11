@@ -7,6 +7,7 @@ use App\Monitoring\ScheduledOutcomeRegistry;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Outcome-based monitoring for scheduled tasks: asserts that jobs actually did
@@ -28,6 +29,7 @@ use Illuminate\Support\Facades\Log;
  *
  * See docs/scheduled-outcome-monitoring.md.
  */
+#[AsCommand(name: 'monitor:scheduled-outcomes')]
 class MonitorScheduledOutcomesCommand extends Command
 {
     protected $signature = 'monitor:scheduled-outcomes {--only= : Evaluate only the check with this slug}';

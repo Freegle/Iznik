@@ -57,6 +57,7 @@ import { onMounted } from 'vue'
 import SupportLink from '~/components/SupportLink'
 import ExternalLink from '~/components/ExternalLink'
 import { useError } from '#imports'
+import { useMiscStore } from '~/stores/misc'
 
 const error = useError()
 const maintenance = error?.value?.message === 'Maintenance error'
@@ -66,7 +67,10 @@ const importError =
     'Failed to fetch dynamically imported module'
   ) || error?.value?.message.includes('Importing a module script failed')
 
-if (importError) {
+// Not when we are navigating away on purpose (the job redirect page does): the failed import
+// is that navigation cancelling the page, and reloading would bring the page back and repeat
+// whatever it did - for the job page, a second, unpaid click on the advert.
+if (importError && !useMiscStore().unloading) {
   // This can happen when a page load is cancelled by the user, sometimes.  Reload.
   console.log('Import of module error - reload')
   window.location.reload()

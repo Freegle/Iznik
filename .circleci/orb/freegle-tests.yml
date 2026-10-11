@@ -654,10 +654,16 @@ commands:
               docker-compose build $INLINE_CACHE_FLAG apiv2 > "$GO_LOG" 2>&1 &
               GO_PID=$!
 
-              # Nuxt containers — wrapped in retry for transient npm ECONNRESET errors
+              # Nuxt containers — wrapped in retry for transient npm ECONNRESET errors.
+              # The two dev images are built here too. CI turns file sync off because the
+              # build is meant to put the code in every container, and Vitest and eslint
+              # both run in modtools-dev-local. Left out, `docker-compose up` reuses any
+              # dev image already on a pooled runner VM, and both run over an older copy of
+              # the frontend.
               (
                 for attempt in 1 2 3; do
-                  docker-compose build $INLINE_CACHE_FLAG freegle-prod-local modtools-prod-local && exit 0
+                  docker-compose build $INLINE_CACHE_FLAG freegle-prod-local modtools-prod-local \
+                    freegle-dev-local modtools-dev-local && exit 0
                   echo "⚠️ Nuxt build attempt $attempt failed, retrying in 30s..."
                   [ $attempt -lt 3 ] && sleep 30
                 done
@@ -726,9 +732,11 @@ commands:
               RETRY_DELAY=30
               for attempt in $(seq 1 $MAX_RETRIES); do
                 echo "Build attempt $attempt of $MAX_RETRIES..."
+                # The dev images too: see the parallel path above.
                 if docker-compose build $CACHE_FLAG \
                   apiv2 \
                   freegle-prod-local modtools-prod-local \
+                  freegle-dev-local modtools-dev-local \
                   playwright status spatial-knn spatial; then
                   echo "✅ Build succeeded on attempt $attempt"
                   break

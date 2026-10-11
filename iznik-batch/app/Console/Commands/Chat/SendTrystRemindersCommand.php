@@ -4,7 +4,9 @@ namespace App\Console\Commands\Chat;
 
 use App\Services\TrystService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'chats:send-tryst-reminders')]
 class SendTrystRemindersCommand extends Command
 {
     protected $signature = 'chats:send-tryst-reminders

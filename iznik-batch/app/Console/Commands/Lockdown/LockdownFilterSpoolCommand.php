@@ -4,6 +4,7 @@ namespace App\Console\Commands\Lockdown;
 
 use App\Services\Lockdown\LockdownFilterSpoolService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Removes a waiting spooled mail once the member content it names is no longer fit to
@@ -13,6 +14,7 @@ use Illuminate\Console\Command;
  * reports an error) - also runnable on its own at any time, since a file with no `about`
  * field is always left untouched.
  */
+#[AsCommand(name: 'lockdown:filter-spool')]
 class LockdownFilterSpoolCommand extends Command
 {
     protected $signature = 'lockdown:filter-spool';

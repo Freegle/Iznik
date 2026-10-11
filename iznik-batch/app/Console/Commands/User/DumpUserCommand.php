@@ -4,6 +4,7 @@ namespace App\Console\Commands\User;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Dump a user's data to a JSON file for later restoration.
@@ -14,6 +15,7 @@ use Illuminate\Support\Facades\DB;
  * Usage: php artisan user:dump --email=user@example.com --output=/tmp/user-dump.json
  *        php artisan user:dump --id=12345 --output=/tmp/user-dump.json
  */
+#[AsCommand(name: 'user:dump')]
 class DumpUserCommand extends Command
 {
     protected $signature = 'user:dump

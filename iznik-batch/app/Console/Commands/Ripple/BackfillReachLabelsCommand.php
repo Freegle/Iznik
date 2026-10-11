@@ -6,6 +6,7 @@ use App\Console\Concerns\PreventsOverlapping;
 use App\Services\Ripple\ReachService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * One-shot backfill of reach-engine labels for rippling_reach rows that predate
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\DB;
  * server without the engine configured (503s are silent no-ops; run again once
  * REACH_DIR is deployed). Paced for Galera like the other ripple backfills.
  */
+#[AsCommand(name: 'ripple:backfill-reach-labels')]
 class BackfillReachLabelsCommand extends Command
 {
     use PreventsOverlapping;

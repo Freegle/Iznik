@@ -18,6 +18,10 @@ const mockJobStore = {
   get list() {
     return mockJobList
   },
+  // The ad slots read the list without the adverts this device opened recently.
+  get available() {
+    return mockJobList
+  },
   fetch: vi.fn().mockResolvedValue(undefined),
 }
 

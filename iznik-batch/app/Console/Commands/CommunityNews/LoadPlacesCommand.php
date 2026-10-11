@@ -4,6 +4,7 @@ namespace App\Console\Commands\CommunityNews;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Loads the UK gazetteer in database/data/uk-places.csv into `places`.
@@ -13,6 +14,7 @@ use Illuminate\Support\Facades\DB;
  * live system - nothing reads `places` except the Community News research
  * prompt, which simply gets a better list of what an area covers.
  */
+#[AsCommand(name: 'community-news:load-places')]
 class LoadPlacesCommand extends Command
 {
     protected $signature = 'community-news:load-places

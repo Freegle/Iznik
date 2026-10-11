@@ -34,6 +34,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Processes background tasks queued by the Go API server.
@@ -43,6 +44,7 @@ use Illuminate\Support\Str;
  *
  * Runs as a daemon via supervisor or the Laravel scheduler.
  */
+#[AsCommand(name: 'queue:background-tasks')]
 class ProcessBackgroundTasksCommand extends Command
 {
     use GracefulShutdown;
@@ -113,7 +115,11 @@ class ProcessBackgroundTasksCommand extends Command
 
             $processed = $this->processIteration($limit, $pushService, $spooler, $shouldSpool);
 
-            if ($processed === 0) {
+            // Idle: sleep before polling again, unless this was the last iteration,
+            // in which case there is nothing to wait for. A --max-iterations=1 run
+            // used to idle for the full --sleep before exiting.
+            $lastIteration = $maxIterations > 0 && $iteration >= $maxIterations;
+            if ($processed === 0 && ! $lastIteration) {
                 sleep($sleepSeconds);
             }
         }

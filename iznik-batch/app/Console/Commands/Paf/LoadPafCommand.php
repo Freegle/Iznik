@@ -4,7 +4,9 @@ namespace App\Console\Commands\Paf;
 
 use App\Services\PafService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'paf:load')]
 class LoadPafCommand extends Command
 {
     protected $signature = 'paf:load

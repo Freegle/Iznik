@@ -5,6 +5,7 @@ namespace App\Console\Commands\Images;
 use App\Services\ImageStore\ObjectStoreUnavailable;
 use App\Services\ImageStore\SpoolPusherService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Move completed uploads from tusd's local spool to the object store.
@@ -14,6 +15,7 @@ use Illuminate\Console\Command;
  *
  *   php artisan images:push-spool --dry-run
  */
+#[AsCommand(name: 'images:push-spool')]
 class PushSpoolCommand extends Command
 {
     protected $signature = 'images:push-spool

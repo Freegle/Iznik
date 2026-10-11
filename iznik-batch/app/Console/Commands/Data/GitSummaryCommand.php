@@ -6,6 +6,7 @@ use App\Services\GitSummaryService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Command to generate and send AI-powered git commit summaries.
@@ -13,6 +14,7 @@ use Illuminate\Support\Facades\Log;
  * This replaces the legacy V1 PHP git_summary_ai cron script.
  * Summaries are sent to Discourse via email-to-forum integration.
  */
+#[AsCommand(name: 'data:git-summary')]
 class GitSummaryCommand extends Command
 {
     use GracefulShutdown;

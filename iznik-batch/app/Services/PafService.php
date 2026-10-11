@@ -67,7 +67,7 @@ class PafService
      * Process a PAF CSV file (initial load), inserting new records.
      * Returns [processed, inserted, unknown_postcodes] counts.
      */
-    public function load(string $inputPath, callable $progress = null): array
+    public function load(string $inputPath, ?callable $progress = null): array
     {
         if (!file_exists($inputPath)) {
             throw new \InvalidArgumentException("Input file not found: {$inputPath}");
@@ -146,7 +146,7 @@ class PafService
     /**
      * Process a PAF CSV file (update pass), updating changed records.
      */
-    public function update(string $inputPath, callable $progress = null): array
+    public function update(string $inputPath, ?callable $progress = null): array
     {
         if (!file_exists($inputPath)) {
             throw new \InvalidArgumentException("Input file not found: {$inputPath}");

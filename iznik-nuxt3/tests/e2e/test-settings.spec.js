@@ -350,6 +350,18 @@ test.describe('Settings Page - Email Level Settings', () => {
     await feed.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
     await expect(feed.locator('input[type="range"]')).toHaveCount(1)
 
+    // The reach hint under the slider looks up nearby places once it is in view,
+    // after a 350ms debounce, so wait past that. The lookup must finish rather
+    // than stay on "Finding nearby places", and what it leaves must be a reach,
+    // example towns or the nearest town, or nothing when there is no answer.
+    const hint = feed.locator('.nearby-towns').first()
+    await hint.scrollIntoViewIfNeeded()
+    await page.waitForTimeout(500)
+    await expect(hint).not.toContainText('Finding nearby places', {
+      timeout: timeouts.api.default,
+    })
+    await expect(hint).toHaveText(/^$|by road|^e\.g\. |^Nearest town: /)
+
     console.log(
       '✓ Split reveals a second slider and persists nothing until it is used'
     )

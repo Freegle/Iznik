@@ -4,6 +4,7 @@ namespace App\Console\Commands\BulkOffer;
 
 use App\Services\Gmail\GmailService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Move matching mailbox messages to Trash - e.g. delivery-failure NDRs whose
@@ -12,6 +13,7 @@ use Illuminate\Console\Command;
  *
  * Dry-run by default (lists what it would trash); --live actually trashes.
  */
+#[AsCommand(name: 'bulkoffer:trash-outreach')]
 class TrashOutreachCommand extends Command
 {
     protected $signature = 'bulkoffer:trash-outreach

@@ -5,6 +5,7 @@ namespace App\Console\Commands\Ripple;
 use App\Console\Concerns\PreventsOverlapping;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * The disk-reclaim step of the labels-truth cutover, in two grades:
@@ -32,6 +33,7 @@ use Illuminate\Support\Facades\DB;
  * Safe to re-run; rows without labels are never touched, and the maxreach
  * backfill skips labelled rows so drained grids are not rewritten.
  */
+#[AsCommand(name: 'ripple:drop-cell-grids')]
 class DropCellGridsCommand extends Command
 {
     use PreventsOverlapping;

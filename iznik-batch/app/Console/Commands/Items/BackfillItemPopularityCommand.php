@@ -4,6 +4,7 @@ namespace App\Console\Commands\Items;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Recompute items.popularity from messages_items.
@@ -29,6 +30,7 @@ use Illuminate\Support\Facades\DB;
  *   php artisan items:backfill-popularity --dry-run
  *   php artisan items:backfill-popularity --chunk=5000
  */
+#[AsCommand(name: 'items:backfill-popularity')]
 class BackfillItemPopularityCommand extends Command
 {
     protected $signature = 'items:backfill-popularity

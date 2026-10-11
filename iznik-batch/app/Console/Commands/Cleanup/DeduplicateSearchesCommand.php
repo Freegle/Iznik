@@ -5,7 +5,9 @@ namespace App\Console\Commands\Cleanup;
 use App\Services\PurgeService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'cleanup:search-duplicates')]
 class DeduplicateSearchesCommand extends Command
 {
     /**

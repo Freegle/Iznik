@@ -42,9 +42,21 @@ class EeeSqliteServiceTest extends TestCase
         parent::tearDown();
     }
 
+    /**
+     * Where the throwaway SQLite files go. Memory-backed when the container has
+     * it: the service opens each file in WAL mode, and on a disk every table it
+     * creates and every row it writes is its own synced commit, which is most of
+     * what these tests used to spend their time on. What is asserted does not
+     * depend on where the file lives.
+     */
+    private function tempDir(): string
+    {
+        return is_dir('/dev/shm') && is_writable('/dev/shm') ? '/dev/shm' : sys_get_temp_dir();
+    }
+
     private function newService(?string $path = null): EeeSqliteService
     {
-        $path ??= sys_get_temp_dir() . '/eee_sqlite_test_' . uniqid() . '.sqlite';
+        $path ??= $this->tempDir() . '/eee_sqlite_test_' . uniqid() . '.sqlite';
         $this->tempPaths[] = $path;
         config(['freegle.eee.sqlite_path' => $path]);
         return new EeeSqliteService();
@@ -56,7 +68,7 @@ class EeeSqliteServiceTest extends TestCase
 
     public function test_get_pdo_creates_missing_nested_directory_and_file(): void
     {
-        $path = sys_get_temp_dir() . '/eee_sqlite_test_' . uniqid() . '/nested/classifications.sqlite';
+        $path = $this->tempDir() . '/eee_sqlite_test_' . uniqid() . '/nested/classifications.sqlite';
         $this->tempPaths[] = $path;
         config(['freegle.eee.sqlite_path' => $path]);
         $service = new EeeSqliteService();
@@ -97,7 +109,7 @@ class EeeSqliteServiceTest extends TestCase
 
     public function test_migrate_upgrades_legacy_schema_missing_classification_mode_column(): void
     {
-        $path = sys_get_temp_dir() . '/eee_sqlite_test_' . uniqid() . '.sqlite';
+        $path = $this->tempDir() . '/eee_sqlite_test_' . uniqid() . '.sqlite';
         $this->tempPaths[] = $path;
 
         // Simulate a pre-existing v1 database: the full column set the upgrade
@@ -143,7 +155,7 @@ class EeeSqliteServiceTest extends TestCase
 
     public function test_migrate_upgrades_schema_with_mode_column_but_short_primary_key(): void
     {
-        $path = sys_get_temp_dir() . '/eee_sqlite_test_' . uniqid() . '.sqlite';
+        $path = $this->tempDir() . '/eee_sqlite_test_' . uniqid() . '.sqlite';
         $this->tempPaths[] = $path;
 
         // v2: classification_mode column already exists, but the PK is still

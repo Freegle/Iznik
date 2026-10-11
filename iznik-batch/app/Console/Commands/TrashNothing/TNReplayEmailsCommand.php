@@ -8,6 +8,7 @@ use App\Services\Mail\Incoming\MailParserService;
 use App\Services\TrashNothing\Sync\EmailReplaySyncer;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Replay TN post emails through the legacy email-ingestion pipeline
@@ -23,6 +24,7 @@ use Illuminate\Support\Facades\Log;
  * test database, then compared against a PostSyncer --dry-run run over the
  * same date window (see TNSyncCommand) by diffing their TN-SYNC-TRACE log lines.
  */
+#[AsCommand(name: 'tn:replay-emails')]
 class TNReplayEmailsCommand extends Command
 {
     protected $signature = 'tn:replay-emails

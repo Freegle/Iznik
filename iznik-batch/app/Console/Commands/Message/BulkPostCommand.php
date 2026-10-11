@@ -11,6 +11,7 @@ use App\Services\TusService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Bulk-post offer messages from a CSV file via the Go API.
@@ -23,6 +24,7 @@ use Illuminate\Support\Facades\Log;
  *   body.txt    - shared body text for all posts
  *   *.jpg/png   - photo files referenced in CSV
  */
+#[AsCommand(name: 'messages:bulk-post')]
 class BulkPostCommand extends Command
 {
     protected $signature = 'messages:bulk-post

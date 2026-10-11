@@ -5,6 +5,7 @@ namespace App\Console\Commands\Concierge;
 use App\Services\Gmail\GmailService;
 use Illuminate\Console\Command;
 use Symfony\Component\Mime\Address;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Sends ONLY the concierge queue entries a human has marked "approved": true.
@@ -15,6 +16,7 @@ use Symfony\Component\Mime\Address;
  *    action, body) — an entry is skipped if its key is already in the ledger,
  *    so re-running can never send the same reply twice.
  */
+#[AsCommand(name: 'concierge:send-approved')]
 class ConciergeSendApprovedCommand extends Command
 {
     protected $signature = 'concierge:send-approved

@@ -5,7 +5,9 @@ namespace App\Console\Commands\CommunityNews;
 use App\Services\CommunityNews\CommunityNewsEmailService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'community-news:email')]
 class SendCommunityNewsEmailCommand extends Command
 {
     protected $signature = 'community-news:email

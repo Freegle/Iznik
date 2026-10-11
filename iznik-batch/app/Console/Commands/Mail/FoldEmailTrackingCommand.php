@@ -6,6 +6,7 @@ use App\Services\Mail\EmailTrackingFoldService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Apply the email tracking journal (image loads and pixel opens appended by the Go delivery
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\Log;
  * that covers every open it just applied: that command normally runs hourly over the last three
  * hours of opened_at, which would never see an open whose event is now many hours old.
  */
+#[AsCommand(name: 'mail:tracking:fold')]
 class FoldEmailTrackingCommand extends Command
 {
     protected $signature = 'mail:tracking:fold

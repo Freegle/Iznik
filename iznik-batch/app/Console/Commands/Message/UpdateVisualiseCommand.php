@@ -5,7 +5,9 @@ namespace App\Console\Commands\Message;
 use App\Services\VisualiseService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'messages:update-visualise')]
 class UpdateVisualiseCommand extends Command
 {
     protected $signature = 'messages:update-visualise

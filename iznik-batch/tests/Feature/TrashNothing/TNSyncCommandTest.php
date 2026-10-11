@@ -9,8 +9,6 @@ use App\Services\LokiService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use PHPUnit\Framework\Attributes\PreserveGlobalState;
-use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use Psr\Log\NullLogger;
 use Tests\TestCase;
 
@@ -27,8 +25,15 @@ use Tests\TestCase;
  * memory accumulation. 28+ artisan() calls in one process exhaust the heap
  * because PHP's zend_mm doubles its segment size on each expansion attempt.
  */
-#[RunTestsInSeparateProcesses]
-#[PreserveGlobalState(false)]
+/**
+ * Runs in one process, like every other class. It used to run each test in its
+ * own process, and before that to force a garbage collection around each test,
+ * to get round memory that accumulated across artisan() calls in early versions
+ * of the command. Neither is needed now, and both were expensive: a process per
+ * test cost a PHP start and an application boot each, and a forced collection
+ * late in the suite walks the hundreds of megabytes of coverage data PHPUnit is
+ * holding by then, about 150ms a time.
+ */
 class TNSyncCommandTest extends TestCase
 {
     private const DATE_SYNC = '2026-03-20T10:00:00+00:00';
@@ -41,17 +46,10 @@ class TNSyncCommandTest extends TestCase
 
     protected function setUp(): void
     {
-        // Free cyclic garbage from the previous test (or a crashed test that skipped tearDown).
-        // Each artisan() call boots a full Laravel kernel with many cyclic references that
-        // PHP's reference counter won't collect automatically — gc_collect_cycles() does.
-        gc_collect_cycles();
-
         parent::setUp();
 
-        // With #[RunTestsInSeparateProcesses], each test runs in its own PHP process.
-        // LOG_CHANNEL=stderr in Docker means logs go to child-process stderr, which
-        // PHPUnit captures and treats as risky output (failOnRisky: true → error).
-        // Swap the logger for a NullLogger to prevent all log output in child processes.
+        // tn:sync logs as it goes. Swap in a NullLogger so none of that reaches the
+        // test output.
         Log::swap(new NullLogger());
 
         $this->dateFile = sys_get_temp_dir() . '/tn_sync_test_' . uniqid('', true) . '.txt';
@@ -71,11 +69,6 @@ class TNSyncCommandTest extends TestCase
         }
 
         parent::tearDown();
-
-        // Force collection of cyclic references left by Laravel's service container
-        // and Eloquent after each artisan() run. Without this, cycles accumulate
-        // across the 41 tests in this class and exhaust the 1GB memory limit.
-        gc_collect_cycles();
     }
 
     // =========================================================================

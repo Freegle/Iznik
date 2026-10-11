@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-09
+last_reviewed: 2026-10-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/components/ExternalDa.vue
@@ -9,6 +9,8 @@ covers:
   - iznik-batch/app/Console/Commands/Donation/UpdateAdsTargetCommand.php
   - iznik-batch/app/Services/WhatJobsService.php
   - iznik-nuxt3/components/JobsDaSlot.vue
+  - iznik-nuxt3/stores/job.js
+  - iznik-nuxt3/pages/job/[id].vue
 ---
 
 # Adverts
@@ -85,6 +87,17 @@ Things to know before touching it:
   the top 20 and orders them at random weighted by pay (`composables/payWeightedOrder.js`, the
   digest's own weighting), so several slots on one page differ but better-paid jobs still lead.
   A uniform shuffle there would discard the ranking.
+- **A device is never sent to the same advert twice within 24 hours.** WhatJobs does not pay
+  for a repeat click from the same user, IP or browser on the same advert in that window, and
+  counts it against the first. The job store remembers in `localStorage` which adverts this
+  device opened; the ad slots read `jobStore.available`, which leaves them out, so a slot
+  swaps an opened advert for another a moment after the tap. A tap within two seconds of
+  opening any advert is a double-tap and is dropped before it reaches the link. The email
+  landing page (`pages/job/[id].vue`) does not redirect to an advert already opened, and
+  offers other jobs instead. It also sets `miscStore.unloading` before it leaves, because
+  leaving cancels in-flight module loads and the reload that `error.vue` and `app.vue` do
+  for a failed import would otherwise load the page again and send a second click. Our own
+  `logs_jobs` records every tap, so it counts more clicks than WhatJobs bills.
 
 ## The mobile app
 

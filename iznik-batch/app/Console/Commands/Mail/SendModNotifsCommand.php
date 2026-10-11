@@ -8,7 +8,9 @@ use App\Services\ModNotifService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:mod-notifs')]
 class SendModNotifsCommand extends Command
 {
     use PreventsOverlapping;

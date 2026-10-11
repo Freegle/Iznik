@@ -6,12 +6,33 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"reflect"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
+
+// The retry loops back off with a real sleep between attempts. Nothing in this file
+// is about how long that wait is, only that it happens and stays within range, so
+// the whole package records the waits instead of making them: before this, the file
+// spent over three seconds asleep.
+var recordedBackoffs []time.Duration
+
+// productionRetrySleep is what retrySleep held before the swap below, so a test can
+// check that outside the tests the retry loop really sleeps.
+var productionRetrySleep func(time.Duration)
+
+func TestMain(m *testing.M) {
+	productionRetrySleep = retrySleep
+	retrySleep = func(d time.Duration) {
+		recordedBackoffs = append(recordedBackoffs, d)
+	}
+	os.Exit(m.Run())
+}
 
 // helper: create a Fiber app with a retry-wrapped test handler.
 func testApp(handler fiber.Handler, maxRetries ...int) *fiber.App {
@@ -187,10 +208,18 @@ func TestRetry_AllRetriesExhausted(t *testing.T) {
 		return errors.New("MySQL server has gone away")
 	}, 3)
 
+	recordedBackoffs = nil
 	resp, _ := app.Test(httptest.NewRequest("GET", "/test", nil), 10000)
 	// After 1 initial + 3 retries = 4 calls, should fail.
 	assert.Equal(t, 500, resp.StatusCode)
 	assert.Equal(t, int32(4), atomic.LoadInt32(&calls))
+
+	// One backoff before each retry, each a jittered wait inside the configured range.
+	assert.Len(t, recordedBackoffs, 3)
+	for _, d := range recordedBackoffs {
+		assert.GreaterOrEqual(t, d, time.Duration(minBackoffMs)*time.Millisecond)
+		assert.Less(t, d, time.Duration(maxBackoffMs)*time.Millisecond)
+	}
 }
 
 func TestRetry_ResponseResetBetweenAttempts(t *testing.T) {
@@ -237,9 +266,29 @@ func TestRetry_DefaultMaxRetries(t *testing.T) {
 		return errors.New("Deadlock found")
 	}))
 
+	recordedBackoffs = nil
 	app.Test(httptest.NewRequest("GET", "/test", nil), 30000)
 	// 1 initial + 5 retries = 6 calls.
 	assert.Equal(t, int32(6), atomic.LoadInt32(&calls))
+
+	// The default path backs off before every retry too, each wait inside the range,
+	// and the waits are jittered rather than one fixed delay: two requests that
+	// collided on a deadlock must not retry in lockstep. Five equal waits from a
+	// 150-value range would happen about once in five hundred million runs.
+	assert.Len(t, recordedBackoffs, DefaultMaxRetries)
+	distinct := map[time.Duration]bool{}
+	for _, d := range recordedBackoffs {
+		assert.GreaterOrEqual(t, d, time.Duration(minBackoffMs)*time.Millisecond)
+		assert.Less(t, d, time.Duration(maxBackoffMs)*time.Millisecond)
+		distinct[d] = true
+	}
+	assert.Greater(t, len(distinct), 1, "backoff waits should vary between retries")
+}
+
+func TestRetry_ProductionSleepIsTimeSleep(t *testing.T) {
+	// The tests above record the waits instead of making them. This pins down that the
+	// retry loop the API actually runs does wait.
+	assert.Equal(t, reflect.ValueOf(time.Sleep).Pointer(), reflect.ValueOf(productionRetrySleep).Pointer())
 }
 
 func TestRetry_ZeroConfigUsesDefault(t *testing.T) {

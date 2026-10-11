@@ -5,6 +5,7 @@ namespace App\Console\Commands\Notification;
 use App\Services\PushNotificationService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Send a test push notification to a user's registered devices.
@@ -15,6 +16,7 @@ use Illuminate\Support\Facades\DB;
  * Usage: php artisan push:test-notification --email=user@example.com --app=mt
  *        php artisan push:test-notification --id=12345 --app=fd
  */
+#[AsCommand(name: 'push:test-notification')]
 class SendTestPushCommand extends Command
 {
     protected $signature = 'push:test-notification

@@ -4,7 +4,9 @@ namespace App\Console\Commands\Stories;
 
 use App\Services\StoriesService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'stories:send-to-central')]
 class SendStoriesToCentralCommand extends Command
 {
     protected $signature = 'stories:send-to-central

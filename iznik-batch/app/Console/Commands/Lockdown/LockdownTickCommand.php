@@ -11,6 +11,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Runs every minute while a lockdown exists (plan 2026-09-27-lockdown-switch.md, section
@@ -28,6 +29,7 @@ use Illuminate\Support\Facades\Mail;
  * pass, so the send queue is kept clear of mail about removed content throughout, not only
  * at the moment email is lifted.
  */
+#[AsCommand(name: 'lockdown:tick')]
 class LockdownTickCommand extends Command
 {
     protected $signature = 'lockdown:tick';

@@ -6,7 +6,9 @@ use App\Models\CommunityNewsArea;
 use App\Services\CommunityNews\CommunityNewsAreaService;
 use App\Services\CommunityNews\CommunityNewsResearchService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'community-news:research')]
 class ResearchCommunityNewsCommand extends Command
 {
     protected $signature = 'community-news:research
