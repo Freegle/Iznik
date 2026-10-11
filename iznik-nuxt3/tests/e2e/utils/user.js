@@ -7,7 +7,11 @@ const path = require('path')
 const { expect } = require('@playwright/test')
 const { timeouts, DEFAULT_TEST_PASSWORD } = require('../config')
 const { SCREENSHOTS_DIR } = require('../config')
-const { trackFailedLoads, waitForAppMount } = require('./app-mount')
+const {
+  trackFailedLoads,
+  waitForAppMount,
+  noteRecovery,
+} = require('./app-mount')
 const { waitForModal } = require('./ui')
 
 /**
@@ -1759,13 +1763,18 @@ async function loginViaModTools(page, email, password = 'freegle') {
       { email, password }
     )
     if (!intact) {
-      if (attempt >= 3) {
+      // One refill, recorded, and then a failure. This happens about once in
+      // forty logins with the cause not yet found, and a member could lose
+      // what they typed the same way, so it must stay visible rather than be
+      // retried until it goes away.
+      if (attempt >= 2) {
         throw new Error(
-          'ModTools login form lost its typed values three times in a row'
+          'ModTools login form lost its typed values twice in a row'
         )
       }
-      console.log(
-        `[loginViaModTools] Login form was re-rendered after typing (attempt ${attempt}), filling again`
+      noteRecovery(
+        'login-refill',
+        `ModTools login form lost the typed email or password before submit; filled it again (${email})`
       )
       continue
     }

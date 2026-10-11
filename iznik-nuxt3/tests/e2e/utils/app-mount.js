@@ -14,7 +14,27 @@
  * again brings it back. ERR_CONNECTION_RESET is the same shape from the
  * other end.
  */
+const { test } = require('@playwright/test')
 const { timeouts } = require('../config')
+
+/**
+ * Record that the harness recovered from something instead of failing.
+ *
+ * Recovering from host noise is legitimate, but a recovery must never be
+ * silent: the same symptom can be a real fault (a server resetting
+ * connections, a form that loses what was typed), and if it is only retried
+ * away nobody sees it. So each recovery is a "[RECOVERED]" line, which the
+ * status runner counts and names in the run's final message, and an
+ * annotation on the test in the report.
+ */
+function noteRecovery(kind, detail) {
+  console.log(`[RECOVERED] ${kind}: ${detail}`)
+  try {
+    test.info().annotations.push({ type: `recovered-${kind}`, description: detail })
+  } catch {
+    // Outside a running test (no test.info()): the log line is enough.
+  }
+}
 
 const LOST_LOAD = /ERR_NETWORK_CHANGED|ERR_CONNECTION_RESET/
 
@@ -94,7 +114,10 @@ async function waitForAppMount(page, path, navigatedAt) {
       timeout: timeouts.navigation.default,
     })
     if (await appMounted(page, MOUNT_WAIT)) {
-      console.log(`[appMount] ${path}: mounted after the reload`)
+      noteRecovery(
+        'reload',
+        `${path} mounted only after a reload; first load: ${describeFailed(failed)}`
+      )
       return
     }
     const again = failedLoadsSince(page, reloadedAt)
@@ -115,4 +138,4 @@ async function waitForAppMount(page, path, navigatedAt) {
   )
 }
 
-module.exports = { trackFailedLoads, waitForAppMount }
+module.exports = { trackFailedLoads, waitForAppMount, noteRecovery }

@@ -129,13 +129,10 @@ async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
     300000
   )
 
-  // And again now the database exists afresh. This is what lets apiv2 keep
-  // running across the reset instead of being restarted: its pool (go-sql-driver
-  // 1.8, liveness check on) notices a killed connection the next time it picks
-  // it up and opens a new one against the new database, with no error reaching
-  // the caller. A connection opened in the gap between the first KILL and the
-  // DROP would have had its default database dropped from under it and been
-  // broken for every query for the rest of its life, hence killing twice.
+  // And again now the database exists afresh, so that nothing still holds a
+  // connection whose default database was dropped from under it between the first
+  // KILL and the DROP (the batch container's workers included). apiv2 is
+  // restarted further down in any case.
   killIznikConnections(pfx)
   // Every migration runs from an empty schema here, and on a cold stack - containers
   // just started, buffer pool empty, a dozen other services competing for the disk -
@@ -222,14 +219,21 @@ async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
       `spatial ${ages.messages_spatial} day(s) old)\n`
   )
 
+  // Restart apiv2. Its pool would cope with the reset on its own, but apiv2 also
+  // keeps in-memory caches keyed by id (dashboard answers for up to half an hour,
+  // message visibility, member leaves, reach universes), and the fixtures come back
+  // with the same ids. Without a restart, state cached from the previous run's
+  // changes is served to this one: one run could pass or fail because of another.
+  // CI starts every container fresh, so this matters only for local runs, which is
+  // exactly where this reset runs.
+  runStep('restart apiv2', `docker restart ${pfx}-apiv2`, 120000)
+
   // Prove apiv2 is serving the new data by the route the browser uses: through
   // traefik, as apiv2.localhost, asking the location typeahead for the fixture
-  // postcode. That exercises the pool after the KILLs above (a connection the
-  // reset broke would show up here, not twenty minutes later as an empty
-  // postcode dropdown in the /give flow), and it is also why apiv2 is no
-  // longer restarted: traefik drops a restarting container from its routes
-  // until Docker reports it healthy, which takes a ten-second healthcheck
-  // interval, and the first tests of a run were failing on 404s in that gap.
+  // postcode. Traefik drops a restarting container from its routes until Docker
+  // reports it healthy, and the first tests of a run used to fail on 404s in that
+  // gap, so waiting on this answer, rather than on the container's own health, is
+  // what makes the restart safe. It also proves the pool works after the reset.
   // apiv2.localhost resolves here through traefik's network alias, the same
   // hostname the app itself calls.
   const probeUrl = 'http://apiv2.localhost/api/location/typeahead?q=EH3'
@@ -415,15 +419,28 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     // same copy as the container starts, but `docker restart` returns before
     // it has necessarily finished, and repeating it synchronously is what
     // makes it safe to carry on without a fixed pause.
-    try {
-      execSync(
-        `docker exec ${pfx}-playwright sh -c "cp -r /host-tests/* /app/tests/ && cp /host-playwright-config/playwright.config.js /app/playwright.config.js"`,
-        { encoding: 'utf8', timeout: 15000 }
-      )
-      appendTestLogs('playwright', `${since()} tests and playwright.config.js synced from host\n`)
-    } catch (syncError: any) {
-      appendTestLogs('playwright', `Warning: Failed to sync tests/playwright.config.js: ${syncError.message}\n`)
+    // A run must not go ahead on tests or a config other than the ones on disk: it
+    // would report pass or fail about code nobody is looking at. The container can
+    // refuse an exec for a moment straight after the restart, so try for up to ten
+    // seconds, then stop the run saying why.
+    let synced = false
+    let syncFailure = ''
+    for (let attempt = 0; attempt < 10 && !synced; attempt++) {
+      try {
+        execSync(
+          `docker exec ${pfx}-playwright sh -c "cp -r /host-tests/* /app/tests/ && cp /host-playwright-config/playwright.config.js /app/playwright.config.js"`,
+          { encoding: 'utf8', timeout: 15000 }
+        )
+        synced = true
+      } catch (syncError: any) {
+        syncFailure = syncError.message
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+      }
     }
+    if (!synced) {
+      throw new Error(`Could not copy the tests and playwright.config.js into the Playwright container: ${syncFailure}`)
+    }
+    appendTestLogs('playwright', `${since()} tests and playwright.config.js synced from host\n`)
 
     // Clear freeze-specs file and stale test result files before run.
     // Stale junit.xml / test-status.json from a previous run (possibly weeks old
@@ -575,13 +592,22 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
 
     const state = getTestState('playwright')
     const p = state.progress
+    // The harness recovers from some host noise (a page reloaded after its chunk
+    // loads were aborted, a login form filled a second time) and prints a
+    // "[RECOVERED]" line each time. Name them in the result, so a run that only
+    // passed because of recoveries says so, and a real fault with the same symptom
+    // cannot hide behind a green tick.
+    const recoveries = (state.logs || '').match(/^\[RECOVERED\] [^\n]*/gm) || []
+    const recoveryNote = recoveries.length
+      ? `; ${recoveries.length} recovered: ${[...new Set(recoveries.map((r) => r.replace(/^\[RECOVERED\] ([^:]+):.*/, '$1')))].join(', ')}`
+      : ''
     setTestState('playwright', {
       status: finalCode === 0 ? 'completed' : 'failed',
       success: finalCode === 0,
       endTime: Date.now(),
-      message: finalCode === 0
+      message: (finalCode === 0
         ? `All tests passed (${p.passed}✓)`
-        : `Tests failed (${p.passed}✓ ${p.failed}✗)`,
+        : `Tests failed (${p.passed}✓ ${p.failed}✗)`) + recoveryNote,
     })
     console.log(`Playwright tests completed with code ${finalCode}`)
   } catch (error: any) {
