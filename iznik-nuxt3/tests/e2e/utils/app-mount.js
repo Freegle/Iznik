@@ -30,7 +30,9 @@ const { timeouts } = require('../config')
 function noteRecovery(kind, detail) {
   console.log(`[RECOVERED] ${kind}: ${detail}`)
   try {
-    test.info().annotations.push({ type: `recovered-${kind}`, description: detail })
+    test
+      .info()
+      .annotations.push({ type: `recovered-${kind}`, description: detail })
   } catch {
     // Outside a running test (no test.info()): the log line is enough.
   }
