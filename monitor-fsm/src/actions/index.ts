@@ -15,6 +15,11 @@ import {
   kvSet,
   queueDiscourseDraft,
   recordPostedReply,
+  hasPostedDraft,
+  hasLiveDraft,
+  markDraftPosted,
+  markDraftApproved,
+  listUnpostedDrafts,
   cancelDraftsForBug,
   insertReviewerFeedback,
   listUnprocessedFeedback,
@@ -26,6 +31,7 @@ import {
   findTagDuplicate,
   tagJaccard,
 } from '../db/index.js'
+import type { DiscourseDraftRow } from '../db/index.js'
 import { renderAllViews } from '../db/views.js'
 import { getPhaseInfo } from '../phase.js'
 import { modelForAdversarialReview } from '../policy.js'
@@ -1435,6 +1441,69 @@ async function askReporterOnDiscourse(
   return true
 }
 
+/**
+ * Send one stored draft to Discourse and, on success, stamp it approved and posted.
+ *
+ * A draft that has passed the quality gates is posted without a human approving it
+ * first (Edward, 2026-10-10). A failed post leaves the row unposted, so the next
+ * iteration's post_pending_discourse_drafts retries it. If a reply to the same post
+ * has already gone out, the draft is turned down instead of sent, so nothing is
+ * posted twice.
+ */
+export async function sendDraft(
+  db: ReturnType<typeof getDb>,
+  d: DiscourseDraftRow,
+): Promise<'posted' | 'failed' | 'duplicate'> {
+  if (hasPostedDraft(db, d.topic, d.post, d.id)) {
+    db.prepare(
+      `UPDATE discourse_draft SET rejected_at = datetime('now'), rejection_reason = ? WHERE id = ?`,
+    ).run('a reply to this post was already sent', d.id)
+    return 'duplicate'
+  }
+  const raw = formatReplyRaw(d)
+  const res = await questionAnswerDeps.postDiscourseReply(d.topic, raw, d.post)
+  if (!res.ok) {
+    markDraftApproved(db, d.id)
+    outWarn(`sendDraft: could not post draft ${d.id} to ${d.topic}/${d.post}, will retry: ${res.error}`)
+    return 'failed'
+  }
+  markDraftPosted(db, d.id)
+  return 'posted'
+}
+
+/**
+ * Queue a reply and post it straight away. Returns the outcome: 'posted',
+ * 'unposted' (the post failed; the row stays for the retry) or 'duplicate' (this
+ * post already has a live reply, so nothing was queued or sent).
+ */
+export async function queueAndSendDraft(
+  db: ReturnType<typeof getDb>,
+  draft: Parameters<typeof queueDiscourseDraft>[1],
+): Promise<{ outcome: 'posted' | 'unposted' | 'duplicate'; draftId: number | null }> {
+  if (hasLiveDraft(db, draft.topic, draft.post)) return { outcome: 'duplicate', draftId: null }
+  const id = queueDiscourseDraft(db, draft)
+  const row = db.prepare('SELECT * FROM discourse_draft WHERE id = ?').get(id) as DiscourseDraftRow
+  const res = await sendDraft(db, row)
+  return { outcome: res === 'posted' ? 'posted' : 'unposted', draftId: id }
+}
+
+/**
+ * Send every draft that has not gone out and has not been turned down: retries after
+ * a failed post, and any drafts left waiting from when a human had to approve them.
+ * Also the one-off command (scripts/post-pending-drafts.ts).
+ */
+export async function flushUnpostedDrafts(
+  db: ReturnType<typeof getDb>,
+): Promise<{ posted: number[]; failed: number[]; duplicate: number[] }> {
+  const out_ = { posted: [] as number[], failed: [] as number[], duplicate: [] as number[] }
+  for (const d of listUnpostedDrafts(db)) {
+    const r = await sendDraft(db, d)
+    out_[r].push(d.id)
+    if (r === 'posted') out(`post_pending_discourse_drafts: posted draft ${d.id} to ${d.topic}/${d.post}`)
+  }
+  return out_
+}
+
 export const deployedReplyDeps = {
   checkPrDeployed,
   postDiscourseReply,
@@ -1886,6 +1955,17 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates, 'fe
       if (posted.length > 0) await deployedReplyDeps.renderAllViews(db)
 
       return { posted, pendingDeploy, alreadyPosted, skippedToolingOnly, postFailed }
+    },
+  },
+
+  {
+    name: 'post_pending_discourse_drafts',
+    description: 'Called automatically during LOAD_STATE. Posts every discourse_draft row that has not gone out and has not been turned down: the retry for a reply whose post failed last iteration, and any draft left waiting from when a human had to approve them. Stamps approved_at and posted_at on success; a failed post stays unposted for the next iteration. A draft for a post that already has a reply sent is turned down, not sent, so nothing is posted twice. Returns {posted: [draftId], failed: [draftId], duplicate: [draftId]}.',
+    handler: async () => {
+      const db = getDb()
+      const res = await flushUnpostedDrafts(db)
+      if (res.posted.length > 0) await renderAllViews(db)
+      return res
     },
   },
 
@@ -2437,7 +2517,7 @@ print(json.dumps(out))
 
   {
     name: 'post_discourse_reply_draft',
-    description: 'Queue a Discourse reply draft by APPENDING it to /tmp/freegle-monitor/retest-drafts.md. NEVER posts to Discourse — drafts require explicit human approval per iteration. Strict template (enforced here): body must be a single sentence; the file entry always renders the full [quote] block, the @username tag, the body, and a testable URL if provided. Params: {topic, post, username, quote, body, previewUrl?, prNumber?, prUrl?}. Use previewUrl ONLY for frontend-only fixes; backend/mixed fixes must include NO previewUrl because the user cannot retest until a deploy. The body should be exactly "Fix applied for <specific issue> (<prUrl>). Please retest." or (with preview) "Possible fix — please test: <url>". Always include the prUrl in the body so the reporter can see which PR fixed their issue.',
+    description: 'Record a Discourse reply in the discourse_draft table and POST it to Discourse straight away (quoted, threaded under the reporting post) — there is no human approval step. A failed post leaves the row unposted and post_pending_discourse_drafts retries it next iteration; a post that already has a live reply is not replied to again; a reply with an empty quote is refused. Returns {queued, posted, draftId, duplicate?}. Strict template (enforced here): body must be a single sentence; the file entry always renders the full [quote] block, the @username tag, the body, and a testable URL if provided. Params: {topic, post, username, quote, body, previewUrl?, prNumber?, prUrl?}. Use previewUrl ONLY for frontend-only fixes; backend/mixed fixes must include NO previewUrl because the user cannot retest until a deploy. The body should be exactly "Fix applied for <specific issue> (<prUrl>). Please retest." or (with preview) "Possible fix — please test: <url>". Always include the prUrl in the body so the reporter can see which PR fixed their issue.',
     paramsSchema: {
       type: 'object',
       properties: {
@@ -2462,11 +2542,17 @@ print(json.dumps(out))
       const prNumber = params.prNumber as number | undefined
       const prUrl = params.prUrl as string | undefined
 
+      if (!quote) return { queued: false, posted: false, reason: 'nothing to quote, so the reply would not show what it answers' }
+
       const db = getDb()
-      const draftId = queueDiscourseDraft(db, {
+      const sent = await queueAndSendDraft(db, {
         topic, post, username, quote, body,
         previewUrl, prNumber, prUrl,
       })
+      if (sent.outcome === 'duplicate') {
+        return { queued: false, posted: false, duplicate: true, reason: `${topic}/${post} already has a reply` }
+      }
+      const draftId = sent.draftId
 
       // Also mark the bug as fix-queued so subsequent iterations know a draft is out.
       if (prNumber) {
@@ -2476,11 +2562,10 @@ print(json.dumps(out))
         })
       }
 
-      // Regenerate the MD view so the copy-paste queue reflects current DB state.
       await renderAllViews(db)
 
       const previewLine = previewUrl ? `> @${username} Possible fix — please test: ${previewUrl}` : `> @${username} ${body}`
-      return { queued: true, draftId, draft: params, file: DRAFTS_PATH, previewLineRendered: previewLine }
+      return { queued: true, posted: sent.outcome === 'posted', draftId, draft: params, file: DRAFTS_PATH, previewLineRendered: previewLine }
     },
   },
 
@@ -3721,7 +3806,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
 
   {
     name: 'list_unanswered_questions',
-    description: "Moderators' questions on Discourse that still have no reply, so they can be answered this iteration. A question is one that TRIAGE classified as type=question (state 'question' in discourse_bug) and that has no reply waiting for approval and none already sent. A reply the human turned down puts the question back in the list, with their reason in previousRejection so the next attempt can address it. Read-only. Returns {questions: [{topic, post, topicTitle, reporter, excerpt, featureArea, previousRejection}], count}.",
+    description: "Moderators' questions on Discourse that still have no reply, so they can be answered this iteration. A question is one that TRIAGE classified as type=question (state 'question' in discourse_bug) and that has no reply waiting to be sent and none already sent. A reply the human turned down puts the question back in the list, with their reason in previousRejection so the next attempt can address it. Read-only. Returns {questions: [{topic, post, topicTitle, reporter, excerpt, featureArea, previousRejection}], count}.",
     paramsSchema: {
       type: 'object',
       properties: { limit: { type: 'number', description: 'How many to return (1-5, default 3)' } },
@@ -3740,7 +3825,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
 
   {
     name: 'persist_question_answers',
-    description: "Turn the answers the question delegates wrote into replies waiting for approval. Reads context.questionAnswers: [{topic, post, answer, confidence: high|medium|low, needsHuman?, reason?, link?}]. Each answer is queued as a discourse_draft that a human approves and sends from the dashboard - NOTHING is posted to Discourse here. An answer the delegate is not confident about, or that asks for a human, defers the question instead. An answer that reads like documentation rather than plain English is refused and the question is left for another attempt; the second such attempt defers it to a human. Returns {queued, deferred, rejected, skipped}.",
+    description: "Post the answers the question delegates wrote. Reads context.questionAnswers: [{topic, post, answer, confidence: high|medium|low, needsHuman?, reason?, link?}]. Each answer that passes the gates is posted to Discourse straight away, quoted and threaded under the question, and recorded in discourse_draft as approved and posted (no human approval step). A failed post leaves the row unposted and post_pending_discourse_drafts retries it next iteration. An answer the delegate is not confident about, or that asks for a human, defers the question instead. An answer that reads like documentation rather than plain English is refused and the question is left for another attempt; the second such attempt defers it to a human. A question with nothing to quote, or one that already has a reply, is skipped. Returns {posted, postFailed, deferred, rejected, skipped}.",
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const ctx = context as { questionAnswers?: unknown }
@@ -3748,7 +3833,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         ? (ctx.questionAnswers as Array<Record<string, unknown>>)
         : []
       const db = getDb()
-      let queued = 0, deferred = 0, rejected = 0, skipped = 0
+      let posted = 0, postFailed = 0, deferred = 0, rejected = 0, skipped = 0
 
       const deferToHuman = (topic: number, post: number, why: string) => {
         upsertDiscourseBug(db, { topic, post, state: 'deferred', reason: `needs a human answer: ${why}` })
@@ -3803,33 +3888,40 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         } catch { quote = '' }
         if (!quote.trim()) quote = (bug.excerpt ?? '').trim()
         if (!quote) {
-          outWarn(`persist_question_answers: ${topic}/${post} has nothing to quote - not queueing a reply`)
+          outWarn(`persist_question_answers: ${topic}/${post} has nothing to quote - not posting a reply`)
           skipped++
           continue
         }
 
         const link = typeof a.link === 'string' && a.link.trim() ? a.link.trim() : ''
         const body = link ? `${answer}\n\nTechnical details: ${link}` : answer
-        queueDiscourseDraft(db, {
+        const sent = await queueAndSendDraft(db, {
           topic, post,
           username: bug.reporter ?? 'there',
           quote,
           body,
         })
-        out(`persist_question_answers: queued an answer to ${topic}/${post} for approval`)
-        queued++
+        if (sent.outcome === 'duplicate') { skipped++; continue }
+        if (sent.outcome === 'posted') {
+          out(`persist_question_answers: posted an answer to ${topic}/${post}`)
+          posted++
+        } else {
+          outWarn(`persist_question_answers: could not post the answer to ${topic}/${post}; it will be retried`)
+          postFailed++
+        }
       }
 
       if (answers.length > 0) {
-        out(`persist_question_answers: ${queued} queued, ${deferred} left for a human, ${rejected} sent back for a rewrite, ${skipped} ignored`)
+        out(`persist_question_answers: ${posted} posted, ${postFailed} to retry, ${deferred} left for a human, ${rejected} sent back for a rewrite, ${skipped} ignored`)
       }
-      return { queued, deferred, rejected, skipped }
+      if (posted > 0) await renderAllViews(db)
+      return { posted, postFailed, deferred, rejected, skipped }
     },
   },
 
   {
     name: 'ask_reporter_for_detail',
-    description: "Ask the person who reported a bug for something only they can tell you, when the report cannot be worked on without it: which member, which group, which post, what they saw, when it happened, what they were using. The question is queued for a human to approve and send, like every other reply; nothing is posted here. The bug is held as 'needs-detail' so it leaves the fix queue until they answer, and it returns to the queue on its own when a later post in the thread names something. Use this instead of deferring a report in silence. Params: {topic, post, questions: [1-3 short plain-English things to ask for, e.g. 'which group this was on']}. Returns {queued, reason?, problems?}.",
+    description: "Ask the person who reported a bug for something only they can tell you, when the report cannot be worked on without it: which member, which group, which post, what they saw, when it happened, what they were using. The question is posted to Discourse straight away, quoted under the report. The bug is held as 'needs-detail' so it leaves the fix queue until they answer, and it returns to the queue on its own when a later post in the thread names something. Use this instead of deferring a report in silence. Params: {topic, post, questions: [1-3 short plain-English things to ask for, e.g. 'which group this was on']}. Returns {queued, reason?, problems?}.",
     paramsSchema: {
       type: 'object',
       properties: {
@@ -3893,7 +3985,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
 
   {
     name: 'persist_classifications',
-    description: 'Persist TRIAGE classifications to the discourse_bug table so the status post reflects all identified bugs, not just ones with PRs. A report that names nothing anyone could look up - "a member", "a group", "her post" - is held as "needs-detail" with a question to the reporter queued for approval, and released to "open" when a later post in the thread supplies an id, an email, a link or a screenshot. Upserts each other bug/retest classification as "open" (or "deferred" if type is deferred, "feature-request" if type is feature_request). Already-fixed bugs are not downgraded. Returns {upserted: number, skipped: number}.',
+    description: 'Persist TRIAGE classifications to the discourse_bug table so the status post reflects all identified bugs, not just ones with PRs. A report that names nothing anyone could look up - "a member", "a group", "her post" - is held as "needs-detail" with a question to the reporter posted, and released to "open" when a later post in the thread supplies an id, an email, a link or a screenshot. Upserts each other bug/retest classification as "open" (or "deferred" if type is deferred, "feature-request" if type is feature_request). Already-fixed bugs are not downgraded. Returns {upserted: number, skipped: number}.',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const ctx = context as any

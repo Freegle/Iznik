@@ -48,6 +48,19 @@ folder had since been cleaned up. So a modified file in the main checkout that n
 editing may be a stray from a worker; search the transcripts under `~/.claude/projects/-tmp-monitor-fsm-*`
 for its path before treating it as someone's work, or before discarding it.
 
+## Replies are posted, not queued for approval
+
+Question answers (`persist_question_answers`), reporter questions and `post_discourse_reply_draft`
+all post straight to Discourse, as the fix replies always did. A human does not approve them first
+(Edward, 2026-10-10). The gates are the only brake: confidence, the plain-English scorer, a
+non-empty quote, and "nothing posted twice" (any live `discourse_draft` row for the post, sent or
+not, stops a second reply).
+
+A failed post leaves the row unposted, so a question with an unsent row is NOT offered again by
+`list_unanswered_questions`; `post_pending_discourse_drafts` (in `LOAD_STATE`) is what retries it.
+`SKIP_DISCOURSE_POSTS=1` fails every post closed and the rows wait. To flush by hand:
+`npx tsx scripts/post-pending-drafts.ts` from `monitor-fsm` (`--dry-run` lists first).
+
 ## See also
 
 - `.claude/rules/dev-containers.md` - the worktree isolation this keeps escaping.
