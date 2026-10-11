@@ -59,7 +59,7 @@ const jobStore = useJobStore()
 const authStore = useAuthStore()
 
 // Get list and blocked from jobStore
-const { list, blocked } = storeToRefs(jobStore)
+const { available: list, blocked } = storeToRefs(jobStore)
 
 // Local state
 const show = ref(0)

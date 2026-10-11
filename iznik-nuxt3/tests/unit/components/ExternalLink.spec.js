@@ -1,15 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import ExternalLink from '~/components/ExternalLink.vue'
 
-const { mockOpenUrl } = vi.hoisted(() => ({
+const { mockOpenUrl, mockMobileStore } = vi.hoisted(() => ({
   mockOpenUrl: vi.fn(),
+  mockMobileStore: { isApp: false },
 }))
 
 vi.mock('~/stores/mobile', () => ({
-  useMobileStore: () => ({
-    isApp: false,
-  }),
+  useMobileStore: () => mockMobileStore,
 }))
 
 vi.mock('@capacitor/app-launcher', () => ({
@@ -21,6 +20,7 @@ vi.mock('@capacitor/app-launcher', () => ({
 describe('ExternalLink', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockMobileStore.isApp = false
   })
 
   function createWrapper(props = {}) {
@@ -116,6 +116,30 @@ describe('ExternalLink', () => {
     it('has openInBrowser function', () => {
       const wrapper = createWrapper()
       expect(typeof wrapper.vm.openInBrowser).toBe('function')
+    })
+  })
+
+  describe('in the app', () => {
+    it('opens the link in the browser and cancels the click so it is not opened twice', async () => {
+      mockMobileStore.isApp = true
+      const wrapper = createWrapper({ href: 'https://example.com/job' })
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+      wrapper.find('a').element.dispatchEvent(event)
+      await flushPromises()
+
+      expect(event.defaultPrevented).toBe(true)
+      expect(mockOpenUrl).toHaveBeenCalledWith({
+        url: 'https://example.com/job',
+      })
+    })
+
+    it('leaves the click alone on the website', () => {
+      const wrapper = createWrapper()
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+      wrapper.find('a').element.dispatchEvent(event)
+
+      expect(event.defaultPrevented).toBe(false)
+      expect(mockOpenUrl).not.toHaveBeenCalled()
     })
   })
 })

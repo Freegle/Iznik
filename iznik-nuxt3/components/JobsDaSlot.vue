@@ -169,7 +169,7 @@ const list = computed(() => {
   // The API ranks the nearest jobs by pay. Take its top 20, then order them at random so
   // several ad slots on one page differ - weighted by pay, so the ranking still shows. A
   // uniform shuffle would throw the pay order away.
-  return payWeightedOrder(jobStore?.list.slice(0, 20))
+  return payWeightedOrder(jobStore?.available.slice(0, 20))
 })
 
 const displayedJobs = computed(() => {
