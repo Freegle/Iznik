@@ -86,48 +86,58 @@ test.describe('ModTools Member Logs', () => {
       'a:has-text("View logs"), button:has-text("Logs"), a:has-text("Logs"), [title*="Logs" i]'
     )
 
-    if (
-      await logsButton
-        .first()
-        .isVisible({ timeout: timeouts.ui.appearance })
-        .catch(() => false)
-    ) {
-      await logsButton.first().click()
+    // The approved members of the test community always include someone, so the
+    // logs control must be there. It used to be looked for with isVisible() inside
+    // an if, which let the whole loop check pass without running when it was not.
+    await expect(logsButton.first()).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
 
-      // Track API calls to detect infinite looping
-      // Count fetches of the logs API only (GET /modtools/logs, which
-      // ModLogsModal's infinite scroll calls once per chunk). Matching any
-      // URL with "log" in it counted the logs page's own CSS chunk and the
-      // app's POST /clientlog reports as well, and the latter arrive every
-      // few seconds, which kept the "gone quiet" check below from being
-      // true for forty seconds or more.
-      let apiCallCount = 0
-      let lastLogRequestAt = Date.now()
-      page.on('request', (request) => {
-        if (request.url().includes('/modtools/logs')) {
-          apiCallCount++
-          lastLogRequestAt = Date.now()
-        }
-      })
+    // Count fetches of the logs API only (GET /modtools/logs, which ModLogsModal's
+    // infinite scroll calls once per chunk). Matching any URL with "log" in it also
+    // counted the page's own CSS chunk and the app's POST /clientlog reports.
+    // Listen before the click, so the modal's first fetches are counted too.
+    let apiCallCount = 0
+    let lastLogRequestAt = 0
+    page.on('request', (request) => {
+      if (request.url().includes('/modtools/logs')) {
+        apiCallCount++
+        lastLogRequestAt = Date.now()
+      }
+    })
 
-      // A looping page keeps fetching; a healthy one fetches its chunk or
-      // two and goes quiet. So wait until no logs fetch has been seen for
-      // five seconds (counting from the click, so a page that fetches
-      // nothing is done in five seconds, as it was passing before with a
-      // count of zero), or the count has already blown past the limit (the
-      // loop, caught early), rather than sleeping for the whole appearance
-      // budget (67 seconds on this stack) and counting afterwards.
-      await expect
-        .poll(
-          () => apiCallCount >= 20 || Date.now() - lastLogRequestAt > 5000,
-          { timeout: timeouts.ui.appearance, intervals: [250] }
-        )
-        .toBe(true)
+    const firstLogsFetch = page.waitForRequest(
+      (request) => request.url().includes('/modtools/logs'),
+      { timeout: timeouts.ui.appearance }
+    )
+    const clickedAt = Date.now()
+    await logsButton.first().click()
 
-      // If loading infinitely, apiCallCount would be very high (>20).
-      // A reasonable load should make fewer than 20 log API calls.
-      expect(apiCallCount).toBeLessThan(20)
-    }
+    // Opening the modal must fetch the logs; a modal that never asks has not
+    // been tested for looping at all.
+    await firstLogsFetch
+
+    // A looping modal keeps fetching; a healthy one fetches its chunk or two and
+    // goes quiet. Watch for at least fifteen seconds from the click, and until no
+    // logs fetch has been seen for five seconds, or stop early once the count has
+    // blown past the limit (the loop, caught). Fifteen seconds still sees a loop
+    // that fetches every few seconds, where the old fixed wait took 67.
+    const MIN_WATCH_MS = 15000
+    const QUIET_MS = 5000
+    await expect
+      .poll(
+        () =>
+          apiCallCount >= 20 ||
+          (Date.now() - clickedAt >= MIN_WATCH_MS &&
+            Date.now() - lastLogRequestAt >= QUIET_MS),
+        { timeout: timeouts.ui.appearance, intervals: [250] }
+      )
+      .toBe(true)
+
+    // If loading infinitely, apiCallCount would be very high (>20).
+    // A reasonable load should make fewer than 20 log API calls.
+    expect(apiCallCount).toBeGreaterThan(0)
+    expect(apiCallCount).toBeLessThan(20)
 
     expect(errors).toHaveLength(0)
   })
