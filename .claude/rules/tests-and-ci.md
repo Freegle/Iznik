@@ -222,6 +222,15 @@ genuinely on different lines.
   (`ssh -i ~/.ssh/hetzner_ci root@<ip>`), downgrade it to the pinned version, re-run the failed
   workflows, and merge master into the branch that provisioned it.
 
+- **Builds sit queued with `not_running` and nothing is running**: there is no runner. A
+  pipeline only provisions one at the start, in `check-runner`, and only when it sees fewer than
+  two. Hetzner has been refusing the second, so in practice one runner serves the whole queue,
+  and every pipeline queued behind it provisioned nothing. When that runner deletes itself, at
+  its uptime cap or after idling, the queue strands. The `check-runner` log says why Hetzner
+  refused (HTTP status and error). To restart the queue, start a new pipeline through the API
+  (`POST /project/gh/Freegle/Iznik/pipeline` with the branch); its `check-runner` provisions a
+  runner, and that runner works through everything queued. Past its cap a runner now waits for
+  five minutes with no job before deleting itself, so it claims the next queued build first.
 - **build-and-test red within seconds on a pull request from a fork, with "Task information
   unavailable" and no steps**, is CircleCI refusing fork code on our self-hosted runner
   (`Forked prs not allowed to run on OSS projects`, visible only in the job's `messages` through
