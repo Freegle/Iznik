@@ -573,6 +573,27 @@ describe('ModSupportUser', () => {
       expect(callback).toHaveBeenCalled()
     })
 
+    it('cancelling the password confirm stops the spinner without editing', async () => {
+      const wrapper = await mountComponent()
+      wrapper.vm.newpassword = 'newpass123'
+      const callback = vi.fn()
+      wrapper.vm.setPassword(callback)
+      wrapper.vm.passwordConfirmClosed()
+      expect(callback).toHaveBeenCalledTimes(1)
+      expect(wrapper.vm.showPasswordConfirm).toBe(false)
+      expect(mockEdit).not.toHaveBeenCalled()
+    })
+
+    it('the modal closing after a confirm does not run the callback twice', async () => {
+      const wrapper = await mountComponent()
+      wrapper.vm.newpassword = 'newpass123'
+      const callback = vi.fn()
+      wrapper.vm.setPassword(callback)
+      await wrapper.vm.setPasswordConfirmed()
+      wrapper.vm.passwordConfirmClosed()
+      expect(callback).toHaveBeenCalledTimes(1)
+    })
+
     it('addEmail calls store addEmail', async () => {
       const wrapper = await mountComponent()
       wrapper.vm.newemail = 'newemail@test.com'

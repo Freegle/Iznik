@@ -55,10 +55,17 @@ watch(
 
 async function remove() {
   const teamStore = useTeamStore()
-  await teamStore.remove({
-    id: props.teamid,
-    userid: props.userid,
-  })
+  try {
+    await teamStore.remove({
+      id: props.teamid,
+      userid: props.userid,
+    })
+  } catch (e) {
+    console.error('ModTeamMember remove failed:', e)
+  }
+  // Without the catch a refused remove reaches Nuxt's default Vue error
+  // handling, which replaces the whole ModTools page with the app error
+  // page. Emit anyway so the page refetches the team and carries on.
   emit('removed')
 }
 </script>

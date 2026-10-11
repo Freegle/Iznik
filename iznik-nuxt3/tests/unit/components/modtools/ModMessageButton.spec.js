@@ -473,6 +473,39 @@ describe('ModMessageButton', () => {
       const wrapper = mountComponent({ approve: true })
       await expect(wrapper.vm.click()).resolves.not.toThrow()
     })
+
+    it('calls callback when the store action fails', async () => {
+      // A failed action must still stop the SpinButton, or it spins for the full
+      // 20 seconds and reports a forgotten callback (frontend-traps rule:
+      // callback on every exit path, as in ModMemberButton).
+      mockMessageStore.approve.mockRejectedValueOnce(new Error('boom'))
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const callback = vi.fn()
+      const wrapper = mountComponent({ approve: true })
+      await wrapper.vm.click(callback)
+      expect(callback).toHaveBeenCalledTimes(1)
+      consoleSpy.mockRestore()
+    })
+
+    it('re-throws a held-by-another-mod error so guardHold shows the notice', async () => {
+      // Swallowing this one would silence the "X is holding this post" warning
+      // that guardHold renders (stores/message.js runHoldAware tags the 409).
+      const held = new Error('held by another mod')
+      held.heldByOtherMod = true
+      mockMessageStore.approve.mockRejectedValueOnce(held)
+      const callback = vi.fn()
+      const wrapper = mountComponent({ approve: true })
+      await expect(wrapper.vm.click(callback)).rejects.toBe(held)
+      expect(callback).toHaveBeenCalledTimes(1)
+    })
+
+    it('calls callback when the no-message reject confirmation opens', async () => {
+      const callback = vi.fn()
+      const wrapper = mountComponent({ reject: true, noMemberMessage: true })
+      await wrapper.vm.click(callback)
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(true)
+      expect(callback).toHaveBeenCalledTimes(1)
+    })
   })
 
   describe('modal rendering', () => {

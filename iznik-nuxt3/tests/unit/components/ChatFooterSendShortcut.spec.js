@@ -158,4 +158,45 @@ describe('ChatFooter Ctrl+Enter / Cmd+Enter', () => {
       expect(mockChatStore.send).toHaveBeenCalledWith(123, 'hello')
     })
   })
+
+  describe('failed send', () => {
+    it('stops the SpinButton and shows why the send failed', async () => {
+      // The catch must call the SpinButton callback too, or the send button
+      // spins for the full 20 seconds and reports a forgotten callback
+      // (frontend-traps rule: callback on every early-return path).
+      const finishSpy = vi.fn()
+      const wrapper = mount(ChatFooter, {
+        props: { id: 123 },
+        global: {
+          stubs: {
+            ...stubs,
+            ChatNotice: { template: '<div class="chat-notice"><slot /></div>' },
+            SpinButton: {
+              template:
+                '<button class="spin-button" @click="fire"><slot /></button>',
+              emits: ['handle'],
+              methods: {
+                fire() {
+                  this.$emit('handle', finishSpy)
+                },
+              },
+            },
+          },
+          directives: { 'b-tooltip': {} },
+        },
+      })
+      await flushPromises()
+      mockChatStore.send.mockRejectedValueOnce({
+        response: { status: 404 },
+      })
+      const area = wrapper.find('#chatmessage')
+      await area.setValue('hello')
+      await wrapper.find('button.send-button').trigger('click')
+      await flushPromises()
+      expect(finishSpy).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('.chat-notice').text()).toContain(
+        'no longer available'
+      )
+    })
+  })
 })

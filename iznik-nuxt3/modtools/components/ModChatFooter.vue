@@ -69,6 +69,13 @@
             multiple
           />
         </div>
+        <NoticeMessage
+          v-if="sendError"
+          variant="warning"
+          data-test="send-failed"
+        >
+          {{ sendError }}
+        </NoticeMessage>
         <label for="chatmessage" class="visually-hidden">Chat message</label>
         <b-form-textarea
           v-if="enterNewLine && !otheruser?.spammer"
@@ -537,6 +544,7 @@ const { lastTyping } = storeToRefs(miscStore)
 
 // Refs (former data properties)
 const sending = ref(false)
+const sendError = ref(null)
 const uploading = ref(false)
 const showMicrovolunteering = ref(false)
 const showNotices = ref(true)
@@ -857,8 +865,27 @@ const send = async (callback) => {
       // Encode up any emojis.
       msg = untwem(msg)
 
-      // Send it
-      await chatStore.send(props.id, msg)
+      // Send it. As in ChatFooter: a failed send must not throw to the global
+      // error.vue page and must not leave the SpinButton hanging — catch it,
+      // keep the typed text so they don't lose it, and explain inline instead.
+      try {
+        sendError.value = null
+        await chatStore.send(props.id, msg)
+      } catch (e) {
+        sending.value = false
+        const status = e?.response?.status
+        if (status === 404) {
+          sendError.value =
+            "Sorry, this chat is no longer available, so your message couldn't be sent."
+        } else {
+          sendError.value =
+            "Sorry, your message couldn't be sent just now. Please try again."
+        }
+        if (typeof callback === 'function') {
+          callback()
+        }
+        return
+      }
 
       // Clear the message now it's sent - and drop the saved draft so it can't be restored.
       sendmessage.value = ''

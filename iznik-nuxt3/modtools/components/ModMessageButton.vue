@@ -459,84 +459,95 @@ async function click(callback) {
     return stdmsgPending
   }
 
-  // On a rippled-in copy every removal - the Reject and Delete buttons, and any standard
-  // message that removes - scopes to this group and says nothing to the freegler
-  // (Discourse 9862/16-17, 10102). Confirm that plainly instead of composing a message
-  // the server would refuse to send.
-  if (!props.isHomeGroup) {
-    const kind = await scopedRemovalKind(stdmsgOnce)
+  // As in ModMemberButton: the callback must fire even when the store call fails, or
+  // the SpinButton spins for the full 20 seconds and reports a forgotten callback
+  // (see .claude/rules/frontend-traps.md).
+  try {
+    // On a rippled-in copy every removal - the Reject and Delete buttons, and any standard
+    // message that removes - scopes to this group and says nothing to the freegler
+    // (Discourse 9862/16-17, 10102). Confirm that plainly instead of composing a message
+    // the server would refuse to send.
+    if (!props.isHomeGroup) {
+      const kind = await scopedRemovalKind(stdmsgOnce)
 
-    if (kind) {
-      scopedRemoval.value = kind
-      showRejectNoMsgModal.value = true
-      if (callback) callback()
-      return
-    }
-  }
-
-  if (props.approve) {
-    // Standard approve button - no modal.
-    await approveIt()
-  } else if (props.delete) {
-    // Standard delete button - no modal.
-    await deleteIt()
-  } else if (props.hold) {
-    // Standard hold button - no modal.
-    await holdIt()
-  } else if (props.release) {
-    // Standard release button - no modal.
-    await releaseIt()
-  } else if (props.spam) {
-    // Standard spam button.
-    showSpamModal.value = true
-  } else if (props.approveedits) {
-    await approveEdits()
-  } else if (props.revertedits) {
-    await revertEdits()
-  } else {
-    // We want to show a modal.
-    stdmsgId.value = null
-    stdmsgAction.value = null
-
-    if (props.reject && sendsNoMemberMessage.value) {
-      // Reject with nothing sent: confirm a no-message removal instead of composing one.
-      showRejectNoMsgModal.value = true
-      if (callback) callback()
-      return
-    }
-
-    if (props.stdmsgid && sendsNoMemberMessage.value) {
-      // A standard message whose action is Reject, where the member is not to be
-      // written to, must behave exactly like the Reject button above: scope the
-      // removal to this group with NO message to the member, and show the same
-      // confirmation (Discourse 9862/16-17). We only
-      // take this DESTRUCTIVE scoped path when the action is DEFINITIVELY 'Reject':
-      // if the standard message can't be resolved we fall through to the normal
-      // compose modal (fail closed; cf. the fail-open flaw that closed PR #1071).
-      const stdmsg = await stdmsgOnce()
-      if (stdmsg?.action === 'Reject') {
+      if (kind) {
+        scopedRemoval.value = kind
         showRejectNoMsgModal.value = true
-        if (callback) callback()
         return
       }
     }
 
-    if (props.reject) {
-      stdmsgAction.value = 'Reject'
-    } else if (props.leave) {
-      stdmsgAction.value = 'Leave'
-    } else if (props.stdmsgid) {
-      // We have a standard message.  Fetch it into the store.
-      await stdmsgOnce()
-      stdmsgId.value = props.stdmsgid
-    }
+    if (props.approve) {
+      // Standard approve button - no modal.
+      await approveIt()
+    } else if (props.delete) {
+      // Standard delete button - no modal.
+      await deleteIt()
+    } else if (props.hold) {
+      // Standard hold button - no modal.
+      await holdIt()
+    } else if (props.release) {
+      // Standard release button - no modal.
+      await releaseIt()
+    } else if (props.spam) {
+      // Standard spam button.
+      showSpamModal.value = true
+    } else if (props.approveedits) {
+      await approveEdits()
+    } else if (props.revertedits) {
+      await revertEdits()
+    } else {
+      // We want to show a modal.
+      stdmsgId.value = null
+      stdmsgAction.value = null
 
-    showStdMsgModal.value = true
-    stdmodal.value?.show()
-    await nextTick()
-    stdmodal.value?.fillin()
+      if (props.reject && sendsNoMemberMessage.value) {
+        // Reject with nothing sent: confirm a no-message removal instead of composing one.
+        showRejectNoMsgModal.value = true
+        return
+      }
+
+      if (props.stdmsgid && sendsNoMemberMessage.value) {
+        // A standard message whose action is Reject, where the member is not to be
+        // written to, must behave exactly like the Reject button above: scope the
+        // removal to this group with NO message to the member, and show the same
+        // confirmation (Discourse 9862/16-17). We only
+        // take this DESTRUCTIVE scoped path when the action is DEFINITIVELY 'Reject':
+        // if the standard message can't be resolved we fall through to the normal
+        // compose modal (fail closed; cf. the fail-open flaw that closed PR #1071).
+        const stdmsg = await stdmsgOnce()
+        if (stdmsg?.action === 'Reject') {
+          showRejectNoMsgModal.value = true
+          return
+        }
+      }
+
+      if (props.reject) {
+        stdmsgAction.value = 'Reject'
+      } else if (props.leave) {
+        stdmsgAction.value = 'Leave'
+      } else if (props.stdmsgid) {
+        // We have a standard message.  Fetch it into the store.
+        await stdmsgOnce()
+        stdmsgId.value = props.stdmsgid
+      }
+
+      showStdMsgModal.value = true
+      stdmodal.value?.show()
+      await nextTick()
+      stdmodal.value?.fillin()
+    }
+  } catch (e) {
+    // A "another moderator is holding this" refusal must still reach guardHold
+    // so the held-by notice appears; everything else is reported and swallowed
+    // so a failure never reaches the global error page.
+    if (e?.heldByOtherMod) {
+      throw e
+    }
+    console.error('ModMessageButton action failed:', e)
+  } finally {
+    if (callback) callback()
   }
-  if (callback) callback()
 }
 </script>
 <style scoped lang="scss">

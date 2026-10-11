@@ -846,6 +846,12 @@ const send = async (callback) => {
           sendError.value =
             "Sorry, your message couldn't be sent just now. Please try again."
         }
+        // The send is over, it just failed - stop the SpinButton here too, or it
+        // spins for the full 20 seconds and reports a forgotten callback (see
+        // .claude/rules/frontend-traps.md: callback on every early-return path).
+        if (typeof callback === 'function') {
+          callback()
+        }
         return
       }
 

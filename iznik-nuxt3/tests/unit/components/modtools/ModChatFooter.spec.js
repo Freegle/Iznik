@@ -693,4 +693,42 @@ describe('ModChatFooter', () => {
       mockMiscStore.get.mockReturnValue(false)
     })
   })
+
+  describe('failed send', () => {
+    it('explains inline, keeps the text and stops the SpinButton', async () => {
+      // A refused send must not throw to the error page, must not lose what the
+      // moderator typed, and must still call the SpinButton callback (the trap
+      // in .claude/rules/frontend-traps.md) - as ChatFooter already does.
+      mockChatStore.send.mockRejectedValueOnce({ response: { status: 404 } })
+      const wrapper = await mountComponent({ id: 123 })
+      const footer = wrapper.findComponent(ModChatFooter)
+      await footer.find('#chatmessage').setValue('hello')
+
+      const finishSpy = vi.fn()
+      await footer.vm.send(finishSpy)
+      await flushPromises()
+
+      expect(finishSpy).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('[data-test="send-failed"]').text()).toContain(
+        'no longer available'
+      )
+      expect(footer.find('#chatmessage').element.value).toBe('hello')
+    })
+
+    it('gives the generic apology for a refusal without a known status', async () => {
+      mockChatStore.send.mockRejectedValueOnce(new Error('network'))
+      const wrapper = await mountComponent({ id: 123 })
+      const footer = wrapper.findComponent(ModChatFooter)
+      await footer.find('#chatmessage').setValue('hello')
+
+      const finishSpy = vi.fn()
+      await footer.vm.send(finishSpy)
+      await flushPromises()
+
+      expect(finishSpy).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('[data-test="send-failed"]').text()).toContain(
+        'Please try again'
+      )
+    })
+  })
 })
