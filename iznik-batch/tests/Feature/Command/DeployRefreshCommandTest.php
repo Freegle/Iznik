@@ -86,6 +86,44 @@ class DeployRefreshCommandTest extends TestCase
         Process::assertRan(fn ($process) => str_contains($process->command, 'supervisorctl restart mail-spooler:*'));
     }
 
+    public function test_without_supervisorctl_it_says_so_and_restarts_nothing(): void
+    {
+        // Faking every process as a success left this branch unreachable; it used
+        // to depend on whichever container ran the suite.
+        Process::swap(new ProcessFactory);
+        Process::fake([
+            'which supervisorctl*' => Process::result(exitCode: 1),
+            '*' => Process::result(),
+        ]);
+        Cache::forget(RefreshCommand::VERSION_CACHE_KEY);
+
+        $this->artisan('deploy:refresh')
+            ->expectsOutputToContain('⚠ supervisorctl not available')
+            ->expectsOutput('Done!')
+            ->assertSuccessful();
+
+        Process::assertDidntRun(fn ($process) => str_contains($process->command, 'supervisorctl restart'));
+        $this->assertNotNull(Cache::get(RefreshCommand::VERSION_CACHE_KEY), 'the deploy still records its version');
+    }
+
+    public function test_a_failed_restart_warns_with_supervisors_message_and_continues(): void
+    {
+        Process::swap(new ProcessFactory);
+        Process::fake([
+            'which supervisorctl*' => Process::result(output: '/usr/bin/supervisorctl'),
+            'supervisorctl restart *' => Process::result(output: "mail-spooler:00: ERROR (spawn error)\n", exitCode: 7),
+            '*' => Process::result(),
+        ]);
+        Cache::forget(RefreshCommand::VERSION_CACHE_KEY);
+
+        $this->artisan('deploy:refresh')
+            ->expectsOutputToContain('⚠ mail-spooler:*: mail-spooler:00: ERROR (spawn error)')
+            ->expectsOutput('Done!')
+            ->assertSuccessful();
+
+        $this->assertNotNull(Cache::get(RefreshCommand::VERSION_CACHE_KEY), 'the deploy still records its version');
+    }
+
     public function test_supervisor_restart_timing_out_warns_and_continues(): void
     {
         // A restart waits for the program to stop (up to its stopwaitsecs) and

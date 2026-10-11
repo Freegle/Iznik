@@ -34,4 +34,21 @@ class SpamhausDblLookupTest extends TestCase
         $this->assertFalse($lookup->isListed('good.example.com'));
         $this->assertSame(['bad.example.com.dbl.spamhaus.org', 'good.example.com.dbl.spamhaus.org'], $lookup->asked);
     }
+
+    public function test_the_container_builds_the_real_lookup_and_its_dns_call_runs(): void
+    {
+        // Every test gets a lookup with a list bound in TestCase, so without this the
+        // class production resolves, and its dns_get_record line, would run nowhere.
+        $this->app->forgetInstance(SpamhausDblLookup::class);
+        $lookup = $this->app->make(SpamhausDblLookup::class);
+
+        $listed = (new \ReflectionProperty(SpamhausDblLookup::class, 'listed'))->getValue($lookup);
+        $this->assertNull($listed, 'production should ask DNS, not consult a list');
+
+        // A name under .invalid never resolves (RFC 6761), so this runs the real
+        // DNS call without asking Spamhaus anything and without depending on the
+        // network's answer: no records, quickly.
+        $aRecords = new \ReflectionMethod(SpamhausDblLookup::class, 'aRecords');
+        $this->assertSame([], $aRecords->invoke($lookup, 'freegle-test.invalid'));
+    }
 }
