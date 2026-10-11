@@ -175,6 +175,15 @@ genuinely on different lines.
   grows with the square of its test count: 280ms per trivial test in MessageExpanded.spec.js,
   18ms once unmounted. Do not mount in one test and read in the next, and do not call
   `enableAutoUnmount` in a spec; a second call throws.
+- **A page that stays blank for 200 seconds while a test waits for a selector, with the trace
+  showing `net::ERR_NETWORK_CHANGED` on `_nuxt` chunk loads**, means a container or an image
+  build step somewhere else on the host changed the network while the page was loading. The
+  Playwright container is host-network, so Chromium sees every interface appearing or
+  disappearing on the machine and aborts its in-flight requests; the HTML arrived, the chunks
+  did not, and the app never mounted. There is no error on the page and the server logs show
+  nothing. The harness (`tests/e2e/utils/app-mount.js`, used by `gotoAndVerify` and the
+  ModTools login) now reloads such a page once and otherwise fails naming the URLs. Do not
+  build images or start stacks on the host during a Playwright run you intend to believe.
 
 ## CI failures that are about the build, not the branch
 

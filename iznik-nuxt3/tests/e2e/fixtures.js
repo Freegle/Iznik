@@ -13,6 +13,7 @@ const {
 } = require('./config')
 const logger = require('./logger')
 const { logoutIfLoggedIn } = require('./utils/user')
+const { trackFailedLoads, waitForAppMount } = require('./utils/app-mount')
 
 const NUXT_TEST_UTILS_AVAILABLE = (() => {
   try {
@@ -245,6 +246,10 @@ const test = base.test.extend({
     const page = await context.newPage()
     console.log(`Created new page in isolated context`)
 
+    // From the first request: a lost script chunk is what gotoAndVerify
+    // reloads for (see utils/app-mount.js).
+    trackFailedLoads(page)
+
     // Enable coverage collection only in Chromium
     let coverageStarted = false
     if (context.browser().browserType().name() === 'chromium') {
@@ -319,6 +324,12 @@ const test = base.test.extend({
       /\[Exc?eption for Sentry\]:.*TypeError: Cannot read properties of undefined \(reading '_leaflet_pos'\)/, // Sentry capturing leaflet errors
       /\[Exc?eption for Sentry\]:.*\(Error: \w+\)/, // Sentry capturing minified errors (e.g., "Error: oa")
       /accounts\.google\.com\/gsi/, // Google authentication/sign-in errors in test
+      // LoginModal.vue reports to Sentry when Google's own script has not
+      // drawn its button 21 seconds after the modal opened (GOOGLE_WAIT_MS
+      // plus four draw checks). In Docker that script arrives late or not at
+      // all, so a login modal left open under load trips it. Nothing of ours
+      // is involved, as with the FedCM and gstatic entries around this one.
+      /\[Exc?eption for Sentry\]:.*Google sign-in button did not draw/,
       /malformed JSON response:.*Error 400 \(Bad Request\)/, // Google API malformed JSON responses
       // CSP (Content Security Policy) violations - common in development/testing
       /Refused to apply inline style because it violates the following Content Security Policy directive/,
@@ -402,10 +413,14 @@ const test = base.test.extend({
           fullErrorText += ` (at ${locationStr})`
         }
 
-        // Try to extract stack trace from console arguments
+        // Try to extract stack trace from console arguments. Only worth the
+        // two round trips into the renderer when the error is one that will
+        // fail the test: the stack goes into that failure message and
+        // nowhere else, and the allowed Google/FedCM noise alone is several
+        // hundred errors a run.
         let stackTrace = ''
         try {
-          const args = message.args()
+          const args = isAllowedError(fullErrorText) ? [] : message.args()
           if (args.length > 0) {
             // Look for Error objects in the arguments that might contain stack traces
             for (const arg of args) {
@@ -704,6 +719,7 @@ const test = base.test.extend({
           // Default 'load' waits for all resources; 'domcontentloaded' is faster
           // for pages with external resources (e.g., Stripe, PayPal) that may be slow in CI.
           failStep = 'page.goto'
+          const navigatedAt = Date.now()
           await page.goto(path, { timeout, waitUntil })
           console.log(`[gotoAndVerify] page.goto done for ${path}`)
 
@@ -724,6 +740,18 @@ const test = base.test.extend({
           await base.expect(body).toBeVisible({
             timeout: Math.min(timeout, 30000),
           })
+
+          // Wait for the client app to have mounted, which is the point by
+          // which the route's own chunk has been imported and run. A test
+          // that only loads a page and checks its title would otherwise end,
+          // and stop coverage, before hydration reached that chunk, and the
+          // page's source file then appears in the coverage report on some
+          // runs and not others. A page that lost a script chunk during the
+          // load never mounts; this reloads it once and otherwise fails here,
+          // naming the lost URLs, rather than carrying on to selector waits
+          // that cannot succeed (see utils/app-mount.js).
+          failStep = 'hydration'
+          await waitForAppMount(page, path, navigatedAt)
 
           // Check if page contains error messages
           failStep = 'content-check'
@@ -826,17 +854,21 @@ const test = base.test.extend({
             )
           }
 
-          // Check if it's a retryable connection/navigation error
+          // Check if it's a retryable connection/navigation error. A page
+          // that did not mount has already had its one reload, and its
+          // message names the lost loads, so it is not retried again here
+          // whatever error text it quotes.
           const isRetryable =
-            error.message.includes('ERR_CONNECTION_RESET') ||
-            error.message.includes('ERR_SOCKET_NOT_CONNECTED') ||
-            error.message.includes('ERR_NETWORK_CHANGED') ||
-            error.message.includes('net::ERR_') ||
-            error.message.includes('Execution context was destroyed') ||
-            error.message.includes('is interrupted by another navigation') ||
-            error.message.includes(
-              'Target page, context or browser has been closed'
-            )
+            !error.message.startsWith('App did not mount') &&
+            (error.message.includes('ERR_CONNECTION_RESET') ||
+              error.message.includes('ERR_SOCKET_NOT_CONNECTED') ||
+              error.message.includes('ERR_NETWORK_CHANGED') ||
+              error.message.includes('net::ERR_') ||
+              error.message.includes('Execution context was destroyed') ||
+              error.message.includes('is interrupted by another navigation') ||
+              error.message.includes(
+                'Target page, context or browser has been closed'
+              ))
 
           if (isRetryable && attempt < maxRetries) {
             console.log(
@@ -992,9 +1024,18 @@ const test = base.test.extend({
       level: 'normal',
     })
 
-    // Ensure user is logged out at the start of each test (after all methods are set up)
-    await logoutIfLoggedIn(loggingPage)
-    console.log('Ensured user is logged out for fresh test state')
+    // Every test gets a brand-new context with no cookies and empty storage
+    // (see the context fixture above), so nobody is signed in and there is no
+    // app page open yet. Do not call logoutIfLoggedIn() here: on about:blank
+    // it waits its full ten seconds for a logout button that cannot exist and
+    // then loads the homepage, and across 205 tests that was 36 of the 80
+    // minutes of test time in a profiled run. The one thing it did for the
+    // test is kept: in-flight requests can still answer 401 while a test
+    // signs in and out, and specs are written against that being allowed.
+    page.addAllowedErrorPattern(
+      /Failed to load resource: the server responded with a status of 401/
+    )
+    console.log('Fresh context, nobody signed in')
 
     // Freeze-detection heartbeat. Sends a trivial page.evaluate() every 8s with a
     // 35s timeout. If the renderer stops responding the spec file is appended to
@@ -1389,17 +1430,23 @@ const testWithFixtures = test.extend({
         .locator('input[name="email"], input.email, input[type="email"]')
         .first()
 
-      // Race between the two possible states
-      const winner = await Promise.race([
-        loggedInEmailDisplay
+      // Wait once for whichever of the two states renders. They are a
+      // v-if/v-else pair in PostLoggedInEmail.vue, so only one ever exists.
+      // Two racing waitFor() calls would leave the loser polling the page in
+      // the background for its whole timeout after the winner had resolved.
+      let winner
+      try {
+        await loggedInEmailDisplay
+          .or(emailInput)
+          .filter({ visible: true })
+          .first()
           .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
-          .then(() => 'loggedIn')
-          .catch(() => null),
-        emailInput
-          .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
-          .then(() => 'notLoggedIn')
-          .catch(() => null),
-      ])
+        winner = (await loggedInEmailDisplay.isVisible())
+          ? 'loggedIn'
+          : 'notLoggedIn'
+      } catch {
+        winner = null
+      }
 
       if (winner === 'loggedIn') {
         console.log('User is already logged in, skipping email input')
@@ -1444,17 +1491,10 @@ const testWithFixtures = test.extend({
         )
       }
 
-      // Take a debug screenshot — bounded timeout prevents hang on unresponsive renderer
-      const emailScreenshotTimestamp = new Date()
-        .toISOString()
-        .replace(/[:.]/g, '-')
-      await page
-        .screenshot({
-          path: `playwright-screenshots/email-filled-${emailScreenshotTimestamp}.png`,
-          fullPage: true,
-          timeout: 10000,
-        })
-        .catch(() => {})
+      // No debug screenshot here: nothing reads it (the directory is cleared
+      // after a passing run and a failing test gets Playwright's own
+      // screenshot and trace), and a full-page capture under load cost up
+      // to a second per post.
 
       // Wait for validation to complete and the button to appear using web assertions
       console.log(
@@ -1654,17 +1694,9 @@ const testWithFixtures = test.extend({
 
       console.log('=== POST-SUBMISSION NAVIGATION DEBUG END ===')
 
-      // Take a screenshot of the success — bounded timeout prevents hang on unresponsive renderer
-      const screenshotTimestamp = new Date().toISOString().replace(/[:.]/g, '-')
-      await page
-        .screenshot({
-          path: `playwright-screenshots/item-post-success-${screenshotTimestamp}.png`,
-          fullPage: true,
-          timeout: 10000,
-        })
-        .catch(() => {})
-
-      // Check for the posted item
+      // Check for the posted item (no success screenshot: see the note above
+      // the email step; the full-page capture of /myposts averaged over a
+      // second and peaked at eight under load).
       // Look for the message card which uses .message-card class (with hyphen)
       const messageCard = page
         .locator(`.message-card:has-text("${item}")`)
@@ -1885,6 +1917,12 @@ const testWithFixtures = test.extend({
           }
         }
 
+        // Count before clicking, so the drop can be seen afterwards.
+        const postsBeforeWait = await page.locator(postSelector).count()
+        console.log(
+          `Posts with "${item}" before withdrawing: ${postsBeforeWait}`
+        )
+
         // Ensure button is enabled before clicking
         const isEnabled = await withdrawButton
           .isEnabled({ timeout: 5000 })
@@ -1982,57 +2020,31 @@ const testWithFixtures = test.extend({
           console.log('No confirmation modal found - withdrawal may be direct')
         }
 
-        // Wait for any UI updates after confirmation
-        await page.waitForTimeout(timeouts.ui.settleTime)
-
-        // Debug: Count posts before waiting for removal
-        const postsBeforeWait = await page.locator(postSelector).count()
-        console.log(`Posts with "${item}" before waiting: ${postsBeforeWait}`)
-
-        // Debug: Check if our specific post card is still visible
-        const isSpecificPostVisible = await postCard
-          .isVisible({ timeout: 5000 })
-          .catch(() => false)
-        console.log(
-          `Specific post card still visible: ${isSpecificPostVisible}`
-        )
-
-        // Wait for UI to update after withdrawal click
-        await page.waitForTimeout(timeouts.ui.settleTime)
-
-        // Debug: Check post count after settle time
-        const postsAfterSettle = await page.locator(postSelector).count()
-        console.log(
-          `Posts with "${item}" after settle time: ${postsAfterSettle}`
-        )
-
-        // Verify the post was removed by checking the count decreased
-        // This is more reliable than waiting for a specific element to detach
-        // because Vue/Nuxt may re-render the entire list
-        const postsAfterWithdrawal = await page.locator(postSelector).count()
-        console.log(`Posts after withdrawal: ${postsAfterWithdrawal}`)
-
-        if (postsAfterWithdrawal < postsBeforeWait) {
-          console.log('✓ Post count decreased - withdrawal successful')
-        } else {
-          console.log('Post count unchanged - waiting for UI update...')
-          // Wait a bit longer for UI to update
-          await page.waitForTimeout(2000)
-          const finalCount = await page.locator(postSelector).count()
-          if (finalCount < postsBeforeWait) {
-            console.log(
-              '✓ Post count decreased after delay - withdrawal successful'
+        // Wait for the list to drop the post. Vue may re-render the whole list
+        // rather than detach one card, so watch the count rather than the
+        // card. This polls instead of sleeping for fixed settle times: the
+        // list usually catches up well inside a second, and the old
+        // three-to-five seconds of sleeps added up to minutes over a run.
+        // It is logged, not asserted, exactly as before.
+        let postsAfterWithdrawal = postsBeforeWait
+        try {
+          await base.expect
+            .poll(
+              async () => {
+                postsAfterWithdrawal = await page.locator(postSelector).count()
+                return postsAfterWithdrawal
+              },
+              { timeout: 5000 }
             )
-          } else {
-            console.log(
-              '⚠ Warning: Post count did not decrease, but API call succeeded'
-            )
-          }
+            .toBeLessThan(postsBeforeWait)
+          console.log(
+            `✓ Post count decreased to ${postsAfterWithdrawal} - withdrawal successful`
+          )
+        } catch {
+          console.log(
+            `⚠ Warning: Post count did not decrease (still ${postsAfterWithdrawal}), but API call succeeded`
+          )
         }
-
-        // Debug: Count posts after removal attempt
-        const postsAfterWait = await page.locator(postSelector).count()
-        console.log(`Posts with "${item}" after waiting: ${postsAfterWait}`)
 
         page.resetAllowedErrorPatterns()
         return true
@@ -2069,11 +2081,22 @@ const testWithFixtures = test.extend({
         ) {
           console.log('Found password input, setting password')
           await passwordInput.type(password)
-          await saveButton.click()
-          console.log('Set password successfully')
 
-          // Wait a moment for the password to be saved
-          await page.waitForTimeout(1000)
+          // NewUserInfo saves through PATCH /session. Wait for that response
+          // rather than a fixed second, so the test moves on as soon as the
+          // password really is saved and never before. Best effort, as the
+          // sleep it replaces was.
+          const saved = page
+            .waitForResponse(
+              (r) =>
+                r.request().method() === 'PATCH' &&
+                /\/api\/session(\?|$)/.test(r.url()),
+              { timeout: timeouts.api.default }
+            )
+            .catch(() => null)
+          await saveButton.click()
+          await saved
+          console.log('Set password successfully')
           return true
         } else {
           console.log('Password input not visible, may not be needed')
@@ -2301,7 +2324,26 @@ const testWithFixtures = test.extend({
             hasText: 'Welcome to Freegle',
           })
           try {
-            await welcomeModal.waitFor({ state: 'visible', timeout: 30000 })
+            // The modal lives in the reply pane, which the state machine
+            // unmounts when it routes to /chats/, so once the chat page is
+            // showing there is no modal coming and nothing to close. Stop
+            // then, rather than wait the whole modal timeout on the runs
+            // where the modal is not shown (67 seconds in a test that
+            // otherwise takes 30).
+            const arrived = await Promise.race([
+              welcomeModal
+                .waitFor({ state: 'visible', timeout: 30000 })
+                .then(() => true),
+              freshPage
+                .waitForURL('**/chats/**', { timeout: 30000 })
+                .then(() => false),
+            ])
+            if (!arrived) {
+              console.log(
+                'Chat page showing with no Welcome to Freegle modal, nothing to close'
+              )
+              return
+            }
             console.log('Welcome to Freegle modal appeared')
             const closeButton = welcomeModal.locator(
               '.btn:has-text("Close and Continue")'
@@ -2310,10 +2352,27 @@ const testWithFixtures = test.extend({
               state: 'visible',
               timeout: timeouts.ui.appearance,
             })
-            await closeButton.click()
+            // The reply state machine routes to /chats/ by itself, and that
+            // unmounts the reply pane this modal lives in. Once the modal has
+            // gone there is nothing left to click, so stop then instead of
+            // retrying a click against a detached button until the action
+            // timeout runs out.
+            await Promise.race([
+              closeButton.click({ timeout: timeouts.ui.interaction }),
+              welcomeModal
+                .waitFor({
+                  state: 'detached',
+                  timeout: timeouts.navigation.default,
+                })
+                .then(() => {
+                  throw new Error('welcome modal was closed by the navigation')
+                }),
+            ])
             console.log('Clicked Close and Continue')
-          } catch {
-            console.log('Welcome modal did not appear within timeout')
+          } catch (e) {
+            console.log(
+              `Welcome modal not clicked: ${e.message.split('\n')[0]}`
+            )
           }
         }
 

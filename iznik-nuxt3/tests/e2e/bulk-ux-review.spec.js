@@ -218,11 +218,23 @@ async function captureCatalogue(page, takeScreenshot, msgId, who) {
     await page.gotoAndVerify(`/message/${msgId}`, {
       timeout: timeouts.navigation.default,
     })
-    // Wait for the catalogue to render (toggles for a recipient, interest
-    // summary for the owner) — non-fatal if neither is present.
-    await page
-      .locator('.bitem')
-      .first()
+    // Wait for the page to render what this viewer gets: the catalogue rows
+    // for a recipient, and for the owner their own post card (Withdraw and
+    // the rest), because /message/:id shows an owner their post and not the
+    // catalogue at all. Waiting for the rows in both cases ran the whole
+    // appearance timeout twice over for the owner, 90 to 135 seconds of the
+    // longest test in the suite. Non-fatal if neither turns up, as before.
+    // MyMessage renders its action buttons once per layout and hides the
+    // ones for the other, so take the first visible Withdraw, not the first
+    // in the DOM (which ran the whole timeout once in a run).
+    const rendered =
+      who === 'owner'
+        ? page
+            .locator('button:has-text("Withdraw")')
+            .filter({ visible: true })
+            .first()
+        : page.locator('.bitem').first()
+    await rendered
       .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
       .catch(() => {})
     await page.waitForTimeout(600)

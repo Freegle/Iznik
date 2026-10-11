@@ -95,15 +95,34 @@ test.describe('ModTools Member Logs', () => {
       await logsButton.first().click()
 
       // Track API calls to detect infinite looping
+      // Count fetches of the logs API only (GET /modtools/logs, which
+      // ModLogsModal's infinite scroll calls once per chunk). Matching any
+      // URL with "log" in it counted the logs page's own CSS chunk and the
+      // app's POST /clientlog reports as well, and the latter arrive every
+      // few seconds, which kept the "gone quiet" check below from being
+      // true for forty seconds or more.
       let apiCallCount = 0
+      let lastLogRequestAt = Date.now()
       page.on('request', (request) => {
-        if (request.url().includes('/logs') || request.url().includes('log')) {
+        if (request.url().includes('/modtools/logs')) {
           apiCallCount++
+          lastLogRequestAt = Date.now()
         }
       })
 
-      // Wait for logs to load, then check that API calls stabilize
-      await page.waitForTimeout(timeouts.ui.appearance)
+      // A looping page keeps fetching; a healthy one fetches its chunk or
+      // two and goes quiet. So wait until no logs fetch has been seen for
+      // five seconds (counting from the click, so a page that fetches
+      // nothing is done in five seconds, as it was passing before with a
+      // count of zero), or the count has already blown past the limit (the
+      // loop, caught early), rather than sleeping for the whole appearance
+      // budget (67 seconds on this stack) and counting afterwards.
+      await expect
+        .poll(
+          () => apiCallCount >= 20 || Date.now() - lastLogRequestAt > 5000,
+          { timeout: timeouts.ui.appearance, intervals: [250] }
+        )
+        .toBe(true)
 
       // If loading infinitely, apiCallCount would be very high (>20).
       // A reasonable load should make fewer than 20 log API calls.

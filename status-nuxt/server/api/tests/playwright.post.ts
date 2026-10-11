@@ -96,28 +96,47 @@ function runStep(step: string, cmd: string, timeout: number, input?: string) {
   }
 }
 
-async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
-  appendTestLogs('playwright', `${label}Resetting test database to clean state...\n`)
+// Seconds since the current request started, for the setup log lines, so the
+// setup phase can be read off the log instead of guessed at.
+let phaseStartedAt = Date.now()
+const since = () => `[+${((Date.now() - phaseStartedAt) / 1000).toFixed(1)}s]`
 
-  if (settleMs > 0) {
-    await new Promise((r) => setTimeout(r, settleMs))
-  }
-
-  // Kill active connections to iznik before dropping — avoids waiting for InnoDB
-  // to flush dirty pages. Best-effort: the DROP succeeds even if connections have
-  // already closed between the SELECT and the KILL.
+// Kill every connection to iznik. Best-effort: a connection that closes between
+// the SELECT and the KILL just makes the KILL a no-op.
+function killIznikConnections(pfx: string) {
   try {
     execSync(
       `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e \\"SELECT CONCAT('KILL ',id,';') FROM information_schema.processlist WHERE db='iznik'\\" | mysql -u root -piznik"`,
       { encoding: 'utf8', timeout: 10000 }
     )
   } catch {}
+}
+
+async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
+  appendTestLogs('playwright', `${label}${since()} Resetting test database to clean state...\n`)
+
+  if (settleMs > 0) {
+    await new Promise((r) => setTimeout(r, settleMs))
+  }
+
+  // Kill active connections to iznik before dropping — avoids waiting for InnoDB
+  // to flush dirty pages.
+  killIznikConnections(pfx)
 
   runStep(
     'drop and recreate database',
     `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
     300000
   )
+
+  // And again now the database exists afresh. This is what lets apiv2 keep
+  // running across the reset instead of being restarted: its pool (go-sql-driver
+  // 1.8, liveness check on) notices a killed connection the next time it picks
+  // it up and opens a new one against the new database, with no error reaching
+  // the caller. A connection opened in the gap between the first KILL and the
+  // DROP would have had its default database dropped from under it and been
+  // broken for every query for the rest of its life, hence killing twice.
+  killIznikConnections(pfx)
   // Every migration runs from an empty schema here, and on a cold stack - containers
   // just started, buffer pool empty, a dozen other services competing for the disk -
   // that overran the old five-minute limit. The reset then aborted while migrate
@@ -199,42 +218,53 @@ async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
   }
   appendTestLogs(
     'playwright',
-    `${label}Fixture dates rolled forward (newest post ${ages.messages_groups} day(s) old, ` +
+    `${label}${since()} Fixture dates rolled forward (newest post ${ages.messages_groups} day(s) old, ` +
       `spatial ${ages.messages_spatial} day(s) old)\n`
   )
 
-  // The Go V2 API maintains a MySQL connection pool. Dropping and recreating the
-  // database invalidates those connections. Restart the container so it starts
-  // fresh — otherwise the location typeahead (used by postcode validation in the
-  // /give flow) returns empty results and Playwright tests time out.
-  runStep('restart apiv2', `docker restart ${pfx}-apiv2`, 120000)
-
-  const apiv2Start = Date.now()
+  // Prove apiv2 is serving the new data by the route the browser uses: through
+  // traefik, as apiv2.localhost, asking the location typeahead for the fixture
+  // postcode. That exercises the pool after the KILLs above (a connection the
+  // reset broke would show up here, not twenty minutes later as an empty
+  // postcode dropdown in the /give flow), and it is also why apiv2 is no
+  // longer restarted: traefik drops a restarting container from its routes
+  // until Docker reports it healthy, which takes a ten-second healthcheck
+  // interval, and the first tests of a run were failing on 404s in that gap.
+  // apiv2.localhost resolves here through traefik's network alias, the same
+  // hostname the app itself calls.
+  const probeUrl = 'http://apiv2.localhost/api/location/typeahead?q=EH3'
+  const probeStart = Date.now()
   let apiv2Ready = false
-  while (Date.now() - apiv2Start < 60000) {
+  let lastProbe = ''
+  while (Date.now() - probeStart < 60000) {
     try {
-      const health = execSync(
-        `docker inspect --format '{{.State.Health.Status}}' ${pfx}-apiv2`,
-        { encoding: 'utf8', timeout: 5000 }
-      ).trim()
-      if (health === 'healthy') { apiv2Ready = true; break }
-    } catch {}
-    await new Promise((r) => setTimeout(r, 2000))
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 3000)
+      const resp = await fetch(probeUrl, { signal: controller.signal })
+      clearTimeout(timer)
+      const body = await resp.text()
+      lastProbe = `${resp.status} ${body.slice(0, 120)}`
+      if (resp.ok && body.includes('EH3')) { apiv2Ready = true; break }
+    } catch (e: any) {
+      lastProbe = e?.message || String(e)
+    }
+    await new Promise((r) => setTimeout(r, 250))
   }
   if (!apiv2Ready) {
-    throw new Error(`${pfx}-apiv2 did not become healthy within 60s after restart`)
+    throw new Error(`apiv2 did not return the fixture postcode from ${probeUrl} within 60s of the reset (last answer: ${lastProbe})`)
   }
 
   // Clear the in-memory testEnv cache so the run re-reads the seeded postcode/ID
   // data. The fixture reload restores the same ids, so cached values remain valid,
   // but clearing keeps the cache honest after a DB reset.
   clearTestEnvCache()
-  appendTestLogs('playwright', `${label}Test database reset complete (apiv2 healthy)\n`)
+  appendTestLogs('playwright', `${label}${since()} Test database reset complete (apiv2 serving the fixtures)\n`)
 }
 
 async function runPlaywrightTests(testFile: string | null, testName: string | null) {
   // Drives periodic background-task processing during the run (started/stopped below).
   let bgTasksInterval: ReturnType<typeof setInterval> | null = null
+  phaseStartedAt = Date.now()
   try {
     // Check both prod containers are running
     const pfx = process.env.COMPOSE_PROJECT_NAME || 'freegle'
@@ -289,35 +319,16 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       appendTestLogs('playwright', `${name}:${port} is ready\n`)
     }
 
-    // Restart Playwright container
+    // Restart the Playwright container (kills anything a previous run left
+    // behind and re-syncs the tests). It has nothing to do with the database,
+    // so it runs while the reset below is in progress and is awaited after.
     setTestState('playwright', { message: 'Restarting Playwright container...' })
-    appendTestLogs('playwright', 'Restarting Playwright container...\n')
-
-    try {
-      execSync(`docker restart ${pfx}-playwright`, {
-        encoding: 'utf8',
-        timeout: 30000,
-      })
-      appendTestLogs('playwright', 'Playwright container restarted\n')
-    } catch (restartError: any) {
-      appendTestLogs('playwright', `Warning: Failed to restart container: ${restartError.message}\n`)
-    }
-
-    // Sync playwright.config.js from the mounted volume — it's baked in at
-    // image build time and not covered by the entrypoint's /host-tests sync,
-    // so local changes (e.g. retries, flags) would otherwise be silently ignored.
-    try {
-      execSync(
-        `docker exec ${pfx}-playwright cp /host-playwright-config/playwright.config.js /app/playwright.config.js`,
-        { encoding: 'utf8', timeout: 5000 }
+    appendTestLogs('playwright', `${since()} Restarting Playwright container...\n`)
+    const playwrightRestart = new Promise<string | null>((resolve) => {
+      exec(`docker restart ${pfx}-playwright`, { timeout: 30000 }, (err) =>
+        resolve(err ? err.message : null)
       )
-      appendTestLogs('playwright', 'playwright.config.js synced from host\n')
-    } catch (syncError: any) {
-      appendTestLogs('playwright', `Warning: Failed to sync playwright.config.js: ${syncError.message}\n`)
-    }
-
-    // Wait for Playwright container to be ready
-    await new Promise(resolve => setTimeout(resolve, 3000))
+    })
 
     // Test environments are now created on demand by each test's testEnv fixture
     // via GET /api/tests/env/:prefix (no pre-generation needed).
@@ -333,39 +344,14 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     if (resolvedTestFile) testArgs += ` ${resolvedTestFile}`
     if (testName) testArgs += ` --grep "${testName}"`
 
-    // Get accurate test count using --list before running
-    setTestState('playwright', { message: 'Counting tests...' })
-    try {
-      const listOutput = execSync(
-        `docker exec ${pfx}-playwright sh -c "cd /app && export NODE_PATH=/usr/lib/node_modules && npx playwright test --list${testArgs}"`,
-        { encoding: 'utf8', timeout: 60000 }
-      )
-      // Count lines that match test entries (lines with [chromium] marker)
-      const testLines = listOutput.split('\n').filter(line => line.includes('[chromium]'))
-      if (testLines.length > 0) {
-        const state = getTestState('playwright')
-        state.progress.total = testLines.length
-        setTestState('playwright', state)
-        appendTestLogs('playwright', `Test count from --list: ${testLines.length}\n`)
-        console.log(`Playwright --list found ${testLines.length} tests`)
-      }
-    } catch (listError: any) {
-      console.warn('Could not get test count from --list:', listError.message)
-      appendTestLogs('playwright', 'Could not pre-count tests, will determine from output\n')
-    }
+    // The test count comes from Playwright's own "Running N tests using W
+    // workers" line, which parsePlaywrightOutput picks up seconds into the
+    // run. A separate `playwright test --list` beforehand loads every spec
+    // file a second time just to print the same number (and, counting only
+    // [chromium] lines, printed a smaller one), at ten to twenty seconds of
+    // every run.
 
     const testCmd = `export ENABLE_MONOCART_REPORTER=true && npx playwright test${testArgs}`
-
-    // Clear freeze-specs file and stale test result files before run.
-    // Stale junit.xml / test-status.json from a previous run (possibly weeks old
-    // if the container is reused) would otherwise be collected as CI artifacts
-    // and reported as failures even when the current run passes.
-    try {
-      execSync(
-        `docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt /app/test-results/junit.xml /app/test-results/test-status.json"`,
-        { encoding: 'utf8', timeout: 5000 }
-      )
-    } catch {}
 
     // Process incoming chat messages throughout the run. apiv2 (Go) creates a reply chat message
     // with processingrequired=1; chats:process-incoming flips it to processingsuccessful=1, which
@@ -415,8 +401,43 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       }
     }
 
+    const restartError = await playwrightRestart
+    if (restartError) {
+      appendTestLogs('playwright', `Warning: Failed to restart container: ${restartError}\n`)
+    } else {
+      appendTestLogs('playwright', `${since()} Playwright container restarted\n`)
+    }
+
+    // Sync playwright.config.js from the mounted volume — it's baked in at
+    // image build time and not covered by the entrypoint's /host-tests sync,
+    // so local changes (e.g. retries, flags) would otherwise be silently ignored.
+    // The tests themselves are copied again here too: the entrypoint does the
+    // same copy as the container starts, but `docker restart` returns before
+    // it has necessarily finished, and repeating it synchronously is what
+    // makes it safe to carry on without a fixed pause.
+    try {
+      execSync(
+        `docker exec ${pfx}-playwright sh -c "cp -r /host-tests/* /app/tests/ && cp /host-playwright-config/playwright.config.js /app/playwright.config.js"`,
+        { encoding: 'utf8', timeout: 15000 }
+      )
+      appendTestLogs('playwright', `${since()} tests and playwright.config.js synced from host\n`)
+    } catch (syncError: any) {
+      appendTestLogs('playwright', `Warning: Failed to sync tests/playwright.config.js: ${syncError.message}\n`)
+    }
+
+    // Clear freeze-specs file and stale test result files before run.
+    // Stale junit.xml / test-status.json from a previous run (possibly weeks old
+    // if the container is reused) would otherwise be collected as CI artifacts
+    // and reported as failures even when the current run passes.
+    try {
+      execSync(
+        `docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt /app/test-results/junit.xml /app/test-results/test-status.json"`,
+        { encoding: 'utf8', timeout: 5000 }
+      )
+    } catch {}
+
     setTestState('playwright', { message: 'Running Playwright tests...' })
-    appendTestLogs('playwright', `Running: ${testCmd}\n`)
+    appendTestLogs('playwright', `${since()} Running: ${testCmd}\n`)
 
     const initialCode = await spawnPlaywrightProcess(testCmd, pfx)
 
