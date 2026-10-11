@@ -53,6 +53,22 @@ class BoundedPoolResilienceTest extends TestCase
         Redis::shouldReceive('del')->andThrow(new \RedisException('connection refused'));
     }
 
+    public function test_a_failing_redis_call_is_tried_three_times_with_backoff(): void
+    {
+        // The comment in setUp says the retries still happen with only the waiting
+        // faked away; this is the test that holds it to that. Three attempts, and
+        // the 50ms then 200ms waits between them, in that order.
+        Redis::shouldReceive('rpush')->times(3)->andThrow(new \RedisException('connection refused'));
+
+        $pool = new BoundedPool($this->testPoolName, 5);
+        $pool->release();
+
+        Sleep::assertSequence([
+            Sleep::usleep(50000),
+            Sleep::usleep(200000),
+        ]);
+    }
+
     public function test_initialize_does_not_throw_when_redis_unreachable(): void
     {
         $this->makeRedisUnreachable();

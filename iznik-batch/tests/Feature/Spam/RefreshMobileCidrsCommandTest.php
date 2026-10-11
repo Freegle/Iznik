@@ -112,6 +112,12 @@ class RefreshMobileCidrsCommandTest extends TestCase
             0,
             DB::table('spam_whitelist_ips')->where('comment', 'like', 'UK mobile:%')->count()
         );
+
+        // The comment above is a claim; these hold it: two attempts at RIPEstat for
+        // each carrier, with one 500ms pause between them.
+        $asns = count(MobileNetworkService::UK_MOBILE_ASNS);
+        $this->assertCount($asns * 2, Http::recorded(fn ($request) => str_contains($request->url(), 'stat.ripe.net')));
+        Sleep::assertSequence(array_fill(0, $asns, Sleep::usleep(500000)));
     }
 
     public function test_service_targets_the_uk_mobile_mnos(): void
@@ -176,6 +182,12 @@ class RefreshMobileCidrsCommandTest extends TestCase
             0,
             DB::table('spam_whitelist_ips')->where('comment', MobileNetworkService::CLOUDFLARE_COMMENT)->count()
         );
+
+        // And the retry the comment above describes did happen: two attempts at
+        // Cloudflare with one 500ms pause, and no pause for the carriers, which
+        // answered first time.
+        $this->assertCount(2, Http::recorded(fn ($request) => str_contains($request->url(), 'www.cloudflare.com/ips-v4')));
+        Sleep::assertSequence([Sleep::usleep(500000)]);
     }
 
     // ── RFC 6598 CGNAT constant ───────────────────────────────────────────────

@@ -98,9 +98,15 @@ class BoundedPoolTest extends TestCase
         $pool->acquire();
 
         // Try to acquire another - should timeout
+        $started = microtime(true);
         $result = $pool->acquire();
+        $elapsed = microtime(true) - $started;
 
         $this->assertFalse($result);
+        // It must actually have waited for the timeout. A lower bound, so a slow
+        // host cannot fail it: a timeout that returned at once (a fractional value
+        // truncated to zero, say) would pass the assertion above and fail this one.
+        $this->assertGreaterThanOrEqual(0.09, $elapsed, 'acquire should block for its timeout before giving up');
     }
 
     public function test_with_permit_executes_callback(): void
