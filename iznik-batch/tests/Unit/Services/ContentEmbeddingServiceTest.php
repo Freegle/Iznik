@@ -10,16 +10,73 @@ class ContentEmbeddingServiceTest extends TestCase
 {
     private ContentEmbeddingService $service;
 
+    /**
+     * EMBEDDING_SIDECAR_URL as the process had it before the test, in each place
+     * env() looks: $_SERVER and $_ENV first, then getenv(). The batch container sets
+     * a real one, so setting only putenv() changed nothing the service saw. Each
+     * test sets its own and puts the original back, or every later test in the
+     * process sees the wrong sidecar (TestCase fails a test that does not).
+     *
+     * @var array{server: string|null, env: string|null, getenv: string|false}
+     */
+    private array $originalSidecarUrl = ['server' => null, 'env' => null, 'getenv' => false];
+
     protected function setUp(): void
     {
         parent::setUp();
         $this->service = new ContentEmbeddingService();
+        $this->originalSidecarUrl = [
+            'server' => $_SERVER['EMBEDDING_SIDECAR_URL'] ?? null,
+            'env' => $_ENV['EMBEDDING_SIDECAR_URL'] ?? null,
+            'getenv' => getenv('EMBEDDING_SIDECAR_URL'),
+        ];
+    }
+
+    /** Set the sidecar URL everywhere env() looks, or remove it with null. */
+    private function setSidecarUrl(?string $url): void
+    {
+        if ($url === null) {
+            unset($_SERVER['EMBEDDING_SIDECAR_URL'], $_ENV['EMBEDDING_SIDECAR_URL']);
+            putenv('EMBEDDING_SIDECAR_URL');
+
+            return;
+        }
+        $_SERVER['EMBEDDING_SIDECAR_URL'] = $url;
+        $_ENV['EMBEDDING_SIDECAR_URL'] = $url;
+        putenv('EMBEDDING_SIDECAR_URL='.$url);
+    }
+
+    private function restoreSidecarUrl(): void
+    {
+        $original = $this->originalSidecarUrl;
+        if ($original['server'] === null) {
+            unset($_SERVER['EMBEDDING_SIDECAR_URL']);
+        } else {
+            $_SERVER['EMBEDDING_SIDECAR_URL'] = $original['server'];
+        }
+        if ($original['env'] === null) {
+            unset($_ENV['EMBEDDING_SIDECAR_URL']);
+        } else {
+            $_ENV['EMBEDDING_SIDECAR_URL'] = $original['env'];
+        }
+        putenv($original['getenv'] === false
+            ? 'EMBEDDING_SIDECAR_URL'
+            : 'EMBEDDING_SIDECAR_URL='.$original['getenv']);
     }
 
     public function test_returns_false_when_no_sidecar_url_configured(): void
     {
-        // No EMBEDDING_SIDECAR_URL in test environment → conservative no-suppress.
-        $this->assertFalse($this->service->isInnocentContext('gun for sale', 'substance_regulated'));
+        // Remove the URL for this test: the batch container sets a real one, so
+        // without this the test called the real sidecar and never reached the
+        // no-URL branch it is named for.
+        Http::fake();
+        $this->setSidecarUrl(null);
+        try {
+            $this->assertFalse($this->service->isInnocentContext('gun for sale', 'substance_regulated'));
+            Http::assertNothingSent();
+        } finally {
+            $this->restoreSidecarUrl();
+        }
     }
 
     public function test_returns_false_for_unknown_category(): void
@@ -51,12 +108,12 @@ class ContentEmbeddingServiceTest extends TestCase
         Http::fake(['*' => Http::response([], 500)]);
 
         // Even with a URL set, sidecar failure → conservative no-suppress.
-        putenv('EMBEDDING_SIDECAR_URL=http://nonexistent-sidecar:3200');
+        $this->setSidecarUrl('http://nonexistent-sidecar:3200');
         try {
             $result = $this->service->isInnocentContext('hot glue gun', 'substance_regulated');
             $this->assertFalse($result);
         } finally {
-            putenv('EMBEDDING_SIDECAR_URL=');
+            $this->restoreSidecarUrl();
         }
     }
 
@@ -91,14 +148,14 @@ class ContentEmbeddingServiceTest extends TestCase
                 ->push(['embeddings' => [$textVec]], 200),
         ]);
 
-        putenv('EMBEDDING_SIDECAR_URL=http://fake-sidecar:3200');
+        $this->setSidecarUrl('http://fake-sidecar:3200');
         try {
             // Static cache persists between test calls — reset it via reflection.
             $this->resetProtoCache();
             $result = $this->service->isInnocentContext('hot glue gun for crafts', 'substance_regulated');
             $this->assertTrue($result, 'Clearly innocent context should be suppressed');
         } finally {
-            putenv('EMBEDDING_SIDECAR_URL=');
+            $this->restoreSidecarUrl();
             $this->resetProtoCache();
         }
     }
@@ -128,13 +185,13 @@ class ContentEmbeddingServiceTest extends TestCase
                 ->push(['embeddings' => [$textVec]], 200),
         ]);
 
-        putenv('EMBEDDING_SIDECAR_URL=http://fake-sidecar:3200');
+        $this->setSidecarUrl('http://fake-sidecar:3200');
         try {
             $this->resetProtoCache();
             $result = $this->service->isInnocentContext('handgun pistol for sale', 'substance_regulated');
             $this->assertFalse($result, 'Concerning context should not be suppressed');
         } finally {
-            putenv('EMBEDDING_SIDECAR_URL=');
+            $this->restoreSidecarUrl();
             $this->resetProtoCache();
         }
     }
@@ -163,13 +220,13 @@ class ContentEmbeddingServiceTest extends TestCase
                 ->push(['embeddings' => [$textVec]], 200),
         ]);
 
-        putenv('EMBEDDING_SIDECAR_URL=http://fake-sidecar:3200');
+        $this->setSidecarUrl('http://fake-sidecar:3200');
         try {
             $this->resetProtoCache();
             $result = $this->service->isInnocentContext('medicine cabinet wooden storage', 'substance_medicine');
             $this->assertTrue($result, 'Innocent medicine context (cabinet) should be suppressed');
         } finally {
-            putenv('EMBEDDING_SIDECAR_URL=');
+            $this->restoreSidecarUrl();
             $this->resetProtoCache();
         }
     }
@@ -197,13 +254,13 @@ class ContentEmbeddingServiceTest extends TestCase
                 ->push(['embeddings' => [$textVec]], 200),
         ]);
 
-        putenv('EMBEDDING_SIDECAR_URL=http://fake-sidecar:3200');
+        $this->setSidecarUrl('http://fake-sidecar:3200');
         try {
             $this->resetProtoCache();
             $result = $this->service->isInnocentContext('selling prescription opioid pills', 'substance_medicine');
             $this->assertFalse($result, 'Concerning medicine context should not be suppressed');
         } finally {
-            putenv('EMBEDDING_SIDECAR_URL=');
+            $this->restoreSidecarUrl();
             $this->resetProtoCache();
         }
     }
@@ -232,13 +289,13 @@ class ContentEmbeddingServiceTest extends TestCase
                 ->push(['embeddings' => [$textVec]], 200),
         ]);
 
-        putenv('EMBEDDING_SIDECAR_URL=http://fake-sidecar:3200');
+        $this->setSidecarUrl('http://fake-sidecar:3200');
         try {
             $this->resetProtoCache();
             $result = $this->service->isInnocentContext('warning this looks like a scam report it', 'scam');
             $this->assertTrue($result, 'Innocent scam-warning context should be suppressed');
         } finally {
-            putenv('EMBEDDING_SIDECAR_URL=');
+            $this->restoreSidecarUrl();
             $this->resetProtoCache();
         }
     }
@@ -266,13 +323,13 @@ class ContentEmbeddingServiceTest extends TestCase
                 ->push(['embeddings' => [$textVec]], 200),
         ]);
 
-        putenv('EMBEDDING_SIDECAR_URL=http://fake-sidecar:3200');
+        $this->setSidecarUrl('http://fake-sidecar:3200');
         try {
             $this->resetProtoCache();
             $result = $this->service->isInnocentContext('send payment via bank transfer PayPal gift card', 'scam');
             $this->assertFalse($result, 'Actual scam payment request should not be suppressed');
         } finally {
-            putenv('EMBEDDING_SIDECAR_URL=');
+            $this->restoreSidecarUrl();
             $this->resetProtoCache();
         }
     }
