@@ -83,6 +83,13 @@ func TestEnsureIsochroneExistsWithValidLocation(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM isochrones WHERE id = ? AND locationid = ? AND transport = 'Walk' AND minutes = 15", isoID, locID).Scan(&count)
 	assert.Equal(t, int64(1), count)
 
+	// It must have come from the routing server. Without this, a routing server that
+	// is down or has no data for this point still passes the test whenever a Mapbox
+	// key is present, by quietly falling through to Mapbox.
+	var source string
+	db.Raw("SELECT COALESCE(source, '') FROM isochrones WHERE id = ?", isoID).Scan(&source)
+	assert.Equal(t, "RoutingServer", source, "the Bristol point should be answered by the routing server, not a fallback")
+
 	// Cleanup
 	db.Exec("DELETE FROM isochrones WHERE id = ?", isoID)
 	db.Exec("DELETE FROM locations WHERE id = ?", locID)
