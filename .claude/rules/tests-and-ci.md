@@ -193,6 +193,10 @@ genuinely on different lines.
   A new-page recovery means Chromium left `context.newPage()` unanswered for a minute before any
   test code ran. Seen once in three runs, with no container event, memory pressure or crash
   logged; the fixture asks once more. More than one in a run is worth chasing in Chromium.
+- **Every image CI starts must be built in the orb's build step.** CI turns file sync off, so
+  an image the build step leaves out is whatever copy a pooled runner VM already has. Vitest and
+  eslint run in modtools-dev-local, which was left out: on a VM that had it, both ran over an
+  older frontend and a lint error passed. Adding a service to a CI profile means adding it there.
 - **Compare Playwright coverage file by file, never by its totals.** The number of lines the
   coverage file counts changes from run to run on the same code (19,843 in one run, 27,657 in
   another), so total lines hit can rise or fall by thousands with nothing changed. Per file, two
