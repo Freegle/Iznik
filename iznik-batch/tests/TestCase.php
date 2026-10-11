@@ -95,6 +95,18 @@ abstract class TestCase extends BaseTestCase
     private ?array $phpunitExceptionHandlers = null;
 
     /**
+     * The process environment as this test found it, after its boot.
+     *
+     * .env.testing is read once per process (see createApplication), so a test
+     * that changes an environment variable and does not put it back changes it for
+     * every test after it in the process. Before, the next boot healed it; now
+     * nothing would, and the leak would show up somewhere unrelated, or nowhere.
+     *
+     * @var array<string, string>|null
+     */
+    private ?array $environmentAtStart = null;
+
+    /**
      * Prevent PHPUnit from marking tests as risky due to Laravel's handler cleanup.
      *
      * PHPUnit 11+ snapshots the error/exception handler stack before setUp and
@@ -114,6 +126,8 @@ abstract class TestCase extends BaseTestCase
         $this->phpunitExceptionHandlers = $this->captureHandlerStack('exception');
 
         parent::setUp();
+
+        $this->environmentAtStart = getenv();
 
         // A tripped drive-metrics or reach-eval circuit breaker (static,
         // process-wide) must not leak from one test into the next.
@@ -196,6 +210,10 @@ abstract class TestCase extends BaseTestCase
 
     protected function tearDown(): void
     {
+        // By now the test's own tearDown has run, so whatever it changed and meant
+        // to put back has been put back.
+        $leaked = $this->environmentAtStart === null ? [] : $this->environmentChanges($this->environmentAtStart);
+
         parent::tearDown();
 
         // After Laravel's flushHandlersState() wiped and re-created handlers,
@@ -224,6 +242,13 @@ abstract class TestCase extends BaseTestCase
             foreach ($this->phpunitExceptionHandlers as $handler) {
                 set_exception_handler($handler);
             }
+        }
+
+        if ($leaked !== []) {
+            $this->fail(
+                'This test left the process environment changed for every test after it: '
+                .implode(', ', $leaked).'. Put it back in the test (it has been restored here).'
+            );
         }
     }
 
@@ -274,6 +299,38 @@ abstract class TestCase extends BaseTestCase
      * This prevents accidentally running tests with `docker exec` instead
      * of via the status container API which manages test isolation and reporting.
      */
+    /**
+     * What differs between the environment now and $before, as "NAME (what
+     * happened)" strings, after putting $before back so the next test starts clean.
+     *
+     * @param  array<string, string>  $before
+     * @return list<string>
+     */
+    private function environmentChanges(array $before): array
+    {
+        $now = getenv();
+        $changes = [];
+
+        foreach ($now as $name => $value) {
+            if (! array_key_exists($name, $before)) {
+                $changes[] = "{$name} (set)";
+                putenv($name);
+            } elseif ($before[$name] !== $value) {
+                $changes[] = "{$name} (changed)";
+                putenv("{$name}={$before[$name]}");
+            }
+        }
+
+        foreach ($before as $name => $value) {
+            if (! array_key_exists($name, $now)) {
+                $changes[] = "{$name} (unset)";
+                putenv("{$name}={$value}");
+            }
+        }
+
+        return $changes;
+    }
+
     public static function setUpBeforeClass(): void
     {
         parent::setUpBeforeClass();
