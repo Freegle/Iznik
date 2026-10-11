@@ -46,6 +46,10 @@ flowchart LR
 4. **Backend services** (the Go and PHP APIs and the Laravel batch app) deploy through
    their own path, separate from the Netlify frontend flow.
 
+A pull request from a fork gets no CI on its own: CircleCI will not run fork code on our
+self-hosted runner. A maintainer who has read it applies the **Run CI** label to run it;
+see [Pull requests from forks](reference/circleci.md#pull-requests-from-forks).
+
 ### Backend first
 
 When a change spans both, deploy the **backend before** the frontend that depends on it,

@@ -73,6 +73,29 @@ On non-master branches, path-based skipping avoids running unrelated test suites
 ### Auto-Merge to Production
 When all tests pass on `master`, the branch is automatically merged to `production` (which triggers Netlify deploys).
 
+### Pull requests from forks
+
+CircleCI will not run a pull request from a fork on our self-hosted runner. The
+build-and-test check fails within seconds with "Forked prs not allowed to run on OSS
+projects", and nothing has run. This is a security control, not a fault: a fork's code
+would run on a runner that is reused between builds, beside the project's secrets.
+
+To run CI for one, a maintainer reads every line of the pull request and then applies
+the **Run CI** label. `.github/workflows/fork-pr-ci.yml` points a branch `ci/pr-<number>`
+at the commit that was reviewed, CircleCI builds it as an ordinary push, and the result
+appears on the pull request. The label is then taken off. It approves one commit, so
+any later push needs another review and the label again. The branch is deleted when the
+pull request closes.
+
+The workflow refuses, and says why on the pull request, when:
+
+- the label was applied by someone without write access;
+- the contributor pushed again after the label was applied;
+- the pull request changes what CI itself runs: `.circleci/`, `.github/`, `scripts/`,
+  `status-nuxt/`, compose files, Dockerfiles, or dependency manifests and lockfiles.
+  Those cannot be judged from a label, so a maintainer pushes such a branch themselves
+  after reviewing it.
+
 ## Environment Variables
 
 The following variables should be configured in CircleCI:

@@ -222,6 +222,13 @@ genuinely on different lines.
   (`ssh -i ~/.ssh/hetzner_ci root@<ip>`), downgrade it to the pinned version, re-run the failed
   workflows, and merge master into the branch that provisioned it.
 
+- **build-and-test red within seconds on a pull request from a fork, with "Task information
+  unavailable" and no steps**, is CircleCI refusing fork code on our self-hosted runner
+  (`Forked prs not allowed to run on OSS projects`, visible only in the job's `messages` through
+  the v2 API). Nothing ran, so there is no test failure to find. A maintainer reads the pull
+  request and applies the **Run CI** label (`.github/workflows/fork-pr-ci.yml`). Do not turn on
+  fork builds or secrets for forks in the CircleCI settings to get round it.
+
 - **Docker Hub rate limits** mean the pull-through mirror is only wired up for the self-hosted
   runner, so a job that lands elsewhere pulls directly and is throttled.
 - **A new compose service that is not in the orb's explicit build list** is never built, and
