@@ -12,6 +12,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * ripple:expand — maintains the rippling-out reach (rippling_reach) for every
@@ -19,6 +20,7 @@ use Illuminate\Support\Facades\Log;
  * computing reach via the routing server. Dark in PR A: nothing reads the reach
  * yet, so this only populates rippling_reach.
  */
+#[AsCommand(name: 'ripple:expand')]
 class ExpandCommand extends Command
 {
     use GracefulShutdown;

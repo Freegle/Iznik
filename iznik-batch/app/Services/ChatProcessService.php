@@ -108,7 +108,7 @@ class ChatProcessService
                 ->where('chat_messages.id', '>', $lastId)
                 ->when($chatHeld, fn ($query) => $query->where('chat_rooms.chattype', '!=', ChatRoom::TYPE_USER2USER))
                 ->orderBy('chat_messages.id', 'asc')
-                ->limit(LockdownHoldsService::RELEASE_BATCH_SIZE)
+                ->limit(LockdownHoldsService::releaseBatchSize())
                 ->select('chat_messages.*', 'chat_rooms.chattype', 'chat_rooms.user1', 'chat_rooms.user2')
                 ->get();
             if ($messages->isEmpty()) {

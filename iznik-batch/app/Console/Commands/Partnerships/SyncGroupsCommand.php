@@ -6,6 +6,7 @@ use App\Services\PartnershipGroupsService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Re-checks every live partnership's communities against its council boundary, so a
@@ -17,6 +18,7 @@ use Illuminate\Support\Facades\DB;
  *   php artisan partnerships:sync-groups
  *   php artisan partnerships:sync-groups --dry-run
  */
+#[AsCommand(name: 'partnerships:sync-groups')]
 class SyncGroupsCommand extends Command
 {
     protected $signature = 'partnerships:sync-groups

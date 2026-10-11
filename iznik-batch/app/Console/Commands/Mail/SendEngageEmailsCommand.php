@@ -4,7 +4,9 @@ namespace App\Console\Commands\Mail;
 
 use App\Services\EngageEmailService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:engage')]
 class SendEngageEmailsCommand extends Command
 {
     protected $signature = 'mail:engage

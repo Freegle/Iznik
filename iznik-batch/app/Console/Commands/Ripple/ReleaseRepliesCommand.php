@@ -7,6 +7,7 @@ use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * ripple:release-replies — releases or expires held external replies (#3 / PR C)
@@ -24,6 +25,7 @@ use Illuminate\Support\Facades\Log;
  * Inert until the reach engine is live: until a reply is held there is nothing to
  * release, so this is a cheap no-op.
  */
+#[AsCommand(name: 'ripple:release-replies')]
 class ReleaseRepliesCommand extends Command
 {
     use GracefulShutdown;

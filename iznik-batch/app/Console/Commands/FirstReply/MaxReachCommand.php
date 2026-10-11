@@ -5,6 +5,7 @@ namespace App\Console\Commands\FirstReply;
 use App\Services\FirstReply\MaxReachService;
 use App\Traits\SingleInstanceLock;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * firstreply:maxreach - fill in rippling_reach.max_polygon.
@@ -16,6 +17,7 @@ use Illuminate\Console\Command;
  * simply have no max reach yet, and every reader of max_polygon treats that as
  * "unknown" and falls back to current-reach behaviour.
  */
+#[AsCommand(name: 'firstreply:maxreach')]
 class MaxReachCommand extends Command
 {
     protected $signature = 'firstreply:maxreach

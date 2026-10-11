@@ -4,7 +4,9 @@ namespace App\Console\Commands\Logs;
 
 use App\Services\LogRotationService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'logs:rotate')]
 class RotateLogsCommand extends Command
 {
     protected $signature = 'logs:rotate

@@ -5,7 +5,9 @@ namespace App\Console\Commands\Chat;
 use App\Services\ChatReviewPendingService;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'chats:review-pending')]
 class ReviewPendingCommand extends Command
 {
     use LogsBatchJob;

@@ -4,6 +4,7 @@ namespace App\Console\Commands\Eee;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * One-shot backfill of `eee_classified_attachments` from a bundled CSV
@@ -20,6 +21,7 @@ use Illuminate\Support\Facades\DB;
  * via EeeClassificationService::recordClassifiedAttachment(), so this
  * command is one-shot — no need to re-snapshot.
  */
+#[AsCommand(name: 'eee:backfill-classified-table')]
 class EeeBackfillClassifiedTableCommand extends Command
 {
     protected $signature = 'eee:backfill-classified-table

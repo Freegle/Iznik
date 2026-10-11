@@ -5,12 +5,14 @@ namespace App\Console\Commands\Lockdown;
 use App\Services\Lockdown\LockdownService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Print the lockdown switch's current state as the batch sees it: whether it is active,
  * which surfaces are held, and what has been counted against the incident so far (plan
  * 2026-09-27-lockdown-switch.md, section 11.4). Read-only.
  */
+#[AsCommand(name: 'lockdown:status')]
 class LockdownStatusCommand extends Command
 {
     protected $signature = 'lockdown:status';

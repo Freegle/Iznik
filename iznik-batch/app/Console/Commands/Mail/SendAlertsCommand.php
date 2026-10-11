@@ -4,7 +4,9 @@ namespace App\Console\Commands\Mail;
 
 use App\Services\AlertService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:alerts:send')]
 class SendAlertsCommand extends Command
 {
     protected $signature = 'mail:alerts:send

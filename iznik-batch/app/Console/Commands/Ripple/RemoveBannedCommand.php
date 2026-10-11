@@ -4,6 +4,7 @@ namespace App\Console\Commands\Ripple;
 
 use App\Services\Ripple\ExpandService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * ripple:remove-banned — one-off remediation for the window before rippling honoured
@@ -16,6 +17,7 @@ use Illuminate\Console\Command;
  * ripple-join membership. Organic memberships are never touched. Galera-safe: one row per
  * statement. Defaults to a dry run; pass --commit to write.
  */
+#[AsCommand(name: 'ripple:remove-banned')]
 class RemoveBannedCommand extends Command
 {
     protected $signature = 'ripple:remove-banned

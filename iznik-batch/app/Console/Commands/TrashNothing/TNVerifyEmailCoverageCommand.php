@@ -12,6 +12,7 @@ use App\Services\TrashNothing\Verify\TnEmailRoutingGate;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Verifies that every TN post which arrived by email was also ingested via the
@@ -32,6 +33,7 @@ use Illuminate\Support\Facades\Cache;
  * the sync's own latency are never mistaken for a gap. The upper bound is the
  * archive's 48h retention (mail:cleanup-archive).
  */
+#[AsCommand(name: 'tn:verify-email-coverage')]
 class TNVerifyEmailCoverageCommand extends Command
 {
     protected $signature = 'tn:verify-email-coverage

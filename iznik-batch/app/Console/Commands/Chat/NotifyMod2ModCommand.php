@@ -9,7 +9,9 @@ use App\Services\EmailSpoolerService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:chat:mod2mod')]
 class NotifyMod2ModCommand extends Command
 {
     use GracefulShutdown;
@@ -122,8 +124,9 @@ class NotifyMod2ModCommand extends Command
             } else {
                 if ($runOnce) {
                     $this->info("No messages to notify.");
-                } else {
-                    // No messages to process, sleep before next iteration.
+                } elseif ($iteration < $maxIterations) {
+                    // No messages to process, sleep before the next iteration. There
+                    // is no next iteration after the last one, so do not sleep then.
                     sleep(1);
                 }
             }

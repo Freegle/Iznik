@@ -5,7 +5,9 @@ namespace App\Console\Commands\Chat;
 use App\Services\ChatChaseupExpectedService;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'chats:chaseup-expected')]
 class ChaseupExpectedCommand extends Command
 {
     use LogsBatchJob;

@@ -8,6 +8,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Put every member on the travel-time budget their own surroundings justify, and
@@ -85,6 +86,7 @@ use Illuminate\Support\Facades\Log;
  * Chunked by id and re-runnable: it only ever moves a member towards the
  * invariant, so stopping and re-running is safe.
  */
+#[AsCommand(name: 'browse:backfill-max-distance')]
 class BackfillBrowseMaxDistanceCommand extends Command
 {
     /**

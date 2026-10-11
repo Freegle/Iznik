@@ -6,6 +6,7 @@ use App\Services\EeeSqliteService;
 use App\Services\EeeVisionService;
 use Illuminate\Console\Command;
 use PDO;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Score vision-model classifications against human reviewer labels.
@@ -26,6 +27,7 @@ use PDO;
  *   php artisan eee:score-vs-human --field=EEE
  *   php artisan eee:score-vs-human --prompt-versions=1.4.1,1.4.2
  */
+#[AsCommand(name: 'eee:score-vs-human')]
 class EeeScoreVsHumanCommand extends Command
 {
     protected $signature = 'eee:score-vs-human

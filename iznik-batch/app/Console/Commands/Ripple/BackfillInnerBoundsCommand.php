@@ -7,6 +7,7 @@ use App\Services\Ripple\ReachBoundsService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * One-shot repair for rippling_reach rows whose inner bound is missing or uselessly
@@ -19,6 +20,7 @@ use Illuminate\Support\Facades\Log;
  * completed-post rows (POINT outer) are skipped. Run with --dry-run first on
  * production to see the candidate count.
  */
+#[AsCommand(name: 'ripple:backfill-inner-bounds')]
 class BackfillInnerBoundsCommand extends Command
 {
     use PreventsOverlapping;

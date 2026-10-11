@@ -5,6 +5,7 @@ namespace App\Console\Commands\Eee;
 use App\Services\EeeComponentService;
 use App\Services\EeeSqliteService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Build (or update) the component vector index used for deterministic EEE logic.
@@ -16,6 +17,7 @@ use Illuminate\Console\Command;
  *
  * Run after each batch of new classifications to keep the index current.
  */
+#[AsCommand(name: 'eee:build-component-index')]
 class EeeBuildComponentIndexCommand extends Command
 {
     protected $signature = 'eee:build-component-index

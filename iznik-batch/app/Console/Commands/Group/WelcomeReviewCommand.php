@@ -4,7 +4,9 @@ namespace App\Console\Commands\Group;
 
 use App\Services\WelcomeReviewService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'groups:welcome-review')]
 class WelcomeReviewCommand extends Command
 {
     protected $signature = 'groups:welcome-review

@@ -5,6 +5,7 @@ namespace App\Console\Commands\Chat;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Finds User2Mod chat rooms where user1 (the member) is missing from
@@ -13,6 +14,7 @@ use Illuminate\Support\Facades\Log;
  *
  * Safe to run repeatedly — uses INSERT IGNORE so existing rows are untouched.
  */
+#[AsCommand(name: 'chat:repair-roster')]
 class RepairRosterCommand extends Command
 {
     protected $signature = 'chat:repair-roster

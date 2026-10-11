@@ -6,6 +6,7 @@ use App\Services\Desirability\DesirabilityService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Incremental desirability scoring - scores OFFERs approved since the last run.
@@ -17,6 +18,7 @@ use Illuminate\Support\Facades\Log;
  *   php artisan desirability:score-new
  *   php artisan desirability:score-new --limit=2000 --dry-run
  */
+#[AsCommand(name: 'desirability:score-new')]
 class ScoreNewCommand extends Command
 {
     protected $signature = 'desirability:score-new

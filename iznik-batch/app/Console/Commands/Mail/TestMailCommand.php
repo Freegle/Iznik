@@ -29,7 +29,9 @@ use App\Services\UnsubscribeService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:test')]
 class TestMailCommand extends Command
 {
     use AvatarResolver;

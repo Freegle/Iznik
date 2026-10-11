@@ -4,6 +4,7 @@ namespace App\Console\Commands\Discourse;
 
 use App\Services\AgmCategoryService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Yearly maintenance of the AGM category on Discourse. Run by hand, not
@@ -14,6 +15,7 @@ use Illuminate\Console\Command;
  *   php artisan discourse:agm announce             # put every user on Watching
  *   php artisan discourse:agm close --year=2026    # after the AGM
  */
+#[AsCommand(name: 'discourse:agm')]
 class AgmCommand extends Command
 {
     protected $signature = 'discourse:agm

@@ -4,6 +4,7 @@ namespace App\Services\WorkerPool;
 
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Sleep;
 
 /**
  * A bounded worker pool using Redis BLPOP for back pressure.
@@ -25,7 +26,9 @@ class BoundedPool
     public function __construct(
         private string $name,
         private int $maxConcurrency,
-        private int $timeoutSeconds = 0, // 0 = block forever
+        // 0 = block forever. Fractional seconds are allowed (BLPOP accepts them
+        // since Redis 6), so a caller can wait for less than a whole second.
+        private int|float $timeoutSeconds = 0,
         private int $sentryThrottleSeconds = 300
     ) {
         $this->permitsKey = "pool:{$name}:permits";
@@ -245,7 +248,8 @@ class BoundedPool
             } catch (\Throwable $e) {
                 $lastException = $e;
                 if ($attempt < count($delaysMs)) {
-                    usleep($delaysMs[$attempt] * 1000);
+                    // Through the Sleep facade so a test can Sleep::fake() the backoff.
+                    Sleep::usleep($delaysMs[$attempt] * 1000);
                 }
             }
         }

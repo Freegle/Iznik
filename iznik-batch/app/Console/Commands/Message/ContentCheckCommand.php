@@ -6,7 +6,9 @@ use App\Services\ContentCheckService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'messages:contentcheck')]
 class ContentCheckCommand extends Command
 {
     use GracefulShutdown;

@@ -4,7 +4,9 @@ namespace App\Console\Commands\Birthday;
 
 use App\Services\BirthdayService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'birthday:send-emails')]
 class SendBirthdayEmailsCommand extends Command
 {
     protected $signature = 'birthday:send-emails

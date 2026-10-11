@@ -5,6 +5,7 @@ namespace App\Console\Commands\Donation;
 use App\Services\DonationUserIdBackfillService;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Reconcile users_donations.userid against live accounts. Two populations:
@@ -21,6 +22,7 @@ use Illuminate\Console\Command;
  * Donations already on a LIVE account are deliberately left alone: that is the
  * duplicate-account case, resolved by a human account merge, not here.
  */
+#[AsCommand(name: 'donations:correct-userids')]
 class CorrectDonationUserIdsCommand extends Command
 {
     use LogsBatchJob;

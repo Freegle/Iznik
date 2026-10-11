@@ -4,6 +4,7 @@ namespace App\Console\Commands\Housekeeper;
 
 use App\Services\HousekeeperService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Records a run of a task that lives outside Laravel in housekeeper_tasks, the
@@ -11,6 +12,7 @@ use Illuminate\Console\Command;
  * which runs on the Docker host and calls this through `docker exec -i`, with the
  * run's log on stdin when --log-stdin is given.
  */
+#[AsCommand(name: 'housekeeper:record')]
 class RecordCommand extends Command
 {
     protected $signature = 'housekeeper:record

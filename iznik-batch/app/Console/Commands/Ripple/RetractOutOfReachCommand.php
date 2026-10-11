@@ -5,6 +5,7 @@ namespace App\Console\Commands\Ripple;
 use App\Services\Ripple\ExpandService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * ripple:retract-out-of-reach — one-off cap-backlog cleanup. For posts whose reach
@@ -14,6 +15,7 @@ use Illuminate\Support\Facades\DB;
  * keep working). New posts ripple capped from the start, so this is only needed for
  * the pre-cap backlog. --dry-run reports counts without writing.
  */
+#[AsCommand(name: 'ripple:retract-out-of-reach')]
 class RetractOutOfReachCommand extends Command
 {
     protected $signature = 'ripple:retract-out-of-reach

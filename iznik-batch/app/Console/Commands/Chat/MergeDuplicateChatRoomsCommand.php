@@ -5,6 +5,7 @@ namespace App\Console\Commands\Chat;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Merge duplicate User2User chat rooms where the same pair of users
@@ -14,6 +15,7 @@ use Illuminate\Support\Facades\Log;
  * (smaller ID first) but only searching for normalized form, missing
  * old rooms from PHP createConversation() that weren't normalized.
  */
+#[AsCommand(name: 'chat:merge-duplicates')]
 class MergeDuplicateChatRoomsCommand extends Command
 {
     protected $signature = 'chat:merge-duplicates
