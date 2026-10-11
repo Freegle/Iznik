@@ -100,3 +100,13 @@ swagger.json snapshot differs from what go-swagger v0.31.0 in the apiv2 image no
 stack's image serves a spec WITHOUT the {id} parameter; which generator output the snapshot
 should follow is a separate decision.
 
+
+## Final runs (2026-10-11)
+
+final2 (a86a94ca6) failed two Playwright tests. The withdraw helper probed for OutcomeModal once
+with isVisible(), which ignores its timeout, so a modal still loading its async chunk was missed
+and the post was never withdrawn; master had the same probe but only warned. It now waits for
+the dialog. The settings test hung ten minutes inside Chromium's context.newPage() with no
+container event, OOM or crash logged; the fixture bounds it at 60s and retries once as a
+new-page recovery. final3 (f53b9c491): all four suites green, 575s, no recoveries, 41 of 41
+withdrawals through the dialog. final4 reruns on the master merge before push.
