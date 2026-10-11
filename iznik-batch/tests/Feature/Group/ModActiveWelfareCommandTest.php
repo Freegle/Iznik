@@ -41,7 +41,7 @@ class ModActiveWelfareCommandTest extends TestCase
         return $user;
     }
 
-    private function recordApproval(int $userId, int $groupId, string $arrival = null): void
+    private function recordApproval(int $userId, int $groupId, ?string $arrival = null): void
     {
         // messages_groups.msgid must be unique per group; use a random large id to avoid collisions
         $msgId = DB::table('messages')->insertGetId([

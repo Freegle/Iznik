@@ -5,6 +5,7 @@ namespace App\Console\Commands\BulkOffer;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Emails the outreach replies the offerer has APPROVED in the management page.
@@ -17,6 +18,7 @@ use Illuminate\Support\Facades\DB;
  * dup guard: an approved reply is emailed exactly once, even on re-runs.
  * Dry-run unless --live.
  */
+#[AsCommand(name: 'bulkoffer:send-approved-outreach')]
 class SendApprovedOutreachCommand extends Command
 {
     protected $signature = 'bulkoffer:send-approved-outreach {--live : actually send (else dry-run .eml)}';

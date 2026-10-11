@@ -4,7 +4,9 @@ namespace App\Console\Commands\CommunityNews;
 
 use App\Services\CommunityNews\CommunityNewsChitChatService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'community-news:post-chitchat')]
 class PostCommunityNewsChitChatCommand extends Command
 {
     protected $signature = 'community-news:post-chitchat

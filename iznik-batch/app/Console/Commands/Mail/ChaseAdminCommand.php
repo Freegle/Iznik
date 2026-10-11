@@ -11,7 +11,9 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:admin:chase')]
 class ChaseAdminCommand extends Command
 {
     use GracefulShutdown;

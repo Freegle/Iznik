@@ -4,7 +4,9 @@ namespace App\Console\Commands\Pool;
 
 use App\Services\WorkerPool\BoundedPool;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'pool:init')]
 class InitCommand extends Command
 {
     protected $signature = 'pool:init

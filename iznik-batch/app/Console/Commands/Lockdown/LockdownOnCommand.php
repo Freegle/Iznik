@@ -4,6 +4,7 @@ namespace App\Console\Commands\Lockdown;
 
 use App\Services\Lockdown\LockdownService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Press the lockdown switch: every surface held, chat hard (plan
@@ -16,6 +17,7 @@ use Illuminate\Console\Command;
  * (announcedat IS NULL) on its next run and sends it, the same path every later change
  * (a lift, a close) is announced through.
  */
+#[AsCommand(name: 'lockdown:on')]
 class LockdownOnCommand extends Command
 {
     protected $signature = 'lockdown:on

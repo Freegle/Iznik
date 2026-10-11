@@ -8,6 +8,7 @@ use PhpOffice\PhpSpreadsheet\Reader\Xlsx as XlsxReader;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Produces the quarterly statistics spreadsheet that local authorities receive:
@@ -20,6 +21,7 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
  * With --partnership, the communities are the ones that deal covers rather than those
  * derived from the boundary, so the spreadsheet matches the Partnerships page.
  */
+#[AsCommand(name: 'authority:stats')]
 class AuthorityStatsCommand extends Command
 {
     // Explicit number formats for the values we write, so display never depends

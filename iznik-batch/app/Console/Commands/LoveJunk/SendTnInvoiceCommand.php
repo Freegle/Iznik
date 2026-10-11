@@ -4,7 +4,9 @@ namespace App\Console\Commands\LoveJunk;
 
 use App\Services\LoveJunkInvoiceService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'lovejunk:send-tn-invoice')]
 class SendTnInvoiceCommand extends Command
 {
     protected $signature = 'lovejunk:send-tn-invoice

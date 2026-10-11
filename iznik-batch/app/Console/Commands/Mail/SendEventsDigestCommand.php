@@ -5,7 +5,9 @@ namespace App\Console\Commands\Mail;
 use App\Services\EventsDigestService;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:events-digest')]
 class SendEventsDigestCommand extends Command
 {
     use LogsBatchJob;

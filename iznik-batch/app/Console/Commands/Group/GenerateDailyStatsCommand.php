@@ -6,6 +6,7 @@ use App\Services\StatsGenerationService;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * BACKFILL (one-off, post-deploy):
@@ -29,6 +30,7 @@ use Illuminate\Support\Facades\Log;
  * rows (it does not delete them), so a stat that drops to exactly 0 keeps its
  * old inflated row — not a concern for active groups, whose counts stay > 0.
  */
+#[AsCommand(name: 'stats:generate-daily')]
 class GenerateDailyStatsCommand extends Command
 {
     protected $signature = 'stats:generate-daily

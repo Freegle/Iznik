@@ -6,6 +6,7 @@ use App\Console\Concerns\PreventsOverlapping;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * One-shot backfill of newsfeed.leaf - the road-network region tag the
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\Http;
  * feed's own age window matter: replies inherit their thread's visibility
  * and older threads are never served.
  */
+#[AsCommand(name: 'chitchat:backfill-leaves')]
 class BackfillLeavesCommand extends Command
 {
     use PreventsOverlapping;

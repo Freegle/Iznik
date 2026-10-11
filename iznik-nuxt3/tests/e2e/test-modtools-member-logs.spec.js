@@ -81,34 +81,63 @@ test.describe('ModTools Member Logs', () => {
 
     await dismissAllModals(page)
 
-    // Look for a "View logs" link on a member
-    const logsButton = page.locator(
-      'a:has-text("View logs"), button:has-text("Logs"), a:has-text("Logs"), [title*="Logs" i]'
+    // A member card's own "View logs" button (ModMember.vue). The selector used to
+    // include a:has-text("Logs"), which matched the sidebar's Logs link first, so
+    // these tests clicked through to the Logs page and never opened a member's logs.
+    const logsButton = page.getByRole('button', { name: 'View logs' })
+
+    // The approved members of the test community always include someone, so the
+    // logs control must be there. It used to be looked for with isVisible() inside
+    // an if, which let the whole loop check pass without running when it was not.
+    await expect(logsButton.first()).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
+
+    // Count fetches of the logs API only (GET /modtools/logs, which ModLogsModal's
+    // infinite scroll calls once per chunk). Matching any URL with "log" in it also
+    // counted the page's own CSS chunk and the app's POST /clientlog reports.
+    // Listen before the click, so the modal's first fetches are counted too.
+    let apiCallCount = 0
+    let lastLogRequestAt = 0
+    page.on('request', (request) => {
+      if (request.url().includes('/modtools/logs')) {
+        apiCallCount++
+        lastLogRequestAt = Date.now()
+      }
+    })
+
+    const firstLogsFetch = page.waitForRequest(
+      (request) => request.url().includes('/modtools/logs'),
+      { timeout: timeouts.ui.appearance }
     )
+    const clickedAt = Date.now()
+    await logsButton.first().click()
 
-    if (
-      await logsButton
-        .first()
-        .isVisible({ timeout: timeouts.ui.appearance })
-        .catch(() => false)
-    ) {
-      await logsButton.first().click()
+    // Opening the modal must fetch the logs; a modal that never asks has not
+    // been tested for looping at all.
+    await firstLogsFetch
 
-      // Track API calls to detect infinite looping
-      let apiCallCount = 0
-      page.on('request', (request) => {
-        if (request.url().includes('/logs') || request.url().includes('log')) {
-          apiCallCount++
-        }
-      })
+    // A looping modal keeps fetching; a healthy one fetches its chunk or two and
+    // goes quiet. Watch for at least fifteen seconds from the click, and until no
+    // logs fetch has been seen for five seconds, or stop early once the count has
+    // blown past the limit (the loop, caught). Fifteen seconds still sees a loop
+    // that fetches every few seconds, where the old fixed wait took 67.
+    const MIN_WATCH_MS = 15000
+    const QUIET_MS = 5000
+    await expect
+      .poll(
+        () =>
+          apiCallCount >= 20 ||
+          (Date.now() - clickedAt >= MIN_WATCH_MS &&
+            Date.now() - lastLogRequestAt >= QUIET_MS),
+        { timeout: timeouts.ui.appearance, intervals: [250] }
+      )
+      .toBe(true)
 
-      // Wait for logs to load, then check that API calls stabilize
-      await page.waitForTimeout(timeouts.ui.appearance)
-
-      // If loading infinitely, apiCallCount would be very high (>20).
-      // A reasonable load should make fewer than 20 log API calls.
-      expect(apiCallCount).toBeLessThan(20)
-    }
+    // If loading infinitely, apiCallCount would be very high (>20).
+    // A reasonable load should make fewer than 20 log API calls.
+    expect(apiCallCount).toBeGreaterThan(0)
+    expect(apiCallCount).toBeLessThan(20)
 
     expect(errors).toHaveLength(0)
   })
@@ -163,39 +192,27 @@ test.describe('ModTools Member Logs', () => {
 
     await dismissAllModals(page)
 
-    // Look for a "View logs" link on a member
-    const logsButton = page.locator(
-      'a:has-text("View logs"), button:has-text("Logs"), a:has-text("Logs"), [title*="Logs" i]'
+    // A member card's own "View logs" button (ModMember.vue). The selector used to
+    // include a:has-text("Logs"), which matched the sidebar's Logs link first, so
+    // these tests clicked through to the Logs page and never opened a member's logs.
+    const logsButton = page.getByRole('button', { name: 'View logs' })
+
+    await expect(logsButton.first()).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
+    const logsFetched = page.waitForResponse(
+      (response) => response.url().includes('/modtools/logs'),
+      { timeout: timeouts.ui.appearance }
     )
+    await logsButton.first().click()
+    await logsFetched
 
-    if (
-      await logsButton
-        .first()
-        .isVisible({ timeout: timeouts.ui.appearance })
-        .catch(() => false)
-    ) {
-      await logsButton.first().click()
-
-      // Wait for log entries to appear
-      await page.waitForTimeout(timeouts.ui.settleTime)
-
-      // Log entries that reference messages should have subject lines,
-      // not empty or "undefined" subjects
-      const logArea = page.locator(
-        '.modal.show, [class*="log"], [class*="Log"]'
-      )
-      if (
-        await logArea
-          .first()
-          .isVisible({ timeout: timeouts.ui.appearance })
-          .catch(() => false)
-      ) {
-        const logText = await logArea.first().textContent()
-        // Subject lines should not show as "undefined" or be completely absent
-        // when there are message-related log entries
-        expect(logText).not.toContain('Subject: undefined')
-        expect(logText).not.toContain('subject undefined')
-      }
-    }
+    // The member's logs modal must be open, and its entries must not show a
+    // missing subject where a message is referenced.
+    const logsModal = page.locator('.modal.show')
+    await expect(logsModal).toBeVisible({ timeout: timeouts.ui.appearance })
+    const logText = await logsModal.textContent()
+    expect(logText).not.toContain('Subject: undefined')
+    expect(logText).not.toContain('subject undefined')
   })
 })

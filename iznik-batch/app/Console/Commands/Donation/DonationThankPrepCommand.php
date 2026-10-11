@@ -5,12 +5,14 @@ namespace App\Console\Commands\Donation;
 use App\Services\DonationThankPrepService;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Daily thank-prep digest: a card-per-donation email aimed at the person
  * composing thank-you replies. Distinct from {@code mail:donations:summary}
  * which sends the simple finance-team status table.
  */
+#[AsCommand(name: 'mail:donations:thank-prep')]
 class DonationThankPrepCommand extends Command
 {
     use LogsBatchJob;

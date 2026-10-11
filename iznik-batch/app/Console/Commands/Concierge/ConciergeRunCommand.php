@@ -8,6 +8,7 @@ use App\Services\Concierge\TemplateDrafter;
 use App\Services\Gmail\GmailService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * One pass of the concierge reply-handling FSM for a bulk-offer clearance:
@@ -18,6 +19,7 @@ use Illuminate\Support\Facades\DB;
  * sends only the entries a human marked approved. The engine's decision logic is
  * covered by the replay test.
  */
+#[AsCommand(name: 'concierge:run')]
 class ConciergeRunCommand extends Command
 {
     protected $signature = 'concierge:run

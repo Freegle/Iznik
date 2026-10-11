@@ -88,17 +88,25 @@ class BoundedPoolTest extends TestCase
 
     public function test_acquire_with_timeout_returns_false_when_no_permits(): void
     {
-        // Use very long sentry throttle to prevent alerts during test
-        $pool = new BoundedPool($this->testPoolName, 1, timeoutSeconds: 1, sentryThrottleSeconds: 999999);
+        // Use very long sentry throttle to prevent alerts during test. The timeout
+        // is a real BLPOP wait, so it is kept short (Redis accepts fractions of a
+        // second); the behaviour under test is the same whatever the length.
+        $pool = new BoundedPool($this->testPoolName, 1, timeoutSeconds: 0.1, sentryThrottleSeconds: 999999);
         $pool->initialize();
 
         // Take the only permit
         $pool->acquire();
 
         // Try to acquire another - should timeout
+        $started = microtime(true);
         $result = $pool->acquire();
+        $elapsed = microtime(true) - $started;
 
         $this->assertFalse($result);
+        // It must actually have waited for the timeout. A lower bound, so a slow
+        // host cannot fail it: a timeout that returned at once (a fractional value
+        // truncated to zero, say) would pass the assertion above and fail this one.
+        $this->assertGreaterThanOrEqual(0.09, $elapsed, 'acquire should block for its timeout before giving up');
     }
 
     public function test_with_permit_executes_callback(): void
@@ -133,7 +141,7 @@ class BoundedPoolTest extends TestCase
     public function test_with_permit_throws_on_timeout(): void
     {
         // Use very long sentry throttle to prevent alerts during test
-        $pool = new BoundedPool($this->testPoolName, 1, timeoutSeconds: 1, sentryThrottleSeconds: 999999);
+        $pool = new BoundedPool($this->testPoolName, 1, timeoutSeconds: 0.1, sentryThrottleSeconds: 999999);
         $pool->initialize();
 
         // Take the only permit
@@ -177,7 +185,7 @@ class BoundedPoolTest extends TestCase
     public function test_stats_track_timeouts(): void
     {
         // Use very long sentry throttle to prevent alerts during test
-        $pool = new BoundedPool($this->testPoolName, 1, timeoutSeconds: 1, sentryThrottleSeconds: 999999);
+        $pool = new BoundedPool($this->testPoolName, 1, timeoutSeconds: 0.1, sentryThrottleSeconds: 999999);
         $pool->initialize();
 
         // Take the only permit

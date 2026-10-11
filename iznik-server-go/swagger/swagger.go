@@ -4323,6 +4323,14 @@ type housekeeperTasksResponse struct {
 //	403: errorResponse
 //	404: errorResponse
 
+// swagger:parameters getSupportAIRun
+type getSupportAIRunParams struct {
+	// Run ID
+	// in: path
+	// required: true
+	ID int64 `json:"id"`
+}
+
 // swagger:route POST /donations/bulk donations bulkUploadDonations
 // Bulk upload donations
 //

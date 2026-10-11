@@ -29,7 +29,7 @@ class MessageIllustrationsServiceTest extends TestCase
         return new MessageIllustrationsService($mock);
     }
 
-    private function makeMockPollinations(array $fetchResult = null): object
+    private function makeMockPollinations(?array $fetchResult = null): object
     {
         $mock = $this->createMock(PollinationsService::class);
         $mock->method('shouldSkipItem')->willReturn(false);

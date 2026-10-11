@@ -4,7 +4,9 @@ namespace App\Console\Commands\User;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'user:remove-membership')]
 class RemoveMembershipCommand extends Command
 {
     protected $signature = 'user:remove-membership

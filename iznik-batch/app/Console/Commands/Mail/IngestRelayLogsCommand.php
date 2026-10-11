@@ -5,6 +5,7 @@ namespace App\Console\Commands\Mail;
 use App\Services\Mail\RelayLogIngestService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Read the outbound relay's maillog into logs_emails.
@@ -17,6 +18,7 @@ use Illuminate\Support\Facades\Log;
  * message. So this is how we answer "did you actually email me?", and a wrong
  * row here becomes a wrong answer to a member.
  */
+#[AsCommand(name: 'mail:relay-logs:ingest')]
 class IngestRelayLogsCommand extends Command
 {
     protected $signature = 'mail:relay-logs:ingest

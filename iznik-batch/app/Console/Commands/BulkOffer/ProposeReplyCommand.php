@@ -4,6 +4,7 @@ namespace App\Console\Commands\BulkOffer;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * The email-outreach brain's "propose" action — the mailbox equivalent of the
@@ -13,6 +14,7 @@ use Illuminate\Support\Facades\DB;
  * → HelperProposalCard) to review, edit and approve. bulkoffer:send-approved-outreach
  * then emails whatever the offerer approved.
  */
+#[AsCommand(name: 'bulkoffer:propose-reply')]
 class ProposeReplyCommand extends Command
 {
     protected $signature = 'bulkoffer:propose-reply

@@ -33,6 +33,17 @@ class LockdownHoldsService
      */
     public const RELEASE_BATCH_SIZE = 300;
 
+    /**
+     * The batch size in force: RELEASE_BATCH_SIZE unless configuration says
+     * otherwise. The test suite sets a small one, so that a release that has to
+     * go round more than once can be shown with tens of rows rather than
+     * hundreds of real posts and chat messages put through the full pipeline.
+     */
+    public static function releaseBatchSize(): int
+    {
+        return (int) config('freegle.lockdown.release_batch_size', self::RELEASE_BATCH_SIZE);
+    }
+
     public function __construct(private readonly ?LockdownService $lockdown = null)
     {
     }
@@ -76,7 +87,7 @@ class LockdownHoldsService
                 ->where('kind', self::KIND_CHITCHAT)
                 ->whereNull('outcome')
                 ->orderBy('id')
-                ->limit(self::RELEASE_BATCH_SIZE)
+                ->limit(self::releaseBatchSize())
                 ->get();
             if ($batch->isEmpty()) {
                 break;

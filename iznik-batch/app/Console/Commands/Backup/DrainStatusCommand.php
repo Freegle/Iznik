@@ -4,6 +4,7 @@ namespace App\Console\Commands\Backup;
 
 use App\Console\BackupDrain;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Tells the backup script whether batch work is actually being held off.
@@ -16,6 +17,7 @@ use Illuminate\Console\Command;
  * is worse than a backup that ran alongside some batch work, so the exit code is a signal
  * for the caller to log or alert on, not a gate to abort behind.
  */
+#[AsCommand(name: 'backup:drain-status')]
 class DrainStatusCommand extends Command
 {
     protected $signature = 'backup:drain-status

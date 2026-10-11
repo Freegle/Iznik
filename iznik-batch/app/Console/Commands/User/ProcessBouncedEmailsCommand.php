@@ -7,7 +7,9 @@ use App\Services\Mail\Incoming\BounceService;
 use App\Services\UserManagementService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:bounced')]
 class ProcessBouncedEmailsCommand extends Command
 {
     use PreventsOverlapping;

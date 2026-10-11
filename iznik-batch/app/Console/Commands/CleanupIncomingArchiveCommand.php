@@ -4,7 +4,9 @@ namespace App\Console\Commands;
 
 use App\Services\Mail\Incoming\IncomingArchiveService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:cleanup-archive')]
 class CleanupIncomingArchiveCommand extends Command
 {
     protected $signature = 'mail:cleanup-archive {--hours=48 : Maximum age in hours}';

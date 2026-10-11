@@ -15,7 +15,9 @@ use Illuminate\Console\Command;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'tn:sync')]
 class TNSyncCommand extends Command
 {
     use GracefulShutdown;

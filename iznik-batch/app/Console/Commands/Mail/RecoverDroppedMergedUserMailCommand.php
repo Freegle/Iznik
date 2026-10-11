@@ -11,6 +11,7 @@ use App\Services\Mail\Incoming\StripQuotedService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * One-off recovery command for emails dropped due to merged user proxy addresses.
@@ -23,6 +24,7 @@ use Illuminate\Support\Facades\Log;
  * addresses, resolves the actual recipient via users_emails, and delivers
  * the messages with an apology note.
  */
+#[AsCommand(name: 'mail:recover-dropped-merged')]
 class RecoverDroppedMergedUserMailCommand extends Command
 {
     protected $signature = 'mail:recover-dropped-merged

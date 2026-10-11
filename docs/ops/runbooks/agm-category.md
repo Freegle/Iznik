@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-12
+last_reviewed: 2026-10-10
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Console/Commands/Discourse/AgmCommand.php

@@ -7026,6 +7026,17 @@
     ],
     "summary": "Get an AI Support Helper run",
     "operationId": "getSupportAIRun",
+    "parameters": [
+     {
+      "type": "integer",
+      "format": "int64",
+      "x-go-name": "ID",
+      "description": "Run ID",
+      "name": "id",
+      "in": "path",
+      "required": true
+     }
+    ],
     "responses": {
      "200": {
       "$ref": "#/responses/genericResponse"

@@ -4,7 +4,9 @@ namespace App\Console\Commands\Group;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'group:set-community-news')]
 class SetCommunityNewsCommand extends Command
 {
     protected $signature = 'group:set-community-news

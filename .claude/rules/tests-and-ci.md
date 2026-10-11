@@ -169,6 +169,48 @@ genuinely on different lines.
 - **A spec that presses the lockdown holds every other spec's writes.** Keep it in the
   `lockdown` project, which runs as the teardown of `lockdown-order` after every other project
   has finished, and out of the `chromium` project's match.
+- **A unit spec's wrappers are unmounted after every test by `tests/unit/setup.ts`.** A wrapper
+  left mounted stays subscribed to the file's shared mock refs, so each `beforeEach` reset
+  re-renders every instance mounted so far before the next test body runs, and the file's time
+  grows with the square of its test count: 280ms per trivial test in MessageExpanded.spec.js,
+  18ms once unmounted. Do not mount in one test and read in the next, and do not call
+  `enableAutoUnmount` in a spec; a second call throws.
+- **A page that stays blank for 200 seconds while a test waits for a selector, with the trace
+  showing `net::ERR_NETWORK_CHANGED` on `_nuxt` chunk loads**, means a container or an image
+  build step somewhere else on the host changed the network while the page was loading. The
+  Playwright container is host-network, so Chromium sees every interface appearing or
+  disappearing on the machine and aborts its in-flight requests; the HTML arrived, the chunks
+  did not, and the app never mounted. There is no error on the page and the server logs show
+  nothing. The harness (`tests/e2e/utils/app-mount.js`, used by `gotoAndVerify` and the
+  ModTools login) now reloads such a page once and otherwise fails naming the URLs. Do not
+  build images or start stacks on the host during a Playwright run you intend to believe.
+- **A Playwright result that says "N recovered: reload, login-refill"** passed only because the
+  harness recovered from something. Each recovery is a `[RECOVERED]` line in the log and an
+  annotation on the test. A reload after aborted chunk loads is host noise when it lines up with a
+  container event; without one, or several in a run, look for a server resetting connections.
+  A login refill means the ModTools login form lost what was typed before submit, about once in
+  forty logins, cause not yet found: a member could hit it too. It refills once, then fails.
+  A new-page recovery means Chromium left `context.newPage()` unanswered for a minute before any
+  test code ran. Seen once in three runs, with no container event, memory pressure or crash
+  logged; the fixture asks once more. More than one in a run is worth chasing in Chromium.
+- **Every image CI starts must be built in the orb's build step.** CI turns file sync off, so
+  an image the build step leaves out is whatever copy a pooled runner VM already has. Vitest and
+  eslint run in modtools-dev-local, which was left out: on a VM that had it, both ran over an
+  older frontend and a lint error passed. Adding a service to a CI profile means adding it there.
+- **Compare Playwright coverage file by file, never by its totals.** The number of lines the
+  coverage file counts changes from run to run on the same code (19,843 in one run, 27,657 in
+  another), so total lines hit can rise or fall by thousands with nothing changed. Per file, two
+  master runs still differ in about 14 files, LoginModal alone by 20 lines. A file that loses
+  coverage in a few runs and not others is a test that ends before something async finishes:
+  make it wait for that thing and check it.
+- **A Laravel test that fails with "left the process environment changed"** is not broken
+  itself. `.env.testing` is read once per process, so `TestCase` compares each test's environment
+  at teardown, puts it back, and fails the test that changed it. Restore what you `putenv` in the
+  test.
+- **`CompileTimeDeprecationsTest` failing** names a compile-time deprecation the suite would
+  otherwise never report: with opcache on for the CLI, a deprecation raised while compiling is
+  printed only on a cold cache and never reaches PHPUnit's report. It lints the tree with opcache
+  off.
 
 ## CI failures that are about the build, not the branch
 

@@ -5,6 +5,7 @@ namespace App\Console\Commands\Desirability;
 use App\Services\Desirability\DesirabilityService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Imports a desirability artifact into item_desirability.
@@ -28,6 +29,7 @@ use Illuminate\Support\Facades\DB;
  *
  *   php artisan desirability:import-artifact /path/to/artifact.jsonl --model-version=desir-2026-08
  */
+#[AsCommand(name: 'desirability:import-artifact')]
 class ImportArtifactCommand extends Command
 {
     protected $signature = 'desirability:import-artifact

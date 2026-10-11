@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-09
+last_reviewed: 2026-10-11
 owner: Freegle dev team
 covers:
   - docs/ops/reference/circleci.md
@@ -90,6 +90,10 @@ Operational notes worth knowing:
   public, so this is about rate limiting rather than access: an anonymous fetch that
   github.com throttles reaches git as a credentials prompt and a protocol error, not
   as a clear refusal.
+- **Every image CI starts is built in the orb's build step, dev images included.** CI
+  turns file sync off, so an image that step leaves out is whatever copy the runner VM
+  already has. Vitest and eslint run in the ModTools dev container, so a stale image there
+  means they test an older frontend while the build reports green.
 - A pin published from a branch carries that branch's orb changes. Master must not
   adopt it until the branch merges, or master's jobs run steps for code it does not
   have.

@@ -6,6 +6,7 @@ use App\Services\ImageStore\ObjectStore;
 use App\Services\ImageStore\ObjectStoreUnavailable;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Prove the object store works the way the edge relies on it: we can write,
@@ -21,6 +22,7 @@ use Illuminate\Support\Facades\Http;
  * both revoked at once, provider side) raises a Sentry error within minutes
  * instead of being found on a status question an hour later.
  */
+#[AsCommand(name: 'images:object-store-check')]
 class ObjectStoreCheckCommand extends Command
 {
     protected $signature = 'images:object-store-check

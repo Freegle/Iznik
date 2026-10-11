@@ -12,8 +12,14 @@ use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\EmailSpoolerService;
 use App\Services\LokiService;
+use App\Services\Mail\Incoming\SpamhausDblLookup;
+use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Foundation\Application;
+use Illuminate\Foundation\Bootstrap\LoadEnvironmentVariables;
+use Illuminate\Foundation\Testing\CachedState;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+use Illuminate\Foundation\Testing\WithCachedConfig;
 use Illuminate\Mail\Mailable;
 
 abstract class TestCase extends BaseTestCase
@@ -22,6 +28,64 @@ abstract class TestCase extends BaseTestCase
     // This rolls back each test's changes, ensuring test isolation.
     use DatabaseTransactions;
 
+    // Every test boots a fresh application. Without this each boot re-reads the
+    // .env file and all 36 config files (ours and the framework's defaults they
+    // merge with). The config is the same on every boot: phpunit.xml fixes the
+    // environment before the first test and nothing changes it afterwards, and
+    // the tests that do alter the environment require the config file directly
+    // rather than going through the application. So the first boot's config is
+    // kept and handed to every later boot. A test's config([...]) changes still
+    // apply to that test's own application only, as before.
+    use WithCachedConfig;
+
+    /**
+     * Whether a boot in this process has already read the environment file.
+     */
+    private static bool $environmentLoaded = false;
+
+    /**
+     * Boot an application for a test, as the framework does, except that only
+     * the first boot in the process reads .env.testing.
+     *
+     * Dotenv writes what it reads into the process environment ($_ENV, $_SERVER
+     * and putenv) and never overwrites a value already there, so every boot
+     * after the first parsed the file to change nothing, about 0.65ms a time
+     * over 7,000-odd tests. From the second boot on, the bootstrapper that
+     * reads it is replaced with one that does nothing. phpunit.xml's own <env>
+     * values are in the environment before the first boot either way, and a
+     * test's config([...]) changes still apply to its own application only.
+     *
+     * The body mirrors the framework's createApplication(), keeping its
+     * WithCachedConfig handling. WithCachedRoutes is not supported here.
+     *
+     * @return \Illuminate\Foundation\Application
+     */
+    public function createApplication()
+    {
+        $app = require Application::inferBasePath().'/bootstrap/app.php';
+
+        $this->traitsUsedByTest = array_flip(class_uses_recursive(static::class));
+
+        if (isset(CachedState::$cachedConfig) &&
+            isset($this->traitsUsedByTest[WithCachedConfig::class])) {
+            $this->markConfigCached($app);
+        }
+
+        if (self::$environmentLoaded) {
+            $app->bind(LoadEnvironmentVariables::class, fn () => new class
+            {
+                public function bootstrap(): void
+                {
+                }
+            });
+        }
+        self::$environmentLoaded = true;
+
+        $app->make(Kernel::class)->bootstrap();
+
+        return $app;
+    }
+
     /**
      * Saved PHPUnit error/exception handler stack from before Laravel's setUp.
      *
@@ -29,6 +93,18 @@ abstract class TestCase extends BaseTestCase
      */
     private ?array $phpunitErrorHandlers = null;
     private ?array $phpunitExceptionHandlers = null;
+
+    /**
+     * The process environment as this test found it, after its boot.
+     *
+     * .env.testing is read once per process (see createApplication), so a test
+     * that changes an environment variable and does not put it back changes it for
+     * every test after it in the process. Before, the next boot healed it; now
+     * nothing would, and the leak would show up somewhere unrelated, or nowhere.
+     *
+     * @var array<string, string>|null
+     */
+    private ?array $environmentAtStart = null;
 
     /**
      * Prevent PHPUnit from marking tests as risky due to Laravel's handler cleanup.
@@ -50,6 +126,8 @@ abstract class TestCase extends BaseTestCase
         $this->phpunitExceptionHandlers = $this->captureHandlerStack('exception');
 
         parent::setUp();
+
+        $this->environmentAtStart = getenv();
 
         // A tripped drive-metrics or reach-eval circuit breaker (static,
         // process-wide) must not leak from one test into the next.
@@ -100,6 +178,12 @@ abstract class TestCase extends BaseTestCase
             };
         });
 
+        // The spam checks ask the Spamhaus DBL about every URL in a message, by
+        // DNS. Not from the test suite: the answer would come from the network,
+        // slowly, and say nothing about the code. Nothing is listed unless a
+        // test binds a lookup of its own.
+        $this->app->instance(SpamhausDblLookup::class, new SpamhausDblLookup(listed: []));
+
         // Force cache driver to 'array' and flush it, so rate-limit / throttle
         // entries (e.g. bounce_autoreply:<hash>) don't leak between tests.
         // DatabaseTransactions only isolates the DB; the cache store is shared
@@ -126,6 +210,10 @@ abstract class TestCase extends BaseTestCase
 
     protected function tearDown(): void
     {
+        // By now the test's own tearDown has run, so whatever it changed and meant
+        // to put back has been put back.
+        $leaked = $this->environmentAtStart === null ? [] : $this->environmentChanges($this->environmentAtStart);
+
         parent::tearDown();
 
         // After Laravel's flushHandlersState() wiped and re-created handlers,
@@ -154,6 +242,13 @@ abstract class TestCase extends BaseTestCase
             foreach ($this->phpunitExceptionHandlers as $handler) {
                 set_exception_handler($handler);
             }
+        }
+
+        if ($leaked !== []) {
+            $this->fail(
+                'This test left the process environment changed for every test after it: '
+                .implode(', ', $leaked).'. Put it back in the test (it has been restored here).'
+            );
         }
     }
 
@@ -204,6 +299,38 @@ abstract class TestCase extends BaseTestCase
      * This prevents accidentally running tests with `docker exec` instead
      * of via the status container API which manages test isolation and reporting.
      */
+    /**
+     * What differs between the environment now and $before, as "NAME (what
+     * happened)" strings, after putting $before back so the next test starts clean.
+     *
+     * @param  array<string, string>  $before
+     * @return list<string>
+     */
+    private function environmentChanges(array $before): array
+    {
+        $now = getenv();
+        $changes = [];
+
+        foreach ($now as $name => $value) {
+            if (! array_key_exists($name, $before)) {
+                $changes[] = "{$name} (set)";
+                putenv($name);
+            } elseif ($before[$name] !== $value) {
+                $changes[] = "{$name} (changed)";
+                putenv("{$name}={$before[$name]}");
+            }
+        }
+
+        foreach ($before as $name => $value) {
+            if (! array_key_exists($name, $now)) {
+                $changes[] = "{$name} (unset)";
+                putenv("{$name}={$value}");
+            }
+        }
+
+        return $changes;
+    }
+
     public static function setUpBeforeClass(): void
     {
         parent::setUpBeforeClass();

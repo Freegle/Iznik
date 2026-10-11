@@ -5,7 +5,9 @@ namespace App\Console\Commands\Donation;
 use App\Services\GiftAidClaimService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'donations:giftaid-claim')]
 class GiftAidClaimCommand extends Command
 {
     /**

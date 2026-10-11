@@ -17,7 +17,9 @@
  *
  * If a PR changes one of those paths but not this doc page, the author is told
  * to update the page (or, if nothing needs saying, bump `last_reviewed` - which
- * still counts as touching the page, so the acknowledgement is explicit).
+ * still counts as touching the page, so the acknowledgement is explicit). A
+ * page whose `last_reviewed` is already on or after the day of the change has
+ * acknowledged it, since there is no later date to bump it to.
  *
  * Usage:
  *   node scripts/check-docs-freshness.mjs [--base <ref>] [--warn]
@@ -123,6 +125,25 @@ function globToRegExp(glob) {
   return new RegExp('^' + re + '$')
 }
 
+// A page reviewed on or after the day of the newest change to what it covers
+// has already acknowledged that change: a bump to today on a page that already
+// says today would change nothing, so the date is the acknowledgement. The
+// field is a date, so a review earlier the same day counts.
+function reviewedSince(lastReviewed, hits) {
+  if (typeof lastReviewed !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(lastReviewed)) return false
+  let changedOn
+  if (staged) {
+    changedOn = new Date().toISOString().slice(0, 10)
+  } else {
+    try {
+      changedOn = sh(`git log -1 --format=%cs ${base}..HEAD -- ${hits.map((h) => JSON.stringify(h)).join(' ')}`)
+    } catch {
+      return false
+    }
+  }
+  return Boolean(changedOn) && lastReviewed >= changedOn
+}
+
 const pages = walk(DOCS_DIR)
 const violations = []
 
@@ -135,7 +156,7 @@ for (const page of pages) {
 
   const matchers = covers.map(globToRegExp)
   const hits = changed.filter((f) => matchers.some((m) => m.test(f)))
-  if (hits.length) {
+  if (hits.length && !reviewedSince(fm.last_reviewed, hits)) {
     violations.push({ page: rel, hits })
   }
 }

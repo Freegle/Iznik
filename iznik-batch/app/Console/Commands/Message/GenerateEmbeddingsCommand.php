@@ -8,12 +8,14 @@ use App\Traits\SingleInstanceLock;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Nightly embedding generator — embeds messages that don't yet have a row
  * in messages_embeddings. See RegenerateEmbeddingsCommand for the full
  * rebuild used after recipe or model changes.
  */
+#[AsCommand(name: 'embeddings:generate')]
 class GenerateEmbeddingsCommand extends Command
 {
     use GracefulShutdown;

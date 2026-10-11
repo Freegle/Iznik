@@ -7,7 +7,9 @@ use App\Services\MessageRemapSubjectsService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'messages:remap-subjects')]
 class RemapSubjectsCommand extends Command
 {
     use PreventsOverlapping;

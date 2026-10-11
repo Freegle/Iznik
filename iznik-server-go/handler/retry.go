@@ -35,6 +35,18 @@ const (
 	maxBackoffMs      = 200
 )
 
+// retrySleep is what the retry loops wait with between attempts. It is a variable
+// so that the tests can swap in a recorder: with the real time.Sleep, the suite
+// spent over three seconds asleep in real backoff while proving nothing about it.
+var retrySleep = time.Sleep
+
+// backoff pauses before the next attempt: a random wait between minBackoffMs and
+// maxBackoffMs, so that two requests that collided on a deadlock do not retry in
+// lockstep and collide again.
+func backoff() {
+	retrySleep(time.Duration(minBackoffMs+rand.Intn(maxBackoffMs-minBackoffMs)) * time.Millisecond)
+}
+
 // retryableError wraps an error to explicitly mark it as retryable.
 type retryableError struct {
 	err error
@@ -85,9 +97,7 @@ func WithRetry(h fiber.Handler) fiber.Handler {
 
 		for attempt := 0; attempt <= DefaultMaxRetries; attempt++ {
 			if attempt > 0 {
-				// Backoff with jitter before retry.
-				sleep := time.Duration(minBackoffMs+rand.Intn(maxBackoffMs-minBackoffMs)) * time.Millisecond
-				time.Sleep(sleep)
+				backoff()
 
 				// Reset the response so the retried handler starts clean.
 				c.Response().Reset()
@@ -179,8 +189,7 @@ func WithRetryN(maxRetries int, h fiber.Handler) fiber.Handler {
 
 		for attempt := 0; attempt <= maxRetries; attempt++ {
 			if attempt > 0 {
-				sleep := time.Duration(minBackoffMs+rand.Intn(maxBackoffMs-minBackoffMs)) * time.Millisecond
-				time.Sleep(sleep)
+				backoff()
 
 				c.Response().Reset()
 

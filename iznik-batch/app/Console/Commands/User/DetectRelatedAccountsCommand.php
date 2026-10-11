@@ -5,6 +5,7 @@ namespace App\Console\Commands\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Links accounts that gave the same contact details in chat, so moderators see them in
@@ -43,6 +44,7 @@ use Illuminate\Support\Facades\Log;
  * normal. That decision is untouched. Nothing here looks at contact details on their own -
  * only at the same details turning up under two different accounts.
  */
+#[AsCommand(name: 'users:detect-related')]
 class DetectRelatedAccountsCommand extends Command
 {
     protected $signature = 'users:detect-related

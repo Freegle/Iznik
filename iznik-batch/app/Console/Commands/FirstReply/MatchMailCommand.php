@@ -5,6 +5,7 @@ namespace App\Console\Commands\FirstReply;
 use App\Services\FirstReply\MatchMailService;
 use App\Services\FirstReply\Rollout;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * firstreply:matchmail - tell the people who have actually asked for an item
@@ -14,6 +15,7 @@ use Illuminate\Console\Command;
  * the member asked to hear about. See MatchMailService for how they are picked
  * and why nothing weaker qualifies.
  */
+#[AsCommand(name: 'firstreply:matchmail')]
 class MatchMailCommand extends Command
 {
     protected $signature = 'firstreply:matchmail

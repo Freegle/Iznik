@@ -155,15 +155,15 @@ test.describe('Post validation tests', () => {
       })
       console.log('Uploaded test image')
 
-      // Wait for photo processing
-      await page.waitForTimeout(timeouts.api.default)
-
       // After photo upload, the Next button should appear
       const nextButton = page.locator('button.w-100').filter({
         hasText: 'Next',
       })
 
-      // Check if Next button is visible (only shows when photos are present)
+      // Check if Next button is visible (only shows when photos are present).
+      // It stays disabled while a photo is still uploading
+      // (pages/give/mobile/photos.vue), and click() waits for it to be
+      // enabled, so no separate wait for the upload is needed.
       await nextButton.waitFor({
         state: 'visible',
         timeout: timeouts.ui.appearance,

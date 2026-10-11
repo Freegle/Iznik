@@ -7,6 +7,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Chases council sponsorships that are coming up for renewal, and those that have run out
@@ -23,6 +24,7 @@ use Illuminate\Support\Facades\Mail;
  *   php artisan partnerships:reminders --days=30 --type=1month
  *   php artisan partnerships:reminders --ended --days=30 --type=ended
  */
+#[AsCommand(name: 'partnerships:reminders')]
 class SponsorshipRemindersCommand extends Command
 {
     protected $signature = 'partnerships:reminders

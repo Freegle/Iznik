@@ -74,8 +74,10 @@ func TestASecondCallWithinTheTTLDoesNotReRead(t *testing.T) {
 
 func TestACallAfterTheTTLReReads(t *testing.T) {
 	reset()
+	// The TTL only has to be long enough to tell "within" from "after"; the wait
+	// need only outlast it, and time.Sleep never returns early.
 	oldTTL := TTL
-	TTL = 20 * time.Millisecond
+	TTL = 2 * time.Millisecond
 	defer func() { TTL = oldTTL }()
 
 	calls := 0
@@ -86,7 +88,7 @@ func TestACallAfterTheTTLReReads(t *testing.T) {
 	defer func() { loadLatest = loadLatestFromDB }()
 
 	Current()
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(2 * TTL)
 	Current()
 	assert.Equal(t, 2, calls, "a call after the TTL has passed must re-read")
 }

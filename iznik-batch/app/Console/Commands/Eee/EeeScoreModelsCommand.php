@@ -6,6 +6,7 @@ use App\Services\EeeComponentService;
 use App\Services\EeeSqliteService;
 use App\Services\EeeVisionService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Compute objective quality scores for each model in eee_classifications.
@@ -21,6 +22,7 @@ use Illuminate\Console\Command;
  *   php artisan eee:score-models
  *   php artisan eee:score-models --prompt-version=1.4.0
  */
+#[AsCommand(name: 'eee:score-models')]
 class EeeScoreModelsCommand extends Command
 {
     protected $signature = 'eee:score-models

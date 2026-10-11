@@ -6,6 +6,7 @@ use App\Services\CPIService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Command to fetch and store UK CPI data from ONS.
@@ -14,6 +15,7 @@ use Illuminate\Support\Facades\Log;
  * The CPI data is used to inflation-adjust the "benefit of reuse" value
  * (£711 per tonne from 2011) to current year prices.
  */
+#[AsCommand(name: 'data:update-cpi')]
 class UpdateCPICommand extends Command
 {
     use GracefulShutdown;

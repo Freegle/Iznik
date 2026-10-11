@@ -36,7 +36,7 @@ class BounceService
     private const TOTAL_THRESHOLD = 50;
 
     // Error directory for unparseable bounces
-    private const ERROR_DIRECTORY = '/var/lib/freegle/bounces/error';
+    private string $errorDirectory = '/var/lib/freegle/bounces/error';
 
     // Patterns that indicate a permanent bounce
     private const PERMANENT_PATTERNS = [
@@ -593,12 +593,12 @@ class BounceService
      */
     private function saveUnparseableBounce(ParsedEmail $email): void
     {
-        if (! is_dir(self::ERROR_DIRECTORY)) {
-            @mkdir(self::ERROR_DIRECTORY, 0755, true);
+        if (! is_dir($this->errorDirectory)) {
+            @mkdir($this->errorDirectory, 0755, true);
         }
 
-        if (is_dir(self::ERROR_DIRECTORY)) {
-            $filename = self::ERROR_DIRECTORY.'/'.date('Y-m-d_His').'_'.uniqid().'.eml';
+        if (is_dir($this->errorDirectory)) {
+            $filename = $this->errorDirectory.'/'.date('Y-m-d_His').'_'.uniqid().'.eml';
             @file_put_contents($filename, $email->rawMessage);
 
             Log::debug('Saved unparseable bounce', [

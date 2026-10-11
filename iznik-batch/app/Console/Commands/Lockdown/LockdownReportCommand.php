@@ -6,6 +6,7 @@ use App\Services\Lockdown\LockdownService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Hourly stats mail to geeks@ while a lockdown is active, and a final summary once after
@@ -14,6 +15,7 @@ use Illuminate\Support\Facades\Mail;
  * lockdown:tick's announce, not through spool()/shouldSkip() - this must reach geeks@
  * regardless of whether email itself is held.
  */
+#[AsCommand(name: 'lockdown:report')]
 class LockdownReportCommand extends Command
 {
     protected $signature = 'lockdown:report {--closing : Send the final summary for the incident that just closed}';

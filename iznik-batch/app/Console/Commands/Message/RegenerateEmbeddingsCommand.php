@@ -7,6 +7,7 @@ use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Re-embed every live message from scratch. Used after the embedding text
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\Log;
  * Lives alongside embeddings:generate — the nightly command which only
  * embeds rows that don't yet have one. This command rewrites existing rows.
  */
+#[AsCommand(name: 'embeddings:regenerate')]
 class RegenerateEmbeddingsCommand extends Command
 {
     use GracefulShutdown;

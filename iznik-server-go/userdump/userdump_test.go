@@ -3,6 +3,7 @@ package userdump
 import (
 	"errors"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,6 +82,12 @@ func TestParseIncludeThenIncludeString_RoundTrips(t *testing.T) {
 // Sections run concurrently: a snapshot is as slow as its slowest section, not
 // the sum of them. Progress callbacks still arrive one at a time with a
 // running count, and every section is recorded.
+//
+// Concurrency is proved with a barrier rather than a stopwatch: every section
+// waits until all dumpWorkers of them are running at once. Sections run one
+// after another would leave the first one waiting for company that never comes,
+// so the barrier gives up after a few seconds and the test fails. The stopwatch
+// version slept 300ms per section and could only say "faster than serial".
 func TestRunSections_RunsConcurrently(t *testing.T) {
 	b, err := NewBuilder()
 	assert.NoError(t, err)
@@ -88,11 +95,20 @@ func TestRunSections_RunsConcurrently(t *testing.T) {
 	assert.NoError(t, b.InitMeta())
 
 	var plan []section
+	var running atomic.Int32
+	allRunning := make(chan struct{})
 	for i := 0; i < dumpWorkers; i++ {
 		name := "s" + strconv.Itoa(i)
 		plan = append(plan, section{name: name, weight: 1, run: func(b *Builder) (int, error) {
-			time.Sleep(300 * time.Millisecond)
-			return 1, nil
+			if running.Add(1) == dumpWorkers {
+				close(allRunning)
+			}
+			select {
+			case <-allRunning:
+				return 1, nil
+			case <-time.After(5 * time.Second):
+				return 0, errors.New("section ran alone: the others were never started alongside it")
+			}
 		}})
 	}
 	plan = append(plan, section{name: "bad", weight: 8, run: func(b *Builder) (int, error) {
@@ -100,14 +116,12 @@ func TestRunSections_RunsConcurrently(t *testing.T) {
 	}})
 
 	var dones []int
-	start := time.Now()
 	warnings := runSections(b, plan, dumpWorkers+8, []string{"plan warning"},
 		func(done, total, totalWeight, doneWeight int, sec section, rows int, secErr error) {
 			dones = append(dones, done)
 			assert.Equal(t, len(plan), total)
 		})
 
-	assert.Less(t, time.Since(start), 2*300*time.Millisecond, "sections overlap rather than queue")
 	var want []int
 	for i := 1; i <= len(plan); i++ {
 		want = append(want, i)
