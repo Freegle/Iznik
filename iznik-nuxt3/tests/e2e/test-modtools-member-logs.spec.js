@@ -81,10 +81,10 @@ test.describe('ModTools Member Logs', () => {
 
     await dismissAllModals(page)
 
-    // Look for a "View logs" link on a member
-    const logsButton = page.locator(
-      'a:has-text("View logs"), button:has-text("Logs"), a:has-text("Logs"), [title*="Logs" i]'
-    )
+    // A member card's own "View logs" button (ModMember.vue). The selector used to
+    // include a:has-text("Logs"), which matched the sidebar's Logs link first, so
+    // these tests clicked through to the Logs page and never opened a member's logs.
+    const logsButton = page.getByRole('button', { name: 'View logs' })
 
     // The approved members of the test community always include someone, so the
     // logs control must be there. It used to be looked for with isVisible() inside
@@ -192,39 +192,27 @@ test.describe('ModTools Member Logs', () => {
 
     await dismissAllModals(page)
 
-    // Look for a "View logs" link on a member
-    const logsButton = page.locator(
-      'a:has-text("View logs"), button:has-text("Logs"), a:has-text("Logs"), [title*="Logs" i]'
+    // A member card's own "View logs" button (ModMember.vue). The selector used to
+    // include a:has-text("Logs"), which matched the sidebar's Logs link first, so
+    // these tests clicked through to the Logs page and never opened a member's logs.
+    const logsButton = page.getByRole('button', { name: 'View logs' })
+
+    await expect(logsButton.first()).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
+    const logsFetched = page.waitForResponse(
+      (response) => response.url().includes('/modtools/logs'),
+      { timeout: timeouts.ui.appearance }
     )
+    await logsButton.first().click()
+    await logsFetched
 
-    if (
-      await logsButton
-        .first()
-        .isVisible({ timeout: timeouts.ui.appearance })
-        .catch(() => false)
-    ) {
-      await logsButton.first().click()
-
-      // Wait for log entries to appear
-      await page.waitForTimeout(timeouts.ui.settleTime)
-
-      // Log entries that reference messages should have subject lines,
-      // not empty or "undefined" subjects
-      const logArea = page.locator(
-        '.modal.show, [class*="log"], [class*="Log"]'
-      )
-      if (
-        await logArea
-          .first()
-          .isVisible({ timeout: timeouts.ui.appearance })
-          .catch(() => false)
-      ) {
-        const logText = await logArea.first().textContent()
-        // Subject lines should not show as "undefined" or be completely absent
-        // when there are message-related log entries
-        expect(logText).not.toContain('Subject: undefined')
-        expect(logText).not.toContain('subject undefined')
-      }
-    }
+    // The member's logs modal must be open, and its entries must not show a
+    // missing subject where a message is referenced.
+    const logsModal = page.locator('.modal.show')
+    await expect(logsModal).toBeVisible({ timeout: timeouts.ui.appearance })
+    const logText = await logsModal.textContent()
+    expect(logText).not.toContain('Subject: undefined')
+    expect(logText).not.toContain('subject undefined')
   })
 })
