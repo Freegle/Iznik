@@ -362,9 +362,12 @@ func TestUpdateLocation(t *testing.T) {
 	assert.NotZero(t, centroid.Lat, "lat should be set from centroid")
 	assert.NotZero(t, centroid.Lng, "lng should be set from centroid")
 
-	// Verify a remap_postcodes background task was queued (async, so brief wait).
-	taskCount := waitForRemapTask(t, locID)
-	assert.Greater(t, taskCount, int64(0), "remap_postcodes task should be queued after geometry update")
+	// Verify a remap_postcodes background task was queued (async, so brief wait). The
+	// location had no geometry before, so there is no old area to remap: exactly one
+	// task, for the new polygon. Waiting for the exact count also means the cleanup
+	// below cannot run before a task that is still on its way.
+	taskCount := waitForRemapTasks(t, locID, 1)
+	assert.Equal(t, int64(1), taskCount, "one remap_postcodes task should be queued after the geometry update")
 	// Cleanup the task.
 	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
 
@@ -997,9 +1000,12 @@ func TestLocationTaskQueueStalePrecondition(t *testing.T) {
 	updateResp, _ := getApp().Test(updateReq)
 	assert.Equal(t, 200, updateResp.StatusCode)
 
-	// Wait for async task queueing
-	finalTaskCount := waitForRemapTask(t, locID)
-	assert.Greater(t, finalTaskCount, int64(0), "Tasks should be queued after update")
+	// The new polygon overlaps the old one, so the update queues one more task, for
+	// the union. Wait for that exact count before asserting and cleaning up: the
+	// creation's task already satisfies "at least one", so waiting for any row would
+	// let the cleanup run before the update's task landed.
+	finalTaskCount := waitForRemapTasks(t, locID, initialTaskCount+1)
+	assert.Equal(t, initialTaskCount+1, finalTaskCount, "the update should queue exactly one more remap task")
 
 	// Cleanup
 	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
