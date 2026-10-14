@@ -287,4 +287,128 @@ describe('NewsLoveComment', () => {
       expect(showlove.attributes('aria-label')).toContain('5 loves')
     })
   })
+
+  describe('refused love/unlove', () => {
+    // The SpinButton passes its finish callback to @handle; if a refused
+    // store call skips it, the button spins its full 20 seconds and reports
+    // a forgotten callback, and the rejection escapes to the error page
+    // (.claude/rules/frontend-traps.md: callback on every exit path).
+    let errorSpy
+
+    function mountWithSpy(finishSpy) {
+      return mount(NewsLoveComment, {
+        props: {
+          newsfeed: {
+            id: 123,
+            threadhead: 100,
+            userid: 2,
+            loved: false,
+            loves: 0,
+            closed: false,
+          },
+        },
+        global: {
+          stubs: {
+            SpinButton: {
+              template:
+                '<button class="spin-button" @click="$emit(\'handle\', finishSpy)"><slot /></button>',
+              props: ['variant', 'size', 'iconName', 'doneIcon', 'iconClass'],
+              emits: ['handle'],
+              setup: (props, { expose }) => {
+                expose({})
+              },
+              computed: {
+                finishSpy: () => finishSpy,
+              },
+            },
+            'b-button': {
+              template:
+                '<button class="b-button" @click="$emit(\'click\')"><slot /></button>',
+              props: ['variant', 'size'],
+              emits: ['click'],
+            },
+            'v-icon': {
+              template: '<span class="v-icon" :data-icon="icon" />',
+              props: ['icon'],
+            },
+            NewsLovesModal: {
+              template: '<div class="loves-modal" />',
+              props: ['id'],
+              emits: ['hidden'],
+            },
+          },
+        },
+      })
+    }
+
+    beforeEach(() => {
+      errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('stops the SpinButton when a love is refused', async () => {
+      const finishSpy = vi.fn()
+      const wrapper = mountWithSpy(finishSpy)
+      mockNewsfeedStore.love.mockRejectedValueOnce(new Error('refused'))
+      await wrapper.find('button.spin-button').trigger('click')
+      await flushPromises()
+      expect(mockNewsfeedStore.love).toHaveBeenCalledWith(123, 100)
+      expect(finishSpy).toHaveBeenCalledTimes(1)
+      expect(errorSpy).toHaveBeenCalled()
+      expect(wrapper.find('.d-flex').exists()).toBe(true)
+    })
+
+    it('stops the SpinButton when an unlove is refused', async () => {
+      const finishSpy = vi.fn()
+      const wrapper = mount(NewsLoveComment, {
+        props: {
+          newsfeed: {
+            id: 123,
+            threadhead: 100,
+            userid: 1,
+            loved: true,
+            loves: 3,
+            closed: false,
+          },
+        },
+        global: {
+          stubs: {
+            SpinButton: {
+              template:
+                '<button class="spin-button" @click="$emit(\'handle\', finishSpy)"><slot /></button>',
+              props: ['variant', 'size', 'iconName', 'doneIcon', 'iconClass'],
+              emits: ['handle'],
+              computed: {
+                finishSpy: () => finishSpy,
+              },
+            },
+            'b-button': {
+              template:
+                '<button class="b-button" @click="$emit(\'click\')"><slot /></button>',
+              props: ['variant', 'size'],
+              emits: ['click'],
+            },
+            'v-icon': {
+              template: '<span class="v-icon" :data-icon="icon" />',
+              props: ['icon'],
+            },
+            NewsLovesModal: {
+              template: '<div class="loves-modal" />',
+              props: ['id'],
+              emits: ['hidden'],
+            },
+          },
+        },
+      })
+      mockNewsfeedStore.unlove.mockRejectedValueOnce(new Error('refused'))
+      await wrapper.find('button.spin-button').trigger('click')
+      await flushPromises()
+      expect(mockNewsfeedStore.unlove).toHaveBeenCalledWith(123, 100)
+      expect(finishSpy).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('.d-flex').exists()).toBe(true)
+    })
+  })
 })
