@@ -676,7 +676,14 @@ const _updateAfterSend = async () => {
 }
 
 const markRead = async () => {
-  await chatStore.markRead(props.id)
+  // Every chat focus runs this; a refusal (dead session in a long-open tab,
+  // network) must not throw through the focus handler to the global error
+  // page. The read flag is retried on the next focus.
+  try {
+    await chatStore.markRead(props.id)
+  } catch (e) {
+    console.error(e)
+  }
   _updateAfterSend()
 }
 
@@ -690,7 +697,16 @@ const onBlur = () => {
 }
 
 const doNudge = async () => {
-  await chatStore.nudge(props.id)
+  // A refused nudge must not take down the chat via the global error page.
+  // Say so inline instead, same notice and wording shape as a failed send.
+  try {
+    await chatStore.nudge(props.id)
+  } catch (e) {
+    console.error(e)
+    sendError.value =
+      "Sorry, your nudge couldn't be sent just now. Please try again."
+    return
+  }
   _updateAfterSend()
 }
 
