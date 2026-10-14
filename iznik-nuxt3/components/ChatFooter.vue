@@ -658,12 +658,21 @@ const applySuggestedAddress = async () => {
 const _updateAfterSend = async () => {
   sending.value = false
 
-  // Fetch the messages again to pick up the new one.
-  await fetchMessages()
-  emit('scrollbottom')
+  // By the time this runs the action itself has already succeeded, so a
+  // failed refresh must not escape: callers like send() would skip the
+  // SpinButton callback (20 s spin plus a forgotten-callback report) and
+  // markRead()/doNudge() would fire an unhandled rejection, even though the
+  // message was sent. The chat catches up on the next fetch.
+  try {
+    // Fetch the messages again to pick up the new one.
+    await fetchMessages()
+    emit('scrollbottom')
 
-  // We also want to trigger an update in the chat list.
-  await chatStore.fetchChat(props.id)
+    // We also want to trigger an update in the chat list.
+    await chatStore.fetchChat(props.id)
+  } catch (e) {
+    console.error(e)
+  }
 }
 
 const markRead = async () => {
