@@ -244,6 +244,7 @@ the five largest week-on-week changes to `config('freegle.ux.report_to')` every 
 that opens the tab.
 
 - [The SysAdmin UX tab](ux-sysadmin-tab.md): the sections, the address, the filters, Biggest loss.
+- [Member surveys](ux-member-surveys.md): the questions microvolunteers are asked, the card, and the coder that groups what they write into problems.
 
 `tests/e2e/test-ux-telemetry.spec.js` holds the flows to the event contract in section 2. The browser
 test of the tab itself is described on the page above.

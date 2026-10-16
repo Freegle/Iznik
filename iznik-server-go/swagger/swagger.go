@@ -5663,6 +5663,121 @@ type getSupportAIRunParams struct {
 //	401: errorResponse
 //	403: errorResponse
 
+// swagger:route GET /modtools/ux/problem-groups modtools getUxProblemGroups
+// What members say, by group
+//
+// The headings member problems are filed under, each with how many problems and mentions it holds and its biggest problem, the largest first and Other last, with the number of answers that fitted no problem.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: flow
+//     in: query
+//     description: A funnel key, or none for problems tied to no funnel; omitted means all
+//     required: false
+//     type: string
+//   + name: q
+//     in: query
+//     description: Text to find in a title or description, at most 60 characters
+//     required: false
+//     type: string
+//   + name: min
+//     in: query
+//     description: The least number of mentions
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/ux/problems modtools getUxProblems
+// Member problems
+//
+// The problems members raised, most mentioned first, each with its group, the quotes the batch checked, the fixes members suggested and how the follow-up ranked it. total counts every match before the limit is applied.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: group
+//     in: query
+//     description: A group name
+//     required: false
+//     type: string
+//   + name: flow
+//     in: query
+//     description: A funnel key, or none for problems tied to no funnel; omitted means all
+//     required: false
+//     type: string
+//   + name: q
+//     in: query
+//     description: Text to find in a title or description, at most 60 characters
+//     required: false
+//     type: string
+//   + name: min
+//     in: query
+//     description: The least number of mentions
+//     required: false
+//     type: integer
+//   + name: limit
+//     in: query
+//     description: How many to return, 30 by default and at most 100
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/ux/values modtools getUxValues
+// What members value
+//
+// What members said they value about Freegle, most mentioned first, at most 20, each with its checked quotes.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/ux/questions modtools getUxQuestions
+// Member questions
+//
+// The survey, awareness and open questions with what members chose per option, the ways out, skips and comments, and the share of right answers. The decoy figures show how readily members say yes to anything.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: kind
+//     in: query
+//     description: One of survey, awareness or open
+//     required: false
+//     type: string
+//   + name: status
+//     in: query
+//     description: One of open or closed
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
 // swagger:route GET /modtools/ux/samples modtools getUxSamples
 // UX sampled sessions
 //

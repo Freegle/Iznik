@@ -5702,6 +5702,185 @@
     ]
    }
   },
+  "/modtools/ux/problem-groups": {
+   "get": {
+    "description": "The headings member problems are filed under, each with how many problems and mentions it holds and its biggest problem, the largest first and Other last, with the number of answers that fitted no problem.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "What members say, by group",
+    "operationId": "getUxProblemGroups",
+    "parameters": [
+     {
+      "type": "string",
+      "description": "A funnel key, or none for problems tied to no funnel; omitted means all",
+      "name": "flow",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Text to find in a title or description, at most 60 characters",
+      "name": "q",
+      "in": "query"
+     },
+     {
+      "type": "integer",
+      "description": "The least number of mentions",
+      "name": "min",
+      "in": "query"
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/modtools/ux/problems": {
+   "get": {
+    "description": "The problems members raised, most mentioned first, each with its group, the quotes the batch checked, the fixes members suggested and how the follow-up ranked it. total counts every match before the limit is applied.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Member problems",
+    "operationId": "getUxProblems",
+    "parameters": [
+     {
+      "type": "string",
+      "description": "A group name",
+      "name": "group",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "A funnel key, or none for problems tied to no funnel; omitted means all",
+      "name": "flow",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Text to find in a title or description, at most 60 characters",
+      "name": "q",
+      "in": "query"
+     },
+     {
+      "type": "integer",
+      "description": "The least number of mentions",
+      "name": "min",
+      "in": "query"
+     },
+     {
+      "type": "integer",
+      "description": "How many to return, 30 by default and at most 100",
+      "name": "limit",
+      "in": "query"
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/modtools/ux/values": {
+   "get": {
+    "description": "What members said they value about Freegle, most mentioned first, at most 20, each with its checked quotes.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "What members value",
+    "operationId": "getUxValues",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/modtools/ux/questions": {
+   "get": {
+    "description": "The survey, awareness and open questions with what members chose per option, the ways out, skips and comments, and the share of right answers. The decoy figures show how readily members say yes to anything.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Member questions",
+    "operationId": "getUxQuestions",
+    "parameters": [
+     {
+      "type": "string",
+      "description": "One of survey, awareness or open",
+      "name": "kind",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "One of open or closed",
+      "name": "status",
+      "in": "query"
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
   "/modtools/ux/samples": {
    "get": {
     "description": "The sampled abandoned sessions for a flow step on a date, each with its client timeline from Loki.",

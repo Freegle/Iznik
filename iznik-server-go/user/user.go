@@ -3472,6 +3472,11 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("trysts").Where("user2 = ?", id1).Update("user2", id2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("isochrones_users").Where("userid = ?", id1).Update("userid", id2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("microactions").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("ux_prompt_responses").Where("userid = ?", id1).Update("userid", id2)
+	// Where both had answered the same question the IGNORE left id1's answer behind, and id1 is
+	// about to be deleted. It would belong to nobody, out of reach of forget-me and the data
+	// export for id2, and still counted as a second answer from one person. id2's answer wins.
+	tx.Table("ux_prompt_responses").Where("userid = ?", id1).Delete(nil)
 	tx.Table("volunteering").Where("userid = ?", id1).Update("userid", id2)
 	tx.Table("volunteering").Where("deletedby = ?", id1).Update("deletedby", id2)
 	tx.Table("volunteering").Where("heldby = ?", id1).Update("heldby", id2)

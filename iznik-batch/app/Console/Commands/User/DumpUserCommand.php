@@ -37,6 +37,7 @@ class DumpUserCommand extends Command
         'users_donations'          => ['userid'],
         'giftaid'                  => ['userid'],
         'microactions'             => ['userid'],
+        'ux_prompt_responses'      => ['userid'],
         'ratings'                  => ['rater', 'ratee'],
         'users_logins'             => ['userid'],
         'users_emails'             => ['userid'],

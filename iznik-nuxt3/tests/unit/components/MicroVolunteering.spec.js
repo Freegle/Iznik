@@ -18,6 +18,10 @@ const mockAuthStore = {
   saveAndGet: vi.fn().mockResolvedValue({}),
 }
 
+const mockClientLog = {
+  info: vi.fn(),
+}
+
 const mockMe = ref({
   id: 1,
   added: '2023-01-01',
@@ -42,6 +46,10 @@ vi.mock('~/stores/misc', () => ({
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => mockAuthStore,
+}))
+
+vi.mock('~/composables/useClientLog', () => ({
+  useClientLog: () => mockClientLog,
 }))
 
 vi.mock('~/composables/useMe', () => ({
@@ -84,7 +92,7 @@ describe('MicroVolunteering', () => {
           },
           'b-modal': {
             template:
-              '<div class="b-modal" :class="{ show: modelValue }"><slot name="header" /><slot /><slot name="footer" /></div>',
+              '<div class="b-modal" :class="{ show: modelValue }" :data-header-class="headerClass" :data-body-class="bodyClass" :data-footer-class="footerClass"><slot name="header" /><slot /><slot name="footer" /></div>',
             props: [
               'modelValue',
               'scrollable',
@@ -95,6 +103,9 @@ describe('MicroVolunteering', () => {
               'noCloseOnBackdrop',
               'hideHeaderClose',
               'noCloseOnEsc',
+              'headerClass',
+              'bodyClass',
+              'footerClass',
             ],
             emits: ['update:modelValue'],
           },
@@ -103,8 +114,8 @@ describe('MicroVolunteering', () => {
           },
           'b-button': {
             template:
-              '<button class="b-button" @click="$emit(\'click\')"><slot /></button>',
-            props: ['variant'],
+              '<button class="b-button" :data-size="size" @click="$emit(\'click\')"><slot /></button>',
+            props: ['variant', 'size'],
             emits: ['click'],
           },
           'v-icon': {
@@ -130,6 +141,11 @@ describe('MicroVolunteering', () => {
             template: '<div class="mv-survey" />',
             props: ['url'],
             emits: ['done'],
+          },
+          MicroVolunteeringUxPrompt: {
+            template: '<div class="mv-ux-prompt" />',
+            props: ['prompt'],
+            emits: ['next', 'skipped'],
           },
           MicroVolunteeringInvite: {
             template: '<div class="mv-invite" />',
@@ -250,6 +266,181 @@ describe('MicroVolunteering', () => {
       const wrapper = createWrapper({ force: true })
       await flushPromises()
       expect(wrapper.text()).toContain('Photo Rotate')
+    })
+  })
+
+  describe('UxPrompt task', () => {
+    const uxprompt = { id: 4, kind: 'open', question: 'Which is clearer?' }
+
+    function askUx() {
+      mockMicroVolunteeringStore.challenge.mockResolvedValue({
+        type: 'UxPrompt',
+        uxprompt,
+      })
+    }
+
+    function askCheckMessage() {
+      mockMicroVolunteeringStore.challenge.mockResolvedValue({
+        type: 'CheckMessage',
+        msgid: 1,
+      })
+    }
+
+    // The task modal is the one that is open.
+    const taskModal = (wrapper) => wrapper.find('.b-modal.show')
+
+    it('asks for UxPrompt tasks in the default types list', async () => {
+      createWrapper({ force: true })
+      await flushPromises()
+      const asked = mockMicroVolunteeringStore.challenge.mock.calls[0][0].types
+      expect(asked).toContain('UxPrompt')
+    })
+
+    it('renders the UxPrompt component with the task prompt', async () => {
+      askUx()
+      const wrapper = createWrapper({ force: true })
+      await flushPromises()
+      expect(wrapper.text()).toContain('A question about Freegle')
+      expect(wrapper.text()).not.toContain('What do you think?')
+      const prompt = wrapper.findComponent('.mv-ux-prompt')
+      expect(prompt.exists()).toBe(true)
+      expect(prompt.props('prompt')).toEqual(uxprompt)
+    })
+
+    it('does not thank them for housekeeping above a question about the site', async () => {
+      askUx()
+      const wrapper = createWrapper({ force: true })
+      await flushPromises()
+      const modal = taskModal(wrapper)
+      expect(modal.text()).not.toContain('run smoothly')
+      // No hearts and no second line of thanks: the question is the first thing they read.
+      expect(modal.text()).not.toContain('easier to use')
+      expect(modal.text()).not.toContain('Thank you')
+      expect(modal.findAll('.v-icon')).toHaveLength(0)
+    })
+
+    it('stops asking for UxPrompt tasks for the rest of the visit once one is skipped', async () => {
+      askUx()
+      const wrapper = createWrapper({ force: true })
+      await flushPromises()
+      mockMicroVolunteeringStore.challenge.mockClear()
+      const prompt = wrapper.findComponent('.mv-ux-prompt')
+      prompt.vm.$emit('skipped')
+      prompt.vm.$emit('next')
+      await flushPromises()
+      const asked = mockMicroVolunteeringStore.challenge.mock.calls[0][0].types
+      expect(asked).not.toContain('UxPrompt')
+      expect(asked).toContain('CheckMessage')
+    })
+
+    it('gives the modal compact classes only for a UxPrompt task', async () => {
+      askUx()
+      const ux = createWrapper({ force: true })
+      await flushPromises()
+      const modal = taskModal(ux)
+      expect(modal.attributes('data-header-class')).toBe('py-2')
+      expect(modal.attributes('data-body-class')).toBe('py-1')
+      expect(modal.attributes('data-footer-class')).toBe('py-1 px-2')
+
+      askCheckMessage()
+      const other = createWrapper({ force: true })
+      await flushPromises()
+      const plain = taskModal(other)
+      expect(plain.attributes('data-header-class')).toBeUndefined()
+      expect(plain.attributes('data-body-class')).toBeUndefined()
+      expect(plain.attributes('data-footer-class')).toBeUndefined()
+    })
+
+    it('keeps both footer buttons, in small size on one row, for a UxPrompt task', async () => {
+      askUx()
+      const wrapper = createWrapper({ force: false })
+      await flushPromises()
+      const footer = taskModal(wrapper)
+        .findAll('.b-button')
+        .filter((b) =>
+          ["Don't ask me again", 'Ask again tomorrow'].includes(b.text())
+        )
+      expect(footer.map((b) => b.text())).toEqual([
+        "Don't ask me again",
+        'Ask again tomorrow',
+      ])
+      for (const b of footer) {
+        expect(b.attributes('data-size')).toBe('sm')
+        expect(b.classes()).not.toContain('mb-1')
+      }
+    })
+
+    it('still makes the footer buttons full size for other tasks', async () => {
+      askCheckMessage()
+      const wrapper = createWrapper({ force: false })
+      await flushPromises()
+      const footer = taskModal(wrapper)
+        .findAll('.b-button')
+        .filter((b) =>
+          ["Don't ask me again", 'Ask again tomorrow'].includes(b.text())
+        )
+      expect(footer).toHaveLength(2)
+      for (const b of footer) {
+        expect(b.attributes('data-size')).toBeUndefined()
+        expect(b.classes()).toContain('mb-1')
+      }
+    })
+
+    it('still shows the hearts and the subtitle for other tasks', async () => {
+      askCheckMessage()
+      const wrapper = createWrapper({ force: true })
+      await flushPromises()
+      const modal = taskModal(wrapper)
+      expect(modal.findAll('.v-icon').length).toBeGreaterThan(0)
+      expect(modal.text()).toContain('run smoothly')
+      expect(modal.text()).not.toContain('A question about Freegle')
+    })
+
+    it('does not draw the moderator note for a UxPrompt task', async () => {
+      mockMe.value.isModerator = true
+      askUx()
+      const wrapper = createWrapper({ force: true })
+      await flushPromises()
+      expect(taskModal(wrapper).text()).not.toContain(
+        'This is something members see'
+      )
+    })
+
+    it('still draws the moderator note for other tasks', async () => {
+      mockMe.value.isModerator = true
+      askCheckMessage()
+      const wrapper = createWrapper({ force: true })
+      await flushPromises()
+      expect(taskModal(wrapper).text()).toContain(
+        'This is something members see'
+      )
+    })
+
+    it('logs the prompt id and kind with the challenge received line', async () => {
+      askUx()
+      createWrapper({ force: true })
+      await flushPromises()
+      expect(mockClientLog.info).toHaveBeenCalledWith(
+        'Microvolunteering challenge received',
+        expect.objectContaining({
+          event_type: 'microvolunteering',
+          challenge_type: 'UxPrompt',
+          prompt_id: 4,
+          prompt_kind: 'open',
+        })
+      )
+    })
+
+    it('logs no prompt for other tasks', async () => {
+      askCheckMessage()
+      createWrapper({ force: true })
+      await flushPromises()
+      const received = mockClientLog.info.mock.calls.find(
+        (c) => c[0] === 'Microvolunteering challenge received'
+      )
+      expect(received[1].challenge_type).toBe('CheckMessage')
+      expect(received[1].prompt_id).toBeUndefined()
+      expect(received[1].prompt_kind).toBeUndefined()
     })
   })
 

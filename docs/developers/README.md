@@ -94,6 +94,7 @@ Read these directly; the pages above link into them rather than copy them:
 | Improving Freegle from what people do and what they care about (the overview of idea farming and experiments) | [./ux-idea-farming-and-experiments.md](./ux-idea-farming-and-experiments.md) |
 | UX telemetry (the event and rollup contract) | [./reference/ux-telemetry.md](./reference/ux-telemetry.md) |
 | The SysAdmin UX tab (sections, address, filters, Biggest loss) | [./reference/ux-sysadmin-tab.md](./reference/ux-sysadmin-tab.md) |
+| Member surveys (short phone questions, coded into grouped problems) | [./reference/ux-member-surveys.md](./reference/ux-member-surveys.md) |
 
 Each component also has its own README (`iznik-nuxt3/README.md`, `iznik-server-go/README.md`,
 `iznik-batch/README.md`, `iznik-routing-go/README.md`, `iznik-spatial-go/README.md`), and

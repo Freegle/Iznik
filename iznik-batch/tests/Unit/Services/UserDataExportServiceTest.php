@@ -131,6 +131,26 @@ class UserDataExportServiceTest extends TestCase
         $this->assertEquals('Test Exporter', $json['basic']['fullname']);
     }
 
+    public function test_export_contains_the_answers_given_to_microvolunteer_questions(): void
+    {
+        $user = $this->createTestUser();
+        $other = $this->createTestUser();
+        $prompt = DB::table('ux_prompts')->insertGetId(['kind' => 'open', 'question' => 'Did anything cause you a problem?', 'body' => 'b', 'options' => '[]',
+            'status' => 'open', 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ux_prompt_responses')->insert([
+            ['prompt_id' => $prompt, 'userid' => $user->id, 'answer' => json_encode(['text' => 'The photo upload']), 'comment' => null],
+            ['prompt_id' => $prompt, 'userid' => $other->id, 'answer' => json_encode(['text' => 'Not mine']), 'comment' => null],
+        ]);
+        $exportId = DB::table('users_exports')->insertGetId(['userid' => $user->id, 'tag' => 'test-tag', 'requested' => now()]);
+
+        $this->service->processAll();
+
+        $json = json_decode(gzinflate(DB::table('users_exports')->where('id', $exportId)->value('data')), true);
+        $this->assertCount(1, $json['question_answers']);
+        $this->assertSame('Did anything cause you a problem?', $json['question_answers'][0]['question']);
+        $this->assertSame(['text' => 'The photo upload'], $json['question_answers'][0]['answer']);
+    }
+
     public function test_export_contains_emails(): void
     {
         $user = $this->createTestUser();

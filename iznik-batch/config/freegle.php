@@ -1798,6 +1798,24 @@ return [
             'reply'    => ['message-id'],
             'settings' => ['settings'],
         ],
+        // The member surveys (ux:prompt, ux:prompts-tick). See
+        // docs/developers/reference/ux-member-surveys.md.
+        'prompts' => [
+            'helper_url' => EnvSetting::env('UX_HELPER_URL', 'http://ai-support-helper:3000'),
+            // Coding a prompt's answers into problems uses no tools, but writing 300 answers out as
+            // JSON can take several minutes. This wait must be LONGER than the helper's own limit
+            // (10 minutes, UX_THEMES_TIMEOUT_MS in claude-agent-sdk/ux-themes.js), or the batch
+            // hangs up first, the helper aborts on the disconnect and every retry fails the same way.
+            'themes_timeout' => (int) EnvSetting::env('UX_THEMES_TIMEOUT', 660),
+            // Shared secret the helper's /internal/ux-themes and /internal/ux-groups routes require in
+            // the X-Freegle-Internal-Secret header, on top of its private-address check. Unset, the
+            // helper refuses everything and the batch does not try.
+            'internal_secret' => EnvSetting::env('UX_INTERNAL_SECRET', ''),
+            // Free-text answers go to an AI service for coding. Only 1 and true open this gate, set by
+            // a person after the public privacy wording has been checked to cover that. A bare (bool)
+            // cast would read "off" and "no" as true.
+            'privacy_cleared' => EnvSetting::flag(EnvSetting::env('UX_PRIVACY_CLEARED', false)),
+        ],
         'report_to'       => EnvSetting::env('UX_REPORT_TO', EnvSetting::env('FREEGLE_GEEKS_ADDR', 'geeks@ilovefreegle.org')),
         'sample_per_step' => 20,
     ],

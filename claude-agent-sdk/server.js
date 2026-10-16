@@ -32,7 +32,11 @@ const CODEBASE_DIR = process.env.CODEBASE_DIR || '/app/codebase'
 // agent.js kept for searchCodebase utility but runAgent/warmupSession no longer used
 
 const app = express()
-app.use(express.json())
+// The /internal routes take bodies well over the default 100kb (hundreds of member answers or
+// problems), so they get their own larger limit below and are skipped here. Without that the default
+// parser would answer 413 before they ran.
+const defaultJson = express.json()
+app.use((req, res, next) => (req.path.startsWith('/internal/') ? next() : defaultJson(req, res, next)))
 
 // CORS: allow ModTools origins only. Dev uses *.localhost (traefik); prod/edge
 // lists its ModTools origin in ALLOWED_ORIGINS (comma-separated). Requests with
@@ -423,6 +427,50 @@ app.post('/api/refer-to-geeks', express.json({ limit: REFERRAL_BODY_LIMIT }), as
     })
   }
 })
+
+// ---------------------------------------------------------------------------
+// The member-answer coder and the regroup call. Asked by the batch (ux:prompt analyse and
+// ux:prompt regroup, on request) from the docker network, never by a browser, so they are
+// deliberately NOT under /api/ai-support, the only prefix the load balancer forwards
+// (docs/ops/production.md). The guard also refuses anything that is not from a private address,
+// that carries a forwarding header, or that lacks the shared secret in X-Freegle-Internal-Secret
+// (env UX_INTERNAL_SECRET; unset refuses everyone). One run at a time across every /internal
+// route: a second request while one is running is answered 429 straight away, and a run stops if
+// its caller disconnects. See ux-themes.js, ux-groups.js, ux-internal.js,
+// docs/developers/reference/ux-member-surveys.md and docs/developers/reference/ai-support-helper.md.
+// ---------------------------------------------------------------------------
+const { internalHandler, internalGuard } = require('./ux-internal')
+const { cleanThemesRequest, generateThemes } = require('./ux-themes')
+const { cleanGroupsRequest, generateGroups } = require('./ux-groups')
+
+// Refuse before reading the body, so a caller without the secret cannot make this parse 2MB.
+const internalGate = (req, res, next) => (internalGuard(req).ok ? next() : res.status(403).json({ error: 'FORBIDDEN' }))
+const internalJson = express.json({ limit: '2mb' })
+
+app.post(
+  '/internal/ux-themes',
+  internalGate,
+  internalJson,
+  internalHandler({
+    tag: 'UxThemes',
+    clean: cleanThemesRequest,
+    run: (request, { signal }) => generateThemes({ ...request, signal }),
+    summary: (result, request) =>
+      `preset=${request.preset} answers=${request.answers.length} problems=${result.problems.length} solutions=${result.solutions.length} values=${result.values.length}`,
+  })
+)
+
+app.post(
+  '/internal/ux-groups',
+  internalGate,
+  internalJson,
+  internalHandler({
+    tag: 'UxGroups',
+    clean: cleanGroupsRequest,
+    run: (request, { signal }) => generateGroups({ ...request, signal }),
+    summary: (result, request) => `problems=${request.problems.length} assigned=${result.assignments.length}`,
+  })
+)
 
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {

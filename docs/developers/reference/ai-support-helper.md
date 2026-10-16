@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-13
+last_reviewed: 2026-10-15
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -21,6 +21,10 @@ covers:
   - iznik-server-go/supportai/supportai.go
   - iznik-nuxt3/modtools/components/ModSupportAIRating.vue
   - iznik-nuxt3/modtools/components/ModSysAdminSupportAI.vue
+  - claude-agent-sdk/ux-themes.js
+  - claude-agent-sdk/ux-groups.js
+  - claude-agent-sdk/ux-internal.js
+  - claude-agent-sdk/ux-internal.test.js
 ---
 
 # AI Support Helper
@@ -320,6 +324,55 @@ member is deleted with that member's account (`userid` cascades).
   with what, to stdout (`SUPPORT_AUDIT …`, shippable to Loki) and, durably, to
   `AUDIT_LOG_PATH` on the `ai-support-audit` volume.
 
+## Internal routes for the member surveys
+
+The batch, not a browser, calls two more routes. They code members' written answers into grouped
+problems ([ux-member-surveys.md](ux-member-surveys.md)). Neither has any tools: the model reads text and
+writes JSON, so nothing in an answer can read a file or run a command.
+
+- `POST /internal/ux-themes` takes the answers (an id and scrubbed text, no user id), the funnel keys and
+  the group list, and returns themes, each with a group, a title of at most 60 characters and the answer
+  ids and quotes it came from. A quote is kept only when its words appear in that answer.
+- `POST /internal/ux-groups` takes the group list and each problem's id, title and description, and returns
+  the group for each. It sees no answers.
+
+Bodies on these routes may be up to 2 MB. The default 100 KB parser is skipped for any path that starts with
+`/internal/`.
+
+**The model.** The coder asks for the model named in `UX_THEMES_MODEL` when the helper's environment sets
+it, else `SUPPORT_AI_MODEL`, else `opus`. `docker-compose.yml` passes `SUPPORT_AI_MODEL` only, so to give
+the coder its own model, add `UX_THEMES_MODEL` to the helper's `environment:` block. The coder reads no model
+setting that belongs to another feature.
+
+**The guard (`ux-internal.js`).** A call must come from a private address, carry no forwarding headers, and
+send the shared secret in `X-Freegle-Internal-Secret`, equal to the helper's `UX_INTERNAL_SECRET`. Being on
+the docker network is not enough: each call starts a long model run on the shared subscription, and the load
+balancer's `/api/ai-support` prefix reaches this same container, so the address check alone could be
+bypassed through it. The check runs before the body is read.
+
+**Setting the secret on live**, by variable name only:
+
+- Make up one long random value and **never write it in a pull request, a commit message, a test or a doc**.
+  The same value goes in two places.
+- *The batch:* `UX_INTERNAL_SECRET` in `.env.background` on the backend host (the file `batch-prod` reads;
+  it applies when the container is next created). The batch reads it as
+  `config('freegle.ux.prompts.internal_secret')` and sends it on every call.
+- *The helper:* `UX_INTERNAL_SECRET` in the helper container's environment. `docker-compose.yml` passes a
+  container only the variables its `environment:` block names, so the `ai-support-helper` service names
+  `UX_INTERNAL_SECRET` (as `${UX_INTERNAL_SECRET:-}`) and the value must be in the compose `.env` on that
+  host. Check with `printenv UX_INTERNAL_SECRET` inside the container, never by printing the value into a log
+  or a chat.
+- *Unset on either side, it fails closed.* The helper answers 403 when the variable is empty or different.
+  The batch will not call without it: `ux:prompt analyse` and `regroup` stop with "UX_INTERNAL_SECRET is not
+  set" rather than send a request bound to be refused. Collecting answers does not use it and carries on.
+- *Rotate* by changing both and restarting the helper and the batch container. A call in flight while they
+  differ is refused.
+
+**One run at a time.** Every internal route goes through one queue, so a long run is never started while
+another is going. A second call gets 429 at once. Any other internal route that uses the queue, such as the
+idea generator's, makes `ux:prompt analyse` and `regroup` get 429 until its run ends, so run them at
+another time.
+
 ## Files
 
 - **Backend**: `claude-agent-sdk/` — `server.js` (SSE endpoint + CORS + auth gate),
@@ -331,6 +384,8 @@ member is deleted with that member's account (`userid` cascades).
 - **Frontend**: `iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue`,
   `ModSupportAIRating.vue` (thumbs), `ModSysAdminSupportAI.vue` (SysAdmin review).
 - **Go API**: `iznik-server-go/supportai/` (record, list, get, rate runs).
+- **Internal routes**: `claude-agent-sdk/ux-internal.js` (guard, queue, handler and JSON parser),
+  `ux-themes.js` and `ux-groups.js` (the two coders), wired in `server.js`.
 - **Compose**: the `ai-support-helper` service in `docker-compose.yml` (profile `backend`).
 - **Lockdown**: the user dump (`iznik-server-go/userdump/userdump.go`) is a download, so it is
   refused while a [lockdown](../../ops/runbooks/lockdown.md) holds `export`, for Support and Admin

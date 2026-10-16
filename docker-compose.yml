@@ -685,6 +685,9 @@ services:
       - SUPPORT_SMTP_PORT=${SUPPORT_SMTP_PORT:-1025}
       - SUPPORT_SMTP_USER=${SUPPORT_SMTP_USER:-}
       - SUPPORT_SMTP_PASS=${SUPPORT_SMTP_PASS:-}
+      # Shared secret the /internal routes require, which the batch presents too. Unset, the
+      # helper refuses every internal call.
+      - UX_INTERNAL_SECRET=${UX_INTERNAL_SECRET:-}
     volumes:
       # Session mode (testing) ONLY: mount JUST the Claude OAuth credential read-only,
       # NOT the whole ~/.claude (which holds memory/transcripts/project notes). This

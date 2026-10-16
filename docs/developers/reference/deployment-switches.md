@@ -5,6 +5,7 @@ covers:
   - iznik-batch/app/Support/EnvSetting.php
   - iznik-batch/tests/Unit/Config/BlankEnvMeansDefaultTest.php
   - iznik-batch/config/freegle.php
+  - iznik-batch/app/Services/Ux/UxPromptService.php
   - iznik-batch/routes/console.php
   - iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php
   - iznik-batch/app/Mail/Session/LoginLinkMail.php
@@ -68,6 +69,10 @@ variables like every other Freegle setting.
 | `backup.database.bucket` | `BACKUP_DB_BUCKET` | `gs://freegle_backup_uk` | Where the compressed stream goes. |
 | `backup.database.compress_threads` | `BACKUP_DB_COMPRESS_THREADS` | `4` | xtrabackup compression threads. More finishes sooner and competes harder. |
 | `ux.report_to` | `UX_REPORT_TO` | falls back to `FREEGLE_GEEKS_ADDR` | Where `ux:weekly-report` sends the Monday summary of the biggest week-on-week UX changes. See [ux-telemetry.md](ux-telemetry.md). |
+| `ux.prompts.helper_url` | `UX_HELPER_URL` | `http://ai-support-helper:3000` | Where `ux:prompt analyse` and `regroup` reach the helper. See [ux-member-surveys.md](ux-member-surveys.md). |
+| `ux.prompts.themes_timeout` | `UX_THEMES_TIMEOUT` | `660` | Seconds the batch waits for the coder. It must be longer than the helper's own limit of 10 minutes (`UX_THEMES_TIMEOUT_MS`), or the batch hangs up first, the helper stops at the disconnect and every retry fails the same way. |
+| `ux.prompts.internal_secret` | `UX_INTERNAL_SECRET` | empty | The shared secret the helper's internal routes ask for. Empty, `ux:prompt analyse` and `regroup` stop with "UX_INTERNAL_SECRET is not set" and the helper refuses every call. The same value must be in the helper's environment: see [ai-support-helper.md](ai-support-helper.md). |
+| `ux.prompts.privacy_cleared` | `UX_PRIVACY_CLEARED` | off | Only `1` or `true` opens it. Closed, `ux:prompt analyse` and `regroup` refuse to run, because members' written answers go to an AI service for coding. A person sets it, after checking that the public privacy wording covers that. See [ux-member-surveys.md](ux-member-surveys.md). |
 | `backup.database.alert_email` | `BACKUP_DB_ALERT_EMAIL` | `geek-alerts@ilovefreegle.org` | Where a failure is mailed. Plain text, no template, because this has to work when the database is unhappy. |
 
 Every setting in `config/freegle.php` is read through `EnvSetting::env`, which is Laravel's

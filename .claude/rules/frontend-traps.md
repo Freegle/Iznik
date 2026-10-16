@@ -152,6 +152,7 @@ can be a sentence (an answer option, a problem title, a step name) therefore run
 edge of a phone screen, with no error and no scrollbar, and a scoped `white-space: normal` does
 nothing. Wrap it with `white-space: normal !important` on a more specific selector, as
 `components/ModSysAdminUxFunnelChart.vue` does for its row labels, and check it at phone width.
+The member question card (components/MicroVolunteeringUxPrompt.vue) is the second place this bit.
 
 ## A filter the old API ignores shows unfiltered figures as filtered
 

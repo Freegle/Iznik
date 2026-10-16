@@ -1693,6 +1693,63 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/ux/health", ux.Health)
 
+		// @Router /modtools/ux/problem-groups [get]
+		// @Summary What members say, by group
+		// @Description The headings member problems are filed under, each with how many problems and mentions it holds and its biggest problem, the largest first and Other last, with the answers that fitted no problem
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param flow query string false "A funnel key, or none for problems tied to no funnel; omitted means all"
+		// @Param q query string false "Text to find in a title or description, at most 60 characters"
+		// @Param min query int false "The least number of mentions"
+		// @Success 200 {object} ux.ProblemGroupsResponse
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/problem-groups", ux.ProblemGroups)
+
+		// @Router /modtools/ux/problems [get]
+		// @Summary Member problems
+		// @Description The problems members raised, most mentioned first, each with its group, the checked quotes, the fixes suggested and how the follow-up ranked it; total counts every match before the limit
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param group query string false "A group name"
+		// @Param flow query string false "A funnel key, or none for problems tied to no funnel; omitted means all"
+		// @Param q query string false "Text to find in a title or description, at most 60 characters"
+		// @Param min query int false "The least number of mentions"
+		// @Param limit query int false "How many to return, 30 by default and at most 100"
+		// @Success 200 {object} ux.ProblemsResponse
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/problems", ux.Problems)
+
+		// @Router /modtools/ux/values [get]
+		// @Summary What members value
+		// @Description What members said they value about Freegle, most mentioned first, at most 20, each with its checked quotes
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} ux.ValuesResponse
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/values", ux.Values)
+
+		// @Router /modtools/ux/questions [get]
+		// @Summary Member questions
+		// @Description The survey, awareness and open questions with what members chose per option, the ways out, skips and comments, and the share of right answers; the decoy figures show how readily members say yes
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param kind query string false "One of survey, awareness or open"
+		// @Param status query string false "One of open or closed"
+		// @Success 200 {object} ux.QuestionsResponse
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/questions", ux.Questions)
+
 		// @Router /modtools/ux/samples [get]
 		// @Summary UX sampled sessions
 		// @Description The sampled abandoned sessions for a flow step on a date, with each client timeline from Loki

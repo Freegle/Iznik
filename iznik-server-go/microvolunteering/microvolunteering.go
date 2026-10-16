@@ -45,6 +45,7 @@ type Challenge struct {
 	URL      *string            `json:"url,omitempty"`
 	AIImage  *AIImageChallenge  `json:"aiimage,omitempty"`
 	EEELabel *EEELabelChallenge `json:"eeelabel,omitempty"`
+	UxPrompt *UxPromptChallenge `json:"uxprompt,omitempty"`
 }
 
 // Photo represents a photo for rotation challenge
@@ -201,6 +202,16 @@ func GetChallenge(c *fiber.Ctx) error {
 	// Try Invite challenge first
 	if contains(challengeTypes, ChallengeInvite) {
 		if challenge := getInviteChallenge(db, userID); challenge != nil {
+			return c.JSON(challenge)
+		}
+	}
+
+	// A question about Freegle itself (a survey, an awareness question or an open one), when one is
+	// open and the member has not been asked this week. Ahead of the review backlogs, which never
+	// run dry, and needs no community. The site always names the types it can draw, so this is never
+	// in the default list: an old caller must not be handed a card it cannot draw.
+	if contains(challengeTypes, ChallengeUxPrompt) {
+		if challenge := getUxPromptChallenge(db, userID); challenge != nil {
 			return c.JSON(challenge)
 		}
 	}
@@ -584,6 +595,9 @@ type PostResponseRequest struct {
 	EEECondition    *string `json:"eee_condition,omitempty"`
 	EEEWeight       *string `json:"eee_weight,omitempty"`
 	EEESize         *string `json:"eee_size,omitempty"`
+	// UxPrompt response fields
+	UxPromptID uint64          `json:"ux_prompt_id,omitempty"`
+	UxAnswer   *UxPromptAnswer `json:"ux_answer,omitempty"`
 }
 
 // PostResponse records a user's response to a micro-volunteering challenge
@@ -796,6 +810,14 @@ func PostResponse(c *fiber.Ctx) error {
 			"version":           Version,
 			"score_negative":    gorm.Expr("0"),
 		})
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	} else if req.UxPromptID > 0 {
+		// Response to a UxPrompt challenge: an answer to a question about Freegle itself.
+		if err := recordUxPromptResponse(db, myid, req.UxPromptID, req.UxAnswer, req.Comments); err != nil {
+			return err
+		}
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 

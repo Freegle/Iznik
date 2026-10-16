@@ -130,6 +130,7 @@ class UserDataExportService
         $data['newsfeed'] = $this->getNewsfeed($userId);
         $data['aboutme'] = $this->getAboutMe($userId);
         $data['stories'] = $this->getStories($userId);
+        $data['question_answers'] = $this->getQuestionAnswers($userId);
         $data['exports'] = $this->getExportHistory($userId);
         $data['logs'] = $this->getLogs($userId);
 
@@ -648,6 +649,22 @@ class UserDataExportService
             'stories' => $stories,
             'likes' => $likes,
         ];
+    }
+
+    /**
+     * What the member answered when microvolunteering asked them questions about Freegle: the
+     * question, their answer (the words they wrote, or the option they picked) and when.
+     */
+    private function getQuestionAnswers(int $userId): array
+    {
+        return DB::table('ux_prompt_responses as r')
+            ->join('ux_prompts as p', 'p.id', '=', 'r.prompt_id')
+            ->where('r.userid', $userId)
+            ->select('p.question', 'r.answer', 'r.comment', 'r.timestamp')
+            ->orderBy('r.timestamp', 'asc')
+            ->get()
+            ->map(fn ($e) => ['question' => $e->question, 'answer' => json_decode($e->answer, true), 'comment' => $e->comment, 'timestamp' => $e->timestamp])
+            ->toArray();
     }
 
     private function getExportHistory(int $userId): array

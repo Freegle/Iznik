@@ -543,6 +543,45 @@ func TestMergeAllowsTrashNothingTwinWithoutStamp(t *testing.T) {
 	assert.Equal(t, uint64(991004), tn)
 }
 
+// A member's answers to the UX questions move with them on a merge. Where both accounts answered
+// the same question the target keeps its own answer, because a member has one vote per question.
+func TestMergeUxPromptResponsesTransferred(t *testing.T) {
+	prefix := uniquePrefix("merge_uxresp")
+	db := database.DBConn
+	_, adminToken := mergeAdminSetup(t, prefix)
+	id1 := CreateTestUser(t, prefix+"_u1", "User")
+	id2 := CreateTestUser(t, prefix+"_u2", "User")
+
+	cleanup := func() {
+		db.Exec("DELETE r FROM ux_prompt_responses r INNER JOIN ux_prompts p ON p.id = r.prompt_id WHERE p.question LIKE ?", prefix+"%")
+		db.Exec("DELETE FROM ux_prompts WHERE question LIKE ?", prefix+"%")
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	var ids [2]uint64
+	for i := range ids {
+		db.Exec("INSERT INTO ux_prompts (kind, question, body, options, images, status, max_responses, created_at, updated_at) VALUES ('open', ?, '', '[]', '[]', 'open', 100, NOW(), NOW())", fmt.Sprintf("%s q%d", prefix, i))
+		db.Raw("SELECT id FROM ux_prompts WHERE question = ?", fmt.Sprintf("%s q%d", prefix, i)).Scan(&ids[i])
+	}
+	// id1 answered both questions; id2 answered the first as well.
+	db.Exec("INSERT INTO ux_prompt_responses (prompt_id, userid, answer) VALUES (?, ?, '{\"text\":\"from one\"}')", ids[0], id1)
+	db.Exec("INSERT INTO ux_prompt_responses (prompt_id, userid, answer) VALUES (?, ?, '{\"text\":\"from one too\"}')", ids[1], id1)
+	db.Exec("INSERT INTO ux_prompt_responses (prompt_id, userid, answer) VALUES (?, ?, '{\"text\":\"from two\"}')", ids[0], id2)
+
+	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
+
+	var moved int64
+	db.Raw("SELECT COUNT(*) FROM ux_prompt_responses WHERE userid = ? AND prompt_id IN (?, ?)", id2, ids[0], ids[1]).Scan(&moved)
+	assert.Equal(t, int64(2), moved, "the second question moved across and the first was not duplicated")
+	var kept string
+	db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(answer, '$.text')) FROM ux_prompt_responses WHERE userid = ? AND prompt_id = ?", id2, ids[0]).Scan(&kept)
+	assert.Equal(t, "from two", kept, "the target's own answer wins")
+	var orphaned int64
+	db.Raw("SELECT COUNT(*) FROM ux_prompt_responses WHERE userid = ?", id1).Scan(&orphaned)
+	assert.Equal(t, int64(0), orphaned, "nothing is left behind for the user who no longer exists")
+}
+
 // ── Chat rooms: the one merge must do what the email-verify merge learned ────
 
 // Both accounts have a User2Mod room with the same community: one room survives, holding

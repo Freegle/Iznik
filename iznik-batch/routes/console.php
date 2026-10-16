@@ -584,6 +584,16 @@ Schedule::command('ux:weekly-report')
     ->appendOutputTo(cronLog('ux:weekly-report'))
     ->runInBackground();
 
+// Hourly upkeep of the member surveys: close a prompt that has collected its answers, weigh the
+// follow-up picks, and blank member words after 90 days. Off the hour so it never queues behind the
+// rollup. It is not in the backup-drain always_run list: a skipped hour only delays closing a full
+// prompt, and the API already refuses an answer past the cap.
+Schedule::command('ux:prompts-tick')
+    ->hourlyAt(23)
+    ->withoutOverlapping(50)
+    ->appendOutputTo(cronLog('ux:prompts-tick'))
+    ->runInBackground();
+
 // Backup apiv2 node serving members: overnight, over the whole previous day, so
 // that hours of clients kept on a backup after a daytime failover reach Sentry.
 Schedule::command('monitor:api-backup-traffic')

@@ -222,6 +222,9 @@ func buildDBSpecs(userID int64, chatIDs, recentChatIDs, msgIDs, trackIDs []inter
 	add("spam_users", "userid = ? OR byuserid = ?", uu, 0)
 	add("spam_whitelist_links", "userid = ?", u, 0)
 	add("microactions", "userid = ?", u, 0)
+	// What the member answered to the UX questions asked in microvolunteering, including any
+	// free text: it is theirs and a subject access request has to include it.
+	add("ux_prompt_responses", "userid = ?", u, 0)
 	add("modnotifs", "userid = ?", u, 0)
 	add("users_modmails", "userid = ?", u, 0)
 	add("users_related", "user1 = ? OR user2 = ?", uu, 0)
