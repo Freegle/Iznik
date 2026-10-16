@@ -5862,6 +5862,70 @@
     ]
    }
   },
+  "/modtools/ux/ideas": {
+   "get": {
+    "description": "The ideas the idea generator proposed for each funnel, best score first, with the totals by status, a summary per funnel, and for each idea the experiment it became (read live) and the member problem it answers. Read only: an idea is queued, set aside or put back with the ux:idea command.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "UX ideas",
+    "operationId": "getUxIdeas",
+    "parameters": [
+     {
+      "type": "string",
+      "description": "A funnel key",
+      "name": "flow",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "One of open, scheduled, running, done or rejected",
+      "name": "status",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "fix or experiment",
+      "name": "type",
+      "in": "query"
+     },
+     {
+      "type": "integer",
+      "description": "Only the ideas that answer this member problem",
+      "name": "problem_id",
+      "in": "query"
+     },
+     {
+      "type": "integer",
+      "description": "How many to return, 200 by default and at most 500",
+      "name": "limit",
+      "in": "query"
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "501": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
   "/newsfeed": {
    "get": {
     "description": "Returns newsfeed items",

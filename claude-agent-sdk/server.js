@@ -32,7 +32,11 @@ const CODEBASE_DIR = process.env.CODEBASE_DIR || '/app/codebase'
 // agent.js kept for searchCodebase utility but runAgent/warmupSession no longer used
 
 const app = express()
-app.use(express.json())
+// The /internal routes take bodies well over the default 100kb (hundreds of member answers or
+// problems), so they get their own larger limit below and are skipped here. Without that the default
+// parser would answer 413 before they ran.
+const defaultJson = express.json()
+app.use((req, res, next) => (req.path.startsWith('/internal/') ? next() : defaultJson(req, res, next)))
 
 // CORS: allow ModTools origins only. Dev uses *.localhost (traefik); prod/edge
 // lists its ModTools origin in ALLOWED_ORIGINS (comma-separated). Requests with
@@ -423,6 +427,35 @@ app.post('/api/refer-to-geeks', express.json({ limit: REFERRAL_BODY_LIMIT }), as
     })
   }
 })
+
+// ---------------------------------------------------------------------------
+// The UX idea generator. Asked daily by the batch (ux:ideas-refresh) from the docker network, never by
+// a browser, so it is deliberately NOT under /api/ai-support, the only prefix the load balancer
+// forwards (docs/ops/production.md). The guard also refuses anything that is not from a private
+// address, that carries a forwarding header, or that lacks the shared secret in
+// X-Freegle-Internal-Secret (env UX_INTERNAL_SECRET; unset refuses everyone). One run at a time
+// across every /internal route: a second request while one is running is answered 429 straight away,
+// and a run stops if its caller disconnects. See ux-ideas.js, ux-internal.js,
+// docs/developers/reference/ux-ideas.md and docs/developers/reference/ai-support-helper.md.
+// ---------------------------------------------------------------------------
+const { internalHandler, internalGuard } = require('./ux-internal')
+const { cleanRequest, generateIdeas } = require('./ux-ideas')
+
+// Refuse before reading the body, so a caller without the secret cannot make this parse 2MB.
+const internalGate = (req, res, next) => (internalGuard(req).ok ? next() : res.status(403).json({ error: 'FORBIDDEN' }))
+const internalJson = express.json({ limit: '2mb' })
+
+app.post(
+  '/internal/ux-ideas',
+  internalGate,
+  internalJson,
+  internalHandler({
+    tag: 'UxIdeas',
+    clean: cleanRequest,
+    run: (request, { signal }) => generateIdeas({ ...request, codebaseDir: CODEBASE_DIR, signal }),
+    summary: (result, request) => `flow=${request.flow} ideas=${result.ideas.length} problems=${result.problems.length}`,
+  })
+)
 
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {

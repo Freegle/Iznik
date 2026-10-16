@@ -3,6 +3,8 @@
 // component here and adding one entry; nothing scans for files.
 import ModSysAdminUxOverview from '~/modtools/components/ModSysAdminUxOverview.vue'
 import ModSysAdminUxFunnels from '~/modtools/components/ModSysAdminUxFunnels.vue'
+import ModSysAdminUxIdeas from '~/modtools/components/ModSysAdminUxIdeas.vue'
+import ModSysAdminUxProblemIdeas from '~/modtools/components/ModSysAdminUxProblemIdeas.vue'
 import ModSysAdminUxPages from '~/modtools/components/ModSysAdminUxPages.vue'
 
 // A section has:
@@ -43,6 +45,17 @@ export const SECTIONS = [
     params: ['step', 'open'],
   },
   {
+    // What the idea generator has proposed, ranked. It loads its own data from its own store.
+    key: 'ideas',
+    label: 'Ideas',
+    order: 50,
+    component: ModSysAdminUxIdeas,
+    funnelLink: { label: 'Ideas' },
+    filters: [],
+    slots: [],
+    params: ['idea', 'istatus', 'itype'],
+  },
+  {
     key: 'pages',
     label: 'Pages and features',
     order: 90,
@@ -54,7 +67,7 @@ export const SECTIONS = [
 ]
 
 // Components that other parts of the tab add to a place that draws them without knowing them.
-export const HOSTED = { problem: [], experiment: [] }
+export const HOSTED = { problem: [ModSysAdminUxProblemIdeas], experiment: [] }
 
 export const uxSections = () => [...SECTIONS].sort((a, b) => a.order - b.order)
 export const hostedFor = (slot) => HOSTED[slot] || []

@@ -10,11 +10,14 @@ describe('useUxSections', () => {
   it('lists the sections in the order of their `order`', () => {
     const orders = uxSections().map((s) => s.order)
     expect(orders).toEqual([...orders].sort((a, b) => a - b))
-    expect(uxSections().map((s) => s.key)).toEqual([
-      'overview',
-      'funnels',
-      'pages',
-    ])
+    // Other parts of the tab add sections between Funnels and Pages, so this names only these three.
+    const own = ['overview', 'funnels', 'pages']
+    expect(
+      uxSections()
+        .map((s) => s.key)
+        .filter((k) => own.includes(k))
+    ).toEqual(own)
+    expect(uxSections()[0].key).toBe('overview')
   })
 
   it('gives a copy, so a caller cannot reorder the registry', () => {
@@ -69,10 +72,13 @@ describe('useUxSections', () => {
     expect(last.order).toBe(90)
   })
 
-  it('has no hosted component yet, and gives an empty list for a place it does not know', () => {
-    expect(HOSTED).toEqual({ problem: [], experiment: [] })
-    expect(hostedFor('problem')).toEqual([])
-    expect(hostedFor('experiment')).toEqual([])
+  it('has two places other parts add components to, and gives an empty list for a place it does not know', () => {
+    // Which components are in them depends on which other parts of the tab are there, so this names none.
+    expect(Object.keys(HOSTED).sort()).toEqual(['experiment', 'problem'])
+    expect(Array.isArray(HOSTED.problem)).toBe(true)
+    expect(Array.isArray(HOSTED.experiment)).toBe(true)
+    expect(hostedFor('problem')).toBe(HOSTED.problem)
+    expect(hostedFor('experiment')).toBe(HOSTED.experiment)
     expect(hostedFor('nothing')).toEqual([])
   })
 })

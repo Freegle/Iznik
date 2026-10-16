@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-15
+last_reviewed: 2026-10-16
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useFlowTelemetry.js
@@ -248,6 +248,30 @@ that opens the tab.
 - [The SysAdmin UX tab](ux-sysadmin-tab.md): the sections, the address, the filters, Biggest loss.
 - [UX experiments](ux-experiments.md): how a change is shown to some members, read every hour and
   decided within a day.
+- [UX ideas](ux-ideas.md): how the idea generator proposes changes, how an idea becomes an experiment,
+  and the backtest that checks the generator.
 
 `tests/e2e/test-ux-telemetry.spec.js` holds the flows to the event contract in section 2. The browser
 test of the tab itself is described on the page above.
+
+## Appendix A. The experiment framework
+
+The measurement above exists so that changes to the member site can be tried, judged and kept or
+removed without a person in the loop. The diagram shows how the parts fit together. Each part has its
+own page, and section 7 lists them.
+
+```mermaid
+flowchart LR
+    Q["Microvolunteers: open questions<br/>(problems, values, what to change)"] -->|coded with no tools| P[("Problems<br/>ranked by other members")]
+    P --> G["Idea generator<br/>(themes only, never words)"]
+    G --> I[("Ideas<br/>backlog per funnel")]
+    I -->|one idea| PR["One PR: a variant behind<br/>useExperiment('name')"]
+    PR -->|Netlify ships it| S["start: power check, one per funnel,<br/>arms into the config key"]
+    S --> C["Client reads the key,<br/>sticky arm stamped in variant"]
+    C --> L[("Loki")]
+    L -->|hourly tick| T["Read by arm in strata,<br/>decide within 24h"]
+    T -->|adopted| H["90% new, 10% old holdout,<br/>daily decay check"]
+    H --> K["Cleanup PR removes the switch,<br/>close the experiment"]
+    T -->|reverted or inconclusive| R["Back to control; cleanup PR<br/>removes the variant"]
+    T -.->|history read by| G
+```

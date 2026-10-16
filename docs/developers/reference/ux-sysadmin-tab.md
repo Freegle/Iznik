@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-15
+last_reviewed: 2026-10-16
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/components/ModSysAdminUx.vue
@@ -52,6 +52,7 @@ opened, one funnel is open at a time, and a link goes to a funnel, a step or a p
 |---|---|---|---|
 | `overview` | Overview | A closed Data health row, then one row for each of the seven funnels: started, finished, finished before, and the biggest loss. The funnel name opens that funnel and the biggest loss opens it at that step. | Period, Device |
 | `funnels` | Funnels | A picker of the seven funnels, always all seven. The open funnel has its headline, a line of outcome figures, one chart for each page family, the step detail, and closed rows for Second thoughts and Help for that funnel only. | Period, Device, Signed in |
+| `ideas` | Ideas | What the idea generator has proposed, ranked: a strip of counts by status, a line for what the score is, a line for each funnel with the best waiting idea, and the ideas of a funnel best score first, with a Funnel select and a Type select. One idea is open at a time, with what changes, why, the evidence, the problem it answers and the experiment it became. It only reads, has its own route and store, and the tab says its filters do not apply. See [ux-ideas.md](ux-ideas.md). | None |
 | `pages` | Pages and features | Friction, Adoption, Regret, and Search and browse, closed, one open at a time. They are not about one funnel. | Period, Device |
 
 **Adding a section.** The list is one explicit file, `modtools/composables/useUxSections.js`, and
@@ -62,6 +63,10 @@ section may also have a `badge` drawn in the nav, and a `funnelLink` that adds a
 for this funnel" row of the Funnels section. A section that loads its own data from its own store
 lists no slots and no filters, and the tab then hides the filter bar and says so. Add a row to
 the table above in the same change, because this page covers that file.
+
+The same file lists `HOSTED`: components that one part adds to a place another part draws without
+knowing it (`problem` and `experiment`). The Ideas section adds a piece to `problem`, which lists the
+ideas for the problem that is open.
 
 The tab mounts only the open section. A section never imports another section's component. It
 gets `view` (see below) and sends `navigate(patch)`, which changes the address. Two helpers are

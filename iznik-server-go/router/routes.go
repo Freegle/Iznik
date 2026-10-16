@@ -1749,6 +1749,24 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Patch("/modtools/ux/experiments/:id", ux.ExperimentAction)
 
+		// @Router /modtools/ux/ideas [get]
+		// @Summary UX ideas
+		// @Description The ideas the idea generator proposed, best score first, with the totals by status, a summary per funnel, and for each idea the experiment it became and the member problem it answers
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param flow query string false "A funnel key"
+		// @Param status query string false "One of open, scheduled, running, done or rejected"
+		// @Param type query string false "fix or experiment"
+		// @Param problem_id query int false "Only the ideas that answer this member problem"
+		// @Param limit query int false "How many to return, 200 by default and at most 500"
+		// @Success 200 {object} ux.IdeasResponse
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		// @Failure 501 {object} fiber.Error "The ideas table has not been made yet"
+		rg.Get("/modtools/ux/ideas", ux.Ideas)
+
 		// Email Tracking for specific user (authenticated, admin only)
 		// @Router /email/user/{id} [get]
 		// @Summary Get email tracking for a user

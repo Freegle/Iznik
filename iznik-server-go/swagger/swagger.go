@@ -5756,6 +5756,49 @@ type getSupportAIRunParams struct {
 //	403: errorResponse
 //	404: errorResponse
 
+// swagger:route GET /modtools/ux/ideas modtools getUxIdeas
+// UX ideas
+//
+// The ideas the idea generator proposed for each funnel, best score first, with the totals by status, a summary per funnel, and for each idea the experiment it became (read live) and the member problem it answers. Read only: an idea is queued, set aside or put back with the ux:idea command.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: flow
+//     in: query
+//     description: A funnel key
+//     required: false
+//     type: string
+//   + name: status
+//     in: query
+//     description: One of open, scheduled, running, done or rejected
+//     required: false
+//     type: string
+//   + name: type
+//     in: query
+//     description: fix or experiment
+//     required: false
+//     type: string
+//   + name: problem_id
+//     in: query
+//     description: Only the ideas that answer this member problem
+//     required: false
+//     type: integer
+//   + name: limit
+//     in: query
+//     description: How many to return, 200 by default and at most 500
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	501: errorResponse
+
 // swagger:route GET /newsfeed/{id}/duplicate newsfeed getNewsfeedDuplicate
 // Whether a ChitChat post duplicates the poster's own live OFFER/WANTED
 //

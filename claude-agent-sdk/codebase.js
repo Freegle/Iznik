@@ -56,4 +56,40 @@ function syncCodebase({ dir, repo = CODEBASE_REPO, run, exists }) {
   }
 }
 
-module.exports = { syncCodebase, CODEBASE_REPO }
+/**
+ * Make a shallow checkout deep enough to answer "what changed in this area since <date>".
+ *
+ * syncCodebase keeps the checkout at depth 1, which has exactly one commit, so a `git log` over a
+ * path says nothing. Fetching back to a date without blobs (--filter=blob:none) brings the commits
+ * and trees, which is all a path-limited log needs, and not the file contents, which is most of
+ * the weight. The next syncCodebase pull is `--depth 1` again, so this is asked for each time the
+ * history is wanted; objects already fetched are not sent twice.
+ *
+ * Never throws: with no network the caller still gets whatever history the checkout has.
+ *
+ * @param {object} opts
+ * @param {string} opts.dir - the checkout path.
+ * @param {string} opts.since - YYYY-MM-DD to deepen back to.
+ * @param {function} opts.execFile - (file, args, opts) => Promise<{stdout:string}>, never a shell.
+ * @returns {Promise<boolean>} true when a fetch was attempted and succeeded.
+ */
+async function deepenHistory({ dir, since, execFile }) {
+  try {
+    const { stdout } = await execFile('git', ['rev-parse', '--is-shallow-repository'], { cwd: dir, timeout: 10000 })
+
+    if (String(stdout).trim() !== 'true') {
+      return false
+    }
+
+    await execFile('git', ['fetch', '--quiet', '--filter=blob:none', `--shallow-since=${since}`, 'origin'], {
+      cwd: dir,
+      timeout: 120000,
+    })
+
+    return true
+  } catch (e) {
+    return false
+  }
+}
+
+module.exports = { syncCodebase, deepenHistory, CODEBASE_REPO }

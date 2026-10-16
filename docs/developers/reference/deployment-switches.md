@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-15
+last_reviewed: 2026-10-16
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Support/EnvSetting.php
@@ -19,6 +19,7 @@ covers:
   - iznik-server-go/test/message_agreement_test.go
   - iznik-nuxt3/eslint.config.mjs
   - iznik-batch/app/Services/Ux/UxExperimentService.php
+  - iznik-batch/app/Services/Ux/UxIdeasService.php
 ---
 
 # Deployment switches
@@ -95,6 +96,15 @@ variables like every other Freegle setting.
 | `ux.experiments.holdout_days` | `UX_EXPERIMENTS_HOLDOUT_DAYS` | `14` | How many days after adoption the tick compares the holdout with the adopted arm, once a day. The Go API reads this variable too (to report when the holdout ends), so set it on both sides or on neither. |
 | `ux.experiments.holdout_revert_probability` | `UX_EXPERIMENTS_HOLDOUT_REVERT_P` | `0.99` | The holdout check reverts an adopted change when the old version is this likely to be better on `holdout_revert_looks` looks in a row (both sides need `early_min_starts_per_arm`). High because there are up to 14 daily looks. |
 | `ux.experiments.holdout_revert_looks` | `UX_EXPERIMENTS_HOLDOUT_REVERT_LOOKS` | `2` | How many daily looks in a row must be against an adopted change before it is reverted. |
+| `ux.ideas.helper_url` | `UX_IDEAS_HELPER_URL`, else `UX_HELPER_URL` | `http://ai-support-helper:3000` | Where `ux:ideas-refresh` reaches the helper. `UX_HELPER_URL` is the address of the helper for every part that calls it. See [ux-ideas.md](ux-ideas.md). |
+| `ux.ideas.timeout` | `UX_IDEAS_TIMEOUT` | `960` | Seconds the batch waits for the helper to generate ideas for one funnel. It must be longer than the helper's own limit of 15 minutes (`UX_IDEAS_TIMEOUT_MS`), or the batch hangs up first, the helper stops at the disconnect and the next funnel queues behind a run nobody wants. |
+| `ux.ideas.internal_secret` | `UX_INTERNAL_SECRET` | empty | The shared secret the helper's internal routes ask for. Empty, `ux:ideas-refresh` stops with "UX_INTERNAL_SECRET is not set" and the helper refuses every call. The same value must be in the helper's environment: see [ai-support-helper.md](ai-support-helper.md). |
+| `ux.ideas.discourse_categories` | `UX_IDEAS_DISCOURSE_CATEGORIES` | `tech-modtools,development,bug-reports` | The Discourse categories whose recent first posts go to the idea generator as reports, when the Discourse API key is set. |
+| `ux.ideas.reports_days` | `UX_IDEAS_REPORTS_DAYS` | `60` | How many days back a Discourse report is still given to the idea generator. |
+| `ux.ideas.github_repo` | `UX_IDEAS_GITHUB_REPO` | `Freegle/Iznik` | The repository whose open issue titles go to the idea generator as reports. Blank turns that off. |
+| `ux.ideas.min_open` | `UX_IDEAS_MIN_OPEN` | `3` | A funnel with fewer waiting ideas than this is topped up by the daily `ux:ideas-refresh`. |
+| `ux.ideas.count` | `UX_IDEAS_COUNT` | `12` | How many ideas to ask the helper for in one call. |
+| `ux.ideas.max_attempts` | `UX_IDEAS_MAX_ATTEMPTS` | `2` | How many times an idea whose experiment ended without a decision goes back to waiting. At this many tries `ux:ideas-sync` marks it tried. |
 | `backup.database.alert_email` | `BACKUP_DB_ALERT_EMAIL` | `geek-alerts@ilovefreegle.org` | Where a failure is mailed. Plain text, no template, because this has to work when the database is unhappy. |
 
 Every setting in `config/freegle.php` is read through `EnvSetting::env`, which is Laravel's

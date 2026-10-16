@@ -584,6 +584,29 @@ Schedule::command('ux:experiments-tick')
     ->appendOutputTo(cronLog('ux:experiments-tick'))
     ->runInBackground();
 
+// Daily top-up of the UX ideas backlog: asks the support helper for ideas for any funnel with fewer
+// than UX_IDEAS_MIN_OPEN open ones. Daily because it does nothing when every funnel has enough, so
+// it costs nothing most days and a thin backlog is refilled within a day. 05:17 is after the rollup
+// has the previous day's figures and clear of the other early jobs.
+//
+// The helper generates one funnel at a time and may take up to 16 minutes over each, so seven
+// funnels can take two hours. The overlap lock lasts three, so a slow run is not joined by the
+// next one (a lock that expired mid-run would let a second batch queue behind the first on the
+// helper and spend the subscription twice).
+Schedule::command('ux:ideas-refresh')
+    ->dailyAt('05:17')
+    ->withoutOverlapping(180)
+    ->appendOutputTo(cronLog('ux:ideas-refresh'))
+    ->runInBackground();
+
+// Hourly: bring each queued or running idea in line with its experiment. It is not in the
+// backup-drain always_run list: a skipped hour only delays an idea's status by an hour.
+Schedule::command('ux:ideas-sync')
+    ->hourlyAt(29)
+    ->withoutOverlapping(50)
+    ->appendOutputTo(cronLog('ux:ideas-sync'))
+    ->runInBackground();
+
 // Monday morning: the five biggest week-on-week changes in step conversion, friction and regret,
 // led by any telemetry that looks broken, mailed to geeks@ with a link to the ModTools UX tab.
 Schedule::command('ux:weekly-report')
