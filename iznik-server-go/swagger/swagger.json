@@ -5754,6 +5754,114 @@
     ]
    }
   },
+  "/modtools/ux/experiments": {
+   "get": {
+    "description": "Per funnel: running and past UX experiments, each with its status, its design, its result (the whole read while it runs and when it ends) and the paragraph of its newest read since the last start.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "UX experiments per funnel",
+    "operationId": "getUxExperiments",
+    "parameters": [
+     {
+      "type": "string",
+      "description": "Restrict to one flow",
+      "name": "flow",
+      "in": "query"
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   },
+   "post": {
+    "description": "Adds a draft UX experiment for a funnel. The body is flow, name, title, hypothesis, change, expected and optionally arms, design and pr_url. A pr_url must start with https://. The batch starts the draft on request, within the concurrency cap and the 24-hour end.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Create a UX experiment",
+    "operationId": "createUxExperiment",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "409": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/modtools/ux/experiments/{id}": {
+   "patch": {
+    "description": "Queues a start, stop or close of a UX experiment for the batch, which applies the rules and rewrites the ux_experiments config key the clients read. The body is action (start, stop or close), reason and cleanup_pr. A cleanup_pr must start with https://.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Start, stop or close a UX experiment",
+    "operationId": "actUxExperiment",
+    "parameters": [
+     {
+      "type": "integer",
+      "description": "Experiment id",
+      "name": "id",
+      "in": "path",
+      "required": true
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "404": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
   "/newsfeed": {
    "get": {
     "description": "Returns newsfeed items",

@@ -303,10 +303,24 @@ so no line needs a join to `session_start`. `page_view` also carries `page_id` a
 `event_type="flow"` lines come only from `composables/useFlowTelemetry.js` (a test enforces it). The
 `action_name` is the event (`flow_start`, `step_enter`, `step_complete`, `step_back`, `field_revisit`,
 `validation_failed`, `choice_switched`, `flow_submit`, `flow_submit_result`, `flow_complete`,
-`flow_abandon`, `flow_resume`, `help_sought`), with `flow`, `flow_instance_id`, `step`, `step_seq` and
-`variant` on each. They hold names, kinds and counts, never anything a member typed. API calls made
+`flow_abandon`, `flow_resume`, `help_sought`), with `flow`, `flow_instance_id`, `step`, `step_seq`,
+`variant`, `start_logged_in` and `started_ms` on each (the last two are frozen when the flow starts).
+They hold names, kinds and counts, never anything a member typed. API calls made
 while a flow instance is live carry the request header `X-Freegle-Flow-Instance`. The fields and rules
 are in [UX telemetry](../../developers/reference/ux-telemetry.md).
+
+`variant` is also what the hourly `ux:experiments-tick` reads: it asks live Loki for the counts of
+these lines by arm, hour by hour, over the window since each running experiment started (24 hours
+at most), stopping 45 minutes short of now, which is why a Loki outage stalls experiment decisions.
+A client stamps an arm only for an experiment its own bundle contains. The tick falls back to its
+last read only if that is under two hours old, and never adopts early on it; past an experiment's
+end with no usable read it waits up to six hours and then marks the experiment inconclusive, which
+takes the change off, rather than leave it running unread. Anyone can post a client log line, so the
+query is built to survive any line: one whose `started_ms` is not a number, or whose arm is not one of
+the experiment's own, is left out, and the labels it groups by take a fixed set of values, so no line
+can make Loki refuse the query. The
+arms themselves are published in the `config` table row `ux_experiments`, rewritten by the tick;
+do not edit it by hand ([UX experiments](../../developers/reference/ux-experiments.md)).
 
 ---
 

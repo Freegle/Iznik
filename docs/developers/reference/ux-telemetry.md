@@ -3,7 +3,6 @@ last_reviewed: 2026-10-15
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useFlowTelemetry.js
-  - iznik-nuxt3/composables/useExperiment.js
   - iznik-nuxt3/composables/useFlowRoutes.js
   - iznik-nuxt3/composables/useComposeTelemetry.js
   - iznik-nuxt3/composables/useLoginTelemetry.js
@@ -51,6 +50,12 @@ flowchart LR
 
 `page_view` also carries `page_id` and the modal context, like interaction events do.
 
+Every **flow** event also carries two fields frozen when its flow started, `start_logged_in` (whether
+the member was signed in then) and `started_ms` (when, in epoch milliseconds). `logged_in` itself is
+read at send time, so it changes mid-flow when a member signs in as part of Give, Ask or Reply, and
+is wrong for grouping the start and the completion of one flow. The experiment read groups by
+`start_logged_in` and cuts by `started_ms` ([The hourly tick](ux-experiments.md#the-hourly-tick)).
+
 ## 2. Flow events
 
 Emitted only through `composables/useFlowTelemetry.js`, which owns the names as exported
@@ -69,6 +74,8 @@ constants (`FlowName`, `FlowEvent`). Each is a `/clientlog` entry with **`event_
 | `dwell_ms` | On `step_complete`, `step_back`, `flow_abandon`: ms since the matching `step_enter`. On `flow_complete`: ms since `flow_start` |
 | `variant` | The member's experiment arms as `name:arm` joined by `,`, sorted; `''` when none. Frozen at `flow_start`: every event of an instance carries the same value, even if logging in at the end changes the id the arm is computed from |
 | `entry` | On `flow_start` only |
+| `start_logged_in` | `true` / `false`: whether the member was signed in when the flow started. Frozen at `flow_start`, so every event of an instance carries the same value, unlike `logged_in`, which is read at send time. The experiment read groups by it |
+| `started_ms` | When the flow started, in epoch milliseconds. Frozen at `flow_start`. The experiment read counts only flows that started at least `settle_minutes` before the end of its window, and cuts on this |
 
 **Events** (`FlowEvent`):
 
@@ -164,14 +171,9 @@ a minute.
 
 ## 4. Experiments
 
-`composables/useExperiment.js`: `useExperiment(name)` returns the member's arm for a configured
-experiment. Assignment is `crc32(<id>|<name>) % 100`, the same function as
-`iznik-batch/app/Support/ExperimentBucket.php`, where `<id>` is the user id when logged in and the
-client `session_id` otherwise. Experiments and arm ranges come from runtime config
-`public.UX_EXPERIMENTS` (JSON, `{"name": {"control": [0, 49], "b": [50, 99]}}`), empty by
-default. Every flow event carries the arms in `variant`, so the funnel splits by arm with no
-per-experiment recording code. Use fixed ratios with a control arm; the epsilon-greedy bandit in
-`abtest` is for choosing between asks, not for measuring a change.
+Every flow event carries the member's arms in `variant` as `name:arm` pairs, so the funnel splits by
+arm with no per-experiment recording code. How a member gets an arm, and how an experiment is run, read
+and decided, is on its own page: [UX experiments](ux-experiments.md).
 
 ## 5. Rollup tables
 
@@ -244,6 +246,8 @@ the five largest week-on-week changes to `config('freegle.ux.report_to')` every 
 that opens the tab.
 
 - [The SysAdmin UX tab](ux-sysadmin-tab.md): the sections, the address, the filters, Biggest loss.
+- [UX experiments](ux-experiments.md): how a change is shown to some members, read every hour and
+  decided within a day.
 
 `tests/e2e/test-ux-telemetry.spec.js` holds the flows to the event contract in section 2. The browser
 test of the tab itself is described on the page above.

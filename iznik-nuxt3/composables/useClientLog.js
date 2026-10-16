@@ -157,6 +157,14 @@ function getCurrentUserId() {
 }
 
 /**
+ * Whether a member is signed in right now. Flow telemetry freezes this when a flow starts, so an
+ * experiment can be compared among people who were in the same state when they began.
+ */
+export function isSignedIn() {
+  return !!getCurrentUserId()
+}
+
+/**
  * Check if auth store is ready (login state has been determined).
  * The store is considered ready once loginStateKnown is true,
  * which happens after fetchUser completes (whether logged in or not).

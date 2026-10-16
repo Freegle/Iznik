@@ -18,6 +18,7 @@ covers:
   - iznik-server-go/message/messageOutcome.go
   - iznik-server-go/test/message_agreement_test.go
   - iznik-nuxt3/eslint.config.mjs
+  - iznik-batch/app/Services/Ux/UxExperimentService.php
 ---
 
 # Deployment switches
@@ -59,7 +60,7 @@ variables like every other Freegle setting.
 | `backup.drain.enabled` | `BACKUP_DRAIN_ENABLED` | `false` | Holds batch work off while the nightly database backup runs. Off ships as a no-op. See below. |
 | `backup.drain.start` | `BACKUP_DRAIN_START` | `03:50` | When the hold starts, `HH:MM` in the app timezone. Anything that is not a valid `HH:MM` leaves the drain off rather than holding the schedule back for ever. |
 | `backup.drain.minutes` | `BACKUP_DRAIN_MINUTES` | `45` | How long the hold lasts. Zero or negative leaves it off, on the same reasoning. |
-| `backup.drain.always_run` | `BACKUP_DRAIN_ALWAYS_RUN` | `lockdown:tick,lockdown:report` | Comma-separated artisan command names that run anyway, matched without their arguments. Anything listed is competing with the backup, so keep it short. |
+| `backup.drain.always_run` | `BACKUP_DRAIN_ALWAYS_RUN` | `lockdown:tick,lockdown:report,ux:experiments-tick` | Comma-separated artisan command names that run anyway, matched without their arguments. Anything listed is competing with the backup, so keep it short. Set it starting from this list, not from the lockdown pair alone, or the experiment tick is held off again. |
 | `backup.database.enabled` | `BACKUP_DB_ENABLED` | `false` | Takes the nightly physical backup from Laravel instead of the shell script on the database node. Off ships as a no-op: the command refuses and the scheduled entry does not fire. |
 | `backup.database.host` | `BACKUP_DB_HOST` | empty | The node being backed up. xtrabackup copies a local data directory, so the pipeline runs there and only control flow crosses ssh. Empty is a configuration error rather than a default. |
 | `backup.database.ssh_key` | `BACKUP_DB_SSH_KEY` | `/etc/monitoring-ssh-key` | The private key the batch container uses to reach the node, at its path inside the container. The default is the monitoring key, which docker-compose already mounts and which is the root shell the backup needs anyway. |
@@ -68,6 +69,32 @@ variables like every other Freegle setting.
 | `backup.database.bucket` | `BACKUP_DB_BUCKET` | `gs://freegle_backup_uk` | Where the compressed stream goes. |
 | `backup.database.compress_threads` | `BACKUP_DB_COMPRESS_THREADS` | `4` | xtrabackup compression threads. More finishes sooner and competes harder. |
 | `ux.report_to` | `UX_REPORT_TO` | falls back to `FREEGLE_GEEKS_ADDR` | Where `ux:weekly-report` sends the Monday summary of the biggest week-on-week UX changes. See [ux-telemetry.md](ux-telemetry.md). |
+| `ux.experiments.max_concurrent` | `UX_EXPERIMENTS_MAX_CONCURRENT` | `5` | Most UX experiments running at once. `ux:experiment start` refuses one more. The Go API reads the same variable from its own environment to report the cap, and `docker-compose.yml` does not pass it to `apiv2`: set it on both sides or on neither, or the experiment routes report a cap that the batch does not use. The whole loop is in [ux-experiments.md](ux-experiments.md). |
+| `ux.experiments.max_hours` | `UX_EXPERIMENTS_MAX_HOURS` | `24` | How long a UX experiment may run before `ux:experiments-tick` must decide it. |
+| `ux.experiments.settle_minutes` | `UX_EXPERIMENTS_SETTLE_MINUTES` | `45` | Only flows that started at least this many minutes before now (or the end) are counted, with everything they did up to then, so flows that have not had time to finish do not count against the arm that got more traffic. |
+| `ux.experiments.min_starts_per_arm` | `UX_EXPERIMENTS_MIN_STARTS` | `50` | Flow starts each arm needs before any decision at the end. Fewer is inconclusive. |
+| `ux.experiments.early_min_starts_per_arm` | `UX_EXPERIMENTS_EARLY_MIN_STARTS` | `300` | Flow starts each arm needs before an early stop or any re-weighting of traffic. Every hourly look is another chance to be fooled by noise, so these ask for far more than a decision at the end. |
+| `ux.experiments.adopt_probability` | `UX_EXPERIMENTS_ADOPT_P` | `0.80` | At the end, adopt at or above this probability the change is better (and the expected loss is small enough), revert at or below one minus it, and call it inconclusive between. |
+| `ux.experiments.max_expected_loss_points` | `UX_EXPERIMENTS_MAX_LOSS_POINTS` | `0.5` | Adoption also needs the expected loss of choosing the change, if it turns out worse, to be at most this many points of completion. Stops a near-zero effect being adopted on a lucky probability. |
+| `ux.experiments.early_adopt_probability` | `UX_EXPERIMENTS_EARLY_ADOPT_P` | `0.99` | On any hourly read, once both arms have `early_min_starts_per_arm`, adopt at once at this probability (and the same loss bar, and no guardrail blocking). |
+| `ux.experiments.early_revert_probability` | `UX_EXPERIMENTS_EARLY_REVERT_P` | `0.02` | On any hourly read, once both arms have `early_min_starts_per_arm`, revert at once at or below this probability the change is better. |
+| `ux.experiments.guardrail_margin_points` | `UX_EXPERIMENTS_GUARDRAIL_MARGIN` | `2.0` | A guardrail (submit failures, validation failures, help sought, another touched flow's completion) trips only when the change is worse by more than this many points. A null change read every hour would otherwise trip one by chance. |
+| `ux.experiments.guardrail_error` | `UX_EXPERIMENTS_GUARDRAIL_ERROR` | `0.10` | The chance of a false alarm across all of an experiment's guardrails together at the end, split between the `k` guardrails: one blocks adoption at probability `1 - 0.10 / k`. Replaces `UX_EXPERIMENTS_GUARDRAIL_P`, which no longer does anything. |
+| `ux.experiments.early_guardrail_error` | `UX_EXPERIMENTS_EARLY_GUARDRAIL_ERROR` | `0.03` | The same for the early revert on any hourly read: probability `1 - 0.03 / k`. Replaces `UX_EXPERIMENTS_EARLY_HARM_P`, which no longer does anything. |
+| `ux.experiments.guardrail_min_events` | `UX_EXPERIMENTS_GUARDRAIL_MIN` | `100` | Events needed behind a guardrail, across both arms, before it is read at all. |
+| `ux.experiments.bandit` | `UX_EXPERIMENTS_BANDIT` | `true` | Each hourly read moves traffic towards the winning arm by Thompson sampling, once both arms have `early_min_starts_per_arm`. Off keeps the opening split. |
+| `ux.experiments.min_control_share` | `UX_EXPERIMENTS_MIN_CONTROL` | `35` | Percent of traffic control always keeps, so the comparison never stops being one. Every variant keeps the same floor (scaled by 2/k for k arms), so no arm is starved or emptied. |
+| `ux.experiments.max_variant_share` | `UX_EXPERIMENTS_MAX_VARIANT` | `65` | Percent of traffic one variant can take. |
+| `ux.experiments.cleanup_days` | `UX_EXPERIMENTS_CLEANUP_DAYS` | `7` | Days after an experiment is adopted before its switch still being in the code is reported as overdue. The Go API reads this variable too (for the overdue flag), so set it on both sides or on neither. |
+| `ux.experiments.min_power` | `UX_EXPERIMENTS_MIN_POWER` | `0.30` | `ux:experiment start` refuses an experiment whose expected effect a day of its flow would adopt less often than this. `0` turns the check off. Only applies where the daily rollup already has figures for the flow. |
+| `ux.experiments.default_expected_points` | `UX_EXPERIMENTS_DEFAULT_EXPECTED_POINTS` | `5.0` | The effect, in points of completion, the power check assumes when the experiment's design does not say. |
+| `ux.experiments.stale_read_hours` | `UX_EXPERIMENTS_STALE_READ_HOURS` | `2` | When Loki is down, the tick may carry on from its last stored read only if it is younger than this. |
+| `ux.experiments.stale_wait_hours` | `UX_EXPERIMENTS_STALE_WAIT_HOURS` | `6` | Past an experiment's end with no usable read, the tick waits this long for Loki and then marks the experiment inconclusive. |
+| `ux.experiments.sample_ratio_points` | `UX_EXPERIMENTS_SAMPLE_RATIO_POINTS` | `5` | A variant whose share of starts is further than this many points (and over 3.5 standard errors) from the share it was served is never adopted. A change that loses people before the flow starts looks better on the rate among starters while fewer finish. |
+| `ux.experiments.holdout_share` | `UX_EXPERIMENTS_HOLDOUT_SHARE` | `10` | After adoption this percent of members keep the old version until the experiment is closed. `0` turns the holdout, and the decay check that needs it, off. The Go API reads this variable too (to report whether a holdout runs), so set it on both sides or on neither. |
+| `ux.experiments.holdout_days` | `UX_EXPERIMENTS_HOLDOUT_DAYS` | `14` | How many days after adoption the tick compares the holdout with the adopted arm, once a day. The Go API reads this variable too (to report when the holdout ends), so set it on both sides or on neither. |
+| `ux.experiments.holdout_revert_probability` | `UX_EXPERIMENTS_HOLDOUT_REVERT_P` | `0.99` | The holdout check reverts an adopted change when the old version is this likely to be better on `holdout_revert_looks` looks in a row (both sides need `early_min_starts_per_arm`). High because there are up to 14 daily looks. |
+| `ux.experiments.holdout_revert_looks` | `UX_EXPERIMENTS_HOLDOUT_REVERT_LOOKS` | `2` | How many daily looks in a row must be against an adopted change before it is reverted. |
 | `backup.database.alert_email` | `BACKUP_DB_ALERT_EMAIL` | `geek-alerts@ilovefreegle.org` | Where a failure is mailed. Plain text, no template, because this has to work when the database is unhappy. |
 
 Every setting in `config/freegle.php` is read through `EnvSetting::env`, which is Laravel's
@@ -135,6 +162,12 @@ a 45-minute hold cannot explain a day-old row.
 lockdown is a live security incident, not routine batch work: the announce mail, holding
 and releasing, and the hourly report cannot wait out a 45-minute backup drain
 window while a spam wave is still going out. See the [lockdown runbook](../../ops/runbooks/lockdown.md).
+
+**`ux:experiments-tick` is in the default list too.** It only reads Loki and writes a few small rows, and
+it is the clock a 24-hour experiment is decided by. An hourly job that falls inside the window is skipped,
+not delayed, so holding it would leave an experiment that ends in the window decided an hour late, on more
+than a day of data, and the early-revert guardrails unchecked for two hours. See
+[the hourly tick](ux-experiments.md#the-hourly-tick).
 
 ### Taking the backup from Laravel
 

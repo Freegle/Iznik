@@ -5695,6 +5695,67 @@ type getSupportAIRunParams struct {
 //	401: errorResponse
 //	403: errorResponse
 
+// swagger:route GET /modtools/ux/experiments modtools getUxExperiments
+// UX experiments per funnel
+//
+// Per funnel: running and past UX experiments, each with its status, its design, its result (the whole read while it runs and when it ends) and the paragraph of its newest read since the last start.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: flow
+//     in: query
+//     description: Restrict to one flow
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /modtools/ux/experiments modtools createUxExperiment
+// Create a UX experiment
+//
+// Adds a draft UX experiment for a funnel. The body is flow, name, title, hypothesis, change, expected and optionally arms, design and pr_url. A pr_url must start with https://. The batch starts the draft on request, within the concurrency cap and the 24-hour end.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	409: errorResponse
+
+// swagger:route PATCH /modtools/ux/experiments/{id} modtools actUxExperiment
+// Start, stop or close a UX experiment
+//
+// Queues a start, stop or close of a UX experiment for the batch, which applies the rules and rewrites the ux_experiments config key the clients read. The body is action (start, stop or close), reason and cleanup_pr. A cleanup_pr must start with https://.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Experiment id
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
 // swagger:route GET /newsfeed/{id}/duplicate newsfeed getNewsfeedDuplicate
 // Whether a ChitChat post duplicates the poster's own live OFFER/WANTED
 //

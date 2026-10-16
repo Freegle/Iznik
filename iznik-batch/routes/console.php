@@ -576,6 +576,14 @@ Schedule::command('ux:rollup-daily')
     ->appendOutputTo(cronLog('ux:rollup-daily'))
     ->runInBackground();
 
+// Hourly: read every running UX experiment from Loki by arm, move traffic towards the arm that
+// is winning, and decide within 24 hours. Off the hour so it never queues behind the rollup.
+Schedule::command('ux:experiments-tick')
+    ->hourlyAt(17)
+    ->withoutOverlapping(50)
+    ->appendOutputTo(cronLog('ux:experiments-tick'))
+    ->runInBackground();
+
 // Monday morning: the five biggest week-on-week changes in step conversion, friction and regret,
 // led by any telemetry that looks broken, mailed to geeks@ with a link to the ModTools UX tab.
 Schedule::command('ux:weekly-report')

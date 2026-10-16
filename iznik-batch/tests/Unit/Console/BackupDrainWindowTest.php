@@ -172,4 +172,25 @@ class BackupDrainWindowTest extends TestCase
             );
         }
     }
+
+    public function test_the_hourly_ux_experiments_tick_is_not_held_off_by_the_drain(): void
+    {
+        // An hourly job in the window is skipped, not delayed, and the once-a-day check above
+        // cannot see it. This one decides experiments against a 24-hour limit, so it must run.
+        config(['freegle.backup.drain.enabled' => true]);
+
+        $schedule = $this->loadSchedule();
+        BackupDrain::apply($schedule);
+
+        $tick = null;
+        foreach ($schedule->events() as $event) {
+            if (str_contains((string) $event->command, 'ux:experiments-tick')) {
+                $tick = $event;
+            }
+        }
+
+        $this->assertNotNull($tick, 'ux:experiments-tick should be scheduled');
+        $this->assertTrue(BackupDrain::exempt($tick), 'ux:experiments-tick must be in the drain always_run list');
+        $this->assertSame(17, (int) explode(' ', $tick->expression)[0], 'the tick runs at :17, which the 03:50 window covers at 04:17');
+    }
 }

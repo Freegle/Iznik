@@ -10,21 +10,39 @@ import {
   useFlowTelemetry,
   getLiveFlowInstanceId,
   noteHelpSought,
+  flowArm,
   _resetFlowTelemetryForTests,
 } from '~/composables/useFlowTelemetry'
 
 const log = vi.hoisted(() => ({
   action: vi.fn(),
   flush: vi.fn(),
+  signedIn: false,
   variant: '',
+  now: null,
+  exposures: [],
 }))
 
 vi.mock('~/composables/useClientLog', () => ({
   action: log.action,
   flush: log.flush,
+  isSignedIn: () => log.signedIn,
 }))
 vi.mock('~/composables/useExperiment', () => ({
   experimentVariant: () => log.variant,
+  // The member's arm right now, which can differ from the one frozen into a live flow.
+  useExperiment: (name) => {
+    log.exposures.push(['now', name])
+    return log.now
+  },
+  noteExposure: (name, arm) => log.exposures.push(['frozen', name, arm]),
+  armInVariant: (variant, name) => {
+    for (const part of String(variant || '').split(',')) {
+      const i = part.indexOf(':')
+      if (i > 0 && part.slice(0, i) === name) return part.slice(i + 1)
+    }
+    return null
+  },
 }))
 
 function events() {
@@ -45,6 +63,9 @@ describe('useFlowTelemetry', () => {
     log.action.mockClear()
     log.flush.mockClear()
     log.variant = ''
+    log.signedIn = false
+    log.now = null
+    log.exposures = []
     flow = useFlowTelemetry(FlowName.GIVE)
   })
 
@@ -139,6 +160,26 @@ describe('useFlowTelemetry', () => {
       flow.submit()
       flow.complete()
       expect(events().every((e) => e.variant === 'exp:control')).toBe(true)
+    })
+
+    it('freezes who was signed in, and when the flow began, onto every event', () => {
+      log.signedIn = false
+      flow.start('navbar')
+      const began = Date.now()
+      // The member signs in part way through the flow and the flow then completes.
+      log.signedIn = true
+      vi.advanceTimersByTime(60000)
+      flow.enterStep('give')
+      flow.complete()
+      expect(events().length).toBeGreaterThanOrEqual(3)
+      expect(events().every((e) => e.start_logged_in === false)).toBe(true)
+      expect(events().every((e) => e.started_ms === began)).toBe(true)
+    })
+
+    it('records a flow begun while signed in as such', () => {
+      log.signedIn = true
+      flow.start('navbar')
+      expect(last().start_logged_in).toBe(true)
     })
 
     it('works without crypto.randomUUID', () => {
@@ -363,6 +404,8 @@ describe('useFlowTelemetry', () => {
       'reason',
       'last_step',
       'age_ms',
+      'start_logged_in',
+      'started_ms',
     ])
 
     it('takes no value arguments: the signatures are names and kinds only', () => {
@@ -712,6 +755,57 @@ describe('useFlowTelemetry', () => {
       expect(askId).not.toBe(giveId)
       flow.complete()
       expect(getLiveFlowInstanceId()).toBe(askId)
+    })
+  })
+
+  describe('flowArm', () => {
+    it('is the arm now when no instance is live', () => {
+      log.now = 'b'
+      expect(flowArm(FlowName.GIVE, 'exp')).toBe('b')
+      expect(log.exposures).toEqual([['now', 'exp']])
+    })
+
+    it('is the arm frozen at flow_start while an instance is live', () => {
+      log.variant = 'exp:control,other:b'
+      flow.start('navbar')
+      // The member signs in, the config refreshes, the arm now is b; the flow keeps control.
+      log.now = 'b'
+      log.variant = 'exp:b,other:b'
+      expect(flowArm(FlowName.GIVE, 'exp')).toBe('control')
+      expect(flowArm(FlowName.GIVE, 'other')).toBe('b')
+      expect(flowArm(FlowName.GIVE, 'absent')).toBeNull()
+      expect(log.exposures).toContainEqual(['frozen', 'exp', 'control'])
+    })
+
+    it('is null for a flow started before the member was in the experiment', () => {
+      log.variant = ''
+      flow.start('navbar')
+      log.now = 'b'
+      expect(flowArm(FlowName.GIVE, 'exp')).toBeNull()
+    })
+
+    it('does not match a name that is only the end of another', () => {
+      log.variant = 'login_cta:b'
+      flow.start('navbar')
+      expect(flowArm(FlowName.GIVE, 'cta')).toBeNull()
+    })
+
+    it('keeps reading the frozen arm after an idle end, and drops it after a real end', () => {
+      log.variant = 'exp:b'
+      flow.start('navbar')
+      vi.advanceTimersByTime(31 * 60 * 1000)
+      log.variant = 'exp:control'
+      log.now = 'control'
+      expect(flowArm(FlowName.GIVE, 'exp')).toBe('b')
+      flow.complete()
+      expect(flowArm(FlowName.GIVE, 'exp')).toBe('control')
+    })
+
+    it("reads another flow's instance only for that flow", () => {
+      log.variant = 'exp:b'
+      flow.start('navbar')
+      log.now = 'control'
+      expect(flowArm(FlowName.ASK, 'exp')).toBe('control')
     })
   })
 })

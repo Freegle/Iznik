@@ -26,6 +26,8 @@ use App\Services\HousekeeperService;
 use App\Services\Lockdown\LockdownService;
 use App\Services\PostcodeRemapService;
 use App\Services\UserManagementService;
+use App\Services\Ux\UxExperimentRefused;
+use App\Services\Ux\UxExperimentService;
 use App\Services\PushNotificationService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
@@ -286,6 +288,7 @@ class ProcessBackgroundTasksCommand extends Command
             BackgroundTask::TASK_REMAP_POSTCODES         => $this->handleRemapPostcodes($data),
             BackgroundTask::TASK_USER_FORGET             => $this->handleUserForget($data),
             BackgroundTask::TASK_TN_SYNC                 => $this->handleTnSyncCommand($data),
+            BackgroundTask::TASK_UX_EXPERIMENT           => $this->handleUxExperiment($data),
             default => throw new \RuntimeException("Unknown task type: {$taskType}"),
         };
     }
@@ -1870,5 +1873,35 @@ class ProcessBackgroundTasksCommand extends Command
         if ($exitCode !== 0) {
             throw new \RuntimeException("tn:sync failed with exit code {$exitCode}");
         }
+    }
+
+    /**
+     * Start, stop or close a UX experiment for the experiment routes (PATCH
+     * /modtools/ux/experiments/:id). The Go API only queues; the service applies the concurrency
+     * cap, the 24-hour end and the config key the client reads, so those rules live once.
+     */
+    private function handleUxExperiment(array $data): void
+    {
+        $id = (int) ($data['id'] ?? 0);
+        $action = (string) ($data['action'] ?? '');
+        $service = app(UxExperimentService::class);
+        try {
+            match ($action) {
+                'start' => $service->start($id),
+                'stop' => $service->stop($id, (string) ($data['reason'] ?: 'Stopped from ModTools.')),
+                'close' => $service->close($id, $data['cleanup_pr'] ?: null),
+                default => throw new \RuntimeException("Unknown ux_experiment action: {$action}"),
+            };
+        } catch (UxExperimentRefused $e) {
+            // The rules said no (the cap, a second experiment on the flow, too little power, a
+            // status that does not allow it). That is an answer for the person who clicked, not a
+            // fault: say so on the experiment, where the experiment routes show it, and finish the task.
+            // Trying again would only be refused again.
+            $service->recordRefusal($id, $action, $e->getMessage());
+            Log::info('UX experiment action refused', ['id' => $id, 'action' => $action, 'why' => $e->getMessage()]);
+
+            return;
+        }
+        Log::info('UX experiment action applied', ['id' => $id, 'action' => $action]);
     }
 }

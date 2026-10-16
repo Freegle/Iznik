@@ -1708,6 +1708,47 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/ux/samples", ux.Samples)
 
+		// @Router /modtools/ux/experiments [get]
+		// @Summary UX experiments per funnel
+		// @Description Per funnel: running and past experiments with their latest plain-English read
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param flow query string false "Restrict to one flow"
+		// @Success 200 {object} ux.ExperimentsResponse
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/experiments", ux.Experiments)
+
+		// @Router /modtools/ux/experiments [post]
+		// @Summary Create a UX experiment
+		// @Description Adds a draft experiment for a funnel; the batch starts it on request
+		// @Tags ux
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Param body body ux.CreateExperimentRequest true "The experiment"
+		// @Success 200 {object} fiber.Map
+		// @Failure 400 {object} fiber.Error "Invalid"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Post("/modtools/ux/experiments", ux.CreateExperiment)
+
+		// @Router /modtools/ux/experiments/{id} [patch]
+		// @Summary Start, stop or close a UX experiment
+		// @Description Queues the action for the batch, which applies the cap and the 24-hour end
+		// @Tags ux
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Param id path int true "Experiment id"
+		// @Param body body ux.ExperimentActionRequest true "start, stop or close"
+		// @Success 200 {object} fiber.Map
+		// @Failure 400 {object} fiber.Error "Invalid"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Patch("/modtools/ux/experiments/:id", ux.ExperimentAction)
+
 		// Email Tracking for specific user (authenticated, admin only)
 		// @Router /email/user/{id} [get]
 		// @Summary Get email tracking for a user

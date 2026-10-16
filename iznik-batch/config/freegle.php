@@ -147,9 +147,15 @@ return [
             // and the hourly report must not wait out a 45-minute backup window on top of whatever
             // is actually happening. Override via BACKUP_DRAIN_ALWAYS_RUN if that default
             // is ever wrong for a specific deployment.
+            //
+            // ux:experiments-tick also runs through the window: it only reads Loki and writes a
+            // few small rows, and it is the clock a 24-hour experiment is decided by. An hourly
+            // job inside the window is skipped, not delayed, so holding it would leave an
+            // experiment that ends in the window decided an hour late, on more than a day of
+            // data, and would leave the early-revert guardrails unchecked for two hours.
             'always_run' => array_values(array_filter(array_map(
                 'trim',
-                explode(',', (string) EnvSetting::env('BACKUP_DRAIN_ALWAYS_RUN', 'lockdown:tick,lockdown:report'))
+                explode(',', (string) EnvSetting::env('BACKUP_DRAIN_ALWAYS_RUN', 'lockdown:tick,lockdown:report,ux:experiments-tick'))
             ))),
         ],
 
@@ -1800,5 +1806,72 @@ return [
         ],
         'report_to'       => EnvSetting::env('UX_REPORT_TO', EnvSetting::env('FREEGLE_GEEKS_ADDR', 'geeks@ilovefreegle.org')),
         'sample_per_step' => 20,
+
+        // The automated experiment loop (ux:experiments-tick). Caps and thresholds are settings
+        // so the loop can be tuned without a deploy of the batch code. See
+        // docs/developers/reference/ux-experiments.md.
+        'experiments' => [
+            // No more than this many running at once, and none for longer than this.
+            'max_concurrent' => (int) EnvSetting::env('UX_EXPERIMENTS_MAX_CONCURRENT', 5),
+            'max_hours' => (int) EnvSetting::env('UX_EXPERIMENTS_MAX_HOURS', 24),
+            // Only flows that started at least this long ago are counted (what they did is counted
+            // up to now): a flow started later has not had time to finish, and the arm getting
+            // more traffic would look worse for it.
+            'settle_minutes' => (int) EnvSetting::env('UX_EXPERIMENTS_SETTLE_MINUTES', 45),
+            // Each arm needs this many flow starts before a decision at the end. An early stop
+            // and any re-weighting of the traffic need the larger figure (every hourly look is
+            // another chance to be fooled by noise, so they ask for much more).
+            'min_starts_per_arm' => (int) EnvSetting::env('UX_EXPERIMENTS_MIN_STARTS', 50),
+            'early_min_starts_per_arm' => (int) EnvSetting::env('UX_EXPERIMENTS_EARLY_MIN_STARTS', 300),
+            // At the end: adopt at or above this probability the change is better AND when the
+            // expected loss, if it is not, is under this many points; revert at or below one minus
+            // the probability; inconclusive (and off) otherwise.
+            'adopt_probability' => (float) EnvSetting::env('UX_EXPERIMENTS_ADOPT_P', 0.80),
+            'max_expected_loss_points' => (float) EnvSetting::env('UX_EXPERIMENTS_MAX_LOSS_POINTS', 0.5),
+            // On any hourly read, once both arms have early_min_starts_per_arm.
+            'early_adopt_probability' => (float) EnvSetting::env('UX_EXPERIMENTS_EARLY_ADOPT_P', 0.99),
+            'early_revert_probability' => (float) EnvSetting::env('UX_EXPERIMENTS_EARLY_REVERT_P', 0.02),
+            // A guardrail trips only when the arm is worse by more than this many points. The
+            // chance of a false alarm across ALL of an experiment's k guardrails together is split
+            // between them: at the end the change is blocked when one is worse with probability
+            // 1 - guardrail_error / k, and reverted at once on any read at 1 - early_guardrail_error / k
+            // (and only once both arms have early_min_starts_per_arm starts). Each is read once
+            // this many events are behind it across both arms.
+            'guardrail_margin_points' => (float) EnvSetting::env('UX_EXPERIMENTS_GUARDRAIL_MARGIN', 2.0),
+            'guardrail_error' => (float) EnvSetting::env('UX_EXPERIMENTS_GUARDRAIL_ERROR', 0.10),
+            'early_guardrail_error' => (float) EnvSetting::env('UX_EXPERIMENTS_EARLY_GUARDRAIL_ERROR', 0.03),
+            'guardrail_min_events' => (int) EnvSetting::env('UX_EXPERIMENTS_GUARDRAIL_MIN', 100),
+            // Thompson sampling moves traffic towards the arm that is winning each hour, inside a
+            // band: control keeps at least this share and no variant takes more than the cap, so
+            // the comparison keeps enough people on both sides to be read in a day.
+            'bandit' => EnvSetting::env('UX_EXPERIMENTS_BANDIT', true),
+            'min_control_share' => (int) EnvSetting::env('UX_EXPERIMENTS_MIN_CONTROL', 35),
+            'max_variant_share' => (int) EnvSetting::env('UX_EXPERIMENTS_MAX_VARIANT', 65),
+            // A variant whose share of starts is further than this many points (and more than chance
+            // allows) from the share it was served is never adopted: the completion rate is among
+            // those who started, so a change that loses people before the start event can look
+            // better while fewer people finish.
+            'sample_ratio_points' => (float) EnvSetting::env('UX_EXPERIMENTS_SAMPLE_RATIO_POINTS', 5.0),
+            // An adopted experiment whose switch has not been cleaned out of the code after this
+            // many days is reported as overdue.
+            'cleanup_days' => (int) EnvSetting::env('UX_EXPERIMENTS_CLEANUP_DAYS', 7),
+            // start() refuses an experiment whose expected effect a day of its flow would adopt
+            // with less than this probability (0 turns the check off); the expected effect is
+            // the design's expected_points, or default_expected_points when the design has none.
+            'min_power' => (float) EnvSetting::env('UX_EXPERIMENTS_MIN_POWER', 0.30),
+            'default_expected_points' => (float) EnvSetting::env('UX_EXPERIMENTS_DEFAULT_EXPECTED_POINTS', 5.0),
+            // A stored read older than this many hours is never used to adopt; past the end the
+            // tick waits up to stale_wait_hours for Loki and then marks the experiment inconclusive.
+            'stale_read_hours' => (int) EnvSetting::env('UX_EXPERIMENTS_STALE_READ_HOURS', 2),
+            'stale_wait_hours' => (int) EnvSetting::env('UX_EXPERIMENTS_STALE_WAIT_HOURS', 6),
+            // After adoption this percentage of members keeps the old version, and for holdout_days
+            // the tick compares it once a day with the adopted arm and reverts a gain that decayed.
+            'holdout_share' => (int) EnvSetting::env('UX_EXPERIMENTS_HOLDOUT_SHARE', 10),
+            'holdout_days' => (int) EnvSetting::env('UX_EXPERIMENTS_HOLDOUT_DAYS', 14),
+            // High, and needed on this many daily looks in a row: with up to 14 looks a loose bar
+            // would undo good changes by chance.
+            'holdout_revert_probability' => (float) EnvSetting::env('UX_EXPERIMENTS_HOLDOUT_REVERT_P', 0.99),
+            'holdout_revert_looks' => (int) EnvSetting::env('UX_EXPERIMENTS_HOLDOUT_REVERT_LOOKS', 2),
+        ],
     ],
 ];
