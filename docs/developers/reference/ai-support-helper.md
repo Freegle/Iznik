@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-15
+last_reviewed: 2026-10-16
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -88,7 +88,7 @@ SDK's `Read`/`Grep`/`Glob` confined to the codebase checkout:
 | Tool | Purpose |
 |------|---------|
 | `identify_user` | resolve an email / name / id to a member (must be done first) |
-| `get_user_dump` + `query_dump` | pull a per-user SQLite dump (~69 tables + Loki + Sentry, secrets redacted) via the Go API and run SQL against it locally |
+| `get_user_dump` + `query_dump` | pull a per-user SQLite dump (~70 tables + Loki + Sentry, secrets redacted) via the Go API and run SQL against it locally |
 | `db_query` | ad-hoc **read-only** SQL against the live DB (guarded — see below) |
 | `loki_search` | multi-pass member-id search (both label eras), or raw LogQL (window capped) |
 | `sentry_search` | recent Sentry issues across the nuxt3/go/capacitor/modtools projects |

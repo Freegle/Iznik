@@ -2,8 +2,10 @@
  * Experiment assignment for UX telemetry (docs/developers/reference/ux-experiments.md).
  *
  * Assignment is crc32("<id>|<name>") % 100, the same function as
- * iznik-batch/app/Support/ExperimentBucket.php, where <id> is the user id when logged in and the
- * client session id otherwise. Arm ranges are inclusive.
+ * iznik-batch/app/Support/ExperimentBucket.php and iznik-server-go/ux/serverarm.go, where <id> is
+ * the user id when logged in and the client session id otherwise. An entry may carry a `salt`, and
+ * the text is then crc32("<id>|<name>|<salt>"): it makes a re-run of an experiment fall into
+ * different arms from the run before. Arm ranges are inclusive.
  *
  * Where the arms come from, in order of precedence:
  *   1. The live config key `ux_experiments`, fetched at boot by plugins/uxExperiments.client.js
@@ -43,6 +45,9 @@ export const STORED_COPY_MAX_AGE_MS = 2 * 60 * 60 * 1000
 
 const NAME = /^[A-Za-z0-9_-]{1,64}$/
 const ARM = /^[A-Za-z0-9_-]{1,32}$/
+// The salt of an entry, when it has one. Server code reads the same pattern; an entry whose salt is
+// present and does not match is dropped in all three places, so no runtime guesses at a bucket.
+const SALT = /^[A-Za-z0-9_-]{1,16}$/
 // Names that would be keys on a plain object in surprising ways.
 const BLOCKED_NAMES = new Set(['__proto__', 'constructor', 'prototype'])
 
@@ -82,8 +87,8 @@ export function crc32(str) {
   return (crc ^ 0xffffffff) >>> 0
 }
 
-export function bucket(id, name) {
-  return crc32(id + '|' + name) % 100
+export function bucket(id, name, salt = '') {
+  return crc32(id + '|' + name + (salt ? '|' + salt : '')) % 100
 }
 
 function parse(raw) {
@@ -141,9 +146,10 @@ function validArms(arms) {
 }
 
 /**
- * Turn a config value into {name: {arms, until, adopted}}, dropping anything malformed. An entry
- * that is not understood is left out, which is control: the safe reading. `allowFlat` accepts the
- * old shape (arms directly under the name), for the local-testing runtime config only.
+ * Turn a config value into {name: {arms, until, adopted, salt}}, dropping anything malformed. An
+ * entry that is not understood is left out, which is control: the safe reading. `salt` is '' when
+ * the entry has none. `allowFlat` accepts the old shape (arms directly under the name), for the
+ * local-testing runtime config only.
  */
 export function normaliseConfig(raw, allowFlat = false) {
   const source = parse(raw)
@@ -157,17 +163,28 @@ export function normaliseConfig(raw, allowFlat = false) {
     if (value.arms !== undefined) {
       const arms = validArms(value.arms)
       if (!arms) continue
+      // A salt that is present (not undefined or null) must be a well formed string.
+      const salted = value.salt !== undefined && value.salt !== null
+      if (salted && !(typeof value.salt === 'string' && SALT.test(value.salt)))
+        continue
       const until = Number(value.until)
       entries[name] = {
         arms,
         until: Number.isFinite(until) ? until : null,
         adopted: value.adopted === true,
         flat: false,
+        salt: salted ? value.salt : '',
       }
     } else if (allowFlat) {
       const arms = validArms(value)
       if (arms)
-        entries[name] = { arms, until: null, adopted: false, flat: true }
+        entries[name] = {
+          arms,
+          until: null,
+          adopted: false,
+          flat: true,
+          salt: '',
+        }
     }
   }
   return entries
@@ -286,8 +303,8 @@ function assignmentId() {
   return getSessionId()
 }
 
-function armFromRanges(name, ranges, id) {
-  const b = bucket(id, name)
+function armFromRanges(name, ranges, id, salt = '') {
+  const b = bucket(id, name, salt)
   for (const [arm, range] of Object.entries(ranges)) {
     if (b >= range[0] && b <= range[1]) return arm
   }
@@ -342,7 +359,7 @@ function resolveArm(name) {
   // Adopted, and the old flat shape used for local testing, are not sticky: an adopted entry is
   // the same arm for everyone for as long as it is in the config.
   if (entry.adopted || entry.flat) {
-    return armFromRanges(name, entry.arms, assignmentId())
+    return armFromRanges(name, entry.arms, assignmentId(), entry.salt)
   }
 
   const st = readSticky(name)
@@ -358,7 +375,7 @@ function resolveArm(name) {
     dropSticky(name)
   }
 
-  const arm = armFromRanges(name, entry.arms, assignmentId())
+  const arm = armFromRanges(name, entry.arms, assignmentId(), entry.salt)
   if (arm) writeSticky(name, { arm, until: entry.until })
   return arm
 }

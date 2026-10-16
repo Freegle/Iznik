@@ -94,6 +94,15 @@ give, ask or reply. It was declined on 2026-10-12 and will never be built. The t
 where members struggle; it does not interrupt them to ask. Do not add a prompt, survey or
 `ux_feedback` table to the flows for this.
 
+## An experiment counts a member once, on their first exposure
+
+When an experiment is decided on the server and counted from `ux_experiment_exposures`, each member is one
+count, on the first exposure of a type the source counts. The age test runs after that first one is
+chosen: a first exposure that is not yet old enough is not counted and is not replaced by a later one. Do
+not "fix" a low count by counting every exposure (a member mailed twice would count twice) or by taking
+the latest (a member's count would depend on when you looked). A web view writes no row, so
+mail-and-site experiments are measured from the first server exposure.
+
 ## See also
 
 - `docs/developers/reference/coding-standards.md` - the rest of the coding rules.

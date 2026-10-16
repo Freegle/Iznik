@@ -13,6 +13,7 @@ use Symfony\Component\Console\Attribute\AsCommand;
  *
  *   ux:experiment list
  *   ux:experiment create --flow=give --name=give-photos-skip --title=... --hypothesis=... --change=... --expected=... [--touches=give,login --expected-points=5]
+ *   ux:experiment create --flow=reply --name=digest-subject ... --design='{"channel":"email","type":"UnifiedDigestDaily","source":"email_click","window_hours":24,"expected_points":0.5,"copy":{"control":"...","items":"..."}}'
  *   ux:experiment start give-photos-skip
  *   ux:experiment stop give-photos-skip --reason="..."
  *   ux:experiment close give-photos-skip --cleanup-pr=https://...
@@ -34,6 +35,7 @@ class ExperimentCommand extends Command
         {--pr= : create: the pull request that adds the switch}
         {--touches= : create: comma separated funnels the change can affect, whose completion is watched as a guardrail (default: its own funnel and login)}
         {--expected-points= : create: the effect expected, in points of completion, used to check a day of the funnel could show it (default 5)}
+        {--design= : create: JSON design keys for an experiment decided on the server (mail, push or server code): channel, type, source, window_hours, intake_hours, max_hours, salt, slot, copy. --touches and --expected-points win over the same keys here}
         {--reason= : stop: why}
         {--cleanup-pr= : close: the pull request that removed the switch}';
 
@@ -95,14 +97,34 @@ class ExperimentCommand extends Command
             'expected' => $this->option('expected'),
             'arms' => $this->option('arms'),
             'pr_url' => $this->option('pr'),
-            'design' => array_filter([
+            'design' => array_merge($this->designOption(), array_filter([
                 'touches' => $this->option('touches') !== null ? array_values(array_filter(array_map('trim', explode(',', (string) $this->option('touches'))))) : null,
                 'expected_points' => $this->option('expected-points') !== null ? $this->option('expected-points') : null,
-            ], fn ($v) => $v !== null),
+            ], fn ($v) => $v !== null)),
         ]);
         $this->info("Created experiment $id (".$this->option('name').'), draft. Start it with: ux:experiment start '.$this->option('name'));
 
         return self::SUCCESS;
+    }
+
+    /**
+     * The keys of --design. A value that is not a JSON object is refused in plain words, so a typo
+     * does not quietly create an experiment with no design.
+     *
+     * @return array<string, mixed>
+     */
+    private function designOption(): array
+    {
+        $raw = $this->option('design');
+        if ($raw === null || $raw === '') {
+            return [];
+        }
+        $design = json_decode((string) $raw, true);
+        if (! is_array($design) || array_is_list($design)) {
+            throw new \InvalidArgumentException('--design must be a JSON object, for example {"channel":"email","type":"UnifiedDigestDaily"}');
+        }
+
+        return $design;
     }
 
     private function show(object $exp): int

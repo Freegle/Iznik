@@ -333,4 +333,69 @@ describe('ModSysAdminUxExperimentReadout', () => {
       ).toBe(false)
     })
   })
+  describe('an experiment decided on the server', () => {
+    const words = {
+      who: 'members',
+      started: 'were counted',
+      finished: 'clicked a link within a day',
+      tab_started: 'Counted',
+      tab_finished: 'Clicked within a day',
+      note: 'Each member is counted once, for the first email they were sent, and only when that was at least a day ago.',
+    }
+
+    const decided = (over = {}) =>
+      experiment({
+        design: { channel: 'email', source: 'email_click', window_hours: 24 },
+        result: result(
+          {
+            arms: {
+              control: { starts: 12389, completes: 1239 },
+              b: { starts: 12402, completes: 2232 },
+            },
+            words,
+          },
+          { control_rate: 0.1, variant_rate: 0.18, diff_points: 8 }
+        ),
+        ...over,
+      })
+
+    it('says how many were counted and what happened in the nouns of the source', () => {
+      const t = make(decided()).text()
+      expect(t).toContain('Counted: 12,402 with the change, 12,389 without.')
+      expect(t).toContain(
+        'Clicked within a day: 18.0% with the change, 10.0% without. That is 8 points more.'
+      )
+      expect(t).not.toContain('Sent:')
+      expect(t).not.toContain('Started:')
+      expect(t).not.toContain('Finished:')
+    })
+
+    it('shows how it counts, as a note', () => {
+      const w = make(decided())
+      expect(w.find('.note').exists()).toBe(true)
+      expect(w.find('.note').text()).toBe(words.note)
+    })
+
+    it('shows no note for a change to the site', () => {
+      expect(make(experiment()).find('.note').exists()).toBe(false)
+    })
+
+    it('says members, not starts, when the share counted is not the share served', () => {
+      const t = make(
+        decided({
+          result: result(
+            { words },
+            { share_off: true, observed_share: 30, expected_share: 50 }
+          ),
+        })
+      ).text()
+      expect(t).toContain(
+        'Fewer members were counted with the change than expected.'
+      )
+      expect(t).toContain(
+        '30% of those counted were on the change, and about 50% were expected.'
+      )
+      expect(t).not.toContain('of starts')
+    })
+  })
 })

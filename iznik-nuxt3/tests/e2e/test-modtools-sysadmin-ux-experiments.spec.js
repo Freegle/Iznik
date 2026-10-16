@@ -164,6 +164,124 @@ const TAKEN_OFF = {
   latest_read: null,
 }
 
+// Experiments decided on the server, counted from the database by a metric source instead of from Loki.
+// The route sends their design and result as stored (iznik-server-go/ux/experiments.go), so these are
+// the shapes UxExperimentService writes: the text each version shows in design.copy, and the source's own
+// nouns and how many were exposed and counted in result.words and result.detail.
+const EMAIL = {
+  ...RUNNING,
+  id: 21,
+  flow: 'reply',
+  name: 'digest-subject',
+  title: 'A plainer digest subject',
+  hypothesis: 'A subject that says what is inside gets more clicks.',
+  change: 'The subject of the daily digest names the items in it.',
+  expected: 'More members click a link in the digest.',
+  arms: { control: [0, 49], items: [50, 99] },
+  started_at: '2026-10-20 10:00:00',
+  ends_at: '2026-10-22 10:00:00',
+  pr_url: 'https://github.com/Freegle/Iznik/pull/1810',
+  design: {
+    channel: 'email',
+    type: 'UnifiedDigestDaily',
+    source: 'email_click',
+    window_hours: 24,
+    intake_hours: 24,
+    max_hours: 48,
+    fixed_split: true,
+    touches: [],
+    expected_points: 1,
+    copy: {
+      control: 'Your daily digest',
+      items: 'Sofa, bike and 14 more near you',
+    },
+  },
+  result: {
+    read_at: '2026-10-21T16:30:00+00:00',
+    arms: {
+      control: { starts: 12389, completes: 1239 },
+      items: { starts: 12402, completes: 2232 },
+    },
+    primary: {
+      items: {
+        control_rate: 0.1,
+        variant_rate: 0.18,
+        diff_points: 8,
+        p_better: 0.97,
+        enough: true,
+        observed_share: 50,
+        expected_share: 50,
+        share_off: false,
+      },
+    },
+    guardrails: [
+      {
+        arm: 'items',
+        name: 'unsubscribe',
+        label: 'the share of members who unsubscribed',
+        control_rate: 0.002,
+        variant_rate: 0.002,
+        p_worse: 0.1,
+        k: 1,
+        margin_points: 0.3,
+      },
+    ],
+    allocation: { control: 50, items: 50 },
+    words: {
+      who: 'members',
+      started: 'were counted',
+      finished: 'clicked a link within a day',
+      tab_started: 'Counted',
+      tab_finished: 'Clicked within a day',
+      note: 'Each member is counted once, for the first email they were sent, and only when that was at least a day ago.',
+    },
+    detail: {
+      exposed: { control: 12500, items: 12512 },
+      counted: { control: 12389, items: 12402 },
+    },
+  },
+  latest_read: null,
+  hours: 30.5,
+}
+
+const PUSH = {
+  ...EMAIL,
+  id: 22,
+  name: 'push-posts-title',
+  title: 'A shorter title on the daily posts push',
+  hypothesis: 'A shorter title is read on the lock screen.',
+  change:
+    'The title of the daily posts push gives the count and the first item.',
+  expected: 'More members open the site after the push.',
+  pr_url: null,
+  design: {
+    channel: 'push',
+    type: 'daily_new_posts',
+    source: 'active_after',
+    window_hours: 24,
+    intake_hours: 24,
+    max_hours: 48,
+    fixed_split: true,
+    touches: [],
+    expected_points: 2,
+    copy: {
+      control: 'New posts near you',
+      items: '12 new posts, including a sofa',
+    },
+  },
+  result: {
+    ...EMAIL.result,
+    words: {
+      who: 'members',
+      started: 'were counted',
+      finished: 'were active within a day',
+      tab_started: 'Counted',
+      tab_finished: 'Active within a day',
+      note: "Active means the site or app loaded the member's notifications, which it does when they have something unread or open the bell. Each member is counted once, for the first notification they were sent, and only when that was at least a day ago. The hour it was sent counts.",
+    },
+  },
+}
+
 // A finished experiment for each day, the newest first, to push one past the first 25 rows.
 const OLD = (i) => ({
   ...KEPT,
@@ -656,5 +774,118 @@ test.describe('ModTools SysAdmin UX tab: Experiments', () => {
     await expect(rows(page)).toHaveCount(30)
     await expect(rows(page).last()).toHaveAttribute('aria-expanded', 'true')
     await expect(section(page).locator('button.more')).toHaveCount(0)
+  })
+
+  test('shows an experiment decided on the server: its channel, the text of each version, how long members are reached and how many were counted', async ({
+    page,
+    testEnv,
+  }) => {
+    await loginViaModTools(page, testEnv.mod.email)
+    await serveExperiments(page, { list: [RUNNING, EMAIL, PUSH, DRAFT] })
+    await open(page, 'ux_exp=21')
+
+    await expect(rows(page)).toHaveCount(4, { timeout: timeouts.ui.appearance })
+    // The funnel column names the channel and then the funnel for a change decided on the server, and the funnel
+    // alone otherwise. The Funnel filter chooses by funnel, so the column says which funnel each one feeds.
+    const funnels = await rows(page).locator('.funnel').allTextContents()
+    expect([...funnels].sort()).toEqual([
+      'Email, Replying',
+      'Offering',
+      'Push, Replying',
+      'Settings',
+    ])
+    await expect(
+      rows(page)
+        .filter({ hasText: 'A plainer digest subject' })
+        .locator('.line')
+    ).toContainText(
+      'Looking better: 18.0% clicked within a day against 10.0% (+8.0 points).'
+    )
+
+    // The mail experiment, open: the text of each version, how long members are reached, and the counts.
+    const detail = section(page).locator('.ux-exp-detail')
+    await expect(detail).toBeVisible({ timeout: timeouts.ui.appearance })
+    await expect(detail).toHaveCount(1)
+    const channel = detail.locator('.ux-exp-channel')
+    await expect(channel).toContainText('Email experiment')
+    await expect(channel).toContainText('Funnel: Replying to a post.')
+    await expect(channel).toContainText('Control: Your daily digest')
+    await expect(channel).toContainText(
+      'Items: Sofa, bike and 14 more near you'
+    )
+    await expect(channel).toContainText(
+      'Served until 21 Oct 2026, 10:00 UTC. Decision on 22 Oct 2026, 10:00 UTC.'
+    )
+    // In the words and the order of the read-out: the change first, then the old version.
+    await expect(channel.locator('.exposed')).toHaveText(
+      'Exposed: 12,512 with the change, 12,500 without.'
+    )
+    await expect(channel.locator('.counted')).toHaveText(
+      'Counted: 12,402 with the change, 12,389 without.'
+    )
+    // The read-out uses the nouns of the source, and says how it counts.
+    await expect(detail).toContainText(
+      'Counted: 12,402 with the change, 12,389 without.'
+    )
+    await expect(detail).toContainText(
+      'Clicked within a day: 18.0% with the change, 10.0% without. That is 8 points more.'
+    )
+    await expect(detail.locator('.note')).toContainText(
+      'Each member is counted once, for the first email they were sent'
+    )
+    // Another funnel cannot be split by a server arm, so none is listed as watched.
+    await expect(detail).not.toContainText('Other funnels we watched')
+
+    // The push experiment has its own text.
+    await rows(page)
+      .filter({ hasText: 'A shorter title on the daily posts push' })
+      .click()
+    const push = section(page).locator('.ux-exp-detail .ux-exp-channel')
+    await expect(push).toContainText('Push experiment', {
+      timeout: timeouts.ui.appearance,
+    })
+    await expect(push).toContainText('Items: 12 new posts, including a sofa')
+    await expect(section(page).locator('.ux-exp-detail')).toContainText(
+      'Active within a day: 18.0% with the change, 10.0% without.'
+    )
+
+    // A change to the site has no channel block.
+    await rows(page).filter({ hasText: 'Make skipping photos obvious' }).click()
+    await expect(section(page).locator('.ux-exp-detail')).toContainText(
+      'Started: 210 with the change, 200 without.',
+      { timeout: timeouts.ui.appearance }
+    )
+    await expect(section(page).locator('.ux-exp-channel')).toHaveCount(0)
+  })
+
+  test('draws an experiment decided on the server at 390 wide, with nothing wider than the section', async ({
+    page,
+    testEnv,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await loginViaModTools(page, testEnv.mod.email)
+    await serveExperiments(page, { list: [EMAIL, PUSH] })
+    await open(page, 'ux_exp=21')
+
+    await expect(rows(page)).toHaveCount(2, { timeout: timeouts.ui.appearance })
+    await expect(section(page).locator('.ux-exp-channel')).toBeVisible()
+    const fit = () =>
+      section(page).evaluate((el) => {
+        const room = el.getBoundingClientRect()
+        const past = []
+        for (const child of el.querySelectorAll('*')) {
+          const b = child.getBoundingClientRect()
+          if (
+            b.width > 0 &&
+            (b.right > room.right + 1 || b.left < room.left - 1)
+          ) {
+            past.push(
+              `${child.tagName.toLowerCase()}.${String(child.className).slice(0, 40)}`
+            )
+          }
+        }
+        return { past, overflow: el.scrollWidth - el.clientWidth }
+      })
+    expect(await fit()).toEqual({ past: [], overflow: 0 })
   })
 })

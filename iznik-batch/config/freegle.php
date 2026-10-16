@@ -1873,5 +1873,23 @@ return [
             'holdout_revert_probability' => (float) EnvSetting::env('UX_EXPERIMENTS_HOLDOUT_REVERT_P', 0.99),
             'holdout_revert_looks' => (int) EnvSetting::env('UX_EXPERIMENTS_HOLDOUT_REVERT_LOOKS', 2),
         ],
+
+        // The run length of an experiment decided on the server (mail, push, server code), per
+        // channel. ceiling_hours is the longest run (max_hours) a start is allowed. intake_hours is how
+        // long arms are served by default, and the rest of the run is the window members have to
+        // convert in. A web experiment keeps the global max_hours above. docs/developers/reference/
+        // ux-experiments.md, "Experiments in mail, push and the server".
+        'channels' => [
+            'push' => ['ceiling_hours' => 48, 'intake_hours' => 24],
+            'email' => ['ceiling_hours' => 168, 'intake_hours' => 24],
+            'server' => ['ceiling_hours' => 336, 'intake_hours' => 168],
+        ],
+
+        // Metric sources: the name an experiment gives in design.source => the class that counts it
+        // from the database instead of from Loki (App\Services\Ux\UxMetricSource).
+        'sources' => [
+            'email_click' => \App\Services\Ux\Sources\EmailClickSource::class,
+            'active_after' => \App\Services\Ux\Sources\ActiveAfterSource::class,
+        ],
     ],
 ];

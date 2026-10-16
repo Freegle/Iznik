@@ -3472,6 +3472,12 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("trysts").Where("user2 = ?", id1).Update("user2", id2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("isochrones_users").Where("userid = ?", id1).Update("userid", id2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("microactions").Where("userid = ?", id1).Update("userid", id2)
+	// The record of which experiment arm a send used. A merge must not depend on an analytics table,
+	// so a table that has not been created yet is skipped. A row that clashes with one the surviving
+	// account already has stays where it is.
+	if tx.Migrator().HasTable("ux_experiment_exposures") {
+		tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("ux_experiment_exposures").Where("userid = ?", id1).Update("userid", id2)
+	}
 	tx.Table("volunteering").Where("userid = ?", id1).Update("userid", id2)
 	tx.Table("volunteering").Where("deletedby = ?", id1).Update("deletedby", id2)
 	tx.Table("volunteering").Where("heldby = ?", id1).Update("heldby", id2)

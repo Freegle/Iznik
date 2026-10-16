@@ -6,11 +6,22 @@ covers:
   - iznik-batch/app/Services/Ux/BetaBinomial.php
   - iznik-batch/app/Services/Ux/UxRng.php
   - iznik-batch/app/Services/Ux/UxExperimentRefused.php
+  - iznik-batch/app/Services/Ux/UxArm.php
+  - iznik-batch/app/Services/Ux/UxMetricSource.php
+  - iznik-batch/app/Services/Ux/ExposureSource.php
+  - iznik-batch/app/Services/Ux/Sources/EmailClickSource.php
+  - iznik-batch/app/Services/Ux/Sources/ActiveAfterSource.php
+  - iznik-batch/app/Models/UxExperimentExposure.php
+  - iznik-batch/app/Support/ExperimentBucket.php
+  - iznik-batch/config/ux_switches.php
   - iznik-batch/app/Console/Commands/Ux/ExperimentCommand.php
   - iznik-batch/app/Console/Commands/Ux/ExperimentsTickCommand.php
   - iznik-batch/database/migrations/2026_10_14_000001_create_ux_experiment_tables.php
   - iznik-batch/database/migrations/2026_10_14_000001_create_ux_experiment_tables_migration.sql
+  - iznik-batch/database/migrations/2026_10_16_000001_create_ux_experiment_exposures_table.php
+  - iznik-batch/database/migrations/2026_10_16_000001_create_ux_experiment_exposures_table_migration.sql
   - iznik-server-go/ux/experiments.go
+  - iznik-server-go/ux/serverarm.go
   - iznik-server-go/config/config.go
   - iznik-nuxt3/composables/useExperiment.js
   - iznik-nuxt3/plugins/uxExperiments.client.js
@@ -20,12 +31,29 @@ covers:
   - iznik-batch/tests/Feature/Ux/UxExperimentBoundaryTest.php
   - iznik-batch/tests/Unit/Ux/BetaBinomialTest.php
   - iznik-batch/tests/Unit/Ux/UxRngTest.php
+  - iznik-batch/tests/Unit/Ux/UxSwitchManifestTest.php
+  - iznik-batch/tests/Unit/Support/ExperimentBucketTest.php
+  - iznik-batch/tests/Feature/Ux/UxArmTest.php
+  - iznik-batch/tests/Feature/Ux/UxExperimentSourceTest.php
+  - iznik-batch/tests/Feature/Ux/EmailClickSourceTest.php
+  - iznik-batch/tests/Feature/Ux/ActiveAfterSourceTest.php
+  - iznik-batch/tests/Feature/Ux/UxExposureRetentionTest.php
+  - iznik-batch/tests/Feature/Ux/UxExposureErasureTest.php
+  - iznik-batch/tests/Feature/Ux/UxExposureTableMissingTest.php
+  - iznik-batch/tests/Feature/Ux/UxExposureTableCheckTest.php
+  - iznik-batch/tests/Support/HidesExposureTable.php
+  - iznik-batch/tests/Support/LagsTheReadNode.php
+  - iznik-batch/tests/Support/FakeUxMetricSource.php
+  - iznik-server-go/test/ux_serverarm_test.go
+  - iznik-server-go/ux/serverarm_internal_test.go
+  - iznik-nuxt3/tests/unit/composables/useExperiment.spec.js
   - iznik-server-go/test/ux_experiments_test.go
   - iznik-nuxt3/modtools/components/ModSysAdminUxExperiments.vue
   - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentRow.vue
   - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentDetail.vue
   - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentReadout.vue
   - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentForm.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentChannel.vue
   - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentsBadge.vue
   - iznik-nuxt3/modtools/composables/useUxExperimentActions.js
   - iznik-nuxt3/modtools/composables/useUxExperimentRead.js
@@ -40,6 +68,7 @@ covers:
   - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentDetail.spec.js
   - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentReadout.spec.js
   - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentForm.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentChannel.spec.js
   - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentsBadge.spec.js
   - iznik-nuxt3/tests/unit/uxExperimentsBoundary.spec.js
   - iznik-nuxt3/tests/e2e/test-modtools-sysadmin-ux-experiments.spec.js
@@ -70,8 +99,10 @@ flowchart LR
 One experiment is **one pull request, one switch and one row**:
 
 - The PR adds the variant to the frontend only, behind `useExperiment('<name>') === 'b'`. Anything
-  else, including `null`, is control. Nothing in the batch or the Go API changes per experiment, and
-  neither does the schema.
+  else, including `null`, is control. A change to the site needs nothing in the batch or the Go API, and
+  no experiment changes the schema. An experiment decided on the server (mail, push, server code) is
+  different: its call to the arm, and its entry in that runtime's switch list, are code in the batch or the
+  Go API. See [Experiments in mail, push and the server](#experiments-in-mail-push-and-the-server).
 - The switch is the `name`: letters, digits, `_` and `-`, up to 64, and not `__proto__`,
   `constructor` or `prototype` (the name becomes a key in a JSON object the browser reads). The read
   finds the arm by matching the name only at the start of the `variant` field or after a comma, so
@@ -441,6 +472,25 @@ What to know about where the figures come from:
 - **The status words are readable**: white on `#2a7a0a`, 5.4 to 1, for Kept and for "Change is ahead",
   because the ModTools theme forces a lighter green on `.bg-success` that white text cannot be read on
   (2.8 to 1).
+- **An experiment decided on the server** (see [Experiments in mail, push and the
+  server](#experiments-in-mail-push-and-the-server)) has no flow events, so the tab reads it from the
+  source's own words. Its row names the channel and then the funnel it feeds, such as **Email, Replying**,
+  **Push, Replying** or **Server, Replying** (server code), drafts included, so the column agrees with the
+  Funnel filter, which chooses by funnel. The read-out says "Counted: 12,402 with the change, 12,389
+  without." and "Clicked within a day: 18.0% with the change, 10.0% without.", and ends with the source's
+  note on how it counts. The members counted are fewer than the members reached so far, and "Exposed" is
+  the only word for those. A rate counted by a source is written to one decimal place, because a click rate
+  of 3.0% against 3.4% reads "3% against 3%" in whole percents; a funnel read from Loki keeps whole percents.
+  `ModSysAdminUxExperimentChannel.vue` adds to the details the text each version shows
+  (`design.copy`), how long members are reached and when it is decided, and the members exposed and
+  counted, in the read-out's words and order ("Exposed: 12,512 with the change, 12,500 without."), or by
+  version name with control first when there are more than two. It draws nothing for a change to the site.
+  "Other funnels we watched" is left out, because another funnel cannot be split by a server arm. Start is
+  switched off while another change runs for the same thing, not only the same funnel, so a mail test can
+  be started beside a reply test on the site. The reason names what holds the place ("Another email
+  experiment is already running for UnifiedDigestDaily."), because "slot" already means the cap on running
+  experiments on that tab. A refusal such as "Experiments in mail, push and server code are switched off."
+  shows like any other.
 - **A link is drawn only for an address that starts with `https://`** (`safeLink`). `pr_url` and
   `cleanup_pr_url` come from a command line that can store any text, and a `javascript:` address would run
   when a moderator clicked it. Any other stored text is shown as plain text. Go refuses such an address
@@ -553,6 +603,208 @@ stop that:
 (`Cleanup overdue: ...`) and flagged `cleanup_overdue` by `GET /modtools/ux/experiments`, so a missed
 cleanup is seen within a day.
 
+## Experiments in mail, push and the server
+
+An experiment does not have to change the site. Server code can decide what a member gets from the same
+arm: the subject of the daily digest, the title of a push, a message sent after a promise. The arm is
+worked out in the batch or in the Go API from the member's id, with the function the browser uses, so
+all three agree. What changes is the counting. A flow event in Loki cannot be split by a server arm, so
+the counts come from the database.
+
+Nothing here changes until the config row `ux_server_arms` is `1` and someone starts an experiment. This
+change holds no experiment: both switch lists ship empty.
+
+### One assignment function, in three places
+
+`bucket = crc32("<member id>|<name>") % 100`, or `crc32("<member id>|<name>|<salt>") % 100` when the
+experiment has a salt. The first arm whose inclusive range holds the bucket wins, a range written from
+above to holds nobody, and no match is control, written `""` in server code.
+
+| Where | The function |
+|---|---|
+| The browser | `bucket(id, name, salt)` and `armFromRanges` in `composables/useExperiment.js` |
+| The batch | `ExperimentBucket::bucket` and `armIn` in `app/Support/ExperimentBucket.php` |
+| The Go API | `ux.ExperimentBucket` in `ux/serverarm.go` |
+
+The same vectors are pinned in all three test suites (members 1, 2, 3, 5, 12345 and 999999, for
+`confirm-reply`, `digest-subject` and `digest-subject` with the salt `r2`), so a change that moves one
+bucket fails all three.
+
+A **salt** is optional: 1 to 16 letters, digits, `_` or `-`, from `design.salt`, published in the config
+entry. It makes a re-run fall into different arms from the run before, which otherwise keeps its name and
+so its buckets. An adopted entry keeps it, or adoption would move everyone. An entry whose salt is present
+and malformed is dropped by all three runtimes. Use a salt only where no web step reads the arm: a cached
+page or an app build from before the salt existed ignores it.
+
+### Reading the arm in code
+
+PHP `UxArm::for($userId, 'name')` and Go `ux.ExperimentArm(db, userid, "name")` give the arm, or `""`
+for control. They give `""` unless **all** of these hold:
+
+- the config row `ux_server_arms` is `1`;
+- the name is in that runtime's switch list (below);
+- the entry in the `ux_experiments` row is well formed by the browser's own checks;
+- the entry is adopted (then `until` is ignored), or its `until` is ahead by no more than 15 days. The
+  browser's 25 hour rule stays the browser's.
+
+Both read the two config rows in one query on the read connection and keep them for at most 60 seconds,
+because a queue worker lives for hours. A read error is control, is logged, and is not asked again for
+that minute.
+
+The code that varies content follows three rules:
+
+- **Look the arm up before the content is built.** A mailable's constructor builds its subject, so the
+  arm has to be known first. `UxArm::pick($arm, ['control' => $a, 'items' => $b])` gives the control value
+  for `""` and for an arm it has no value for.
+- **The arm is a pure function of the member's id**, so a retry that builds the same mail again gets the
+  same arm. Never use `rand()`.
+- **Keep arm names out of links, headers and the `email_type`**, which other code matches exactly.
+
+### Exposures
+
+`ux_experiment_exposures` has a row each time server code used a member's arm to decide what they get,
+written for every arm, control included, by `UxArm::expose` or `ux.RecordExposure`. Write it where the
+decision is made, after the row the decision is about exists, and never where content is drawn. It never
+throws: a failed row must not stop a send, a reply or a promise.
+
+| `subject_type` | `subject_id` |
+|---|---|
+| `email` | `email_tracking.id`. No row when email tracking is off |
+| `push` | days since 1970-01-01 UTC, so a member has one row a day (`userid` is in the unique key) |
+| `chat`, `reply` | `chat_messages.id` |
+| `bell` | `users_notifications.id` |
+| `promise` | `messages_promises.id` |
+| `view` | `messages.id` |
+
+`detail` holds ids and numbers only. No text, address or copy is ever stored, and a value longer than its
+column is skipped and logged, not cut. Rows are kept 90 days: the hourly tick deletes older ones an
+experiment at a time, 5000 rows to a statement. Starting an experiment again first deletes that name's old
+rows, because a same-day push row would hold the unique key and the new run would lose it.
+
+**Who is counted.** Each member once, on their first exposure of a type the source counts. The age test
+runs after the first is chosen: a first exposure younger than the window is not counted yet and is never
+replaced by a later one. So a member mailed and then pushed is one count, on the first. A web view writes
+no row, so an experiment that changes both mail and the site is measured from its first server exposure.
+
+### Metric sources
+
+`design.source` names a class in `config('freegle.ux.sources')` that implements `UxMetricSource`. It
+counts members per arm and stratum, and the engine does the rest as it does for Loki: the same
+probabilities, the same adopt, revert and inconclusive rules, the same holdout. `ExposureSource` does the
+counting in one grouped query over the cohort above; a subclass says what a conversion and a bad event
+are. Two ship.
+
+| Source | Converted when, within the window of the exposure | Guardrail |
+|---|---|---|
+| `email_click` | the member clicked a link in the email, and it was not the unsubscribe link (that link also sets the click time) | unsubscribing in the window, margin 0.3 points |
+| `active_after` | the member has a `users_active` row in the hour of the exposure or inside the window. The site or app writes one when it loads the member's notifications, which it does when they have something unread or when they open the bell, so a member who visits with nothing unread is not counted, in either arm | turning the daily posts push off, for a push only, margin 0.3 points |
+
+Opens are never used: they are folded in nightly, and image proxies open mail for people who never looked
+at it. A tap on a push is not used because the app records none. The sources write the numbers in their own
+words: the members **counted** are those first reached at least a window ago, who are fewer than the members
+**exposed** so far, and only "exposed" means sent. `active_after` says what active means in its note, because
+nothing else on the tab does. A guardrail has its own margin and the
+sentences name it, because the 2 point default is far too coarse for a 0.2 percent unsubscribe rate. A
+guardrail is read once 100 members are counted across both arms, and an early revert still needs 300
+counted on each arm.
+
+A source that fails is a read that failed, like Loki being down: the tick uses its last read for up to two
+hours, and after the end waits six hours before it calls the experiment inconclusive. A run that counted
+nobody (the switch was off, or no sender ran) ends inconclusive.
+
+### Design keys
+
+All are set in `--design=<json>` of `ux:experiment create`; the Go create route keeps only `touches` and
+`expected_points`, so these experiments are made on the batch host.
+
+| Key | Meaning |
+|---|---|
+| `channel` | `email`, `push` or `server`. Web when absent. Any other channel, or a `source`, forces a fixed split |
+| `type` | the email type or push kind it changes, `A-Za-z0-9_-`, up to 48 |
+| `source` | a key of `ux.sources`. Needs a channel other than web |
+| `window_hours` | the hours a member has to convert in. Needed with a `source` |
+| `intake_hours`, `max_hours` | the hours members are reached, and the whole run. Only with a `source`. The run is the intake plus the window unless `max_hours` says |
+| `salt` | see above |
+| `slot` | see below |
+| `copy` | arm name to the text that arm shows, up to 240 characters, for the tab. Plain text, never used to build a message |
+| `touches`, `expected_points` | as for a web experiment. `touches` is stored as empty for a source experiment: the browser stamps only the arms it has code for, so another funnel's completion cannot be split by a server arm. Set `expected_points` in points of the source's own rate, because the default 5 is far too big for a click rate |
+
+### Run length, slot and a fixed split
+
+| Channel | Longest run | Default time members are reached | Why |
+|---|---|---|---|
+| push | 48 hours | 24 | a member gets one daily posts push a day, and only first exposures count |
+| email | 168 hours | 24 | mail lands over a day or more. The daily digest sends from 07:00 to 12:00, so its run is 48 |
+| server | 336 hours | 168 | a handover or a promise outcome needs a week after the exposure |
+
+`start` refuses a run over the ceiling, and a time members are reached that is longer than the whole run.
+The config key serves arms until the end of the intake plus an hour, and the window runs on with no new
+exposures. A web experiment keeps `max_hours`, 24. An experiment with a web step keeps `intake_hours` at 24
+or less, because the browser drops an entry more than 25 hours ahead.
+
+**One running experiment per slot**: `design.slot`, else `<channel>:<type>` when it has a type, else its
+funnel. A digest test and a reply funnel test run together; two digest tests cannot. A web experiment's slot
+is its funnel, with the wording staff already know. The cap of five running stays shared across channels.
+
+**The split is fixed.** The tick never moves it, because the browser keeps its first arm in
+`localStorage` and a member of a mail experiment is reached again and again, so a moving split would give
+one member two arms. Adoption still sets the winner to 0 to 89 and control to 90 to 99, so some members
+change arm then, as on the web.
+
+`start` also refuses, in plain words, a source experiment when `ux_server_arms` is not `1`, when email
+tracking is off for mail, when a mail or push experiment has no entry in `config/ux_switches.php` (the
+code is not deployed yet) or the entry's arms or metric source differ from the row, and when the source's
+own volume shows the run is too small to read. Every refusal is the kind the queue records and does not
+retry.
+
+### Switch lists and corpse control
+
+An experiment that is not in a runtime's list is control there, whatever the config says. Each runtime has
+one list, because none can read another's source tree: `iznik-nuxt3/ux-experiments.manifest.json` for the
+browser, `iznik-batch/config/ux_switches.php` for the batch and `ux.ServerSwitches` in
+`iznik-server-go/ux/serverarm.go` for the Go API. An entry has the name, the day it was opened, the pull
+request, `keep_until`, the channel, the type, what varies, the arms and the metric.
+
+Each language has a test (`UxSwitchManifestTest`, `TestServerSwitches...`) that reads the code and fails when
+a call has no entry, when an entry has no call left, when the name is not a string literal, and when an entry
+is more than 30 days old unless `keep_until` is still ahead. It warns past 14 days. A server run adopted at
+day 14 lives about 35 days, so set `keep_until` when it is adopted. The scans read the code as the compiler
+does and are tested on sample source, and each test counts the files it read.
+
+### The kill switch
+
+`ux_server_arms` is a config row. Set it through the Support or Admin route, so no deploy is needed:
+
+```
+PATCH /config/admin   {"ux_server_arms": "1"}
+```
+
+Only `1` serves arms. Anything else, or no row, makes every sender act as control within a minute and write no
+exposure row. The row is not public. To stop one experiment, `ux:experiment stop` drops its entry from the key
+at once; the tab's Stop is queued and applied within minutes. Servers also ignore an entry whose `until` has
+passed or is more than 15 days ahead. A source guardrail that trips reverts the experiment early, once both
+arms have 300 counted.
+
+### Privacy
+
+The table holds the member's id, the experiment, the arm, the kind and id of the thing decided, the time, and
+ids. The arm follows from the member's id and the published weights, so it adds nothing. No arm goes in a URL,
+a header or a Loki label, and no route returns rows: the tab shows counts only. The table is part of
+forgetting a member (the scheduled path and the removed TrashNothing path), merging two accounts (PHP and Go),
+the data export (as the experiment, the arm, the kind and the time) and the support dump. Each checks the
+table exists first, so an erasure, a merge or an export never depends on an analytics table. The batch asks
+the write node (`UxExperimentExposure::tableExists()`), because `Schema::hasTable` asks the read node, and a
+read node that is behind says no for a table the write node has just made, which would skip an erasure
+without an error. The export reads its rows from the write node too.
+
+### Deploying experiments decided on the server
+
+Run `iznik-batch/database/migrations/2026_10_16_000001_create_ux_experiment_exposures_table_migration.sql`
+first. It is one `CREATE TABLE IF NOT EXISTS`, alters no existing table and is safe to run twice. Then deploy
+the Go API and the batch. Nothing changes until `ux_server_arms` is `1`, and setting it back to `0` is the
+rollback. If the SQL has not been run when the batch is live, forgetting, merging and exporting a member skip
+the table and the hourly tick skips its clean-up.
+
 ## The routes
 
 Support and Admin only. `GET /modtools/ux/experiments?flow=` returns `running_count`, `max_running` and
@@ -607,7 +859,9 @@ frontend reads a config key that only the new Go code serves.
    that is not a Sentry event per page view, but members are in control. The earlier advice that the
    frontend could go first "harmlessly" was wrong.
 
-After that, every experiment is a frontend PR plus a start; nothing else is deployed per experiment.
+After that, every experiment is a frontend PR plus a start; nothing else is deployed per experiment. An
+experiment decided on the server has one more table and its own order: see
+[Deploying experiments decided on the server](#deploying-experiments-decided-on-the-server).
 
 What breaks when a part is missing:
 

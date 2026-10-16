@@ -74,6 +74,15 @@ class UxExperimentService
 
     public const ACTIVE = [self::STATUS_RUNNING];
 
+    /**
+     * Exposure rows are kept this many days. The longest run with its holdout and clean-up is about
+     * 35 days, and a shorter keep holds less member data.
+     */
+    public const EXPOSURE_KEEP_DAYS = 90;
+
+    /** Exposure rows deleted per statement, so the purge never holds a long lock. */
+    private const PURGE_BATCH = 5000;
+
     /** Events read per arm and flow. */
     private const EVENTS = ['flow_start', 'flow_complete', 'flow_submit_result', 'validation_failed', 'help_sought'];
 
@@ -90,6 +99,23 @@ class UxExperimentService
 
     /** An arm's name, held to the same strictness as the experiment's name and for the same reason. */
     private const ARM_PATTERN = '/^[A-Za-z0-9_]{1,16}\z/';
+
+    /** The channel of an experiment that changes the site. The others are decided on the server. */
+    public const WEB = 'web';
+
+    /** The channels of an experiment decided on the server: mail, push and server code. */
+    public const CHANNELS = ['email', 'push', 'server'];
+
+    /** The email type or push kind an experiment changes. */
+    private const TYPE_PATTERN = '/^[A-Za-z0-9_-]{1,48}\z/';
+
+    /** Read by the browser, the batch and the Go API alike, so it is the same pattern in all three. */
+    private const SALT_PATTERN = '/^[A-Za-z0-9_-]{1,16}\z/';
+
+    private const SLOT_PATTERN = '/^[A-Za-z0-9_:-]{1,48}\z/';
+
+    /** The text of an arm, as the tab shows it. */
+    private const COPY_MAX = 240;
 
     /**
      * The most arms an experiment may have. The hourly read is one Loki query, and Loki refuses a
@@ -231,6 +257,15 @@ class UxExperimentService
      * The design object: only the keys we know, with touches limited to real flows. Anything else
      * a caller sends (free text from a caller, say) is dropped rather than stored.
      *
+     * Besides touches and expected_points, an experiment decided on the server (mail, push, server
+     * code) carries: channel (email, push or server; web when absent), type (the email type or push
+     * kind), source (a key of freegle.ux.sources, which counts from the database), window_hours (how
+     * long a member has to convert), intake_hours and max_hours (how long arms are served and the
+     * whole run, only with a source), salt (a re-run falls into different arms), slot (the one
+     * running experiment per slot), fixed_split (no bandit) and copy (arm => the text it shows, for
+     * the tab). A channel other than web, or a source, always has a fixed split: the same member is
+     * reached again and again, so a split that moved would give them two arms.
+     *
      * @return array<string, mixed>
      */
     public static function normaliseDesign(mixed $design, string $flow): array
@@ -258,6 +293,82 @@ class UxExperimentService
                 throw new \InvalidArgumentException('design.expected_points must be a positive number of points');
             }
             $out['expected_points'] = (float) $design['expected_points'];
+        }
+
+        $channel = self::WEB;
+        if (isset($design['channel'])) {
+            if (! in_array($design['channel'], array_merge([self::WEB], self::CHANNELS), true)) {
+                throw new \InvalidArgumentException('design.channel must be email, push or server');
+            }
+            $channel = $design['channel'];
+            if ($channel !== self::WEB) {
+                $out['channel'] = $channel;
+            }
+        }
+        if (isset($design['type'])) {
+            if (! is_string($design['type']) || ! preg_match(self::TYPE_PATTERN, $design['type'])) {
+                throw new \InvalidArgumentException('design.type must be 1 to 48 letters, digits, _ or -');
+            }
+            $out['type'] = $design['type'];
+        }
+        $hasSource = isset($design['source']);
+        if ($hasSource) {
+            if ($channel === self::WEB) {
+                throw new \InvalidArgumentException('design.source needs a channel of email, push or server');
+            }
+            $sources = (array) config('freegle.ux.sources', []);
+            if (! is_string($design['source']) || ! array_key_exists($design['source'], $sources)) {
+                throw new \InvalidArgumentException('design.source is not a metric source that exists: '.json_encode($design['source']));
+            }
+            $out['source'] = $design['source'];
+            if (! isset($design['window_hours'])) {
+                throw new \InvalidArgumentException('design.window_hours is needed with design.source: the hours a member has to convert in');
+            }
+        }
+        foreach (['window_hours', 'intake_hours', 'max_hours'] as $key) {
+            if (! isset($design[$key])) {
+                continue;
+            }
+            $hours = filter_var($design[$key], FILTER_VALIDATE_INT);
+            if ($hours === false || $hours < 1) {
+                throw new \InvalidArgumentException("design.$key must be a whole number of hours, 1 or more");
+            }
+            if (! $hasSource) {
+                throw new \InvalidArgumentException("design.$key is only for an experiment with a design.source");
+            }
+            $out[$key] = $hours;
+        }
+        if (isset($out['intake_hours'], $out['max_hours']) && $out['intake_hours'] > $out['max_hours']) {
+            throw new \InvalidArgumentException('design.intake_hours must not be longer than design.max_hours');
+        }
+        if ($channel !== self::WEB || $hasSource) {
+            $out['fixed_split'] = true;
+        } elseif (isset($design['fixed_split'])) {
+            $out['fixed_split'] = filter_var($design['fixed_split'], FILTER_VALIDATE_BOOLEAN);
+        }
+        if (isset($design['salt'])) {
+            if (! is_string($design['salt']) || ! preg_match(self::SALT_PATTERN, $design['salt'])) {
+                throw new \InvalidArgumentException('design.salt must be 1 to 16 letters, digits, _ or -');
+            }
+            $out['salt'] = $design['salt'];
+        }
+        if (isset($design['slot'])) {
+            if (! is_string($design['slot']) || ! preg_match(self::SLOT_PATTERN, $design['slot'])) {
+                throw new \InvalidArgumentException('design.slot must be 1 to 48 letters, digits, _, : or -');
+            }
+            $out['slot'] = $design['slot'];
+        }
+        if (isset($design['copy'])) {
+            if (! is_array($design['copy']) || $design['copy'] === []) {
+                throw new \InvalidArgumentException('design.copy must give the text each arm shows, by arm name');
+            }
+            foreach ($design['copy'] as $arm => $text) {
+                $text = is_string($text) ? trim($text) : '';
+                if (! preg_match(self::ARM_PATTERN, (string) $arm) || $text === '' || mb_strlen($text) > self::COPY_MAX) {
+                    throw new \InvalidArgumentException('design.copy must give the text each arm shows, by arm name, up to '.self::COPY_MAX.' characters');
+                }
+                $out['copy'][(string) $arm] = $text;
+            }
         }
 
         return $out;
@@ -370,13 +481,20 @@ class UxExperimentService
 
     /**
      * Start a draft (or a finished) experiment: it runs from now for at most max_hours, within the
-     * concurrency cap and with no other experiment running on the same flow (two changes to one
-     * flow at once cannot be told apart), and its arms are published.
+     * concurrency cap and with no other experiment running in the same slot (two changes to one
+     * funnel at once cannot be told apart, and a mail, push or server experiment has a slot of its
+     * own), and its arms are published.
      *
      * Before it starts, the power of a day of this flow at the expected effect is worked out under
      * the adopt rule and stored in design.power. A test that would almost never reach a decision
      * is refused, with advice, rather than run for a day to say "inconclusive". The result starts
      * with what a day of this flow can show, so a reader knows what could ever be seen.
+     *
+     * An experiment counted by a metric source (design.source) is refused unless server arms are
+     * switched on, its code is deployed (a mail or push experiment must be in config/ux_switches.php
+     * with the same arms and source) and its run fits its channel's ceiling. Its power is worked out
+     * from the source's own volume, and its run length is resolved into design.intake_hours and
+     * design.max_hours. Every refusal is a UxExperimentRefused.
      */
     public function start(int|string $idOrName, ?Carbon $now = null): object
     {
@@ -399,43 +517,69 @@ class UxExperimentService
             if ($this->runningCount() >= (int) $s['max_concurrent']) {
                 throw new UxExperimentRefused('Already '.$s['max_concurrent'].' experiments running; that is the cap');
             }
-            $sameFlow = DB::table('ux_experiments')->useWritePdo()->where('flow', $exp->flow)->whereIn('status', self::ACTIVE)->value('name');
-            if ($sameFlow !== null) {
-                throw new UxExperimentRefused("Experiment $sameFlow is already running on the funnel \"".$this->funnelTitle($exp->flow)."\". Only one change at a time can run on a funnel, so the results can be told apart.");
+            // One change at a time in a slot, so the results can be told apart. A web experiment's slot is
+            // its funnel; a mail, push or server experiment has its own, so a digest test and a reply
+            // funnel test can run together but two digest tests cannot.
+            $slot = $this->slotOf($exp);
+            $inSlot = $this->runningInSlot($slot, (int) $exp->id);
+            if ($inSlot !== null) {
+                throw new UxExperimentRefused(in_array($slot, UxRollupService::FLOWS, true)
+                    ? "Experiment $inSlot is already running on the funnel \"".$this->funnelTitle($slot)."\". Only one change at a time can run on a funnel, so the results can be told apart."
+                    : $this->takenSlotWords($exp, $inSlot));
             }
 
             $design = $this->designOf($exp);
-            $design['touches'] = $this->touches($exp);
+            $source = $this->sourceOf($exp);
+            $hours = (int) $s['max_hours'];
+            if ($source) {
+                // Counted from the database. Flow guardrails cannot be split by a server arm, because
+                // the browser stamps only the arms it has code for, so there are none.
+                [$design, $hours] = $this->resolveSourceRun($exp, $design);
+                $design['touches'] = [];
+            } else {
+                $design['touches'] = $this->touches($exp);
+            }
             $design['expected_points'] ??= (float) $s['default_expected_points'];
-            $volume = $this->flowVolume($exp->flow, $now);
-            $mde = $volume ? $this->mdeFromVolume($volume) : null;
+            $volume = $source ? $this->sourceVolume($source, $exp, $now) : $this->flowVolume($exp->flow, $now);
+            $mde = $volume && ! $source ? $this->mdeFromVolume($volume) : null;
             $power = null;
             if ($volume) {
                 $power = round(BetaBinomial::adoptPower($volume['rate'], $volume['per_arm_per_day'], $design['expected_points'] / 100,
                     (float) $s['adopt_probability'], (float) $s['max_expected_loss_points'] / 100), 3);
                 $design['power'] = $power;
                 if ((float) $s['min_power'] > 0 && $power < (float) $s['min_power']) {
-                    throw new UxExperimentRefused(sprintf(
-                        'A day of the funnel "%s" (about %s starts on each arm) would adopt a change of %s only %d%% of the time, below the %d%% minimum. '
-                        .'Make the change bigger, or combine it with another change.',
-                        $this->funnelTitle($exp->flow), number_format($volume['per_arm_per_day']), $this->pointsText(round($design['expected_points'], 1)),
-                        round($power * 100), round((float) $s['min_power'] * 100)));
+                    throw new UxExperimentRefused($source
+                        ? sprintf(
+                            'A run of this experiment (about %s %s on each arm) would adopt a change of %s only %d%% of the time, below the %d%% minimum. '
+                            .'Make the change bigger, combine it with another change, or set design.expected_points to the change you really expect.',
+                            number_format($volume['per_arm_per_day']), $source->words($exp)['who'], $this->pointsText(round($design['expected_points'], 1)),
+                            round($power * 100), round((float) $s['min_power'] * 100))
+                        : sprintf(
+                            'A day of the funnel "%s" (about %s starts on each arm) would adopt a change of %s only %d%% of the time, below the %d%% minimum. '
+                            .'Make the change bigger, or combine it with another change.',
+                            $this->funnelTitle($exp->flow), number_format($volume['per_arm_per_day']), $this->pointsText(round($design['expected_points'], 1)),
+                            round($power * 100), round((float) $s['min_power'] * 100)));
                 }
             }
 
             // An experiment that has run before may have been left by the bandit at 65/35 or worse,
             // with no data behind that now. A second attempt starts from an even split like the
-            // first; a draft keeps the arms it was created with.
+            // first; a draft keeps the arms it was created with. A fixed split is never moved by the
+            // bandit, so what is stored is what its creator chose (a tenth of members, say), and a
+            // restart keeps it.
             $arms = json_decode($exp->arms, true) ?: [];
             if ($exp->status !== self::STATUS_DRAFT) {
-                $arms = self::evenArms(array_keys($arms));
+                if (empty($design['fixed_split'])) {
+                    $arms = self::evenArms(array_keys($arms));
+                }
+                $this->forgetExposures($exp->name);
             }
 
             $n = DB::table('ux_experiments')->where('id', $exp->id)->whereIn('status', self::STARTABLE)->update([
                 'arms' => json_encode($arms),
                 'status' => self::STATUS_RUNNING,
                 'started_at' => $now,
-                'ends_at' => $now->copy()->addHours((int) $s['max_hours']),
+                'ends_at' => $now->copy()->addHours($hours),
                 'decided_at' => null,
                 'decision' => null,
                 'result' => json_encode($mde === null ? [] : ['mde_points' => $mde]),
@@ -544,9 +688,45 @@ class UxExperimentService
         foreach ($this->checkAdopted($now) as $line) {
             $lines[] = $line;
         }
+        $this->purgeExposures($now);
         $this->locked(fn () => $this->rebuildConfig());
 
         return $lines;
+    }
+
+    /**
+     * Delete exposure rows older than EXPOSURE_KEEP_DAYS, an experiment at a time and in batches, so
+     * the (experiment, exposed_at) index is used and no statement is long. A table that does not
+     * exist yet (the SQL has not been run) or any other trouble is logged and left: it must not stop
+     * the tick.
+     */
+    private function purgeExposures(Carbon $now): void
+    {
+        try {
+            $cut = $now->copy()->subDays(self::EXPOSURE_KEEP_DAYS)->format('Y-m-d H:i:s');
+            foreach (DB::table('ux_experiment_exposures')->useWritePdo()->distinct()->pluck('experiment') as $name) {
+                do {
+                    $n = DB::table('ux_experiment_exposures')->where('experiment', $name)->where('exposed_at', '<', $cut)
+                        ->limit(self::PURGE_BATCH)->delete();
+                } while ($n >= self::PURGE_BATCH);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('ux:experiments-tick: could not purge old exposures: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Forget the exposures of a name that is being run again. A same-day push row would otherwise
+     * hold the unique key and the new run would lose it, and the old run's members must not be
+     * counted in the new one.
+     */
+    private function forgetExposures(string $name): void
+    {
+        try {
+            DB::table('ux_experiment_exposures')->where('experiment', $name)->delete();
+        } catch (\Throwable $e) {
+            Log::warning("ux:experiment: could not clear the old exposures of {$name}: ".$e->getMessage());
+        }
     }
 
     /**
@@ -613,7 +793,9 @@ class UxExperimentService
                 return "{$exp->name}: {$decision['status']}";
             }
 
-            if (self::settings()['bandit'] && ! $stale) {
+            // A fixed split is never moved: a member of a mail, push or server experiment is reached again
+            // and again, and the browser keeps its first arm, so a moving split would give one member two.
+            if (self::settings()['bandit'] && ! $stale && empty($this->designOf($fresh)['fixed_split'])) {
                 $arms = $this->allocate($read, json_decode($fresh->arms, true));
                 // MySQL stores JSON object keys in its own order, so compare by value, not order.
                 if ($arms != json_decode($fresh->arms, true)) {
@@ -711,8 +893,10 @@ class UxExperimentService
                 ->update(['result' => json_encode($old), 'updated_at' => $now]);
 
             if ($against && $strikes >= (int) $s['holdout_revert_looks']) {
-                $text = sprintf('Reverted after adoption: the people who kept the old version did better over %s, on %d checks in a row (%s finished with the old version against %s with the change; probability the old version is better: %s). The gain seen in the test did not show up afterwards.',
-                    $this->dayWord($days), $strikes, $this->pct($p['control_rate']), $this->pct($p['variant_rate']), $this->prob(1 - $p['p_better']));
+                // A read counted by a metric source is written with its nouns and to one decimal place.
+                $w = $read['words'] ?? null;
+                $text = sprintf('Reverted after adoption: the %s who kept the old version did better over %s, on %d checks in a row (%s %s with the old version against %s with the change; probability the old version is better: %s). The gain seen in the test did not show up afterwards.',
+                    $w['who'] ?? 'people', $this->dayWord($days), $strikes, $this->pct($p['control_rate'], $w !== null), $w['finished'] ?? 'finished', $this->pct($p['variant_rate'], $w !== null), $this->prob(1 - $p['p_better']));
                 $read['decayed'] = true;
                 if ($this->finish($fresh, self::STATUS_REVERTED, $text, $read, $now, self::STATUS_ADOPTED)) {
                     return "{$exp->name}: reverted after adoption (the holdout did better)";
@@ -733,6 +917,9 @@ class UxExperimentService
      * The counts come hour by hour, ending exactly at the end of the window so the newest data is
      * never dropped, and only whole hours inside the window are kept: an hour that began before
      * the experiment did could hold a previous run of the same name.
+     *
+     * An experiment counted by a metric source (design.source) is read from the database through
+     * it and makes no Loki call; see readFromSource().
      *
      * @throws UxLokiUnavailable
      * @throws \InvalidArgumentException when the name, flow or arms could not be put safely into LogQL
@@ -760,6 +947,9 @@ class UxExperimentService
         }
         if (count($armNames) > self::MAX_ARMS) {
             throw new \InvalidArgumentException('an experiment has at most '.self::MAX_ARMS.' arms, and this one has '.count($armNames));
+        }
+        if (($this->designOf($exp)['source'] ?? null) !== null) {
+            return $this->readFromSource($exp, $now, $since);
         }
         // The same query text for the same arms, whatever order MySQL gave them in.
         sort($armNames);
@@ -861,6 +1051,43 @@ class UxExperimentService
     }
 
     /**
+     * The read of an experiment decided on the server: the same statistics over counts that come
+     * from the database through the experiment's metric source instead of from Loki. The split is
+     * fixed, so expected_starts is left unset and the share check compares the members counted with
+     * the split that was served. The read carries the source's words and its detail (members exposed
+     * and counted), which the summary and the tab use. No Loki call is made.
+     *
+     * A source that fails is a read that failed: the tick treats it as Loki being unavailable, so the
+     * last good read is used for up to stale_read_hours and the six hour wait applies after the end.
+     *
+     * @throws UxLokiUnavailable
+     */
+    private function readFromSource(object $exp, Carbon $now, ?Carbon $since): array
+    {
+        $source = $this->sourceOf($exp);
+        $start = $since ?: Carbon::parse($exp->started_at);
+        $limit = $since ? $now->copy() : $now->copy()->min(Carbon::parse($exp->ends_at));
+        $minutes = max(1, (int) ceil($start->diffInSeconds($limit, false) / 60));
+
+        try {
+            $counts = $source->counts($exp, $limit, $since);
+            $words = $source->words($exp);
+        } catch (\Throwable $e) {
+            throw new UxLokiUnavailable('the metric source '.get_class($source).' failed: '.$e->getMessage(), 0, $e);
+        }
+
+        $arms = [];
+        foreach (array_keys(json_decode($exp->arms, true)) as $arm) {
+            $c = $counts['arms'][$arm] ?? [];
+            $arms[$arm] = ['starts' => (int) ($c['starts'] ?? 0), 'completes' => (int) ($c['completes'] ?? 0), 'submitted' => 0, 'submit_ok' => 0,
+                'submit_failed' => 0, 'validation_failed' => 0, 'help_sought' => 0, 'other_flows' => [], 'strata' => $c['strata'] ?? []];
+        }
+
+        return $this->statistics($exp, $arms, $minutes, $now, $since === null, $source, $counts['guards'] ?? [])
+            + ['words' => $words, 'detail' => $counts['extra'] ?? []];
+    }
+
+    /**
      * The starts each arm would have had if the flow's starts had followed the split in force in
      * each hour: every hour's total starts shared out by that hour's allocation. The bandit moves
      * the split, so judging the whole run against today's split would call a variant that was
@@ -914,8 +1141,15 @@ class UxExperimentService
      * change read every hour does not trip one by chance. With k guardrails the bars in decide()
      * are split k ways, and each guardrail carries its k. Only the flows the experiment declares
      * it touches are guardrails.
+     *
+     * An experiment counted by a metric source has that source's guardrails instead, each with its
+     * own margin, because a 0.2 percent unsubscribe rate is far too small for the 2 point default.
+     * $guards is what the source counted for them: name => arm => ['bad' => n, 'base' => n]. A
+     * guardrail is read once its control base and its arm's base together reach guardrail_min_events.
+     *
+     * @param  array<string, array<string, array{bad: int, base: int}>>  $guards
      */
-    public function statistics(object $exp, array $arms, int $minutes, Carbon $now, bool $checkShare = true): array
+    public function statistics(object $exp, array $arms, int $minutes, Carbon $now, bool $checkShare = true, ?UxMetricSource $source = null, array $guards = []): array
     {
         $s = self::settings();
         $served = self::sharesFromArms(json_decode($exp->arms, true) ?: []);
@@ -924,8 +1158,9 @@ class UxExperimentService
         $primary = [];
         $guardrails = [];
         $totalStarts = array_sum(array_map(fn ($a) => $a['starts'], $arms));
-        $others = array_values(array_diff($this->touches($exp), [$exp->flow]));
-        $k = 3 + count($others);
+        $sourceGuards = $source ? $source->guardrails($exp) : [];
+        $others = $source ? [] : array_values(array_diff($this->touches($exp), [$exp->flow]));
+        $k = $source ? count($sourceGuards) : 3 + count($others);
 
         foreach ($arms as $arm => $a) {
             if ($arm === self::CONTROL) {
@@ -966,6 +1201,23 @@ class UxExperimentService
                 'validation_failed' => ['bad' => 'validation_failed', 'base' => 'starts', 'label' => 'the number of validation failures per start'],
                 'help_sought' => ['bad' => 'help_sought', 'base' => 'starts', 'label' => 'the share of starts where people went looking for help'],
             ];
+            if ($source) {
+                foreach ($sourceGuards as $name => $g) {
+                    $cb = (int) ($guards[$name][self::CONTROL]['base'] ?? 0);
+                    $vb = (int) ($guards[$name][$arm]['base'] ?? 0);
+                    if ($cb + $vb < $s['guardrail_min_events']) {
+                        continue;
+                    }
+                    $cBad = min((int) ($guards[$name][self::CONTROL]['bad'] ?? 0), $cb);
+                    $vBad = min((int) ($guards[$name][$arm]['bad'] ?? 0), $vb);
+                    $gMargin = (float) $g['margin_points'];
+                    $pWorse = BetaBinomial::probabilityDiffExceeds($cBad, $cb - $cBad, $vBad, $vb - $vBad, $gMargin / 100);
+                    $guardrails[] = ['arm' => $arm, 'name' => $name, 'label' => $g['label'],
+                        'control_rate' => $cb ? $cBad / $cb : null, 'variant_rate' => $vb ? $vBad / $vb : null,
+                        'p_worse' => round($pWorse, 4), 'k' => $k, 'margin_points' => $gMargin];
+                }
+                $worseIfHigher = [];
+            }
             foreach ($worseIfHigher as $key => $g) {
                 $cb = $control[$g['base']] ?? 0;
                 $vb = $a[$g['base']] ?? 0;
@@ -1055,10 +1307,13 @@ class UxExperimentService
         // people finishing, so nothing is adopted on it.
         $skewed = $best && ($read['primary'][$best]['share_off'] ?? false);
 
+        // The nouns of a read counted by a metric source, or null for a flow read from Loki.
+        $w = $read['words'] ?? null;
+
         if ($harmReverts && $early) {
             return ['status' => self::STATUS_REVERTED, 'text' => "Reverted early: {$harm['label']} got worse with the change "
                 .'('.$this->rate($harm['variant_rate']).' against '.$this->rate($harm['control_rate'])." without it; probability it is worse by more than "
-                .$this->pointsText($s['guardrail_margin_points']).': '.$this->prob($harm['p_worse']).').'];
+                .$this->pointsText($harm['margin_points'] ?? $s['guardrail_margin_points']).': '.$this->prob($harm['p_worse']).').'];
         }
 
         if ($early) {
@@ -1075,22 +1330,26 @@ class UxExperimentService
         }
 
         if (! $best || ! $read['primary'][$best]['enough']) {
-            return ['status' => self::STATUS_INCONCLUSIVE, 'text' => 'Time was up before enough people had started with each version to say whether it worked (each needs at least '
+            return ['status' => self::STATUS_INCONCLUSIVE, 'text' => ($w
+                ? "Time was up before enough {$w['who']} had been counted with each version to say whether it worked (each needs at least "
+                : 'Time was up before enough people had started with each version to say whether it worked (each needs at least ')
                 .(int) $s['min_starts_per_arm'].'), so the change was taken off. '.$figures];
         }
         if ($harmBlocks) {
             return ['status' => self::STATUS_REVERTED, 'text' => "Reverted at the end: {$harm['label']} was probably worse with the change (probability ".$this->prob($harm['p_worse'])."), whatever the main result. $figures"];
         }
         if ($skewed && $p >= $s['adopt_probability']) {
-            return ['status' => self::STATUS_INCONCLUSIVE, 'text' => 'Inconclusive at the end, so the change was taken off: the numbers of people who started with each version did not match the share they were served '
-                .'(a change that loses or adds people before the funnel starts looks better or worse on the rate among starters whatever it does to how many finish). '.$figures];
+            return ['status' => self::STATUS_INCONCLUSIVE, 'text' => $w
+                ? "Inconclusive at the end, so the change was taken off: the numbers of {$w['who']} counted with each version did not match the share they were served, so the two rates cannot be compared. $figures"
+                : 'Inconclusive at the end, so the change was taken off: the numbers of people who started with each version did not match the share they were served '
+                    .'(a change that loses or adds people before the funnel starts looks better or worse on the rate among starters whatever it does to how many finish). '.$figures];
         }
         if ($p >= $s['adopt_probability'] && $lossOk) {
             return ['status' => self::STATUS_ADOPTED, 'text' => "Adopted at the end: the change was probably better. $figures"];
         }
         if ($p >= $s['adopt_probability'] && ! $lossOk) {
             return ['status' => self::STATUS_INCONCLUSIVE, 'text' => 'Inconclusive at the end, so the change was taken off: it was probably better, but if it were not we would lose more than '
-                .$this->pointsText($s['max_expected_loss_points']).', and a day was not enough to rule that out. '.$figures];
+                .$this->pointsText($s['max_expected_loss_points']).($w ? ', and the run was not long enough to rule that out. ' : ', and a day was not enough to rule that out. ').$figures];
         }
         if ($p <= 1 - $s['adopt_probability']) {
             return ['status' => self::STATUS_REVERTED, 'text' => "Reverted at the end: the change was probably worse. $figures"];
@@ -1199,10 +1458,14 @@ class UxExperimentService
         $p = $read['primary'][$best];
         $c = $read['arms'][self::CONTROL];
         $v = $read['arms'][$best];
-        $text = "$after: ".number_format($v['starts']).($v['starts'] == 1 ? ' person' : ' people').' started "'.$this->funnelTitle($exp->flow).'" with the change and '
-            .number_format($c['starts']).' without. ';
+        // A read counted by a metric source is written with its nouns, not with the funnel's.
+        $w = $read['words'] ?? null;
+        $text = $w
+            ? "$after: ".$this->counted($v['starts'], $w).' with the change and '.number_format($c['starts']).' without. '
+            : "$after: ".number_format($v['starts']).($v['starts'] == 1 ? ' person' : ' people').' started "'.$this->funnelTitle($exp->flow).'" with the change and '
+                .number_format($c['starts']).' without. ';
         if ($p['variant_rate'] !== null && $p['control_rate'] !== null) {
-            $text .= $this->pct($p['variant_rate']).' finished with the change, '.$this->pct($p['control_rate']).' without ('
+            $text .= $this->pct($p['variant_rate'], $w !== null).' '.($w['finished'] ?? 'finished').' with the change, '.$this->pct($p['control_rate'], $w !== null).' without ('
                 .$this->points($p['diff_points']).'). Probability the change is better: '.$this->prob($p['p_better']).'. ';
             if (isset($p['expected_loss_points'])) {
                 $text .= 'If we kept it and it were really no better, we would expect to lose about '.$this->pointsText($p['expected_loss_points']).'. ';
@@ -1211,18 +1474,20 @@ class UxExperimentService
         $harm = $this->worstGuardrail($read, $best);
         if ($harm && $harm['p_worse'] >= 0.5) {
             $text .= 'Watch: '.$harm['label'].' looks worse with the change ('.$this->rate($harm['variant_rate']).' against '
-                .$this->rate($harm['control_rate']).', probability of being worse by more than '.$this->pointsText(self::settings()['guardrail_margin_points']).': '.$this->prob($harm['p_worse']).'). ';
+                .$this->rate($harm['control_rate']).', probability of being worse by more than '.$this->pointsText($harm['margin_points'] ?? self::settings()['guardrail_margin_points']).': '.$this->prob($harm['p_worse']).'). ';
         } elseif ($read['guardrails']) {
             $text .= 'Guardrails: nothing worse. ';
         }
         if ($p['share_off'] ?? false) {
-            $text .= "Warning: {$p['observed_share']}% of starts were on the change but about ".round((float) $p['expected_share']).'% were expected, so the two finishing rates cannot be compared. ';
+            $text .= $w
+                ? "Warning: {$p['observed_share']}% of the {$w['who']} counted were on the change but about ".round((float) $p['expected_share']).'% were expected, so the two rates cannot be compared. '
+                : "Warning: {$p['observed_share']}% of starts were on the change but about ".round((float) $p['expected_share']).'% were expected, so the two finishing rates cannot be compared. ';
         }
         $served = $read['allocation'][$best] ?? null;
         if ($served !== null) {
             $text .= "Traffic on the change: {$served}% served";
             if (isset($p['observed_share'])) {
-                $text .= ", {$p['observed_share']}% of starts seen";
+                $text .= $w ? ", {$p['observed_share']}% of those counted" : ", {$p['observed_share']}% of starts seen";
             }
             $text .= '. ';
         }
@@ -1230,9 +1495,31 @@ class UxExperimentService
         if ($mde !== null) {
             $text .= 'A day of this funnel can show a change of about '.$this->pointsText($mde).'. ';
         }
-        $text .= $p['enough'] ? 'Enough people have been through to read it.' : 'Too few people so far to read it.';
+        if ($w) {
+            $text .= $p['enough'] ? "Enough {$w['who']} have been counted to read it." : "Too few {$w['who']} counted so far to read it.";
+        } else {
+            $text .= $p['enough'] ? 'Enough people have been through to read it.' : 'Too few people so far to read it.';
+        }
 
         return $text;
+    }
+
+    /**
+     * A number counted, with the nouns of a read that has them: "12,402 members were counted".
+     * One member reads "1 member was counted".
+     *
+     * @param  array{who: string, started: string}  $w
+     */
+    private function counted(int $n, array $w): string
+    {
+        $who = $w['who'];
+        $started = $w['started'];
+        if ($n === 1) {
+            $who = preg_replace('/s\z/', '', $who);
+            $started = preg_replace('/\Awere /', 'was ', $started);
+        }
+
+        return number_format($n).' '.$who.' '.$started;
     }
 
     private function oneLine(array $read): string
@@ -1253,9 +1540,10 @@ class UxExperimentService
         $p = $read['primary'][$arm];
         $c = $read['arms'][self::CONTROL];
         $v = $read['arms'][$arm];
-        $out = number_format($v['starts']).' started with the change and '.number_format($c['starts']).' without; ';
+        $w = $read['words'] ?? null;
+        $out = ($w ? $this->counted($v['starts'], $w) : number_format($v['starts']).' started').' with the change and '.number_format($c['starts']).' without; ';
         if ($p['variant_rate'] !== null && $p['control_rate'] !== null) {
-            $out .= $this->pct($p['variant_rate']).' finished against '.$this->pct($p['control_rate']).' ('.$this->points($p['diff_points']).'); ';
+            $out .= $this->pct($p['variant_rate'], $w !== null).' '.($w['finished'] ?? 'finished').' against '.$this->pct($p['control_rate'], $w !== null).' ('.$this->points($p['diff_points']).'); ';
         }
 
         return $out.'probability the change is better: '.$this->prob($p['p_better']).'.';
@@ -1284,9 +1572,14 @@ class UxExperimentService
         return $days == 1.0 ? '1 day' : $days.' days';
     }
 
-    private function pct(?float $v): string
+    /**
+     * A rate as a percentage. A funnel read from Loki is a whole percent. A rate counted by a metric source is to
+     * one decimal place, because a click rate of 3.0% against 3.4% is a real difference that whole percents
+     * would print as "3% against 3%".
+     */
+    private function pct(?float $v, bool $fine = false): string
     {
-        return $v === null ? 'unknown' : round($v * 100).'%';
+        return $v === null ? 'unknown' : ($fine ? number_format($v * 100, 1) : round($v * 100)).'%';
     }
 
     /**
@@ -1331,6 +1624,11 @@ class UxExperimentService
      * experiment on for ever. An adopted entry serves the winner to most members and keeps the
      * holdout on control: {"arms": {"b": [0,89], "control": [90,99]}, "adopted": true, "until": ...}.
      * Its `until` is a fortnight past the decision, past the holdout check and the cleanup window.
+     *
+     * An experiment with a salt publishes it ("salt": "r2"), and an adopted one keeps it, or adoption
+     * would put everyone in a different bucket. The `until` of an experiment counted by a metric
+     * source is the end of its intake plus an hour, not the end of the run: arms stop being served
+     * when intake ends, and the window runs on with no new exposures.
      */
     public function rebuildConfig(): string
     {
@@ -1338,6 +1636,9 @@ class UxExperimentService
         $out = [];
         foreach (DB::table('ux_experiments')->useWritePdo()->whereIn('status', [self::STATUS_RUNNING, self::STATUS_ADOPTED])->orderBy('id')->get() as $exp) {
             $arms = json_decode($exp->arms, true) ?: [];
+            $design = $this->designOf($exp);
+            // A salt of "0" is a salt. empty("0") is true in PHP, so the test is for a string with something in it.
+            $salt = (string) ($design['salt'] ?? '') !== '' ? ['salt' => (string) $design['salt']] : [];
             if ($exp->status === self::STATUS_ADOPTED) {
                 $winner = json_decode($exp->result ?? '', true)['winner'] ?? $this->firstVariant($arms);
                 $holdout = max(0, min(50, (int) $s['holdout_share']));
@@ -1345,13 +1646,16 @@ class UxExperimentService
                     ? [$winner => [0, 99 - $holdout], self::CONTROL => [100 - $holdout, 99]]
                     : [$winner => [0, 99]];
                 $out[$exp->name] = ['arms' => $arms, 'adopted' => true,
-                    'until' => Carbon::parse($exp->decided_at ?? $exp->updated_at, 'UTC')->addDays(15)->getTimestamp()];
+                    'until' => Carbon::parse($exp->decided_at ?? $exp->updated_at, 'UTC')->addDays(15)->getTimestamp()] + $salt;
 
                 continue;
             }
             // Never publish an empty range: the client would have to drop the entry for it.
             $arms = array_filter($arms, fn ($r) => is_array($r) && count($r) === 2 && $r[0] <= $r[1]);
-            $out[$exp->name] = ['arms' => $arms, 'until' => Carbon::parse($exp->ends_at, 'UTC')->getTimestamp() + 3600];
+            $servedUntil = isset($design['source'], $design['intake_hours'])
+                ? Carbon::parse($exp->started_at, 'UTC')->addHours((int) $design['intake_hours'])
+                : Carbon::parse($exp->ends_at, 'UTC');
+            $out[$exp->name] = ['arms' => $arms, 'until' => $servedUntil->getTimestamp() + 3600] + $salt;
         }
         $json = json_encode($out ?: new \stdClass());
         DB::table('config')->upsert([['key' => self::CONFIG_KEY, 'value' => $json]], ['key'], ['value']);
@@ -1361,10 +1665,158 @@ class UxExperimentService
 
     // ------------------------------------------------------------------ helpers
 
-    /** The design object as stored (touches, expected_points, power), or []. */
+    /** The design object as stored (touches, expected_points, power and the channel keys), or []. */
     private function designOf(object $exp): array
     {
         return json_decode($exp->design ?? '', true) ?: [];
+    }
+
+    /**
+     * The metric source of an experiment decided on the server, or null for one read from Loki.
+     *
+     * @throws \RuntimeException when the design names a source this code does not have
+     */
+    private function sourceOf(object $exp): ?UxMetricSource
+    {
+        $key = $this->designOf($exp)['source'] ?? null;
+        if ($key === null) {
+            return null;
+        }
+        $class = ((array) config('freegle.ux.sources', []))[$key] ?? null;
+        if (! $class) {
+            throw new \RuntimeException("Experiment {$exp->name} names the metric source \"$key\", which this code does not have");
+        }
+
+        return app($class);
+    }
+
+    /**
+     * The slot an experiment holds while it runs: one running experiment per slot. design.slot if it
+     * has one, else <channel>:<type> when it names a type, else its funnel.
+     */
+    private function slotOf(object $exp): string
+    {
+        $design = $this->designOf($exp);
+        // A slot or a type of "0" is a value, and empty("0") is true in PHP, so these test for a string with something in it.
+        if ((string) ($design['slot'] ?? '') !== '') {
+            return (string) $design['slot'];
+        }
+        if ((string) ($design['type'] ?? '') !== '') {
+            return ($design['channel'] ?? self::WEB).':'.$design['type'];
+        }
+
+        return (string) $exp->flow;
+    }
+
+    /**
+     * Why a slot that is not a funnel is taken, as staff read it. They know "slots" as the cap on running
+     * experiments, so this says what holds the place instead: the kind of experiment and what it is for, which
+     * is the type it changes, or the label the design gave the slot.
+     */
+    private function takenSlotWords(object $exp, string $holder): string
+    {
+        $design = $this->designOf($exp);
+        $label = (string) ($design['slot'] ?? '');
+        $type = (string) ($design['type'] ?? '');
+        $channel = (string) ($design['channel'] ?? self::WEB);
+        $kind = 'experiment';
+        $for = $label;
+        if ($label === '' && $type !== '') {
+            $kind = $channel === self::WEB ? 'experiment' : "$channel experiment";
+            $for = $type;
+        }
+
+        return "Another $kind, $holder, is already running for $for. Only one change at a time can run there, so the results can be told apart.";
+    }
+
+    /** The name of another running experiment in the slot, or null. */
+    private function runningInSlot(string $slot, int $exceptId): ?string
+    {
+        $others = DB::table('ux_experiments')->useWritePdo()->whereIn('status', self::ACTIVE)->where('id', '!=', $exceptId)->orderBy('id')->get();
+        foreach ($others as $other) {
+            if ($this->slotOf($other) === $slot) {
+                return (string) $other->name;
+            }
+        }
+
+        return null;
+    }
+
+    /** Whether the config row ux_server_arms is 1, read from the write node because a start rests on it. */
+    private function serverArmsOn(): bool
+    {
+        return trim((string) DB::table('config')->useWritePdo()->where('key', UxArm::SWITCH_KEY)->value('value')) === '1';
+    }
+
+    /**
+     * The refusals that belong to an experiment decided on the server, and its run length: arms are
+     * served for intake_hours and the whole run is max_hours, which is the intake and the window
+     * unless the design says. Both are resolved here and stored in the design, which the tab and the
+     * config key read. Every refusal is a UxExperimentRefused, because the queue records that on the
+     * experiment and retries any other exception.
+     *
+     * @param  array<string, mixed>  $design
+     * @return array{0: array<string, mixed>, 1: int} the design with both hours set, and max_hours
+     */
+    private function resolveSourceRun(object $exp, array $design): array
+    {
+        $channel = (string) ($design['channel'] ?? self::WEB);
+        if (! $this->serverArmsOn()) {
+            throw new UxExperimentRefused('Experiments in mail, push and server code are switched off. Set the config key '.UxArm::SWITCH_KEY.' to 1, then start this one again.');
+        }
+        if ($channel === 'email' && ! config('freegle.mail.tracking_enabled', true)) {
+            throw new UxExperimentRefused('Email tracking is switched off, so no email can be counted.');
+        }
+        if (in_array($channel, ['email', 'push'], true)) {
+            // The Go API's list is not visible from here, so a server experiment is not checked.
+            $entry = null;
+            foreach ((array) config('ux_switches', []) as $candidate) {
+                if (is_array($candidate) && ($candidate['name'] ?? null) === $exp->name) {
+                    $entry = $candidate;
+                }
+            }
+            if ($entry === null) {
+                throw new UxExperimentRefused("The code for {$exp->name} is not deployed yet: it has no entry in the switch list.");
+            }
+            $rowArms = array_map('strval', array_keys(json_decode($exp->arms, true) ?: []));
+            $listArms = array_map('strval', (array) ($entry['arms'] ?? []));
+            sort($rowArms);
+            sort($listArms);
+            if ($rowArms !== $listArms) {
+                throw new UxExperimentRefused("The versions in the switch list for {$exp->name} (".implode(', ', $listArms).') are not the versions of this experiment ('.implode(', ', $rowArms).').');
+            }
+            if (($entry['metric']['source'] ?? null) !== ($design['source'] ?? null)) {
+                throw new UxExperimentRefused("The switch list says {$exp->name} is counted by \"".($entry['metric']['source'] ?? '')."\", but this experiment is counted by \"".($design['source'] ?? '').'".');
+            }
+        }
+
+        $channelSettings = (array) config("freegle.ux.channels.$channel", []);
+        $intake = (int) ($design['intake_hours'] ?? $channelSettings['intake_hours'] ?? 24);
+        $max = (int) ($design['max_hours'] ?? ($intake + (int) $design['window_hours']));
+        $ceiling = (int) ($channelSettings['ceiling_hours'] ?? 0);
+        if ($intake > $max) {
+            throw new UxExperimentRefused("Members are reached for $intake hours, which is longer than the whole run of $max hours.");
+        }
+        if ($ceiling > 0 && $max > $ceiling) {
+            throw new UxExperimentRefused(ucfirst($channel)." experiments run for at most $ceiling hours, and this one would run for $max. Shorten the window or the time members are reached.");
+        }
+        $design['intake_hours'] = $intake;
+        $design['max_hours'] = $max;
+
+        return [$design, $max];
+    }
+
+    /**
+     * What a run of a source experiment could count, in the shape the power check reads: members on
+     * each arm over the whole run and the rate they convert at. Null skips the check.
+     *
+     * @return array{per_arm_per_day: int, rate: float}|null
+     */
+    private function sourceVolume(UxMetricSource $source, object $exp, Carbon $now): ?array
+    {
+        $volume = $source->volume($exp, $now);
+
+        return $volume ? ['per_arm_per_day' => (int) $volume['per_arm'], 'rate' => (float) $volume['rate']] : null;
     }
 
     /**

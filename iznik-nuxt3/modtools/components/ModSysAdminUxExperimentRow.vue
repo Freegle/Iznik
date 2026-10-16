@@ -30,12 +30,15 @@
 </template>
 
 <script setup>
-// One experiment on one line: a word for its status, its title, its funnel, and a sentence about how
-// it is doing or how it ended. Pressing it opens its details. The batch's own sentences name a
+// One experiment on one line: a word for its status, its title, its funnel (with Email, Push or Server
+// before it for one decided on the server, so "Email, Replying" is a mail experiment that feeds the Replying
+// funnel, which is the funnel the filter above the list chooses by), and a sentence about how it is
+// doing or how it ended. Pressing it opens its details. The batch's own sentences name a
 // funnel by its title and never by its key.
 import { computed } from 'vue'
 import { flowShort } from '~/modtools/composables/useUxFlows'
 import {
+  channelWord,
   estateOf,
   lineOf,
   readOf,
@@ -56,7 +59,11 @@ const props = defineProps({
 const emit = defineEmits(['toggle'])
 
 const status = computed(() => statusWord(props.experiment))
-const funnel = computed(() => flowShort(props.experiment.flow))
+const funnel = computed(() => {
+  const flow = flowShort(props.experiment.flow)
+  const channel = channelWord(props.experiment)
+  return channel ? `${channel}, ${flow}` : flow
+})
 // The watch chip says what the line would, so the line leaves it out.
 const line = computed(() => lineOf(props.experiment, { watch: false }))
 // Only a running experiment is watched: a finished one has been decided already.
@@ -83,7 +90,8 @@ const statusClass = computed(
 // !important, which would run a long title and line off the right edge of a phone.
 .ux-exp-row {
   display: grid;
-  grid-template-columns: 1.25rem 8.5rem minmax(0, 2fr) 6.5rem minmax(0, 3fr);
+  // The funnel column is wide enough for "Email, Replying" on one line.
+  grid-template-columns: 1.25rem 8.5rem minmax(0, 2fr) 8.5rem minmax(0, 3fr);
   align-items: baseline;
   gap: 0.25rem 0.75rem;
   width: 100%;

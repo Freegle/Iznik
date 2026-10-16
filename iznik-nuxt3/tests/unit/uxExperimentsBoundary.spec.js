@@ -23,6 +23,7 @@ const FILES = [
   'modtools/components/ModSysAdminUxExperimentRow.vue',
   'modtools/components/ModSysAdminUxExperimentDetail.vue',
   'modtools/components/ModSysAdminUxExperimentReadout.vue',
+  'modtools/components/ModSysAdminUxExperimentChannel.vue',
   'modtools/components/ModSysAdminUxExperimentForm.vue',
   'modtools/components/ModSysAdminUxExperimentsBadge.vue',
   'modtools/composables/useUxExperimentActions.js',
@@ -79,7 +80,7 @@ describe('the Experiments section stands alone', () => {
   it('read every file on its list, and none was empty', () => {
     // A wrong path would make readFileSync throw, and an empty file would check nothing.
     expect(read).toHaveLength(FILES.length)
-    expect(read).toHaveLength(10)
+    expect(read).toHaveLength(11)
     for (const { file, source } of read) {
       expect(source.trim().length, file).toBeGreaterThan(0)
     }

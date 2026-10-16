@@ -9,6 +9,11 @@
 // ago, and one just started again. `latest_read` is only the paragraph behind "Show the full read".
 // It is never used for a figure.
 //
+// An experiment decided on the server (mail, push, server code) is counted from the database by a
+// metric source, which sends its own nouns in `result.words` and how many members were exposed and
+// counted in `result.detail`. The lines below use those nouns when there are some, and the funnel's
+// own words when there are none.
+//
 // Every function here is pure. Staff words say funnel, never flow.
 
 export const STATUS_WORDS = {
@@ -62,6 +67,45 @@ export function estateOf(exp) {
   return 'finished'
 }
 
+// ---------------------------------------------------------------------------------------- channel
+
+// The channel of an experiment decided on the server, named in the funnel column beside the funnel it feeds. Server
+// is code that runs on the server, as design.channel says. A change to the site has no channel.
+export const CHANNEL_WORDS = { email: 'Email', push: 'Push', server: 'Server' }
+
+/** Email, Push or Server for an experiment decided on the server, and empty for a change to the site. */
+export function channelWord(exp) {
+  return CHANNEL_WORDS[exp?.design?.channel] || ''
+}
+
+/**
+ * The slot an experiment holds while it runs, worked out as the batch does it
+ * (UxExperimentService::slotOf): one running experiment per slot. Its own slot if it has one, else
+ * the channel and type, else its funnel.
+ */
+export function slotOf(exp) {
+  const d = exp?.design || {}
+  if (d.slot) return String(d.slot)
+  if (d.type) return `${d.channel || 'web'}:${d.type}`
+  return String(exp?.flow ?? '')
+}
+
+/**
+ * What a taken slot stands for, as a sentence for staff: "Another email experiment is already running for
+ * UnifiedDigestDaily". The tab already uses "slot" for the cap on running experiments, so the word is not used
+ * here. Empty when the slot is a funnel, which has its own words, and for an experiment with neither a slot nor
+ * a type.
+ */
+export function sharedSlotWords(exp) {
+  const d = exp?.design || {}
+  const label = d.slot ? String(d.slot) : ''
+  const type = d.type ? String(d.type) : ''
+  if (label) return `Another experiment is already running for ${label}`
+  if (!type) return ''
+  const channel = CHANNEL_WORDS[d.channel]
+  return `Another ${channel ? `${channel.toLowerCase()} ` : ''}experiment is already running for ${type}`
+}
+
 // ----------------------------------------------------------------------------------- the numbers
 
 const whole = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
@@ -69,6 +113,14 @@ const whole = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 /** A rate between 0 and 1 as a whole percent. */
 const percent = (rate) =>
   isNumber(rate) ? `${Math.round(rate * 100)}%` : 'unknown'
+
+/**
+ * A rate of the main comparison. A funnel read from Loki is a whole percent. A rate counted by a metric source is
+ * to one decimal place, with the zero kept, because a click rate of 3.0% against 3.4% is a real difference that
+ * whole percents would print as "3% against 3%".
+ */
+const rateOf = (read, rate) =>
+  read.words && isNumber(rate) ? `${(rate * 100).toFixed(1)}%` : percent(rate)
 
 /** A guardrail rate as a percent to one decimal place, without a trailing zero. */
 const rateText = (rate) =>
@@ -107,6 +159,23 @@ export function firstSentence(text) {
 
 // -------------------------------------------------------------------------------------- the read
 
+// The nouns a metric source writes its experiment with, or null for a flow read from Loki.
+function wordsOf(r) {
+  const w = r?.words
+  if (!w || typeof w !== 'object' || Array.isArray(w)) return null
+  const text = (k) => (typeof w[k] === 'string' ? w[k].trim() : '')
+  const out = {
+    who: text('who'),
+    finished: text('finished'),
+    tabStarted: text('tab_started'),
+    tabFinished: text('tab_finished'),
+    note: text('note'),
+  }
+  return out.tabStarted && out.tabFinished ? out : null
+}
+
+const lowerFirst = (s) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s)
+
 /**
  * The read for the variant that is most likely to be better, or null when there is no read yet.
  * Rates are fractions between 0 and 1. A guardrail's label is the one the batch stored with it, so a
@@ -140,6 +209,7 @@ export function readOf(exp) {
     shareOff: !!p.share_off,
     observedShare: isNumber(p.observed_share) ? p.observed_share : null,
     expectedShare: isNumber(p.expected_share) ? p.expected_share : null,
+    words: wordsOf(r),
     guardrails: (Array.isArray(r.guardrails) ? r.guardrails : [])
       .filter((g) => g?.arm === arm)
       .map((g) => ({
@@ -177,16 +247,16 @@ const hasFigures = (read) =>
   isNumber(read.changeRate) &&
   isNumber(read.diffPoints)
 
-// "51% finished against 46% (+5.4 points)"
+// "51% finished against 46% (+5.4 points)", or "18% clicked within a day against 10% (+8.0 points)"
 const figuresOf = (read) =>
-  `${percent(read.changeRate)} finished against ${percent(read.controlRate)} (${signedPoints(read.diffPoints)} points)`
+  `${rateOf(read, read.changeRate)} ${read.words ? lowerFirst(read.words.tabFinished) : 'finished'} against ${rateOf(read, read.controlRate)} (${signedPoints(read.diffPoints)} points)`
 
 // ----------------------------------------------------------------------------------- the one line
 
 function runningLine(exp, watch) {
   const read = readOf(exp)
   if (!read) return NO_READ_YET
-  let line = 'Too few people so far to say.'
+  let line = `Too few ${read.words?.who || 'people'} so far to say.`
   if (read.enough && hasFigures(read)) {
     let verb = 'No clear difference yet'
     if (read.pBetter >= AHEAD) verb = 'Looking better'
@@ -267,16 +337,25 @@ export function shareWarning(read) {
   if (!read?.shareOff) return null
   const { observedShare: seen, expectedShare: expected } = read
   const known = seen !== null && expected !== null
-  let head =
-    'The people who started with the change are not the share expected.'
+  // A metric source counts members, not starts, so it names them as it does elsewhere.
+  const who = read.words?.who
+  let head = who
+    ? `The ${who} counted with the change are not the share expected.`
+    : 'The people who started with the change are not the share expected.'
   if (known && seen < expected) {
-    head = 'Fewer people started with the change than expected.'
+    head = who
+      ? `Fewer ${who} were counted with the change than expected.`
+      : 'Fewer people started with the change than expected.'
   } else if (known && seen > expected) {
-    head = 'More people started with the change than expected.'
+    head = who
+      ? `More ${who} were counted with the change than expected.`
+      : 'More people started with the change than expected.'
   }
   let text = `${head} The rates cannot be compared yet.`
   if (known) {
-    text += ` ${Math.round(seen)}% of starts were on the change, and about ${Math.round(expected)}% were expected.`
+    text += who
+      ? ` ${Math.round(seen)}% of those counted were on the change, and about ${Math.round(expected)}% were expected.`
+      : ` ${Math.round(seen)}% of starts were on the change, and about ${Math.round(expected)}% were expected.`
   }
   return text
 }
@@ -291,16 +370,19 @@ function differenceText(diff) {
 
 /**
  * The sentences of the read-out, for the read from readOf. Any of them can be null: a side with no
- * rate yet has no finished line, and an unread chance has no chance line.
+ * rate yet has no finished line, an unread chance has no chance line, and only an experiment counted
+ * by a metric source has a note on how it counts.
  */
 export function readLines(read) {
   if (!read) return null
+  const w = read.words
   return {
-    started: `Started: ${whole(read.changeStarts)} with the change, ${whole(read.controlStarts)} without.`,
+    started: `${w ? w.tabStarted : 'Started'}: ${whole(read.changeStarts)} with the change, ${whole(read.controlStarts)} without.`,
     finished:
       isNumber(read.controlRate) && isNumber(read.changeRate)
-        ? `Finished: ${percent(read.changeRate)} with the change, ${percent(read.controlRate)} without. That is ${differenceText(read.diffPoints)}.`
+        ? `${w ? w.tabFinished : 'Finished'}: ${rateOf(read, read.changeRate)} with the change, ${rateOf(read, read.controlRate)} without. That is ${differenceText(read.diffPoints)}.`
         : null,
+    note: w?.note || null,
     chance: isNumber(read.pBetter)
       ? `Chance the change is better: ${probText(read.pBetter)}.`
       : null,
@@ -313,12 +395,94 @@ export function readLines(read) {
 
 /**
  * The funnels an experiment was set up to watch besides its own, as keys. Null when it does not say:
- * a draft made on the command line with no list, which takes the batch's default when it starts.
+ * a draft made on the command line with no list, which takes the batch's default when it starts, and
+ * an experiment counted by a metric source, which watches nothing but itself.
  */
 export function watchedFunnels(exp) {
+  // Counted from the database, nothing else is watched: another funnel's completion cannot be split by
+  // a server arm.
+  if (exp?.design?.source) return null
   const touches = exp?.design?.touches
   if (!Array.isArray(touches)) return null
   return touches.filter((f, i) => f !== exp.flow && touches.indexOf(f) === i)
+}
+
+// ----------------------------------------------------------------------------- a channel experiment
+
+/** A window as the batch writes it: "a day", "7 days", "1 hour" or "N hours". */
+export function windowWord(hours) {
+  if (!isNumber(hours) || hours < 1) return ''
+  if (hours === 24) return 'a day'
+  if (hours === 168) return '7 days'
+  return `${hours} ${hours === 1 ? 'hour' : 'hours'}`
+}
+
+/**
+ * What each version shows, as lines: "Control: Your daily digest". Control first, then the others by
+ * name. Only the arms the design gave text for.
+ */
+export function copyLines(exp) {
+  const copy = exp?.design?.copy
+  if (!copy || typeof copy !== 'object' || Array.isArray(copy)) return []
+  return Object.keys(copy)
+    .filter((arm) => typeof copy[arm] === 'string' && copy[arm].trim() !== '')
+    .sort((a, b) =>
+      a === 'control' ? -1 : b === 'control' ? 1 : a.localeCompare(b)
+    )
+    .map((arm) => `${capital(arm)}: ${copy[arm].trim()}`)
+}
+
+// A stored time ("2026-10-20 09:00:00", UTC) a number of hours later, in the same form.
+function addHours(stamp, hours) {
+  const m = STAMP.exec(typeof stamp === 'string' ? stamp : '')
+  if (!m || !isNumber(hours)) return ''
+  const t = new Date(
+    Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) + hours * 3600000
+  )
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())} ${pad(t.getUTCHours())}:${pad(t.getUTCMinutes())}:00`
+}
+
+/**
+ * How long members are reached and when it is decided: "Served until 21 Oct 2026, 10:00 UTC.
+ * Decision on 22 Oct 2026, 10:00 UTC." Empty before it starts. The decision date is the due time, so
+ * it is only given while the experiment runs.
+ */
+export function servingLine(exp) {
+  const until = stampWord(addHours(exp?.started_at, exp?.design?.intake_hours))
+  if (!until) return ''
+  const due = exp.status === 'running' ? stampWord(exp.ends_at) : ''
+  return `Served until ${until}.${due ? ` Decision on ${due}.` : ''}`
+}
+
+// Arm names with control first, then the others by name.
+const armOrder = (names) =>
+  [...names].sort((a, b) =>
+    a === 'control' ? -1 : b === 'control' ? 1 : a.localeCompare(b)
+  )
+
+/**
+ * How many members were exposed and how many were counted, from the read's detail. With one change against the
+ * old version it reads as the read-out does, the change first: "Exposed: 12,512 with the change, 12,500
+ * without." With more than two versions there is no single change, so each is named: "Exposed: control 4,100,
+ * b 4,090, c 4,110." Null before the first read. Exposed is every member the experiment has reached so far;
+ * counted is those it first reached at least a whole window ago, who have had time to act.
+ */
+export function exposureLines(exp) {
+  const d = exp?.result?.detail
+  if (!d || typeof d !== 'object') return null
+  const line = (label, by) => {
+    if (!by || typeof by !== 'object') return null
+    const arms = armOrder(Object.keys(by).filter((a) => isNumber(by[a])))
+    if (!arms.length) return null
+    if (arms.length === 2 && arms[0] === 'control') {
+      return `${label}: ${whole(by[arms[1]])} with the change, ${whole(by.control)} without.`
+    }
+    return `${label}: ${arms.map((a) => `${a} ${whole(by[a])}`).join(', ')}.`
+  }
+  const exposed = line('Exposed', d.exposed)
+  const counted = line('Counted', d.counted)
+  return exposed || counted ? { exposed, counted } : null
 }
 
 // ----------------------------------------------------------------------------------------- the order

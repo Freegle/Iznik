@@ -143,3 +143,17 @@ func TestBuildDBSpecs_NoChatsAtAll(t *testing.T) {
 	assert.NotNil(t, held)
 	assert.Equal(t, "userid = ?", held.where)
 }
+
+// Which experiment arm each send, reply or promise to a member used is theirs, so support's dump of
+// the member carries it, keyed on the member alone. The table may not exist on a schema that has not
+// had the SQL run; a spec for a table that is absent is skipped quietly when the dump runs.
+func TestBuildDBSpecs_ExperimentExposuresAreCollected(t *testing.T) {
+	since := time.Date(2026, 5, 7, 0, 0, 0, 0, time.UTC)
+	specs := buildDBSpecs(42, nil, nil, nil, nil, since)
+
+	exposures := findSpec(specs, "ux_experiment_exposures")
+	assert.NotNil(t, exposures)
+	assert.Equal(t, "userid = ?", exposures.where)
+	assert.Equal(t, []interface{}{int64(42)}, exposures.args)
+	assert.Equal(t, 0, exposures.limit, "all of the member's rows")
+}

@@ -63,6 +63,101 @@ describe('useExperiment', () => {
       expect(mod.bucket('sess-abc', 'ab')).toBe(72)
       expect(mod.bucket('42', 'give-hint')).toBe(40)
     })
+
+    // The same vectors are pinned in iznik-batch (ExperimentBucketTest) and iznik-server-go
+    // (ux_serverarm_test.go). A change to one runtime that moves a bucket fails all three.
+    const IDS = [1, 2, 3, 5, 12345, 999999]
+    it.each([
+      ['confirm-reply', '', [44, 73, 77, 55, 1, 38]],
+      ['digest-subject', '', [87, 77, 72, 88, 29, 68]],
+      ['digest-subject', 'r2', [88, 97, 5, 2, 11, 58]],
+    ])('matches the shared vectors for %s with salt %j', (name, salt, want) => {
+      expect(IDS.map((id) => mod.bucket(id, name, salt))).toEqual(want)
+    })
+
+    it('reads an empty salt as no salt', () => {
+      expect(mod.bucket(5, 'digest-subject', '')).toBe(
+        mod.bucket(5, 'digest-subject')
+      )
+      expect(mod.bucket(5, 'digest-subject', 'r2')).not.toBe(
+        mod.bucket(5, 'digest-subject')
+      )
+    })
+  })
+
+  describe('a salted entry', () => {
+    const arms = { control: [0, 49], items: [50, 99] }
+
+    it('places a member by the salted bucket', () => {
+      // Member 3 is in items without a salt (bucket 72) and in control with the salt r2 (bucket 5).
+      auth.user = { id: 3 }
+      mod.setLiveExperiments({ 'digest-subject': running(arms) })
+      expect(mod.useExperiment('digest-subject')).toBe('items')
+
+      localStorage.clear()
+      mod.resetLiveExperiments()
+      mod.setLiveExperiments({
+        'digest-subject': { ...running(arms), salt: 'r2' },
+      })
+      expect(mod.useExperiment('digest-subject')).toBe('control')
+    })
+
+    it('keeps its salt once adopted, or adoption would move everyone', () => {
+      // Member 2 has bucket 77 without the salt, so in the adopted arm, and bucket 97 with the
+      // salt r2, so in the holdout.
+      auth.user = { id: 2 }
+      const adopted = { items: [0, 89], control: [90, 99] }
+      mod.setLiveExperiments({
+        'digest-subject': { arms: adopted, adopted: true, salt: 'r2' },
+      })
+      expect(mod.useExperiment('digest-subject')).toBe('control')
+
+      mod.setLiveExperiments({
+        'digest-subject': { arms: adopted, adopted: true },
+      })
+      expect(mod.useExperiment('digest-subject')).toBe('items')
+    })
+
+    it('stamps the salt on the entry it publishes', () => {
+      const entries = mod.normaliseConfig({
+        a: { ...running(arms), salt: 'r2' },
+        b: running(arms),
+        c: { ...running(arms), salt: null },
+      })
+      expect(entries.a.salt).toBe('r2')
+      expect(entries.b.salt).toBe('')
+      expect(entries.c.salt).toBe('')
+    })
+
+    it.each([
+      ['a space', 'bad salt'],
+      ['17 characters', 'abcdefghijklmnopq'],
+      ['an empty string', ''],
+      ['a number', 5],
+      ['true', true],
+      ['a list', ['r2']],
+      ['an object', { r: 2 }],
+      ['a symbol', 'r2!'],
+      ['a newline at the end', 'r2\n'],
+    ])('drops the whole entry when the salt is %s', (_label, salt) => {
+      auth.user = { id: 3 }
+      mod.setLiveExperiments({
+        bad: { ...running(arms), salt },
+        good: { ...running(arms), salt: 'ok_-1' },
+        adoptedbad: { arms: { items: [0, 99] }, adopted: true, salt },
+      })
+      expect(mod.useExperiment('bad')).toBeNull()
+      expect(mod.useExperiment('adoptedbad')).toBeNull()
+      expect(mod.useExperiment('good')).not.toBeNull()
+    })
+
+    it('accepts a salt of 16 characters', () => {
+      auth.user = { id: 3 }
+      mod.setLiveExperiments({
+        exp: { ...running(arms), salt: 'abcdefghijklmnop' },
+      })
+      expect(mod.useExperiment('exp')).not.toBeNull()
+    })
   })
 
   describe('the old flat shape, from runtime config only', () => {

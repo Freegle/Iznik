@@ -235,6 +235,18 @@ stale JWT reads as signed in, because it still names its member. A persistent to
 not signed in. `TestJobGate_AStaleSessionStillGetsTheJob` and
 `TestJobGate_APersistentTokenCountsAsSignedIn` check both.
 
+## An experiment arm is a copy up to a minute old, and its exposure goes on the primary
+
+`ux.ExperimentArm` reads the `ux_experiments` and `ux_server_arms` config rows once and keeps them for 60
+seconds, so turning `ux_server_arms` off takes up to a minute to reach a running API, and a test that
+changes the rows must call `ux.FlushServerArmCache()` or it reads the copy it made earlier. A read error is
+control and is remembered for the same minute, so it looks like "the experiment is off" with nothing wrong
+in the logs but one line.
+
+`ux.RecordExposure` writes the member's row. Pass the transaction of the thing decided (the promise, the
+reply), not a read handle, so the row stands or falls with it and goes to the primary. It returns an error
+for the tests and logs it; the caller must carry on, because a failed analytics row must not stop a reply.
+
 ## See also
 
 - `.claude/rules/laravel-batch-traps.md` - JSON null casting, in-place foreign keys.

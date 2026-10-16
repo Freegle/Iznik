@@ -1378,6 +1378,12 @@ class User extends Model implements Auditable
             EloquentUtils::reparentRowIgnore(Tryst::class, 'user2', $id2, $id1, $dryRun);
             EloquentUtils::reparentRowIgnore(IsochroneUser::class, 'userid', $id2, $id1, $dryRun);
             EloquentUtils::reparentRowIgnore(Microaction::class, 'userid', $id2, $id1, $dryRun);
+            // The record of which experiment arm a send used. A merge must not depend on an analytics
+            // table, so a table that has not been created yet is skipped. A row that clashes with one the
+            // surviving account already has stays where it is.
+            if (UxExperimentExposure::tableExists()) {
+                EloquentUtils::reparentRowIgnore(UxExperimentExposure::class, 'userid', $id2, $id1, $dryRun);
+            }
 
             // --- Handle bans ---
             EloquentUtils::reparentRowIgnore(UserBanned::class, 'userid', $id2, $id1, $dryRun);
@@ -1810,6 +1816,12 @@ class User extends Model implements Auditable
         Logger::info("TN-SYNC-TRACE [WRITE] table=messages_promises op=delete where=userid={$this->id}");
         if (!$dryRun) {
             MessagePromise::where('userid', $this->id)->get()->each->delete();
+        }
+
+        // --- Delete experiment exposures (skipped while the table does not exist) ---
+        Logger::info("TN-SYNC-TRACE [WRITE] table=ux_experiment_exposures op=delete where=userid={$this->id}");
+        if (!$dryRun && UxExperimentExposure::tableExists()) {
+            UxExperimentExposure::where('userid', $this->id)->delete();
         }
 
         // --- Mark user as forgotten ---

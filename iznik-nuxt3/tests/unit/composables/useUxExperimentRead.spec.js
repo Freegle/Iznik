@@ -11,6 +11,7 @@ import {
   readLines,
   guardrailLine,
   shareWarning,
+  sharedSlotWords,
   firstSentence,
   holdoutText,
   safeLink,
@@ -20,6 +21,13 @@ import {
   durationWord,
   watchedFunnels,
   orderExperiments,
+  CHANNEL_WORDS,
+  channelWord,
+  slotOf,
+  windowWord,
+  copyLines,
+  servingLine,
+  exposureLines,
 } from '~/modtools/composables/useUxExperimentRead'
 
 // The structured read the hourly tick stores in `result` (UxExperimentService::statistics). Rates are
@@ -997,6 +1005,468 @@ describe('useUxExperimentRead', () => {
       ]) {
         expect(safeLink(bad), String(bad)).toBe('')
       }
+    })
+  })
+  // An experiment decided on the server (mail, push, server code) is counted from the database by a
+  // metric source. It sends its own nouns in result.words and how many were exposed and counted in
+  // result.detail; the lines use them when they are there and the funnel's own words when they are not.
+  describe('an experiment decided on the server', () => {
+    const words = {
+      who: 'members',
+      started: 'were counted',
+      finished: 'clicked a link within a day',
+      tab_started: 'Counted',
+      tab_finished: 'Clicked within a day',
+      note: 'Each member is counted once, for the first email they were sent, and only when that was at least a day ago.',
+    }
+
+    const sourceResult = (over = {}, primary = {}) => ({
+      read_at: '2026-10-21T16:00:00+00:00',
+      arms: {
+        control: { starts: 12389, completes: 1239 },
+        items: { starts: 12402, completes: 2232 },
+      },
+      primary: {
+        items: {
+          control_rate: 0.1,
+          variant_rate: 0.18,
+          diff_points: 8,
+          p_better: 0.97,
+          enough: true,
+          observed_share: 50,
+          expected_share: 50,
+          share_off: false,
+          ...primary,
+        },
+      },
+      guardrails: [],
+      words,
+      detail: {
+        exposed: { control: 12500, items: 12512 },
+        counted: { control: 12389, items: 12402 },
+      },
+      ...over,
+    })
+
+    const email = (over = {}) => ({
+      id: 9,
+      flow: 'reply',
+      name: 'digest-subject',
+      title: 'A plainer digest subject',
+      status: 'running',
+      created_at: '2026-10-20 09:00:00',
+      started_at: '2026-10-20 10:00:00',
+      ends_at: '2026-10-22 10:00:00',
+      design: {
+        channel: 'email',
+        type: 'UnifiedDigestDaily',
+        source: 'email_click',
+        window_hours: 24,
+        intake_hours: 24,
+        max_hours: 48,
+        fixed_split: true,
+        touches: [],
+        copy: { items: 'Items near you', control: 'Your daily digest' },
+      },
+      result: sourceResult(),
+      ...over,
+    })
+
+    describe('the word in the funnel column', () => {
+      it('is Email, Push or Server, and empty for a change to the site', () => {
+        expect(channelWord({ design: { channel: 'email' } })).toBe('Email')
+        expect(channelWord({ design: { channel: 'push' } })).toBe('Push')
+        expect(channelWord({ design: { channel: 'server' } })).toBe('Server')
+        expect(channelWord({ design: { channel: 'web' } })).toBe('')
+        expect(channelWord({ design: { touches: ['give'] } })).toBe('')
+        expect(channelWord({ design: null })).toBe('')
+        expect(channelWord(null)).toBe('')
+        expect(channelWord({ design: { channel: 'sms' } })).toBe('')
+        expect(CHANNEL_WORDS).toEqual({
+          email: 'Email',
+          push: 'Push',
+          server: 'Server',
+        })
+      })
+    })
+
+    describe('the slot', () => {
+      it('is the design slot, else the channel and type, else the funnel', () => {
+        expect(
+          slotOf({ flow: 'reply', design: { slot: 'shared:thing' } })
+        ).toBe('shared:thing')
+        expect(
+          slotOf({
+            flow: 'reply',
+            design: { channel: 'email', type: 'UnifiedDigestDaily' },
+          })
+        ).toBe('email:UnifiedDigestDaily')
+        expect(
+          slotOf({
+            flow: 'reply',
+            design: { slot: 'mine', channel: 'email', type: 'x' },
+          })
+        ).toBe('mine')
+        expect(slotOf({ flow: 'reply', design: { channel: 'email' } })).toBe(
+          'reply'
+        )
+        expect(slotOf({ flow: 'give', design: { touches: ['give'] } })).toBe(
+          'give'
+        )
+        expect(slotOf({ flow: 'give', design: null })).toBe('give')
+        expect(slotOf({ flow: 'give', design: { type: 'x' } })).toBe('web:x')
+        expect(slotOf(null)).toBe('')
+      })
+    })
+
+    describe('what a shared slot is for', () => {
+      it('names the kind of experiment and the type it changes, and never says slot', () => {
+        expect(sharedSlotWords(email())).toBe(
+          'Another email experiment is already running for UnifiedDigestDaily'
+        )
+        expect(
+          sharedSlotWords({
+            design: { channel: 'push', type: 'daily_new_posts' },
+          })
+        ).toBe('Another push experiment is already running for daily_new_posts')
+        expect(
+          sharedSlotWords({ design: { channel: 'server', type: 'confirm' } })
+        ).toBe('Another server experiment is already running for confirm')
+      })
+
+      it('gives the label the design chose for its slot, whatever its type', () => {
+        expect(
+          sharedSlotWords({
+            design: { channel: 'email', type: 'x', slot: 'shared:thing' },
+          })
+        ).toBe('Another experiment is already running for shared:thing')
+      })
+
+      it('leaves out the channel of an experiment with no channel, and gives nothing with neither', () => {
+        expect(sharedSlotWords({ design: { type: 'x' } })).toBe(
+          'Another experiment is already running for x'
+        )
+        expect(sharedSlotWords({ design: { touches: ['give'] } })).toBe('')
+        expect(sharedSlotWords({ design: null })).toBe('')
+        expect(sharedSlotWords(null)).toBe('')
+      })
+    })
+
+    describe('the words of the read', () => {
+      it('are kept from the read, and a read with none has none', () => {
+        const read = readOf(email())
+        expect(read.words).toEqual({
+          who: 'members',
+          finished: 'clicked a link within a day',
+          tabStarted: 'Counted',
+          tabFinished: 'Clicked within a day',
+          note: words.note,
+        })
+        expect(readOf(running()).words).toBeNull()
+        expect(
+          readOf(email({ result: sourceResult({ words: 'nope' }) })).words
+        ).toBeNull()
+        expect(
+          readOf(email({ result: sourceResult({ words: { who: 'members' } }) }))
+            .words
+        ).toBeNull()
+      })
+
+      it('say how many were counted and what they did, in the read-out lines', () => {
+        const lines = readLines(readOf(email()))
+        // Counted, not sent: the members counted are fewer than the members sent so far.
+        expect(lines.started).toBe(
+          'Counted: 12,402 with the change, 12,389 without.'
+        )
+        expect(lines.finished).toBe(
+          'Clicked within a day: 18.0% with the change, 10.0% without. That is 8 points more.'
+        )
+        expect(lines.chance).toBe('Chance the change is better: 97%.')
+        expect(lines.note).toBe(words.note)
+      })
+
+      it('leave a read from Loki saying what it always said, with no note', () => {
+        const lines = readLines(readOf(running()))
+        expect(lines.started).toBe('Started: 210 with the change, 200 without.')
+        expect(lines.finished).toContain('Finished: 51% with the change')
+        expect(lines.note).toBeNull()
+      })
+
+      it('are in the one line on the row', () => {
+        expect(lineOf(email())).toBe(
+          'Looking better: 18.0% clicked within a day against 10.0% (+8.0 points).'
+        )
+        expect(
+          lineOf(email({ status: 'adopted', decision: 'Adopted early.' }))
+        ).toBe('Kept: 18.0% clicked within a day against 10.0% (+8.0 points).')
+        expect(
+          lineOf(
+            email({
+              status: 'reverted',
+              decision: 'Reverted early: it got worse.',
+            })
+          )
+        ).toBe(
+          'Taken off: 18.0% clicked within a day against 10.0% (+8.0 points). Reverted early: it got worse.'
+        )
+      })
+
+      it('write a rate to one decimal place, so half a point can be read', () => {
+        // 3.0% against 3.4%. Whole percents print "3% against 3%".
+        const closeRead = sourceResult(
+          {},
+          { control_rate: 0.03, variant_rate: 0.034, diff_points: 0.4 }
+        )
+        const close = email({ result: closeRead })
+        expect(lineOf(close)).toBe(
+          'Looking better: 3.4% clicked within a day against 3.0% (+0.4 points).'
+        )
+        expect(readLines(readOf(close)).finished).toBe(
+          'Clicked within a day: 3.4% with the change, 3.0% without. That is 0.4 points more.'
+        )
+        // 4.4% against 4.9% would read "5% against 4%".
+        const other = email({
+          result: sourceResult(
+            {},
+            { control_rate: 0.044, variant_rate: 0.049, diff_points: 0.5 }
+          ),
+        })
+        expect(lineOf(other)).toBe(
+          'Looking better: 4.9% clicked within a day against 4.4% (+0.5 points).'
+        )
+        expect(
+          lineOf(
+            email({
+              status: 'adopted',
+              decision: 'Adopted early.',
+              result: closeRead,
+            })
+          )
+        ).toBe('Kept: 3.4% clicked within a day against 3.0% (+0.4 points).')
+      })
+
+      it('keep whole percents for a funnel read from Loki', () => {
+        expect(lineOf(running())).toContain('51% finished against 46%')
+        expect(readLines(readOf(running())).finished).toContain(
+          'Finished: 51% with the change, 46% without.'
+        )
+      })
+
+      it('say members, not people, when there are too few to say', () => {
+        const few = email({
+          result: sourceResult({}, { enough: false }),
+        })
+        expect(lineOf(few)).toBe('Too few members so far to say.')
+        expect(lineOf(running({ result: result({}, { enough: false }) }))).toBe(
+          'Too few people so far to say.'
+        )
+      })
+
+      it('say members, not starts, when the share is not what was served', () => {
+        const off = (seen, expected) =>
+          shareWarning(
+            readOf(
+              email({
+                result: sourceResult(
+                  {},
+                  {
+                    share_off: true,
+                    observed_share: seen,
+                    expected_share: expected,
+                  }
+                ),
+              })
+            )
+          )
+        expect(off(30, 50)).toBe(
+          'Fewer members were counted with the change than expected. The rates cannot be compared yet. 30% of those counted were on the change, and about 50% were expected.'
+        )
+        expect(off(70, 50)).toContain(
+          'More members were counted with the change than expected.'
+        )
+        const unknown = shareWarning(
+          readOf(
+            email({
+              result: sourceResult(
+                {},
+                { share_off: true, observed_share: null, expected_share: null }
+              ),
+            })
+          )
+        )
+        expect(unknown).toBe(
+          'The members counted with the change are not the share expected. The rates cannot be compared yet.'
+        )
+      })
+    })
+
+    describe('what it watched', () => {
+      it('is nothing but itself: another funnel cannot be split by a server arm', () => {
+        expect(watchedFunnels(email())).toBeNull()
+        expect(
+          watchedFunnels({
+            flow: 'reply',
+            design: { source: 'x', touches: ['reply', 'give'] },
+          })
+        ).toBeNull()
+        expect(
+          watchedFunnels({
+            flow: 'give',
+            design: { touches: ['give', 'login'] },
+          })
+        ).toEqual(['login'])
+      })
+    })
+
+    describe('the window', () => {
+      it('is a day, 7 days, an hour or hours, as the batch writes it', () => {
+        expect(windowWord(24)).toBe('a day')
+        expect(windowWord(168)).toBe('7 days')
+        expect(windowWord(1)).toBe('1 hour')
+        expect(windowWord(36)).toBe('36 hours')
+        expect(windowWord(0)).toBe('')
+        expect(windowWord(null)).toBe('')
+        expect(windowWord('24')).toBe('')
+      })
+    })
+
+    describe('the text each version shows', () => {
+      it('is a line for each arm, control first, then the others by name', () => {
+        expect(copyLines(email())).toEqual([
+          'Control: Your daily digest',
+          'Items: Items near you',
+        ])
+        expect(
+          copyLines({
+            design: { copy: { z: 'last', a: 'first', control: 'base' } },
+          })
+        ).toEqual(['Control: base', 'A: first', 'Z: last'])
+      })
+
+      it('leaves out an arm with no text, and gives nothing for no copy', () => {
+        expect(
+          copyLines({ design: { copy: { control: ' ', b: 'x', c: 4 } } })
+        ).toEqual(['B: x'])
+        expect(copyLines({ design: { copy: ['x'] } })).toEqual([])
+        expect(copyLines({ design: {} })).toEqual([])
+        expect(copyLines(null)).toEqual([])
+      })
+    })
+
+    describe('how long members are reached', () => {
+      it('is the start plus the intake, and the due time while it runs', () => {
+        expect(servingLine(email())).toBe(
+          'Served until 21 Oct 2026, 10:00 UTC. Decision on 22 Oct 2026, 10:00 UTC.'
+        )
+      })
+
+      it('gives no decision date once it has been decided', () => {
+        expect(servingLine(email({ status: 'adopted' }))).toBe(
+          'Served until 21 Oct 2026, 10:00 UTC.'
+        )
+      })
+
+      it('crosses a day, a month and a year as a clock does', () => {
+        const at = (started, hours) =>
+          servingLine({
+            status: 'adopted',
+            started_at: started,
+            design: { intake_hours: hours },
+          })
+        expect(at('2026-10-20 23:30:00', 1)).toBe(
+          'Served until 21 Oct 2026, 00:30 UTC.'
+        )
+        expect(at('2026-10-31 22:00:00', 4)).toBe(
+          'Served until 1 Nov 2026, 02:00 UTC.'
+        )
+        expect(at('2026-12-31 23:00:00', 2)).toBe(
+          'Served until 1 Jan 2027, 01:00 UTC.'
+        )
+        expect(at('2026-10-20 10:00:00', 168)).toBe(
+          'Served until 27 Oct 2026, 10:00 UTC.'
+        )
+      })
+
+      it('says nothing before it starts or when the intake is not known', () => {
+        expect(servingLine(email({ started_at: null }))).toBe('')
+        expect(servingLine(email({ design: { channel: 'email' } }))).toBe('')
+        expect(servingLine(null)).toBe('')
+      })
+    })
+
+    describe('how many were exposed and counted', () => {
+      it('is a line each, in the words and the order of the read-out, with thousands separated', () => {
+        // The change first, then the old version, as "Counted: 12,402 with the change, 12,389 without." reads above it.
+        expect(exposureLines(email())).toEqual({
+          exposed: 'Exposed: 12,512 with the change, 12,500 without.',
+          counted: 'Counted: 12,402 with the change, 12,389 without.',
+        })
+      })
+
+      it('names each version when there are more than two, control first', () => {
+        expect(
+          exposureLines(
+            email({
+              result: sourceResult({
+                detail: {
+                  exposed: { c: 4110, control: 4100, b: 4090 },
+                  counted: { b: 3990, c: 4010, control: 4000 },
+                },
+              }),
+            })
+          )
+        ).toEqual({
+          exposed: 'Exposed: control 4,100, b 4,090, c 4,110.',
+          counted: 'Counted: control 4,000, b 3,990, c 4,010.',
+        })
+      })
+
+      it('names the versions when the two are not the old version and one change', () => {
+        expect(
+          exposureLines(
+            email({
+              result: sourceResult({
+                detail: { exposed: { a: 5, b: 7 }, counted: { a: 1, b: 2 } },
+              }),
+            })
+          )
+        ).toEqual({
+          exposed: 'Exposed: a 5, b 7.',
+          counted: 'Counted: a 1, b 2.',
+        })
+      })
+
+      it('is nothing before the first read, and a part is left out if it is missing', () => {
+        expect(exposureLines(email({ result: null }))).toBeNull()
+        expect(exposureLines(email({ result: { arms: {} } }))).toBeNull()
+        expect(
+          exposureLines(email({ result: sourceResult({ detail: {} }) }))
+        ).toBeNull()
+        expect(
+          exposureLines(
+            email({
+              result: sourceResult({
+                detail: { counted: { control: 0, items: 3 } },
+              }),
+            })
+          )
+        ).toEqual({
+          exposed: null,
+          counted: 'Counted: 3 with the change, 0 without.',
+        })
+      })
+
+      it('ignores a count that is not a number', () => {
+        expect(
+          exposureLines(
+            email({
+              result: sourceResult({
+                detail: { exposed: { control: 'many', items: 5 } },
+              }),
+            })
+          )
+        ).toEqual({ exposed: 'Exposed: items 5.', counted: null })
+      })
     })
   })
 })

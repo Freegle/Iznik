@@ -241,4 +241,85 @@ describe('ModSysAdminUxExperimentRow', () => {
       'No count yet. The first one comes within the hour.'
     )
   })
+  describe('an experiment decided on the server', () => {
+    const words = {
+      who: 'members',
+      started: 'were counted',
+      finished: 'clicked a link within a day',
+      tab_started: 'Counted',
+      tab_finished: 'Clicked within a day',
+      note: 'Each member is counted once.',
+    }
+
+    const decided = (channel, over = {}) =>
+      experiment({
+        flow: 'reply',
+        name: `${channel}-test`,
+        design: {
+          channel,
+          type: 'UnifiedDigestDaily',
+          source: 'email_click',
+          window_hours: 24,
+        },
+        result: result(
+          { words },
+          { control_rate: 0.1, variant_rate: 0.18, diff_points: 8 }
+        ),
+        ...over,
+      })
+
+    it('shows the channel and then the funnel it feeds in the funnel column', () => {
+      // The Funnel filter above the list chooses by funnel, so a row says which funnel it feeds as well.
+      expect(
+        make({ experiment: decided('email') })
+          .find('.funnel')
+          .text()
+      ).toBe('Email, Replying')
+      expect(
+        make({ experiment: decided('push') })
+          .find('.funnel')
+          .text()
+      ).toBe('Push, Replying')
+      expect(
+        make({ experiment: decided('server') })
+          .find('.funnel')
+          .text()
+      ).toBe('Server, Replying')
+    })
+
+    it('does not call server code the site: a change to the site is the one that is on it', () => {
+      const text = make({ experiment: decided('server') })
+        .find('.funnel')
+        .text()
+      expect(text).not.toMatch(/\bSite\b/)
+    })
+
+    it('shows the channel on a draft too, before it has a read', () => {
+      const w = make({
+        experiment: decided('email', { status: 'draft', result: null }),
+      })
+      expect(w.find('.funnel').text()).toBe('Email, Replying')
+      expect(w.find('.status').text()).toBe('Not started')
+    })
+
+    it('keeps the funnel name for a change to the site', () => {
+      expect(make().find('.funnel').text()).toBe('Offering')
+      const web = make({
+        experiment: experiment({
+          design: { touches: ['give'], channel: 'web' },
+        }),
+      })
+      expect(web.find('.funnel').text()).toBe('Offering')
+    })
+
+    it('writes its line with the words of the source', () => {
+      expect(
+        make({ experiment: decided('email') })
+          .find('.line-text')
+          .text()
+      ).toBe(
+        'Looking better: 18.0% clicked within a day against 10.0% (+8.0 points).'
+      )
+    })
+  })
 })

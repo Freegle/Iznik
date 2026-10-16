@@ -743,7 +743,7 @@ func TestUxCreateExperimentReadsTheNewIdFromThePrimary(t *testing.T) {
 // The experiments routes read their own two tables and nothing else. They name no table that
 // belongs to another part of the UX work.
 func TestUxExperimentsBoundary(t *testing.T) {
-	files := []string{"../ux/experiments.go"}
+	files := []string{"../ux/experiments.go", "../ux/serverarm.go"}
 	read := 0
 	for _, f := range files {
 		b, err := os.ReadFile(f)
@@ -754,6 +754,6 @@ func TestUxExperimentsBoundary(t *testing.T) {
 			assert.NotContains(t, string(b), name, f)
 		}
 	}
-	require.Len(t, files, 1)
-	assert.Equal(t, 1, read, "the file was read")
+	require.Len(t, files, 2)
+	assert.Equal(t, 2, read, "both files were read")
 }

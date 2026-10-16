@@ -834,4 +834,211 @@ describe('ModSysAdminUxExperimentDetail', () => {
       'Adopted but its switch is still in the code: cleanup overdue.'
     )
   })
+  describe('an experiment decided on the server', () => {
+    const words = {
+      who: 'members',
+      started: 'were counted',
+      finished: 'clicked a link within a day',
+      tab_started: 'Counted',
+      tab_finished: 'Clicked within a day',
+      note: 'Each member is counted once, for the first email they were sent, and only when that was at least a day ago.',
+    }
+
+    const digest = {
+      ...running,
+      id: 11,
+      flow: 'reply',
+      name: 'digest-subject',
+      title: 'A plainer digest subject',
+      change: 'The digest subject names the items.',
+      started_at: '2026-10-20 10:00:00',
+      ends_at: '2026-10-22 10:00:00',
+      design: {
+        channel: 'email',
+        type: 'UnifiedDigestDaily',
+        source: 'email_click',
+        window_hours: 24,
+        intake_hours: 24,
+        max_hours: 48,
+        touches: [],
+        copy: { control: 'Your daily digest', items: 'Items near you' },
+      },
+      result: result(
+        {
+          arms: {
+            control: { starts: 12389, completes: 1239 },
+            b: { starts: 12402, completes: 2232 },
+          },
+          words,
+          detail: {
+            exposed: { control: 12500, b: 12512 },
+            counted: { control: 12389, b: 12402 },
+          },
+        },
+        { control_rate: 0.1, variant_rate: 0.18, diff_points: 8 }
+      ),
+      latest_read: null,
+    }
+
+    const webReply = {
+      ...running,
+      id: 12,
+      flow: 'reply',
+      name: 'reply-web',
+      title: 'A reply test on the site',
+      design: { touches: ['reply'] },
+    }
+
+    it('draws the channel block: the funnel, the text of each version, how long members are reached, and the counts', () => {
+      const w = make(digest)
+      const block = w.find('.ux-exp-channel')
+      expect(block.exists()).toBe(true)
+      expect(block.text()).toContain('Email experiment')
+      expect(block.text()).toContain('Funnel: Replying to a post.')
+      expect(block.text()).toContain('Control: Your daily digest')
+      expect(block.text()).toContain('Items: Items near you')
+      expect(block.text()).toContain(
+        'Served until 21 Oct 2026, 10:00 UTC. Decision on 22 Oct 2026, 10:00 UTC.'
+      )
+      expect(block.text()).toContain(
+        'Exposed: 12,512 with the change, 12,500 without.'
+      )
+    })
+
+    it('draws the readout in the nouns of the source, with its note', () => {
+      const w = make(digest)
+      expect(w.find('.how').text()).toContain(
+        'Counted: 12,402 with the change, 12,389 without.'
+      )
+      expect(w.find('.how .note').text()).toContain(
+        'Each member is counted once'
+      )
+    })
+
+    it('draws nothing in the channel block for a change to the site', () => {
+      expect(make(running).find('.ux-exp-channel').exists()).toBe(false)
+    })
+
+    it('does not list other funnels it watched: another funnel cannot be split by a server arm', () => {
+      expect(make(digest).text()).not.toContain('Other funnels we watched')
+      expect(make(running).text()).toContain('Other funnels we watched')
+    })
+
+    it('draws the channel block before the pieces other parts of the tab add', () => {
+      hosted.pieces = [
+        {
+          name: 'Piece',
+          props: ['experiment'],
+          template: '<p class="hosted-piece">hosted</p>',
+        },
+      ]
+      const html = make(digest).html()
+      expect(html.indexOf('ux-exp-channel')).toBeGreaterThan(-1)
+      expect(html.indexOf('ux-exp-channel')).toBeLessThan(
+        html.indexOf('hosted-piece')
+      )
+    })
+
+    it('shows a refusal of the start like any other', () => {
+      const refused = {
+        ...digest,
+        status: 'draft',
+        started_at: null,
+        ends_at: null,
+        result: {
+          last_refusal: {
+            action: 'start',
+            message:
+              'Experiments in mail, push and server code are switched off. Set the config key ux_server_arms to 1, then start this one again.',
+            at: '2026-10-20T09:00:00+00:00',
+          },
+        },
+      }
+      const w = make(refused)
+      expect(w.find('.problem').text()).toBe(
+        'That was not done: Experiments in mail, push and server code are switched off. Set the config key ux_server_arms to 1, then start this one again.'
+      )
+      expect(w.find('.ux-exp-channel').text()).toContain(
+        'Control: Your daily digest'
+      )
+      expect(w.find('.ux-exp-channel').text()).not.toContain('Served until')
+    })
+
+    describe('the Start button follows what the experiment changes, not only the funnel', () => {
+      const draftDigest = {
+        ...digest,
+        id: 13,
+        name: 'digest-two',
+        status: 'draft',
+        started_at: null,
+        ends_at: null,
+        result: null,
+      }
+      const startOf = (w) => w.find('button.start')
+
+      it('is off while another change runs for the same email type', () => {
+        const w = make(draftDigest, { list: [draftDigest, digest] })
+        expect(startOf(w).attributes('disabled')).toBeDefined()
+        expect(w.find('.start-reason').text()).toBe(
+          'Another email experiment is already running for UnifiedDigestDaily.'
+        )
+      })
+
+      it('does not use the word slot, which the strip above the list uses for the cap on running experiments', () => {
+        const w = make(draftDigest, { list: [draftDigest, digest] })
+        expect(w.find('.start-reason').text()).not.toMatch(/slot/i)
+      })
+
+      it('is on for a mail test while a change to the site runs on the same funnel', () => {
+        const w = make(draftDigest, { list: [draftDigest, webReply] })
+        expect(startOf(w).attributes('disabled')).toBeUndefined()
+        expect(w.find('.start-reason').exists()).toBe(false)
+      })
+
+      it('is on for a change to the site while a mail test runs on the same funnel', () => {
+        const draftWeb = {
+          ...webReply,
+          id: 14,
+          status: 'draft',
+          started_at: null,
+          ends_at: null,
+          result: null,
+        }
+        const w = make(draftWeb, { list: [draftWeb, digest] })
+        expect(startOf(w).attributes('disabled')).toBeUndefined()
+      })
+
+      it('is off for a change to the site while another runs on its funnel, as before', () => {
+        const draftWeb = {
+          ...webReply,
+          id: 14,
+          status: 'draft',
+          started_at: null,
+          ends_at: null,
+          result: null,
+        }
+        const w = make(draftWeb, { list: [draftWeb, webReply] })
+        expect(startOf(w).attributes('disabled')).toBeDefined()
+        expect(w.find('.start-reason').text()).toBe(
+          'Another change is running on this funnel.'
+        )
+      })
+
+      it('is off for two that name the same slot, whatever their types', () => {
+        const a = {
+          ...draftDigest,
+          design: { ...draftDigest.design, slot: 'shared:thing' },
+        }
+        const b = {
+          ...digest,
+          design: { ...digest.design, type: 'Other', slot: 'shared:thing' },
+        }
+        const w = make(a, { list: [a, b] })
+        expect(startOf(w).attributes('disabled')).toBeDefined()
+        expect(w.find('.start-reason').text()).toBe(
+          'Another experiment is already running for shared:thing.'
+        )
+      })
+    })
+  })
 })

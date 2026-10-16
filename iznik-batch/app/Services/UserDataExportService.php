@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Database\Expressions\Comparison;
 use App\Database\Expressions\Length;
+use App\Models\UxExperimentExposure;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -131,6 +132,7 @@ class UserDataExportService
         $data['aboutme'] = $this->getAboutMe($userId);
         $data['stories'] = $this->getStories($userId);
         $data['exports'] = $this->getExportHistory($userId);
+        $data['experiments'] = $this->getExperiments($userId);
         $data['logs'] = $this->getLogs($userId);
 
         return $data;
@@ -648,6 +650,28 @@ class UserDataExportService
             'stories' => $stories,
             'likes' => $likes,
         ];
+    }
+
+    /**
+     * Which experiment arm each send, reply or promise to this member used: the experiment, the arm,
+     * what kind of thing it decided and when. An export must not depend on an analytics table, so a
+     * table that has not been created yet gives an empty list. The write node is asked and read, because a
+     * read node that is behind would leave rows out of what is the member's own data.
+     */
+    private function getExperiments(int $userId): array
+    {
+        if (! UxExperimentExposure::tableExists()) {
+            return [];
+        }
+
+        return DB::table('ux_experiment_exposures')
+            ->useWritePdo()
+            ->where('userid', $userId)
+            ->select('experiment', 'arm', 'subject_type', 'exposed_at')
+            ->orderBy('id', 'asc')
+            ->get()
+            ->map(fn($e) => (array) $e)
+            ->toArray();
     }
 
     private function getExportHistory(int $userId): array

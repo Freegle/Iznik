@@ -4,6 +4,7 @@ namespace App\Console\Commands\User;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
@@ -66,6 +67,7 @@ class DumpUserCommand extends Command
         'locations_excluded'       => ['userid'],
         'logs'                     => ['user'],
         'logs_sql'                 => ['userid'],
+        'ux_experiment_exposures'  => ['userid'],
     ];
 
     public function handle(): int
@@ -142,6 +144,13 @@ class DumpUserCommand extends Command
 
         // Dump each table.
         foreach ($this->tables as $table => $userIdColumns) {
+            // A table that does not exist yet (its SQL has not been run) is skipped, not fatal.
+            if (! Schema::hasTable($table)) {
+                $this->warn("  $table: no such table, skipped");
+
+                continue;
+            }
+
             $rows = [];
             $query = DB::table($table);
 

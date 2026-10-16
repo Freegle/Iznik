@@ -24,7 +24,9 @@
           </li>
         </ul>
       </div>
-      <p v-if="lines.share" class="share mb-0">{{ lines.share }}</p>
+      <p v-if="lines.share" class="share mb-1">{{ lines.share }}</p>
+      <!-- How a metric source counts, in its own words. Only an experiment decided on the server has one. -->
+      <p v-if="lines.note" class="note text-muted mb-0">{{ lines.note }}</p>
     </template>
     <p v-else-if="running" class="none text-muted mb-0">{{ NO_READ_YET }}</p>
     <p v-else class="none text-muted mb-0">No figures were kept.</p>

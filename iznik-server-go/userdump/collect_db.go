@@ -148,6 +148,9 @@ func buildDBSpecs(userID int64, chatIDs, recentChatIDs, msgIDs, trackIDs []inter
 	// Posts.
 	add("messages", "fromuser = ?", u, 0)
 	add("messages_drafts", "userid = ?", u, 0)
+	// Which experiment arm each send, reply or promise to this member used. Skipped quietly while
+	// the table does not exist, like every spec for a table this schema lacks.
+	add("ux_experiment_exposures", "userid = ?", u, 0)
 
 	if in, args := inClause(msgIDs); in != "" {
 		withU := func(a []interface{}) []interface{} { return append([]interface{}{userID}, a...) }
