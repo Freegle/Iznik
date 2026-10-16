@@ -10,11 +10,14 @@ describe('useUxSections', () => {
   it('lists the sections in the order of their `order`', () => {
     const orders = uxSections().map((s) => s.order)
     expect(orders).toEqual([...orders].sort((a, b) => a - b))
-    expect(uxSections().map((s) => s.key)).toEqual([
-      'overview',
-      'funnels',
-      'pages',
-    ])
+    // Other parts of the tab add sections between Funnels and Pages, so this names only these three.
+    const own = ['overview', 'funnels', 'pages']
+    expect(
+      uxSections()
+        .map((s) => s.key)
+        .filter((k) => own.includes(k))
+    ).toEqual(own)
+    expect(uxSections()[0].key).toBe('overview')
   })
 
   it('gives a copy, so a caller cannot reorder the registry', () => {

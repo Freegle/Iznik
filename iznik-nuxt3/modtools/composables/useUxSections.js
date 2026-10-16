@@ -3,6 +3,7 @@
 // component here and adding one entry; nothing scans for files.
 import ModSysAdminUxOverview from '~/modtools/components/ModSysAdminUxOverview.vue'
 import ModSysAdminUxFunnels from '~/modtools/components/ModSysAdminUxFunnels.vue'
+import ModSysAdminUxSurveys from '~/modtools/components/ModSysAdminUxSurveys.vue'
 import ModSysAdminUxPages from '~/modtools/components/ModSysAdminUxPages.vue'
 
 // A section has:
@@ -41,6 +42,18 @@ export const SECTIONS = [
     filters: ['period', 'device', 'signed'],
     slots: ['health', 'funnels', 'outcomes'],
     params: ['step', 'open'],
+  },
+  {
+    // The problems members raised, what works for them, and the questions asked. It loads its own data
+    // from its own store.
+    key: 'members',
+    label: 'What members say',
+    order: 40,
+    component: ModSysAdminUxSurveys,
+    funnelLink: { label: 'What members say' },
+    filters: [],
+    slots: [],
+    params: ['view', 'group', 'problem', 'q', 'question'],
   },
   {
     key: 'pages',

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-15
+last_reviewed: 2026-10-16
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxPromptService.php
@@ -27,6 +27,28 @@ covers:
   - iznik-server-go/test/ux_surveys_test.go
   - iznik-nuxt3/tests/unit/components/MicroVolunteeringUxPrompt.spec.js
   - iznik-nuxt3/tests/e2e/test-microvolunteering-ux-prompt.spec.js
+  - iznik-nuxt3/modtools/components/ModSysAdminUxSurveys.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxProblemGroups.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxProblem.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxValues.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxQuestions.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxQuestionResult.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxSaid.vue
+  - iznik-nuxt3/modtools/composables/useUxAnswers.js
+  - iznik-nuxt3/modtools/stores/uxSurveys.js
+  - iznik-nuxt3/api/UxSurveysAPI.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxSurveys.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxProblemGroups.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxProblem.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxValues.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxQuestions.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxQuestionResult.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxSaid.spec.js
+  - iznik-nuxt3/tests/unit/composables/useUxAnswers.spec.js
+  - iznik-nuxt3/tests/unit/stores/uxSurveys.spec.js
+  - iznik-nuxt3/tests/unit/api/UxSurveysAPI.spec.js
+  - iznik-nuxt3/tests/unit/uxSurveysBoundary.spec.js
+  - iznik-nuxt3/tests/e2e/test-modtools-sysadmin-ux-surveys.spec.js
 ---
 
 # Member surveys
@@ -44,6 +66,7 @@ flowchart LR
     H --> G[("ux_problems<br/>grouped, with quotes")]
     G -->|"ux:prompt followup"| P
     G --> A["GET /modtools/ux/problem-groups,<br/>problems, values, questions"]
+    A --> T["What members say, in the<br/>SysAdmin UX tab"]
 ```
 
 Questions are an optional microvolunteering task, never a step inside a member funnel. They never decide
@@ -321,8 +344,9 @@ Four routes, for Support and Admin (`iznik-server-go/ux/surveys.go`):
 | `GET /modtools/ux/questions?kind=&status=` | each prompt with its tallies, skips and comments, and the decoy yes rate |
 
 `flow=none` means problems tied to no funnel. Answer text is never sent except as checked quotes and the
-capped comments. Until a section of the SysAdmin UX tab reads them, `php artisan ux:prompt list` and
-these routes are the way to look.
+capped comments. The What members say section of the SysAdmin UX tab reads these four routes and nothing
+else (the last two sections of this page). `php artisan ux:prompt list` is the way to look from a
+terminal.
 
 ### How to see the answer rate
 
@@ -378,7 +402,112 @@ batch, rebuild the helper with the secret, and the site follows.
 |---|---|
 | SQL not run, batch updated | Account deletion throws (`forgetUser` strips `ux_prompt_responses`), the data export and the user dump fail, and `ux:prompts-tick` fails each hour. This is the one change with a wide blast radius. **Do not update the batch on the host until `SHOW TABLES LIKE 'ux_prompt%'` shows two tables.** |
 | SQL not run, Go updated | The member question path logs a table error on each microvolunteering call and offers no question. |
-| Go not updated, site live | The new card is never offered, because the old server does not serve it. |
+| Go not updated, site live | The new card is never offered, because the old server does not serve it. The What members say section says `This part is not switched on yet.` |
 | Helper secret missing | `analyse` and `regroup` stop with "UX_INTERNAL_SECRET is not set", and the helper answers 403. Everything else works. |
 | Privacy gate closed | `analyse` and `regroup` stop with the privacy message. Collecting answers works. |
 | Helper busy | While another long run is going, `analyse` gets 429. |
+
+## 8. The What members say section
+
+The SysAdmin UX tab has a section for what this page collects, in ModTools (SysAdmin, then UX, then What
+members say). It reads the four routes of "Reading the results" and nothing else, through
+`modtools/stores/uxSurveys.js` and `api/UxSurveysAPI.js`. It is site code: no SQL, Go or batch change. Until
+the Go routes are live, each view says `This part is not switched on yet.`, and a fault is a notice.
+[ux-sysadmin-tab.md](ux-sysadmin-tab.md) says how the tab and its address work.
+
+`ModSysAdminUxSurveys.vue` is the section. It has one line (problems, groups, written answers and
+questions), a caution that these are the members who chose to answer, and **How to read these numbers**
+behind a button. There are three views.
+
+| View | Address | What it shows |
+|---|---|---|
+| Problems | `ux_view` left out | `ModSysAdminUxProblemGroups.vue`: the groups, closed. |
+| What works | `ux_view=values` | `ModSysAdminUxValues.vue`: what members value, each with its count and the words behind a toggle. |
+| Questions | `ux_view=questions` | `ModSysAdminUxQuestions.vue`: one line for each question, with its kind (Problem ranking, Area ranking, Awareness or Written answers), how many answered, and its state, Open or Closed. No kind is named Open, so the two words never sit side by side with different meanings. |
+
+An unknown `ux_view` is Problems. The other keys the section owns are `ux_group` (the open group, by name),
+`ux_problem` (the open problem's id), `ux_q` (the search) and `ux_question` (the open question's id). The
+funnel is the tab's shared `ux_flow`, with one value that is no funnel: `none`, for problems tied to no
+funnel. A copied link restores all of it.
+
+- **Groups.** They are drawn in the order the server sends them (most mentions first, `Other` last), and the
+  component does not sort. Each shows its problems and mentions and its biggest problem. One opens at a
+  time. Its list is 30 problems; Show more asks again for the same group with `limit` raised by 30, up to
+  the 100 the route allows, and replaces the list. At 100 with more left it says to narrow the list with the
+  funnel or the search box. The store keeps the list for one group, one funnel and one search, and drops it
+  when any changes, so a list is never drawn under another group's heading.
+- **A link to a problem** that the first 30 of its group do not reach asks once more for 100, so it opens
+  whenever it can; when it still is not there the group says so.
+- **A group name in the address.** The address keeps letters, digits, spaces and `. : -` (`useUxView.js`).
+  The section matches a group on its name read the same way, so a name with an ampersand or an apostrophe
+  still opens from a link, and the route is asked for the real name.
+- **A problem** (`ModSysAdminUxProblem.vue`) shows its description, how many members named it, how other
+  members ranked it, the fixes members suggested, what members wrote behind a toggle, and the funnel it is
+  about as a link. It draws each piece in `hostedFor('problem')` from the tab's registry, given the prop
+  `problem`, and knows no other part of the tab. A part that wants to add to a problem adds its component to
+  that list.
+- **The funnel select and the search box** are on the Problems view only, because the routes for the other
+  two views take neither, and a filter that is not applied must not look applied. For the same reason the
+  groups are asked for with them only while Problems is open, so the line at the top counts everything on
+  the other views and not a narrowed list with nothing on screen to say so. They stay in the address, for
+  the way back to Problems. The search is cut at 60 characters and sent as typed, with its apostrophes:
+  `useUxView.js` keeps any printable character in `ux_q`. It is sent when typing pauses, on Enter and when
+  the box loses focus.
+- **Each visit asks again.** The tab draws the section anew each time a person comes back to it, while the
+  store lives on. The groups and the questions are asked for on every visit, and the values the first time
+  What works opens in a visit, and not again while the person moves between the views. A visit replaces what
+  the visit before left in the store, so the values of an old visit are not kept beside problems that are new.
+- **A row follows the width of its list.** The ModTools menu is open when the page loads, at every width,
+  and takes about 217 pixels, so a list is far narrower than the window. A container query on the groups
+  and on the questions lays a row out by the width of the list: below 46rem the counts and the biggest
+  problem go under the name. The window width rule beside it is for a browser without container queries.
+  The browser test measures it at 800 and at 1280 wide.
+- **A question** (`ModSysAdminUxQuestionResult.vue`) shows how one question did: the table for its kind, the
+  right answer and the yes-saying check for awareness questions, the ways out, the skips, how far the
+  analysis has read for an open question, and the comments behind a toggle. The follow-up has one pick and
+  no column for the smallest problem.
+- **The words behind a toggle** (`ModSysAdminUxSaid.vue`) draws member words, escaped, and says how many it is
+  not showing. Its button has the class `said-toggle`, not `toggle`: a style for switches elsewhere in the
+  site draws a pill with a border and a fixed width round anything with the class `toggle`. That style is in
+  the production build and not in the development one, so only a browser test against the production
+  container shows it, and the browser test checks the shape of the button.
+
+The section stands alone. `uxSurveysBoundary.spec.js` reads its files from a list and fails on an import of
+an experiment, idea or reaction file. The one import of the registry is in the problem detail, for the
+hosted pieces. Member words (quotes, suggestions, comments, titles) are drawn by interpolation, and the same
+test fails on `v-html` or `innerHTML` in use.
+
+## 9. How to read the numbers
+
+- **Who answered.** Microvolunteers chose to answer. They tend to be keen and prefer what they know, so the
+  section shows what the members who answered said, not what members think. No error range is shown,
+  because one does not fit people who chose to answer.
+- **Counts, then percentages.** Every figure is a count out of its base, and a percentage is added only from
+  100 answers (`PERCENT_MIN_ANSWERS` in `useUxAnswers.js`). The base is different for each question and is
+  never added across questions.
+- **Two bases, two names.** The base of a problem or a value is the number of written answers that were
+  analysed for its question: the count stored when it was analysed, not how many have arrived since,
+  because the problems were drawn from the first. It is fewer than the members who answered the question,
+  which is what the Questions view counts, and which also holds the members who wrote nothing or did not
+  understand it. So Problems and What works say written answers, and the questions keep who answered. The
+  top line says written answers too. A problem with no base is a count of members, on its row as in its
+  detail.
+- **A mention is one answer.** One answer can name more than one problem, so the mentions in a group can add
+  up to more than the answers.
+- **None of these.** A survey can hold the older name for it, `dont_care`, beside `none`. The server counts
+  them apart and the result adds them, so a survey with both shows the sum.
+- **The ranking.** The follow-up question shows each member three problems. The line on a problem says how
+  many times it was shown and how many picked it as the biggest; from 100 members asked it adds the share.
+  Until anyone has been asked, the problem says so.
+- **The left-over line.** `{n} answers did not match any problem` is the mentions of the rows the coder
+  filed as kind `other`: answers read that fit no problem. The route works it out for the funnel and not for
+  the search text, so it is not drawn under a search. When `Other` holds more than a quarter of all the
+  mentions, the section says the group list may need another group (section 3, "The groups"). That is
+  about the whole list, so it is not said under a funnel or a search, which leave only some of the groups.
+- **The yes-saying check.** Members who say yes to something Freegle does not do are agreeing without
+  knowing. Beside each real awareness question the section shows how many of the answers to the decoy
+  questions were Yes, and says that some Yes answers on the question may be guesses. It is worked out from
+  the questions on screen.
+- **Open questions are counted, not read.** The result for one says how many wrote something, had nothing to
+  say or did not understand, and whether the analysis has read the answers. When more arrived after the
+  analysis, it says how many have not been analysed.

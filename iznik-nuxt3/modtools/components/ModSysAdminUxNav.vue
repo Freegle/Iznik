@@ -1,5 +1,5 @@
 <template>
-  <nav class="ux-nav mb-3" aria-label="UX sections">
+  <nav ref="row" class="ux-nav mb-3" aria-label="UX sections">
     <ul class="list-unstyled d-flex mb-0">
       <li v-for="s in sections" :key="s.key">
         <!-- A real link, so copy link and open in a new tab work. A plain click is handled here. -->
@@ -19,9 +19,10 @@
 </template>
 
 <script setup>
+import { nextTick, onMounted, ref, watch } from 'vue'
 import { isPlainClick } from '~/modtools/composables/useUxFormat'
 
-defineProps({
+const props = defineProps({
   // [{ key, label, badge? }] in the order to draw them.
   sections: { type: Array, required: true },
   current: { type: String, default: '' },
@@ -29,6 +30,28 @@ defineProps({
   hrefFor: { type: Function, required: true },
 })
 const emit = defineEmits(['go'])
+
+const row = ref(null)
+
+// On a phone the links are wider than the room, and the row scrolls sideways. The open section is
+// brought into it by as much as it is cut off, at the right or at the left, so its name is always in
+// view. Only the row moves: scrollIntoView could move the page as well.
+function showOpen() {
+  const box = row.value
+  const link = box?.querySelector('a[aria-current="page"]')
+  if (!box || !link) return
+  const room = box.getBoundingClientRect()
+  const at = link.getBoundingClientRect()
+  if (at.left < room.left) box.scrollLeft += at.left - room.left
+  else if (at.right > room.right) box.scrollLeft += at.right - room.right
+}
+
+onMounted(showOpen)
+// After the links are drawn again, so that the one now open is the one found.
+watch(
+  () => props.current,
+  () => nextTick(showOpen)
+)
 
 function click(e, key) {
   if (!isPlainClick(e)) return
