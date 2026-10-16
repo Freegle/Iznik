@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-15
+last_reviewed: 2026-10-16
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/components/ModSysAdminUx.vue
@@ -52,6 +52,7 @@ opened, one funnel is open at a time, and a link goes to a funnel, a step or a p
 |---|---|---|---|
 | `overview` | Overview | A closed Data health row, then one row for each of the seven funnels: started, finished, finished before, and the biggest loss. The funnel name opens that funnel and the biggest loss opens it at that step. | Period, Device |
 | `funnels` | Funnels | A picker of the seven funnels, always all seven. The open funnel has its headline, a line of outcome figures, one chart for each page family, the step detail, and closed rows for Second thoughts and Help for that funnel only. | Period, Device, Signed in |
+| `experiments` | Experiments | The experiments in one list, running first, with a form to make one by hand and a plain read-out of how a running one is doing. One is open at a time. It has its own routes and store, and the tab says its filters do not apply. See [ux-experiments.md](ux-experiments.md). | None |
 | `pages` | Pages and features | Friction, Adoption, Regret, and Search and browse, closed, one open at a time. They are not about one funnel. | Period, Device |
 
 **Adding a section.** The list is one explicit file, `modtools/composables/useUxSections.js`, and
