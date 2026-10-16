@@ -11,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/modmessaging"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -144,9 +145,12 @@ func List(c *fiber.Ctx) error {
 			// memberships.rippled = 0 for the same reason as Group() above: a membership
 			// rippling created is not a relationship with the community, so it must not put
 			// somebody's story in that group's moderators' review queue either.
+			// And not one the TN ingestion made because a TN post of theirs was placed on
+			// the group without their choosing - the same thing for the same reason.
 			whereSQL = "reviewed = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL " +
 				"AND users_stories.date > ? AND memberships.groupid IN (?) AND memberships.collection = ? " +
-				"AND memberships.rippled = 0"
+				"AND memberships.rippled = 0 AND NOT " +
+				modmessaging.UnaddressedOnSQL("memberships.userid", "memberships.groupid")
 			whereArgs = []interface{}{reviewed, storyCutoff, modGroupIDs, utils.COLLECTION_APPROVED}
 			tx = db.Table("users_stories").
 				Select("DISTINCT users_stories.id").
@@ -195,7 +199,10 @@ func Group(c *fiber.Ctx) error {
 		Select("DISTINCT users_stories.id").
 		Joins("INNER JOIN memberships ON memberships.userid = users_stories.userid").
 		Joins("INNER JOIN users ON users.id = users_stories.userid").
-		Where("memberships.groupid = ? AND memberships.collection = ? AND memberships.rippled = 0 AND reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL",
+		Where("memberships.groupid = ? AND memberships.collection = ? AND memberships.rippled = 0 AND reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL "+
+			// A membership the TN ingestion made for a post placed on the group without the
+			// member choosing it is no more a relationship than a ripple-join.
+			"AND NOT "+modmessaging.UnaddressedOnSQL("memberships.userid", "memberships.groupid"),
 			groupid64, utils.COLLECTION_APPROVED, reviewed, public).
 		Order("date DESC").
 		Limit(int(limit64)).

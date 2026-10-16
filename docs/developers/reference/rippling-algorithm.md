@@ -832,6 +832,12 @@ For each due post, `ripple:expand`:
 ripple-join (`logs.text = 'Rippled'`) and they then left, rippling does not re-add them: they
 opted out of a rippled membership. A later ordinary join-then-leave does not block rippling.
 
+**No ripple-join for an unaddressed TN post.** A TrashNothing post placed on a community its
+poster never chose (origin row `mod_messaging_allowed = 0`) still ripples, but its poster is
+not joined to any group it ripples into, and so is sent no ripple intro: they have not opted
+in to Freegle, and a membership is what Freegle's mail is sent by. See
+[trashnothing.md](trashnothing.md), "Posts nobody chose".
+
 **Email settings for a ripple-join.** The new membership copies the poster's settings from
 their home group on the post, except immediate (-1) becomes daily (24) so an unrequested
 membership never starts a flood. If they have left every group the post is on, the settings

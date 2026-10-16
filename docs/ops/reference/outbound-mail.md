@@ -41,6 +41,12 @@ part is the render (MJML, and AMP for some types), so mail to a provider that is
 refusing us is stopped *before* the render - see
 [mail deferrals](../../developers/reference/mail-deferrals.md).
 
+The spooler also refuses mail to a TrashNothing poster who never opted in to Freegle (their
+only posts were placed on communities they did not choose), except members' chat about their
+post and account mail they asked for. That is logged as "not spooling, recipient is a TN
+poster who has not opted in to Freegle" - see
+[trashnothing.md](../../developers/reference/trashnothing.md), "Posts nobody chose".
+
 ## 2. The spool
 
 A file queue at `storage/spool/mail/{pending,sending,sent,failed}` on the batch host.

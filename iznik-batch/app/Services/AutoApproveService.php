@@ -137,6 +137,11 @@ class AutoApproveService
                 // Normal posts: the 48h fallback (unchanged).
                 $q->where(function ($q2) {
                     $q2->where('messages_groups.rippled_in', 0)
+                        // Except a TN post placed on a community its poster never chose
+                        // (see ModMessaging): ingestion joins them so it can be moderated,
+                        // which would satisfy the membership gate, but it waits for a
+                        // moderator however long that takes.
+                        ->where('messages_groups.mod_messaging_allowed', 1)
                         ->where('messages_groups.arrival', '<=', now()->subHours(self::PENDING_HOURS + 1));
                 })
                 // Rippling-out rows already Approved on their origin group: a short mod-veto

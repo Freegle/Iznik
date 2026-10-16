@@ -2873,8 +2873,10 @@ func modOfAnyMessageGroup(db *gorm.DB, myid uint64, groups []MessageGroup) bool 
 
 // PosterMessagingGroups is HomeGroups plus every community the post rippled into where its
 // poster is an ordinary member: one they joined, moved into, or dealt with, rather than
-// one rippling joined them to (memberships.rippled = 0). Those communities may write to
-// the poster about the post, as the home community may (Discourse 10239).
+// one rippling joined them to (memberships.rippled = 0), or one the TN ingestion joined
+// them to because a TN post of theirs was placed there without their choosing
+// (modmessaging.UnaddressedOnSQL). Those communities may write to the poster about the
+// post, as the home community may (Discourse 10239).
 //
 // Use it only for whether the poster is written to. Whether an action is a receiving
 // community turning the post away - which stops it rippling back - still goes by
@@ -2891,7 +2893,8 @@ func PosterMessagingGroups(db *gorm.DB, msgid uint64) map[uint64]bool {
 		Joins("JOIN messages m ON m.id = mg.msgid").
 		Joins("JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "+
 			"AND mem.rippled = 0 AND mem.collection = ?", utils.COLLECTION_APPROVED).
-		Where("mg.msgid = ? AND mg.rippled_in = 1", msgid).
+		Where("mg.msgid = ? AND mg.rippled_in = 1 AND NOT "+
+			modmessaging.UnaddressedOnSQL("mem.userid", "mem.groupid"), msgid).
 		Scan(&ordinary)
 
 	for _, gid := range ordinary {
@@ -4269,9 +4272,9 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, []uint64, error) {
 	// The sync's job is to STOP divergence, not tolerate it: merge the twins
 	// (falls back to the split candidates if the merge fails).
 	candidates = user.HealTNDivergence(db, candidates)
-	// The member may hold further accounts carrying a DIFFERENT per-group alias
-	// (see user.FindTNSiblings). Added after the heal, so they widen owner
-	// arbitration without being merged.
+	// The member may hold further accounts carrying a DIFFERENT address of the
+	// same TN username, bare or per-group alias (see user.FindTNSiblings). Added
+	// after the heal, so they widen owner arbitration without being merged.
 	return candidates[0], user.WithTNSiblings(db, candidates, email), nil
 }
 

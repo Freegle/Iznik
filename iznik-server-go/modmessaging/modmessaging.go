@@ -15,6 +15,7 @@
 package modmessaging
 
 import (
+	"fmt"
 	stdlog "log"
 
 	flog "github.com/freegle/iznik-server-go/log"
@@ -59,26 +60,136 @@ func UserIsUnaddressedOnly(db *gorm.DB, userid uint64) bool {
 }
 
 // UsersUnaddressedOnly answers UserIsUnaddressedOnly for a whole page of users in one
-// query, for the members list. Users absent from the map - including any user with no
-// posts at all - are unrestricted.
+// query. Users absent from the map - including any user with no posts at all - are
+// unrestricted.
 func UsersUnaddressedOnly(db *gorm.DB, userids []uint64) map[uint64]bool {
 	out := make(map[uint64]bool, len(userids))
+	for userid, perGroup := range originStatus(db, userids) {
+		out[userid] = !addressedAnywhere(perGroup)
+	}
+
+	return out
+}
+
+// IsUnaddressedOn reports whether the user's only tie to ONE group is TN posts placed there
+// without their choosing: at least one unaddressed post on it, and no addressed one.
+//
+// That is what the membership the TN ingestion makes for such a post stands for, and it is
+// the TN equivalent of a ripple-join (memberships.rippled = 1), so it is barred from what
+// that is barred from. Unlike UserIsUnaddressedOnly it is per group: a "mixed" poster is a
+// real member where they chose to be, and only there. Deleted posts still count, for the
+// same reason as there. False for a missing id. Mirrors iznik-batch's
+// ModMessaging::isUnaddressedOn.
+func IsUnaddressedOn(db *gorm.DB, userid uint64, groupid uint64) bool {
+	if userid == 0 || groupid == 0 {
+		return false
+	}
+
+	posts := func(allowed int) bool {
+		var n int64
+		db.Table("messages mm_msg").
+			Joins("INNER JOIN messages_groups mm_mg ON mm_mg.msgid = mm_msg.id AND mm_mg.rippled_in = 0").
+			Where("mm_msg.fromuser = ? AND mm_mg.groupid = ? AND mm_mg.mod_messaging_allowed = ?",
+				userid, groupid, allowed).
+			Count(&n)
+		return n > 0
+	}
+
+	return posts(0) && !posts(1)
+}
+
+// CannotBeContactedOn reports whether the group's moderators have nobody to write to: the
+// user is unaddressed everywhere, or unaddressed on this group. It is the bar on moderators
+// starting a chat or a modmail, and on telling the member they were removed.
+func CannotBeContactedOn(db *gorm.DB, userid uint64, groupid uint64) bool {
+	return UserIsUnaddressedOnly(db, userid) || IsUnaddressedOn(db, userid, groupid)
+}
+
+// Membership names one user's membership of one group.
+type Membership struct {
+	Userid  uint64
+	Groupid uint64
+}
+
+// MembershipsCannotBeContacted answers CannotBeContactedOn for a whole page of memberships
+// in one query, for the members list. Memberships absent from the map are unrestricted.
+func MembershipsCannotBeContacted(db *gorm.DB, memberships []Membership) map[Membership]bool {
+	out := make(map[Membership]bool, len(memberships))
+	if len(memberships) == 0 {
+		return out
+	}
+
+	userids := make([]uint64, 0, len(memberships))
+	for _, m := range memberships {
+		userids = append(userids, m.Userid)
+	}
+	status := originStatus(db, userids)
+
+	for _, m := range memberships {
+		perGroup := status[m.Userid]
+		if len(perGroup) == 0 {
+			continue
+		}
+
+		here := perGroup[m.Groupid]
+		out[m] = !addressedAnywhere(perGroup) || (here.unaddressed && !here.addressed)
+	}
+
+	return out
+}
+
+// UnaddressedOnSQL is IsUnaddressedOn as a SQL predicate over a user column and a group
+// column, for a query that selects members - typically memberships.userid and
+// memberships.groupid. The columns are spliced in as given, so pass column names, never
+// input. Driven from the user's own posts (messages.fromuser), so it is a few keyed probes
+// per row however big the group is.
+func UnaddressedOnSQL(userColumn string, groupColumn string) string {
+	origin := func(allowed int) string {
+		return fmt.Sprintf("SELECT 1 FROM messages mm_msg "+
+			"INNER JOIN messages_groups mm_mg ON mm_mg.msgid = mm_msg.id AND mm_mg.rippled_in = 0 "+
+			"WHERE mm_msg.fromuser = %s AND mm_mg.groupid = %s AND mm_mg.mod_messaging_allowed = %d",
+			userColumn, groupColumn, allowed)
+	}
+
+	return "(EXISTS (" + origin(0) + ") AND NOT EXISTS (" + origin(1) + "))"
+}
+
+// groupStatus is what a user's origin posts on one group say about it.
+type groupStatus struct {
+	unaddressed bool
+	addressed   bool
+}
+
+func addressedAnywhere(perGroup map[uint64]groupStatus) bool {
+	for _, s := range perGroup {
+		if s.addressed {
+			return true
+		}
+	}
+
+	return false
+}
+
+// originStatus reads, in one query, which kinds of origin post each user has on each group
+// they have posted to. Users with no posts are absent.
+func originStatus(db *gorm.DB, userids []uint64) map[uint64]map[uint64]groupStatus {
+	out := make(map[uint64]map[uint64]groupStatus, len(userids))
 	if len(userids) == 0 {
 		return out
 	}
 
-	// One pass over the users' origin rows, reduced per user: MIN() is 0 only if they have
-	// an unaddressed post, MAX() is 0 only if they have no addressed one.
+	// One pass over the users' origin rows, reduced per user and group: MIN() is 0 only if
+	// there is an unaddressed post, MAX() is 1 only if there is an addressed one.
 	//
 	// Positional Rows().Scan, not Scan(&struct): a SELECT of SEVERAL aggregates scanned
 	// into a struct silently comes back all-zero through GORM here (no error, no log), and
 	// all-zero is exactly the value that reads as "restrict this member".
-	rows, err := db.Raw(
-		"SELECT m.fromuser, MIN(mg.mod_messaging_allowed), MAX(mg.mod_messaging_allowed) "+
-			"FROM messages m "+
-			"INNER JOIN messages_groups mg ON mg.msgid = m.id AND mg.rippled_in = 0 "+
-			"WHERE m.fromuser IN (?) "+
-			"GROUP BY m.fromuser", userids).Rows()
+	rows, err := db.Table("messages m").
+		Select("m.fromuser, mg.groupid, MIN(mg.mod_messaging_allowed), MAX(mg.mod_messaging_allowed)").
+		Joins("INNER JOIN messages_groups mg ON mg.msgid = m.id AND mg.rippled_in = 0").
+		Where("m.fromuser IN ?", userids).
+		Group("m.fromuser, mg.groupid").
+		Rows()
 	if err != nil || rows == nil {
 		if err != nil {
 			stdlog.Printf("Failed to read mod-messaging status for %d users: %v", len(userids), err)
@@ -88,13 +199,16 @@ func UsersUnaddressedOnly(db *gorm.DB, userids []uint64) map[uint64]bool {
 	defer rows.Close()
 
 	for rows.Next() {
-		var userid uint64
+		var userid, groupid uint64
 		var minimum, maximum int
-		if err := rows.Scan(&userid, &minimum, &maximum); err != nil {
+		if err := rows.Scan(&userid, &groupid, &minimum, &maximum); err != nil {
 			stdlog.Printf("Failed to scan mod-messaging status row: %v", err)
 			continue
 		}
-		out[userid] = minimum == 0 && maximum == 0
+		if out[userid] == nil {
+			out[userid] = map[uint64]groupStatus{}
+		}
+		out[userid][groupid] = groupStatus{unaddressed: minimum == 0, addressed: maximum == 1}
 	}
 
 	// A read that died halfway leaves the rest of the page looking unrestricted, which is

@@ -26,6 +26,7 @@ use App\Database\Expressions\StY;
 use App\Database\Expressions\Value;
 use App\Services\ContentCheckService;
 use App\Services\MessageSpatialService;
+use App\Services\TrashNothing\ModMessaging;
 use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -2281,6 +2282,16 @@ class ExpandService
             $msg = DB::table('messages')->where('id', $msgid)->first(['fromuser']);
             $posterId = $msg->fromuser ?? null;
             if (!$posterId) {
+                return;
+            }
+
+            // A TN post placed on a community its poster never chose (unaddressed - see
+            // ModMessaging) comes from someone who has not opted in to Freegle. Ingestion
+            // does not join them to its home community, and the post rippling must not
+            // join them anywhere else either: a membership is what Freegle's mail is sent
+            // by, and this one would also send the ripple intro mail below. The post
+            // itself still ripples; only the poster stays out.
+            if (ModMessaging::postIsUnaddressed($msgid)) {
                 return;
             }
 

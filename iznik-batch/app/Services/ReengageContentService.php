@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
+use App\Services\TrashNothing\ModMessaging;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -239,6 +240,8 @@ class ReengageContentService
             ->where('memberships.userid', $user->id)
             ->where('memberships.collection', Membership::COLLECTION_APPROVED)
             ->where('memberships.rippled', 0)
+            // Nor a community a TN post of theirs was merely placed on (ModMessaging).
+            ->tap(fn ($q) => ModMessaging::excludeUnaddressedMemberships($q))
             ->where('groups.type', Group::TYPE_FREEGLE)
             ->select('groups.id', 'groups.nameshort', 'groups.namefull');
 

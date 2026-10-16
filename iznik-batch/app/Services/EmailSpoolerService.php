@@ -8,6 +8,7 @@ use App\Mail\Contracts\RetryableMailable;
 use App\Models\UserEmail;
 use App\Services\Mail\Incoming\BounceService;
 use App\Services\Mail\SmtpFailureClassifier;
+use App\Services\TrashNothing\ModMessaging;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailer;
 use Illuminate\Support\Facades\Log;
@@ -162,6 +163,12 @@ class EmailSpoolerService
         // of the returned id, so throwing here would change the shape of
         // every caller's error handling.
         if ($this->isSuppressedForDeferral($normalizedTo, $emailType)) {
+            return '';
+        }
+
+        // The same kind of last line of defence, for someone who never opted in to
+        // Freegle at all - see isToUnaddressedTnPosterOnly().
+        if ($this->isToUnaddressedTnPosterOnly($normalizedTo, $mailable, $emailType)) {
             return '';
         }
 
@@ -1432,6 +1439,61 @@ class EmailSpoolerService
             $headers->addTextHeader($name, $value);
         }
     }
+
+    /**
+     * Mail that may still reach a TN poster who never opted in to Freegle: other
+     * members answering their post (the chat relay back to TN, and the handover a
+     * chat arranges), which is what posting it asked for. Plus the account mail they
+     * would have to ask for themselves - see MailSuppressionService.
+     */
+    private const MAIL_ALLOWED_TO_UNADDRESSED_TN_POSTERS = [
+        \App\Mail\Chat\ChatNotification::class,
+        \App\Mail\Deferrals\UnreadChatCatchUpMail::class,
+        \App\Mail\Tryst\TrystCalendarInviteMail::class,
+    ];
+
+    /**
+     * Whether every recipient is a TN poster who has not opted in to Freegle - whose
+     * only posts were placed on communities they never chose (ModMessaging::
+     * userIsUnaddressedOnly()) - and this is not mail they may still receive.
+     *
+     * Nothing on Freegle may write to such a person: not moderators (the Go API and
+     * ProcessBackgroundTasksCommand refuse), and not Freegle's own mail. The sending
+     * loops mostly cannot reach them anyway, because ingestion and rippling never give
+     * them a membership; this is here for every mailer that does not go through
+     * memberships, and for any added later without knowing about them. Only TN
+     * addresses are looked up, so ordinary mail pays nothing for it.
+     */
+    private function isToUnaddressedTnPosterOnly(array $normalizedTo, Mailable $mailable, ?string $emailType): bool
+    {
+        if ($normalizedTo === []
+            || in_array(get_class($mailable), self::MAIL_ALLOWED_TO_UNADDRESSED_TN_POSTERS, true)
+            || in_array($emailType, \App\Services\Mail\MailSuppressionService::ALLOWLISTED_EMAIL_TYPES_WHILE_HELD, true)) {
+            return FALSE;
+        }
+
+        foreach ($normalizedTo as $addr) {
+            $address = strtolower(trim(is_array($addr) ? ($addr['address'] ?? '') : (string) $addr));
+
+            if (!str_ends_with($address, '@user.trashnothing.com')) {
+                return FALSE;
+            }
+
+            $userId = (int) UserEmail::where('email', $address)->value('userid');
+            if (!ModMessaging::userIsUnaddressedOnly($userId)) {
+                return FALSE;
+            }
+        }
+
+        Log::info('EmailSpoolerService: not spooling, recipient is a TN poster who has not opted in to Freegle', [
+            'mailable' => get_class($mailable),
+            'email_type' => $emailType,
+            'recipients' => count($normalizedTo),
+        ]);
+
+        return TRUE;
+    }
+
     /**
      * Whether every recipient of this message is behind a provider that is
      * currently refusing our mail.

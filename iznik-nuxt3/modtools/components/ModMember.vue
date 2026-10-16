@@ -38,10 +38,10 @@
           data-test="tn-unaddressed-member-warning"
         >
           This is a <strong>Trash Nothing</strong> user. Everything they've
-          posted here was matched to a community from where they are, not chosen
-          by them, so <strong>they can't be contacted</strong> - there's no
-          chat, no mail and no standard messages. If they post to a community
-          they've chosen, this goes away by itself.
+          posted here was matched to this community from where they are, not
+          chosen by them, so <strong>they can't be contacted</strong> - there's
+          no chat, no mail and no standard messages. If they choose this
+          community and post here, this goes away by itself.
         </NoticeMessage>
         <div v-if="heldByUser">
           <NoticeMessage variant="warning" class="mb-2">
@@ -428,9 +428,10 @@ const user = computed(() => {
 
 const email = usePreferredEmail(user)
 
-// False when everything this person has posted is a TN post matched to a Freegle community
-// they never chose, so there is no relationship for a volunteer to use and no way to reach
-// them. Someone who has ALSO posted to a community they chose is unaffected.
+// False when everything this person has posted on this community is a TN post matched to it
+// without their choosing it (or everything they have posted anywhere is), so there is no
+// relationship for a volunteer here to use and no way to reach them - the TN twin of a
+// rippled membership. Someone who has posted to this community by choice is unaffected.
 // Server-derived (memberships payload) and
 // server-enforced - see the Go modmessaging package.
 const modMessagingAllowed = computed(

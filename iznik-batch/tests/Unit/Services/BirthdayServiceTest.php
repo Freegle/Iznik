@@ -44,6 +44,46 @@ class BirthdayServiceTest extends TestCase
         $this->assertSame(1, $count, 'only the genuine member receives the birthday appeal');
     }
 
+    /**
+     * A TN poster joined to a community only because their post was placed on it
+     * (messages_groups.mod_messaging_allowed = 0) never chose it either, so it must not
+     * send them a birthday appeal - even when, having chosen another community, they
+     * are a real member elsewhere and the spooler would let the mail through.
+     */
+    public function test_members_who_never_chose_the_community_are_excluded_from_birthday_appeals(): void
+    {
+        $service = new BirthdayService();
+
+        $group = $this->createTestGroup();
+        DB::table('groups')->where('id', $group->id)->update([
+            'type' => 'Freegle',
+            'publish' => 1,
+            'onmap' => 1,
+            'founded' => now()->subYear()->format('Y-m-d H:i:s'),
+        ]);
+
+        $genuine = $this->makeBirthdayRecipient();
+        $placed = $this->makeBirthdayRecipient();
+        foreach ([$genuine, $placed] as $user) {
+            DB::table('memberships')->insert([
+                'userid' => $user->id, 'groupid' => $group->id,
+                'role' => 'Member', 'collection' => 'Approved', 'rippled' => 0, 'added' => now(),
+            ]);
+        }
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $placed->id, 'subject' => 'OFFER: Placed item', 'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId, 'groupid' => $group->id, 'collection' => 'Approved',
+            'rippled_in' => 0, 'mod_messaging_allowed' => 0,
+        ]);
+
+        $count = $service->sendBirthdayEmails(null, [$group->id], dryRun: true);
+
+        $this->assertSame(1, $count, 'only the member who chose the community receives the appeal');
+    }
+
     /** A user who passes every birthday gate: consenting, active, contactable, no recent appeal. */
     private function makeBirthdayRecipient(): object
     {

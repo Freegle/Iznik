@@ -89,7 +89,7 @@ func TestCreatePartnerUser(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND email = ?", userID, email).Scan(&emailCount)
 	assert.Equal(t, int64(1), emailCount)
 
-	// Verify name was extracted from email prefix (before -g).
+	// Verify name was taken from the username behind the address (any -g<digits> suffix dropped).
 	// The name extraction replaces underscores with spaces and title-cases.
 	var fullname string
 	db.Raw("SELECT fullname FROM users WHERE id = ?", userID).Scan(&fullname)
@@ -343,4 +343,74 @@ func TestCreatePartnerUserStoresV1CanonAndBackwards(t *testing.T) {
 	// A second alias of the same member must reduce to the same canon, which is
 	// what stops it minting another account.
 	assert.Equal(t, wantCanon, user.CanonicalizePartnerEmail(prefix+"-g1586@user.trashnothing.com"))
+}
+
+// A TN member may now hold a bare username@ address as well as, or instead of,
+// per-group -gNNN aliases. Both forms are the same member, in either direction,
+// and a longer username sharing the prefix is still a different member.
+func TestFindTNSiblingsMatchesBareAndSuffixedTNAddresses(t *testing.T) {
+	prefix := uniquePrefix("partner_bare")
+	db := database.DBConn
+	tn := "@user.trashnothing.com"
+
+	bare := CreateTestUser(t, prefix+"_bare", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", bare, prefix+"-jane"+tn)
+
+	aliased := CreateTestUser(t, prefix+"_alias", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", aliased, prefix+"-jane-g12"+tn)
+
+	// A different member: "<prefix>" is a prefix of "<prefix>-jane".
+	shorter := CreateTestUser(t, prefix+"_short", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", shorter, prefix+"-g34"+tn)
+	// And "<prefix>-jane-gomes" is a longer member whose alias matches "<prefix>-jane-g%".
+	longer := CreateTestUser(t, prefix+"_long", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", longer, prefix+"-jane-gomes-g4840"+tn)
+
+	fromBare := user.FindTNSiblings(db, prefix+"-jane"+tn)
+	assert.Equal(t, []uint64{aliased}, fromBare, "a bare address must find the member's suffixed alias, and only that")
+
+	fromAlias := user.FindTNSiblings(db, prefix+"-jane-g99"+tn)
+	assert.ElementsMatch(t, []uint64{bare, aliased}, fromAlias, "an alias must find the member's bare address too")
+
+	assert.NotContains(t, user.FindTNSiblings(db, prefix+"-g1"+tn), bare,
+		"a shorter username must not reach a hyphenated longer one")
+}
+
+// The display name comes from the TN username, not from everything before the
+// first "-g": "bibiana-gomes-g4840" is Bibiana-Gomes, and a bare "mary-grace@" is
+// Mary-Grace, not Mary.
+func TestCreatePartnerUserNameKeepsHyphenatedUsername(t *testing.T) {
+	prefix := uniquePrefix("partner_hyphen")
+	db := database.DBConn
+
+	cases := map[string]string{
+		"bibiana-gomes-g4840": "Bibiana-Gomes",
+		"mary-grace":          "Mary-Grace",
+		"tricia.hayes":        "Tricia Hayes",
+	}
+	for local, want := range cases {
+		email := strings.ReplaceAll(prefix, "_", "") + "." + local + "@user.trashnothing.com"
+		userID, err := user.CreatePartnerUser(db, 0, email)
+		require.NoError(t, err)
+
+		var fullname string
+		db.Raw("SELECT fullname FROM users WHERE id = ?", userID).Scan(&fullname)
+		assert.True(t, strings.HasSuffix(fullname, want), "%s gave %q, want suffix %q", email, fullname, want)
+	}
+}
+
+// A bare TN address stores the same PHP-shaped canon as its aliases, so the PHP
+// canon fallback can find a row Go wrote.
+func TestCreatePartnerUserStoresV1CanonForBareTNAddress(t *testing.T) {
+	prefix := strings.ReplaceAll(uniquePrefix("partner_barecanon"), "_", "")
+	db := database.DBConn
+
+	email := prefix + "-jane@user.trashnothing.com"
+	userID, err := user.CreatePartnerUser(db, 0, email)
+	require.NoError(t, err)
+
+	var canon string
+	db.Table("users_emails").Select("canon").Where("userid = ? AND email = ?", userID, email).Scan(&canon)
+	assert.Equal(t, prefix+"-jane@usertrashnothingcom", canon)
+	assert.Equal(t, canon, user.CanonicalizePartnerEmail(prefix+"-jane-g12@user.trashnothing.com"))
 }

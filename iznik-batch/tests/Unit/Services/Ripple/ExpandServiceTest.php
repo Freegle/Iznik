@@ -2273,6 +2273,37 @@ class ExpandServiceTest extends TestCase
         ]);
     }
 
+    public function test_an_unaddressed_tn_post_ripples_without_joining_its_poster(): void
+    {
+        // A TN post placed on a community its poster never chose (origin row
+        // mod_messaging_allowed = 0) comes from someone who has not opted in to Freegle.
+        // The post still ripples, but the poster is joined nowhere and sent no intro.
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        DB::table('messages')->where('id', $msgid)->update(['tnpostid' => 'tn-unaddressed-' . uniqid()]);
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['mod_messaging_allowed' => 0]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'the post itself still ripples into group B'
+        );
+        $this->assertSame(0, DB::table('memberships')->where('userid', $posterId)->count(), 'poster joined nowhere');
+        $this->assertSame(
+            0,
+            (int) DB::table('rippling_reach')->where('msgid', $msgid)->value('ripple_intro_sent'),
+            'no intro email claimed for a poster who was not joined'
+        );
+    }
+
     public function test_rippling_does_not_overwrite_an_existing_banned_membership(): void
     {
         // A poster already Banned on a group the post ripples into must stay Banned — we

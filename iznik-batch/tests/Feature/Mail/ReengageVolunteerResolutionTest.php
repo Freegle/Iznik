@@ -253,4 +253,43 @@ class ReengageVolunteerResolutionTest extends TestCase
         $this->assertNotNull($volunteer);
         $this->assertSame($real->id, $volunteer['groupid'], 'a rippled-in group must never sign off');
     }
+
+    public function test_a_community_the_member_never_chose_is_never_a_sign_off_community(): void
+    {
+        // The TN equivalent of a ripple-join: a membership made only because a TN post of
+        // theirs was placed on the community (mod_messaging_allowed = 0). Its volunteers
+        // have no relationship with the member, so must not sign off to them.
+        $lat = 51.45;
+        $lng = -2.60;
+
+        $real = $this->createGroupAt(51.45, -2.20);
+        $this->setCatchment(
+            $real->id,
+            'POLYGON((-2.75 51.35, -2.45 51.35, -2.45 51.55, -2.75 51.55, -2.75 51.35))'
+        );
+        $this->addModerator($real->id, 'Real');
+
+        $member = $this->createMemberAt($real->id, $lat, $lng);
+
+        $placed = $this->createGroupAt(51.45, -2.60);
+        $this->setCatchment(
+            $placed->id,
+            'POLYGON((-2.70 51.40, -2.50 51.40, -2.50 51.50, -2.70 51.50, -2.70 51.40))'
+        );
+        $this->addModerator($placed->id, 'Placed');
+        $this->joinGroup($member->id, $placed->id);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $member->id, 'subject' => 'OFFER: Placed item', 'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId, 'groupid' => $placed->id, 'collection' => 'Approved',
+            'rippled_in' => 0, 'mod_messaging_allowed' => 0,
+        ]);
+
+        $volunteer = (new ReengageContentService())->resolveVolunteer($member);
+
+        $this->assertNotNull($volunteer);
+        $this->assertSame($real->id, $volunteer['groupid'], 'a community the member never chose must never sign off');
+    }
 }

@@ -754,11 +754,11 @@ class ContentCheckServiceTest extends TestCase
     public function test_is_user_moderated_no_membership_on_a_tn_post_is_not_moderated(): void
     {
         // A TN API post is placed on the group its coordinates resolve to, not one
-        // the poster chose, so the poster is frequently not a member and
-        // GroupPostIngestionService falls back to the 'DEFAULT' a brand-new member
-        // gets. Those posts now arrive Pending awaiting this check, so calling the
-        // missing membership "moderated" would strand every one of them in the mod
-        // queue with nothing able to promote it.
+        // the poster chose. GroupPostIngestionService now joins the poster - silently,
+        // with no posting status, when they never chose it - but posts ingested before
+        // it did have no membership at all. Those arrived Pending awaiting this check,
+        // so calling the missing membership "moderated" would strand every one of them
+        // in the mod queue with nothing able to promote it.
         $user  = $this->createTestUser();
         $group = $this->createTestGroup();
         // No membership inserted.

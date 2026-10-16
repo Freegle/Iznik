@@ -186,6 +186,51 @@ class UserModelTest extends TestCase
         $this->assertEquals('Bob Smith', User::removeTNGroup('Bob Smith-g12345'));
     }
 
+    /**
+     * Expected values are what Go's CreatePartnerUser produces
+     * (strings.Title after replacing . and _), so the two stacks agree.
+     */
+    public function test_tn_display_name_matches_go_partner_user(): void
+    {
+        $this->assertEquals('Tricia Hayes', User::tnDisplayName('tricia.hayes'));
+        $this->assertEquals('Bob Smith', User::tnDisplayName('bob_smith'));
+        $this->assertEquals('Mary-Jane', User::tnDisplayName('mary-jane'));
+        $this->assertEquals("O'Brien", User::tnDisplayName("o'brien"));
+        $this->assertEquals('X2y Z', User::tnDisplayName('x2y.z'));
+        $this->assertEquals('Élise Dupont', User::tnDisplayName('élise.dupont'));
+        $this->assertEquals('ALREADY Up', User::tnDisplayName('ALREADY.up'));
+    }
+
+    public function test_tn_email_for_username(): void
+    {
+        $this->assertEquals('tricia.hayes@user.trashnothing.com', User::tnEmailForUsername('tricia.hayes'));
+    }
+
+    public function test_tn_username_from_email_handles_bare_and_alias(): void
+    {
+        $this->assertEquals('tricia.hayes', User::tnUsernameFromEmail('tricia.hayes@user.trashnothing.com'));
+        $this->assertEquals('tricia.hayes', User::tnUsernameFromEmail('tricia.hayes-g298@user.trashnothing.com'));
+        $this->assertEquals('tricia.hayes', User::tnUsernameFromEmail(' Tricia.Hayes-G298@User.TrashNothing.com '));
+    }
+
+    public function test_tn_username_from_email_keeps_hyphens_in_username(): void
+    {
+        $this->assertEquals('mary-jane', User::tnUsernameFromEmail('mary-jane@user.trashnothing.com'));
+        $this->assertEquals('mary-grace', User::tnUsernameFromEmail('mary-grace@user.trashnothing.com'));
+        $this->assertEquals('bibiana-gomes', User::tnUsernameFromEmail('bibiana-gomes-g4840@user.trashnothing.com'));
+        $this->assertEquals('bibiana', User::tnUsernameFromEmail('bibiana@user.trashnothing.com'));
+        // Only the last -g<digits> is the group suffix.
+        $this->assertEquals('ann-g12', User::tnUsernameFromEmail('ann-g12-g34@user.trashnothing.com'));
+    }
+
+    public function test_tn_username_from_email_rejects_non_tn_addresses(): void
+    {
+        $this->assertNull(User::tnUsernameFromEmail('tricia.hayes@gmail.com'));
+        $this->assertNull(User::tnUsernameFromEmail('tricia@user.trashnothing.com.evil.com'));
+        $this->assertNull(User::tnUsernameFromEmail('tricia@trashnothing.com'));
+        $this->assertNull(User::tnUsernameFromEmail('@user.trashnothing.com'));
+    }
+
     public function test_remove_tn_group_preserves_name_without_suffix(): void
     {
         $this->assertEquals('Alice', User::removeTNGroup('Alice'));

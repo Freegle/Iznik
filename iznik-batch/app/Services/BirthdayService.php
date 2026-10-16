@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Mail\Birthday\BirthdayMail;
 use App\Models\User;
+use App\Services\TrashNothing\ModMessaging;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
@@ -47,6 +48,9 @@ class BirthdayService
 
             $members = DB::table('users')
                 ->join('memberships', 'users.id', '=', 'memberships.userid')
+                // Like the rippled exclusion below: a membership made only because a TN
+                // post of theirs was placed on this community, which they never chose.
+                ->tap(fn ($q) => ModMessaging::excludeUnaddressedMemberships($q))
                 ->where('memberships.groupid', $group->id)
                 ->where('memberships.collection', 'Approved')
                 // Exclude Rippling Out auto-joins: a birthday appeal must never appear to come

@@ -7,6 +7,7 @@ use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
+use App\Services\TrashNothing\Ingestion\TnUserProvisioner;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use OpenAPI\Client\Model\GetAllPosts200Response;
 use OpenAPI\Client\ObjectSerializer;
@@ -54,7 +55,7 @@ class PostSyncerTest extends TestCase
     private function injectIngestionSpy(PostSyncer $syncer): GroupPostIngestionService
     {
         $spy = $this->getMockBuilder(GroupPostIngestionService::class)
-            ->setConstructorArgs([true, app(LokiService::class), app(ItemService::class)])
+            ->setConstructorArgs([true, app(LokiService::class), app(ItemService::class), new TnUserProvisioner(true, false, 'test-key', app(LokiService::class))])
             ->onlyMethods(['ingest'])
             ->getMock();
 

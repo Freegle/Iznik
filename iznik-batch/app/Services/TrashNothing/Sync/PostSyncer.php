@@ -8,6 +8,7 @@ use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
+use App\Services\TrashNothing\Ingestion\TnUserProvisioner;
 use Illuminate\Support\Facades\Log;
 use OpenAPI\Client\Api\PostsApi;
 use OpenAPI\Client\ApiException;
@@ -71,6 +72,13 @@ class PostSyncer
             dryRun: $this->dryRun,
             loki: $this->loki,
             itemService: app(ItemService::class),
+            userProvisioner: new TnUserProvisioner(
+                dryRun: $this->dryRun,
+                localTesting: $this->localTesting,
+                publicApiKey: $this->apiKey,
+                loki: $this->loki,
+                rateLimiter: $this->rateLimiter,
+            ),
         );
     }
 

@@ -68,9 +68,12 @@ var tierB = map[string]bool{
 }
 
 // tnEmailSuffix — users imported from TrashNothing often have email-like
-// fullnames such as "alice-g3486@user.trashnothing.com". These aren't
-// deliberate impersonation, they're an import side-effect.
-var tnEmailSuffix = regexp.MustCompile(`(?i)-g[0-9]+@user\.trashnothing\.com$`)
+// fullnames such as "alice-g3486@user.trashnothing.com" or a bare
+// "mary-jane@user.trashnothing.com". These aren't deliberate impersonation,
+// they're an import side-effect. Recognised by domain alone: not every TN
+// address carries a -gNNNN suffix. Twinned with iznik-batch's
+// NameSanitiser::TN_EMAIL_SUFFIX.
+var tnEmailSuffix = regexp.MustCompile(`(?i)@user\.trashnothing\.com$`)
 
 var nonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
 

@@ -97,7 +97,7 @@ TN chat replies continue to arrive via email and are handled by the existing `In
 
 ### F. Ordering between syncers
 Order: ratings → user-changes → posts → duplicate merge.
-Risk: a post references an `fd_user_id` not yet created locally (race with `UserChangesSyncer`). Behavior on missing user is an open item.
+Risk: a post references an `fd_user_id` not yet created locally (race with `UserChangesSyncer`). ~~Behavior on missing user is an open item.~~ **Closed 2026-10-07** (`plans/tn-posts-api-user-id-fix.md`): the poster is resolved by `users.tnuserid`, and an unknown TN user is looked up on TN (`GET /users/{id}`) and created by `TnUserProvisioner`. The new user is unmapped, has no membership, and their post goes Pending (`unmapped user`). The post is dropped only when TN 404s (`Post from unknown user`), the lookup fails (`tn-user-lookup-failed`), or the username's address belongs to a different `tnuserid` (`tn-username-clash`). See `docs/developers/reference/trashnothing.md`, "Post Ingestion via API".
 
 ### G. Failure semantics
 Covered by all-or-nothing checkpoint decision above. Each syncer surfaces its own `maxChangeDate`; orchestrator aggregates only on full success.

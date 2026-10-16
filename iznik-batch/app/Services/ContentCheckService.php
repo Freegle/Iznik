@@ -782,11 +782,11 @@ class ContentCheckService
             // because a member posted to their own group, so a missing membership is
             // unexpected and stays moderated. A TrashNothing API post is different by
             // design: GroupPostIngestionService places it on the group its coordinates
-            // resolve to (Location::groupsNear()), not one the poster chose, so the
-            // poster frequently isn't a member and ingestion falls back to the same
-            // 'DEFAULT' a brand-new member gets. Calling that moderated would strand
-            // every non-member TN post in the mod queue, because these posts now arrive
-            // Pending awaiting this check and nothing else would ever promote them.
+            // resolve to (Location::groupsNear()), not one the poster chose. It now joins
+            // the poster to that group, but posts ingested before it did were left
+            // with no membership and a 'DEFAULT' fallback. Calling those moderated would
+            // strand them in the mod queue, because they arrived Pending awaiting this
+            // check and nothing else would ever promote them.
             return !$this->isTrashNothingPost($msgid);
         }
 

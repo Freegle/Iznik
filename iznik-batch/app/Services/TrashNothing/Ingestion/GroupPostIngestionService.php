@@ -7,12 +7,16 @@ use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageAttachment;
 use App\Models\MessageGroup;
+use App\Models\SpamUser;
 use App\Models\User;
+use App\Models\UserBanned;
 use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\SpatialQueryService;
+use App\Services\TrashNothing\ModMessaging;
 use App\Services\TusService;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -42,13 +46,47 @@ class GroupPostIngestionService
      */
     public const REASON_UNKNOWN_USER = 'Post from unknown user';
 
+    public const REASON_NON_MEMBER = 'Post from non-member';
+
+    /**
+     * Sourced from IncomingMailService::route()'s isKnownSpammer() drop, which
+     * happens before the group post is looked at at all.
+     */
+    public const REASON_KNOWN_SPAMMER = 'Known spammer';
+
     /**
      * API-only routing_reason values — no email-path branch produces these.
      * Stable strings: dashboards and the parity comparison group on them.
      */
     public const REASON_NO_USER_ID = 'no-user-id';
 
+    /**
+     * The poster could not be resolved because TN could not be asked who they
+     * are (5xx, 429, timeout, challenge), or because their username's address
+     * belongs to a Freegle user with a different tnuserid. See TnUserProvisioner.
+     *
+     * Both exist only because this path CREATES a Freegle user for a TN poster
+     * Freegle has never met — a deliberate divergence from email-path case 2,
+     * which still drops such a post as REASON_UNKNOWN_USER. Expect API-side
+     * Pending (a new user is unmapped) against email-side Dropped/unknown-user
+     * for the same post; that is the feature working, not a parity gap.
+     */
+    public const REASON_TN_USER_LOOKUP_FAILED = TnUserProvisioner::REASON_LOOKUP_FAILED;
+
+    public const REASON_TN_USERNAME_CLASH = TnUserProvisioner::REASON_USERNAME_CLASH;
+
     public const REASON_DUPLICATE = 'duplicate';
+
+    /**
+     * The poster is banned from the group the post's coordinates resolved to.
+     *
+     * The email path has no branch of its own for this: a ban deletes the
+     * membership and its subscribe handler will not re-join a banned member, so a
+     * banned member's post falls into its REASON_NON_MEMBER drop. This path joins
+     * the poster to the group itself (see joinGroup()), so it must refuse a ban
+     * before that, or it would quietly undo the ban.
+     */
+    public const REASON_BANNED = 'banned';
 
     /**
      * A TN per-group COPY of a source post, discarded so Freegle's own rippling
@@ -83,6 +121,15 @@ class GroupPostIngestionService
     public const SOURCEHEADER = 'TN-API';
 
     /**
+     * logs.text of the Group/Joined row joinGroup() writes. The unaddressed form tells a
+     * moderator reading the log why the member arrived, and is how
+     * restoreMailIfNowChosen() recognises a silence that ingestion imposed.
+     */
+    public const JOINED_TEXT = 'Posted via TrashNothing';
+
+    public const JOINED_UNADDRESSED_TEXT = 'Posted via TrashNothing, to a community they did not choose';
+
+    /**
      * Context from the last ingest() call, for the caller to attach to its Loki
      * entry — mirroring IncomingMailService::$lastRoutingContext exactly, right
      * down to which branches populate which keys.
@@ -100,6 +147,7 @@ class GroupPostIngestionService
         private readonly bool $dryRun,
         private readonly LokiService $loki,
         private readonly ItemService $itemService,
+        private readonly TnUserProvisioner $userProvisioner,
     ) {}
 
     /**
@@ -230,24 +278,44 @@ class GroupPostIngestionService
         }
 
         // Resolve the Freegle user from TN's user id. TN's `user_id` is TN's OWN id,
-        // not a Freegle id: the mapping is users.tnuserid (unique, set when TN adds a
-        // member through the partner API). A TN user Freegle does not know is skipped -
-        // there is no address to reach them at, so a reply to their post could never be
-        // delivered, and treating the number as a Freegle id would hand the post to
-        // whichever unrelated account happens to hold it.
-        $user = $tnUserId ? $this->resolveUser((int) $tnUserId) : null;
+        // not a Freegle id: treating it as one would hand the post to whichever
+        // unrelated account happens to hold the number. The mapping is
+        // users.tnuserid; a TN poster Freegle has never met is looked up on TN and
+        // created (see TnUserProvisioner), deliberately unlike email-path case 2 —
+        // see REASON_TN_USER_LOOKUP_FAILED. The post is skipped only when that fails.
+        $user = $tnUserId ? $this->userProvisioner->resolveOrCreate((int) $tnUserId) : null;
         if ($user === null) {
-            $reason = $tnUserId ? 'unknown-user' : 'no-user-id';
-            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=' . $reason . ' tnpostid=' . $postId . ' tn_user_id=' . $tnUserId);
-            $this->loki->logEvent('tn-sync', 'post-skip-unknown-user', ['tn_post_id' => $postId, 'tn_user_id' => $tnUserId]);
+            $reason = $tnUserId ? $this->unresolvedUserReason() : self::REASON_NO_USER_ID;
+            $traceReason = match ($reason) {
+                self::REASON_UNKNOWN_USER => 'unknown-user',
+                default                   => $reason,
+            };
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=' . $traceReason . ' tnpostid=' . $postId . ' tn_user_id=' . $tnUserId);
+            $this->loki->logEvent('tn-sync', 'post-skip-unknown-user', [
+                'tn_post_id' => $postId,
+                'tn_user_id' => $tnUserId,
+                'reason'     => $traceReason,
+            ]);
             // Mirrors email-path case 2, which sets routing_reason and NOTHING
             // else — no group_id/group_name, even though the email path has
             // resolved the group by this point. dropped() REPLACES the context
             // rather than merging, which is what reproduces that omission here.
-            return $this->dropped(
-                $tnUserId ? self::REASON_UNKNOWN_USER : self::REASON_NO_USER_ID,
-                result: 'skipped',
-            );
+            return $this->dropped($reason, result: 'skipped');
+        }
+
+        // Known spammers cannot post anywhere. Mirrors IncomingMailService::route(),
+        // which drops mail from a confirmed spammer before routing it at all - so
+        // before lastaccess is touched, and with routing_reason and nothing else.
+        // Only a confirmed 'Spammer', as there: 'PendingAdd' is a report awaiting
+        // a decision, not a verdict.
+        if (SpamUser::where('userid', $user->id)->where('collection', 'Spammer')->exists()) {
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=known-spammer tnpostid=' . $postId . ' user_id=' . $user->id);
+            $this->loki->logEvent('tn-sync', 'post-skip-known-spammer', [
+                'tn_post_id' => $postId,
+                'user_id'    => $user->id,
+            ]);
+
+            return $this->dropped(self::REASON_KNOWN_SPAMMER);
         }
 
         // Update user's last access.
@@ -262,22 +330,72 @@ class GroupPostIngestionService
             $user->save();
         }
 
-        // No membership gate: the group here was chosen for the post (via
-        // Location::groupsNear() on its own coordinates), not supplied by a member
-        // posting to a group they belong to, so the poster is frequently not an
-        // Approved member of the resolved group — that's expected, not an error.
-        // If a membership does exist, its ourPostingStatus still applies (matches
-        // the email path for genuine members); otherwise fall back to the same
-        // 'DEFAULT' a brand-new member gets. The group's own moderation settings
-        // below still apply regardless.
-        $membership = Membership::where('userid', $user->id)
+        // The group here was chosen for the post (via Location::groupsNear() on its
+        // own coordinates), not by the poster, so they are often not on it yet. On
+        // the email path TN subscribes its member to the group before mailing a post
+        // to it; this path has no such step, so it joins the poster itself - see
+        // joinGroup() - and from then on applies the email path's membership logic
+        // unchanged.
+        $membershipRow = Membership::where('userid', $user->id)
             ->where('groupid', $group->id)
-            ->where('collection', 'Approved')
             ->first();
 
-        if ($membership === null) {
-            Log::info('TN-SYNC-TRACE [POST-META] reason=non-member tnpostid=' . $postId . ' user_id=' . $user->id . ' group_id=' . $group->id);
+        // Banned from this group: never join them, and never post for them. Both
+        // representations, as ExpandService checks before rippling into a group:
+        // users_banned (what a ban writes now, after deleting the membership) and a
+        // legacy collection='Banned' membership. The email path refuses the same
+        // poster twice over - its subscribe handler will not re-join a banned member,
+        // so their post then falls into the non-member drop below - and this is that
+        // pair collapsed into one check, with its own reason.
+        if ($membershipRow?->collection === Membership::COLLECTION_BANNED
+            || UserBanned::where('userid', $user->id)->where('groupid', $group->id)->exists()) {
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=banned tnpostid=' . $postId . ' user_id=' . $user->id . ' group_id=' . $group->id);
+            $this->loki->logEvent('tn-sync', 'post-skip-banned', [
+                'tn_post_id' => $postId,
+                'user_id'    => $user->id,
+                'group_id'   => $group->id,
+            ]);
+            // dropped() replaces the context, so this carries routing_reason and
+            // nothing else - the same shape as the email path's non-member drop.
+            return $this->dropped(self::REASON_BANNED);
         }
+
+        // A post placed here by its coordinates alone ($modMessagingAllowed false -
+        // "unaddressed", see ModMessaging) comes from someone who never chose this
+        // community. They are joined all the same, because the membership is what lets
+        // its moderators moderate them: set a posting status and see who they are. But
+        // silently - see joinGroup() - and Go's modmessaging bars the membership from
+        // everything a ripple-join is barred from. The post still never auto-approves
+        // (AutoApproveService skips an unaddressed origin row). The email
+        // path never sees a post like this - TN only mails the groups its member chose -
+        // so there is nothing there to mirror.
+        if ($membershipRow === null) {
+            $membershipRow = $this->joinGroup($user, $group, chosen: $modMessagingAllowed);
+        } elseif ($modMessagingAllowed && $membershipRow->collection === Membership::COLLECTION_APPROVED) {
+            $this->restoreMailIfNowChosen($user, $group, $membershipRow);
+        }
+
+        // Check membership - mirrors IncomingMailService::handleGroupPost() from
+        // here on. Having just joined them, the only poster left who is not an
+        // Approved member is one whose existing membership is still Pending (a
+        // group that approves joins), and the email path refuses that post too.
+        $membership = $membershipRow?->collection === Membership::COLLECTION_APPROVED ? $membershipRow : null;
+
+        if ($membershipRow !== null && $membership === null) {
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=non-member tnpostid=' . $postId . ' user_id=' . $user->id . ' group_id=' . $group->id);
+            $this->loki->logEvent('tn-sync', 'post-skip-non-member', [
+                'tn_post_id' => $postId,
+                'user_id'    => $user->id,
+                'group_id'   => $group->id,
+                'collection' => $membershipRow->collection,
+            ]);
+
+            return $this->dropped(self::REASON_NON_MEMBER);
+        }
+
+        // The email path swallows TAKEN/RECEIVED subjects here. Nothing to mirror:
+        // PostSyncer only asks TN for offers and wanteds, so neither can arrive.
+        // Nor its spam check, which it skips for a TrashNothing post.
 
         // Set context early - we know the group and user at this point.
         // Positioned exactly where IncomingMailService::handleGroupPost() sets
@@ -289,8 +407,29 @@ class GroupPostIngestionService
             'user_id'    => $user->id,
         ];
 
-        // Determine posting status, applying the same override hierarchy as the email path.
-        $postingStatus = $membership->ourPostingStatus ?? 'DEFAULT';
+        // PROHIBITED means the group's mods have stopped this person posting there,
+        // so it is a refusal, checked before anything else can decide the outcome.
+        // The web/API submit refuses it outright ("You are not allowed to post on
+        // this group", message_submit.go) and rippling treats it as a hard stop.
+        // The email path only looks at it in its last routing branch, after the
+        // overrides below have replaced it with MODERATED and after the unmapped and
+        // worry-word checks, so there a prohibited poster on a moderated group, or
+        // with no location, or with a concern word, lands Pending for a moderator to
+        // approve. Checked here first, so none of those let the post through. This
+        // is the one place the routing below deliberately differs from the email path.
+        if (strtoupper((string) $membership?->ourPostingStatus) === Membership::POSTING_STATUS_PROHIBITED) {
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=prohibited tnpostid=' . $postId . ' user_id=' . $user->id);
+            // Mirrors email-path case 6, which returns RoutingResult::DROPPED
+            // directly rather than via dropped(), so it keeps the group/user
+            // context set above and carries NO routing_reason. Returning without
+            // calling dropped() reproduces that exactly.
+            return 'dropped';
+        }
+
+        // Determine posting status, applying the same override hierarchy as the email
+        // path. NULL - which every join leaves, including both kinds joinGroup() makes -
+        // is moderated, exactly as there: it is neither DEFAULT nor UNMODERATED below.
+        $postingStatus = $membership?->ourPostingStatus;
 
         $overrideModeration = $group->overridemoderation ?? 'None';
         if ($overrideModeration === 'ModerateAll') {
@@ -320,8 +459,7 @@ class GroupPostIngestionService
         } elseif ($this->subjectContainsWorryWords($subject, $content)) {
             $pendingReason = 'worry words';
         } else {
-            // Unmoderated posters (DEFAULT/UNMODERATED - including the 'DEFAULT'
-            // fallback a non-member gets above) are NOT approved on arrival. They
+            // Unmoderated posters (DEFAULT/UNMODERATED) are NOT approved on arrival. They
             // start Pending so messages:contentcheck gates them: clean posts are
             // auto-promoted within a minute, while posts matching a concern keyword or
             // content rule are held for a moderator instead of going live unchecked.
@@ -329,21 +467,8 @@ class GroupPostIngestionService
             // submit path (iznik-server-go message.go). Approving on arrival here was
             // an unintended divergence - the email path was changed to gate these and
             // this path was not - not a deliberate one like those documented elsewhere
-            // in this file.
-            $routingResult = match ($postingStatus) {
-                'PROHIBITED' => 'dropped',
-                default      => 'pending',
-            };
+            // in this file. PROHIBITED never reaches here - it is refused above.
             $awaitingContentCheck = in_array($postingStatus, ['DEFAULT', 'UNMODERATED'], true);
-        }
-
-        if ($routingResult === 'dropped') {
-            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=prohibited tnpostid=' . $postId . ' user_id=' . $user->id);
-            // Mirrors email-path case 6, which returns RoutingResult::DROPPED
-            // directly rather than via dropped(), so it keeps the group/user
-            // context set above and carries NO routing_reason. Returning without
-            // calling dropped() reproduces that exactly.
-            return 'dropped';
         }
 
         // Create the message record.
@@ -632,17 +757,128 @@ class GroupPostIngestionService
     }
 
     /**
-     * The Freegle user behind a TN user id, or null if Freegle has never met them.
+     * Join the poster to the group the post resolved to, as the membership TN's
+     * subscribe mail would have given them on the email path.
      *
-     * users.tnuserid is unique and is written by the partner membership-add flow, which
-     * runs whenever a TN member joins a Freegle community through TN, so nearly every TN
-     * user who has ever touched Freegle resolves here. Nothing is created for the rest:
-     * the public API gives no name and no address for a poster, so a stub could only
-     * carry an invented address that bounces, and a Freegle member's reply would vanish.
+     * Mirrors IncomingMailService::handleSubscribe(): an Approved member on the daily
+     * digest, with ourPostingStatus left NULL as every join path leaves it - which
+     * the routing treats as moderated, so a poster's posts on a group new to them
+     * are held for its moderators until a moderator says otherwise - and a
+     * Group/Joined log so moderators can see how they arrived. Never called for a
+     * banned poster; ingest() refuses those first.
+     *
+     * A poster who never chose the community ($chosen false) gets the same membership
+     * with every mail setting off - no digest, no events or volunteering roundup -
+     * because a membership is what Freegle's mail is sent by and they have not opted in
+     * to any of it. EmailSpoolerService refuses the rest for someone who is unaddressed
+     * everywhere. Its Joined log says so (JOINED_UNADDRESSED_TEXT), which is also what
+     * restoreMailIfNowChosen() reads to know that this silence was ours to lift.
+     *
+     * In a dry run nothing is written, and the unsaved membership stands in for
+     * the one that would have been, so routing is traced as it would really run.
      */
-    private function resolveUser(int $tnUserId): ?User
+    private function joinGroup(User $user, Group $group, bool $chosen): Membership
     {
-        return User::where('tnuserid', $tnUserId)->orderBy('id')->first();
+        $membership = new Membership();
+        $membership->userid         = $user->id;
+        $membership->groupid        = $group->id;
+        $membership->role           = Membership::ROLE_MEMBER;
+        $membership->collection     = Membership::COLLECTION_APPROVED;
+        $membership->added          = now();
+        $membership->emailfrequency = $chosen ? Membership::EMAIL_FREQUENCY_DAILY : Membership::EMAIL_FREQUENCY_NEVER;
+        if (!$chosen) {
+            $membership->eventsallowed       = false;
+            $membership->volunteeringallowed = 0;
+        }
+
+        Log::info('TN-SYNC-TRACE [WRITE] table=memberships op=insert set=userid=' . $user->id . ',groupid=' . $group->id . ',collection=Approved' . ($chosen ? '' : ',silent=1'));
+        Log::info('TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Group,subtype=Joined,user=' . $user->id . ',groupid=' . $group->id);
+        if ($this->dryRun) {
+            return $membership;
+        }
+
+        try {
+            $membership->save();
+        } catch (UniqueConstraintViolationException $e) {
+            // A concurrent join got there first (another sync run, or TN's subscribe
+            // mail for the same member); theirs is the membership.
+            return Membership::where('userid', $user->id)->where('groupid', $group->id)->firstOrFail();
+        }
+
+        DB::table('logs')->insert([
+            'timestamp' => now(),
+            'type'      => 'Group',
+            'subtype'   => 'Joined',
+            'user'      => $user->id,
+            'byuser'    => $user->id,
+            'groupid'   => $group->id,
+            'text'      => $chosen ? self::JOINED_TEXT : self::JOINED_UNADDRESSED_TEXT,
+        ]);
+
+        return $membership;
+    }
+
+    /**
+     * Turn a silent membership's mail on once TN says the poster chose the community.
+     *
+     * An addressed post on a community where joinGroup() once joined them silently means
+     * they have now picked it on TN, so the membership is an ordinary one and gets what
+     * joinGroup() gives any chosen join. Nothing else would ever do this: every join path,
+     * here and in Go, is a no-op on a membership that already exists.
+     *
+     * Only the silence ingestion imposed is lifted. Three things must hold: the poster's
+     * tie to the community is still only unaddressed posts (read before this post's own
+     * row is written); their most recent Joined log there is ingestion's silent join,
+     * so they did not arrive some other way; and all three settings are still off, so
+     * neither they nor a moderator has changed them since.
+     */
+    private function restoreMailIfNowChosen(User $user, Group $group, Membership $membership): void
+    {
+        $silent = (int) $membership->emailfrequency === Membership::EMAIL_FREQUENCY_NEVER
+            && !$membership->eventsallowed
+            && !$membership->volunteeringallowed;
+
+        if (!$silent || !ModMessaging::isUnaddressedOn($user->id, $group->id)) {
+            return;
+        }
+
+        $lastJoin = DB::table('logs')
+            ->where('user', $user->id)
+            ->where('groupid', $group->id)
+            ->where('type', 'Group')
+            ->where('subtype', 'Joined')
+            ->orderByDesc('id')
+            ->value('text');
+
+        if ($lastJoin !== self::JOINED_UNADDRESSED_TEXT) {
+            return;
+        }
+
+        Log::info('TN-SYNC-TRACE [WRITE] table=memberships op=update where=id=' . $membership->id
+            . ' set=emailfrequency=' . Membership::EMAIL_FREQUENCY_DAILY . ',eventsallowed=1,volunteeringallowed=1');
+        if ($this->dryRun) {
+            return;
+        }
+
+        $membership->emailfrequency      = Membership::EMAIL_FREQUENCY_DAILY;
+        $membership->eventsallowed       = true;
+        $membership->volunteeringallowed = 1;
+        $membership->save();
+    }
+
+    /**
+     * The routing_reason for a TN user id the provisioner could not resolve.
+     *
+     * TN having no usable user is the email path's unknown user, so it keeps
+     * that path's wording; the other failures can only happen here.
+     */
+    private function unresolvedUserReason(): string
+    {
+        return match ($this->userProvisioner->lastFailureReason()) {
+            TnUserProvisioner::REASON_LOOKUP_FAILED   => self::REASON_TN_USER_LOOKUP_FAILED,
+            TnUserProvisioner::REASON_USERNAME_CLASH  => self::REASON_TN_USERNAME_CLASH,
+            default                                   => self::REASON_UNKNOWN_USER,
+        };
     }
 
     /**

@@ -176,8 +176,11 @@ func PostMemberships(c *fiber.Ctx) error {
 	// a community they have not heard of is the same confusion as one about their post
 	// (Discourse 10102).
 	rippleOnly := rippling.IsRippleOnlyMembership(db, req.Userid, req.Groupid)
+	// Its TrashNothing twin: a member who is here only because a TN post of theirs was
+	// placed on this group, which they never chose. Read before any delete, like rippleOnly.
+	cannotContact := modmessaging.CannotBeContactedOn(db, req.Userid, req.Groupid)
 	notifyMember := 1
-	if rippleOnly {
+	if rippleOnly || cannotContact {
 		notifyMember = 0
 	}
 
@@ -215,11 +218,12 @@ func PostMemberships(c *fiber.Ctx) error {
 			return nil
 		}
 		//
-		// Except to someone whose only presence here is TN posts placed on a community
-		// they never chose: they have agreed to nothing with these moderators, so there is
-		// no modmail relationship to use. ModTools hides Mail and the standard messages for
-		// them (with a notice saying why); this is the guard behind that.
-		if modmessaging.UserIsUnaddressedOnly(db, req.Userid) {
+		// Except to someone who is only here because TN posts of theirs were placed on
+		// this group, which they never chose: they have agreed to nothing with these
+		// moderators, so there is no modmail relationship to use. ModTools hides Mail and
+		// the standard messages for them (with a notice saying why); this is the guard
+		// behind that.
+		if cannotContact {
 			return fiber.NewError(fiber.StatusForbidden, "This member didn't choose this community, so they can't be contacted")
 		}
 
@@ -495,11 +499,12 @@ type GetMembershipsMember struct {
 	MailDelayedSince    *string `json:"maildelayedsince" gorm:"column:maildelayedsince"`
 	MailDelayedProvider *string `json:"maildelayedprovider" gorm:"column:maildelayedprovider"`
 	MailDelayedCount    *int    `json:"maildelayedcount" gorm:"column:maildelayedcount"`
-	// False when every post this person has made is a TN post placed on a Freegle
-	// community they never chose - they have not joined Freegle in any sense a moderator
-	// can act on, so ModTools shows a notice instead of the Chat / Mail / standard-message
-	// buttons. True for everyone else, including a TN poster who has ALSO posted normally.
-	// Derived, not stored: see modmessaging.UsersUnaddressedOnly.
+	// False when this person is only here because TN posts of theirs were placed on this
+	// group, which they never chose (or every post of theirs anywhere is like that) - they
+	// have no relationship with its moderators, so ModTools shows a notice instead of the
+	// Chat / Mail / standard-message buttons. True for everyone else, including a TN poster
+	// who has posted normally on this group. Derived, not stored: see
+	// modmessaging.MembershipsCannotBeContacted.
 	ModMessagingAllowed bool `json:"mod_messaging_allowed" gorm:"-"`
 }
 
@@ -830,16 +835,16 @@ func enrichMembers(members []GetMembershipsMember) {
 	// Whether each member can be contacted at all, answered for the whole page in one
 	// query rather than per row - the members list is the one screen that asks this about
 	// a hundred people at a time.
-	userids := make([]uint64, 0, len(members))
+	memberships := make([]modmessaging.Membership, 0, len(members))
 	for i := range members {
-		userids = append(userids, members[i].Userid)
+		memberships = append(memberships, modmessaging.Membership{Userid: members[i].Userid, Groupid: members[i].Groupid})
 	}
-	unaddressedOnly := modmessaging.UsersUnaddressedOnly(database.DBConn, userids)
+	cannotContact := modmessaging.MembershipsCannotBeContacted(database.DBConn, memberships)
 
 	for i := range members {
 		m := &members[i]
 
-		m.ModMessagingAllowed = !unaddressedOnly[m.Userid]
+		m.ModMessagingAllowed = !cannotContact[modmessaging.Membership{Userid: m.Userid, Groupid: m.Groupid}]
 
 		// Compute displayname from fullname/firstname/lastname.
 		if m.Fullname != nil && *m.Fullname != "" {

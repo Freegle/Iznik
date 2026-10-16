@@ -233,17 +233,50 @@ when reading any coverage report:
   source by it, and `ProcessBackgroundTasksCommand` uses it to skip creating
   freebie alerts for TN posts, which TN syndicates itself.
 
+**The poster is joined to the group the post resolved to.** On the email path TN's
+subscribe mail makes the poster a member before their post arrives; the API has no such
+step, so `GroupPostIngestionService::joinGroup()` makes the same membership the subscribe
+handler would: Approved, daily digest, `ourPostingStatus` NULL, with a `Group`/`Joined`
+log. From there on the email path's membership logic applies unchanged, including that
+NULL means moderated: a poster's posts on a group new to them wait for its moderators (who
+are notified) until a moderator sets their posting status. An existing membership that is
+still Pending (a group that approves joins) is dropped as `Post from non-member`, as on
+the email path.
+
+A poster whose post is **unaddressed** (they never chose this community - see below) is
+joined too, because the membership is what lets moderators moderate them: set a posting
+status, see who they are. But **silently**: `emailfrequency` 0, `eventsallowed` and
+`volunteeringallowed` 0, and the Joined log reads `JOINED_UNADDRESSED_TEXT`. The membership
+is the TN twin of a ripple-join, and is barred from what that is barred from (below). If an
+**addressed** post of theirs later lands on the same group - they have picked it on TN -
+`restoreMailIfNowChosen()` turns the mail back on, but only where the silence was
+ingestion's: their last Joined log there is the silent one, and all three settings are
+still off. Nothing else would, because every join path is a no-op on an existing membership.
+
 **Routing matches the email path**, including approval. A post from an unmoderated
-poster (`ourPostingStatus` `DEFAULT`/`UNMODERATED`, which is also the fallback used
-when the poster isn't a member of the group its coordinates resolved to) is *not*
-approved on arrival: it lands Pending, and `messages:contentcheck` promotes it
-within a minute if clean, or holds it for a moderator if a concern keyword or
-content rule matches. `GroupPostIngestionService` deliberately does not notify mods
-or add such a post to the spatial index — both belong to the content check, so a
-clean post makes no mod work and a flagged one is never live in the meantime.
-Because these posts often have no membership row, `ContentCheckService::isUserModerated()`
-applies the same `DEFAULT` fallback for a post with a `tnpostid`; without that they
-would sit in the mod queue with nothing able to promote them.
+poster (`ourPostingStatus` `DEFAULT`/`UNMODERATED`) is *not* approved on arrival: it
+lands Pending, and `messages:contentcheck` promotes it within a minute if clean, or
+holds it for a moderator if a concern keyword or content rule matches.
+`GroupPostIngestionService` deliberately does not notify mods or add such a post to the
+spatial index — both belong to the content check, so a clean post makes no mod work and
+a flagged one is never live in the meantime. Posts ingested before the join was added
+have no membership row, so `ContentCheckService::isUserModerated()` still treats a post
+with a `tnpostid` and no membership as unmoderated; without that they would sit in the
+mod queue with nothing able to promote them.
+
+**A poster who may not post on the resolved group is refused, and no message is made:**
+
+- **A confirmed spammer** (`spam_users.collection = 'Spammer'`) is dropped with the email
+  path's own reason, `Known spammer`. A `PendingAdd` report does not stop the post.
+- **A ban on that group** (a `users_banned` row, or a legacy `Banned` membership) is dropped
+  as `banned`, and the poster is not joined. The email path refuses the same poster as
+  `Post from non-member`, because a ban deletes the membership and its subscribe handler
+  will not re-join a banned member.
+- **`PROHIBITED`** is dropped before anything else can decide the outcome, as the web
+  submit refuses it. This is the one deliberate difference in routing: the email path
+  reaches it only in its last branch, so there a prohibited poster on a moderated group,
+  with no location, or with a concern word still lands Pending. Expect email-side Pending
+  against API-side Dropped for those posts.
 
 **A stale spatial-index location costs the post its location, not the post.** The
 spatial server keeps its own R-tree, rebuilt from MySQL on its own schedule, so its
@@ -299,17 +332,20 @@ its copies without the column, so they take the table default and would otherwis
 every rippled copy of an unaddressed post read as addressed.
 
 `iznik-server-go/modmessaging` is the one place that decides this, and everything else
-asks it:
+asks it (in batch, `App\Services\TrashNothing\ModMessaging` mirrors it):
 
 | Question | Function |
 |---|---|
 | Is this post unaddressed? | `PostIsUnaddressed` |
 | Is every post this person has made unaddressed? | `UserIsUnaddressedOnly` / `UsersUnaddressedOnly` |
+| Is this person's only tie to this group unaddressed posts? | `IsUnaddressedOn` (batch `isUnaddressedOn`); as SQL, `UnaddressedOnSQL` (batch `excludeUnaddressedMemberships`) |
+| May this group's moderators write to this member? | `CannotBeContactedOn` / `MembershipsCannotBeContacted` |
 | Take an unaddressed post off the platform | `RemoveUnaddressedPost` |
 
-A **mixed** poster - one unaddressed post plus any ordinary Freegle post - is a real
-member and is not restricted at all. That is the case `UserIsUnaddressedOnly` exists to
-get right.
+The member-level questions are answered **per group**. A **mixed** poster - unaddressed
+posts on one group, an ordinary post on another - is a real member where they chose to
+be, and is treated like a ripple-join only on the group they never chose.
+`CannotBeContactedOn` is true when the person is unaddressed everywhere, or on this group.
 
 What changes as a result:
 
@@ -331,8 +367,19 @@ What changes as a result:
   a mod opening a chat to such a member, `PostMemberships` refuses `Leave (Approved)
   Member`, and `ProcessBackgroundTasksCommand` sends nothing for a task that reaches it
   anyway.
+- **The post never auto-approves.** `AutoApproveService` skips an origin row with
+  `mod_messaging_allowed = 0`, although the silent membership would pass its membership
+  gate. A moderator can still set the member's posting status, now that there is a
+  membership to set it on.
+- **The membership is barred from what a ripple-join is barred from**, keyed on
+  `CannotBeContactedOn` / `UnaddressedOnSQL` where the ripple-join checks
+  `memberships.rippled`: a moderator opening a chat or sending modmail (`PutChatRoom`,
+  `PostMemberships`), being told of their removal (`notifyposter` 0), a rippled-in
+  community writing to them about another post (`PosterMessagingGroups`), the group's
+  Stories page and story review queue, birthday appeals (`BirthdayService`), and being
+  the community that signs off re-engagement mail (`ReengageContentService`).
 - **The member is flagged on the members page.** The memberships payload carries
-  `mod_messaging_allowed` per member (batched in `enrichMembers`), and `ModMember.vue`
+  `mod_messaging_allowed` per membership (batched in `enrichMembers`), and `ModMember.vue`
   shows a notice saying this is a Trash Nothing user who did not choose the community and
   cannot be contacted.
 - **The post is flagged in the mod queue.** `ModMessageTnNotice.vue` explains the same
@@ -341,9 +388,26 @@ What changes as a result:
   a report will do. Keyed on the CONTEXT copy's collection, not the message-wide `pending`
   - a post can be live on one community while still pending on another.
 
+- **Freegle sends them nothing.** Someone whose only posts are unaddressed has not opted
+  in to Freegle, so they get no mail from it at all:
+  - Ingestion joins them to the post's community silently: no digest, no events or
+    volunteering roundup.
+  - Rippling does not join them to the communities the post ripples into
+    (`ExpandService::addPosterMembershipToRippledGroups()`), and so sends no ripple intro.
+  - For every mailer that does not read those settings - the stories newsletter,
+    engagement mail, admins - and any added later, `EmailSpoolerService` refuses to spool
+    to a TN address whose owner is unaddressed-only.
+
+  A mixed poster is a real member and is not blocked at the spooler. Their silent
+  membership still sends them no digest or roundup, and no birthday appeal; mailers that
+  ignore the settings, such as admins, reach them as they reach a ripple-join.
+
+  The exceptions are the chat relay below, a handover arranged in that chat, and account
+  mail they would have to ask for themselves (`MAIL_ALLOWED_TO_UNADDRESSED_TN_POSTERS`).
+
 Members are **not** restricted: an ordinary freegler can still reply to one of these
 posts, and the reply relays back to TN as it always has. The restriction is about
-moderators, who are the ones with no relationship to the poster.
+moderators, who are the ones with no relationship to the poster, and about Freegle itself.
 
 ### Verifying nothing is dropped after the cutover
 

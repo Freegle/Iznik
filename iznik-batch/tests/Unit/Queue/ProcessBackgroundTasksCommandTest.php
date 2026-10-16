@@ -17,6 +17,7 @@ use App\Mail\Message\ModStdMessageMail;
 use App\Services\BlockedKeywordBackfillService;
 use App\Services\ContentCheckService;
 use App\Services\PushNotificationService;
+use App\Services\TrashNothing\ModMessaging;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
@@ -3246,14 +3247,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
      */
     public function test_missing_ids_read_as_unrestricted(): void
     {
-        $command = new ProcessBackgroundTasksCommand();
-
         foreach (['postIsUnaddressed', 'userIsUnaddressedOnly'] as $method) {
-            $check = new \ReflectionMethod(ProcessBackgroundTasksCommand::class, $method);
-            $check->setAccessible(true);
-
-            $this->assertFalse($check->invoke($command, 0), "{$method}(0) must not restrict");
-            $this->assertFalse($check->invoke($command, -1), "{$method}(-1) must not restrict");
+            $this->assertFalse(ModMessaging::$method(0), "{$method}(0) must not restrict");
+            $this->assertFalse(ModMessaging::$method(-1), "{$method}(-1) must not restrict");
         }
     }
 

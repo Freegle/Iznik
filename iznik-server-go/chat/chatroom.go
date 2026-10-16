@@ -401,12 +401,13 @@ func PutChatRoom(c *fiber.Ctx) error {
 		chatUserID := myid
 		modOpeningMembersChat := req.Userid > 0 && req.Userid != myid && auth.IsModOfGroup(myid, req.Groupid)
 		if modOpeningMembersChat {
-			// A member who only exists here because TN posts of theirs were placed on a
-			// Freegle group they never chose has agreed to nothing with this community's
-			// moderators, so they cannot be opened a chat to. ModTools hides the Chat
-			// button for them; this is what makes that hold. Someone who has ALSO posted
-			// normally is a real member and is unaffected.
-			if modmessaging.UserIsUnaddressedOnly(db, req.Userid) {
+			// A member who is only here because TN posts of theirs were placed on this
+			// group, which they never chose, has agreed to nothing with its moderators, so
+			// they cannot be opened a chat to - the TN twin of the ripple-join refusal
+			// below. ModTools hides the Chat button for them; this is what makes that
+			// hold. Someone who has posted normally HERE is a real member and is
+			// unaffected.
+			if modmessaging.CannotBeContactedOn(db, req.Userid, req.Groupid) {
 				return fiber.NewError(fiber.StatusForbidden, "This member didn't choose this community, so they can't be contacted")
 			}
 

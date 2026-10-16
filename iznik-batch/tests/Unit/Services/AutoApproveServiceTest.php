@@ -81,6 +81,33 @@ class AutoApproveServiceTest extends TestCase
         ]);
     }
 
+    public function test_does_not_auto_approve_a_tn_post_on_a_community_its_poster_never_chose(): void
+    {
+        // The TN ingestion joins such a poster so moderators can moderate them, which
+        // satisfies the membership gate below - but nobody chose this community, so the
+        // post waits for a moderator however long it takes (docs/moderators/moderating-posts.md).
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['added' => now()->subHours(72)]);
+        $message = $this->createTestMessage($user, $group);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group->id)
+            ->update([
+                'collection' => MessageGroup::COLLECTION_PENDING,
+                'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
+                'mod_messaging_allowed' => 0,
+            ]);
+
+        $this->service->process();
+
+        $this->assertSame(
+            MessageGroup::COLLECTION_PENDING,
+            DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $group->id)->value('collection'),
+        );
+    }
+
     public function test_does_not_auto_approve_a_vague_item_leaving_it_pending(): void
     {
         // A vague item ("anything") must be routed to Pending for a moderator to review, even for

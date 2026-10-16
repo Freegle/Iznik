@@ -27,6 +27,7 @@ use App\Services\Lockdown\LockdownService;
 use App\Services\PostcodeRemapService;
 use App\Services\UserManagementService;
 use App\Services\PushNotificationService;
+use App\Services\TrashNothing\ModMessaging;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
@@ -580,57 +581,6 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
-     * Whether a post is a TN post that was never addressed to the Freegle community it
-     * landed on, and so has a poster no moderator here may write to.
-     *
-     * The origin row (rippled_in = 0) is the one that carries the answer: the rippling
-     * engine inserts its copies without the column, so they take the table default
-     * (allowed) and would mask it. Mirrors modmessaging.PostIsUnaddressed in
-     * iznik-server-go, which is where the interactive paths enforce the same rule.
-     */
-    protected function postIsUnaddressed(int $msgId): bool
-    {
-        if ($msgId <= 0) {
-            return false;
-        }
-
-        return DB::table('messages_groups')
-            ->where('msgid', $msgId)
-            ->where('rippled_in', 0)
-            ->where('mod_messaging_allowed', 0)
-            ->exists();
-    }
-
-    /**
-     * Whether every post this person has made is a TN post matched to a Freegle community
-     * they never chose - so they have not opted in to Freegle and cannot be written to.
-     *
-     * A "mixed" poster (one such post AND an ordinary one) is a real member and is not
-     * restricted. Mirrors modmessaging.UserIsUnaddressedOnly in iznik-server-go.
-     */
-    protected function userIsUnaddressedOnly(int $userId): bool
-    {
-        if ($userId <= 0) {
-            return false;
-        }
-
-        // Two questions, not one aggregate: has this person any post of that kind, and
-        // have they any post that is NOT of that kind. Someone who has never posted at all
-        // answers no to the first and is unrestricted, which is what we want.
-        $originRows = fn () => DB::table('messages as m')
-            ->join('messages_groups as mg', function ($join) {
-                $join->on('mg.msgid', '=', 'm.id')->where('mg.rippled_in', 0);
-            })
-            ->where('m.fromuser', $userId);
-
-        if (!$originRows()->where('mg.mod_messaging_allowed', 0)->exists()) {
-            return false;
-        }
-
-        return !$originRows()->where('mg.mod_messaging_allowed', 1)->exists();
-    }
-
-    /**
      * Handle mod standard message emails (approve, reject, reply).
      *
      * Looks up the message poster, group, and mod info, then:
@@ -717,7 +667,7 @@ class ProcessBackgroundTasksCommand extends Command
         // and the Go API refuses them, so a task reaching here with content came from a
         // stale client - the log and the mods' push above still stand, but nothing is sent
         // to the poster and no modmail thread is opened with them.
-        if ($this->postIsUnaddressed($msgId)) {
+        if (ModMessaging::postIsUnaddressed($msgId)) {
             Log::info("Mod action {$taskType} on an unaddressed TN post, sending nothing to the poster", [
                 'msgid' => $msgId,
                 'byuser' => $byUser,
@@ -876,7 +826,7 @@ class ProcessBackgroundTasksCommand extends Command
         // never chose has not opted in, and their volunteers have no standing to write to
         // them. ModTools offers nothing that would and the Go API refuses it, so a task
         // reaching here came from a stale client.
-        if ($this->userIsUnaddressedOnly($userId)) {
+        if (ModMessaging::userIsUnaddressedOnly($userId)) {
             Log::info('Mod stdmsg for a member who has not opted in to Freegle, sending nothing', [
                 'userid' => $userId,
                 'byuser' => $byUser,

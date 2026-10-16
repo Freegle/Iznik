@@ -280,6 +280,8 @@ delete is the whole of it, and on one already **live** it says what happens if m
 report it. They behave differently from an ordinary post, because the person behind them
 didn't choose your community and never agreed to hear from you:
 
+- They always wait in **Pending** for you; nothing approves them automatically unless you
+  set the member to unmoderated.
 - You can **approve** or **delete** them as normal, and hold and release them.
 - You **cannot edit** them, send a **Blank Reply**, or use any **standard message** - those
   buttons aren't shown, because there is nobody to send them to.
@@ -291,10 +293,15 @@ no community that could act on it. Two different people reporting the same post 
 off Freegle automatically instead. It is a soft delete, so Support can still see it and put
 it back.
 
-The same applies to the person on the **members page**: they show a warning saying they are
-a Trash Nothing user who didn't choose the community, and the Chat, Mail and standard-message
-buttons are not offered. If they later post to a community they've chosen, all of this goes
-away by itself and they become an ordinary member.
+The person **is added as a member** of your community, so that you can moderate them - see
+who they are and set them to moderated or unmoderated - but quietly: the membership sends
+them no digest or other email, and they are not added to any community the post ripples
+to. Their join is logged as *"Posted via TrashNothing, to a community they did not
+choose"*. On the **members page** they show with a warning saying they are a Trash Nothing
+user who didn't choose the community, and the Chat, Mail and standard-message buttons are
+not offered; removing them sends them nothing. If they later choose your community and post
+to it, all of this goes away by itself and they become an ordinary member, with the usual
+emails.
 
 Ordinary freeglers are unaffected - they can still reply to the post, and the reply reaches
 the poster on Trash Nothing as usual.
