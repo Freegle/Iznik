@@ -109,7 +109,8 @@ LOAD_STATE → CHECK_CI → CI_ROUTER
 
 `COVERAGE_GATE` checks:
 - Any red PRs → back to `CI_ROUTER`
-- Dirty PRs (need rebase) → `REBASE_DIRTY_PRS`
+- Dirty PRs (need rebase) → `REBASE_DIRTY_PRS`, which force-pushes a rebase onto master. A PR carrying a blocking label is skipped: it is parked on purpose, and the blocked framework PRs are stacked on one another.
+- A PR red only on Coveralls (tests green) → `WRITE_COVERAGE` adds coverage to that branch. A PR carrying a blocking label is left alone, coverage dip or not: it is parked on purpose, and often under review.
 - No PR created this iteration → `WRITE_COVERAGE` (mandatory coverage PR, rotating Go → Vitest → Laravel)
 - Gate passed → `WRAP_UP → SCHEDULE_NEXT → END`
 
