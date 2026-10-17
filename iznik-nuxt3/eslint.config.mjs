@@ -54,6 +54,7 @@ export default createConfigForNuxt({
           defineProps: 'readonly',
           definePageMeta: 'readonly',
           useRuntimeConfig: 'readonly',
+          useCookie: 'readonly',
           defineNuxtConfig: 'readonly',
           defineNuxtPlugin: 'readonly',
           defineNitroPlugin: 'readonly',

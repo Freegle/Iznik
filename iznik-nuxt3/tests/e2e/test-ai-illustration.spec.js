@@ -4,7 +4,7 @@
  * on both mobile and desktop layouts.
  */
 
-const { test, expect } = require('./fixtures')
+const { test, expect, classicModeCookie } = require('./fixtures')
 const { timeouts } = require('./config')
 const { signUpViaHomepage, logoutIfLoggedIn } = require('./utils/user')
 
@@ -352,6 +352,11 @@ test.describe('AI Illustration Tests - Give Desktop Flow', () => {
       viewport: { width: 1200, height: 900 },
       ignoreHTTPSErrors: true,
     })
+    await desktopContext.addCookies([
+      classicModeCookie(
+        process.env.TEST_BASE_URL || 'http://freegle-prod-local.localhost'
+      ),
+    ])
     const page = addGotoAndVerify(await desktopContext.newPage())
     console.log(
       'Created fresh browser context with desktop viewport (1200x900)'
@@ -444,6 +449,11 @@ test.describe('AI Illustration Tests - Give Desktop Flow', () => {
       viewport: { width: 1200, height: 900 },
       ignoreHTTPSErrors: true,
     })
+    await desktopContext.addCookies([
+      classicModeCookie(
+        process.env.TEST_BASE_URL || 'http://freegle-prod-local.localhost'
+      ),
+    ])
     const page = addGotoAndVerify(await desktopContext.newPage())
     console.log(
       'Created fresh browser context with desktop viewport (1200x900)'
@@ -524,6 +534,11 @@ test.describe('AI Illustration Tests - Find Desktop Flow', () => {
       viewport: { width: 1200, height: 900 },
       ignoreHTTPSErrors: true,
     })
+    await desktopContext.addCookies([
+      classicModeCookie(
+        process.env.TEST_BASE_URL || 'http://freegle-prod-local.localhost'
+      ),
+    ])
     const page = addGotoAndVerify(await desktopContext.newPage())
     console.log(
       'Created fresh browser context with desktop viewport (1200x900)'
@@ -616,6 +631,11 @@ test.describe('AI Illustration Tests - Find Desktop Flow', () => {
       viewport: { width: 1200, height: 900 },
       ignoreHTTPSErrors: true,
     })
+    await desktopContext.addCookies([
+      classicModeCookie(
+        process.env.TEST_BASE_URL || 'http://freegle-prod-local.localhost'
+      ),
+    ])
     const page = addGotoAndVerify(await desktopContext.newPage())
     console.log(
       'Created fresh browser context with desktop viewport (1200x900)'

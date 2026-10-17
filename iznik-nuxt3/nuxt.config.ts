@@ -386,6 +386,7 @@ export default defineNuxtConfig({
       // default. See docs/developers/reference/ux-telemetry.md.
       UX_EXPERIMENTS: process.env.UX_EXPERIMENTS || '{}',
       ISAPP: config.ISAPP,
+      CHAT_FIRST_DEFAULT: config.CHAT_FIRST_DEFAULT,
       MOBILE_VERSION: config.MOBILE_VERSION,
       AI_SUPPORT_URL: config.AI_SUPPORT_URL,
       NETLIFY_DEPLOY_ID: process.env.DEPLOY_ID,

@@ -3,7 +3,7 @@
  * @typedef {import('@playwright/test').Page} Page
  */
 
-const { test, expect } = require('./fixtures')
+const { test, expect, classicModeCookie } = require('./fixtures')
 const { timeouts, environment, selectors, breakpoints } = require('./config')
 
 test.describe('Homepage tests', () => {
@@ -66,6 +66,8 @@ test.describe('Homepage tests', () => {
       viewport: { width: bp.width, height: bp.height },
       baseURL,
     })
+    // This spec describes the classic landing page.
+    await context.addCookies([classicModeCookie(baseURL)])
 
     console.log(`[DEBUG] Creating new page`)
     const page = await context.newPage()

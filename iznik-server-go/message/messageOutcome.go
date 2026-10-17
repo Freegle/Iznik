@@ -29,6 +29,8 @@ type MessagePromise struct {
 	Msgid      uint64          `json:"msgid"`
 	Userid     uint64          `json:"userid"`
 	Promisedat time.Time       `json:"promisedat"`
+	// How many were promised to this user; nil reads as 1.
+	Count      *int            `json:"count"`
 	Terms      json.RawMessage `json:"terms,omitempty"`
 	Acceptedat *time.Time      `json:"acceptedat,omitempty"`
 	Acceptedby *uint64         `json:"acceptedby,omitempty"`

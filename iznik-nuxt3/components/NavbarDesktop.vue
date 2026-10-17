@@ -221,6 +221,19 @@
         </li>
         <li>
           <nuxt-link
+            id="menu-option-chat-shell"
+            no-prefetch
+            class="nav-link text-center small p-0 clickme"
+            data-testid="switch-to-chat"
+            @click="switchToChat"
+          >
+            <v-icon icon="comments" class="fa-2x" />
+            <br />
+            <span class="nav-item__text">Freegle chat</span>
+          </nuxt-link>
+        </li>
+        <li>
+          <nuxt-link
             id="menu-option-settings"
             no-prefetch
             class="nav-link text-center small p-0"
@@ -284,6 +297,7 @@ const {
   homePage,
   requestLogin,
   logout,
+  switchToChat,
   showAboutMe,
   maybeReload,
 } = useNavbar()

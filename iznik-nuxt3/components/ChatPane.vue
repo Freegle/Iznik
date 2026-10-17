@@ -20,12 +20,13 @@
       v-else-if="me"
       class="chatHolder"
       :class="{
-        allowAd,
+        allowAd: allowAd && !embedded,
         navBarHidden,
+        embedded,
       }"
     >
       <!-- Profile header for desktop (md+) - mobile uses ChatMobileNavbar -->
-      <VisibleWhen :at="['md', 'lg', 'xl', 'xxl']">
+      <VisibleWhen v-if="!embedded" :at="['md', 'lg', 'xl', 'xxl']">
         <div v-if="chat" class="desktop-profile-header">
           <!-- Freegle's own chat. Deliberately not the usual header: almost
                nothing in here is a conversation, so rating, blocking or
@@ -298,6 +299,9 @@ const { recentDonor } = useMe()
 
 const props = defineProps({
   id: { type: Number, required: true },
+  // Inside the chat shell: the shell provides the header and the column provides
+  // the height, so the desktop header and the viewport-based heights are off.
+  embedded: { type: Boolean, required: false, default: false },
 })
 
 const windowHeight = ref(window.innerHeight)
@@ -533,6 +537,13 @@ function typing() {
 // - If the navbar is visible, we subtract that - different height on mobile and desktop.
 // - If a sticky ad is shown, we subtract that.
 // We are suspicious of v-bind not working, so we do this purely using classes.
+.chatHolder.embedded,
+.chatHolder.embedded.allowAd,
+.chatHolder.embedded.navBarHidden {
+  height: 100%;
+  min-height: 0;
+}
+
 .chatHolder {
   display: flex;
   flex-direction: column;
