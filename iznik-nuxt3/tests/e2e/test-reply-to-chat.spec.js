@@ -502,3 +502,72 @@ test.describe('Reply-to-Chat - standalone page CTA reachability', () => {
     }
   })
 })
+
+/* A reply to an offer whose photo looks damaged waits while Freegle asks the replier,
+   in the chat, whether they still want it. Offer 990101 is classified damaged in
+   scripts/test-fixtures-extra.sql, which also serves the arm ask of the experiment
+   confirm-reply to everyone, so the question is always asked here; no other test replies
+   to it. The API keeps its copy of those config rows for up to a minute, and a run resets
+   the database as it starts, so this case is last in its file and must not be moved to the
+   front of a run. */
+test.describe('Reply-to-Chat - still want it?', () => {
+  test('asks the replier about a damaged item before the reply goes', async ({
+    page,
+    testEnv,
+  }) => {
+    await page.setViewportSize(MOBILE_VIEWPORT)
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
+    await waitForAuthInLocalStorage(page)
+
+    await page.gotoAndVerify('/message/990101')
+    await waitForAuthHydration(page)
+    await waitForNuxtHydration(page)
+
+    const replyButton = page.locator('.reply-button:has-text("Reply")').first()
+    await replyButton.waitFor({ state: 'visible', timeout: 30000 })
+    await replyButton.click()
+
+    await page
+      .locator('textarea[name="reply"]')
+      .fill('I would love the armchair')
+    await page.locator('textarea[name="collect"]').fill('Any evening this week')
+    await page.locator('.composer-send-btn').first().click()
+    await page.waitForURL(/\/chats\/\d+/, { timeout: 60000 })
+
+    // The chat may first ask for a postcode, as in clickSendAndWait; it covers the buttons.
+    const contactDetails = page
+      .locator('.modal-content')
+      .filter({ hasText: 'Contact details' })
+    if (
+      await contactDetails
+        .waitFor({ state: 'visible', timeout: 5000 })
+        .then(() => true)
+        .catch(() => false)
+    ) {
+      await contactDetails.locator('.btn:has-text("Cancel")').click()
+      await contactDetails.waitFor({ state: 'hidden', timeout: 10000 })
+    }
+
+    // Asked in the chat, by Freegle, addressed to the replier.
+    const prompt = page.locator('[data-testid="chat-prompt"]').last()
+    await expect(prompt).toContainText('before we pass your reply on', {
+      timeout: timeouts.ui.appearance,
+    })
+    await expect(prompt).toContainText('damaged')
+    await expect(prompt).toContainText('@')
+    await expect(
+      prompt.locator('[data-testid="chat-prompt-from-freegle"]')
+    ).toContainText('Freegle')
+    await expect(prompt).toContainText('This is an automated message.')
+
+    // The item it is about is somebody else's, so it links to the public page.
+    await expect(
+      prompt.locator('[data-testid="chat-prompt-post-990101"]')
+    ).toHaveAttribute('href', /\/message\/990101$/)
+
+    await prompt.getByRole('button', { name: 'Yes, send my reply' }).click()
+    await expect(prompt).toContainText('You said: Yes, send my reply', {
+      timeout: timeouts.ui.appearance,
+    })
+  })
+})

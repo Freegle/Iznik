@@ -114,6 +114,9 @@ a real bound, not a hint:
   The **roster** is the member's own row in every room plus everyone's rows in the
   active rooms; the other members of old mod chats are left out (they were 112,609 of
   one moderator's rows).
+- **The questions Freegle asked the member in a chat** (`chat_prompts`, the reply confirmation) are in
+  the dump with how they answered, so a reply that never arrived can be traced to a question that was
+  never answered.
 - **Sections are collected concurrently** (`dumpWorkers` in `userdump.go`), heaviest
   first, so the snapshot takes as long as its slowest section rather than the sum of
   them. `_sections` rows are in completion order.

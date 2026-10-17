@@ -3,8 +3,9 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import ChatMessagePrompt from '~/components/ChatMessagePrompt.vue'
 
-const { mockData, answerPrompt, routerPush } = vi.hoisted(() => {
+const { mockData, answerPrompt, routerPush, mockMe } = vi.hoisted(() => {
   return {
+    mockMe: { id: 7 },
     mockData: {
       chatmessage: {
         userid: 2,
@@ -39,6 +40,11 @@ vi.mock('~/composables/useChat', () => ({
   }),
 }))
 
+vi.mock('~/composables/useMe', async () => {
+  const { computed } = await import('vue')
+  return { useMe: () => ({ myid: computed(() => mockMe.id) }) }
+})
+
 vi.mock('~/stores/chat', () => ({
   useChatStore: () => ({
     answerPrompt,
@@ -58,6 +64,7 @@ vi.mock('#imports', async () => {
 describe('ChatMessagePrompt', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockMe.id = 7
     mockData.chatmessage = {
       userid: 2,
       refmsgid: 999,
@@ -131,6 +138,74 @@ describe('ChatMessagePrompt', () => {
 
     expect(wrapper.findAll('button')).toHaveLength(0)
     expect(wrapper.text()).toContain('You said: Maybe, if it works for me')
+  })
+
+  it('shows a question closed because the post went as a question with no buttons', () => {
+    // The batch closes a reply question with the answer "expired" when the offer is taken or withdrawn. Nobody chose
+    // that, so the card must not say that they did.
+    mockData.chatmessage.prompt.answered = true
+    mockData.chatmessage.prompt.answer = 'expired'
+
+    const wrapper = createWrapper()
+
+    expect(wrapper.text()).toContain('Could you drop it off')
+    expect(wrapper.findAll('button')).toHaveLength(0)
+    expect(wrapper.text()).not.toContain('You said')
+    expect(wrapper.text()).not.toContain('expired')
+  })
+
+  it('says who answered when the question was asked of the other member', () => {
+    // A replier asked "do you still want it?" answers; the poster then sees the
+    // question and the answer, and "You said" would put words in their mouth.
+    mockMe.id = 7
+    mockData.chatmessage.prompt.answered = true
+    mockData.chatmessage.prompt.answer = 'maybe'
+    mockData.chatmessage.prompt.userid = 9
+    mockData.chatmessage.prompt.askedname = 'Sam Jones'
+
+    const wrapper = createWrapper()
+
+    expect(wrapper.text()).toContain(
+      '@Sam Jones said: Maybe, if it works for me'
+    )
+    expect(wrapper.text()).not.toContain('You said')
+  })
+
+  it('says it is from Freegle, with the logo, in a chat between two members', () => {
+    // Freegle is a third voice there, so it has to say who it is.
+    mockData.chatmessage.prompt.userid = 9
+    mockData.chatmessage.prompt.askedname = 'Sam Jones'
+
+    const wrapper = createWrapper()
+
+    expect(
+      wrapper.find('[data-testid="chat-prompt-from-freegle"]').text()
+    ).toContain('Freegle')
+    expect(wrapper.find('.prompt-freegle-logo').attributes('src')).toBe(
+      '/icon.png'
+    )
+    expect(wrapper.text()).toContain('This is an automated message.')
+  })
+
+  it("leaves that to the header in a member's own chat with Freegle", () => {
+    const wrapper = createWrapper()
+
+    expect(
+      wrapper.find('[data-testid="chat-prompt-from-freegle"]').exists()
+    ).toBe(false)
+    expect(wrapper.text()).not.toContain('This is an automated message.')
+  })
+
+  it('says "You said" to the member who was asked', () => {
+    mockMe.id = 9
+    mockData.chatmessage.prompt.answered = true
+    mockData.chatmessage.prompt.answer = 'maybe'
+    mockData.chatmessage.prompt.userid = 9
+    mockData.chatmessage.prompt.askedname = 'Sam Jones'
+
+    expect(createWrapper().text()).toContain(
+      'You said: Maybe, if it works for me'
+    )
   })
 
   it('still shows an expired prompt but stops offering the buttons', () => {

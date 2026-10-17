@@ -44,7 +44,7 @@ class UxExposureTableCheckTest extends TestCase
 
     public function test_forgetting_a_member_deletes_the_exposure_rows_when_the_read_node_is_behind(): void
     {
-        $this->withLaggingReadNode(['users_emails', 'messages'], function (string $lag) {
+        $this->withLaggingReadNode(['users_emails', 'messages', 'chat_prompts'], function (string $lag) {
             $this->seedExposures($lag);
             DB::setDefaultConnection($lag);
 

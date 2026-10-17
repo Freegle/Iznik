@@ -150,7 +150,18 @@ class ChatNotificationService
             ->pluck('refid')
             ->all();
 
-        $releasedRecently = array_values(array_unique(array_merge($releasedRecently, $lockdownReleasedRecently)));
+        // A reply held for the sender's answer (chat_prompts.kind confirm_reply) is delivered when the question is answered,
+        // up to three days after it was written, so it is admitted by the time of the answer, as a released hold is by its
+        // release. Only a yes delivers a reply; the other gates below still apply.
+        $confirmedRecently = DB::table('chat_prompts')
+            ->where('kind', 'confirm_reply')
+            ->where('answer', 'yes')
+            ->whereNotNull('heldchatmsgid')
+            ->where('answered_at', '>=', $startTime)
+            ->pluck('heldchatmsgid')
+            ->all();
+
+        $releasedRecently = array_values(array_unique(array_merge($releasedRecently, $lockdownReleasedRecently, $confirmedRecently)));
 
         $query = ChatMessage::query()
             ->join('chat_rooms', 'chat_messages.chatid', '=', 'chat_rooms.id')
@@ -179,11 +190,28 @@ class ChatNotificationService
                 ->where('cmr.status', '<>', 'released');
         });
 
-        // For User2User chats, only include reviewed messages.
+        // For User2User chats, only include reviewed messages. The question Freegle asks a replier about a reply
+        // (chat_prompts kind confirm_reply) is the one exception while it is open: it is written unsuccessful so that
+        // the poster is told nothing of it, and it is for the replier alone (getMembersToNotify), who is mailed about it
+        // as about any chat message. Without that the replier who leaves the chat never learns of the question, and the
+        // reply is dropped three days later with nobody told.
         if ($chatType === ChatRoom::TYPE_USER2USER) {
             $query->where('chat_messages.reviewrequired', 0)
                 ->where('chat_messages.processingrequired', 0)
-                ->where('chat_messages.processingsuccessful', 1);
+                ->where(function ($q) {
+                    $q->where('chat_messages.processingsuccessful', 1)
+                        ->orWhereExists(function ($open) {
+                            $open->select(DB::raw(1))
+                                ->from('chat_prompts as cq')
+                                ->whereColumn('cq.chatmsgid', 'chat_messages.id')
+                                ->where('cq.kind', 'confirm_reply')
+                                ->whereNotNull('cq.userid')
+                                ->whereNull('cq.answered_at')
+                                ->where(function ($live) {
+                                    $live->whereNull('cq.expires_at')->orWhere('cq.expires_at', '>', now());
+                                });
+                        });
+                });
         }
 
         if (! $forceAll) {
@@ -301,6 +329,10 @@ class ChatNotificationService
                     $sendingFrom = $message->user;
                 } elseif ($message->userid === $sendingTo->id) {
                     // Copy-to-self: recipient is the message author, so sender should be themselves.
+                    $sendingFrom = $message->user;
+                } elseif ($message->type === ChatMessage::TYPE_PROMPT
+                    && ! in_array($message->userid, [$chatRoom->user1, $chatRoom->user2], true)) {
+                    // A question from Freegle in a chat between two members is from Freegle, not from the other member.
                     $sendingFrom = $message->user;
                 } else {
                     $sendingFrom = $this->getOtherUser($chatRoom, $sendingTo);
@@ -468,6 +500,12 @@ class ChatNotificationService
             ->whereIn('userid', [$chatRoom->user1, $chatRoom->user2])
             ->notBlocked()
             ->with('user');
+
+        // A reply question the poster has not been shown goes to the replier it was asked of and to nobody else.
+        $askedOnly = $message->type === ChatMessage::TYPE_PROMPT ? ChatMessage::questionAskedOnlyOf((int) $message->id) : null;
+        if ($askedOnly !== null) {
+            $query->where('userid', $askedOnly);
+        }
 
         if (! $forceAll) {
             // Only get members who haven't been mailed this message yet.

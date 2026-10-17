@@ -415,6 +415,170 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertFalse($present(), 'a release older than the window is not re-selected');
     }
 
+    /**
+     * Whether the reply is among the messages the poster would be emailed about, and the question that holds it:
+     * the reply was written three days ago, and the question (a Prompt message and a confirm_reply row) names it.
+     *
+     * @param  array<string, mixed>  $prompt  columns of chat_prompts that say how the question was answered
+     * @return array{0: \Closure, 1: ChatMessage}
+     */
+    private function replyHeldForAnAnswer(array $prompt): array
+    {
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $post = $this->createTestMessage($sender, $this->createTestGroup());
+        $room = $this->createTestChatRoom($sender, $recipient, ['latestmessage' => now()]);
+
+        // The reply is three days old: well outside the 24 hour look-back window.
+        $reply = $this->createTestChatMessage($room, $sender, ['type' => 'Interested', 'refmsgid' => $post->id, 'date' => now()->subDays(3)]);
+        $question = $this->createTestChatMessage($room, $this->createTestUser(), [
+            'type' => 'Prompt', 'refmsgid' => $post->id, 'date' => now()->subDays(3), 'processingrequired' => 0, 'processingsuccessful' => 0,
+        ]);
+        DB::table('chat_prompts')->insert($prompt + [
+            'chatmsgid' => $question->id, 'msgid' => $post->id, 'msgids' => json_encode([$post->id]), 'userid' => $sender->id,
+            'heldchatmsgid' => $reply->id, 'kind' => 'confirm_reply', 'options' => json_encode([['value' => 'yes'], ['value' => 'no']]),
+            'created_at' => now()->subDays(3), 'expires_at' => now()->subDay(),
+        ]);
+
+        $present = function () use ($room, $reply): bool {
+            $method = new \ReflectionMethod($this->service, 'getUnmailedMessages');
+            $method->setAccessible(true);
+            $rows = $method->invoke($this->service, ChatRoom::TYPE_USER2USER, $room->id, 0, 24, false);
+
+            return $rows->contains(fn ($r) => (int) $r->id === (int) $reply->id);
+        };
+
+        return [$present, $reply];
+    }
+
+    public function test_a_reply_confirmed_after_the_window_is_delivered_by_the_time_of_the_answer(): void
+    {
+        // A reply held for its sender's answer (the confirm-reply question) is delivered when the answer comes, up to
+        // three days after it was written, so it is admitted by the time of the answer, as a released hold is by its
+        // release. Keyed on the date alone, the poster was never emailed.
+        [$present, $reply] = $this->replyHeldForAnAnswer(['answer' => 'yes', 'answered_via' => 'button', 'answered_at' => now()->subMinutes(5)]);
+        $this->assertTrue($present(), 'a reply confirmed within the window is delivered despite an old date');
+
+        DB::table('chat_prompts')->where('heldchatmsgid', $reply->id)->update(['answered_at' => now()->subDays(3)]);
+        $this->assertFalse($present(), 'an answer older than the window is not re-selected on every run');
+    }
+
+    public function test_a_reply_whose_question_was_answered_no_is_not_selected(): void
+    {
+        [$present] = $this->replyHeldForAnAnswer(['answer' => 'no', 'answered_via' => 'button', 'answered_at' => now()]);
+
+        $this->assertFalse($present(), 'only a yes delivers a reply');
+    }
+
+    public function test_a_question_is_not_emailed_to_the_poster_while_its_reply_is_held_for_review(): void
+    {
+        // The replier's messages are all held for review. They answered yes, so the batch processes the reply and holds
+        // it for a moderator. The question stays with the replier: the poster is emailed it only with a reply they get.
+        $replier = $this->createTestUser(['chatmodstatus' => 'Fully']);
+        $poster = $this->createTestUser();
+        $post = $this->createTestMessage($poster, $this->createTestGroup());
+        $room = $this->createTestChatRoom($replier, $poster, ['latestmessage' => now()]);
+        $reply = $this->createTestChatMessage($room, $replier, [
+            'type' => 'Interested', 'refmsgid' => $post->id, 'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+        $question = $this->createTestChatMessage($room, $this->createTestUser(), [
+            'type' => 'Prompt', 'refmsgid' => $post->id, 'processingrequired' => 0, 'processingsuccessful' => 0,
+        ]);
+        DB::table('chat_prompts')->insert([
+            'chatmsgid' => $question->id, 'msgid' => $post->id, 'msgids' => json_encode([$post->id]), 'userid' => $replier->id,
+            'heldchatmsgid' => $reply->id, 'kind' => 'confirm_reply', 'options' => json_encode([['value' => 'yes'], ['value' => 'no']]),
+            'created_at' => now(), 'expires_at' => now()->addDays(3), 'answer' => 'yes', 'answered_via' => 'button', 'answered_at' => now(),
+        ]);
+
+        (new \App\Services\ChatProcessService())->processIncoming();
+
+        $method = new \ReflectionMethod($this->service, 'getUnmailedMessages');
+        $method->setAccessible(true);
+        $selected = $method->invoke($this->service, ChatRoom::TYPE_USER2USER, $room->id, 0, 24, false)
+            ->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $this->assertEquals(1, DB::table('chat_messages')->where('id', $reply->id)->value('reviewrequired'), 'the reply is held for a moderator');
+        $this->assertNotContains((int) $reply->id, $selected, 'the poster is not emailed the held reply');
+        $this->assertNotContains((int) $question->id, $selected, 'nor the question about it');
+    }
+
+    /**
+     * An open reply question in a chat between a replier and a poster, both with a roster entry, and the questions as the
+     * Go API writes it: processed and unsuccessful, so nothing delivers it to the poster.
+     *
+     * @param  array<string, mixed>  $prompt  columns of chat_prompts
+     * @return array{0: ChatRoom, 1: ChatMessage, 2: User, 3: User}
+     */
+    private function openReplyQuestion(array $prompt = []): array
+    {
+        $replier = $this->createTestUser();
+        $poster = $this->createTestUser();
+        $freegle = $this->createTestUser();
+        $post = $this->createTestMessage($poster, $this->createTestGroup());
+        $room = $this->createTestChatRoom($replier, $poster, ['latestmessage' => now()]);
+        foreach ([$replier, $poster] as $member) {
+            ChatRoster::create(['chatid' => $room->id, 'userid' => $member->id, 'lastmsgemailed' => null]);
+        }
+
+        $reply = $this->createTestChatMessage($room, $replier, [
+            'type' => 'Interested', 'refmsgid' => $post->id, 'date' => now()->subMinutes(5),
+            'processingrequired' => 1, 'processingsuccessful' => 0,
+        ]);
+        $question = $this->createTestChatMessage($room, $freegle, [
+            'type' => 'Prompt', 'refmsgid' => $post->id, 'date' => now()->subMinutes(5), 'message' => '@Sam, before we pass your reply on: do you still want it?',
+            'processingrequired' => 0, 'processingsuccessful' => 0,
+        ]);
+        DB::table('chat_prompts')->insert($prompt + [
+            'chatmsgid' => $question->id, 'msgid' => $post->id, 'msgids' => json_encode([$post->id]), 'userid' => $replier->id,
+            'heldchatmsgid' => $reply->id, 'kind' => 'confirm_reply', 'options' => json_encode([['value' => 'yes'], ['value' => 'no']]),
+            'created_at' => now()->subMinutes(5), 'expires_at' => now()->addDays(3),
+        ]);
+
+        return [$room, $question, $replier, $poster];
+    }
+
+    private function mailsTo(User $user): int
+    {
+        return Mail::sent(ChatNotification::class)->filter(fn (ChatNotification $mail) => $mail->hasTo($user->email_preferred))->count();
+    }
+
+    public function test_an_open_reply_question_is_mailed_to_the_replier_and_never_to_the_poster(): void
+    {
+        [$room, $question, $replier, $poster] = $this->openReplyQuestion();
+
+        $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
+
+        $this->assertEquals(1, $this->mailsTo($replier), 'the replier is told of the question, so a reply cannot be dropped unseen');
+        $this->assertEquals(0, $this->mailsTo($poster), 'the poster is told nothing of a question about a reply they have not got');
+        $this->assertNull(ChatRoster::where('chatid', $room->id)->where('userid', $poster->id)->value('lastmsgemailed'));
+    }
+
+    public function test_a_question_that_is_over_is_not_mailed(): void
+    {
+        foreach ([['expires_at' => now()->subMinute()], ['answer' => 'no', 'answered_via' => 'button', 'answered_at' => now()]] as $prompt) {
+            [$room, , $replier, $poster] = $this->openReplyQuestion($prompt);
+
+            $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
+
+            $this->assertEquals(0, $this->mailsTo($replier), 'expired or answered: nothing left to ask');
+            $this->assertEquals(0, $this->mailsTo($poster));
+        }
+    }
+
+    public function test_the_question_is_mailed_to_the_poster_too_once_it_is_delivered_with_the_reply(): void
+    {
+        [$room, $question, $replier, $poster] = $this->openReplyQuestion();
+        $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
+        $this->assertEquals(1, $this->mailsTo($replier));
+
+        DB::table('chat_prompts')->where('chatmsgid', $question->id)->update(['answer' => 'yes', 'answered_via' => 'button', 'answered_at' => now()]);
+        DB::table('chat_messages')->where('id', $question->id)->update(['processingsuccessful' => 1]);
+        $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
+
+        $this->assertEquals(1, $this->mailsTo($replier), 'the replier is not mailed the same question twice');
+        $this->assertEquals(1, $this->mailsTo($poster), 'the poster gets it with the reply, as before');
+    }
+
     public function test_lockdown_released_hold_older_than_window_is_delivered_by_releasedat(): void
     {
         // Same problem, same fix as the rippling case above (plan 2026-09-27-lockdown-switch.md,

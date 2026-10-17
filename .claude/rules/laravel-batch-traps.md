@@ -270,6 +270,23 @@ working experiment:
 Keep the arm name out of links, headers and `email_type`, which other code matches exactly. See
 `docs/developers/reference/ux-experiments.md`, "Experiments in mail, push and the server".
 
+## Anything that holds a chat message and releases it later must be admitted by its release time
+
+`ChatNotificationService::getUnmailedMessages` selects replies by `chat_messages.date` inside a 24 hour look-back. A reply
+held for longer is outside it when it is released, so the poster is never emailed, with no error. It admits a released
+rippling hold by `rippling_held_replies.releasedat`, a released lockdown hold by `lockdown_holds.releasedat`, and a reply
+confirmed by its sender by `chat_prompts.answered_at`. A new way to hold a chat message needs its own line in that list and
+a test like `test_released_reply_older_than_window_is_delivered_by_releasedat`.
+
+## `processingsuccessful = 1` does not mean the poster gets the message
+
+A message held for review (`reviewrequired = 1`) and one dropped by a block keyword (`reviewrejected = 1`) are
+processed and successful too. Whatever shows one message because another was delivered must test all three, as
+`ChatMessage::scopeVisible` does: `ChatProcessService::showQuestionWithReply` tested the first alone, and showed and
+emailed the confirm-reply question for a reply nobody got. The same goes for anything that looks at the message before the
+one being processed, as the review hold chain does: a Freegle question that sits between two messages must be skipped, or
+it stands in for the held message before it.
+
 ## See also
 
 - `.claude/rules/go-api-traps.md` - the same class of silent wrong answer on the Go side.

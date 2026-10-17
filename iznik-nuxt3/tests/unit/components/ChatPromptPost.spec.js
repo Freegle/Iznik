@@ -3,11 +3,13 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { computed, ref } from 'vue'
 import ChatPromptPost from '~/components/ChatPromptPost.vue'
 
-const { mockData, fetchMessage } = vi.hoisted(() => {
+const { mockData, fetchMessage, mockMe } = vi.hoisted(() => {
   return {
+    mockMe: { id: 7 },
     mockData: {
       message: {
         id: 42,
+        fromuser: 7,
         subject: 'OFFER: Dining table and 4 chairs (Tuvalu High Street)',
         attachments: [],
       },
@@ -26,6 +28,10 @@ vi.mock('~/composables/useMessageDisplay', () => ({
   }),
 }))
 
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({ myid: computed(() => mockMe.id) }),
+}))
+
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({ fetch: fetchMessage }),
 }))
@@ -36,8 +42,10 @@ vi.mock('~/stores/message', () => ({
 describe('ChatPromptPost', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockMe.id = 7
     mockData.message = {
       id: 42,
+      fromuser: 7,
       subject: 'OFFER: Dining table and 4 chairs (Tuvalu High Street)',
       attachments: [],
     }
@@ -75,6 +83,15 @@ describe('ChatPromptPost', () => {
     const wrapper = createWrapper(42)
 
     expect(wrapper.find('a').attributes('href')).toBe('/mypost/42')
+  })
+
+  it("links to the public post when it is somebody else's", () => {
+    // A replier asked whether they still want an item is looking at the poster's
+    // offer, not their own post, and /mypost would show them nothing.
+    mockMe.id = 9
+    const wrapper = createWrapper(42)
+
+    expect(wrapper.find('a').attributes('href')).toBe('/message/42')
   })
 
   it('fetches the post itself, since the display composable only reads the store', async () => {

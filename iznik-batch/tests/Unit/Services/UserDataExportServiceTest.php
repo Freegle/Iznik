@@ -212,6 +212,47 @@ class UserDataExportServiceTest extends TestCase
         $this->assertEquals($group->id, $json['memberships'][0]['groupid']);
     }
 
+    public function test_export_contains_the_questions_freegle_asked_the_member_and_how_they_answered(): void
+    {
+        $user = $this->createTestUser();
+        $this->createTestUserEmail($user);
+        $poster = $this->createTestUser();
+        $freegle = $this->createTestUser();
+        $post = $this->createTestMessage($poster, $this->createTestGroup());
+        $room = $this->createTestChatRoom($user, $poster);
+        $reply = $this->createTestChatMessage($room, $user, ['type' => 'Interested', 'refmsgid' => $post->id]);
+        $question = $this->createTestChatMessage($room, $freegle, ['type' => 'Prompt', 'refmsgid' => $post->id, 'message' => '@Test, before we pass your reply on: Do you still want it?']);
+        DB::table('chat_prompts')->insert([
+            'chatmsgid' => $question->id, 'msgid' => $post->id, 'msgids' => json_encode([$post->id]), 'userid' => $user->id,
+            'heldchatmsgid' => $reply->id, 'kind' => 'confirm_reply', 'options' => json_encode([['value' => 'yes'], ['value' => 'no']]),
+            'answer' => 'no', 'answered_via' => 'button', 'answered_at' => '2026-10-20 10:05:00', 'created_at' => '2026-10-20 10:00:00', 'expires_at' => '2026-10-23 10:00:00',
+        ]);
+
+        // Another member's question is not in it.
+        $other = $this->createTestUser();
+        $otherRoom = $this->createTestChatRoom($other, $poster);
+        $otherReply = $this->createTestChatMessage($otherRoom, $other, ['type' => 'Interested', 'refmsgid' => $post->id]);
+        $otherQuestion = $this->createTestChatMessage($otherRoom, $freegle, ['type' => 'Prompt', 'refmsgid' => $post->id]);
+        DB::table('chat_prompts')->insert([
+            'chatmsgid' => $otherQuestion->id, 'msgid' => $post->id, 'msgids' => json_encode([$post->id]), 'userid' => $other->id,
+            'heldchatmsgid' => $otherReply->id, 'kind' => 'confirm_reply', 'options' => '[]', 'created_at' => now(), 'expires_at' => now()->addDays(3),
+        ]);
+
+        $exportId = DB::table('users_exports')->insertGetId(['userid' => $user->id, 'tag' => 'test-tag', 'requested' => now()]);
+
+        $this->service->processAll();
+
+        $json = json_decode(gzinflate(DB::table('users_exports')->where('id', $exportId)->value('data')), true);
+
+        $this->assertArrayHasKey('questions', $json);
+        $this->assertCount(1, $json['questions'], 'only the questions asked of this member');
+        $this->assertEquals('confirm_reply', $json['questions'][0]['kind']);
+        $this->assertEquals($post->id, $json['questions'][0]['msgid']);
+        $this->assertEquals('no', $json['questions'][0]['answer']);
+        $this->assertEquals('button', $json['questions'][0]['answered_via']);
+        $this->assertEquals('2026-10-20 10:05:00', $json['questions'][0]['answered_at']);
+    }
+
     // --- Dry-run mode ---
 
     public function test_dry_run_does_not_write_export_data(): void

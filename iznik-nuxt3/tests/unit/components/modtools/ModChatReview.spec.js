@@ -207,6 +207,22 @@ describe('ModChatReview', () => {
     })
   })
 
+  describe('not delivered notice', () => {
+    it('says when a replier withdrew a reply, never confirmed it, or the item went first', () => {
+      // Freegle asked whether they still wanted an item that looked damaged or
+      // too big to carry; a moderator needs to see why it never arrived.
+      expect(
+        mountComponent({ processingfailreason: 'ReplyWithdrawn' }).text()
+      ).toContain('they said no')
+      expect(
+        mountComponent({ processingfailreason: 'ReplyNotConfirmed' }).text()
+      ).toContain('they never answered')
+      expect(
+        mountComponent({ processingfailreason: 'ReplyPostGone' }).text()
+      ).toContain('the item went before this was sent on')
+    })
+  })
+
   describe('View Original Email button', () => {
     it('shows when bymailid or msgid exists, hides when neither', () => {
       expect(mountComponent({ bymailid: 111 }).text()).toContain(

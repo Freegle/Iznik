@@ -1210,6 +1210,154 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertNotNull($task->processed_at);
     }
 
+    /**
+     * An offer with one replier whose reply is waiting for their answer to the question Freegle asked, and a chat with
+     * a second replier whose reply went through.
+     *
+     * @return array{0: int, 1: int, 2: int, 3: int, 4: int, 5: int} post, held chat, held reply, question, other chat, other reply
+     */
+    private function offerWithAHeldReply(array $prompt = []): array
+    {
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $replier = $this->createTestUser();
+        $other = $this->createTestUser();
+        $freegle = $this->createTestUser();
+
+        $msgId = DB::table('messages')->insertGetId(['fromuser' => $poster->id, 'subject' => 'OFFER: Armchair', 'date' => now()]);
+        DB::table('messages_groups')->insert(['msgid' => $msgId, 'groupid' => $group->id, 'collection' => 'Approved']);
+
+        $heldChat = DB::table('chat_rooms')->insertGetId(['chattype' => 'User2User', 'user1' => $poster->id, 'user2' => $replier->id]);
+        $reply = DB::table('chat_messages')->insertGetId([
+            'chatid' => $heldChat, 'userid' => $replier->id, 'message' => 'Is it still available?', 'type' => 'Interested',
+            'refmsgid' => $msgId, 'date' => now(), 'reviewrequired' => 0, 'reviewrejected' => 0,
+            'processingrequired' => 1, 'processingsuccessful' => 0,
+        ]);
+        $question = DB::table('chat_messages')->insertGetId([
+            'chatid' => $heldChat, 'userid' => $freegle->id, 'message' => '@Sam, do you still want it?', 'type' => 'Prompt',
+            'refmsgid' => $msgId, 'date' => now(), 'processingrequired' => 0, 'processingsuccessful' => 0,
+        ]);
+        DB::table('chat_prompts')->insert($prompt + [
+            'chatmsgid' => $question, 'msgid' => $msgId, 'msgids' => json_encode([$msgId]), 'userid' => $replier->id,
+            'heldchatmsgid' => $reply, 'kind' => 'confirm_reply', 'options' => '[]', 'created_at' => now(), 'expires_at' => now()->addDays(3),
+        ]);
+
+        $otherChat = DB::table('chat_rooms')->insertGetId(['chattype' => 'User2User', 'user1' => $poster->id, 'user2' => $other->id]);
+        $otherReply = DB::table('chat_messages')->insertGetId([
+            'chatid' => $otherChat, 'userid' => $other->id, 'message' => 'Can I have it?', 'type' => 'Interested',
+            'refmsgid' => $msgId, 'date' => now(), 'reviewrequired' => 0, 'reviewrejected' => 0,
+            'processingrequired' => 0, 'processingsuccessful' => 1,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'message_outcome',
+            'data' => json_encode(['msgid' => $msgId, 'byuser' => $poster->id, 'outcome' => 'Taken', 'happiness' => 'Happy', 'comment' => '', 'userid' => 0, 'message' => 'Sorry, this has now been taken.']),
+            'created_at' => now(),
+        ]);
+
+        return [$msgId, $heldChat, $reply, $question, $otherChat, $otherReply];
+    }
+
+    public function test_message_outcome_expires_an_open_reply_question_and_drops_the_reply(): void
+    {
+        [$msgId, $heldChat, $reply, $question, $otherChat] = $this->offerWithAHeldReply();
+        $behind = DB::table('chat_messages')->insertGetId([
+            'chatid' => $heldChat, 'userid' => DB::table('chat_messages')->where('id', $reply)->value('userid'), 'message' => 'no thanks, sorry',
+            'type' => 'Default', 'date' => now(), 'processingrequired' => 1, 'processingsuccessful' => 0,
+        ]);
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+
+        $prompt = DB::table('chat_prompts')->where('chatmsgid', $question)->first();
+        $this->assertEquals('expired', $prompt->answer, 'the question is over, so its buttons stop');
+        $this->assertNotNull($prompt->answered_at);
+
+        foreach ([$reply, $behind] as $id) {
+            $row = DB::table('chat_messages')->where('id', $id)->first();
+            $this->assertEquals(0, $row->processingrequired, 'the batch no longer has it to deliver');
+            $this->assertEquals(0, $row->processingsuccessful);
+            $this->assertEquals(\App\Models\ChatMessage::PROCESSFAIL_POST_GONE, $row->processingfailreason);
+        }
+    }
+
+    public function test_message_outcome_writes_nothing_as_the_poster_into_a_chat_whose_reply_is_held(): void
+    {
+        [$msgId, $heldChat, , , $otherChat] = $this->offerWithAHeldReply();
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+
+        $this->assertEquals(0, DB::table('chat_messages')->where('chatid', $heldChat)->where('type', 'Completed')->count(),
+            'the poster never saw the reply, so nothing is written as the poster');
+        $this->assertEquals(1, DB::table('chat_messages')->where('chatid', $otherChat)->where('type', 'Completed')->count(),
+            'a chat whose reply the poster did get is told as before');
+    }
+
+    public function test_message_outcome_leaves_alone_what_the_replier_wrote_after_answering_no(): void
+    {
+        [$msgId, $heldChat, $reply, $question] = $this->offerWithAHeldReply(['answer' => 'no', 'answered_at' => now()->subMinutes(5), 'answered_via' => 'button']);
+        DB::table('chat_messages')->where('id', $reply)->update([
+            'processingrequired' => 0, 'processingsuccessful' => 0, 'processingfailreason' => \App\Models\ChatMessage::PROCESSFAIL_REPLY_WITHDRAWN,
+        ]);
+        $later = DB::table('chat_messages')->insertGetId([
+            'chatid' => $heldChat, 'userid' => DB::table('chat_messages')->where('id', $reply)->value('userid'), 'message' => 'Do you have anything else?',
+            'type' => 'Default', 'date' => now(), 'processingrequired' => 1, 'processingsuccessful' => 0,
+        ]);
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+
+        $row = DB::table('chat_messages')->where('id', $later)->first();
+        $this->assertEquals(1, $row->processingrequired, 'an ordinary message written after the no is still to be delivered');
+        $this->assertNull($row->processingfailreason);
+        $this->assertEquals('no', DB::table('chat_prompts')->where('chatmsgid', $question)->value('answer'), 'and the answer stands');
+    }
+
+    public function test_message_outcome_leaves_alone_what_the_replier_wrote_after_a_yes_was_delivered(): void
+    {
+        [$msgId, $heldChat, $reply] = $this->offerWithAHeldReply(['answer' => 'yes', 'answered_at' => now()->subMinutes(5), 'answered_via' => 'button']);
+        DB::table('chat_messages')->where('id', $reply)->update(['processingrequired' => 0, 'processingsuccessful' => 1]);
+        $later = DB::table('chat_messages')->insertGetId([
+            'chatid' => $heldChat, 'userid' => DB::table('chat_messages')->where('id', $reply)->value('userid'), 'message' => 'When can I collect?',
+            'type' => 'Default', 'date' => now(), 'processingrequired' => 1, 'processingsuccessful' => 0,
+        ]);
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+
+        $row = DB::table('chat_messages')->where('id', $later)->first();
+        $this->assertEquals(1, $row->processingrequired, 'a message written after the yes went through is an ordinary one');
+        $this->assertNull($row->processingfailreason);
+    }
+
+    public function test_message_outcome_leaves_a_delivered_reply_with_a_question_to_be_told(): void
+    {
+        [$msgId, $heldChat, $reply] = $this->offerWithAHeldReply(['answer' => 'yes', 'answered_at' => now(), 'answered_via' => 'button']);
+        DB::table('chat_messages')->where('id', $reply)->update(['processingrequired' => 0, 'processingsuccessful' => 1]);
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+
+        $this->assertEquals(1, DB::table('chat_messages')->where('chatid', $heldChat)->where('type', 'Completed')->count(),
+            'the poster has this reply, so they tell the replier it has gone');
+        $this->assertEquals('yes', DB::table('chat_prompts')->where('heldchatmsgid', $reply)->value('answer'), 'and the answer stands');
+    }
+
+    public function test_message_outcome_drops_a_reply_answered_yes_but_not_yet_delivered(): void
+    {
+        [$msgId, $heldChat, $reply, $question] = $this->offerWithAHeldReply(['answer' => 'yes', 'answered_at' => now(), 'answered_via' => 'button']);
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+
+        $row = DB::table('chat_messages')->where('id', $reply)->first();
+        $this->assertEquals(0, $row->processingrequired, 'the item has gone, so the batch must not deliver it');
+        $this->assertEquals(0, $row->processingsuccessful);
+        $this->assertEquals('yes', DB::table('chat_prompts')->where('chatmsgid', $question)->value('answer'), 'what they answered is not rewritten');
+        $this->assertEquals(0, DB::table('chat_messages')->where('chatid', $heldChat)->where('type', 'Completed')->count());
+    }
+
     public function test_message_outcome_skips_message_for_unpromised_chats(): void
     {
         $group = $this->createTestGroup();

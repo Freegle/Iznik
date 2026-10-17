@@ -2,7 +2,7 @@
   <nuxt-link
     v-if="message"
     no-prefetch
-    :to="'/mypost/' + id"
+    :to="link"
     class="promptpost"
     :data-testid="'chat-prompt-post-' + id"
   >
@@ -31,9 +31,10 @@
   </nuxt-link>
 </template>
 <script setup>
-import { onMounted, toRef } from 'vue'
+import { computed, onMounted, toRef } from 'vue'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
 import { useMessageStore } from '~/stores/message'
+import { useMe } from '~/composables/useMe'
 
 // One of a member's posts, listed inside a Freegle prompt.
 //
@@ -59,6 +60,16 @@ const messageStore = useMessageStore()
 
 const { message, strippedSubject, placeholderClass, categoryIcon } =
   useMessageDisplay(toRef(props, 'id'))
+
+const { myid } = useMe()
+
+// Usually the member's own post. A replier asked whether they still want an
+// item is looking at someone else's, which only has the public page.
+const link = computed(() =>
+  message.value?.fromuser && message.value.fromuser !== myid.value
+    ? '/message/' + props.id
+    : '/mypost/' + props.id
+)
 
 // useMessageDisplay only reads the store, so somebody has to put the post in it.
 // Done in onMounted rather than as a top-level await: an async setup makes this

@@ -689,6 +689,14 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// the "My Posts" replies + replycount, so it must gate too or the poster sees a held reply
 				// there (name + snippet + count) while it's still hidden everywhere else. Unconditional
 				// (no mod exemption), matching the #927 count-surface gates.
+				//
+				// A reply held for its sender's answer (the confirm-reply question) is gated the same way and
+				// for the same reason: it is left unprocessed, which every surface that reads
+				// processingsuccessful already skips, and this list does not. utils.ReplyHeldByQuestionSQL
+				// is the gate every count of replies shares. It is out while its question is unanswered,
+				// including the three days before the batch drops it, and after a no or when the post has
+				// gone. After a yes it is listed, as any reply the batch has yet to deliver is, for the
+				// minute before the batch delivers it.
 				db.Table("chat_messages").
 					Select("DISTINCT chat_messages.id, refmsgid, chat_messages.date, userid, fromuser, "+
 						"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname").
@@ -698,6 +706,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					Where("refmsgid = ? AND chat_messages.type = ? AND (messages.fromuser != ? OR chat_messages.userid != ?) "+
 						"AND reviewrequired = 0 AND reviewrejected = 0 "+
 						"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') "+
+						"AND NOT "+utils.ReplyHeldByQuestionSQL("chat_messages")+" "+
 						"AND DATEDIFF(chat_messages.date, messages_groups.arrival) < ?",
 						id, utils.MESSAGE_INTERESTED, myid, myid, utils.OPEN_AGE).
 					Group("userid").

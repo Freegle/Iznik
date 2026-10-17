@@ -456,6 +456,43 @@ class ScheduledOutcomeChecksTest extends TestCase
         $this->assertStringContainsString('overran', $result->message);
     }
 
+    /**
+     * A reply waiting for its sender to say they still want a damaged or bulky item is left
+     * unprocessed on purpose, sometimes for days. That is not the chat processor stuck.
+     */
+    public function test_chat_backlog_ignores_a_reply_waiting_for_its_sender_to_confirm(): void
+    {
+        $now = Carbon::now();
+        DB::table('chat_messages')->where('processingrequired', 1)->update(['processingrequired' => 0]);
+
+        $poster = $this->createTestUser();
+        $replier = $this->createTestUser();
+        $room = $this->createTestChatRoom($poster, $replier);
+        $reply = $this->createTestChatMessage($room, $replier, [
+            'processingrequired' => 1, 'processingsuccessful' => 0, 'date' => $now->copy()->subDay(),
+        ]);
+        $question = $this->createTestChatMessage($room, $poster, [
+            'type' => 'Prompt', 'processingrequired' => 0, 'processingsuccessful' => 0,
+        ]);
+        DB::table('chat_prompts')->insert([
+            'chatmsgid' => $question->id, 'userid' => $replier->id, 'heldchatmsgid' => $reply->id,
+            'kind' => 'confirm_reply', 'created_at' => $now,
+        ]);
+
+        $check = $this->registeredCheck('chats:process-incoming');
+        $this->assertTrue($check->evaluate($now)->isOk(), 'waiting for an answer is not a backlog');
+
+        // What the replier wrote after it, while the question is open, waits behind it and is not backlog either.
+        $this->createTestChatMessage($room, $replier, [
+            'processingrequired' => 1, 'processingsuccessful' => 0, 'date' => $now->copy()->subHours(5),
+        ]);
+        $this->assertTrue($check->evaluate($now)->isOk(), 'a message behind the question is not a backlog');
+
+        // Once answered it is the processor's job again, and a day-old one is a real backlog.
+        DB::table('chat_prompts')->where('chatmsgid', $question->id)->update(['answered_at' => $now]);
+        $this->assertTrue($check->evaluate($now)->isBreach());
+    }
+
     private function seedDailySend(string $sentAtUtc): void
     {
         $userid = DB::table('users')->insertGetId([

@@ -35,7 +35,7 @@ class ExperimentCommand extends Command
         {--pr= : create: the pull request that adds the switch}
         {--touches= : create: comma separated funnels the change can affect, whose completion is watched as a guardrail (default: its own funnel and login)}
         {--expected-points= : create: the effect expected, in points of completion, used to check a day of the funnel could show it (default 5)}
-        {--design= : create: JSON design keys for an experiment decided on the server (mail, push or server code): channel, type, source, window_hours, intake_hours, max_hours, salt, slot, copy. --touches and --expected-points win over the same keys here}
+        {--design= : create: JSON design keys for an experiment decided on the server (mail, push or server code): channel, type, source, window_hours, intake_hours, max_hours, primary, salt, slot, copy. --touches and --expected-points win over the same keys here}
         {--reason= : stop: why}
         {--cleanup-pr= : close: the pull request that removed the switch}';
 

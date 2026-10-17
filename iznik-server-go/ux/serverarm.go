@@ -91,10 +91,22 @@ type ServerSwitchMetric struct {
 	WindowHours int
 }
 
-// ServerSwitches lists every experiment Go code reads an arm for, by name. It ships empty: the
-// follow-on that adds an experiment adds its entry in the same change as the call, and a test fails
-// when a call has no entry or an entry has no call, or when an entry is older than 30 days.
-var ServerSwitches = map[string]ServerSwitch{}
+// ServerSwitches lists every experiment Go code reads an arm for, by name. The change that adds a
+// ux.ExperimentArm call adds its entry in the same commit, and a test fails when a call has no
+// entry, when an entry has no call, or when an entry is older than 30 days unless KeepUntil is
+// ahead (docs/developers/reference/ux-experiments.md, "Switch lists and corpse control").
+var ServerSwitches = map[string]ServerSwitch{
+	"confirm-reply": {
+		Name:    "confirm-reply",
+		Opened:  "2026-10-20",
+		PR:      "https://github.com/Freegle/Iznik/pull/1767",
+		Channel: "server",
+		Type:    "confirm_reply",
+		Varies:  "step",
+		Arms:    []string{"control", "ask"},
+		Metric:  ServerSwitchMetric{Source: "confirm_reply", WindowHours: 168},
+	},
+}
 
 var serverSwitchMu sync.RWMutex
 

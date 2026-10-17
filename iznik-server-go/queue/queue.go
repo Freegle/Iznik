@@ -51,6 +51,11 @@ const (
 	// Queued by CreateConcernKeyword; processed by iznik-batch BlockedKeywordBackfillService.
 	TaskConcernKeywordBackfill = "concern_keyword_backfill"
 
+	// TaskPushNotifyChatMessage sends the FCM push for one chat message to the members it is for.
+	// The reply question (chat/replyconfirm.go) is written already processed, so it never passes through
+	// chats:process-incoming, which is what queues the push for an ordinary message.
+	TaskPushNotifyChatMessage = "push_notify_chat_message"
+
 	// TaskEmailAdminTest sends a test copy of an ADMIN, built as a member would get it, to one address.
 	// Queued by the ModTools ADMIN Test action; processed by iznik-batch ProcessBackgroundTasksCommand.
 	TaskEmailAdminTest = "email_admin_test"

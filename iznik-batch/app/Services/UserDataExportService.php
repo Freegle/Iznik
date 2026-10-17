@@ -128,6 +128,7 @@ class UserDataExportService
         $data['excluded_locations'] = $this->getExcludedLocations($userId);
         $data['messages'] = $this->getMessages($userId);
         $data['chats'] = $this->getChats($userId);
+        $data['questions'] = $this->getQuestions($userId);
         $data['newsfeed'] = $this->getNewsfeed($userId);
         $data['aboutme'] = $this->getAboutMe($userId);
         $data['stories'] = $this->getStories($userId);
@@ -573,6 +574,21 @@ class UserDataExportService
         }
 
         return $chats;
+    }
+
+    /**
+     * The questions Freegle asked this member in a chat, and how they answered: which post it was about, the answer,
+     * whether it was a button or another message, and when. The text of a question is Freegle's, and is not in it.
+     */
+    private function getQuestions(int $userId): array
+    {
+        return DB::table('chat_prompts')
+            ->where('userid', $userId)
+            ->select('kind', 'msgid', 'answer', 'answered_via', 'answered_at', 'created_at')
+            ->orderBy('chatmsgid', 'asc')
+            ->get()
+            ->map(fn($e) => (array) $e)
+            ->toArray();
     }
 
     private function getNewsfeed(int $userId): array

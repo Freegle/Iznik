@@ -9,6 +9,7 @@ use App\Database\Expressions\Greatest;
 use App\Database\Expressions\TimestampDiff;
 use App\Database\Expressions\Value;
 use App\Helpers\MailHelper;
+use App\Models\ChatMessage;
 use App\Models\Message;
 use App\Models\User;
 use App\Models\UserDeletion;
@@ -425,6 +426,8 @@ class UserManagementService
             'message' => NULL,
         ]);
 
+        $this->forgetReplyQuestions($userId);
+
         // Delete community events, volunteering, newsfeed, stories, searches, about me.
         DB::table('communityevents')->where('userid', $userId)->delete();
         DB::table('volunteering')->where('userid', $userId)->delete();
@@ -482,6 +485,60 @@ class UserManagementService
 
         // Tell partners, who mirror our users and can only find out by polling.
         UserDeletion::record($userId, UserDeletion::TYPE_FORGOTTEN, $reason);
+    }
+
+    /**
+     * The questions Freegle asked a member about their replies (chat_prompts kind confirm_reply) are written by the
+     * Freegle account and begin with the member's name, so blanking what the member wrote does not reach them, and
+     * the poster's chat would go on showing the name. Each is blanked and taken out of the chat, and the rows that tie
+     * it to the member are deleted. A reply of theirs that is still waiting for the batch is dropped, with whatever they
+     * wrote after it while the question was open: with the row gone nothing would hold them, and the batch would
+     * deliver them blank.
+     */
+    private function forgetReplyQuestions(int $userId): void
+    {
+        $prompts = DB::table('chat_prompts')->where('userid', $userId)->get(['chatmsgid', 'heldchatmsgid']);
+
+        if ($prompts->isEmpty()) {
+            return;
+        }
+
+        DB::table('chat_messages')->whereIn('id', $prompts->pluck('chatmsgid')->all())->update([
+            'message' => NULL,
+            'processingsuccessful' => 0,
+        ]);
+
+        $this->dropRepliesHeldForAnswer($userId);
+
+        DB::table('chat_prompts')->where('userid', $userId)->delete();
+    }
+
+    /**
+     * Drop the replies of a member that are waiting for them to answer a question (chat_prompts kind confirm_reply), and
+     * whatever they wrote after each while it was open. Run before the member's questions are deleted: a reply that
+     * nothing holds any more would be delivered to the poster with no question asked. A member who is deleted outright
+     * needs no such step, because their chat messages are deleted with them (the foreign key cascades).
+     */
+    private function dropRepliesHeldForAnswer(int $userId): void
+    {
+        $heldIds = DB::table('chat_prompts')
+            ->where('userid', $userId)
+            ->where('kind', 'confirm_reply')
+            ->whereNotNull('heldchatmsgid')
+            ->pluck('heldchatmsgid');
+
+        foreach ($heldIds as $heldId) {
+            DB::table('chat_messages')
+                ->where('chatid', DB::table('chat_messages')->where('id', $heldId)->value('chatid'))
+                ->where('userid', $userId)
+                ->where('id', '>=', $heldId)
+                ->where('processingrequired', 1)
+                ->update([
+                    'processingrequired' => 0,
+                    'processingsuccessful' => 0,
+                    'processingfailreason' => ChatMessage::PROCESSFAIL_NOT_CONFIRMED,
+                ]);
+        }
     }
 
     /**

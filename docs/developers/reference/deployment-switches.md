@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-16
+last_reviewed: 2026-10-17
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Support/EnvSetting.php
@@ -97,7 +97,7 @@ variables like every other Freegle setting.
 | `ux.experiments.holdout_revert_looks` | `UX_EXPERIMENTS_HOLDOUT_REVERT_LOOKS` | `2` | How many daily looks in a row must be against an adopted change before it is reverted. |
 | `ux_server_arms` | none: a row in the `config` table, set with `PATCH /config/admin` and `{"ux_server_arms":"1"}` | unset, which is off | The one switch for every server arm. Only `1` serves arms. Missing or anything else makes every sender in the batch and the Go API act as control within a minute and stop writing exposure rows, with no deploy. `ux:experiment start` refuses a mail, push or server experiment while it is off. See [Experiments in mail, push and the server](ux-experiments.md#experiments-in-mail-push-and-the-server). |
 | `ux.channels.<channel>.ceiling_hours`, `.intake_hours` | none, set in `config/freegle.php` | push `48` and `24`, email `168` and `24`, server `336` and `168` | For an experiment decided on the server: the longest run `start` accepts, and the hours members are reached by default (the rest of the run is the window they have to convert in). A web experiment keeps `ux.experiments.max_hours`. |
-| `ux.sources.<name>` | none, set in `config/freegle.php` | `email_click`, `active_after` | The metric sources an experiment can name in `design.source`, each a class that counts from the database instead of Loki. A new source is a class and a line here. |
+| `ux.sources.<name>` | none, set in `config/freegle.php` | `email_click`, `active_after`, `confirm_reply` | The metric sources an experiment can name in `design.source`, each a class that counts from the database instead of Loki. A new source is a class and a line here. |
 | `backup.database.alert_email` | `BACKUP_DB_ALERT_EMAIL` | `geek-alerts@ilovefreegle.org` | Where a failure is mailed. Plain text, no template, because this has to work when the database is unhappy. |
 
 Every setting in `config/freegle.php` is read through `EnvSetting::env`, which is Laravel's

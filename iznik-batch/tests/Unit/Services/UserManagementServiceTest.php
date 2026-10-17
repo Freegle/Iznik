@@ -309,6 +309,102 @@ class UserManagementServiceTest extends TestCase
         ]);
     }
 
+    /**
+     * A reply that waits for its sender to confirm it, the question Freegle asked them about it, and the row that ties
+     * the two to the replier.
+     *
+     * @param  array<string, mixed>  $prompt  columns of chat_prompts
+     * @return array{0: ChatMessage, 1: ChatMessage}  the reply and the question
+     */
+    private function replyWithQuestion(ChatRoom $room, User $replier, User $freegle, int $postId, string $name, array $prompt = [], array $reply = []): array
+    {
+        $replyMessage = $this->createTestChatMessage($room, $replier, $reply + [
+            'type' => 'Interested', 'refmsgid' => $postId, 'message' => 'Is it still available?',
+            'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+        $question = $this->createTestChatMessage($room, $freegle, [
+            'type' => 'Prompt', 'refmsgid' => $postId, 'processingrequired' => 0, 'processingsuccessful' => 0,
+            'message' => "@{$name}, before we pass your reply on: from the photo, this looks like it may be damaged or not working. Do you still want it?",
+        ]);
+        DB::table('chat_prompts')->insert($prompt + [
+            'chatmsgid' => $question->id, 'msgid' => $postId, 'msgids' => json_encode([$postId]), 'userid' => $replier->id,
+            'heldchatmsgid' => $replyMessage->id, 'kind' => 'confirm_reply', 'options' => json_encode([['value' => 'yes'], ['value' => 'no']]),
+            'created_at' => now(), 'expires_at' => now()->addDays(3),
+        ]);
+
+        return [$replyMessage, $question];
+    }
+
+    public function test_forget_user_takes_the_questions_freegle_asked_them_out_of_the_chats(): void
+    {
+        // The question Freegle asked a replier about a reply is written by the Freegle account and names them, so
+        // blanking what the member wrote does not reach it. It is blanked and taken out of the poster's chat, the record
+        // of it and of how they answered goes, and a reply still waiting for its answer is dropped, not delivered with
+        // its text gone.
+        $replier = $this->createTestUser(['fullname' => 'Sam Replier']);
+        $poster = $this->createTestUser();
+        $freegle = $this->createTestUser();
+        $post = $this->createTestMessage($poster, $this->createTestGroup());
+        $room = $this->createTestChatRoom($replier, $poster);
+
+        [$answeredReply, $answeredQuestion] = $this->replyWithQuestion(
+            $room, $replier, $freegle, $post->id, 'Sam Replier',
+            ['answer' => 'yes', 'answered_at' => now(), 'answered_via' => 'button'],
+            ['processingrequired' => 0, 'processingsuccessful' => 1]
+        );
+        // Delivered with the reply, so the poster was shown it.
+        DB::table('chat_messages')->where('id', $answeredQuestion->id)->update(['processingsuccessful' => 1]);
+        [$waitingReply, $waitingQuestion] = $this->replyWithQuestion($room, $replier, $freegle, $post->id, 'Sam Replier');
+
+        // Another member's question, in another chat, is not theirs to lose.
+        $otherReplier = $this->createTestUser(['fullname' => 'Alex Other']);
+        $otherRoom = $this->createTestChatRoom($otherReplier, $poster);
+        [$otherReply, $otherQuestion] = $this->replyWithQuestion($otherRoom, $otherReplier, $freegle, $post->id, 'Alex Other');
+
+        $this->service->forgetUser($replier->id, 'Test reason');
+
+        foreach ([$answeredQuestion, $waitingQuestion] as $question) {
+            $row = DB::table('chat_messages')->where('id', $question->id)->first();
+            $this->assertNull($row->message, 'the text that named them is blanked');
+            $this->assertEquals(0, $row->processingsuccessful, 'and the poster is no longer shown the card');
+        }
+        $this->assertDatabaseMissing('chat_prompts', ['userid' => $replier->id]);
+
+        $waiting = DB::table('chat_messages')->where('id', $waitingReply->id)->first();
+        $this->assertEquals(0, $waiting->processingrequired, 'a reply still waiting is not left for the batch to deliver blank');
+        $this->assertEquals(0, $waiting->processingsuccessful);
+        $this->assertEquals(ChatMessage::PROCESSFAIL_NOT_CONFIRMED, $waiting->processingfailreason);
+        $this->assertEquals(1, DB::table('chat_messages')->where('id', $answeredReply->id)->value('processingsuccessful'), 'a reply that was delivered stays delivered');
+
+        $this->assertNotNull(DB::table('chat_messages')->where('id', $otherQuestion->id)->value('message'), 'another member\'s question is untouched');
+        $this->assertDatabaseHas('chat_prompts', ['userid' => $otherReplier->id, 'heldchatmsgid' => $otherReply->id]);
+    }
+
+    public function test_forget_user_drops_what_they_wrote_behind_an_open_question_too(): void
+    {
+        $replier = $this->createTestUser(['fullname' => 'Sam Replier']);
+        $poster = $this->createTestUser();
+        $freegle = $this->createTestUser();
+        $post = $this->createTestMessage($poster, $this->createTestGroup());
+        $room = $this->createTestChatRoom($replier, $poster);
+        [$reply] = $this->replyWithQuestion($room, $replier, $freegle, $post->id, 'Sam Replier');
+        $behind = $this->createTestChatMessage($room, $replier, [
+            'message' => 'no thanks, sorry', 'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+        $fromPoster = $this->createTestChatMessage($room, $poster, [
+            'message' => 'Yes it is', 'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+
+        $this->service->forgetUser($replier->id, 'Test reason');
+
+        foreach ([$reply, $behind] as $message) {
+            $row = DB::table('chat_messages')->where('id', $message->id)->first();
+            $this->assertEquals(0, $row->processingrequired, 'with the row gone nothing would hold it, so it is dropped');
+            $this->assertEquals(0, $row->processingsuccessful);
+        }
+        $this->assertEquals(1, DB::table('chat_messages')->where('id', $fromPoster->id)->value('processingrequired'), 'the poster\'s own message is theirs');
+    }
+
     public function test_forget_user_records_deletion_for_partners(): void
     {
         // Partners mirror our users and only learn about changes by polling, so a

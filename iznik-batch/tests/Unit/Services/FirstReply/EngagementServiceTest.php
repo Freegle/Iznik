@@ -327,6 +327,45 @@ class EngagementServiceTest extends TestCase
         $this->assertTrue(\Carbon\Carbon::parse($expires)->lessThanOrEqualTo(now()));
     }
 
+    public function test_does_not_retire_a_confirm_reply_question(): void
+    {
+        // A reply confirmation names one post, and the reply it holds is the other member's reply that the sweep reads as
+        // "this question has stopped applying". Retiring it would drop the held reply, and the replier's yes would be refused.
+        [, , $posts] = $this->seedMemberWithPosts(2);
+        $this->service()->run();
+        $deliveryId = DB::table('chat_prompts')->where('kind', '<>', 'confirm_reply')->orderByDesc('chatmsgid')->value('chatmsgid');
+        $this->assertNotNull($deliveryId, 'the run asked the poster a question about the posts');
+        $poster = User::find($posts[0]->fromuser);
+
+        // The reply held for its sender's answer, and the question that holds it.
+        $replier = $this->createTestUser();
+        $room = $this->createTestChatRoom($replier, $poster);
+        $held = $this->createTestChatMessage($room, $replier, [
+            'type' => ChatMessage::TYPE_INTERESTED, 'refmsgid' => $posts[0]->id, 'processingrequired' => 1, 'processingsuccessful' => 0,
+        ]);
+        $question = $this->createTestChatMessage($room, $this->createTestUser(), [
+            'type' => 'Prompt', 'refmsgid' => $posts[0]->id, 'processingrequired' => 0, 'processingsuccessful' => 0,
+        ]);
+        DB::table('chat_prompts')->insert([
+            'chatmsgid' => $question->id, 'msgid' => $posts[0]->id, 'msgids' => json_encode([$posts[0]->id]), 'userid' => $replier->id,
+            'heldchatmsgid' => $held->id, 'kind' => 'confirm_reply', 'options' => json_encode([['value' => 'yes'], ['value' => 'no']]),
+            'created_at' => now(), 'expires_at' => now()->addDays(3),
+        ]);
+        $before = DB::table('chat_prompts')->where('chatmsgid', $question->id)->value('expires_at');
+
+        // The other post has a reply too, so the poster's question stops applying to both of its posts.
+        $other = $this->createTestUser();
+        $this->createTestChatMessage($this->createTestChatRoom($other, $poster), $other, [
+            'type' => ChatMessage::TYPE_INTERESTED, 'refmsgid' => $posts[1]->id,
+        ]);
+
+        $this->service()->run();
+
+        $delivery = DB::table('chat_prompts')->where('chatmsgid', $deliveryId)->value('expires_at');
+        $this->assertTrue(\Carbon\Carbon::parse($delivery)->lessThanOrEqualTo(now()), 'the poster\'s question is retired, so the sweep ran');
+        $this->assertSame($before, DB::table('chat_prompts')->where('chatmsgid', $question->id)->value('expires_at'), 'the reply confirmation is left alone');
+    }
+
     public function test_keeps_a_question_live_while_any_of_its_posts_is_still_waiting(): void
     {
         // The question still means something for the ones that remain, and

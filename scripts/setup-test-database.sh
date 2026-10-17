@@ -94,6 +94,13 @@ if ! docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik iznik < /tmp/t
 fi
 echo "Fixtures loaded"
 
+# Hand-written additions that survive regenerating test-fixtures.sql (see its header).
+docker cp "${REPO_DIR}/scripts/test-fixtures-extra.sql" "${PREFIX}-percona:/tmp/test-fixtures-extra.sql"
+if ! docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures-extra.sql"; then
+  echo "Extra fixture load FAILED: aborting test database setup"
+  exit 1
+fi
+
 # 3a. Roll the fixture posts forward so they are recent.
 #
 # test-fixtures.sql is a mysqldump, so every message carries the ABSOLUTE date it

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-12
+last_reviewed: 2026-10-17
 owner: Freegle dev team
 covers:
   - docs/developers/reference/coding-standards.md
@@ -93,6 +93,21 @@ The test database is built from committed fixtures via the setup scripts (schema
 from Laravel migrations - see [APIs and data](apis-and-data.md)). After adding a
 migration, rerun the test-database setup so the test schema matches. The seeded data is
 FreeglePlayground around Edinburgh (postcode EH3 6SS).
+
+`scripts/test-fixtures.sql` is a dump from the retired V1 seeders and is replaced wholesale if
+it is ever regenerated, so rows added by hand go in `scripts/test-fixtures-extra.sql`, which is
+loaded straight after it (by `setup-test-database.sh` and by the status container's Playwright
+database reset). Keep it idempotent: explicit ids and `INSERT IGNORE`, or `ON DUPLICATE KEY UPDATE`
+for a row that must be refreshed.
+
+The extra fixtures also switch `ux_server_arms` on and serve the arm `ask` of the experiment
+`confirm-reply` to everyone, so the offer classified as damaged always asks. The config row
+`ux_experiments` makes that live at once, and a matching row in the `ux_experiments` table keeps it live,
+because the hourly `ux:experiments-tick` rebuilds the config row from the table and would otherwise empty it.
+`ux_experiments` is a public config key (every browser reads it at boot); `ux_server_arms` is not. They
+reach Playwright and the dev site. The PHP suite runs on `iznik_batch_test`, and the Go suite on
+`iznik_go_test`, a schema only clone that the status API makes afresh at the start of every run, locally
+and in CI alike. Neither has these rows, so a test that reads the arm writes its own.
 
 Locally the database is in memory by default (`PERCONA_STORAGE=ram`), so it is empty
 after percona restarts, including after the idle-stack sweeper stops a worktree. Rerun

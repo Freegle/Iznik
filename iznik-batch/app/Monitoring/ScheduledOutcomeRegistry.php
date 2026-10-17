@@ -2,6 +2,7 @@
 
 namespace App\Monitoring;
 
+use App\Models\ChatMessage;
 use App\Models\MessageGroup;
 use App\Monitoring\Checks\BacklogCheck;
 use App\Monitoring\Checks\CallbackCheck;
@@ -337,13 +338,18 @@ class ScheduledOutcomeRegistry
 
             // chats:process-incoming (every minute) clears processingrequired
             // on every visited chat message (success or fail). A row still
-            // flagged past $backlogMin = the chat processor is stuck.
+            // flagged past $backlogMin = the chat processor is stuck. A reply
+            // waiting for its sender to confirm it (chat_prompts.heldchatmsgid),
+            // and what the sender wrote after it while the question is open, are
+            // left flagged on purpose, so they are not backlog.
             (new BacklogCheck(
                 'chats:process-incoming',
                 'chat_messages',
                 'date',
                 $backlogMin,
-                fn ($q) => $q->where('processingrequired', 1),
+                fn ($q) => $q->where('processingrequired', 1)
+                    // keep-raw: the shared correlated EXISTS of ChatMessage::heldByQuestionSql, which two subqueries over chat_prompts and an OR make impossible to state with the builder.
+                    ->whereRaw('NOT '.ChatMessage::heldByQuestionSql('chat_messages', true)),
             ))
                 ->describedAs('Incoming chat-message processing queue not backing up')
                 ->inCategory('cursor-staleness'),

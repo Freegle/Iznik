@@ -282,6 +282,172 @@ const PUSH = {
   },
 }
 
+// The experiment confirm-reply: the question "Do you still want it?" asked of half the repliers to a damaged or bulky
+// offer, decided in the Go API and counted by ConfirmReplySource. Its read holds, for all reasons and for each, how the
+// repliers answered (result.detail.reasons), which the experiment's details draw below the block that says how long it runs.
+const REPLY_CELL = (o) => ({
+  replies: 0,
+  asked: 0,
+  yes_button: 0,
+  no: 0,
+  never_answered: 0,
+  post_gone: 0,
+  waiting: 0,
+  reached: 0,
+  counted: 0,
+  handed_over: 0,
+  ...o,
+})
+
+// How tall the hosted piece may be at 390 wide, in pixels: with nothing open, and with every row and one reason open. It is
+// about 525 and 1,300. It was about 780, and 2,480 with every reason open, when every reason opened at once.
+const CLOSED_PIECE_MAX = 580
+const OPEN_PIECE_MAX = 1500
+
+const CONFIRM = {
+  ...EMAIL,
+  id: 31,
+  name: 'confirm-reply',
+  title: 'Ask before passing on a reply to a damaged or bulky offer',
+  hypothesis:
+    'Some people reply without noticing that the item looks damaged or needs a car.',
+  change:
+    "Half of the people who reply to such an offer are asked 'Do you still want it?' and their reply waits for the answer.",
+  expected:
+    'Fewer replies reach the poster from people who no longer want the item.',
+  arms: { control: [0, 49], ask: [50, 99] },
+  started_at: '2026-10-20 10:00:00',
+  ends_at: '2026-11-03 10:00:00',
+  pr_url: 'https://github.com/Freegle/Iznik/pull/1767',
+  design: {
+    channel: 'server',
+    source: 'confirm_reply',
+    window_hours: 168,
+    intake_hours: 168,
+    max_hours: 336,
+    primary: 'no_wasted_reply',
+    fixed_split: true,
+    touches: [],
+    expected_points: 10,
+    slot: 'server:confirm-reply',
+    copy: {
+      control: 'The reply goes straight to the poster, as it does now.',
+      ask: 'Freegle asks the replier: Do you still want it? The reply goes to the poster after a Yes. It is dropped after a No, or after 3 days with no answer.',
+    },
+  },
+  result: {
+    read_at: '2026-10-28T16:30:00+00:00',
+    arms: {
+      control: { starts: 60, completes: 15 },
+      ask: { starts: 60, completes: 14 },
+    },
+    primary: {
+      ask: {
+        control_rate: 0.25,
+        variant_rate: 0.233,
+        diff_points: -1.7,
+        p_better: 0.4,
+        enough: true,
+        observed_share: 50,
+        expected_share: 50,
+        share_off: false,
+      },
+    },
+    guardrails: [],
+    allocation: { control: 50, ask: 50 },
+    words: {
+      who: 'repliers',
+      started: 'were counted',
+      finished: 'had no wasted reply within 7 days',
+      tab_started: 'Counted',
+      tab_finished: 'No wasted reply within 7 days',
+      note: 'Each replier is counted once, for their first reply to an offer that looked damaged or too big to carry, and only when that reply is at least 7 days old.',
+    },
+    detail: {
+      exposed: { control: 100, ask: 100 },
+      counted: { control: 60, ask: 60 },
+      reasons: {
+        all: {
+          control: REPLY_CELL({
+            replies: 100,
+            reached: 100,
+            counted: 60,
+            handed_over: 15,
+          }),
+          ask: REPLY_CELL({
+            replies: 100,
+            asked: 100,
+            yes_button: 50,
+            no: 30,
+            never_answered: 15,
+            waiting: 5,
+            reached: 50,
+            counted: 60,
+            handed_over: 14,
+          }),
+        },
+        damaged: {
+          control: REPLY_CELL({
+            replies: 50,
+            reached: 50,
+            counted: 30,
+            handed_over: 9,
+          }),
+          ask: REPLY_CELL({
+            replies: 50,
+            asked: 50,
+            yes_button: 25,
+            no: 15,
+            never_answered: 8,
+            waiting: 2,
+            reached: 25,
+            counted: 30,
+            handed_over: 8,
+          }),
+        },
+        car: {
+          control: REPLY_CELL({
+            replies: 30,
+            reached: 30,
+            counted: 18,
+            handed_over: 4,
+          }),
+          ask: REPLY_CELL({
+            replies: 30,
+            asked: 30,
+            yes_button: 15,
+            no: 9,
+            never_answered: 4,
+            waiting: 2,
+            reached: 15,
+            counted: 18,
+            handed_over: 4,
+          }),
+        },
+        both: {
+          control: REPLY_CELL({
+            replies: 20,
+            reached: 20,
+            counted: 12,
+            handed_over: 2,
+          }),
+          ask: REPLY_CELL({
+            replies: 20,
+            asked: 20,
+            yes_button: 10,
+            no: 6,
+            never_answered: 3,
+            waiting: 1,
+            reached: 10,
+            counted: 12,
+            handed_over: 2,
+          }),
+        },
+      },
+    },
+  },
+}
+
 // A finished experiment for each day, the newest first, to push one past the first 25 rows.
 const OLD = (i) => ({
   ...KEPT,
@@ -887,5 +1053,105 @@ test.describe('ModTools SysAdmin UX tab: Experiments', () => {
         return { past, overflow: el.scrollWidth - el.clientWidth }
       })
     expect(await fit()).toEqual({ past: [], overflow: 0 })
+  })
+
+  test('shows how repliers answered the question of confirm-reply, below the block that says how long it runs, and fits 390 wide', async ({
+    page,
+    testEnv,
+  }) => {
+    await loginViaModTools(page, testEnv.mod.email)
+    await serveExperiments(page, { list: [CONFIRM, EMAIL] })
+    await open(page, 'ux_exp=31')
+
+    await expect(rows(page)).toHaveCount(2, { timeout: timeouts.ui.appearance })
+    // An experiment decided in the Go API is a server experiment, and feeds the reply funnel.
+    const funnels = await rows(page).locator('.funnel').allTextContents()
+    expect([...funnels].sort()).toEqual(['Email, Replying', 'Server, Replying'])
+
+    const detail = section(page).locator('.ux-exp-detail')
+    await expect(detail).toBeVisible({ timeout: timeouts.ui.appearance })
+    // The block above says what each version does and how long members are reached. The piece below does not repeat it.
+    const channel = detail.locator('.ux-exp-channel')
+    await expect(channel).toContainText('Server experiment')
+    await expect(channel).toContainText('Served until')
+    const piece = detail.locator('[data-testid="ux-reply-confirm"]')
+    await expect(piece).toContainText('Still want it?')
+    await expect(piece).not.toContainText('Served until')
+    await expect(piece).toContainText('50.0% (50/100)')
+    // The total has a heading, and the versions are named as the block above names them, the change first.
+    await expect(piece.locator('.all-name')).toHaveText('All reasons')
+    await expect(piece.locator('.all th')).toHaveText([
+      '',
+      'With the change',
+      'Without the change',
+    ])
+    // The rows that tell the story are drawn, and the rest wait for Show every row.
+    await expect(piece.locator('.all tbody tr')).toHaveCount(6)
+    await piece.locator('.rows-toggle').click()
+    await expect(piece.locator('.all tbody tr')).toHaveCount(10)
+    await piece.locator('.rows-toggle').click()
+    await expect(piece.locator('.all tbody tr')).toHaveCount(6)
+
+    // The reasons are closed rows in the order staff read them, and one opens at a time.
+    await expect(piece.locator('.reason-table')).toHaveCount(0)
+    await expect(piece.locator('.reason-name')).toHaveText([
+      'Looks damaged',
+      'Needs a car',
+      'Both',
+    ])
+    await piece.locator('.reason-name').nth(0).click()
+    await expect(piece.locator('.reason-table')).toHaveCount(1)
+    await expect(piece.locator('.reason-table')).toContainText('50.0% (25/50)')
+    await piece.locator('.reason-name').nth(1).click()
+    await expect(piece.locator('.reason-table')).toHaveCount(1)
+    await expect(piece.locator('.reason-table')).toContainText('50.0% (15/30)')
+
+    // The mail experiment, opened, has no such piece.
+    await rows(page).filter({ hasText: 'A plainer digest subject' }).click()
+    await expect(
+      section(page).locator('.ux-exp-detail .ux-exp-channel')
+    ).toContainText('Email experiment', { timeout: timeouts.ui.appearance })
+    await expect(section(page).locator('.ux-reply-confirm')).toHaveCount(0)
+
+    // At 390 wide nothing is wider than the section, with every reason open.
+    await page.setViewportSize({ width: 390, height: 844 })
+    await rows(page)
+      .filter({ hasText: 'Ask before passing on a reply' })
+      .click()
+    const phone = section(page).locator('[data-testid="ux-reply-confirm"]')
+    await expect(phone).toBeVisible({ timeout: timeouts.ui.appearance })
+
+    // Closed, the piece is short: the story rows and three closed reasons, not the 780 pixels the tables made of it
+    // when every reason opened at once.
+    const closedHeight = await phone.evaluate(
+      (el) => el.getBoundingClientRect().height
+    )
+    expect(closedHeight).toBeLessThan(CLOSED_PIECE_MAX)
+
+    // With every row and one reason open, which is the widest and the tallest it gets, nothing is wider than the section.
+    await phone.locator('.rows-toggle').click()
+    await phone.locator('.reason-name').nth(0).click()
+    await expect(phone.locator('.reason-table')).toHaveCount(1)
+    const openHeight = await phone.evaluate(
+      (el) => el.getBoundingClientRect().height
+    )
+    expect(openHeight).toBeLessThan(OPEN_PIECE_MAX)
+    const fit = await section(page).evaluate((el) => {
+      const room = el.getBoundingClientRect()
+      const past = []
+      for (const child of el.querySelectorAll('*')) {
+        const b = child.getBoundingClientRect()
+        if (
+          b.width > 0 &&
+          (b.right > room.right + 1 || b.left < room.left - 1)
+        ) {
+          past.push(
+            `${child.tagName.toLowerCase()}.${String(child.className).slice(0, 40)}`
+          )
+        }
+      }
+      return { past, overflow: el.scrollWidth - el.clientWidth }
+    })
+    expect(fit).toEqual({ past: [], overflow: 0 })
   })
 })

@@ -4,7 +4,8 @@ import (
 	"hash/crc32"
 	"os"
 	"strconv"
-	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/utils"
@@ -166,8 +167,7 @@ func ShouldPassThrough(db *gorm.DB, refmsgid uint64, lng, lat float64) bool {
 	return false
 }
 
-// SystemUserID is the id of the Freegle account, resolved once from its
-// well-known address and cached for the life of the process.
+// SystemUserID is the id of the Freegle account, looked up by its well-known address.
 //
 // Exists so the client can be told that a chat is with Freegle rather than with
 // a person. That matters for the header: most of what Freegle says is not a
@@ -177,20 +177,56 @@ func ShouldPassThrough(db *gorm.DB, refmsgid uint64, lng, lat float64) bool {
 //
 // Returns 0 when the account does not exist yet (it is created lazily by the
 // batch app on first use), which callers treat as "no chat is a Freegle chat".
-var systemUserID uint64
-var systemUserOnce sync.Once
+// A real id is kept for the life of the process. A lookup that finds nothing is
+// believed for a minute, so that the chat list does not go back to the database
+// for every chat while there is no account, and an account made later is picked
+// up without a restart.
+var systemUserID atomic.Uint64
+
+// systemUserMissUntil is when a lookup that found no account stops being believed, as Unix nanoseconds.
+var systemUserMissUntil atomic.Int64
+
+// systemUserMissTTL is how long a lookup that found no account is believed.
+var systemUserMissTTL atomic.Int64
+
+func init() {
+	systemUserMissTTL.Store(int64(time.Minute))
+}
 
 func SystemUserID(db *gorm.DB) uint64 {
-	systemUserOnce.Do(func() {
-		email := os.Getenv("FIRSTREPLY_SYSTEM_USER_EMAIL")
-		if email == "" {
-			email = "freegle@ilovefreegle.org"
-		}
+	if id := systemUserID.Load(); id > 0 {
+		return id
+	}
 
-		var id uint64
-		db.Table("users_emails").Select("userid").Where("email = ?", email).Limit(1).Scan(&id)
-		systemUserID = id
-	})
+	if time.Now().UnixNano() < systemUserMissUntil.Load() {
+		return 0
+	}
 
-	return systemUserID
+	email := os.Getenv("FIRSTREPLY_SYSTEM_USER_EMAIL")
+	if email == "" {
+		email = "freegle@ilovefreegle.org"
+	}
+
+	var id uint64
+	db.Table("users_emails").Select("userid").Where("email = ?", email).Limit(1).Scan(&id)
+	if id > 0 {
+		systemUserID.Store(id)
+	} else {
+		systemUserMissUntil.Store(time.Now().UnixNano() + systemUserMissTTL.Load())
+	}
+
+	return id
+}
+
+// FlushSystemUserCache makes the next SystemUserID look again. For tests, after they make the account or change
+// the address it is looked up by.
+func FlushSystemUserCache() {
+	systemUserID.Store(0)
+	systemUserMissUntil.Store(0)
+}
+
+// SetSystemUserMissCache sets how long a lookup that found no account is believed, and returns what it was.
+// For tests.
+func SetSystemUserMissCache(d time.Duration) time.Duration {
+	return time.Duration(systemUserMissTTL.Swap(int64(d)))
 }

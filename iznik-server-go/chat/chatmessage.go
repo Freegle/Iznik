@@ -226,7 +226,11 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 		// The PHP notification paths honour this gate; the in-app chat fetch must too, or the
 		// poster reads the held reply here once chats:process-incoming flips processingsuccessful.
 		// The sender still sees their own message (userid = ? branch); only the poster is gated.
-		reviewFilter = "(userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 " +
+		//
+		// A prompt asked of one member (chat_prompts.userid) is written unsuccessful so that
+		// nothing delivers it to the other; the member it was asked of sees it here.
+		reviewFilter = "(userid = ? OR EXISTS (SELECT 1 FROM chat_prompts cpr WHERE cpr.chatmsgid = chat_messages.id AND cpr.userid = ?) " +
+			"OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 " +
 			"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')))"
 	}
 
@@ -247,6 +251,7 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 	whereArgs := []interface{}{chatID, userID}
 
 	if !modAccess {
+		whereArgs = append(whereArgs, userID)
 		whereSQL += " AND (users.deleted IS NULL OR users.id = ?)"
 		whereArgs = append(whereArgs, userID)
 	}
@@ -919,6 +924,17 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	// A reply to an offer that looks damaged, or too big to carry, waits while the replier is asked whether they
+	// still want it (replyconfirm.go), if their arm of the experiment confirm-reply is ask. That is decided here,
+	// before the reply is written, so that the reply and what holds it are written together: chats:process-incoming
+	// takes any committed unprocessed reply, whatever its age, and a reply committed before its hold would be
+	// delivered by a run that landed between the two. A reply held by rippling is outside the experiment: the
+	// question would be shown to the poster before the reply.
+	var confirm *replyConfirmPlan
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
+		confirm = planReplyConfirm(db, id, *payload.Refmsgid, myid)
+	}
+
 	// We can see this chat room.  Create a chat message, but flagged as needing processing.  That means it
 	// will only show up to the user who sent it until it is fully processed.
 	payload.Userid = myid
@@ -935,7 +951,17 @@ func CreateChatMessage(c *fiber.Ctx) error {
 
 		if payload.Imageid != nil {
 			// This also stops the image being purged in purge_chats.
-			return linkChatImage(tx, *payload.Imageid, payload.ID)
+			if err := linkChatImage(tx, *payload.Imageid, payload.ID); err != nil {
+				return err
+			}
+		}
+
+		if confirm != nil && confirm.asks() {
+			// In a savepoint of its own: a hold that cannot be written leaves the reply as it would have been without
+			// the experiment, not a reply that failed.
+			if err := tx.Transaction(func(inner *gorm.DB) error { return confirm.hold(inner, payload.ID) }); err != nil {
+				stdlog.Printf("Could not ask replier %d to confirm reply %d in chat %d: %v", myid, payload.ID, id, err)
+			}
 		}
 
 		return nil
@@ -987,6 +1013,16 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			"event": gorm.Expr("'held'"),
 			"count": gorm.Expr("1"),
 		})
+	}
+
+	// A reply that is not asked about (control, and any arm this code has no meaning for) is counted all the same.
+	if confirm != nil && !confirm.asks() {
+		confirm.record(db, newid)
+	}
+
+	// The question reaches the replier by push and email, as any chat message does.
+	if confirm != nil && confirm.asks() {
+		confirm.notify()
 	}
 
 	// Rippling reply attribution (sysadmin KPI): for a genuine Interested reply, snapshot the
@@ -2083,6 +2119,10 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 		Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid}); result.Error != nil {
 		stdlog.Printf("Failed to approve chat message %d: %v", msgID, result.Error)
 	}
+
+	// A reply that waited for its sender's answer (confirm-reply) and was then held for review has its question
+	// hidden from the poster. It is shown with the reply.
+	revealQuestionOfApprovedReply(db, msgID)
 
 	// Log the approve action
 	// Converted together with its

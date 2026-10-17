@@ -12,6 +12,7 @@ covers:
   - iznik-batch/app/Services/Ux/ExposureSource.php
   - iznik-batch/app/Services/Ux/Sources/EmailClickSource.php
   - iznik-batch/app/Services/Ux/Sources/ActiveAfterSource.php
+  - iznik-batch/app/Services/Ux/Sources/ConfirmReplySource.php
   - iznik-batch/app/Models/UxExperimentExposure.php
   - iznik-batch/app/Support/ExperimentBucket.php
   - iznik-batch/config/ux_switches.php
@@ -43,6 +44,8 @@ covers:
   - iznik-batch/tests/Feature/Ux/DigestSubjectExperimentTest.php
   - iznik-batch/tests/Unit/Mail/UnifiedDigestSubjectExperimentTest.php
   - iznik-batch/tests/Feature/Ux/PushPostsTitleTest.php
+  - iznik-batch/tests/Feature/Ux/ConfirmReplySourceTest.php
+  - iznik-batch/tests/Feature/Ux/ConfirmReplyExperimentTest.php
   - iznik-batch/tests/Feature/Ux/UxExposureRetentionTest.php
   - iznik-batch/tests/Feature/Ux/UxExposureErasureTest.php
   - iznik-batch/tests/Feature/Ux/UxExposureTableMissingTest.php
@@ -60,6 +63,7 @@ covers:
   - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentReadout.vue
   - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentForm.vue
   - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentChannel.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxReplyConfirmDetail.vue
   - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentsBadge.vue
   - iznik-nuxt3/modtools/composables/useUxExperimentActions.js
   - iznik-nuxt3/modtools/composables/useUxExperimentRead.js
@@ -75,6 +79,7 @@ covers:
   - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentReadout.spec.js
   - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentForm.spec.js
   - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentChannel.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxReplyConfirmDetail.spec.js
   - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentsBadge.spec.js
   - iznik-nuxt3/tests/unit/uxExperimentsBoundary.spec.js
   - iznik-nuxt3/tests/e2e/test-modtools-sysadmin-ux-experiments.spec.js
@@ -491,6 +496,11 @@ What to know about where the figures come from:
   (`design.copy`), how long members are reached and when it is decided, and the members exposed and
   counted, in the read-out's words and order ("Exposed: 12,512 with the change, 12,500 without."), or by
   version name with control first when there are more than two. It draws nothing for a change to the site.
+  The details of `confirm-reply` also draw `ModSysAdminUxReplyConfirmDetail.vue`, a piece the section hosts
+  (`HOSTED.experiment` in `useUxSections.js`), which shows how repliers answered the question. It is short and drills
+  down: the rows that tell the story for all reasons, a toggle for the rest, and each reason closed until it is opened,
+  one at a time. The versions are named as the block above names them, the change first. Only the two buttons answer the
+  question, so a yes is always a tap.
   "Other funnels we watched" is left out, because another funnel cannot be split by a server arm. Start is
   switched off while another change runs for the same thing, not only the same funnel, so a mail test can
   be started beside a reply test on the site. The reason names what holds the place ("Another email
@@ -618,7 +628,7 @@ all three agree. What changes is the counting. A flow event in Loki cannot be sp
 the counts come from the database.
 
 Nothing here changes until the config row `ux_server_arms` is `1` and someone starts an experiment. The batch
-switch list holds the experiments described below; the Go list is empty.
+switch list holds the experiments described below; the Go list holds one experiment, `confirm-reply`, described below.
 
 ### One assignment function, in three places
 
@@ -701,12 +711,13 @@ no row, so an experiment that changes both mail and the site is measured from it
 counts members per arm and stratum, and the engine does the rest as it does for Loki: the same
 probabilities, the same adopt, revert and inconclusive rules, the same holdout. `ExposureSource` does the
 counting in one grouped query over the cohort above; a subclass says what a conversion and a bad event
-are. Two ship.
+are. Three ship.
 
 | Source | Converted when, within the window of the exposure | Guardrail |
 |---|---|---|
 | `email_click` | the member clicked a link in the email, and it was not the unsubscribe link (that link also sets the click time) | clicking the unsubscribe link in the window, margin 0.3 points. That link opens the unsubscribe page, so it counts members who then do nothing, and a mail client's own Unsubscribe button is not seen (`unsubscribeUrl` in `UnifiedDigest.php`, the `unsubscribe` action of `Click` in `emailtracking.go`) |
 | `active_after` | the member has a `users_active` row in the hour of the exposure or inside the window. The site or app writes one when it loads the member's notifications, which it does when they have something unread or when they open the bell, so a member who visits with nothing unread is not counted, in either arm | turning the daily posts push off, for a push only, margin 0.3 points |
+| `confirm_reply` | the replier is promised the item, or a `messages_by` row names them, within the window of their reply (`primary` `handover`), or also the replier said no, so the reply never reached the poster (`primary` `no_wasted_reply`, the default; a question nobody answered and a post that went while the reply waited do not count) | `never_delivered`, repliers whose reply the question dropped, margin 50 points (`handover`); `fewer_handovers`, the share not handed the item, margin 2 points (`no_wasted_reply`) |
 
 Opens are never used: they are folded in nightly, and image proxies open mail for people who never looked
 at it. A tap on a push is not used because the app records none. The sources write the numbers in their own
@@ -736,6 +747,7 @@ All are set in `--design=<json>` of `ux:experiment create`; the Go create route 
 | `salt` | see above |
 | `slot` | see below |
 | `copy` | arm name to the text that arm shows, up to 240 characters, for the tab. Plain text, never used to build a message |
+| `primary` | which result a source with a choice is decided on. The source says which it offers (`confirm_reply`: `no_wasted_reply`, the default, or `handover`); `create` refuses any other, and refuses the key for a source that offers none. Only with a `source` |
 | `touches`, `expected_points` | as for a web experiment. `touches` is stored as empty for a source experiment: the browser stamps only the arms it has code for, so another funnel's completion cannot be split by a server arm. Set `expected_points` in points of the source's own rate, because the default 5 is far too big for a click rate |
 
 ### Run length, slot and a fixed split
@@ -779,6 +791,9 @@ a call has no entry, when an entry has no call left, when the name is not a stri
 is more than 30 days old unless `keep_until` is still ahead. It warns past 14 days. A server run adopted at
 day 14 lives about 35 days, so set `keep_until` when it is adopted. The scans read the code as the compiler
 does and are tested on sample source, and each test counts the files it read.
+
+A server experiment is listed in Go only: `confirm-reply` has an entry in `ux.ServerSwitches` and none in the batch
+list, because no batch code reads its arm, and `start` checks the batch list only for mail and push.
 
 ### The kill switch
 
@@ -973,6 +988,44 @@ php artisan ux:experiment start push-posts-title
 A re-run of this name keeps its buckets, so add `"salt":"r2"` to the design. To stop it, run
 `php artisan ux:experiment stop push-posts-title --reason="..."`, or set `ux_server_arms` to `0`: titles are
 control again within a minute.
+
+### Confirming a reply before it is passed on
+
+`confirm-reply` is the first experiment decided in Go code. It changes one step of replying to an offer.
+
+- **Who.** A reply made on the website or in the app (`CreateChatMessage`) to an OFFER whose newest `messages_eee` row
+  says the item looks damaged, or large or 20 kg and over unless the poster has said they might deliver. Not when either
+  member is a TrashNothing account, not a reply held by rippling, not a message in a chat with anyone but the poster,
+  and not an email, AMP or LoveJunk reply: those never ask, write no exposure and are not counted. In the arm `ask`, the reply is held and Freegle asks the replier in the
+  chat "Do you still want it?"; a yes (the button) lets it through, a no or three days of silence drops it. Whatever
+  else the replier writes in that chat while the question is open waits behind it and goes the same way. In `control` nothing changes. Both arms write one exposure row per replier and post, with the reply's
+  `chat_messages.id` as the subject and `damaged`, `car` or `both` as the stratum.
+- **Where.** `planReplyConfirm` in `iznik-server-go/chat/replyconfirm.go` looks the arm up on its first line with
+  `ux.ExperimentArm`, so with no experiment running a reply costs nothing extra. It only decides, and it decides before
+  the reply is written. For `ask`, `CreateChatMessage` then writes the reply, the exposure (`ux.RecordExposure`), the
+  question and the hold in one transaction, because the batch takes any committed unprocessed reply, whatever its age: a
+  run between the reply and its hold would deliver it. The exposure, the question and the hold are in a savepoint, so if
+  they cannot be written the reply goes through unasked, in either arm. A reply that is not asked about leaves its
+  exposure after the reply is written. The hold is `ChatProcessService`, which leaves a reply named by an unanswered
+  `chat_prompts.heldchatmsgid` unprocessed ([chat-prompts.md](chat-prompts.md)).
+- **Counted.** `confirm_reply`: each replier once, on their first reply, once it is 7 days old. `design.primary` chooses
+  the result when the experiment is created. `no_wasted_reply` (the default): the poster promised the item to the
+  replier, or marked it taken by them, within 7 days, or the replier said no. A question nobody answered is not a win:
+  it is counted apart as `never_answered`, and so is a post that was taken or withdrawn while the reply waited. The guardrail is
+  `fewer_handovers`, the share of repliers not handed the item, margin 2 points. `handover`: the poster promised the
+  item to the replier, or marked it taken by them, within 7 days; the guardrail is `never_delivered`, repliers whose reply
+  the question dropped, margin 50 points. The Experiments section draws how repliers answered, for all reasons and for
+  each (`ModSysAdminUxReplyConfirmDetail`).
+- **When.** The run is 14 days: arms are served for 169 hours and the last reply is a week old at the decision. It has its
+  own slot, `server:confirm-reply`, which the create scripts put in the design, so web tests on the `reply` funnel run
+  beside it. They measure the send, and the question appears only after it. Take the `slot` key out of the design and it
+  takes the `reply` funnel instead.
+- **Stopping.** The kill switch, a stop and the end of serving return everyone to control within a minute. A question
+  already asked is not recalled: it ends with its answer or its three days.
+- **Cleanup.** One commit takes out the `ux.ExperimentArm` call, the exposure and the exposure test in
+  `planReplyConfirm`, the entry in `ux.ServerSwitches`, `ConfirmReplySource` and its line in `ux.sources`, the hosted
+  piece and its entry in `HOSTED`, and the fixture rows. If `ask` was adopted, asking becomes unconditional and the
+  test that stops a second question for the same post goes back to being the prompt-based one.
 
 ### Deploying experiments decided on the server
 

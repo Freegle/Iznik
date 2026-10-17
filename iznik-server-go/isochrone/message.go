@@ -209,7 +209,7 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+
 			" THEN 1 ELSE 0 END AS unseen, "+
 			"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
-			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
+			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0 AND NOT "+utils.ReplyHeldByQuestionSQL("cm")+") AS replies, "+
 			"rr.lat AS reach_lat, rr.lng AS reach_lng, "+reachExtentSelect(db, probe),
 			utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
 		Scan(&candidates)
@@ -554,7 +554,7 @@ func Messages(c *fiber.Ctx) error {
 				"MIN(mg.arrival) AS visiblesince, "+
 				"ANY_VALUE(CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END) AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = m.id AND mlv.type = ?), 0) AS views, "+
-				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = m.id AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
+				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = m.id AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0 AND NOT "+utils.ReplyHeldByQuestionSQL("cm")+") AS replies, "+
 				"ANY_VALUE(COALESCE(rr.lat, 0)) AS reach_lat, ANY_VALUE(COALESCE(rr.lng, 0)) AS reach_lng, "+
 				"ANY_VALUE(COALESCE("+reachEnvelopeExpr(db)+", '')) AS reach_wkt",
 				utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED,
@@ -753,7 +753,7 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 				strconv.FormatUint(browseClearedWatermark(db, myid), 10)+
 				" THEN 1 ELSE 0 END AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
-				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
+				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0 AND NOT "+utils.ReplyHeldByQuestionSQL("cm")+") AS replies, "+
 				"COALESCE(rr.lat, 0) AS reach_lat, COALESCE(rr.lng, 0) AS reach_lng, COALESCE("+reachEnvelopeExpr(db)+", '') AS reach_wkt",
 				utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
 			// JOIN messages for the ORIGINAL post arrival (m.arrival), stable across

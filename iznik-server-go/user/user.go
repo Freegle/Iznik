@@ -3347,6 +3347,12 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to merge chat rooms")
 	}
 	tx.Table("chat_messages").Where("userid = ?", id1).Update("userid", id2)
+	// A reply question asked of id1 (chat_prompts.userid) moves with their messages. Left behind, the foreign key
+	// deletes it with id1, and the reply it holds (now id2's) is delivered unasked. The held reply itself is a chat
+	// message and has just moved above.
+	if err := tx.Table("chat_prompts").Where("userid = ?", id1).Update("userid", id2).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to merge reply questions")
+	}
 
 	// Sessions and logins.
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("sessions").Where("userid = ?", id1).Update("userid", id2)

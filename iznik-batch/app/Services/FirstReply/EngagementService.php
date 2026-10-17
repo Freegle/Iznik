@@ -513,6 +513,7 @@ class EngagementService
                  WHERE cp.answered_at IS NULL
                    AND (cp.expires_at IS NULL OR cp.expires_at > NOW())
                    AND cp.msgids IS NOT NULL
+                   AND cp.kind <> 'confirm_reply'
                    AND NOT EXISTS (
                          SELECT 1
                          FROM JSON_TABLE(cp.msgids, '$[*]' COLUMNS (mid BIGINT PATH '$')) jt

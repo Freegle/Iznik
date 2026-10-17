@@ -263,7 +263,8 @@ class UxExperimentService
      * long a member has to convert), intake_hours and max_hours (how long arms are served and the
      * whole run, only with a source), salt (a re-run falls into different arms), slot (the one
      * running experiment per slot), fixed_split (no bandit) and copy (arm => the text it shows, for
-     * the tab). A channel other than web, or a source, always has a fixed split: the same member is
+     * the tab) and primary (which result a source with a choice is decided on, only with a source that
+     * offers one). A channel other than web, or a source, always has a fixed split: the same member is
      * reached again and again, so a split that moved would give them two arms.
      *
      * @return array<string, mixed>
@@ -369,6 +370,21 @@ class UxExperimentService
                 }
                 $out['copy'][(string) $arm] = $text;
             }
+        }
+        if (isset($design['primary'])) {
+            if (! $hasSource) {
+                throw new \InvalidArgumentException('design.primary is only for an experiment with a design.source');
+            }
+            // Which result the experiment is decided on, for a source that offers a choice. The source says which
+            // values it offers (a static primaries()), so the engine knows no source's words.
+            $class = ((array) config('freegle.ux.sources', []))[$out['source']];
+            $offered = method_exists($class, 'primaries') ? $class::primaries() : [];
+            if (! is_string($design['primary']) || ! in_array($design['primary'], $offered, true)) {
+                throw new \InvalidArgumentException($offered === []
+                    ? 'design.primary is not offered by the source '.$out['source']
+                    : 'design.primary for the source '.$out['source'].' must be '.implode(' or ', $offered));
+            }
+            $out['primary'] = $design['primary'];
         }
 
         return $out;

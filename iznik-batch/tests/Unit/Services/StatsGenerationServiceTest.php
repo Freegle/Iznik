@@ -210,6 +210,40 @@ class StatsGenerationServiceTest extends TestCase
         $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 2);
     }
 
+    public function test_replies_leaves_out_a_reply_held_for_its_sender_s_answer_or_refused(): void
+    {
+        // A reply to a damaged or bulky offer waits while its sender is asked whether they still want it. The poster has
+        // not got it, so it is not a reply: not while the question is open, and not after a no.
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $freegle = $this->createTestUser();
+        $msg = $this->createTestMessage($poster, $group, ['arrival' => $this->date.' 09:00:00']);
+
+        $make = function (array $prompt, int $at) use ($poster, $freegle, $msg) {
+            $replier = $this->createTestUser();
+            $room = $this->createTestChatRoom($poster, $replier);
+            $reply = $this->createTestChatMessage($room, $replier, [
+                'type' => ChatMessage::TYPE_INTERESTED, 'refmsgid' => $msg->id, 'date' => $this->date.' 10:0'.$at.':00',
+            ]);
+            $question = $this->createTestChatMessage($room, $freegle, [
+                'type' => ChatMessage::TYPE_PROMPT, 'refmsgid' => $msg->id, 'date' => $this->date.' 10:0'.$at.':01',
+                'processingsuccessful' => 0,
+            ]);
+            DB::table('chat_prompts')->insert($prompt + [
+                'chatmsgid' => $question->id, 'msgid' => $msg->id, 'msgids' => json_encode([$msg->id]), 'userid' => $replier->id,
+                'heldchatmsgid' => $reply->id, 'kind' => 'confirm_reply', 'options' => '[]',
+                'created_at' => $this->date.' 10:00:00', 'expires_at' => now()->addDays(3),
+            ]);
+        };
+        $make([], 1);                                                                                              // the question is open
+        $make(['answer' => 'no', 'answered_via' => 'button', 'answered_at' => $this->date.' 11:00:00'], 2);       // refused
+        $make(['answer' => 'yes', 'answered_via' => 'button', 'answered_at' => $this->date.' 11:00:00'], 3);      // released
+
+        $this->service->generate($group->id, $this->date);
+
+        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 1);
+    }
+
     public function test_replies_excludes_senders_on_the_spammer_list(): void
     {
         // On 2026-09-06 one throwaway account sent 2,155 blank replies in twenty minutes;

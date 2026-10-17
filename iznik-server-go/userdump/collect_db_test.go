@@ -157,3 +157,16 @@ func TestBuildDBSpecs_ExperimentExposuresAreCollected(t *testing.T) {
 	assert.Equal(t, []interface{}{int64(42)}, exposures.args)
 	assert.Equal(t, 0, exposures.limit, "all of the member's rows")
 }
+
+// The questions Freegle asked a member in a chat (the reply confirmation) and how they answered are theirs, and
+// support is asked why a reply did not arrive, so the dump of the member carries them, keyed on the member alone.
+func TestBuildDBSpecs_ReplyQuestionsAreCollected(t *testing.T) {
+	since := time.Date(2026, 5, 7, 0, 0, 0, 0, time.UTC)
+	specs := buildDBSpecs(42, nil, nil, nil, nil, since)
+
+	prompts := findSpec(specs, "chat_prompts")
+	assert.NotNil(t, prompts)
+	assert.Equal(t, "userid = ?", prompts.where)
+	assert.Equal(t, []interface{}{int64(42)}, prompts.args)
+	assert.Equal(t, 0, prompts.limit, "all of the member's rows")
+}

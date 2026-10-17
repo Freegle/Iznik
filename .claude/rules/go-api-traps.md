@@ -247,6 +247,39 @@ in the logs but one line.
 reply), not a read handle, so the row stands or falls with it and goes to the primary. It returns an error
 for the tests and logs it; the caller must carry on, because a failed analytics row must not stop a reply.
 
+## A chat message held by leaving it unprocessed is hidden by some surfaces and counted by others
+
+Holding a reply for its sender's answer (`chat_prompts.heldchatmsgid`, the confirm-reply question) works by leaving it
+`processingrequired = 1`, which every surface that reads `processingsuccessful` already skips. A surface that does not read
+it lists the held reply as if it had arrived, with no error: the poster's My Posts reply list and count
+(`message/message.go`), the Browse reply counts (`isochrone/message.go`), the digest ranking (`UnifiedDigestService.php`)
+and the daily stats (`StatsGenerationService.php`) all leave it out through one gate, `utils.ReplyHeldByQuestionSQL`
+(`ChatMessage::heldByQuestionSql` in the batch), which also covers what the replier wrote behind the question. The
+first-reply scouts (`MatchMailService.php`, `firstreply/passthrough.go`) ask whether anyone has replied at all, and a
+replier who has been asked a question has, so they do not use it. When you hold a
+message a new way, grep every `refmsgid` and `type = 'Interested'` count for the flag it forgot.
+
+## A hold must be written in the transaction of the message it holds
+
+`chats:process-incoming` takes every committed chat message with `processingrequired = 1`, whatever its age, once a
+minute. A hold that is a row written after the message commits (the confirm-reply question in `chat_prompts`) leaves a
+gap in which a run delivers the message first, and a miss cannot be repaired: nothing holds it any more, and the
+replier is asked about a reply the poster already has. Decide before the message is written, and write the message and
+its hold in one transaction (`planReplyConfirm` and `CreateChatMessage`), with the part that may fail in a savepoint
+so that a failed hold leaves an ordinary message. A hold is released only by the answer to its question, never by the
+text of a later message: what the replier writes meanwhile is held behind it by the batch, not read as a yes. A test can see the gap with a gorm callback that reads
+from the pool, which sees only what is committed, at the moment the hold is written.
+
+## A fixture for an experiment needs its table row, and the API sees it up to a minute late
+
+The `ux_experiments` row in `config` is rebuilt from the `ux_experiments` table by `ux:experiments-tick` (17 past the hour,
+`UxExperimentService::rebuildConfig`), which writes `{}` when no row is running. A fixture that writes only the config row
+is gone within the hour wherever the batch container's scheduler runs: the dev stack, a long-lived worktree and CI. Seed a
+table row as well (`test-fixtures-extra.sql`), and the tick republishes the same entry. Separately, `ux.ExperimentArm`
+keeps its copy of the config rows for a minute, and a Playwright run resets the database as it starts, so the first minute
+of a run can still be served the old copy: a case that depends on those rows (`test-reply-to-chat.spec.js`, "still want
+it?") must not be the first thing its run does. A browser cannot flush the copy; a Go test can (`ux.FlushServerArmCache()`).
+
 ## See also
 
 - `.claude/rules/laravel-batch-traps.md` - JSON null casting, in-place foreign keys.

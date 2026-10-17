@@ -5,6 +5,7 @@ import {
   uxSections,
   hostedFor,
 } from '~/modtools/composables/useUxSections'
+import ModSysAdminUxReplyConfirmDetail from '~/modtools/components/ModSysAdminUxReplyConfirmDetail.vue'
 
 describe('useUxSections', () => {
   it('lists the sections in the order of their `order`', () => {
@@ -72,10 +73,15 @@ describe('useUxSections', () => {
     expect(last.order).toBe(90)
   })
 
-  it('has no hosted component yet, and gives an empty list for a place it does not know', () => {
-    expect(HOSTED).toEqual({ problem: [], experiment: [] })
-    expect(hostedFor('problem')).toEqual([])
-    expect(hostedFor('experiment')).toEqual([])
+  it('hosts the reply confirmation detail on an experiment, gives a place it does not know an empty list', () => {
+    expect(HOSTED.experiment).toContain(ModSysAdminUxReplyConfirmDetail)
+    expect(hostedFor('experiment')).toContain(ModSysAdminUxReplyConfirmDetail)
     expect(hostedFor('nothing')).toEqual([])
+  })
+
+  it('hosts each component once', () => {
+    for (const list of Object.values(HOSTED)) {
+      expect(new Set(list).size).toBe(list.length)
+    }
   })
 })

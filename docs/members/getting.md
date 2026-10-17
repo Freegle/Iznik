@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-12
+last_reviewed: 2026-10-17
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/ask/**
@@ -9,6 +9,7 @@ covers:
   - iznik-nuxt3/tests/e2e/test-reply-flow-logged-in.spec.js
   - iznik-nuxt3/tests/e2e/test-reply-to-chat.spec.js
   - iznik-server-go/test/chatmessage_rippling_held_test.go
+  - iznik-server-go/test/chatreplyconfirm_test.go
 ---
 
 # Getting something
@@ -36,6 +37,18 @@ people closer to the item get first go, then passes it on. Before you send, the 
 you when: either when the post is due to reach your area, or, if it is never going to
 spread quite that far, when it stops spreading and your reply goes anyway. It shows as
 "waiting to send" until it has gone.
+
+Freegle may ask you in the chat whether you still want the item before passing your reply on.
+It asks when the photo suggests the item may be damaged or not working, or is too big or heavy
+to collect without a car or van. While Freegle tests this, about half of the people who reply
+to such an offer are asked, and the rest are not. The question is addressed to you by name, as
+"@your name".
+
+Tap **Yes, send my reply** and it goes. The person offering sees the question and your answer
+with it. Tap **No, don't send it** and they see none of it. Only the two buttons answer. Anything
+else you write in that chat waits with your reply: it goes after a yes, and it is not sent after a
+no. If you do not answer within three days, none of it is sent. Freegle does not ask this when
+either of you uses TrashNothing. It asks once for each offer.
 
 ## Posting a WANTED
 

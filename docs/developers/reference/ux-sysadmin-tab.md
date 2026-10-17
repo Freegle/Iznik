@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-16
+last_reviewed: 2026-10-17
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/components/ModSysAdminUx.vue
@@ -63,6 +63,10 @@ section may also have a `badge` drawn in the nav, and a `funnelLink` that adds a
 for this funnel" row of the Funnels section. A section that loads its own data from its own store
 lists no slots and no filters, and the tab then hides the filter bar and says so. Add a row to
 the table above in the same change, because this page covers that file.
+
+A piece that belongs to one experiment is not a section: it goes in `HOSTED.experiment` in the same
+file, the details of every experiment draw it, and it draws nothing unless the experiment is its own
+(`ModSysAdminUxReplyConfirmDetail`, for `confirm-reply`).
 
 The tab mounts only the open section. A section never imports another section's component. It
 gets `view` (see below) and sends `navigate(patch)`, which changes the address. Two helpers are
