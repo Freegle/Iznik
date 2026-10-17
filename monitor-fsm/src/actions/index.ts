@@ -6,6 +6,7 @@ import { existsSync, readdirSync, readlinkSync } from 'node:fs'
 import { out, outWarn, dbg, startGroup, endGroup, truncate } from '../log.js'
 import { DISCOURSE_BASE, PROFILE_PATH, formatReplyRaw, hasNonEmptyQuote } from '../discourse.js'
 import { partitionFailedChecks } from '../coverage-checks.js'
+import { pickMasterCi, type CommitStatuses } from '../master-ci.js'
 import {
   getDb,
   getTopicCursor,
@@ -2838,16 +2839,40 @@ print(urllib.request.urlopen(req).read().decode())
       // which are unrelated to the main CircleCI build-and-test pipeline. The
       // commit status API aggregates all CI contexts (CircleCI, Coveralls, etc.)
       // posted to the HEAD commit, giving the true picture.
+      // A [skip ci] commit at the head (the docs screenshot bot, for one) carries
+      // cancelled CircleCI statuses, which the combined state calls a failure although
+      // nothing ran. Walk back to the newest commit that really ran; see master-ci.ts.
+      type StatusPayload = { state: string; sha: string; statuses: Array<{ context: string; state: string; description?: string; target_url: string }> }
       const headRes = await sh('gh', ['api', 'repos/Freegle/Iznik/commits/master/status'])
       if (headRes.code !== 0) return { error: headRes.stderr, failing: false }
-      const data = JSON.parse(headRes.stdout) as { state: string; sha: string; statuses: Array<{ context: string; state: string; target_url: string }> }
-      const circleCiStatuses = data.statuses.filter(s => s.context.startsWith('ci/circleci'))
-      const failingStatuses = circleCiStatuses.filter(s => s.state === 'failure' || s.state === 'error')
+      const head = JSON.parse(headRes.stdout) as StatusPayload
+      const seen: CommitStatuses[] = [{ sha: head.sha, statuses: head.statuses }]
+      let picked = pickMasterCi(seen)
+      if (picked.verdict === 'cancelled' || picked.verdict === 'none') {
+        const listRes = await sh('gh', ['api', 'repos/Freegle/Iznik/commits?sha=master&per_page=6'])
+        const older: Array<{ sha: string }> = listRes.code === 0 ? (JSON.parse(listRes.stdout) as Array<{ sha: string }>).filter(c => c.sha !== head.sha) : []
+        for (const c of older) {
+          const res = await sh('gh', ['api', `repos/Freegle/Iznik/commits/${c.sha}/status`])
+          if (res.code !== 0) break
+          const data = JSON.parse(res.stdout) as StatusPayload
+          seen.push({ sha: data.sha, statuses: data.statuses })
+          picked = pickMasterCi(seen)
+          if (picked.verdict !== 'cancelled' && picked.verdict !== 'none') break
+        }
+        if (picked.skippedShas.length > 0) {
+          out(`check_master_ci: nothing ran on ${picked.skippedShas.map(s => s.slice(0, 9)).join(', ')} (cancelled or skipped), judging master by ${picked.sha.slice(0, 9)}`)
+        }
+      }
+      const circleCiStatuses = picked.statuses.filter(s => s.context.startsWith('ci/circleci')) as Array<{ context: string; state: string; target_url?: string }>
+      const overallState = picked.verdict === 'green' ? 'success' : picked.verdict === 'failing' ? 'failure' : picked.verdict
       return {
-        sha: data.sha,
-        overallState: data.state,
+        sha: picked.sha,
+        headSha: head.sha,
+        skippedShas: picked.skippedShas,
+        verdict: picked.verdict,
+        overallState,
         circleCiStatuses: circleCiStatuses.map(s => ({ context: s.context, state: s.state, url: s.target_url })),
-        failing: failingStatuses.length > 0,
+        failing: picked.failing,
       }
     },
   },
@@ -4386,10 +4411,33 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const topicsWithMinePost = new Set(
         classifications.filter(c => c.type === 'mine').map(c => Number(c.topic))
       )
+      // A topic that waits for its reporter, or that this lap's fix batch has already dealt
+      // with (whatever the outcome), is not offered again in the same lap. A later post on
+      // it saying "still happening" is the same report, not a new job. Offering that post
+      // alone sent a lap round the router, the fix step and the verify step once a minute
+      // until its step cap (2026-10-16: 10257/3 while 10257/1 was held for detail).
+      const topicsHeldForDetail = new Set(
+        (db.prepare("SELECT DISTINCT topic FROM discourse_bug WHERE state = 'needs-detail'").all() as Array<{ topic: number }>)
+          .map(r => Number(r.topic))
+      )
+      const topicsHandledThisLap = new Set(bugsFixed.map(b => Number(b.topic)).filter(n => Number.isFinite(n)))
+      const notThisLap = (b: any): boolean => {
+        const topic = Number(b.topic)
+        if (topicsHeldForDetail.has(topic)) {
+          out(`work_router_decide: ${b.topic}/${b.post} waits with its topic, which is held for the reporter's detail`)
+          return false
+        }
+        if (topicsHandledThisLap.has(topic)) {
+          out(`work_router_decide: ${b.topic}/${b.post} waits for the next lap; this lap's fix batch already dealt with topic ${b.topic}`)
+          return false
+        }
+        return true
+      }
       const allPending = [...pendingBugs, ...extraBugs.map(b => ({ ...b, type: 'bug' }))]
         .filter(b => !topicsWithActivePr.has(Number(b.topic)))
         .filter(b => !topicsWithMinePost.has(Number(b.topic)))
         .filter(b => !isLikelyCoveredByMergedPR(b))
+        .filter(notThisLap)
 
       if (allPending.length > 0) {
         // Dispatch a BATCH of up to MAX_PARALLEL_BUGS bugs (oldest first_seen_at

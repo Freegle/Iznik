@@ -21,6 +21,25 @@ observable state as "nothing needed doing". Check these before concluding it is 
   caller that reads only the header gives up while Discourse is still refusing, the action
   throws, and the lap carries on with no topics and no reporter confirmations.
 
+## A `[skip ci]` commit at master's head reads as a red master
+
+The docs screenshot bot commits to master with `[skip ci]`. CircleCI still opens a pipeline for
+the commit and cancels it, and the cancellation lands on the commit as `ci/circleci:
+build-and-test` in state `error` with the description "Your CircleCI tests were canceled". The
+commit's combined state is then `failure`, so anything that judges master by its head commit's
+statuses calls master red while the last real run was green. On 2026-10-16 the monitor did that
+in three laps running and spent six to eight minutes of each in `FIX_MASTER_CI` with nothing to
+fix. `check_master_ci` now walks back to the newest commit that really ran (`src/master-ci.ts`);
+do the same anywhere else master's CI is read from GitHub statuses.
+
+## A later post on a held topic is the same report
+
+A topic held `needs-detail` waits for its reporter. A later post on it saying "still happening"
+classifies as a `retest`, and the work router used to offer that post for a fix on its own, while
+the fix step rightly refused it, so one lap went router, fix step, verify step once a minute until
+its 40-step cap (2026-10-16, topic 10257). The router now leaves alone any post whose topic is
+held for detail or already dealt with by this lap's fix batch.
+
 ## `PARSE_ONLY` does not stop where you expect
 
 It does not halt at the work router: tool nodes continue past it and the run walks into
