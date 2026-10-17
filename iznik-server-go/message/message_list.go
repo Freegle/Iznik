@@ -13,6 +13,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // PaginationContext is the opaque cursor echoed between pages of the ModTools
@@ -182,6 +183,36 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	search := c.Query("search", "")
 	fromuserStr := c.Query("fromuser", "0")
 	fromuser, _ := strconv.ParseUint(fromuserStr, 10, 64)
+	// Optional oversight view of the Approved collection (non-search listing):
+	//   checked — the Check queue: live posts that published by themselves via
+	//             the automated checks, from members with no posting status
+	filter := c.Query("filter", "")
+
+	if filter != "" {
+		// A filter is an oversight view of a community's live posts - which of them nobody has
+		// looked at - and the Approved collection's list is otherwise open to anyone who names
+		// the community, so a filter needs a moderator of the community named. With none named
+		// the list is of the communities the caller actively moderates (above), which for
+		// anyone else is none. Permission is settled before the filter is judged, so a stranger
+		// learns nothing about which filters exist.
+		if groupid > 0 && !user.IsModOfGroup(myid, groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this group")
+		}
+		if filter != "checked" {
+			return fiber.NewError(fiber.StatusBadRequest, "Unknown filter")
+		}
+		if collection != utils.COLLECTION_APPROVED {
+			return fiber.NewError(fiber.StatusBadRequest, "The checked filter lists live posts: use collection=Approved")
+		}
+	}
+
+	// The Check queue exists only on communities in the post-moderation trial.
+	if filter == "checked" {
+		groupIDs = utils.AutoapproveTrialGroups(groupIDs)
+		if len(groupIDs) == 0 {
+			return c.JSON(fiber.Map{"messages": []uint64{}})
+		}
+	}
 
 	var msgIDs []uint64
 
@@ -352,12 +383,27 @@ func ListMessagesMT(c *fiber.Ctx) error {
 			branchArgs = []interface{}{utils.COLLECTION_PENDING, utils.COLLECTION_SPAM}
 		}
 
-		branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
-			"INNER JOIN messages m ON m.id = mg.msgid " +
-			"INNER JOIN users u ON u.id = m.fromuser " +
-			"WHERE mg.groupid = %GID% AND " + collectionFilter + " AND mg.deleted = 0 " +
-			"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL " +
-			contentcheckFilter + " "
+		var branchSQL string
+		if filter == "checked" {
+			// The Check oversight queue: live posts that published themselves from auto-moderated
+			// members and that no moderator has marked checked, within the check window. Its
+			// definition is utils.CheckQueueConditions, shared with the session badge and the
+			// marking actions so the list, the count and "mark all" can never disagree. The
+			// collection is part of that definition, so there is no collection argument to bind.
+			// Constant SQL: no user-supplied text reaches the query.
+			branchSQL = "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
+				utils.CheckQueueJoins +
+				"WHERE mg.groupid = %GID% AND " + utils.CheckQueueConditions(true) + " " +
+				contentcheckFilter + " "
+			branchArgs = []interface{}{}
+		} else {
+			branchSQL = "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
+				"INNER JOIN messages m ON m.id = mg.msgid " +
+				"INNER JOIN users u ON u.id = m.fromuser " +
+				"WHERE mg.groupid = %GID% AND " + collectionFilter + " AND mg.deleted = 0 " +
+				"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL " +
+				contentcheckFilter + " "
+		}
 
 		if fromuser > 0 {
 			branchSQL += "AND m.fromuser = ? "
@@ -394,6 +440,30 @@ func ListMessagesMT(c *fiber.Ctx) error {
 
 	if len(msgIDs) == 0 {
 		return c.JSON(fiber.Map{"messages": []uint64{}})
+	}
+
+	// A3. Reset-to-minimum hold (extend-only). When a moderator opens the Pending queue, every
+	// post it shows for the communities asked about is given at least 10 more minutes before it
+	// becomes eligible for auto-approval, so nothing publishes under a moderator who has the
+	// queue open. That is the whole queue and not only the page that was fetched: a post on
+	// page two is as much in front of the moderator as one on page one, and the page size is
+	// not something they chose. GREATEST(COALESCE(autoapprove_hold_until, NOW()), NOW()+10m)
+	// is extend-only: an existing hold further out is never shortened.
+	//
+	// Scope: the Pending copies the queue can show (the same visibility rule as the list:
+	// content check run, or older than the 30 minute fallback), heldby IS NULL, deleted=0, and
+	// only the communities in the request that are in the post-moderation trial: nothing reads
+	// the hold anywhere else, so outside the trial this would be a write to the hottest ModTools
+	// page's rows for nothing.
+	if collection == utils.COLLECTION_PENDING {
+		if trialGroupIDs := utils.AutoapproveTrialGroups(groupIDs); len(trialGroupIDs) > 0 {
+			db.Table("messages_groups").
+				Where("groupid IN ? AND collection = 'Pending' AND heldby IS NULL AND deleted = 0 AND rippled_in = 0 "+
+					"AND (contentcheck_checked_at IS NOT NULL OR arrival < NOW() - INTERVAL 30 MINUTE)",
+					trialGroupIDs).
+				Update("autoapprove_hold_until",
+					gorm.Expr("GREATEST(COALESCE(autoapprove_hold_until, NOW()), NOW() + INTERVAL 10 MINUTE)"))
+		}
 	}
 
 	// Build pagination context from last ID.

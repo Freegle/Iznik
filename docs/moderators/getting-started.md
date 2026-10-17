@@ -44,7 +44,11 @@ It shows:
 
 The **red badges** next to the menu items are your work list: pending posts, chat review,
 spam reports, stories and so on. They update automatically, so the numbers tell you where
-attention is needed.
+attention is needed. On a community in the post-moderation trial, the **Check** oversight
+queue (posts that went live without a moderator's click - see
+[moderating posts](moderating-posts.md) and [post-moderation](post-moderation.md))
+uses a **blue** badge instead: worth a look when you have time, rather than members
+waiting on you.
 
 ## Roles and permissions
 

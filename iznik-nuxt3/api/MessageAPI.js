@@ -81,6 +81,39 @@ export default class MessageAPI extends BaseAPI {
     return this.$getv2('/modtools/messages', params)
   }
 
+  // Mark auto-published posts (the Check oversight queue) as reviewed by a moderator. Pass
+  // {groupid, ids} for the posts a moderator has looked at, or {groupid, ids, reject: true} to
+  // pull them back to Pending. {groupid, filter} clears a whole bucket; ModTools does not use it.
+  markChecked(params) {
+    return this.$postv2('/modtools/messages/markchecked', params)
+  }
+
+  // SysAdmin moderation analytics for a date range ({start, end}).
+  moderationStats(params) {
+    return this.$getv2('/modtools/moderationstats', params)
+  }
+
+  // Records that a moderator thinks one node of an automated review decision was wrong.
+  automodFeedback(params) {
+    return this.$postv2('/modtools/automod/feedback', params)
+  }
+
+  // Takes back the caller's own mark on that node; the body is the same {msgid, groupid, node}.
+  // The server answers 404 when there is no mark to take back, which the store counts as done,
+  // so that answer is kept out of Sentry.
+  automodFeedbackUndo(params) {
+    return this.$delv2(
+      '/modtools/automod/feedback',
+      params,
+      (data) => data?.error !== 404
+    )
+  }
+
+  // SysAdmin automated review agreement analytics for the last N days.
+  automodAgreement(params) {
+    return this.$getv2('/modtools/automod/agreement', params)
+  }
+
   update(event) {
     return this.$postv2(
       '/message',

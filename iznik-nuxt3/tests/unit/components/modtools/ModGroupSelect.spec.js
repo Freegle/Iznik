@@ -191,6 +191,44 @@ describe('ModGroupSelect', () => {
     })
   })
 
+  // The Check page offers only the communities that have a Check queue.
+  describe('Prop: onlyGroupids', () => {
+    const optionTexts = (wrapper) => wrapper.vm.groupOptions.map((o) => o.text)
+
+    it('lists only those communities', () => {
+      const wrapper = mountComponent({
+        all: true,
+        modonly: true,
+        onlyGroupids: [2, 4],
+      })
+      expect(optionTexts(wrapper)).toEqual([
+        '-- All my communities --',
+        expect.stringContaining('Beta Group'),
+        'Delta Group',
+      ])
+    })
+
+    it('lists none but the all option when it is given an empty list', () => {
+      const wrapper = mountComponent({ all: true, onlyGroupids: [] })
+      expect(optionTexts(wrapper)).toEqual(['-- All my communities --'])
+    })
+
+    it('lists every community when it is not given, as before', () => {
+      const wrapper = mountComponent({ all: true, modonly: true })
+      expect(wrapper.vm.groupOptions.length).toBe(4)
+    })
+
+    it('falls back to all communities when the chosen one is not on the list', () => {
+      const wrapper = mountComponent({
+        all: true,
+        modonly: true,
+        modelValue: 1,
+        onlyGroupids: [2],
+      })
+      expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([0])
+    })
+  })
+
   describe('Computed: groupOptions', () => {
     it('includes "Please choose" when all is false', () => {
       const wrapper = mountComponent({ all: false })

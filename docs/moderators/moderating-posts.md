@@ -39,6 +39,12 @@ picked is quiet, the page is empty while the menu still shows a count. When that
 the page says so, names the community it is filtered to, and offers a button to go back
 to all your communities, which also clears the remembered choice.
 
+On a community in the **post-moderation trial** the queue works the same way, with two
+additions: a clean post from an auto-moderated member shows a countdown to when it will
+publish by itself unless you act first, and a **Check** queue under Approved lists the
+posts that did. Nothing changes on a community outside the trial. What is on trial, why,
+and what it changes for you is in [post-moderation](post-moderation.md).
+
 For each post you can:
 
 - **Approve** it, so it goes live and reaches members.

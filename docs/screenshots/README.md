@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-19
+last_reviewed: 2026-10-11
 owner: Freegle dev team
 ---
 
@@ -23,6 +23,14 @@ so there is no new tooling to install.
 Each entry in `SHOTS` maps one screenshot to one place in the docs: an audience, a name,
 a URL path, and whether it needs a logged-out, member, or moderator session. To add or
 change a screenshot, edit the manifest - do not paste an image in by hand.
+
+A shot that shows something only a moderator with a community in the post-moderation trial
+sees (the countdown, the Check queue, automated review's decisions) carries `trialOnly: true`.
+The generator takes it only when that moderator's session has such a community, and otherwise
+skips it and keeps the committed image. The seeded test account has no trial community, so a
+plain run would otherwise replace those images with pages that show none of it. The rule lives
+in [`docs-screenshots-plan.mjs`](../../iznik-nuxt3/tests/e2e/docs-screenshots-plan.mjs), beside
+the viewport choice, and has its own unit test.
 
 ## Running it
 
@@ -68,8 +76,10 @@ stack up rather than the one page's.
 Screenshots are only useful in version control if they do not churn on every run. The
 generator pins the things that would otherwise vary:
 
-- a **fixed phone viewport** (390x844, since Freegle is mobile-first) and
-  `reducedMotion: 'reduce'`,
+- a **fixed viewport for each audience**: a phone (390x844) for the member guide, since
+  Freegle is mobile-first, and a desktop (1100x800) for ModTools, which is a desktop tool
+  (at phone width its menu takes half the screen), with `reducedMotion: 'reduce'`. A shot may
+  name its own `viewport` when it needs more height,
 - `animations: 'disabled'` and `caret: 'hide'` at capture time,
 - a **fixed locale and timezone** (`en-GB`, `Europe/London`),
 - the **seeded test account and data**, so the same posts appear each time,

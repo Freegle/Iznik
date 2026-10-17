@@ -108,9 +108,10 @@ Some posts on your community will have started on another community and rippled 
 yours. You will see a small notice on the post making this clear ("This post has rippled
 in from a neighbouring community").
 
-A post only ripples after it has already been approved on the community where it started,
-so it has already been vetted - against **that** community's rules. We therefore do not
-make it sit out a full review again: **with the default settings it is approved on your
+A post only ripples after it has already gone live on the community where it started, so
+it has already been vetted - against **that** community's rules, by a moderator or (where
+[post-moderation](post-moderation.md) is switched on) by the automated checks plus the
+exposure gate described below. We therefore do not make it sit out a full review again: **with the default settings it is approved on your
 community straight away**, appearing among your approved posts with the rippled-in notice
 rather than in your pending list.
 
@@ -132,6 +133,30 @@ thing) - see "Rejecting a rippled-in post" below.
 set above zero - a rippled-in post instead waits in your pending list for that many hours
 and auto-approves if nobody rejects it first. Either way, "they're not from round here" is
 never a reason to reject.)
+
+#### Posts that published without a human look ripple on a leash
+
+Where **[post-moderation](post-moderation.md)** is switched on, some posts go live via
+the automated checks rather than a moderator's click. Those posts do not ripple freely
+(this part is controlled by its own switch, off by default):
+
+- They wait about **an hour** after publishing before they start rippling at all, so
+  their home community gets first look.
+- After that, **reach is earned by clean exposure**: spreading into each additional
+  community requires that a number of members have already seen the post with nobody
+  objecting - a member report to the mods or a microvolunteer rejection **pauses all
+  further spread**, including the visible reach area, until a moderator looks.
+- **Your look settles it**: checking the post (see the Check queue in the
+  post-moderation guide) clears the gate entirely; pulling it back sends it to Pending and
+  pauses its spreading until you decide (approving it lets it carry on, rejecting it ends
+  it).
+- Posts a moderator approved by hand are exempt and ripple exactly as this guide
+  describes.
+
+So a rippled-in post on your community has either been approved by a human on its origin
+community, or has earned its way to you by being seen without complaint - and if anyone
+objects on the way, it stops spreading until a moderator decides. The practical rule for
+you is unchanged: reject it for real reasons, never for being out of area.
 
 ### 2. A reach/map view on posts
 
@@ -440,9 +465,10 @@ click - so a rippled copy may linger very briefly before it disappears.
 
 (**Back to Pending** works differently from Delete/Reject. From the home community it withdraws
 the rippled copies at once and the post never ripples again; from anywhere else it keeps each
-community's copy for per-group review and does **not** re-ripple on re-approval. Either way, a
-copy a community's own moderator has already approved by hand stays live there - see
-**Moving a post back to pending in ModTools** below.)
+community's copy for per-group review. If the home copy goes back to Pending too, the post's
+spreading is frozen until the home community approves it again, and then carries on (it does not
+start over). Either way, a copy a community's own moderator has already approved by hand stays
+live there - see **Moving a post back to pending in ModTools** below.)
 
 While a post is in that frozen state we stop advertising it: it is not included in daily
 digests, immediate emails or phone notifications, because it is under review and we should
@@ -564,7 +590,9 @@ by auto-approval, or by rippling in - is pulled back. Your own community's copy 
 back, whoever approved it.
 
 If you only moderate a community it rippled into, your Back to Pending does not stop anyone
-else approving theirs.
+else approving theirs. If the home community's copy goes back to Pending as well (it does
+unless one of its moderators approved it by hand), the post's spreading is paused until the
+home community approves it again.
 
 **There is one exception, when a moderator of the post's home community does it.** The
 home community is where the poster posted, and its moderators have taken the decision, so the

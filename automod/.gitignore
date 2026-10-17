@@ -1,0 +1,7 @@
+node_modules/
+.cache/
+# Evaluation sets and reports hold real members' posts: never committed.
+*.jsonl
+*report*.json
+adjudicated*.json
+review*.json

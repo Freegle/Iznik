@@ -30,6 +30,10 @@ export const useMessageStore = defineStore('message', {
     list: {},
     byUserList: {},
 
+    // ModTools Check queue: posts a moderator pulled back to Pending from there. They stay
+    // in the Check list, now showing as Pending, so the moderator acts on them in place.
+    pulledBack: {},
+
     // Count of unseen items
     count: 0,
 
@@ -731,6 +735,52 @@ export const useMessageStore = defineStore('message', {
       )
       return fetched.filter((id) => id !== null)
     },
+    // Mark auto-published posts as reviewed by a moderator, clearing them from
+    // the Check oversight queue. Returns the number marked.
+    async markChecked(params) {
+      const data = await api(this.config).message.markChecked(params)
+      return data?.checked ?? 0
+    },
+
+    // One card's "Checked": the post leaves the Check queue, and the card leaves the list.
+    // groupid 0 (or none) is every community I moderate. Returns the number of copies marked,
+    // which is 0 when somebody else had already checked it; the card goes either way.
+    async markCheckedPost(id, groupid = 0) {
+      const checked = await this.markChecked({
+        groupid: groupid || 0,
+        ids: [id],
+      })
+      this.remove({ id })
+      return checked
+    },
+
+    // Fetch SysAdmin moderation analytics for a date range ({start, end}).
+    async fetchModerationStats(params) {
+      return await api(this.config).message.moderationStats(params)
+    },
+
+    // Tell the server a moderator thinks one node of an automated review decision was wrong.
+    async postAutomodFeedback(params) {
+      return await api(this.config).message.automodFeedback(params)
+    },
+
+    // Take back the caller's own mark on that node ({msgid, groupid, node}, as for the mark). The
+    // server answers 404 when there is no mark on that step: another tab took it back first, or
+    // this screen was stale. The moderator wanted it gone and it is, so that counts as done.
+    async deleteAutomodFeedback(params) {
+      try {
+        return await api(this.config).message.automodFeedbackUndo(params)
+      } catch (e) {
+        if (e?.response?.status === 404) return { success: true }
+        throw e
+      }
+    },
+
+    // Fetch SysAdmin automated review agreement analytics for the last N days.
+    async fetchAutomodAgreement(params) {
+      return await api(this.config).message.automodAgreement(params)
+    },
+
     async fetchMessagesMT(params) {
       if (params.context) {
         // Server expects context as a JSON-encoded string; URLSearchParams
@@ -833,7 +883,13 @@ export const useMessageStore = defineStore('message', {
     // left alone - held by another moderator, or locked by the home community - do not keep
     // the card: they were named on it and are not this moderator's to act on, so keeping it
     // would show the post again as if nothing had happened.
-    async refreshOrRemoveFromMTList(id, { severalCommunities = false } = {}) {
+    //
+    // keep leaves the card in the list, refreshed, whatever it now shows: a Check pull back that
+    // did nothing, so the screen can say what happened on the card rather than losing it.
+    async refreshOrRemoveFromMTList(
+      id,
+      { severalCommunities = false, keep = false } = {}
+    ) {
       let message
       try {
         message = await this.fetchMT({ id }, false)
@@ -864,7 +920,7 @@ export const useMessageStore = defineStore('message', {
           moderates(g) &&
           !leftAlone(g)
       )
-      if (stillInReviewQueue) {
+      if (stillInReviewQueue || (keep && message)) {
         this.list[message.id] = message
       } else {
         this.remove({ id })
@@ -895,6 +951,23 @@ export const useMessageStore = defineStore('message', {
         held.heldByOtherMod = true
         throw held
       }
+    },
+    // Pull an auto-published post back from the Check oversight queue, via the markChecked
+    // endpoint's reject flag: the post goes back to Pending, held by this moderator, and the
+    // card stays in the list as a Pending card to act on in place (pulledBack keeps the Check
+    // list showing it). A card that is not Pending anywhere I moderate afterwards leaves the
+    // list. Returns how many copies the server pulled back: 0 means it did nothing, because
+    // the post had changed since the page loaded, and the card then stays, refreshed.
+    async rejectFromOversight(id, groupid) {
+      const data = await api(this.config).message.markChecked({
+        groupid,
+        ids: [id],
+        reject: true,
+      })
+      const rejected = data?.rejected ?? 0
+      this.pulledBack[id] = true
+      await this.refreshOrRemoveFromMTList(id, { keep: rejected === 0 })
+      return rejected
     },
     // groupids, when given, approves (or below, rejects) on every one of those communities
     // at once; see the Go API's resolveActionGroups.

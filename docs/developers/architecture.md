@@ -52,6 +52,7 @@ Freegle (internally "Iznik") is a monorepo. The main pieces:
 | `iznik-routing-go/` | Go service for drive-time routing, used by rippling, browse and the sysadmin analytics; includes the reach engine (region labels instead of repeated searches - see `iznik-routing-go/REACH-ENGINE.md`), which also answers per-point drive-time evals without a full-graph sweep. | `iznik-routing-go/README.md` |
 | `iznik-spatial-go/` | Go service for spatial lookups (which community covers a point, etc). | `iznik-spatial-go/README.md` |
 | `status-nuxt/` | Development status dashboard and test runner; `server/api/tests/*.post.ts` run each suite inside its dev container. | - |
+| `automod/` | Node service that walks the automated review flowchart (`chart.json`) for a Pending post and answers approve or hold with the path taken; the questions about the words go to Claude. Called only by the batch (`messages:automod`), internal network, no database. See [../moderators/post-moderation.md](../moderators/post-moderation.md). | - |
 | `freegle-app/` | A Kotlin Multiplatform native app. An experiment; it does not ship. See [./reference/mobile-app.md](./reference/mobile-app.md). | - |
 
 The mobile apps that members install are **Capacitor builds of `iznik-nuxt3/`** - the same
@@ -144,6 +145,13 @@ and per-group membership and roles are the ones you will meet first.
   row with `rippled_in = 0` - identified from that column and nothing else, because an
   arrival-time window breaks the moment a post is approved slowly (§9 of the algorithm
   reference explains why).
+- **Post-moderation** (dark by default) lets a clean post from a member no moderator has
+  set a posting status for publish by itself after a short delay, with moderators
+  overseeing it afterwards; it is described for moderators in
+  [../moderators/post-moderation.md](../moderators/post-moderation.md). Its one structural
+  claim on rippling is the earned-reach gate (rippling-algorithm.md §5): an auto-published
+  post waits before it starts to spread, and then earns each further community by being seen
+  and not flagged, until a moderator looks.
 - **Getting a first reply in** sits alongside rippling and attacks the 44% of rippled posts
   that get no reply at all: a passthrough for a silent post's first reply, individual mail to
   the members who have asked for that specific item (an open post of the opposite type, or a

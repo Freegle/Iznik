@@ -959,14 +959,38 @@ return [
         // first went live, not from the re-approval, provided the post had been live within this
         // many days before the repost. After a longer gap the reach starts afresh. 0 disables.
         'repost_keeps_reach_days' => (int) EnvSetting::env('RIPPLE_REPOST_KEEPS_REACH_DAYS', 7),
+        // EARNED-REACH GATE (auto-approve x rippling). Ships DARK: when false, ExpandService
+        // behaves exactly as before - no 1h hold, no exposure cap, no await-review
+        // instrumentation. Go-live is a deliberate env flip, exactly like RIPPLE_ENABLED.
+        // On only for "true" or "1" (App\Support\EnvSetting::flag), the rule every post-moderation
+        // switch uses and the Go API applies to this same variable (utils.EnvSwitch): a bare
+        // (bool) cast would read "off" and "no" as on here while Go read them as off.
+        'earned_reach_enabled' => EnvSetting::flag(EnvSetting::env('RIPPLE_EARNED_REACH_ENABLED', false)),
+        // When the gate is on: minimum age (seconds) an auto-published, unreviewed post must
+        // reach before it may start rippling. A post with approvedby or checkedat set (a mod
+        // approved or checked it) skips the hold. Default 3600 (1h); 0 disables just the hold.
+        // This and the next two are whole numbers where 0 is a real setting, read by
+        // EnvSetting::wholeNumber: a blank value (docker-compose passes an unset `${NAME:-}` as
+        // "") is the default, not 0, and a typo ("1h") is the default too. Only an explicit "0"
+        // turns the hold, or the cap below, off.
+        'autoapprove_hold_seconds' => EnvSetting::wholeNumber(EnvSetting::env('RIPPLE_AUTOAPPROVE_HOLD_SECONDS'), 3600),
+        // When the gate is on: distinct clean VIEWS required per community an auto-published
+        // post ripples into. Reach is earned by exposure without complaint - members seeing
+        // the post and nobody flagging it - not by active reviewer sign-off (a per-community
+        // reviewer requirement could never keep up with post volume). Any flag (member report
+        // to the mods referencing the post, or a microvolunteer Reject) pauses further spread
+        // until a moderator look (approvedby/checkedat) clears it. 0 disables just the cap.
+        'clean_views_per_group' => EnvSetting::wholeNumber(EnvSetting::env('RIPPLE_CLEAN_VIEWS_PER_GROUP'), 5),
         // Hours a rippled-in (messages_groups.rippled_in=1) post, already Approved on its
         // origin group, waits before it is approved onto the rippled-in group (it was already
         // vetted on origin). Default 0 = approve AT ripple-in time, so it never even flickers
         // into the Pending mod queue - this keeps the moderation load of rippling off the
         // receiving groups, since the post was already moderated on its origin group. >0 leaves
         // it Pending for AutoApproveService to approve after the window (a mod-veto window for
-        // groups that want to eyeball rippled-in posts before they appear).
-        'rippled_in_pending_hours' => (int) EnvSetting::env('RIPPLE_RIPPLED_IN_PENDING_HOURS', 0),
+        // groups that want to eyeball rippled-in posts before they appear). The Go countdown
+        // reads the same variable (message/autoapproveat.go), so a typo is the default here, as
+        // it is there, not the leading digits.
+        'rippled_in_pending_hours' => EnvSetting::wholeNumber(EnvSetting::env('RIPPLE_RIPPLED_IN_PENDING_HOURS'), 0),
         // Wall-clock hazard schedule (hours since arrival) at which the reach
         // expands one tick. One schedule tick is requested per entry, so the
         // number of ticks equals the length of this array.
@@ -1494,6 +1518,89 @@ return [
     'yeybu' => [
         'api_url' => EnvSetting::env('YEYBU_API_URL', 'https://db.yeybu.com/feeds/v1'),
         'api_key' => EnvSetting::env('YEYBU_KEY', ''),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Auto-approve (delayed) for NULL-status ("auto-moderated") members
+    |--------------------------------------------------------------------------
+    |
+    | Site-wide settings for messages:auto-approve-clean. The delay and the
+    | quality-check sample are the same for every community; neither has a
+    | per-group override.
+    |
+    | - enabled:                master switch for the clean-path auto-approve.
+    |                           DEFAULT OFF: merging/deploying this code changes
+    |                           nothing until the switch is deliberately flipped.
+    | - trial_group_ids:        comma-separated group ids for a phased trial while
+    |                           the master switch is off (mirrors the rippling
+    |                           group experiment: RIPPLE_WITHIN_GROUPS with
+    |                           RIPPLE_ENABLED false). Ignored when enabled=true.
+    | - delay_minutes:          how long a content-check-clean post stays in
+    |                           Pending before auto-approval, giving mods and
+    |                           microvolunteers a chance to intervene. Site-wide;
+    |                           the Go countdown reads the same env variable.
+    | - quality_check_percent:  percentage of otherwise-eligible posts held back
+    |                           in Pending for a manual mod quality check (0 = none).
+    |                           Site-wide; the Go countdown reads the same env variable.
+    | - danger_log_days:        how far back to look for negative moderation log
+    |                           entries that veto auto-approval.
+    | - max_per_run:            the most posts one run of the clean cron publishes. A
+    |                           fault that makes many posts due at once then publishes
+    |                           them over several minutes, not in one go (default 20).
+    |
+    | These are the RAW environment values, read through App\Support\EnvSetting at the
+    | point of use, because the Go API applies the same rule to the same variables and
+    | the two must agree: a switch is on only for "true" or "1", a number is a positive
+    | whole number or the default, a group list keeps only plain-digit tokens. docker-
+    | compose passes unset variables through as empty strings, which all mean "default".
+    |
+    */
+    'autoapprove' => [
+        'enabled'               => EnvSetting::env('FREEGLE_AUTOAPPROVE_ENABLED', ''),
+        'trial_group_ids'       => EnvSetting::env('FREEGLE_AUTOAPPROVE_TRIAL_GROUPS', ''),
+        'delay_minutes'         => EnvSetting::env('FREEGLE_AUTOAPPROVE_DELAY_MINUTES', ''),
+        'quality_check_percent' => (int) EnvSetting::env('FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT', 0),
+        'danger_log_days'       => EnvSetting::env('FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS', ''),
+        'max_per_run'           => EnvSetting::env('FREEGLE_AUTOAPPROVE_MAX_PER_RUN', ''),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Automated review flowchart (#639 follow-on)
+    |--------------------------------------------------------------------------
+    |
+    | Settings for the messages:automod command and AutomodService, which send
+    | facts about a Pending post to the automod Node microservice, walk the
+    | flowchart in automod/chart.json, and store the verdict on
+    | messages_automod. Two independent group lists gate the rollout:
+    |
+    | - shadow_group_ids: the chart runs and the verdict is recorded, but
+    |                      nothing about moderation changes. Purely for
+    |                      gathering agreement numbers before trusting a
+    |                      community's flow.
+    | - (approve mode has no separate list here: it reuses
+    |    AutoApproveCleanService::enabledGroupIds(), i.e.
+    |    FREEGLE_AUTOAPPROVE_ENABLED / FREEGLE_AUTOAPPROVE_TRIAL_GROUPS. A
+    |    chart "approve" there feeds #639's clean-approve path; the chart
+    |    never auto-rejects.)
+    |
+    | - url:     base URL of the automod Node service (internal network only,
+    |            not routed through Traefik). Blank means http://automod:8090.
+    | - timeout: HTTP timeout in seconds for the /review call (a positive whole
+    |            number, else 60: a zero timeout would wait for ever). A timeout or
+    |            any other failure is treated as "unavailable", not a hold:
+    |            AutomodService records end_node=UNAVAILABLE and leaves the
+    |            post to ordinary moderation.
+    |
+    | Raw environment values, read through App\Support\EnvSetting (see above).
+    |
+    */
+    'automod' => [
+        'url'              => EnvSetting::env('AUTOMOD_URL', ''),
+        'shadow_group_ids' => EnvSetting::env('FREEGLE_AUTOMOD_SHADOW_GROUPS', ''),
+        // One call answers every question about a post; the frontier model takes 10 to 20 seconds.
+        'timeout'          => EnvSetting::env('AUTOMOD_TIMEOUT', ''),
     ],
 
     'email_health' => [

@@ -50,18 +50,57 @@ it is worth saying plainly to moderators who notice the asymmetry.
 ## Back to pending pulls every unreviewed copy, and automation must not put them back
 
 A moderator's Back to pending on any one group pulls the post back to Pending on every group
-it is on, the home copy included (`handleBackToPending`, `SendForReviewGroupsExcept`), **except**
-a copy on another community whose own moderator approved it by hand. That copy stays Approved
-with its `approvedby`/`approvedat`, gets no log, and is not withdrawn by a home send-back. The
-acting moderator's own copies always go back. Only the acting moderator's copy is held. Every
-copy pulled back is marked `messages_groups.needs_moderator`, and only a moderator's Approve
-clears it. The content check and auto-approve both skip a flagged copy.
+it is on, the home copy included (`handleBackToPending`, `pullBackToPending`,
+`SendForReviewGroupsExcept`), **except** a copy on another community whose own moderator
+reviewed it by hand. That copy stays Approved with its `approvedby`/`approvedat`, gets no log,
+and is not withdrawn by a home send-back. The acting moderator's own copies always go back.
+Only the acting moderator's copy is held. Every copy pulled back is marked
+`messages_groups.needs_moderator`, and only a moderator's Approve clears it. The content check
+and both auto-approve crons skip a flagged copy.
 
-"Approved by hand" is `messages_groups.approvedby IS NOT NULL`, and that only holds because
-`handleApprove` is the one path that sets it: the content check and auto-approve write NULL and
-the ripple insert leaves it out. A new automatic approval path that stamps `approvedby` would make
-its copies survive every later Back to pending. A report quorum (`SendForReviewAllGroups`) is not
-a moderator's review and still pulls every copy.
+The Check queue's Reject (`MarkChecked` with `reject`) is the same pull-back on the post's own
+community, through `pullBackToPending`, but it is a second look and not the home community's
+decision, so it passes `homeDecision = false`. That is the difference that matters. A home Back
+to pending (`homeDecision = true`) withdraws every unreviewed rippled copy (soft-deleted, a
+Message/Deleted log written against the poster for each, the poster's ripple-join membership
+removed) and bars the post from rippling for good (`rippling_blocked`). A Check reject does none
+of it: the unreviewed copies on other communities go back to their own Pending queues, held by
+nobody, in the neutral `backToPendingReason` wording, and a copy a neighbour's moderator reviewed
+by hand stays live. Only the acting community's own copy and its Hold log say "Check"; a
+community outside the trial has no Check queue and is never told about one.
+
+The split is load-bearing for the automated review. Its `recent_action` fact holds a member's
+next posts for 90 days after any Message/Deleted, Rejected or Replied log written by someone
+other than the member, so a withdraw log written for a reject the moderator then reverses would
+penalise the poster for a post the moderator approved. Only the moderator's own later Reject
+should do that.
+
+Either way the reach goes `held`, not `stopped` (`stopped` is what the engine's orphan
+retraction acts on, and it exempts only `held`). A Check reject bars nothing, so a moderator's
+later Approve of the home copy resumes the reach (next section).
+
+What counts as "in the Check queue" is `utils.CheckQueueJoins` plus `utils.CheckQueueConditions`
+and nothing else. The list, the menu badge, Mark all as checked, marking particular posts and the
+Check reject are all built from them. They were once four hand-written copies, and they drifted:
+the bucket stamped posts of deleted members that the list hid, marking by id stamped a copy a
+moderator had approved, and a post fell out of the list and the badge when its poster left the
+community, which for a banned poster is the post a moderator most wants to see. A new query about
+the Check queue uses those two pieces, and a change to what "in Check" means is made there, once.
+
+"Reviewed by hand" is `messages_groups.approvedby IS NOT NULL OR checkedby IS NOT NULL`
+(`moderatorApprovedElsewhere`). `approvedby` only holds because `handleApprove` is the one path
+that sets it: the content check and auto-approve write NULL and the ripple insert leaves it out.
+`checkedby` is a moderator marking a self-published post checked in the Check queue; two
+microvolunteers' approvals stamp `checkedat` alone, and that is not a review. A new automatic
+approval path that stamps either would make its copies survive every later Back to pending. A
+report quorum (`SendForReviewAllGroups`) is not a moderator's review and still pulls every copy.
+
+`checkedby` is also stamped when a moderator **approves** the same post on another community they
+moderate (`stampOwnSelfPublishedCopies`): the copy of it that published itself on one of their
+other trial communities has been looked at. Only an Approve. The earned-reach gate lifts as soon
+as any copy of the post is approved or checked (`ExpandService::modLooked`), so stamping on a
+Reject or Delete would release a post the moderator has just turned down, and take it out of the
+Check queue where somebody still has to decide about it.
 
 Before that flag existed, the content check re-approved every unheld copy a minute after the
 next edit, with no log entry, so a moderator's decision was quietly undone everywhere but on
@@ -193,6 +232,42 @@ When comparing reaches across that date, you are not comparing like with like.
 
 Size a cap from the **recipient's** local density, not the post's origin. Sizing it at the
 origin permanently blocks rural members from posts in the nearest town they already drive to.
+
+## The batch and the Go API read the post-moderation settings by one rule
+
+docker-compose hands both the same raw strings (`${VAR:-}`, so unset arrives as the empty string).
+The batch reads the master switch, the wait, the community lists and the automod timeout through
+`App\Support\EnvSetting`; the Go API reads the same variables through `utils.EnvSwitch` (on only for
+`true` or `1`, any case, trimmed), `utils.EnvPositiveInt` (a whole number of at most nine digits,
+else the default) and `utils.EnvGroupIDs` (plain ASCII digits only, zero is no community). The two
+test files hold the same cases (`iznik-batch/tests/Unit/Support/EnvSettingTest.php` and
+`iznik-server-go/utils/envsetting_test.go`); a case added to one belongs in the other.
+
+A value one side calls on and the other calls off is silent. Either posts publish themselves with
+no countdown, Check queue or badge to say so, or a countdown shows for a post nothing will publish.
+So do not read one of these variables with `os.Getenv(...) == "true"`, `(bool) env()` or `(int) env()`.
+
+`RIPPLE_EARNED_REACH_ENABLED` follows the same rule: `config/freegle.php` reads it through
+`EnvSetting::flag` and `microvolunteering.go` through `utils.EnvSwitch`. A `(bool) env()` read of
+any of these is a bug, not a second rule: PHP's own cast reads "off" and "no" as on.
+
+## The countdown mirrors the cron, condition by condition
+
+The countdown on a Pending card (`message/autoapproveat.go`: `computeAutoapproveat` and
+`automodApproved`) is a promise about when `AutoApproveCleanService` will publish the copy, so it
+carries the cron's own conditions, in step with `currentApprove` and the candidate query: the chart's
+decision recorded in **approve** mode (a shadow decision never counts down), **strictly** later than
+the content check and the last edit (equal to the second is not later), the poster's posting status
+still NULL, no hold on the post or the copy, the poster not deleted, not a quality sample, not pulled
+back, no spam reason, and the wait counted from the later of arrival and the decision, with
+`autoapprove_hold_until` as a floor. A condition added to the cron needs the same here, and the other
+way round, or a moderator is promised a publish that never comes, or gets none shown for one that does.
+That includes the lockdown: both crons skip a post with an open `lockdown_holds` row and do nothing at
+all while `posts` is held, so there is no countdown for either (`lockdown.ItemHeld`, `lockdown.Held`).
+
+Opening the Pending queue holds every Pending copy it can show on the trial communities in the request
+for at least ten more minutes (`autoapprove_hold_until`, extend-only), not just the page fetched, so
+nothing publishes under a moderator who has the queue open.
 
 ## See also
 

@@ -74,8 +74,9 @@ time plus an application-layer content check running in parallel, with mail then
 the batch processor. The layers, the thresholds and where to tune them are in
 [./reference/spam-and-abuse.md](./reference/spam-and-abuse.md), along with the
 application-layer content checks, what a block keyword does to chat and posts (including
-the backfill that runs when one is created) and the reasons there is no AI moderator. When
-a wave outruns those layers, that page also covers the [lockdown](runbooks/lockdown.md)
+the backfill that runs when one is created), the reasons there is no AI moderator, and the
+automated review flowchart that only holds or approves posts in the post-moderation trial.
+When a wave outruns those layers, that page also covers the [lockdown](runbooks/lockdown.md)
 switch, which holds member content back from everyone until a person lifts it.
 
 ## Backups

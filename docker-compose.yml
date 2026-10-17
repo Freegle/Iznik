@@ -723,6 +723,49 @@ services:
     volumes:
       - embedding_model_cache:/app/model-cache
 
+  # Automated post review (plans/active/automod-flowchart.md): walks
+  # automod/chart.json with ai-flower and answers approve/hold + reason.
+  # Internal network only - no ports, no Traefik labels, reached by other
+  # services as http://automod:8090.
+  automod:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-automod
+    profiles:
+      - backend
+    networks:
+      - default
+    build:
+      context: ./automod
+    restart: unless-stopped
+    mem_limit: 1.5g
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8090/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    environment:
+      - PORT=8090
+      # The NLI models are baked into the image at this path (automod/Dockerfile);
+      # nothing downloads at runtime, so there is no volume to keep.
+      - HF_CACHE_DIR=/app/model-cache
+      # Text questions go to Claude unless a node or request names the local model.
+      - AUTOMOD_BACKEND=${AUTOMOD_BACKEND:-claude}
+      - AUTOMOD_CLAUDE_MODEL=${AUTOMOD_CLAUDE_MODEL:-claude-opus-5-5}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Without an API key, Claude runs through the claude CLI on a subscription token,
+      # asking for this model alias; the model the CLI reports using is what gets recorded.
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
+      - AUTOMOD_CLAUDE_CLI_MODEL=${AUTOMOD_CLAUDE_CLI_MODEL:-opus}
+      - DISABLE_AUTOUPDATER=1
+      # Reviews run at once / waiting before a 503; consecutive backend failures before
+      # /health fails (src/server.js). Blank means the default (2 / 10 / 20).
+      - AUTOMOD_CONCURRENCY=${AUTOMOD_CONCURRENCY:-}
+      - AUTOMOD_QUEUE_MAX=${AUTOMOD_QUEUE_MAX:-}
+      - AUTOMOD_UNHEALTHY_AFTER=${AUTOMOD_UNHEALTHY_AFTER:-}
+      # TypeSafe Jev as a backend for comparison (evaluate.js); TYPESAFE_BASE_URL for a compatible server.
+      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
+      - TYPESAFE_BASE_URL=${TYPESAFE_BASE_URL:-}
+
   host-scripts:
     image: alpine:latest
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-host-scripts
@@ -836,6 +879,23 @@ services:
       # render — matching how V1 derives its base from TUS_UPLOADER.
       - UPLOADS=http://tusd:8080/tus/
       - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
+      # Auto-approve rollout gate: the Go Pending countdown (autoapproveat) must agree
+      # with the Laravel clean-path cron about whether the 20-minute path is on, or mods
+      # would see countdowns that never fire. Mirror whatever the batch env sets.
+      - FREEGLE_AUTOAPPROVE_ENABLED=${FREEGLE_AUTOAPPROVE_ENABLED:-}
+      - FREEGLE_AUTOAPPROVE_TRIAL_GROUPS=${FREEGLE_AUTOAPPROVE_TRIAL_GROUPS:-}
+      - FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS=${FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS:-}
+      - FREEGLE_AUTOAPPROVE_DELAY_MINUTES=${FREEGLE_AUTOAPPROVE_DELAY_MINUTES:-}
+      - FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT=${FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT:-}
+      # Automod shadow trial: chart runs and records but changes nothing
+      # (plans/active/automod-flowchart.md).
+      - FREEGLE_AUTOMOD_SHADOW_GROUPS=${FREEGLE_AUTOMOD_SHADOW_GROUPS:-}
+      # Earned-reach review gate (reviewer-pool bounding in microvolunteering.go).
+      - RIPPLE_EARNED_REACH_ENABLED=${RIPPLE_EARNED_REACH_ENABLED:-}
+      # Hours a rippled-in copy waits in the receiving community before it is approved there.
+      # The ModTools countdown on such a copy reads it (message/autoapproveat.go); the batch
+      # reads the same name, so set it once in each place and keep them equal.
+      - RIPPLE_RIPPLED_IN_PENDING_HOURS=${RIPPLE_RIPPLED_IN_PENDING_HOURS:-}
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - LOKI_JSON_PATH=/var/log/freegle
@@ -864,6 +924,10 @@ services:
       # no-auth port (SPATIAL_INTERNAL_PORT=8194) — NOT spatial-knn, NOT the 8196
       # auth port. Explicit so the drive-time analytics don't silently misroute.
       - ROUTING_EVAL_URL=${ROUTING_EVAL_URL:-http://spatial:8194}
+      # Automated review (automod/chart.json): local flowchart service that
+      # classifies Pending posts (approve/hold + reason), internal network
+      # only, no ports/Traefik.
+      - AUTOMOD_URL=http://automod:8090
     volumes:
       - apiv2_logs:/var/log/freegle
       - embedding_model_cache:/app/model-cache
@@ -1044,6 +1108,23 @@ services:
       - RIPPLE_ANALYTICS_SAMPLE=${RIPPLE_ANALYTICS_SAMPLE:-250}
       - RIPPLE_ANALYTICS_CONCURRENCY=${RIPPLE_ANALYTICS_CONCURRENCY:-16}
       - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
+      # Auto-approve rollout gate: the Go Pending countdown (autoapproveat) must agree
+      # with the Laravel clean-path cron about whether the 20-minute path is on, or mods
+      # would see countdowns that never fire. Mirror whatever the batch env sets.
+      - FREEGLE_AUTOAPPROVE_ENABLED=${FREEGLE_AUTOAPPROVE_ENABLED:-}
+      - FREEGLE_AUTOAPPROVE_TRIAL_GROUPS=${FREEGLE_AUTOAPPROVE_TRIAL_GROUPS:-}
+      - FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS=${FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS:-}
+      - FREEGLE_AUTOAPPROVE_DELAY_MINUTES=${FREEGLE_AUTOAPPROVE_DELAY_MINUTES:-}
+      - FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT=${FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT:-}
+      # Automod shadow trial: chart runs and records but changes nothing
+      # (plans/active/automod-flowchart.md).
+      - FREEGLE_AUTOMOD_SHADOW_GROUPS=${FREEGLE_AUTOMOD_SHADOW_GROUPS:-}
+      # Earned-reach review gate (reviewer-pool bounding in microvolunteering.go).
+      - RIPPLE_EARNED_REACH_ENABLED=${RIPPLE_EARNED_REACH_ENABLED:-}
+      # Hours a rippled-in copy waits in the receiving community before it is approved there.
+      # The ModTools countdown on such a copy reads it (message/autoapproveat.go); the batch
+      # reads the same name, so set it once in each place and keep them equal.
+      - RIPPLE_RIPPLED_IN_PENDING_HOURS=${RIPPLE_RIPPLED_IN_PENDING_HOURS:-}
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - LOKI_JSON_PATH=/var/log/freegle
@@ -1780,7 +1861,29 @@ services:
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
       - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/avatar
       - SPATIAL_KNN_URL=http://spatial-knn:8194
+      # Automated review (automod/chart.json): local flowchart service that
+      # classifies Pending posts (approve/hold + reason), internal network
+      # only, no ports/Traefik. This is the caller - the `messages:automod`
+      # command reviews Pending posts in shadow/approve groups every minute.
+      - AUTOMOD_URL=http://automod:8090
       - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter,Reengage,CommunityNews
+      # Post-moderation + earned-reach flags: the Laravel cron is the component that
+      # actually acts on these, so they MUST reach this container from the same root
+      # .env the Go countdown (apiv2/apiv2-live) reads - otherwise the countdown can
+      # claim the clean path is live while the cron never runs it.
+      - FREEGLE_AUTOAPPROVE_ENABLED=${FREEGLE_AUTOAPPROVE_ENABLED:-}
+      - FREEGLE_AUTOAPPROVE_TRIAL_GROUPS=${FREEGLE_AUTOAPPROVE_TRIAL_GROUPS:-}
+      - FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS=${FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS:-}
+      - FREEGLE_AUTOAPPROVE_DELAY_MINUTES=${FREEGLE_AUTOAPPROVE_DELAY_MINUTES:-}
+      - FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT=${FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT:-}
+      - FREEGLE_AUTOAPPROVE_MAX_PER_RUN=${FREEGLE_AUTOAPPROVE_MAX_PER_RUN:-}
+      # Automod shadow trial: chart runs and records but changes nothing
+      # (plans/active/automod-flowchart.md).
+      - FREEGLE_AUTOMOD_SHADOW_GROUPS=${FREEGLE_AUTOMOD_SHADOW_GROUPS:-}
+      - RIPPLE_EARNED_REACH_ENABLED=${RIPPLE_EARNED_REACH_ENABLED:-}
+      - RIPPLE_RIPPLED_IN_PENDING_HOURS=${RIPPLE_RIPPLED_IN_PENDING_HOURS:-}
+      - RIPPLE_AUTOAPPROVE_HOLD_SECONDS=${RIPPLE_AUTOAPPROVE_HOLD_SECONDS:-}
+      - RIPPLE_CLEAN_VIEWS_PER_GROUP=${RIPPLE_CLEAN_VIEWS_PER_GROUP:-}
       # CI=true skips supervisor startup to prevent Laravel bootstrap race conditions.
       # Multiple supervisor workers bootstrapping Laravel simultaneously can corrupt services.php.
       - CI=${CI:-false}
@@ -1946,6 +2049,19 @@ services:
       # because both read EMBEDDING_SIDECAR_URL and default to empty. The dev
       # `batch` block above has always set it; this one never did.
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
+      # Automated review (automod/chart.json): local flowchart service that
+      # classifies Pending posts (approve/hold + reason), internal network
+      # only, no ports/Traefik. It runs from the `backend` profile, which this
+      # host's COMPOSE_PROFILES (backend,production,mail,edge) includes, on the
+      # same default network as this container.
+      #
+      # The post-moderation switches (FREEGLE_AUTOAPPROVE_*, FREEGLE_AUTOMOD_SHADOW_GROUPS,
+      # RIPPLE_EARNED_REACH_* and RIPPLE_RIPPLED_IN_PENDING_HOURS) are deliberately NOT
+      # listed here: they come from .env.background (env_file above), and an `environment:`
+      # entry would override that file with an empty string. apiv2-live reads the same names
+      # from the root .env; set both, then recreate the containers (docker compose up -d), as
+      # a restart keeps the environment a container was created with.
+      - AUTOMOD_URL=http://automod:8090
       # Avatar generation (Go API)
       - FREEGLE_AVATAR_SERVER_URL=https://api.ilovefreegle.org/avatar
       # AMP Email

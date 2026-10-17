@@ -2,6 +2,7 @@
   <div>
     <client-only>
       <ScrollToTop />
+      <ModHelpPending :groupid="Number(groupid) || 0" />
       <ModAimsModal
         v-if="showAimsModal"
         ref="showAimsModal"

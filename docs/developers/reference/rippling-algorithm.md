@@ -336,7 +336,7 @@ itself. That is the only arrangement in which they cannot drift apart:
 | Email and TN reply hold | `Ripple/ReachQueryService.php` | `RingIndex::admits` |
 | Immediate mail, reach mail | `UnifiedDigestService::keepRingAdmitted` | `RingIndex::admits` |
 | Daily digest, daily-posts push | `UnifiedDigestService::ringRescueIds` | `RingIndex::admittedFor` |
-| First-reply scout mail (excludes the already-admitted) | `FirstReply/MatchMailService` | `RingIndex::admits` |
+| First-reply match mail (excludes the already-admitted) | `FirstReply/MatchMailService` | `RingIndex::admits` |
 
 Both clients call `iznik-spatial-go`'s `reachoverflow` dataset: `/containing`
 for "which posts admit this member" (browse's direction) and `/admits` for
@@ -818,7 +818,7 @@ For each due post, `ripple:expand`:
   tick's polygon, and the stored per-tick reached-group ids drive the ripple-in - no
   schedule recomputation. The target is normally elapsed time alone, but
   `rippling_reach.min_tick` raises a floor under it (capped at the post's schedule length):
-  a scout who replies was outside the reach when we mailed them, so their reply is evidence
+  a matched member who replies was outside the reach when we mailed them, so their reply is evidence
   the item is wanted that far out and the people around them should get the same chance
   rather than waiting on the clock. See
   [first-reply.md](first-reply.md#a-matched-member-who-replies-pulls-the-reach-out-to-them).
@@ -850,8 +850,8 @@ was posted to directly. `advanceDue` writes its status with `status <> 'held'`, 
 while a run is in flight survives it.
 
 `FreezeReachIfOriginPending` (`iznik-server-go/microvolunteering`) sets `status='held'` when a
-post's origin copy stops being live-Approved: Back to pending, or a report quorum. A
-home community's Back to pending freezes unconditionally (`FreezeReach`), because a
+post's origin copy stops being live-Approved: Back to pending, a Check pull-back or a report
+quorum. A home community's Back to pending freezes unconditionally (`FreezeReach`), because a
 hand-approved copy on a second home community can leave the origin Approved. The third writer is
 `modmessaging.RemoveUnaddressedPost`, which takes an unaddressed post off the platform on a
 report quorum: every copy is soft-deleted and the reach frozen directly. Those are the only
@@ -878,14 +878,17 @@ resumed:
 On the batch side a resumed reach is an ordinary due row; nothing in the engine knows it was
 frozen. `advanceDue` takes it on from the stored tick, schedule and polygon, never through
 `initialiseNew` (which needs a post with no reach row): to the tick the clock is at, back on the
-hazard schedule if the clock has not moved on, or back to `done` if it had finished. The reach
-mailer picks the row up once the engine has written `updated_at`, and `mailNewlyReachedForPost`
-mails only members who are inside the reach at the row's current tick, are absent from
-`rippling_reach_notified`, and are on a community where the post is Approved and not deleted. So a
-copy withdrawn before the freeze (`deleted = 1`) is not recreated, its members are not mailed and
-its poster is not joined to it again (`addPosterMembershipToRippledGroups` ignores deleted
-copies), and a copy pulled back to Pending stays Pending and its members are not mailed.
-`ResumedReachTest` pins this against the exact row `ResumeReachIfHeld` leaves.
+hazard schedule if the clock has not moved on, or back to `done` if it had finished. The clock is
+the post's own arrival, so a reach held for hours takes every step it missed in one run and ripples
+into the communities of all those steps together. The reach mailer picks the row up once the
+engine has written `updated_at`, and `mailNewlyReachedForPost` mails only members who are inside
+the reach at the row's current tick, are absent from `rippling_reach_notified`, and are on a
+community where the post is Approved and not deleted. So everyone newly inside the reach is told
+in one pass, each member once, however many steps that run covered. A copy withdrawn before the
+freeze (`deleted = 1`) is not recreated, its members are not mailed and its poster is not joined
+to it again (`addPosterMembershipToRippledGroups` ignores deleted copies), and a copy pulled back
+to Pending stays Pending and its members are not mailed. `ResumedReachTest` pins this against the
+exact row `ResumeReachIfHeld` leaves.
 
 A Reject or Delete at home ends the reach instead (§6).
 
@@ -898,12 +901,15 @@ Freezing governs what we SEND, not who has been reached:
   a reply from them is still held. They have not been reached, and freezing does not alter that;
   the answer is the same one they would get on a post still expanding.
 
-### Back to pending spares hand-approved copies elsewhere
+The first two end when the reach resumes.
 
-`handleBackToPending` first lists the copies a moderator approved by hand on communities other
+### Back to pending spares hand-approved and checked copies elsewhere
+
+`handleBackToPending` first lists the copies a moderator has looked at on communities other
 than the ones the acting moderator is acting on (`moderatorApprovedElsewhere`: live, Approved,
-`approvedby IS NOT NULL`). Only `handleApprove` sets `approvedby`; the content check,
-auto-approve and the ripple insert leave it NULL. Those copies are left exactly as they are:
+`approvedby IS NOT NULL` or `checkedby IS NOT NULL`). Only `handleApprove` sets `approvedby`
+and only a moderator's check sets `checkedby`; the content check, auto-approve, the ripple
+insert and a microvolunteer check leave both NULL. Those copies are left exactly as they are:
 Approved, `approvedby`/`approvedat` kept, no `needs_moderator`, no log. Every other live copy has
 its approval cleared and goes to Pending through `SendForReviewGroupsExcept`, and the acting
 moderator's own copies always do. The member-report quorum and a moderator's report call
@@ -920,7 +926,9 @@ there, with no Group/Left. The post is then recorded in `rippling_blocked` (one 
 the home copies go to Pending, and the reach is frozen. Back to pending from a receiving
 community's moderator, or the member-report quorum (`SendForReviewAllGroups`), withdraws nothing.
 `SendForReviewAllGroups` moves only live copies (Approved, not deleted) to Pending, so a withdrawn
-copy stays withdrawn and gets no Hold log.
+copy stays withdrawn and gets no Hold log. The Check queue's Pull back is not this: it is a
+moderator pulling back their own community's self-published copy for a look, so it neither
+withdraws copies nor writes `rippling_blocked`.
 
 A spared rippled-in copy survives the ripple engine while the home copy is Pending: the reach is
 `held`, so `retractOutOfReachCopies` and the opt-out retraction skip it, and
@@ -930,11 +938,12 @@ copy. While the reach is held the post is out of the nearby feed, so a spared co
 own community's listings (which filter on that community's `messages_groups` row), not nearby.
 
 When a receiving community sends a post back and the home copy is spared, the origin is still
-Approved, so the reach is not frozen and keeps expanding.
+Approved, so the reach is not frozen and keeps expanding. When the home copy goes back to Pending
+too, the reach is held until the home community approves it again.
 
-`initialiseNew` never starts a reach for a post in `rippling_blocked`. That is what makes the
-block durable: the frozen reach row already stops expansion and every read path, but a repost
-removes the reach row, and without the block the next approval would start a new one.
+`initialiseNew` never starts a reach for a post in `rippling_blocked`, and an Approve does not
+resume a blocked post's held reach (§5a). That is what makes the block durable: a repost removes
+the reach row, and without the block the next approval would start a new one.
 
 `messages_groups.locked_by_home` is still honoured where set (`handleApprove` refuses a locked
 copy while the home row is not Approved; auto-approve, the content check, incoming mail and
@@ -942,17 +951,58 @@ TrashNothing ingestion skip it; approving a home group clears it), but nothing s
 
 ---
 
+### The earned-reach gate (`RIPPLE_EARNED_REACH_ENABLED`, dark by default)
+
+With post-moderation (see
+[../../moderators/post-moderation.md](../../moderators/post-moderation.md)) a post can be
+live without any human look (origin `approvedby` NULL, no `checkedat` anywhere). The gate
+stops such posts spreading ahead of scrutiny. It applies only where a post can have
+published itself: an origin on an approve-mode community (`AutomodMode`: the
+`FREEGLE_AUTOAPPROVE_TRIAL_GROUPS` list, or every community when
+`FREEGLE_AUTOAPPROVE_ENABLED` is on, never one in the shadow list). Everywhere else
+`approvedby` NULL is the content check's ordinary promotion of a trusted member's post, and
+the gate leaves it alone, so switching `RIPPLE_EARNED_REACH_ENABLED` on changes nothing
+outside the trial. The scout gate in `firstreply` match mail is scoped the same way.
+
+- **Hold**: `initialiseNew` skips an unreviewed post until it is
+  `RIPPLE_AUTOAPPROVE_HOLD_SECONDS` (default 1h) old. No reach row exists during the hold,
+  so the post is absent from every reach consumer (§7). A mod look (approve/check) lifts
+  it; `--msgid` runs bypass it like the arrival cutoff.
+- **Exposure cap**: before `advanceDue` persists a tick's polygon, the gate requires
+  `RIPPLE_CLEAN_VIEWS_PER_GROUP` (default 5) distinct non-poster viewers
+  (`messages_likes` type View) per community the post would then be on (already rippled-in
+  + this tick's candidates), and no flag - a flag being any `User2Mod` chat message
+  referencing the post from a non-poster, or a microvolunteer Reject. A capped tick is
+  **not consumed**: the polygon, `tick` and `status` stay put (so every §7 consumer of the
+  polygon freezes with it), `awaiting_review_since` is stamped, and `next_expansion_at` is
+  pushed a few minutes out for re-evaluation. When exposure catches up, a mod looks, or
+  the gate is switched off, the paused time is banked into `awaiting_review_seconds`, the
+  stamp cleared, and the advance proceeds from the tick where it stopped. The same
+  verdict gates the tick-0 ripple-in inside `rippleIntoNewGroups`.
+- **Consumers must respect the pause**: anything that pushes a post to people beyond its
+  current polygon has to check the gate itself. `firstreply` match mail does this by
+  skipping unreviewed posts entirely while the gate is on (match mail can reach someone
+  beyond the current edge, and a matched member's reply raises `min_tick`).
+- Pull back from the **Check** queue (Go `markchecked.go`) is a pull-back, not a home
+  decision. The origin goes Pending, held by the moderator and marked `needs_moderator`;
+  every unreviewed copy elsewhere goes back to its own Pending queue with the neutral "moved
+  this post back to pending" text; a copy another community's moderator approved or checked
+  stays live. Nothing is withdrawn and nothing is written to `rippling_blocked` (that is a
+  home community's Back to pending, below). The reach is paused (`status = 'held'`, §5a) and
+  the await stamp settled. A later Approve of the home copy resumes it (`held` goes back to
+  `expanding`) and, being a moderator's look, lifts the gate for good; a Reject ends it (§6).
+
 ## 6. Retraction
 
 As a capped reach shrinks or the reachable set changes, `retractOutOfReachCopies`
 soft-deletes rippled-in copies no longer in reach, and removes the ripple-join membership
-when the poster has no other live post there. A **held** reach (from a report or
-Back-to-Pending) is frozen: while the home copy still exists, its copies persist for per-group
-moderation and are not retracted, so re-approval restores the copy without re-rippling. Once the
-home copy is deleted or rejected there is nothing left to moderate against, so the freeze no
-longer protects the copies: `retractCopiesOrphanedByOriginRemoval` retracts them whatever the
-reach status. A frozen reach is spared only while the home row is still Pending. (Nothing clears
-`held`, so a Back to pending followed by a delete at home used to leave the copies live.)
+when the poster has no other live post there. A **held** reach (from a report, a Check
+pull-back or Back-to-Pending) is paused: while the home copy still exists, its copies persist for
+per-group moderation and are not retracted, so re-approval restores the copy without re-rippling.
+Once the home copy is deleted or rejected there is nothing left to moderate against, so the pause
+no longer protects the copies: `retractCopiesOrphanedByOriginRemoval` retracts them whatever the
+reach status. A held reach is spared only while the home row is still Pending; once the home copy
+is approved the reach has resumed (§5a) and is an ordinary one again (a blocked post's stays held).
 The same applies to `removeStaleAndRetract`, and to a reject at home.
 
 A community switching ripple-out off retracts the same way - see §4a.
@@ -1413,6 +1463,10 @@ about travel time, so the reach wins wherever we have it.
   have been live for a member's repost to resume its reach rather than restart it (§5). 0 disables.
 - `RIPPLE_HIDE_PENDING` (apiv2 env, on by default) - hide a post that has no
   `rippling_reach` row yet for its first ten minutes. Set to `0` to show every post at once.
+- `earned_reach_enabled` (`RIPPLE_EARNED_REACH_ENABLED`), `autoapprove_hold_seconds`
+  (`RIPPLE_AUTOAPPROVE_HOLD_SECONDS`, 3600), `clean_views_per_group`
+  (`RIPPLE_CLEAN_VIEWS_PER_GROUP`, 5) - the earned-reach gate (§5), approve-mode
+  communities only.
 
 Per-community rather than config: `groups.settings.rippling.{out,in}` switches rippling off for
 one community in either direction (§4a), set only via `php artisan ripple:opt-out`.
@@ -1424,9 +1478,11 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   exact polygon (see §7; `outer_bound` is NOT NULL + spatially indexed and drives the
   browse R-tree), cached slim `schedule` (per-tick drive-time / audience / reached-group
   ids, no geometry), `tick`, `status` (expanding / stopped / done / held),
-  `reachable_group_ids` (the current tick's set, used by retraction), and the sizing decision
-  the post was built under - `density_band`, `density_radius_miles`, `max_minutes_cap` (§3a).
-  Bounds maintained in the same statements as the polygon writes; prod schema migrated via
+  `reachable_group_ids` (the current tick's set, used by retraction), the sizing decision
+  the post was built under - `density_band`, `density_radius_miles`, `max_minutes_cap` (§3a)
+  - and the earned-reach instrumentation `awaiting_review_since` / `awaiting_review_seconds`
+  (§5: stamp while cap-paused, lifetime accumulator once resumed or settled). Bounds
+  maintained in the same statements as the polygon writes; prod schema migrated via
   `ripple:migrate-reach-bounds-schema` (shadow copy + swap).
 - `rippling_held_replies` - one row per reply held for being outside the reach, with `dueat`
   (§7a) and `releasedat`. Two similar names, one letter apart: `dueat` is when it becomes

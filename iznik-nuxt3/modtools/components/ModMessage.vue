@@ -140,6 +140,21 @@
             >
               Pending
             </span>
+            <span
+              v-if="pending && countdownLabel"
+              data-testid="autoapprove-countdown"
+              role="timer"
+              class="ms-2"
+              :class="countdownLabel.cls"
+              :title="countdownLabel.title"
+            >
+              {{ countdownLabel.text }}
+            </span>
+            <ModAutomodLine
+              :message="message"
+              :groupid="automodGroupid"
+              :pending="automodPending"
+            />
             <!-- Approved-by is shown by MessageHistory with resolved name -->
             <div v-if="message.deadline" class="text-danger small">
               Deadline: end {{ dateonly(message.deadline) }}
@@ -407,7 +422,8 @@
             <div v-if="expanded">
               <NoticeMessage
                 v-if="message.outcomes && message.outcomes.length"
-                class="mb-1"
+                variant="info"
+                class="mb-2"
               >
                 {{ message.outcomes[0].outcome.toUpperCase() }}
                 at
@@ -461,7 +477,11 @@
                 {{ fromUser.activedistance }} miles apart.
               </NoticeMessage>
             </div>
-            <NoticeMessage v-if="noLocation" variant="warning" class="mb-2">
+            <NoticeMessage
+              v-if="noLocation && !editing"
+              variant="danger"
+              class="mb-2"
+            >
               We couldn't work out where this post is (often an emailed post
               whose subject has no recognised place name). Please click
               <strong>Edit</strong> and add a postcode (it doesn't have to be
@@ -617,12 +637,7 @@
                   {{ eBody }}
                 </span>
               </div>
-              <b-alert
-                v-if="isBulk"
-                :model-value="true"
-                variant="info"
-                class="mb-3"
-              >
+              <NoticeMessage v-if="isBulk" variant="info" class="mb-2">
                 <strong>
                   <v-icon icon="boxes-stacked" /> Bulk clearance —
                   {{ message.bulkcount }} item{{
@@ -640,7 +655,7 @@
                 >
                   See how members see it
                 </b-button>
-              </b-alert>
+              </NoticeMessage>
               <div v-if="attachments?.length" class="w-100 d-flex flex-wrap">
                 <div
                   v-for="attachment in attachments"
@@ -711,10 +726,11 @@
                     message.myrole === 'Member'
                   "
                   variant="danger"
+                  class="mb-2"
                 >
                   Sender only available to mods.
                 </NoticeMessage>
-                <NoticeMessage v-else variant="danger">
+                <NoticeMessage v-else variant="danger" class="mb-2">
                   Can't identify sender. Could have been purged but perhaps a
                   bug.
                 </NoticeMessage>
@@ -833,13 +849,6 @@
           don't click them by accident. Please check with them before releasing
           the message.
         </div>
-        <NoticeMessage
-          v-else-if="!editing && !message.lat && !message.lng"
-          variant="danger"
-          class="mb-2"
-        >
-          This message needs editing so that we know where it is.
-        </NoticeMessage>
         <div
           v-if="
             pending && (!contextGroup?.heldby || heldbyId === myid) && !editing
@@ -861,6 +870,8 @@
           :is-home-group="isHomeGroup"
           :can-message-poster="canMessagePoster"
           :mod-messaging-allowed="modMessagingAllowed"
+          :oversight="oversight"
+          :check-groupid="contextGroupid ? parseInt(contextGroupid) : 0"
         />
         <b-button
           v-if="editing"
@@ -937,6 +948,10 @@ import { useMiscStore } from '~/stores/misc'
 import { SUBJECT_REGEX } from '~/constants'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
+import {
+  useAutoapproveTrial,
+  useAutomod,
+} from '~/modtools/composables/useAutoapproveTrial'
 import { buildKeywordRegex } from '~/composables/useKeywordRegex'
 
 import { useModGroupStore } from '@/stores/modgroup'
@@ -1010,6 +1025,13 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  // Passed down from the Check oversight page to unlock the per-message Reject button
+  // in ModMessageButtons. Not set on any other page.
+  oversight: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
 })
 
 const emit = defineEmits(['destroy'])
@@ -1025,6 +1047,11 @@ const modGroupStore = useModGroupStore()
 const userStore = useUserStore()
 
 const message = computed(() => messageStore.byId(props.messageid))
+
+// --- Auto-approve countdown (A5) ---
+// `now` ticks every second (see onMounted) so the countdown label recomputes live.
+const now = ref(Date.now())
+let countdownInterval = null
 
 watch(
   () => props.messageid,
@@ -1062,6 +1089,8 @@ const fromUser = computed(() => {
 const { typeOptions } = setupKeywords()
 const { me, myid } = useMe()
 const { myModGroups, myModGroup, amAModOn } = useModMe()
+const { isTrialGroup } = useAutoapproveTrial()
+const { isAutomodGroup } = useAutomod()
 
 const top = ref(null)
 const bottom = ref(null)
@@ -1111,6 +1140,42 @@ const currentGroupid = computed(() => {
     if (props.editreview) {
       const originPick = earliestArrivalGroupId(mine)
       if (originPick != null) return originPick
+    }
+    // A card pulled back from Check is about the copy that is waiting for me now, the one I
+    // hold when there are several. Another copy can stay live - one a neighbouring
+    // community's moderator approved by hand, or one I had checked - and the Check listing
+    // and the oversight pick below would take the card back to it, hiding the copy I just
+    // pulled back and the buttons that act on it.
+    if (messageStore.pulledBack?.[message.value?.id]) {
+      const waiting = mine.filter((g) =>
+        ['Pending', 'PendingOther', 'Spam'].includes(g.collection)
+      )
+      if (waiting.length) {
+        const mineHeld = waiting.filter(
+          (g) => (g.heldby?.id ?? g.heldby) === unref(myid)
+        )
+        const pool = mineHeld.length ? mineHeld : waiting
+        const home = homeGroupId(pool)
+        return home != null ? home : parseInt(pool[0].groupid)
+      }
+    }
+    // A Check card is about the copy that published itself: Approved with no approvedby,
+    // posted directly here, on a community in the trial - the same conditions as the
+    // Check list. Anchoring to the generic home pick could land on a TrashNothing
+    // cross-post's other direct copy, one a neighbouring community's moderator approved by
+    // hand, and then Reject here would pull that copy back.
+    if (props.oversight) {
+      const checkRows = mine.filter(
+        (g) =>
+          g.collection === 'Approved' &&
+          !g.approvedby &&
+          !parseInt(g.rippled_in) &&
+          isTrialGroup(parseInt(g.groupid))
+      )
+      if (checkRows.length) {
+        const home = homeGroupId(checkRows)
+        return home != null ? home : parseInt(checkRows[0].groupid)
+      }
     }
     const pending = mine.filter((g) =>
       ['Pending', 'PendingOther', 'Spam'].includes(g.collection)
@@ -1423,6 +1488,149 @@ const pending = computed(() => {
   return hasCollection('Pending')
 })
 
+// The soonest autoapproveat among the Pending copies this card can honestly speak for:
+// the copy being administered when there is a context group, otherwise the copies on trial
+// communities I moderate. The API computes autoapproveat for every trial copy of a post
+// whoever is looking, so without this a moderator of a neighbouring community outside the
+// trial saw a countdown on their own copy of a TrashNothing cross-post - a copy that was
+// never going to publish itself.
+const soonestCountdown = computed(() => {
+  if (!message.value?.groups) return null
+  const context = props.contextGroupid ? parseInt(props.contextGroupid) : null
+  let best = null
+  for (const g of message.value.groups) {
+    if (g.collection !== 'Pending' || !g.autoapproveat) continue
+    const gid = parseInt(g.groupid)
+    if (context !== null ? gid !== context : !amAModOn(gid)) continue
+    if (!isTrialGroup(gid)) continue
+    const time = new Date(g.autoapproveat).getTime()
+    if (Number.isNaN(time)) continue
+    // A tie goes to the community the card is about, so the badge need not name another.
+    if (
+      best === null ||
+      time < best.time ||
+      (time === best.time && gid === currentGroupid.value)
+    ) {
+      best = { time, groupid: gid }
+    }
+  }
+  return best
+})
+
+const soonestAutoapproveat = computed(
+  () => soonestCountdown.value?.time ?? null
+)
+
+// The line under the subject is about one community's automated review. The one being
+// administered, when it is in an automod list; otherwise the first copy I moderate that is,
+// preferring one with a decision to show. A post can be on a trial community and on a
+// neighbour outside it, and the card is anchored to whichever the arrival order picks: the
+// countdown beside the line would have nothing to explain it, and "Should not have
+// published" could not be reached, if the line followed the anchor alone.
+const automodGroupid = computed(() => {
+  const gid = currentGroupid.value
+  if (gid != null && isAutomodGroup(gid)) return gid
+  const mine = (message.value?.groups || []).filter(
+    (g) => isAutomodGroup(parseInt(g.groupid)) && amAModOn(parseInt(g.groupid))
+  )
+  const pick = mine.find((g) => g.automod) || mine[0]
+  return pick ? parseInt(pick.groupid) : gid
+})
+
+// Whether that copy is waiting for a moderator: the line's wording depends on it, and it is
+// not always the copy the card is anchored to.
+const automodPending = computed(() => {
+  const row = (message.value?.groups || []).find(
+    (g) => parseInt(g.groupid) === automodGroupid.value
+  )
+  return row ? row.collection === 'Pending' : pending.value
+})
+
+// How long "Auto-approving..." stays up. The cron publishes within a minute of the time. A
+// post still Pending three minutes after it was not published for a reason the card cannot
+// see (a danger signal, the review service down), and a badge saying it is being approved
+// is then wrong.
+const OVERDUE_MS = 3 * 60 * 1000
+
+const HOLD_EXPLANATION =
+  'Opening this list holds every post it loads for at least 10 minutes, so this goes back up each time the list reloads.'
+
+// Live countdown label + CSS class, recomputed every second via `now`. A badge in the
+// notice palette rather than coloured text: Bootstrap's yellow on white is 1.6:1.
+const countdownLabel = computed(() => {
+  const best = soonestCountdown.value
+  if (best === null) return null
+  const msLeft = best.time - now.value
+  if (msLeft < -OVERDUE_MS) return null
+  // Name the community when the countdown belongs to a copy the card is not about.
+  const where =
+    best.groupid !== currentGroupid.value
+      ? ` (on ${copyName({ groupid: best.groupid })})`
+      : ''
+  const secsLeft = Math.floor(msLeft / 1000)
+  if (secsLeft <= 0) {
+    return {
+      text: `Auto-approving…${where}`,
+      cls: 'badge bg-info text-dark',
+      title:
+        'The wait is over. This publishes itself within a minute or two unless something stops it.',
+    }
+  }
+  const title = `This post publishes itself when the timer runs out, unless you act first. ${HOLD_EXPLANATION}`
+  const totalMins = Math.floor(secsLeft / 60)
+  const secs = secsLeft % 60
+  if (totalMins >= 60) {
+    const hrs = Math.round(totalMins / 60)
+    return {
+      text: `Auto-approves in ~${hrs}h${where}`,
+      cls: 'small text-muted',
+      title,
+    }
+  }
+  return {
+    text: `Auto-approves in ${totalMins}m ${String(secs).padStart(2, '0')}s${where}`,
+    cls: 'badge bg-warning text-dark',
+    title,
+  }
+})
+
+// Tick once a second only while there is a countdown to show. A long Pending list is one
+// card per post, and most posts have no countdown, so a timer on every card is waste. The
+// ticking stops when the badge has gone, too.
+function stopCountdown() {
+  if (countdownInterval) {
+    clearInterval(countdownInterval)
+    countdownInterval = null
+  }
+}
+
+function tickCountdown() {
+  now.value = Date.now()
+  const best = soonestCountdown.value
+  if (best === null || best.time + OVERDUE_MS < now.value) {
+    stopCountdown()
+  }
+}
+
+watch(
+  soonestAutoapproveat,
+  (target) => {
+    if (target === null) {
+      stopCountdown()
+      return
+    }
+    now.value = Date.now()
+    if (target + OVERDUE_MS < now.value) {
+      stopCountdown()
+      return
+    }
+    if (!countdownInterval) {
+      countdownInterval = setInterval(tickCountdown, 1000)
+    }
+  },
+  { immediate: true }
+)
+
 const eSubject = computed(() => {
   if (!message.value) return ''
   return twem(message.value.subject)
@@ -1722,6 +1930,7 @@ onBeforeUnmount(() => {
   if (message.value) {
     emit('destroy', message.value.id, props.next)
   }
+  stopCountdown()
 })
 
 function updateComments() {

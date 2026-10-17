@@ -107,6 +107,29 @@
         leave
         label="Blank Reply"
       />
+      <!-- The Check queue: one post looked at, or pulled back for a decision. Hidden while
+           the moderators surface is held, like the other buttons that change what members see. -->
+      <template v-if="oversight && oversightRejectable && !modsHeld">
+        <SpinButton
+          data-testid="oversight-checked"
+          variant="white"
+          class="m-1"
+          icon-name="check"
+          label="Checked"
+          :flex="false"
+          @handle="markChecked"
+        />
+        <SpinButton
+          data-testid="oversight-pullback"
+          variant="warning"
+          class="m-1"
+          icon-name="reply"
+          label="Pull back"
+          :flex="false"
+          :disabled="pullingBack"
+          @handle="askPullBack"
+        />
+      </template>
       <ModMessageButton
         v-if="(isHomeGroup || messagesPoster) && !modsHeld"
         :messageid="message.id"
@@ -169,6 +192,38 @@
         @handle="outcome($event, 'Withdrawn')"
       />
     </div>
+    <NoticeMessage
+      v-if="oversightNote"
+      variant="warning"
+      class="mt-1 mb-1"
+      role="alert"
+      data-testid="oversight-note"
+    >
+      {{ oversightNote }}
+    </NoticeMessage>
+    <ConfirmModal
+      v-if="showPullBack"
+      title="Pull this post back to Pending?"
+      confirm-label="Pull back"
+      @confirm="pullBack"
+      @hidden="showPullBack = false"
+    >
+      <p>
+        This takes the post off the live site and puts it back in Pending, held
+        by you. You can then approve, edit or reject it like any other pending
+        post.
+      </p>
+      <p>
+        On another community it is on, the post goes back to that community's
+        Pending queue too, unless one of its moderators has already approved or
+        checked it.
+      </p>
+      <p class="mb-0">
+        Spreading to further communities is paused until you decide. If you
+        approve the post again it carries on spreading; if you reject it,
+        spreading ends. The member is not told.
+      </p>
+    </ConfirmModal>
     <div v-if="!editreview && !modsHeld" class="d-lg-inline">
       <ModMessageButton
         v-for="stdmsg in filtered"
@@ -222,6 +277,8 @@ import { useMessageStore } from '~/stores/message'
 import { useModConfigStore } from '~/stores/modconfig'
 import { copyStdMsgs, icon, variant } from '~/composables/useStdMsgs'
 import { useLockdown } from '~/modtools/composables/useLockdown'
+import { useAutoapproveTrial } from '~/modtools/composables/useAutoapproveTrial'
+import { useModMe } from '~/composables/useModMe'
 
 const props = defineProps({
   messageid: {
@@ -280,9 +337,26 @@ const props = defineProps({
     required: false,
     default: true,
   },
+  // Set to true ONLY from the Check oversight page: shows Checked and Pull back for Approved
+  // posts. Pull back puts the post back in Pending, held by this moderator, and the card turns
+  // into the usual Pending card so the moderator approves, edits or rejects it as normal.
+  oversight: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
+  // The community the Check page is filtered to, 0 for all of mine: Checked marks the post
+  // looked at for that scope, as the page's bulk button does.
+  checkGroupid: {
+    type: Number,
+    required: false,
+    default: 0,
+  },
 })
 
 const { modsHeld } = useLockdown()
+const { isTrialGroup } = useAutoapproveTrial()
+const { checkWork } = useModMe()
 
 const messageStore = useMessageStore()
 const modConfigStore = useModConfigStore()
@@ -347,6 +421,24 @@ const canApprove = computed(() => !props.cantpost && !lockedByHome.value)
 
 const approved = computed(() => {
   return hasCollection('Approved')
+})
+
+// The oversight Reject pulls back a copy that published itself, so it is offered only on a
+// copy that matches the Check list: Approved by nobody (approvedby null), posted directly
+// here, on a community in the trial. A copy a neighbouring community's moderator approved by
+// hand was never in Check and must not be pulled back from there, even when the same card
+// shows both copies of a TrashNothing cross-post.
+const oversightRejectable = computed(() => {
+  const groups = message.value?.groups || []
+  const gid = props.groupid || groups[0]?.groupid
+  const g = groups.find((grp) => parseInt(grp.groupid) === parseInt(gid))
+  return (
+    !!g &&
+    g.collection === 'Approved' &&
+    !g.approvedby &&
+    !parseInt(g.rippled_in) &&
+    isTrialGroup(parseInt(gid))
+  )
 })
 
 // Spam-collection messages are surfaced in the Pending review queue (Go API,
@@ -434,5 +526,56 @@ function outcome(callback, type) {
     outcome: type,
   })
   if (callback) callback()
+}
+
+// Check page only. What happened, said on the card when it did not go to plan: there is
+// nowhere else for it, and a card that vanished with no word is how a mistake goes unnoticed.
+const oversightNote = ref('')
+const showPullBack = ref(false)
+const pullingBack = ref(false)
+
+const DID_NOT_GO_THROUGH = "That didn't go through. Try again in a moment."
+
+// "Checked": the post leaves the Check queue and so does the card.
+async function markChecked(callback) {
+  oversightNote.value = ''
+  try {
+    await messageStore.markCheckedPost(props.messageid, props.checkGroupid)
+    await checkWork(true)
+  } catch (e) {
+    oversightNote.value = DID_NOT_GO_THROUGH
+  } finally {
+    if (callback) callback()
+  }
+}
+
+// "Pull back": ask first, because it withdraws the post from the live site on every community
+// that has not looked at it. The button stops spinning as soon as the question is up.
+function askPullBack(callback) {
+  showPullBack.value = true
+  if (callback) callback()
+}
+
+// The post goes back to Pending via markChecked({reject:true}) and stays in the list as a
+// Pending card.
+async function pullBack() {
+  oversightNote.value = ''
+  pullingBack.value = true
+  try {
+    const pulled = await messageStore.rejectFromOversight(
+      props.messageid,
+      props.groupid
+    )
+    if (!pulled) {
+      oversightNote.value =
+        'Nothing was pulled back: this post has changed since you loaded the page. It is shown as it is now.'
+    }
+  } catch (e) {
+    oversightNote.value = DID_NOT_GO_THROUGH
+  } finally {
+    pullingBack.value = false
+  }
+  // The Check and Pending counts moved either way.
+  await checkWork(true)
 }
 </script>

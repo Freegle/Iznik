@@ -41,6 +41,7 @@ import (
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/amp"
 	"github.com/freegle/iznik-server-go/authority"
+	"github.com/freegle/iznik-server-go/automod"
 	"github.com/freegle/iznik-server-go/changes"
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/clientlog"
@@ -2331,10 +2332,27 @@ type listMessagesResponse struct {
 //     description: Filter to messages from this user id
 //     required: false
 //     type: integer
+//   + name: groupid
+//     in: query
+//     description: List this community's messages (0 or absent = every community the caller actively moderates)
+//     required: false
+//     type: integer
+//   + name: collection
+//     in: query
+//     description: Collection to list (Approved, Pending, Rejected, Spam, Edit). Default Approved
+//     required: false
+//     type: string
+//   + name: filter
+//     in: query
+//     description: Oversight view of the Approved collection. "checked" is the Check queue - live posts that published themselves from members with no posting status and that no moderator has marked checked, on communities in the post-moderation trial. Needs a moderator of the community named (403 otherwise); any other value is a 400
+//     required: false
+//     type: string
 //
 // Responses:
 //
 //	200: listMessagesResponse
+//	400: errorResponse
+//	403: errorResponse
 
 // swagger:route PUT /message/submit message submitMessage
 // Submit a complete post in one call
@@ -6168,5 +6186,136 @@ type getSupportAIRunParams struct {
 //
 //	200: successResponse
 //	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /modtools/messages/markchecked modtools markChecked
+// Mark Check queue posts as checked
+//
+// Marks the posts in the Check queue (live posts that published by themselves) as checked by the moderator
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// markCheckedParams is the body of POST /modtools/messages/markchecked: either ids (particular
+// posts) or filter=checked (the whole queue of the community, or of every community the caller
+// actively moderates when groupid is 0); with reject=true the ids are pulled back to Pending,
+// held by the caller, for a decision.
+// swagger:parameters markChecked
+type markCheckedParams struct {
+	// in: body
+	// required: true
+	Body message.MarkCheckedRequest `json:"body"`
+}
+
+// swagger:route GET /modtools/moderationstats modtools getModerationStats
+// Get moderation analytics
+//
+// Moderation analytics for the post-moderation trial (Admin/Support only)
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: start
+//     in: query
+//     description: First day of the period, YYYY-MM-DD
+//     required: true
+//     type: string
+//   + name: end
+//     in: query
+//     description: Last day of the period, YYYY-MM-DD (the whole of that day is included)
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /modtools/automod/feedback modtools automodFeedback
+// Mark an automated review step wrong
+//
+// A moderator marks one step of an automated review decision as wrong. The step must be one
+// the stored decision walked (a node in its path, or its end node). One mark per moderator per
+// step: marking it again answers already=true.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// automodFeedbackParams is the body of POST /modtools/automod/feedback.
+// swagger:parameters automodFeedback
+type automodFeedbackParams struct {
+	// in: body
+	// required: true
+	Body automod.FeedbackRequest `json:"body"`
+}
+
+// swagger:route DELETE /modtools/automod/feedback modtools automodFeedbackUndo
+// Take back a mark on an automated review step
+//
+// A moderator removes their own mark from one step of an automated review decision. The step is
+// named in the body, as for marking it. Answers 404 when the moderator has no mark there.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// automodFeedbackUndoParams is the body of DELETE /modtools/automod/feedback.
+// swagger:parameters automodFeedbackUndo
+type automodFeedbackUndoParams struct {
+	// in: body
+	// required: true
+	Body automod.FeedbackRequest `json:"body"`
+}
+
+// swagger:route GET /modtools/automod/agreement modtools automodAgreement
+// Automated review agreement report
+//
+// How often moderators agree with automated review, by end node and by community, with
+// decision latency and the decisions that came too late for a countdown, for SysAdmin
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: days
+//     in: query
+//     description: Window in days (1-365, default 30)
+//     required: false
+//     type: integer
+//   + name: groupid
+//     in: query
+//     description: Only this community's decisions (default all)
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: genericResponse
 //	401: errorResponse
 //	403: errorResponse

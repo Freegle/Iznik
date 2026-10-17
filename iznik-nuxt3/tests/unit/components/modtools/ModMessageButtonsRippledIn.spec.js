@@ -30,6 +30,10 @@ vi.mock('~/composables/useStdMsgs', () => ({
 }))
 
 const stubs = {
+  // The oversight note (a pull-back that found nothing to pull back) and the Pull back
+  // confirm render through these.
+  NoticeMessage: { template: '<div class="notice"><slot /></div>' },
+  ConfirmModal: true,
   ModMessageButton: {
     name: 'ModMessageButton',
     template: '<button class="mmb">{{ label }}</button>',

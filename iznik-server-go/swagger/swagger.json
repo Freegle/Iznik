@@ -4392,6 +4392,126 @@
     }
    }
   },
+  "/modtools/automod/feedback": {
+   "post": {
+    "description": "A moderator marks one step of an automated review decision as wrong. The step must be one\nthe stored decision walked (a node in its path, or its end node). One mark per moderator per\nstep: marking it again answers already=true.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Mark an automated review step wrong",
+    "operationId": "automodFeedback",
+    "parameters": [
+     {
+      "name": "Body",
+      "in": "body",
+      "schema": {
+       "$ref": "#/definitions/FeedbackRequest"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "404": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   },
+   "delete": {
+    "description": "A moderator removes their own mark from one step of an automated review decision. The step is\nnamed in the body, as for marking it. Answers 404 when the moderator has no mark there.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Take back a mark on an automated review step",
+    "operationId": "automodFeedbackUndo",
+    "parameters": [
+     {
+      "name": "Body",
+      "in": "body",
+      "schema": {
+       "$ref": "#/definitions/FeedbackRequest"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "404": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/modtools/automod/agreement": {
+   "get": {
+    "description": "How often moderators agree with automated review, by end node and by community, with\ndecision latency and the decisions that came too late for a countdown, for SysAdmin",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Automated review agreement report",
+    "operationId": "automodAgreement",
+    "parameters": [
+     {
+      "type": "integer",
+      "description": "Window in days (1-365, default 30)",
+      "name": "days",
+      "in": "query"
+     },
+     {
+      "type": "integer",
+      "description": "Only this community's decisions (default all)",
+      "name": "groupid",
+      "in": "query"
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
   "/modtools/email/deferrals": {
    "get": {
     "description": "Support's view of a deferral episode: which providers have stopped accepting our mail, since when, and which members are affected. Support or Admin only.",
@@ -4833,13 +4953,75 @@
       "description": "Filter to messages from this user id",
       "name": "fromuser",
       "in": "query"
+     },
+     {
+      "type": "integer",
+      "description": "List this community's messages (0 or absent = every community the caller actively moderates)",
+      "name": "groupid",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Collection to list (Approved, Pending, Rejected, Spam, Edit). Default Approved",
+      "name": "collection",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Oversight view of the Approved collection. \"checked\" is the Check queue - live posts that published themselves from members with no posting status and that no moderator has marked checked, on communities in the post-moderation trial. Needs a moderator of the community named (403 otherwise); any other value is a 400",
+      "name": "filter",
+      "in": "query"
      }
     ],
     "responses": {
      "200": {
       "$ref": "#/responses/listMessagesResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
      }
     }
+   }
+  },
+  "/modtools/messages/markchecked": {
+   "post": {
+    "description": "Marks the posts in the Check queue (live posts that published by themselves) as checked by the moderator",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Mark Check queue posts as checked",
+    "operationId": "markChecked",
+    "parameters": [
+     {
+      "name": "Body",
+      "in": "body",
+      "schema": {
+       "$ref": "#/definitions/MarkCheckedRequest"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
    }
   },
   "/modtools/modconfig": {
@@ -4924,6 +5106,85 @@
       "$ref": "#/responses/errorResponse"
      },
      "401": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/modtools/moderationstats": {
+   "get": {
+    "description": "Moderation analytics for the post-moderation trial (Admin/Support only)",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Get moderation analytics",
+    "operationId": "getModerationStats",
+    "parameters": [
+     {
+      "type": "string",
+      "description": "First day of the period, YYYY-MM-DD",
+      "name": "start",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "string",
+      "description": "Last day of the period, YYYY-MM-DD (the whole of that day is included)",
+      "name": "end",
+      "in": "query",
+      "required": true
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/modtools/recommendations/stats": {
+   "get": {
+    "description": "Returns the recommendation funnel (impressions -\u003e clicks -\u003e attributed\nreplies) per source, plus a holdout comparison, for the ModTools sysadmin\n\"Recommendations\" tab. Reads a days query param (default 30, max 365).\nSupport/Admin only.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Get recommendation funnel stats",
+    "operationId": "getRecommendationsStats",
+    "parameters": [
+     {
+      "type": "integer",
+      "description": "Window size in days (default 30, max 365)",
+      "name": "days",
+      "in": "query"
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
       "$ref": "#/responses/errorResponse"
      }
     },
@@ -10181,6 +10442,27 @@
    },
    "x-go-package": "github.com/freegle/iznik-server-go/microvolunteering"
   },
+  "FeedbackRequest": {
+   "type": "object",
+   "title": "FeedbackRequest is the request body for POST /modtools/automod/feedback.",
+   "properties": {
+    "groupid": {
+     "type": "integer",
+     "format": "uint64",
+     "x-go-name": "Groupid"
+    },
+    "msgid": {
+     "type": "integer",
+     "format": "uint64",
+     "x-go-name": "Msgid"
+    },
+    "node": {
+     "type": "string",
+     "x-go-name": "Node"
+    }
+   },
+   "x-go-package": "github.com/freegle/iznik-server-go/automod"
+  },
   "GetMembershipsMember": {
    "type": "object",
    "title": "GetMembershipsMember is the response struct for individual members in GetMemberships.",
@@ -11415,6 +11697,34 @@
    "type": "object",
    "additionalProperties": {},
    "x-go-package": "github.com/gofiber/fiber/v2"
+  },
+  "MarkCheckedRequest": {
+   "description": "MarkCheckedRequest is the request body for marking auto-published posts as\nchecked by a moderator (clearing them from the Check oversight queue).",
+   "type": "object",
+   "properties": {
+    "filter": {
+     "type": "string",
+     "x-go-name": "Filter"
+    },
+    "groupid": {
+     "type": "integer",
+     "format": "uint64",
+     "x-go-name": "Groupid"
+    },
+    "ids": {
+     "type": "array",
+     "items": {
+      "type": "integer",
+      "format": "uint64"
+     },
+     "x-go-name": "IDs"
+    },
+    "reject": {
+     "type": "boolean",
+     "x-go-name": "Reject"
+    }
+   },
+   "x-go-package": "github.com/freegle/iznik-server-go/message"
   },
   "Membership": {
    "type": "object",

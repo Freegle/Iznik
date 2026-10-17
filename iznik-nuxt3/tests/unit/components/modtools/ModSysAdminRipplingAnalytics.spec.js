@@ -516,6 +516,108 @@ describe('ModSysAdminRipplingAnalytics', () => {
     wrapper.unmount()
   })
 
+  describe('review_delay section (earned-reach gate)', () => {
+    it('renders the review gate heading', async () => {
+      mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+      mockFetchMetrics.mockResolvedValueOnce({})
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.html()).toContain('Review gate')
+      wrapper.unmount()
+    })
+
+    // The gate asks for distinct clean viewers per community and no complaint. An earlier
+    // design asked for review "weight" of twice the communities reached; it was dropped, and
+    // the panel must not describe it.
+    it('describes the gate that is built: clean views per community, and no complaint', async () => {
+      mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+      mockFetchMetrics.mockResolvedValueOnce({})
+      const wrapper = mountComponent()
+      await flushPromises()
+      const text = wrapper.text()
+      expect(text).toContain('distinct members')
+      expect(text).toContain('nobody objecting')
+      expect(text).not.toContain('weight must reach')
+      wrapper.unmount()
+    })
+
+    it('shows a dash, not a number, for no current wait', async () => {
+      mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+      mockFetchMetrics.mockResolvedValueOnce({
+        review_delay: {
+          awaiting_count: 0,
+          median_await_seconds: 0,
+          post_hours_delayed: 0,
+          resumed_count: 0,
+        },
+      })
+      const wrapper = mountComponent()
+      await flushPromises()
+      const row = wrapper
+        .findAll('tr')
+        .find((r) => r.text().includes('Average current wait'))
+      expect(row.findAll('td')[1].text()).toBe('-')
+      wrapper.unmount()
+    })
+
+    it('does not use a dash in the heading of the review gate section', async () => {
+      mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+      mockFetchMetrics.mockResolvedValueOnce({})
+      const wrapper = mountComponent()
+      await flushPromises()
+      const heading = wrapper
+        .findAll('h5')
+        .find((h) => h.text().includes('Review gate'))
+      expect(heading.text()).toBe('Review gate: auto-published post holds')
+      wrapper.unmount()
+    })
+
+    it('shows the empty state when review_delay is absent', async () => {
+      mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+      mockFetchMetrics.mockResolvedValueOnce({})
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.html()).toContain('No review gate data yet')
+      wrapper.unmount()
+    })
+
+    it('renders counts and formatted wait from review_delay', async () => {
+      mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+      mockFetchMetrics.mockResolvedValueOnce({
+        review_delay: {
+          awaiting_count: 3,
+          median_await_seconds: 2700,
+          post_hours_delayed: 8.5,
+          resumed_count: 12,
+        },
+      })
+      const wrapper = mountComponent()
+      await flushPromises()
+      const html = wrapper.html()
+      expect(html).toContain('45 min') // 2700s formatted
+      expect(html).toContain('8.5') // post_hours_delayed.toFixed(1)
+      expect(html).toContain('12') // resumed_count
+      wrapper.unmount()
+    })
+
+    it('exposes reviewDelay via vm', async () => {
+      mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+      const payload = {
+        review_delay: {
+          awaiting_count: 2,
+          median_await_seconds: 0,
+          post_hours_delayed: 1.0,
+          resumed_count: 5,
+        },
+      }
+      mockFetchMetrics.mockResolvedValueOnce(payload)
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.vm.reviewDelay).toEqual(payload.review_delay)
+      wrapper.unmount()
+    })
+  })
+
   it('draws the reliability bullseye: a ring per drive-time band, empty rings greyed', async () => {
     mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
     const wrapper = mountComponent()

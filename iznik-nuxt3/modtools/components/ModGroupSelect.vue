@@ -141,6 +141,13 @@ const props = defineProps({
     required: false,
     default: false,
   },
+  // Only these communities are offered (null offers them all). A remembered choice that is
+  // not among them falls back to all, as for any choice that is not offered.
+  onlyGroupids: {
+    type: Array,
+    required: false,
+    default: null,
+  },
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -179,6 +186,11 @@ const groups = computed(() => {
   }
 
   ret = ret || []
+
+  if (props.onlyGroupids) {
+    ret = ret.filter((g) => props.onlyGroupids.includes(g.id))
+  }
+
   return ret
 })
 

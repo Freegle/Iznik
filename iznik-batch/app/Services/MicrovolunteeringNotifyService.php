@@ -2,6 +2,9 @@
 
 namespace App\Services;
 
+use App\Services\AutoApproveCleanService;
+use App\Services\Automod\AutomodMode;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -21,6 +24,7 @@ class MicrovolunteeringNotifyService
 {
     private const NOTIFICATION_TYPE = 'Exhort';
     private const NOTIFICATION_TITLE = 'Could you review this message to help us keep the site safe?';
+    private const SELF_PUBLISHING_TITLE = 'Could you check this post before it goes live?';
     private const MAX_PER_USER = 3;
     private const CANDIDATES_PER_MESSAGE = 10;
     // Only mark-seen notifications from the recent window. There are ~2.5M unseen
@@ -82,11 +86,17 @@ class MicrovolunteeringNotifyService
         // production: 17.03s for the joined form against 1.00s for this one, over 6,209
         // distinct message ids in 7 chunked lookups, returning a result set identical row
         // for row (23,926 rows both ways).
+        // keep-raw: correlated NOT EXISTS over the most-recent outcome, which the builder cannot render.
         $msgs = DB::select("
-            SELECT messages.id, messages.fromuser, messages_groups.groupid, messages.subject, messages_groups.collection
+            SELECT messages.id, messages.fromuser, messages_groups.groupid, messages.subject, messages_groups.collection,
+                   messages_groups.arrival, poster.ourPostingStatus AS posterstatus,
+                   ma.verdict AS automodverdict, ma.created AS automodcreated,
+                   messages.editedat AS editedat, messages_groups.contentcheck_checked_at AS checkedat
             FROM messages
             INNER JOIN messages_groups ON messages.id = messages_groups.msgid
             INNER JOIN `groups` ON messages_groups.groupid = groups.id
+            LEFT JOIN memberships poster ON poster.userid = messages.fromuser AND poster.groupid = messages_groups.groupid
+            LEFT JOIN messages_automod ma ON ma.msgid = messages.id AND ma.groupid = messages_groups.groupid
             WHERE messages_groups.arrival > DATE_SUB(NOW(), INTERVAL 1 DAY)
               AND messages.deleted IS NULL
               -- A hold is per-group. Every other predicate here is already
@@ -119,6 +129,21 @@ class MicrovolunteeringNotifyService
         $msgs = $this->withoutMessagesNotifiedToday($msgs);
 
         $stats['messages_considered'] = count($msgs);
+
+        // Posts that will publish by themselves come first: a human look matters most
+        // while the auto-approve wait is still running. Each carries the minutes left.
+        $minutesLeft = [];
+        foreach ($msgs as $msg) {
+            $left = $this->minutesUntilSelfPublish($msg);
+            if ($left !== null) {
+                $minutesLeft[$msg->id] = $left;
+            }
+        }
+        usort($msgs, function ($a, $b) use ($minutesLeft) {
+            $la = $minutesLeft[$a->id] ?? PHP_INT_MAX;
+            $lb = $minutesLeft[$b->id] ?? PHP_INT_MAX;
+            return $la <=> $lb ?: $a->id <=> $b->id;
+        });
 
         // Users who have already recorded a CheckMessage microaction for a message
         // must never be re-notified about it. Without this, a rippling post - whose
@@ -170,8 +195,11 @@ class MicrovolunteeringNotifyService
                         'type'       => self::NOTIFICATION_TYPE,
                         'newsfeedid' => null,
                         'url'        => $url,
-                        'title'      => self::NOTIFICATION_TITLE,
-                        'text'       => 'Click here to review: ' . $msg->subject,
+                        'title'      => isset($minutesLeft[$msg->id]) ? self::SELF_PUBLISHING_TITLE : self::NOTIFICATION_TITLE,
+                        'text'       => isset($minutesLeft[$msg->id])
+                            ? 'This post could go live in about ' . $minutesLeft[$msg->id] . ' minute' . ($minutesLeft[$msg->id] === 1 ? '' : 's')
+                                . ' unless someone spots a problem. Click here to review: ' . $msg->subject
+                            : 'Click here to review: ' . $msg->subject,
                     ]);
                 }
 
@@ -181,6 +209,41 @@ class MicrovolunteeringNotifyService
         }
 
         return $stats;
+    }
+
+    /**
+     * Minutes until a pending post publishes by itself, or null when it will not: only a
+     * post from a member with no posting status, on an approve-mode community, that
+     * automated review has approved (a current decision: later than any edit and than the
+     * latest content check) is on that path. A post the review held, or has not decided yet,
+     * waits for a moderator and gets the ordinary wording. The wait runs from the later of
+     * arrival and the decision, as AutoApproveCleanService counts it; the quality sample is
+     * not checked here, hence "could go live". Never below one minute.
+     */
+    private function minutesUntilSelfPublish(object $msg): ?int
+    {
+        if (($msg->collection ?? null) !== 'Pending' || ($msg->posterstatus ?? null) !== null) {
+            return null;
+        }
+
+        if (!AutomodMode::isApproveMode((int) $msg->groupid)) {
+            return null;
+        }
+
+        if (($msg->automodverdict ?? null) !== 'approve' || empty($msg->automodcreated)) {
+            return null;
+        }
+
+        $decided = Carbon::parse($msg->automodcreated);
+        if ((!empty($msg->editedat) && Carbon::parse($msg->editedat)->gt($decided))
+            || (!empty($msg->checkedat) && Carbon::parse($msg->checkedat)->gt($decided))) {
+            return null;
+        }
+
+        $from = Carbon::parse($msg->arrival)->max($decided);
+        $sinceFrom = max(0, (int) floor(now()->diffInMinutes($from, true)));
+
+        return max(1, app(AutoApproveCleanService::class)->delayMinutes() - $sinceFrom);
     }
 
     /**

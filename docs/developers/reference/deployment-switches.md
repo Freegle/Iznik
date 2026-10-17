@@ -17,7 +17,15 @@ covers:
   - iznik-batch/database/migrations/2026_09_06_000001_add_agreement_columns_to_messages_promises.php
   - iznik-server-go/message/messageOutcome.go
   - iznik-server-go/test/message_agreement_test.go
+  - iznik-server-go/utils/autoapprovetrial.go
+  - iznik-server-go/utils/envsetting.go
   - iznik-nuxt3/eslint.config.mjs
+  - .env.background.example
+  - iznik-batch/app/Support/EnvSetting.php
+  - iznik-batch/app/Services/Automod/AutomodService.php
+  - iznik-batch/app/Console/Commands/Monitor/AutomodHealthCommand.php
+  - automod/src/backend.js
+  - automod/src/server.js
 ---
 
 # Deployment switches
@@ -54,6 +62,17 @@ variables like every other Freegle setting.
 | `mail.relay_queue.max_rows` | `FREEGLE_MAIL_RELAY_QUEUE_MAX_ROWS` | `500` | Most rows kept. An estate-wide episode names thousands of domains; the worst are kept and the rest dropped. |
 | `schedule.profile` | `FREEGLE_SCHEDULE_PROFILE` | `full` | `overlay-only` runs nothing from `routes/console.php` except what the overlay file below schedules. Any other value behaves as `full`, so a typo can never quietly stop the schedule. |
 | `schedule.overlay` | `FREEGLE_SCHEDULE_OVERLAY` | `routes/console.deployment.php` | A schedule file loaded **if it exists** (relative to the app root, or absolute). Freegle ships none. A deployment puts its own jobs there. |
+| `autoapprove.enabled`, `autoapprove.trial_group_ids` | `FREEGLE_AUTOAPPROVE_ENABLED`, `FREEGLE_AUTOAPPROVE_TRIAL_GROUPS` | `false`, empty | The approve-mode communities: the comma-separated list, or every community when the switch is on. There a post automated review approves publishes itself after the wait (`messages:auto-approve-clean`). **These two and the shadow list are fixed when each container is created, by both the Go API (the countdown, the Check queue, what moderators see) and the batch container (what actually publishes). Change them in both environments and recreate both together** (`docker compose up -d <service>`; a plain restart keeps the old environment); one recreated without the other shows a countdown the cron never honours, or publishes posts no countdown announced. See [../../moderators/post-moderation.md](../../moderators/post-moderation.md). |
+| `automod.shadow_group_ids` | `FREEGLE_AUTOMOD_SHADOW_GROUPS` | empty | Comma-separated community ids where automated review runs every minute (`messages:automod`) and records its decision without acting on it. Shadow wins: a community in this list stays shadow even when it is also in the approve list or `FREEGLE_AUTOAPPROVE_ENABLED` is on, so the global switch can never silently promote a community still being watched (`AutomodMode`). Neither list set, the command does nothing. |
+| `automod.url` | `AUTOMOD_URL` | `http://automod:8090` | The internal automated review service. Unreachable, every review is recorded as unavailable and the post waits for a moderator, so nothing publishes by default. `monitor:automod-health` (every 15 minutes) fails, and so reaches Sentry, when a post has waited behind an unavailable review for a quarter of an hour or through three tries, or an approve-mode post is past the delay with no decision at all. |
+| `automod.timeout` | `AUTOMOD_TIMEOUT` | `60` | Seconds to wait for one decision; blank, zero or anything that is not a positive whole number means 60. One call answers every question about a post, and the frontier model takes 10 to 20 seconds. The service is told to stop two seconds before this (`deadline_ms`) and answers with a hold and the reason. A review that still does not come back in time is recorded as unavailable, which leaves the post waiting for a moderator, and is tried again after five minutes. A service that says it is busy (503) is different: nothing is written and the post is tried again on the next run. A run of `messages:automod` stops taking posts when its time budget is spent (`RUN_BUDGET_SECONDS`, 40 seconds) or after three reviews in a row get no answer (`MAX_CONSECUTIVE_FAILURES`), and the next minute carries on, so a slow model builds a visible backlog (the per-run Loki line's `candidates_waiting`) rather than overlapping runs. |
+| `autoapprove.delay_minutes`, `autoapprove.danger_log_days` | `FREEGLE_AUTOAPPROVE_DELAY_MINUTES`, `FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS` | `20`, `90` | Blank or zero means the default, because docker-compose passes an unset variable as an empty string. The wait runs from the later of the post's arrival and its decision, so a decision that lands late still gives moderators the full window. |
+| `autoapprove.max_per_run` | `FREEGLE_AUTOAPPROVE_MAX_PER_RUN` | `20` | The most posts one run of `messages:auto-approve-clean` publishes. When many fall due at once (a community moving from shadow to approve, an outage ending) they go out over several minutes instead of all together. Blank or zero means 20. |
+| `autoapprove.quality_check_percent` | `FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT` | `0` | Share of approved posts held back in Pending for a moderator's verdict, decided (and stamped on the copy) the moment automated review records the approve, so the card can say so. The 48-hour sweep remains the backstop for a sample nobody looks at. |
+| `ripple.earned_reach_enabled` | `RIPPLE_EARNED_REACH_ENABLED` | `false` | The earned-reach gate on rippling (hold, then spread earned by clean exposure; [rippling-algorithm.md](rippling-algorithm.md) §5). It applies only to a post on an approve-mode community that published itself, so outside the trial it changes nothing even when on. |
+| `ripple.autoapprove_hold_seconds` | `RIPPLE_AUTOAPPROVE_HOLD_SECONDS` | `3600` | With the gate on, how old a post that published itself must be before it may start rippling. A moderator's approve or check lifts the hold. `0` turns the hold off. Leave the variable unset to get the default. |
+| `ripple.clean_views_per_group` | `RIPPLE_CLEAN_VIEWS_PER_GROUP` | `5` | With the gate on, how many different members other than the poster must have seen a post that published itself, with nobody flagging it, for each community it would then be on. A member's report to the moderators, or a microvolunteer's Reject, pauses further spread until a moderator looks. `0` turns the cap off. Leave the variable unset to get the default. |
+| `ripple.rippled_in_pending_hours` | `RIPPLE_RIPPLED_IN_PENDING_HOURS` | `0` | Hours a rippled-in copy, already approved on its origin community, waits in the receiving community's Pending queue before it is approved there. `0` approves it the moment it ripples in. The ModTools countdown on such a copy reads the same figure (`iznik-server-go/message/autoapproveat.go`), so set it in the Go environment too. |
 | `cookieyes.enabled` | `COOKIEYES_ENABLED` | `true` | Off, the weekly `cookieyes:check` is not scheduled. For a deployment with no CookieYes account, which would otherwise fail and email every week. See [cookieyes-watchdog.md](cookieyes-watchdog.md). |
 | `image_store.enabled` | `IMAGE_STORE_ENABLED` | `false` | On, `images:push-spool` runs every minute, moving completed tusd uploads from the local spool to the `images` S3 disk. Off, uploads stay in the spool and are served from there, which is how a deployment without a bucket runs. Turn on only after `images:object-store-check` passes; see [the runbook](../../ops/runbooks/images-to-object-storage.md). |
 | `backup.drain.enabled` | `BACKUP_DRAIN_ENABLED` | `false` | Holds batch work off while the nightly database backup runs. Off ships as a no-op. See below. |
@@ -78,6 +97,46 @@ and a switch that is on by default into off, with no error anywhere. Anything th
 blank comes back exactly as `env()` gives it, so `false` is still false and `0` is still `0`.
 `BlankEnvMeansDefaultTest` loads the file with every variable it names removed, then with every
 one blank, and fails if the two results differ, so a new bare `env()` read cannot slip in.
+
+### How the post-moderation settings are read
+
+The batch reads the post-moderation switches, group lists and numbers above through
+`App\Support\EnvSetting`, and the Go API applies the same rule
+(`iznik-server-go/utils/envsetting.go`, tested against the same cases), so the cron and the
+countdown cannot disagree about a community. A switch is on only for `true` or `1`, in any
+case: `yes`, `on`, `off` and `no` are all off, so a word that merely looks like a value cannot
+turn on something that publishes posts. The earned-reach gate is read the same way. A number is
+a positive whole number or the default; blank, zero, negative, fractional and non-numeric all
+mean the default. A group list keeps only plain-digit ids, so `12abc` is not community 12. The
+two earned-reach numbers (`RIPPLE_AUTOAPPROVE_HOLD_SECONDS` and `RIPPLE_CLEAN_VIEWS_PER_GROUP`)
+are counts where `0` is a real setting (hold off, cap off): blank or unset means the default,
+and only an explicit `0` turns them off.
+
+### The automated review service's own settings
+
+The `automod` service (`automod/`, a Node container) is not Laravel, so these are not
+`config('freegle.*')` settings. It reads them from its own environment, which docker-compose
+fills for the `automod` service, and a value is fixed when the container is created: change
+one, then recreate the container (a plain restart keeps the old environment). The Anthropic key
+or subscription token is read the same way (`ANTHROPIC_API_KEY`, else
+`CLAUDE_CODE_OAUTH_TOKEN`; see [external-services.md](external-services.md)). Blank means the
+default.
+
+| Env var | Default | What it changes |
+|---|---|---|
+| `AUTOMOD_BACKEND` | `claude` | Which backend answers a question when neither the request nor the chart node names one. `claude` is the frontier model, through the API when `ANTHROPIC_API_KEY` is set and otherwise through the `claude` CLI on `CLAUDE_CODE_OAUTH_TOKEN`. The others are `nli` (the local model), `jev` (TypeSafe's) and `fake` (deterministic, for tests and local runs). No chart node names a backend today, so this chooses for all of them. |
+| `AUTOMOD_CLAUDE_MODEL` | `claude-opus-5-5` | The model the API backend asks for. docker-compose supplies this default; the service on its own falls back to `claude-opus-5`. The model that answered each step is stored with it and shown by Why? in ModTools. |
+| `AUTOMOD_CLAUDE_EFFORT` | `medium` | The effort the API backend asks the model to put in (`output_config.effort`). The CLI backend does not use it. |
+| `AUTOMOD_CLAUDE_CLI_MODEL` | `opus` | The model alias the CLI backend asks for. The model the CLI reports having used is what gets recorded, not the alias. |
+| `AUTOMOD_CLAUDE_BIN` | `claude` | The CLI binary the CLI backend runs. |
+| `AUTOMOD_CONCURRENCY` | `2` | Reviews the service runs at once. |
+| `AUTOMOD_QUEUE_MAX` | `10` | Reviews that may wait for a free slot. Past that the service answers 503, which the batch treats as busy: nothing is written and the post is tried again on the next run. `0` means none wait. |
+| `AUTOMOD_UNHEALTHY_AFTER` | `20` | Reviews in a row the backend can fail to answer before `/health` answers 503 and the container reports unhealthy. The last error and the time of the last success are in `/health`. |
+| `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, `AUTOMOD_JEV_MODEL` | empty, `https://api.typesafe.ai`, `jev-latest` | TypeSafe's Jev backend, a comparison backend for `automod/src/evaluate.js` that makes live decisions only if `AUTOMOD_BACKEND` names it. The base URL points it at a compatible server. |
+
+docker-compose passes the container every name above except `AUTOMOD_CLAUDE_EFFORT`,
+`AUTOMOD_CLAUDE_BIN` and `AUTOMOD_JEV_MODEL`. The service reads those three but nothing sets
+them yet, so to use one, name it in the `automod` service's `environment` first.
 
 ### The backup drain
 

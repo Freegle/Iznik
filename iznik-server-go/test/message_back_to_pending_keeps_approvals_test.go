@@ -238,3 +238,36 @@ func TestReportQuorumPullsHandApprovedCopies(t *testing.T) {
 	assert.Equal(t, "Pending", approvalOf(f.msgID, f.home).Collection)
 	assert.Equal(t, "Pending", approvalOf(f.msgID, f.recv).Collection)
 }
+
+// A self-published copy a moderator marked checked in the Check queue (checkedby set) has
+// been reviewed by hand, so a receiving community's Back to pending keeps it live, like an
+// approval. Two microvolunteers' approvals stamp checkedat alone, and that is not a review:
+// such a copy is pulled back.
+func TestReceivingBackToPendingKeepsCheckedHomeCopy(t *testing.T) {
+	f := newHomeLockFixture(t, "keep_checked")
+	volunteers := addModCommunity(t, "keep_checked_vol")
+	addCopy(f.msgID, volunteers.gid, 1)
+	addExpandingReach(t, f.msgID)
+	db := database.DBConn
+
+	// The home copy published by itself and the home moderator checked it.
+	db.Exec("UPDATE messages_groups SET approvedby = NULL, checkedat = NOW(), checkedby = ? WHERE msgid = ? AND groupid = ?", f.modHome, f.msgID, f.home)
+	// A further copy only microvolunteers looked at.
+	db.Exec("UPDATE messages_groups SET checkedat = NOW(), checkedby = NULL WHERE msgid = ? AND groupid = ?", f.msgID, volunteers.gid)
+
+	status, body := postModAction(t, f.tokRecv, f.msgID, "BackToPending", f.recv)
+	require.Equal(t, 200, status, body)
+
+	home := approvalOf(f.msgID, f.home)
+	assert.Equal(t, "Approved", home.Collection, "the home copy a home moderator checked stays live")
+	assert.Equal(t, 0, home.NeedsModerator, "nobody is asked to review it again")
+	assert.Nil(t, home.Heldby)
+	assert.Equal(t, int64(0), logCount(f.msgID, f.home, "Hold"), "the home community gets no Hold log")
+
+	vol := approvalOf(f.msgID, volunteers.gid)
+	assert.Equal(t, "Pending", vol.Collection, "a copy only microvolunteers checked goes back")
+	assert.Equal(t, 1, vol.NeedsModerator)
+
+	own := approvalOf(f.msgID, f.recv)
+	assert.Equal(t, "Pending", own.Collection, "the acting moderator's own copy always goes back")
+}
