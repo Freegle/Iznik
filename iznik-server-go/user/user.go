@@ -3479,8 +3479,13 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	tx.Table("communityevents").Where("heldby = ?", id1).Update("heldby", id2)
 
 	// Bans: move id1's bans to id2, then delete memberships for groups id2 is now banned from.
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("userid = ?", id1).Update("userid", id2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("byuser = ?", id1).Update("byuser", id2)
+	// users_banned.date is ON UPDATE CURRENT_TIMESTAMP, so any UPDATE re-stamps it with the
+	// merge time unless the column is set explicitly. Merging a moderator's two accounts
+	// otherwise makes every ban they ever made look like a batch of new bans that second.
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("userid = ?", id1).
+		Updates(map[string]interface{}{"userid": id2, "date": gorm.Expr("`date`")})
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("byuser = ?", id1).
+		Updates(map[string]interface{}{"byuser": id2, "date": gorm.Expr("`date`")})
 
 	type MergeBanRow struct{ Groupid uint64 }
 	var mergeBans []MergeBanRow

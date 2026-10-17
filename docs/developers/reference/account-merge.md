@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-15
+last_reviewed: 2026-10-16
 owner: Freegle dev team
 covers:
   - iznik-server-go/user/merge.go
@@ -47,6 +47,9 @@ Everything runs in one transaction. In order:
    ratings, notifications, volunteering, events and so on. The list is in `MergeUsersTx`; the
    V1 comment there says how it was found.
 9. **Bans** move, and the kept account is removed from any community it is now banned from.
+   Both the bans on the discarded account and the bans it made as a moderator keep their
+   original dates; `users_banned.date` updates itself on any change, so the merge sets it
+   explicitly.
 10. **Gift Aid.** The most generous declaration is kept.
 11. **Two log rows** are written, type `User`, subtype `Merged`, text `Merged <discarded> into
     <kept>`, one against each account, with `byuser` set to whoever started the merge.

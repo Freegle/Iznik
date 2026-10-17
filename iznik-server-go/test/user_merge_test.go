@@ -413,6 +413,34 @@ func TestMergeBansHandled(t *testing.T) {
 	assert.Equal(t, int64(0), membCount, "id2's membership should be removed for banned group")
 }
 
+// users_banned.date updates itself on any change. A merge must move bans without re-stamping
+// them, on both sides: bans of the merged member, and bans the merged moderator made.
+func TestMergeKeepsBanDates(t *testing.T) {
+	prefix := uniquePrefix("merge_bandates")
+	db := database.DBConn
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	id1 := CreateTestUser(t, prefix+"_u1", "User")
+	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	other := CreateTestUser(t, prefix+"_other", "User")
+	groupID := CreateTestGroup(t, prefix)
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+	bannerID := CreateTestUser(t, prefix+"_banner", "Admin")
+
+	db.Exec("INSERT INTO users_banned (userid, groupid, byuser, date) VALUES (?, ?, ?, '2020-03-04 05:06:07')", id1, groupID, bannerID)
+	db.Exec("INSERT INTO users_banned (userid, groupid, byuser, date) VALUES (?, ?, ?, '2021-08-09 10:11:12')", other, group2ID, id1)
+
+	mergeUsers(t, adminToken, id1, id2)
+
+	var banned string
+	db.Raw("SELECT DATE_FORMAT(date, '%Y-%m-%d %H:%i:%s') FROM users_banned WHERE userid = ? AND groupid = ?", id2, groupID).Scan(&banned)
+	assert.Equal(t, "2020-03-04 05:06:07", banned, "the merged member's ban keeps its date")
+
+	var made string
+	db.Raw("SELECT DATE_FORMAT(date, '%Y-%m-%d %H:%i:%s') FROM users_banned WHERE userid = ? AND groupid = ? AND byuser = ?", other, group2ID, id2).Scan(&made)
+	assert.Equal(t, "2021-08-09 10:11:12", made, "a ban the merged moderator made keeps its date")
+}
+
 func TestMergeGiftaidBestPeriodKept(t *testing.T) {
 	prefix := uniquePrefix("merge_giftaid")
 	db := database.DBConn
