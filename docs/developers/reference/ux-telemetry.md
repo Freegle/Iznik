@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-14
+last_reviewed: 2026-10-15
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useFlowTelemetry.js
@@ -18,8 +18,7 @@ covers:
   - iznik-batch/app/Console/Commands/Ux/WeeklyReportCommand.php
   - iznik-batch/database/migrations/2026_10_12_000001_create_ux_telemetry_tables.php
   - iznik-server-go/ux/ux.go
-  - iznik-nuxt3/modtools/components/ModSysAdminUx.vue
-  - iznik-nuxt3/tests/e2e/test-modtools-sysadmin-ux.spec.js
+  - iznik-server-go/ux/rollups.go
 ---
 
 # UX telemetry
@@ -200,7 +199,29 @@ Schema in the migration above.
 ## 6. Read API
 
 All Support/Admin only, `start` and `end` as `YYYY-MM-DD` (default the last 7 days), and each
-also returns the same figures for the preceding period of equal length as `previous`.
+also returns the same figures for the preceding period of equal length as `previous`. The funnels
+answer gives that period's own dates as `previous.start` and `previous.end`, so a client prints them
+from the server and never works them out.
+
+Every one of the eight rollup reads takes `device` (`web`, `app`, `mobile`, `tablet`, `desktop`,
+`app-ios` or `app-android`) and `signed_in` (`1` or `0`), checked once against that list. A bad
+value is a 400. `web` is mobile, tablet and desktop, and `app` is the two apps. A row with no
+device recorded is counted under no device value, so it is in the figures only when no device is
+asked for. Only some tables can be cut, and every answer says what it did: `filters` holds what was
+applied (an empty string means not applied or not asked), and `ignored` lists the filters asked for
+that this read does not apply (always an array).
+
+| Read | Table | `device` | `signed_in` |
+|---|---|---|---|
+| `funnels` | `ux_flow_daily` | cut | cut |
+| `outcomes` | `ux_flow_outcome_daily` | cut | ignored |
+| `fields` | `ux_field_daily` | cut | ignored |
+| `friction` | `ux_component_daily` | cut | ignored |
+| `adoption`, `regret`, `search`, `health` | their own tables | ignored | ignored |
+
+`logged_in` in the rollup is the state when each event was sent, not when the visit began, so the
+outcomes (started, finished) cannot be cut by it: a signed-in rate of finished over started could pass
+100 percent. The cache key carries both filters (`serve()`). The code is `ux/filters.go`.
 
 | Route | Returns |
 |---|---|
@@ -216,9 +237,13 @@ also returns the same figures for the preceding period of equal length as `previ
 
 ## 7. Where to look
 
-The **UX** sub-tab of ModTools SysAdmin, with Data health first. `ux:weekly-report` mails the five
-largest week-on-week changes to `config('freegle.ux.report_to')` every Monday.
+The **UX** sub-tab of ModTools SysAdmin. It is a row of sections: Overview (the Data health row and
+one row for each funnel), Funnels (one funnel at a time) and Pages and features. What each shows, the
+address keys, the filters and how to read Biggest loss are on its own page. `ux:weekly-report` mails
+the five largest week-on-week changes to `config('freegle.ux.report_to')` every Monday, with a link
+that opens the tab.
 
-`tests/e2e/test-ux-telemetry.spec.js` holds the flows to the event contract in section 2, and
-`tests/e2e/test-modtools-sysadmin-ux.spec.js` checks that the tab loads every panel from the read
-API without an error.
+- [The SysAdmin UX tab](ux-sysadmin-tab.md): the sections, the address, the filters, Biggest loss.
+
+`tests/e2e/test-ux-telemetry.spec.js` holds the flows to the event contract in section 2. The browser
+test of the tab itself is described on the page above.

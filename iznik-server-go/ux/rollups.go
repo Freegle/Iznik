@@ -43,7 +43,11 @@ type FunnelFlow struct {
 	Steps []FunnelStep `json:"steps"`
 }
 
+// FlowsPeriod is the period before the one asked for. It carries its own dates so the tab prints
+// them from the server and never works them out itself.
 type FlowsPeriod struct {
+	Start string       `json:"start"`
+	End   string       `json:"end"`
 	Flows []FunnelFlow `json:"flows"`
 }
 
@@ -52,6 +56,7 @@ type FunnelsResponse struct {
 	End      string       `json:"end"`
 	Flows    []FunnelFlow `json:"flows"`
 	Previous FlowsPeriod  `json:"previous"`
+	Applied
 }
 
 type funnelRow struct {
@@ -90,9 +95,9 @@ var breakdownDims = []struct {
 	{"variant", "variant"},
 }
 
-func funnelFlows(p period, flow string, withBreakdown bool) ([]FunnelFlow, error) {
+func funnelFlows(p period, s scope, withBreakdown bool) ([]FunnelFlow, error) {
 	var rows []funnelRow
-	err := rangeQuery("ux_flow_daily", p, flow).
+	err := rangeQuery("ux_flow_daily", p, s).
 		Select("flow, step, " +
 			"CAST(SUM(entered) AS SIGNED) AS entered, CAST(SUM(reentered) AS SIGNED) AS reentered, " +
 			"CAST(SUM(completed) AS SIGNED) AS completed, CAST(SUM(backed) AS SIGNED) AS backed, " +
@@ -123,7 +128,7 @@ func funnelFlows(p period, flow string, withBreakdown bool) ([]FunnelFlow, error
 	if withBreakdown {
 		for _, dim := range breakdownDims {
 			var brows []breakdownRow
-			err := rangeQuery("ux_flow_daily", p, flow).
+			err := rangeQuery("ux_flow_daily", p, s).
 				Select("flow, step, " + dim.expr + " AS k, " +
 					"CAST(SUM(entered) AS SIGNED) AS entered, CAST(SUM(reentered) AS SIGNED) AS reentered, " +
 					"CAST(SUM(completed) AS SIGNED) AS completed, CAST(SUM(abandoned) AS SIGNED) AS abandoned").
@@ -185,15 +190,19 @@ func funnelFlows(p period, flow string, withBreakdown bool) ([]FunnelFlow, error
 
 // Funnels serves GET /modtools/ux/funnels.
 var Funnels = serve("funnels", func(r request) (interface{}, error) {
-	cur, err := funnelFlows(r.cur, r.flow, true)
+	cur, err := funnelFlows(r.cur, r.scope(), true)
 	if err != nil {
 		return nil, err
 	}
-	prev, err := funnelFlows(r.prev, r.flow, false)
+	prev, err := funnelFlows(r.prev, r.scope(), false)
 	if err != nil {
 		return nil, err
 	}
-	return FunnelsResponse{Start: r.cur.startStr(), End: r.cur.endStr(), Flows: cur, Previous: FlowsPeriod{Flows: prev}}, nil
+	return FunnelsResponse{
+		Start: r.cur.startStr(), End: r.cur.endStr(), Flows: cur,
+		Previous: FlowsPeriod{Start: r.prev.startStr(), End: r.prev.endStr(), Flows: prev},
+		Applied:  r.filter.applied("ux_flow_daily"),
+	}, nil
 })
 
 // ---- outcomes ----
@@ -219,11 +228,12 @@ type OutcomesResponse struct {
 	End      string         `json:"end"`
 	Flows    []OutcomeFlow  `json:"flows"`
 	Previous OutcomesPeriod `json:"previous"`
+	Applied
 }
 
-func outcomeFlows(p period, flow string) ([]OutcomeFlow, error) {
+func outcomeFlows(p period, s scope) ([]OutcomeFlow, error) {
 	rows := []OutcomeFlow{}
-	err := rangeQuery("ux_flow_outcome_daily", p, flow).
+	err := rangeQuery("ux_flow_outcome_daily", p, s).
 		Select("flow, " +
 			"CAST(SUM(started) AS SIGNED) AS started, CAST(SUM(submitted) AS SIGNED) AS submitted, " +
 			"CAST(SUM(submit_ok) AS SIGNED) AS submit_ok, CAST(SUM(submit_failed) AS SIGNED) AS submit_failed, " +
@@ -235,15 +245,18 @@ func outcomeFlows(p period, flow string) ([]OutcomeFlow, error) {
 
 // Outcomes serves GET /modtools/ux/outcomes.
 var Outcomes = serve("outcomes", func(r request) (interface{}, error) {
-	cur, err := outcomeFlows(r.cur, r.flow)
+	cur, err := outcomeFlows(r.cur, r.scope())
 	if err != nil {
 		return nil, err
 	}
-	prev, err := outcomeFlows(r.prev, r.flow)
+	prev, err := outcomeFlows(r.prev, r.scope())
 	if err != nil {
 		return nil, err
 	}
-	return OutcomesResponse{Start: r.cur.startStr(), End: r.cur.endStr(), Flows: cur, Previous: OutcomesPeriod{Flows: prev}}, nil
+	return OutcomesResponse{
+		Start: r.cur.startStr(), End: r.cur.endStr(), Flows: cur, Previous: OutcomesPeriod{Flows: prev},
+		Applied: r.filter.applied("ux_flow_outcome_daily"),
+	}, nil
 })
 
 // ---- fields ----
@@ -266,11 +279,12 @@ type FieldsResponse struct {
 	End      string       `json:"end"`
 	Fields   []FieldRow   `json:"fields"`
 	Previous FieldsPeriod `json:"previous"`
+	Applied
 }
 
-func fieldRows(p period, flow string) ([]FieldRow, error) {
+func fieldRows(p period, s scope) ([]FieldRow, error) {
 	rows := []FieldRow{}
-	err := rangeQuery("ux_field_daily", p, flow).
+	err := rangeQuery("ux_field_daily", p, s).
 		Select("flow, step, field, " +
 			"CAST(SUM(revisits) AS SIGNED) AS revisits, CAST(SUM(validation_failures) AS SIGNED) AS validation_failures, " +
 			"CAST(SUM(choice_switches) AS SIGNED) AS choice_switches").
@@ -282,15 +296,18 @@ func fieldRows(p period, flow string) ([]FieldRow, error) {
 
 // Fields serves GET /modtools/ux/fields.
 var Fields = serve("fields", func(r request) (interface{}, error) {
-	cur, err := fieldRows(r.cur, r.flow)
+	cur, err := fieldRows(r.cur, r.scope())
 	if err != nil {
 		return nil, err
 	}
-	prev, err := fieldRows(r.prev, r.flow)
+	prev, err := fieldRows(r.prev, r.scope())
 	if err != nil {
 		return nil, err
 	}
-	return FieldsResponse{Start: r.cur.startStr(), End: r.cur.endStr(), Fields: cur, Previous: FieldsPeriod{Fields: prev}}, nil
+	return FieldsResponse{
+		Start: r.cur.startStr(), End: r.cur.endStr(), Fields: cur, Previous: FieldsPeriod{Fields: prev},
+		Applied: r.filter.applied("ux_field_daily"),
+	}, nil
 })
 
 // ---- friction ----
@@ -319,6 +336,7 @@ type FrictionResponse struct {
 	Start      string        `json:"start"`
 	End        string        `json:"end"`
 	Components []FrictionRow `json:"components"`
+	Applied
 }
 
 type frictionDB struct {
@@ -331,9 +349,9 @@ type frictionDB struct {
 	RepeatedIntent int64  `gorm:"column:repeated_intent"`
 }
 
-func frictionRows(p period) (map[[2]string]frictionDB, error) {
+func frictionRows(p period, s scope) (map[[2]string]frictionDB, error) {
 	var rows []frictionDB
-	err := rangeQuery("ux_component_daily", p, "").
+	err := rangeQuery("ux_component_daily", p, s).
 		Select("page, component, " +
 			"CAST(SUM(impressions) AS SIGNED) AS impressions, CAST(SUM(clicks) AS SIGNED) AS clicks, " +
 			"CAST(SUM(dead_clicks) AS SIGNED) AS dead_clicks, CAST(SUM(rage_clicks) AS SIGNED) AS rage_clicks, " +
@@ -356,13 +374,14 @@ func frictionRatio(r frictionDB) float64 {
 	return float64(r.RageClicks+r.DeadClicks+r.RepeatedIntent) / float64(clicks)
 }
 
-// Friction serves GET /modtools/ux/friction: the components whose trouble grew most.
+// Friction serves GET /modtools/ux/friction: the components whose trouble grew most. The top 20 is
+// worked out from the rows the filter leaves.
 var Friction = serve("friction", func(r request) (interface{}, error) {
-	cur, err := frictionRows(r.cur)
+	cur, err := frictionRows(r.cur, r.filterOnly())
 	if err != nil {
 		return nil, err
 	}
-	prev, err := frictionRows(r.prev)
+	prev, err := frictionRows(r.prev, r.filterOnly())
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +409,7 @@ var Friction = serve("friction", func(r request) (interface{}, error) {
 	if len(out) > frictionTop {
 		out = out[:frictionTop]
 	}
-	return FrictionResponse{Start: r.cur.startStr(), End: r.cur.endStr(), Components: out}, nil
+	return FrictionResponse{Start: r.cur.startStr(), End: r.cur.endStr(), Components: out, Applied: r.filter.applied("ux_component_daily")}, nil
 })
 
 // ---- adoption ----
@@ -408,6 +427,7 @@ type AdoptionResponse struct {
 	Start    string        `json:"start"`
 	End      string        `json:"end"`
 	Features []AdoptionRow `json:"features"`
+	Applied
 }
 
 type adoptionDB struct {
@@ -426,7 +446,7 @@ func (a adoptionDB) share() float64 {
 
 func adoptionRows(p period) ([]adoptionDB, error) {
 	var rows []adoptionDB
-	err := rangeQuery("ux_feature_adoption_daily", p, "").
+	err := rangeQuery("ux_feature_adoption_daily", p, scope{}).
 		Select("feature, CAST(SUM(active_users) AS SIGNED) AS active_users, " +
 			"CAST(SUM(using_users) AS SIGNED) AS using_users, CAST(SUM(sessions_using) AS SIGNED) AS sessions_using").
 		Group("feature").Order("feature").Scan(&rows).Error
@@ -453,7 +473,7 @@ var Adoption = serve("adoption", func(r request) (interface{}, error) {
 		out = append(out, AdoptionRow{Feature: c.Feature, ActiveUsers: c.ActiveUsers, UsingUsers: c.UsingUsers,
 			SessionsUsing: c.SessionsUsing, Share: c.share(), PreviousShare: prevShare[c.Feature]})
 	}
-	return AdoptionResponse{Start: r.cur.startStr(), End: r.cur.endStr(), Features: out}, nil
+	return AdoptionResponse{Start: r.cur.startStr(), End: r.cur.endStr(), Features: out, Applied: r.filter.applied("ux_feature_adoption_daily")}, nil
 })
 
 // ---- regret ----
@@ -475,6 +495,7 @@ type RegretResponse struct {
 	Start   string         `json:"start"`
 	End     string         `json:"end"`
 	Signals []RegretSignal `json:"signals"`
+	Applied
 }
 
 type regretDB struct {
@@ -485,7 +506,7 @@ type regretDB struct {
 // Regret serves GET /modtools/ux/regret.
 var Regret = serve("regret", func(r request) (interface{}, error) {
 	var rows []regretDB
-	if err := rangeQuery("ux_regret_daily", r.cur, "").
+	if err := rangeQuery("ux_regret_daily", r.cur, scope{}).
 		Select("`signal` AS sig, DATE_FORMAT(`date`, '%Y-%m-%d') AS d, `count` AS cnt, base").
 		Order("`signal`, `date`").Scan(&rows).Error; err != nil {
 		return nil, err
@@ -494,7 +515,7 @@ var Regret = serve("regret", func(r request) (interface{}, error) {
 		Sig   string `gorm:"column:sig"`
 		Total int64  `gorm:"column:total"`
 	}
-	if err := rangeQuery("ux_regret_daily", r.prev, "").
+	if err := rangeQuery("ux_regret_daily", r.prev, scope{}).
 		Select("`signal` AS sig, CAST(SUM(`count`) AS SIGNED) AS total").
 		Group("`signal`").Scan(&prevRows).Error; err != nil {
 		return nil, err
@@ -513,7 +534,7 @@ var Regret = serve("regret", func(r request) (interface{}, error) {
 		s.Days = append(s.Days, row.RegretDay)
 		s.Total += row.Count
 	}
-	return RegretResponse{Start: r.cur.startStr(), End: r.cur.endStr(), Signals: out}, nil
+	return RegretResponse{Start: r.cur.startStr(), End: r.cur.endStr(), Signals: out, Applied: r.filter.applied("ux_regret_daily")}, nil
 })
 
 // ---- search ----
@@ -531,17 +552,18 @@ type SearchResponse struct {
 	Start string      `json:"start"`
 	End   string      `json:"end"`
 	Days  []SearchDay `json:"days"`
+	Applied
 }
 
 // Search serves GET /modtools/ux/search.
 var Search = serve("search", func(r request) (interface{}, error) {
 	days := []SearchDay{}
-	if err := rangeQuery("ux_search_daily", r.cur, "").
+	if err := rangeQuery("ux_search_daily", r.cur, scope{}).
 		Select("DATE_FORMAT(`date`, '%Y-%m-%d') AS d, searches, zero_result, re_searched_60s, browse_sessions, browse_scrolled_out").
 		Order("`date`").Scan(&days).Error; err != nil {
 		return nil, err
 	}
-	return SearchResponse{Start: r.cur.startStr(), End: r.cur.endStr(), Days: days}, nil
+	return SearchResponse{Start: r.cur.startStr(), End: r.cur.endStr(), Days: days, Applied: r.filter.applied("ux_search_daily")}, nil
 })
 
 // ---- health ----
@@ -564,6 +586,7 @@ type HealthResponse struct {
 	Start   string         `json:"start"`
 	End     string         `json:"end"`
 	Metrics []HealthMetric `json:"metrics"`
+	Applied
 }
 
 // Observed against expected within this band is healthy; outside it the telemetry for that metric
@@ -582,7 +605,7 @@ var Health = serve("health", func(r request) (interface{}, error) {
 		Observed float64  `gorm:"column:observed"`
 		Ratio    *float64 `gorm:"column:ratio"`
 	}
-	if err := rangeQuery("ux_telemetry_health_daily", r.cur, "").
+	if err := rangeQuery("ux_telemetry_health_daily", r.cur, scope{}).
 		Select("metric, DATE_FORMAT(`date`, '%Y-%m-%d') AS d, expected, observed, ratio").
 		Order("metric, `date`").Scan(&rows).Error; err != nil {
 		return nil, err
@@ -600,5 +623,5 @@ var Health = serve("health", func(r request) (interface{}, error) {
 			m.Ok = false
 		}
 	}
-	return HealthResponse{Start: r.cur.startStr(), End: r.cur.endStr(), Metrics: out}, nil
+	return HealthResponse{Start: r.cur.startStr(), End: r.cur.endStr(), Metrics: out, Applied: r.filter.applied("ux_telemetry_health_daily")}, nil
 })

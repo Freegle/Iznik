@@ -76,6 +76,36 @@ describe('ModSysAdminUxSamples', () => {
       },
     })
 
+  describe('the title', () => {
+    const title = (props) =>
+      make(props).findComponent({ name: 'ModalStub' }).props('title')
+
+    it('names the funnel and the step in words, as the step detail it opened from does', () => {
+      expect(title({ flow: 'give', step: 'give-mobile-photos' })).toBe(
+        'Sample sessions: Offering something / Photos on 2026-10-07'
+      )
+    })
+
+    it('says which page where two pages share a name', () => {
+      expect(title({ flow: 'give', step: 'give-mobile-options' })).toBe(
+        'Sample sessions: Offering something / Options (mobile) on 2026-10-07'
+      )
+    })
+
+    it('prints a funnel or a step it does not know as it is', () => {
+      expect(title({ flow: 'newflow', step: 'odd-step' })).toBe(
+        'Sample sessions: newflow / odd-step on 2026-10-07'
+      )
+    })
+  })
+
+  it('says that sample sessions are not filtered by device or sign-in', () => {
+    store.samples.data = { sessions: [] }
+    expect(make().text()).toContain(
+      'Sample sessions are not filtered by device or sign-in.'
+    )
+  })
+
   it('lists every day of the period, latest first', () => {
     const select = make().findComponent({ name: 'SelectStub' })
     expect(select.props('options')).toEqual([

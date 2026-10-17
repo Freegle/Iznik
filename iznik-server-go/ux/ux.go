@@ -5,7 +5,9 @@ package ux
 
 import (
 	"fmt"
+	"math"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/auth"
@@ -38,7 +40,15 @@ func (p period) endStr() string   { return p.end.Format(dateFormat) }
 type request struct {
 	cur, prev period
 	flow      string
+	filter    flowFilter // parsed in serve(); a bad value was already a 400
 }
+
+// scope is what a handler passes to rangeQuery for a table that has a flow column and can be
+// filtered by device and sign-in.
+func (r request) scope() scope { return scope{flow: r.flow, filter: r.filter} }
+
+// filterOnly is the scope for friction, whose table has no flow column.
+func (r request) filterOnly() scope { return scope{filter: r.filter} }
 
 // requireSupport applies the Support/Admin gate the other sysadmin tabs use.
 func requireSupport(c *fiber.Ctx) error {
@@ -111,9 +121,16 @@ func serve(name string, build func(r request) (interface{}, error)) fiber.Handle
 		if err != nil {
 			return err
 		}
-		r := request{cur: cur, prev: prev, flow: flow}
+		filter, err := parseFilter(c)
+		if err != nil {
+			return err
+		}
+		r := request{cur: cur, prev: prev, flow: flow, filter: filter}
 
-		key := fmt.Sprintf("%s|%s|%s|%s", name, cur.startStr(), cur.endStr(), flow)
+		// The key carries every filter the request can send, including one this endpoint ignores:
+		// without them the first caller's answer would be served to everyone for ten minutes
+		// whatever they asked for. The echo in the answer (Applied) differs by what was asked.
+		key := fmt.Sprintf("%s|%s|%s|%s|%s|%s", name, cur.startStr(), cur.endStr(), flow, filter.device, filter.signedIn)
 		out, err := cached(key, func() (interface{}, bool, error) {
 			v, err := build(r)
 			return v, err == nil, err
@@ -125,13 +142,14 @@ func serve(name string, build func(r request) (interface{}, error)) fiber.Handle
 	}
 }
 
-// rangeQuery starts a query on a rollup table restricted to the period and, when given, one flow.
-func rangeQuery(table string, p period, flow string) *gorm.DB {
+// rangeQuery starts a query on a rollup table restricted to the period, then to s.flow when it is
+// set, then to the filters this table honours (flowFilter.apply).
+func rangeQuery(table string, p period, s scope) *gorm.DB {
 	q := database.DBConn.Table(table).Where("`date` BETWEEN ? AND ?", p.startStr(), p.endStr())
-	if flow != "" {
-		q = q.Where("flow = ?", flow)
+	if s.flow != "" {
+		q = q.Where("flow = ?", s.flow)
 	}
-	return q
+	return s.filter.apply(q, table)
 }
 
 // weighted is a SQL fragment: the mean of col weighted by w over the rows where col is not NULL.
@@ -141,4 +159,46 @@ func rangeQuery(table string, p period, flow string) *gorm.DB {
 // when they are similar sizes, which is what comparing a week with the week before needs.
 func weighted(col, w string) string {
 	return fmt.Sprintf("CAST(ROUND(SUM(CASE WHEN %[1]s IS NOT NULL THEN %[1]s * %[2]s END) / NULLIF(SUM(CASE WHEN %[1]s IS NOT NULL THEN %[2]s END), 0)) AS SIGNED)", col, w)
+}
+
+// knownFlows is the seven funnels members can be in. It matches FlowName in
+// iznik-nuxt3/composables/useFlowTelemetry.js, which is where a flow is named first.
+var knownFlows = map[string]bool{
+	"give":         true,
+	"ask":          true,
+	"reply":        true,
+	"login":        true,
+	"chat_promise": true,
+	"chat_outcome": true,
+	"settings":     true,
+}
+
+// timeFormat is how a stored time is written in a response: UTC, to the second, no zone.
+const timeFormat = "2006-01-02 15:04:05"
+
+// tstr formats a nullable time for a response. A missing time stays null.
+func tstr(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	s := t.UTC().Format(timeFormat)
+	return &s
+}
+
+// clip trims s and cuts it to at most n characters. It counts characters, not bytes, so a cut never
+// splits one.
+func clip(s string, n int) string {
+	r := []rune(strings.TrimSpace(s))
+	if len(r) > n {
+		return string(r[:n])
+	}
+	return string(r)
+}
+
+// share is part over whole to three places, 0 for an empty whole.
+func share(part, whole int64) float64 {
+	if whole <= 0 {
+		return 0
+	}
+	return math.Round(float64(part)/float64(whole)*1000) / 1000
 }

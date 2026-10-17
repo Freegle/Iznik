@@ -128,4 +128,173 @@ describe('ModEmailDateFilter', () => {
       expect(wrapper.emitted('fetch')).toHaveLength(1)
     })
   })
+
+  /**
+   * The UX tab reads one-row-a-day rollups, so it needs whole days that end yesterday and can never
+   * send a time of day. Without the new props the filter behaves as it always did.
+   */
+  describe('whole days, for the UX tab', () => {
+    const day = (offset) => {
+      const n = new Date()
+      return new Date(
+        Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate() + offset)
+      )
+        .toISOString()
+        .slice(0, 10)
+    }
+    const daysBetween = (a, b) => (new Date(b) - new Date(a)) / 86400000 + 1
+    const dailyPayload = (defaultPreset) => {
+      const wrapper = mount(ModEmailDateFilter, {
+        props: { defaultPreset, daily: true },
+      })
+      return wrapper.emitted('fetch')[0][0]
+    }
+    const optionValues = (wrapper) =>
+      wrapper.findAll('option').map((o) => o.element.value)
+
+    // The shared stubs leave out the input's type and the form's submit event, which these tests
+    // read, so this file's mounts use fuller ones.
+    const stubs = {
+      'b-form': {
+        template:
+          '<form @submit.prevent="$emit(\'submit\', $event)"><slot /></form>',
+        props: ['inline'],
+        // Declared, or the same submit also reaches the root form as a native listener.
+        emits: ['submit'],
+      },
+      'b-form-input': {
+        template:
+          '<input :type="type" :max="max" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+        props: ['modelValue', 'id', 'type', 'max'],
+      },
+    }
+
+    it('offers all six presets unless asked for fewer', () => {
+      expect(optionValues(mount(ModEmailDateFilter))).toEqual([
+        'hour',
+        'day',
+        '7days',
+        '30days',
+        '90days',
+        'custom',
+      ])
+    })
+
+    it('offers only the presets it is given', () => {
+      const wrapper = mount(ModEmailDateFilter, {
+        props: { presets: ['7days', '30days', '90days', 'custom'] },
+      })
+      expect(optionValues(wrapper)).toEqual([
+        '7days',
+        '30days',
+        '90days',
+        'custom',
+      ])
+      expect(wrapper.text()).not.toContain('Last hour')
+      expect(wrapper.text()).not.toContain('Last 24 hours')
+    })
+
+    it.each([
+      ['7days', 7],
+      ['30days', 30],
+      ['90days', 90],
+    ])('%s ends yesterday and is exactly %i whole days', (preset, n) => {
+      const p = dailyPayload(preset)
+      expect(p.end).toBe(day(-1))
+      expect(daysBetween(p.start, p.end)).toBe(n)
+      expect(p.start).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      expect(p.end).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    })
+
+    it('still ends today without the daily prop, as it always did', () => {
+      expect(fetchPayload('7days').end).toBe(day(0))
+    })
+
+    it('asks for dates, not a time of day, for custom dates', async () => {
+      const wrapper = mount(ModEmailDateFilter, {
+        props: { daily: true },
+        global: { stubs },
+      })
+      await wrapper.find('select.form-select').setValue('custom')
+      const inputs = wrapper.findAll('input')
+      expect(inputs).toHaveLength(2)
+      for (const input of inputs) {
+        expect(input.attributes('type')).toBe('date')
+        expect(input.attributes('max')).toBe(day(-1))
+      }
+    })
+
+    it('keeps date and time inputs for custom dates without the daily prop', async () => {
+      const wrapper = mount(ModEmailDateFilter, { global: { stubs } })
+      await wrapper.find('select.form-select').setValue('custom')
+      for (const input of wrapper.findAll('input')) {
+        expect(input.attributes('type')).toBe('datetime-local')
+        expect(input.attributes('max')).toBeUndefined()
+      }
+    })
+
+    it('starts on the range it was handed when the preset is custom', () => {
+      const wrapper = mount(ModEmailDateFilter, {
+        props: {
+          daily: true,
+          defaultPreset: 'custom',
+          defaultStart: '2026-09-01',
+          defaultEnd: '2026-09-30',
+        },
+      })
+      const events = wrapper.emitted('fetch')
+      expect(events).toHaveLength(1)
+      expect(events[0][0]).toMatchObject({
+        start: '2026-09-01',
+        end: '2026-09-30',
+        preset: 'custom',
+        lokiRange: null,
+      })
+    })
+
+    it('says nothing for custom dates until both are filled in', async () => {
+      const wrapper = mount(ModEmailDateFilter, {
+        props: { daily: true, defaultPreset: 'custom' },
+        global: { stubs },
+      })
+      expect(wrapper.emitted('fetch')).toBeUndefined()
+
+      const [from, to] = wrapper.findAll('input')
+      await from.setValue('2026-09-01')
+      await wrapper.find('form').trigger('submit')
+      expect(wrapper.emitted('fetch')).toBeUndefined()
+
+      await to.setValue('2026-09-07')
+      await wrapper.find('form').trigger('submit')
+      expect(wrapper.emitted('fetch')).toHaveLength(1)
+      expect(wrapper.emitted('fetch')[0][0]).toMatchObject({
+        start: '2026-09-01',
+        end: '2026-09-07',
+      })
+    })
+
+    it('refetches at once for a fixed preset', async () => {
+      const wrapper = mount(ModEmailDateFilter, { props: { daily: true } })
+      await wrapper.find('select.form-select').setValue('30days')
+      expect(wrapper.emitted('fetch')).toHaveLength(2)
+      expect(
+        daysBetween(
+          wrapper.emitted('fetch')[1][0].start,
+          wrapper.emitted('fetch')[1][0].end
+        )
+      ).toBe(30)
+    })
+
+    it('ignores a handed-in range when the preset is not custom', () => {
+      const wrapper = mount(ModEmailDateFilter, {
+        props: {
+          daily: true,
+          defaultPreset: '7days',
+          defaultStart: '2026-09-01',
+          defaultEnd: '2026-09-30',
+        },
+      })
+      expect(wrapper.emitted('fetch')[0][0].end).toBe(day(-1))
+    })
+  })
 })

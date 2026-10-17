@@ -2,10 +2,16 @@
   <ModSysAdminUxPanel
     title="Search and browse"
     explanation="Searches that found nothing, searches repeated within a minute (the first one probably did not help), and browse sessions where people scrolled out of the feed without opening anything."
+    collapsible
+    :open="open"
+    :summary="summary"
+    :notes="notes"
     :loading="store.search.loading"
     :error="store.search.error"
+    :missing="store.search.missing"
     :empty="!days.length"
-    empty-text="No search data for the selected period."
+    empty-text="No search data for this period."
+    @toggle="emit('toggle')"
   >
     <ul class="list-unstyled mb-3">
       <li>
@@ -34,8 +40,14 @@
 import { computed } from 'vue'
 import { GChart } from 'vue-google-charts'
 import { useUxStore } from '~/modtools/stores/ux'
-import { withCount, sumBy } from '~/modtools/composables/useUxFormat'
+import { withCount, pct, sumBy } from '~/modtools/composables/useUxFormat'
 import ModSysAdminUxPanel from '~/modtools/components/ModSysAdminUxPanel.vue'
+
+defineProps({
+  // Whether the person opened it. The section keeps this in the address.
+  open: { type: Boolean, default: false },
+})
+const emit = defineEmits(['toggle'])
 
 const store = useUxStore()
 
@@ -43,7 +55,7 @@ const fields = [
   { key: 'date', label: 'Date' },
   { key: 'searches', label: 'Searches' },
   { key: 'zero', label: 'No results' },
-  { key: 'again', label: 'Searched again <60s' },
+  { key: 'again', label: 'Searched again within a minute' },
   { key: 'scrolled', label: 'Browse scrolled out' },
 ]
 
@@ -64,6 +76,14 @@ const totals = computed(() => ({
   ),
 }))
 
+const summary = computed(() => {
+  const searches = sumBy(days.value, 'searches')
+  if (!searches) return 'No searches in this period.'
+  return `${pct(sumBy(days.value, 'zero_result'), searches)} of ${searches.toLocaleString()} searches found nothing.`
+})
+
+const notes = computed(() => store.notes('search'))
+
 const rows = computed(() =>
   days.value.map((d) => ({
     date: d.date,
@@ -77,7 +97,11 @@ const rows = computed(() =>
 const rate = (n, d) => (d ? Math.round((n / d) * 1000) / 10 : 0)
 
 const chartData = computed(() => [
-  ['Date', 'Zero-result %', 'Searched again within a minute %'],
+  [
+    'Date',
+    'Searches with no results (%)',
+    'Searched again within a minute (%)',
+  ],
   ...days.value.map((d) => [
     d.date,
     rate(d.zero_result, d.searches),

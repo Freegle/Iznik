@@ -5246,7 +5246,7 @@
   },
   "/modtools/ux/funnels": {
    "get": {
-    "description": "Per flow and step: entered, completed, backed, abandoned, revisits, validation failures, help sought and dwell, split by device class, login state and experiment variant, with the previous equal-length period.",
+    "description": "Per flow and step: entered, completed, backed, abandoned, revisits, validation failures, help sought and dwell, split by device class, login state and experiment variant, with the previous equal-length period. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
     "tags": [
      "modtools"
     ],
@@ -5269,6 +5269,18 @@
       "type": "string",
       "description": "Restrict to one flow",
       "name": "flow",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+      "name": "device",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Cut the step figures by sign-in. 1 for signed in, 0 for not signed in",
+      "name": "signed_in",
       "in": "query"
      }
     ],
@@ -5295,7 +5307,7 @@
   },
   "/modtools/ux/outcomes": {
    "get": {
-    "description": "Per flow: started, submitted, submit ok and failed, completed, abandoned and resumed, with the previous equal-length period.",
+    "description": "Per flow: started, submitted, submit ok and failed, completed, abandoned and resumed, with the previous equal-length period. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
     "tags": [
      "modtools"
     ],
@@ -5318,6 +5330,18 @@
       "type": "string",
       "description": "Restrict to one flow",
       "name": "flow",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+      "name": "device",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Not applied here, so the answer lists it in ignored. 1 or 0",
+      "name": "signed_in",
       "in": "query"
      }
     ],
@@ -5344,7 +5368,7 @@
   },
   "/modtools/ux/fields": {
    "get": {
-    "description": "Per form field: revisits, validation failures and choice switches, with the previous equal-length period.",
+    "description": "Per form field: revisits, validation failures and choice switches, with the previous equal-length period. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
     "tags": [
      "modtools"
     ],
@@ -5367,6 +5391,18 @@
       "type": "string",
       "description": "Restrict to one flow",
       "name": "flow",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+      "name": "device",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Not applied here, so the answer lists it in ignored. 1 or 0",
+      "name": "signed_in",
       "in": "query"
      }
     ],
@@ -5393,7 +5429,7 @@
   },
   "/modtools/ux/friction": {
    "get": {
-    "description": "The 20 components whose rage clicks, dead clicks and repeated intent grew most against the previous equal-length period.",
+    "description": "The 20 components whose rage clicks, dead clicks and repeated intent grew most against the previous equal-length period. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
     "tags": [
      "modtools"
     ],
@@ -5410,6 +5446,18 @@
       "type": "string",
       "description": "End date (YYYY-MM-DD), default yesterday",
       "name": "end",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+      "name": "device",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Not applied here, so the answer lists it in ignored. 1 or 0",
+      "name": "signed_in",
       "in": "query"
      }
     ],
@@ -5436,7 +5484,7 @@
   },
   "/modtools/ux/adoption": {
    "get": {
-    "description": "Per feature: using users over active users, with the previous period share.",
+    "description": "Per feature: using users over active users, with the previous period share. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
     "tags": [
      "modtools"
     ],
@@ -5453,6 +5501,18 @@
       "type": "string",
       "description": "End date (YYYY-MM-DD), default yesterday",
       "name": "end",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+      "name": "device",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Not applied here, so the answer lists it in ignored. 1 or 0",
+      "name": "signed_in",
       "in": "query"
      }
     ],
@@ -5479,7 +5539,7 @@
   },
   "/modtools/ux/regret": {
    "get": {
-    "description": "Per regret signal per day, with the previous period total.",
+    "description": "Per regret signal per day, with the previous period total. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
     "tags": [
      "modtools"
     ],
@@ -5496,6 +5556,18 @@
       "type": "string",
       "description": "End date (YYYY-MM-DD), default yesterday",
       "name": "end",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+      "name": "device",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Not applied here, so the answer lists it in ignored. 1 or 0",
+      "name": "signed_in",
       "in": "query"
      }
     ],
@@ -5522,7 +5594,7 @@
   },
   "/modtools/ux/search": {
    "get": {
-    "description": "Per day: searches, zero results, re-searches within 60 seconds, browse sessions and scroll-outs.",
+    "description": "Per day: searches, zero results, re-searches within 60 seconds, browse sessions and scroll-outs. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
     "tags": [
      "modtools"
     ],
@@ -5539,6 +5611,18 @@
       "type": "string",
       "description": "End date (YYYY-MM-DD), default yesterday",
       "name": "end",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+      "name": "device",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Not applied here, so the answer lists it in ignored. 1 or 0",
+      "name": "signed_in",
       "in": "query"
      }
     ],
@@ -5565,7 +5649,7 @@
   },
   "/modtools/ux/health": {
    "get": {
-    "description": "Per metric per day: observed against expected, ok when the ratio is within 0.7 to 1.3.",
+    "description": "Per metric per day: observed against expected, ok when the ratio is within 0.7 to 1.3. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
     "tags": [
      "modtools"
     ],
@@ -5582,6 +5666,18 @@
       "type": "string",
       "description": "End date (YYYY-MM-DD), default yesterday",
       "name": "end",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+      "name": "device",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Not applied here, so the answer lists it in ignored. 1 or 0",
+      "name": "signed_in",
       "in": "query"
      }
     ],

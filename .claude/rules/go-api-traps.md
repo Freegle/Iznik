@@ -196,6 +196,14 @@ continuously, 926,265 calls a day, and 621ms against 86ms over 15 members.
 Check each `SELECT DISTINCT` against its own join list rather than assuming either way. An equal
 row count proves a DISTINCT removed nothing, because DISTINCT can only ever remove.
 
+## A cache key must carry every filter the request can send
+
+`serve()` in `iznik-server-go/ux/ux.go` caches each answer for ten minutes under
+`name|start|end|flow|device|signed_in`. A filter missing from the key serves the first caller's
+answer to everyone who asks the same dates for ten minutes, whatever they asked for, with a 200 and
+the right shape. The key is built from the values the request **sent**, including a filter that
+read ignores, or one caller's list of ignored filters reaches the next. Add a part to the key in the
+same commit as the parameter. `TestUxFilterIsPartOfTheCacheKey` fails when one is missing.
 ## `c.IP()` is whatever the client wrote in `X-Forwarded-For`
 
 `main.go` sets `ProxyHeader: "X-Forwarded-For"` and does not validate it, so Fiber v2.52's

@@ -5355,7 +5355,7 @@ type getSupportAIRunParams struct {
 // swagger:route GET /modtools/ux/funnels modtools getUxFunnels
 // UX funnels by flow and step
 //
-// Per flow and step: entered, completed, backed, abandoned, revisits, validation failures, help sought and dwell, split by device class, login state and experiment variant, with the previous equal-length period.
+// Per flow and step: entered, completed, backed, abandoned, revisits, validation failures, help sought and dwell, split by device class, login state and experiment variant, with the previous equal-length period. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.
 //
 // security:
 // - BearerAuth: []
@@ -5374,6 +5374,16 @@ type getSupportAIRunParams struct {
 //   + name: flow
 //     in: query
 //     description: Restrict to one flow
+//     required: false
+//     type: string
+//   + name: device
+//     in: query
+//     description: Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android
+//     required: false
+//     type: string
+//   + name: signed_in
+//     in: query
+//     description: Cut the step figures by sign-in. 1 for signed in, 0 for not signed in
 //     required: false
 //     type: string
 //
@@ -5387,7 +5397,7 @@ type getSupportAIRunParams struct {
 // swagger:route GET /modtools/ux/outcomes modtools getUxOutcomes
 // UX flow outcomes
 //
-// Per flow: started, submitted, submit ok and failed, completed, abandoned and resumed, with the previous equal-length period.
+// Per flow: started, submitted, submit ok and failed, completed, abandoned and resumed, with the previous equal-length period. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.
 //
 // security:
 // - BearerAuth: []
@@ -5406,6 +5416,16 @@ type getSupportAIRunParams struct {
 //   + name: flow
 //     in: query
 //     description: Restrict to one flow
+//     required: false
+//     type: string
+//   + name: device
+//     in: query
+//     description: Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android
+//     required: false
+//     type: string
+//   + name: signed_in
+//     in: query
+//     description: Not applied here, so the answer lists it in ignored. 1 or 0
 //     required: false
 //     type: string
 //
@@ -5419,7 +5439,7 @@ type getSupportAIRunParams struct {
 // swagger:route GET /modtools/ux/fields modtools getUxFields
 // UX field friction
 //
-// Per form field: revisits, validation failures and choice switches, with the previous equal-length period.
+// Per form field: revisits, validation failures and choice switches, with the previous equal-length period. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.
 //
 // security:
 // - BearerAuth: []
@@ -5440,6 +5460,16 @@ type getSupportAIRunParams struct {
 //     description: Restrict to one flow
 //     required: false
 //     type: string
+//   + name: device
+//     in: query
+//     description: Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android
+//     required: false
+//     type: string
+//   + name: signed_in
+//     in: query
+//     description: Not applied here, so the answer lists it in ignored. 1 or 0
+//     required: false
+//     type: string
 //
 // Responses:
 //
@@ -5451,7 +5481,7 @@ type getSupportAIRunParams struct {
 // swagger:route GET /modtools/ux/friction modtools getUxFriction
 // UX component friction
 //
-// The 20 components whose rage clicks, dead clicks and repeated intent grew most against the previous equal-length period.
+// The 20 components whose rage clicks, dead clicks and repeated intent grew most against the previous equal-length period. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.
 //
 // security:
 // - BearerAuth: []
@@ -5465,6 +5495,16 @@ type getSupportAIRunParams struct {
 //   + name: end
 //     in: query
 //     description: End date (YYYY-MM-DD), default yesterday
+//     required: false
+//     type: string
+//   + name: device
+//     in: query
+//     description: Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android
+//     required: false
+//     type: string
+//   + name: signed_in
+//     in: query
+//     description: Not applied here, so the answer lists it in ignored. 1 or 0
 //     required: false
 //     type: string
 //
@@ -5478,7 +5518,7 @@ type getSupportAIRunParams struct {
 // swagger:route GET /modtools/ux/adoption modtools getUxAdoption
 // UX feature adoption
 //
-// Per feature: using users over active users, with the previous period share.
+// Per feature: using users over active users, with the previous period share. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.
 //
 // security:
 // - BearerAuth: []
@@ -5492,6 +5532,16 @@ type getSupportAIRunParams struct {
 //   + name: end
 //     in: query
 //     description: End date (YYYY-MM-DD), default yesterday
+//     required: false
+//     type: string
+//   + name: device
+//     in: query
+//     description: Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android
+//     required: false
+//     type: string
+//   + name: signed_in
+//     in: query
+//     description: Not applied here, so the answer lists it in ignored. 1 or 0
 //     required: false
 //     type: string
 //
@@ -5505,7 +5555,7 @@ type getSupportAIRunParams struct {
 // swagger:route GET /modtools/ux/regret modtools getUxRegret
 // UX regret signals
 //
-// Per regret signal per day, with the previous period total.
+// Per regret signal per day, with the previous period total. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.
 //
 // security:
 // - BearerAuth: []
@@ -5519,6 +5569,16 @@ type getSupportAIRunParams struct {
 //   + name: end
 //     in: query
 //     description: End date (YYYY-MM-DD), default yesterday
+//     required: false
+//     type: string
+//   + name: device
+//     in: query
+//     description: Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android
+//     required: false
+//     type: string
+//   + name: signed_in
+//     in: query
+//     description: Not applied here, so the answer lists it in ignored. 1 or 0
 //     required: false
 //     type: string
 //
@@ -5532,7 +5592,7 @@ type getSupportAIRunParams struct {
 // swagger:route GET /modtools/ux/search modtools getUxSearch
 // UX search and browse
 //
-// Per day: searches, zero results, re-searches within 60 seconds, browse sessions and scroll-outs.
+// Per day: searches, zero results, re-searches within 60 seconds, browse sessions and scroll-outs. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.
 //
 // security:
 // - BearerAuth: []
@@ -5546,6 +5606,16 @@ type getSupportAIRunParams struct {
 //   + name: end
 //     in: query
 //     description: End date (YYYY-MM-DD), default yesterday
+//     required: false
+//     type: string
+//   + name: device
+//     in: query
+//     description: Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android
+//     required: false
+//     type: string
+//   + name: signed_in
+//     in: query
+//     description: Not applied here, so the answer lists it in ignored. 1 or 0
 //     required: false
 //     type: string
 //
@@ -5559,7 +5629,7 @@ type getSupportAIRunParams struct {
 // swagger:route GET /modtools/ux/health modtools getUxHealth
 // UX telemetry health
 //
-// Per metric per day: observed against expected, ok when the ratio is within 0.7 to 1.3.
+// Per metric per day: observed against expected, ok when the ratio is within 0.7 to 1.3. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.
 //
 // security:
 // - BearerAuth: []
@@ -5573,6 +5643,16 @@ type getSupportAIRunParams struct {
 //   + name: end
 //     in: query
 //     description: End date (YYYY-MM-DD), default yesterday
+//     required: false
+//     type: string
+//   + name: device
+//     in: query
+//     description: Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android
+//     required: false
+//     type: string
+//   + name: signed_in
+//     in: query
+//     description: Not applied here, so the answer lists it in ignored. 1 or 0
 //     required: false
 //     type: string
 //

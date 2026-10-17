@@ -1571,6 +1571,8 @@ func SetupRoutes(app *fiber.App) {
 		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
 		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
 		// @Param flow query string false "Restrict to one flow"
+		// @Param device query string false "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Cut the step figures by sign-in. 1 for signed in, 0 for not signed in"
 		// @Success 200 {object} map[string]interface{}
 		// @Failure 400 {object} fiber.Error "Bad parameters"
 		// @Failure 401 {object} fiber.Error "Unauthorized"
@@ -1586,6 +1588,8 @@ func SetupRoutes(app *fiber.App) {
 		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
 		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
 		// @Param flow query string false "Restrict to one flow"
+		// @Param device query string false "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Not applied here, so the answer lists it in ignored. 1 or 0"
 		// @Success 200 {object} map[string]interface{}
 		// @Failure 400 {object} fiber.Error "Bad parameters"
 		// @Failure 401 {object} fiber.Error "Unauthorized"
@@ -1601,6 +1605,8 @@ func SetupRoutes(app *fiber.App) {
 		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
 		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
 		// @Param flow query string false "Restrict to one flow"
+		// @Param device query string false "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Not applied here, so the answer lists it in ignored. 1 or 0"
 		// @Success 200 {object} map[string]interface{}
 		// @Failure 400 {object} fiber.Error "Bad parameters"
 		// @Failure 401 {object} fiber.Error "Unauthorized"
@@ -1615,6 +1621,8 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
 		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
+		// @Param device query string false "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Not applied here, so the answer lists it in ignored. 1 or 0"
 		// @Success 200 {object} map[string]interface{}
 		// @Failure 400 {object} fiber.Error "Bad parameters"
 		// @Failure 401 {object} fiber.Error "Unauthorized"
@@ -1629,6 +1637,8 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
 		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
+		// @Param device query string false "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Not applied here, so the answer lists it in ignored. 1 or 0"
 		// @Success 200 {object} map[string]interface{}
 		// @Failure 400 {object} fiber.Error "Bad parameters"
 		// @Failure 401 {object} fiber.Error "Unauthorized"
@@ -1643,6 +1653,8 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
 		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
+		// @Param device query string false "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Not applied here, so the answer lists it in ignored. 1 or 0"
 		// @Success 200 {object} map[string]interface{}
 		// @Failure 400 {object} fiber.Error "Bad parameters"
 		// @Failure 401 {object} fiber.Error "Unauthorized"
@@ -1657,6 +1669,8 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
 		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
+		// @Param device query string false "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Not applied here, so the answer lists it in ignored. 1 or 0"
 		// @Success 200 {object} map[string]interface{}
 		// @Failure 400 {object} fiber.Error "Bad parameters"
 		// @Failure 401 {object} fiber.Error "Unauthorized"
@@ -1671,6 +1685,8 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
 		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
+		// @Param device query string false "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Not applied here, so the answer lists it in ignored. 1 or 0"
 		// @Success 200 {object} map[string]interface{}
 		// @Failure 400 {object} fiber.Error "Bad parameters"
 		// @Failure 401 {object} fiber.Error "Unauthorized"

@@ -177,7 +177,7 @@ func TestUxFunnels(t *testing.T) {
 	assert.ElementsMatch(t, []string{"device_class", "logged_in", "variant"}, mapKeys(step["by"].(map[string]interface{})))
 	assert.ElementsMatch(t, []string{"key", "entered", "visits", "completed", "abandoned"},
 		mapKeys(step["by"].(map[string]interface{})["device_class"].([]interface{})[0].(map[string]interface{})))
-	assert.ElementsMatch(t, []string{"start", "end", "flows", "previous"}, mapKeys(raw))
+	assert.ElementsMatch(t, []string{"start", "end", "flows", "previous", "filters", "ignored"}, mapKeys(raw))
 	assert.Len(t, raw["flows"], 1, "flow filter")
 	prevStep := raw["previous"].(map[string]interface{})["flows"].([]interface{})[0].(map[string]interface{})["steps"].([]interface{})[0].(map[string]interface{})
 	assert.NotContains(t, prevStep, "by")

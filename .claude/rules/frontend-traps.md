@@ -145,6 +145,57 @@ Three things make this worse than it sounds:
 - **A white screen on app launch** is usually the combination of no splash plugin, an empty body
   in the entry HTML, and a root component that suspends.
 
+## Every button is kept on one line, site-wide
+
+`assets/css/buttons.scss` sets `button { white-space: nowrap !important; }`. A button whose label
+can be a sentence (an answer option, a problem title, a step name) therefore runs off the right
+edge of a phone screen, with no error and no scrollbar, and a scoped `white-space: normal` does
+nothing. Wrap it with `white-space: normal !important` on a more specific selector, as
+`components/ModSysAdminUxFunnelChart.vue` does for its row labels, and check it at phone width.
+
+## A filter the old API ignores shows unfiltered figures as filtered
+
+The frontend ships itself: a green master merges to `production` and Netlify builds it. The Go API
+is rebuilt by hand, hours or days later. A tab that sends a new filter parameter is therefore
+**live before the code that honours it**. The old API ignores a parameter it does not know and
+answers 200 with the figures for everyone, so the screen says "Device: iOS app" over figures that are
+not cut by device, and both test suites pass.
+
+- Every filtered answer must say which filters it used (`filters`) and which it left alone
+  (`ignored`), and the frontend must compare that with what it asked. An answer with no
+  `filters` at all is an old server: say its figures may not be filtered
+  (`filterNotes` in `modtools/composables/useUxFormat.js`).
+- Compare the echo with the request **that produced that answer**, not with the newest request.
+  While a changed filter loads, the slot still holds the answer to the one before, so comparing
+  its echo with the new request prints the old-server warning on every filter change, from a
+  server that is up to date. The sentence then means nothing, and a real old server is missed. The
+  store keeps what each answer was asked with (`answered` in `modtools/stores/ux.js`) and
+  `store.notes(name)` reads it.
+- Say so in the PR description: deploy the Go change first.
+
+## Change the address with `router.replace`, never `push`, inside a view
+
+`plugins/back-navigation.client.js` tracks paths only. For someone who arrived on a link, the first
+Back after a pushed **query** change calls `router.replace('/')` and sends them to the home page.
+A view that keeps its state in the query string (the SysAdmin UX tab, `composables/useUxView.js`)
+must write it with `replace`, so there is no history entry for Back to find and Back leaves the
+page, which is what a person expects. Do not call `replace` when the new query equals the current
+one: a date filter emits on mount.
+
+## An `onErrorCaptured` hook that returns `false` also stops the report
+
+Returning `false` ends Vue's error propagation, so `app.config.errorHandler` is never called. That
+is where Sentry is wired in (`plugins/sentry.client.ts`) and where
+`plugins/something-went-wrong.client.js` sits. A component that catches a child's error to draw
+its own notice and returns `false` reports nothing: no Sentry event and no console line, and the
+person sees only the notice. Return nothing, as `modtools/components/ModSysAdminUx.vue` does, and
+the error carries on to the handler. On the client Nuxt's root only turns a fatal Nuxt error into
+the error page, so an ordinary error is not made worse by this.
+
+In a unit test, Vue Test Utils re-throws any error that reaches the app handler while a component
+is mounting. Mount the part that works, then open the part that fails, and give `global.config` an
+`errorHandler` to see what was reported.
+
 ## See also
 
 - `docs/developers/` for how the feeds and stores are meant to work.

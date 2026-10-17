@@ -88,7 +88,8 @@ class WeeklyReportCommandTest extends TestCase
         $this->assertCount(1, $mails);
         $text = $mails[0]->getOriginalMessage()->getTextBody();
         $this->assertSame('ux-test@example.org', $mails[0]->getEnvelope()->getRecipients()[0]->getAddress());
-        $this->assertStringContainsString('https://mod.example.org/sysadmin', $text);
+        // The link opens the UX tab. A bare /sysadmin opens Housekeeping.
+        $this->assertStringContainsString('https://mod.example.org/sysadmin?tab=ux', $text);
         $this->assertStringContainsString('give-photos', $text);
         $this->assertStringContainsString('80.0% to 40.0%', $text);
         $this->assertStringContainsString('PostCard', $text);

@@ -90,6 +90,10 @@ Read these directly; the pages above link into them rather than copy them:
 | CookieYes watchdog (cookie banner checks) | [./reference/cookieyes-watchdog.md](./reference/cookieyes-watchdog.md) |
 | Chat prompts (Freegle's tappable questions) | [./reference/chat-prompts.md](./reference/chat-prompts.md) |
 | Google Play technical quality (DEX, memory, zero-tap) | [./reference/play-technical-quality.md](./reference/play-technical-quality.md) |
+| Improving Freegle from what people do and what they care about (the overview of idea farming and experiments) | [./ux-idea-farming-and-experiments.md](./ux-idea-farming-and-experiments.md) |
+| Improving Freegle from what people do and what they care about (the overview of idea farming and experiments) | [./ux-idea-farming-and-experiments.md](./ux-idea-farming-and-experiments.md) |
+| UX telemetry (the event and rollup contract) | [./reference/ux-telemetry.md](./reference/ux-telemetry.md) |
+| The SysAdmin UX tab (sections, address, filters, Biggest loss) | [./reference/ux-sysadmin-tab.md](./reference/ux-sysadmin-tab.md) |
 
 Each component also has its own README (`iznik-nuxt3/README.md`, `iznik-server-go/README.md`,
 `iznik-batch/README.md`, `iznik-routing-go/README.md`, `iznik-spatial-go/README.md`), and

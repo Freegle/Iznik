@@ -198,7 +198,7 @@ class WeeklyReportCommand extends Command
             $body .= sprintf("  %d. %s - %s\n", $i + 1, $c['kind'], $c['text']);
         }
 
-        $body .= "\nSee the UX sub-tab of ModTools SysAdmin: ".rtrim((string) config('freegle.sites.mod', 'https://modtools.org'), '/')."/sysadmin\n";
+        $body .= "\nSee the UX sub-tab of ModTools SysAdmin: ".rtrim((string) config('freegle.sites.mod', 'https://modtools.org'), '/')."/sysadmin?tab=ux\n";
 
         return $body;
     }
