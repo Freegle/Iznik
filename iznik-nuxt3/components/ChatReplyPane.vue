@@ -197,6 +197,15 @@
               >
                 Your message
               </label>
+              <!-- Experiment reply-what-happens-next: say where the reply goes.
+                   The arm is null whenever the line cannot show. -->
+              <p
+                v-if="whatHappensNextArm === 'b'"
+                class="reply-card__what-happens-next"
+              >
+                Your message goes to {{ poster.displayname }} as a chat on
+                Freegle.
+              </p>
               <Field
                 :id="'replytomessage-' + messageId"
                 v-model="stateMachine.replyText.value"
@@ -345,6 +354,7 @@ import {
   ReplyState,
 } from '~/composables/useReplyStateMachine'
 import { useRoute } from '#imports'
+import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
 import { action } from '~/composables/useClientLog'
 import { replySurfaceForRoute } from '~/composables/useReplySurface'
 import EmailValidator from '~/components/EmailValidator'
@@ -478,6 +488,20 @@ const poster = computed(() => {
     ? userStore?.byId(message.value?.fromuser)
     : null
 })
+
+// Experiment reply-what-happens-next. Read only once the message and the poster's name are loaded
+// and the composer is shown for a reply that is not held, because reading the arm counts the
+// member as exposed to the line. The reply flow starts at the first keystroke; until then this is
+// the member's sticky arm, which the flow is then stamped with unless the config changes in
+// between.
+const whatHappensNextArm = computed(() =>
+  !message.value ||
+  !poster.value?.displayname ||
+  reachBlocked.value ||
+  me.value?.deleted
+    ? null
+    : flowArm(FlowName.REPLY, 'reply-what-happens-next')
+)
 
 // When the poster was last seen, formatted like the chat header. Keeps the "ago"
 // so the chip reads "Last seen 2 hours ago" and copes with forms like
@@ -985,6 +1009,12 @@ $reply-border: #cdcdcd;
   color: $color-red;
   font-weight: 700;
   font-size: 0.85rem;
+}
+
+.reply-card__what-happens-next {
+  margin: 0 0 6px;
+  font-size: 0.78rem;
+  color: $color-gray--dark;
 }
 
 .composer-hint {

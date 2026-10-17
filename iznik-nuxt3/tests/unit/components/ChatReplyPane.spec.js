@@ -96,6 +96,13 @@ vi.mock('~/composables/useClientLog', () => ({
   action: vi.fn(),
 }))
 
+// The arm of the reply-what-happens-next experiment. 'control' unless a test sets 'b'.
+const mockFlowArm = vi.hoisted(() => vi.fn())
+vi.mock('~/composables/useFlowTelemetry', () => ({
+  FlowName: { REPLY: 'reply' },
+  flowArm: mockFlowArm,
+}))
+
 vi.mock('~/constants', () => ({
   FAR_AWAY: 20,
   LAST_SEEN_TOOLTIP: 'When they were last on Freegle',
@@ -123,6 +130,7 @@ vi.hoisted(() => {
 describe('ChatReplyPane', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockFlowArm.mockReturnValue('control')
     mockMessageStore.byId.mockReturnValue(mockMessage)
     mockReplyStateMachine.canSend.value = true
     mockReplyStateMachine.isProcessing.value = false
@@ -750,6 +758,123 @@ describe('ChatReplyPane', () => {
         false
       )
       expect(wrapper.text()).toContain('as soon as it does')
+    })
+  })
+
+  describe('reply-what-happens-next experiment', () => {
+    const SENTENCE = 'Your message goes to Jane Doe as a chat on Freegle.'
+
+    it('asks for the arm of the reply flow by the switch name', async () => {
+      await createWrapper()
+
+      expect(mockFlowArm).toHaveBeenCalledWith(
+        'reply',
+        'reply-what-happens-next'
+      )
+    })
+
+    it('shows nothing extra in the control arm', async () => {
+      const wrapper = await createWrapper()
+
+      expect(wrapper.find('.reply-card__what-happens-next').exists()).toBe(
+        false
+      )
+      expect(wrapper.text()).not.toContain('goes to Jane Doe')
+    })
+
+    it('says who sees the reply and where in the b arm, just above the box', async () => {
+      mockFlowArm.mockReturnValue('b')
+      const wrapper = await createWrapper()
+
+      const line = wrapper.find('.reply-card__what-happens-next')
+      expect(line.exists()).toBe(true)
+      expect(line.text()).toBe(SENTENCE)
+
+      // It sits inside the field that holds the reply box, before the box itself.
+      const field = line.element.closest('.composer-field')
+      expect(field.querySelector('.field')).not.toBeNull()
+      expect(
+        line.element.compareDocumentPosition(field.querySelector('.field')) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy()
+    })
+
+    it('shows it for a wanted post too', async () => {
+      mockFlowArm.mockReturnValue('b')
+      mockMessageStore.byId.mockReturnValue({ ...mockMessage, type: 'Wanted' })
+      const wrapper = await createWrapper()
+
+      expect(wrapper.find('.reply-card__what-happens-next').text()).toBe(
+        SENTENCE
+      )
+    })
+
+    it('shows no line and counts no exposure while the poster is not loaded', async () => {
+      mockFlowArm.mockReturnValue('b')
+      const poster = mockUserStore.byId()
+      mockUserStore.byId.mockReturnValue(null)
+      try {
+        const wrapper = await createWrapper()
+
+        expect(wrapper.find('.reply-card__what-happens-next').exists()).toBe(
+          false
+        )
+        expect(mockFlowArm).not.toHaveBeenCalled()
+      } finally {
+        mockUserStore.byId.mockReturnValue(poster)
+      }
+    })
+
+    it('shows no line and counts no exposure while the message is not loaded', async () => {
+      mockFlowArm.mockReturnValue('b')
+      mockMessageStore.byId.mockReturnValue(undefined)
+      const wrapper = await createWrapper()
+
+      expect(wrapper.find('.reply-card__what-happens-next').exists()).toBe(
+        false
+      )
+      expect(mockFlowArm).not.toHaveBeenCalled()
+    })
+
+    it('makes no claim about email', async () => {
+      mockFlowArm.mockReturnValue('b')
+      const wrapper = await createWrapper()
+
+      expect(
+        wrapper.find('.reply-card__what-happens-next').text().toLowerCase()
+      ).not.toContain('email')
+    })
+
+    it('leaves the held-reply notice alone: no line while the reply is held', async () => {
+      // A held reply is not delivered yet, so "goes to" would not be true.
+      mockFlowArm.mockReturnValue('b')
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        replyeligible: false,
+      })
+      const wrapper = await createWrapper()
+
+      expect(wrapper.find('.reply-card__what-happens-next').exists()).toBe(
+        false
+      )
+      expect(wrapper.find('.reply-card__reach-blocked').exists()).toBe(true)
+      // Nor is the member counted as having seen the variant: reading the arm is an exposure.
+      expect(mockFlowArm).not.toHaveBeenCalledWith(
+        'reply',
+        'reply-what-happens-next'
+      )
+    })
+
+    it('does not change the control box: same fields and send button in both arms', async () => {
+      const control = await createWrapper()
+      const controlFields = control.findAll('.field').length
+      const controlSend = control.findAll('.spin-button').length
+
+      mockFlowArm.mockReturnValue('b')
+      const variant = await createWrapper()
+
+      expect(variant.findAll('.field').length).toBe(controlFields)
+      expect(variant.findAll('.spin-button').length).toBe(controlSend)
     })
   })
 })

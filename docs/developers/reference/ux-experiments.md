@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-15
+last_reviewed: 2026-10-17
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxExperimentService.php

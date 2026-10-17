@@ -1,5 +1,11 @@
 {
   "_comment": "Every live useExperiment('<name>') or flowArm(<flow>, '<name>') switch in the member site and ModTools, with the day it was opened and the PR that added it. tests/unit/uxExperimentsManifest.spec.js fails the build when a switch in the code is not listed here, when a listed switch is no longer in the code, when a switch name is not a string literal, or when one is older than max_age_days (30) without a keep_until date still in the future. It warns, without failing, about any switch older than 14 days. The client also treats a switch listed here as one this build contains code for, and stamps its arm on flow events. docs/developers/reference/ux-experiments.md.",
   "max_age_days": 30,
-  "experiments": []
+  "experiments": [
+    {
+      "name": "reply-what-happens-next",
+      "opened": "2026-10-17",
+      "pr": "https://github.com/Freegle/Iznik/pull/1781"
+    }
+  ]
 }
