@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-15
+last_reviewed: 2026-10-17
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxExperimentService.php
@@ -404,9 +404,9 @@ the same rules, because both end in `UxExperimentService`.
 | `ux:experiments-tick` | The hourly read, decision, re-weighting and holdout check. Also prints `Cleanup overdue` for adopted experiments |
 
 A good first run: `ux:experiment list`, then `create`, then `start <name>`. A real experiment's `--name`
-is the switch in the code, listed in `iznik-nuxt3/ux-experiments.manifest.json`. That file is empty until
-the first switch lands, so to try the command use any name, for example `try-it`: nothing in the site
-reads a name that has no switch, so members see no change. A refusal is an answer, not a fault: the
+is the switch in the code, listed in `iznik-nuxt3/ux-experiments.manifest.json`. To try the command
+without touching a live switch use any other name, for example `try-it`: nothing in the site reads a name
+that has no switch, so members see no change. A refusal is an answer, not a fault: the
 command prints the reason and exits non-zero. A running experiment prints `ends <time>`; a stopped or
 decided one prints no end, because it has none ahead of it.
 

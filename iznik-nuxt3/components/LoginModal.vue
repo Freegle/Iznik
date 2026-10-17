@@ -153,6 +153,7 @@
           action="/"
           autocomplete="on"
           method="post"
+          @focusin="nativeFormTouched = true"
           @submit="loginNative"
         >
           <b-form-group
@@ -199,6 +200,13 @@
             :error-border="passwordError"
             :placeholder="signUp ? 'Choose password' : 'Password'"
           />
+          <!-- Experiment join-what-happens-next: delete this line with joinNextLine below. -->
+          <p
+            v-if="joinNextLine"
+            class="join-next-line small text-body text-center mt-2 mb-0"
+          >
+            {{ joinNextLine }}
+          </p>
           <b-button
             variant="primary"
             class="w-100 mt-2"
@@ -271,6 +279,7 @@ import { useMe } from '~/composables/useMe'
 import Api from '~/api'
 import { useMobileStore } from '@/stores/mobile' // APP
 import { useLoginTelemetry } from '~/composables/useLoginTelemetry'
+import { FlowName, flowArm } from '~/composables/useFlowTelemetry'
 
 const NoticeMessage = defineAsyncComponent(
   () => import('~/components/NoticeMessage')
@@ -1216,6 +1225,25 @@ const loginTelemetry = useLoginTelemetry({
   loggedIn,
   nativeLoginError,
   socialLoginError,
+})
+
+// Experiment join-what-happens-next: on the join pane only, one line saying what happens after
+// joining with the email form. Only that form leads to the sign-in the line describes, so the
+// line, and the exposure that goes with reading the arm, wait until the member first puts the
+// cursor in one of its fields (or presses its button). Members who join with Facebook, Google or
+// Apple never read the arm here. Not in ModTools, which shares this modal but is not a member flow.
+const nativeFormTouched = ref(false)
+
+const joinNextLine = computed(() => {
+  if (miscStore.modtools) return null
+  if (!showModal.value || !signUp.value || !nativeFormTouched.value) return null
+  if (flowArm(FlowName.LOGIN, 'join-what-happens-next') !== 'b') return null
+
+  return "Joining is free. You'll be signed in straight away."
+})
+
+watch([showModal, signUp], () => {
+  nativeFormTouched.value = false
 })
 
 const signUpChoicesShown = computed(() => {
