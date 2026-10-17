@@ -249,6 +249,9 @@ working experiment:
 - **The arm has to be known before the content is built.** A mailable's constructor runs
   `getSubject()` inside `initTracking`, so reading the arm "where the subject is used" is too late for
   the subject. Look it up first and choose with `UxArm::pick($arm, ['control' => $a, 'items' => $b])`.
+  `pick` builds both values for every member, so a variant that takes work or can throw is chosen with
+  `if ($arm === 'items')` placed before the control lines (`UnifiedDigest::getSubject()`): control then runs
+  exactly the code it ran before.
 - **The arm must be a pure function of the member's id.** A retry rebuilds the mailable, and `rand()`
   would send the same member a different arm each time, in both the mail and the count. Never use it.
 - **Expose after the tracking row exists** (`UxArm::expose($id, $name, $arm, 'email', $this->tracking->id)`),

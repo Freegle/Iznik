@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-16
+last_reviewed: 2026-10-17
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxExperimentService.php
@@ -37,6 +37,10 @@ covers:
   - iznik-batch/tests/Feature/Ux/UxExperimentSourceTest.php
   - iznik-batch/tests/Feature/Ux/EmailClickSourceTest.php
   - iznik-batch/tests/Feature/Ux/ActiveAfterSourceTest.php
+  - iznik-batch/app/Mail/Digest/UnifiedDigest.php
+  - iznik-batch/resources/views/emails/mjml/digest/unified.blade.php
+  - iznik-batch/tests/Feature/Ux/DigestSubjectExperimentTest.php
+  - iznik-batch/tests/Unit/Mail/UnifiedDigestSubjectExperimentTest.php
   - iznik-batch/tests/Feature/Ux/UxExposureRetentionTest.php
   - iznik-batch/tests/Feature/Ux/UxExposureErasureTest.php
   - iznik-batch/tests/Feature/Ux/UxExposureTableMissingTest.php
@@ -611,8 +615,8 @@ worked out in the batch or in the Go API from the member's id, with the function
 all three agree. What changes is the counting. A flow event in Loki cannot be split by a server arm, so
 the counts come from the database.
 
-Nothing here changes until the config row `ux_server_arms` is `1` and someone starts an experiment. This
-change holds no experiment: both switch lists ship empty.
+Nothing here changes until the config row `ux_server_arms` is `1` and someone starts an experiment. The batch
+switch list holds one experiment, `digest-subject`, described below. The Go list is empty.
 
 ### One assignment function, in three places
 
@@ -655,7 +659,9 @@ The code that varies content follows three rules:
 
 - **Look the arm up before the content is built.** A mailable's constructor builds its subject, so the
   arm has to be known first. `UxArm::pick($arm, ['control' => $a, 'items' => $b])` gives the control value
-  for `""` and for an arm it has no value for.
+  for `""` and for an arm it has no value for. `pick` builds every value for every member, so a variant that
+  takes work or can throw is chosen with `if ($arm === 'items')` placed before the control lines, as
+  `UnifiedDigest::getSubject()` does.
 - **The arm is a pure function of the member's id**, so a retry that builds the same mail again gets the
   same arm. Never use `rand()`.
 - **Keep arm names out of links, headers and the `email_type`**, which other code matches exactly.
@@ -696,7 +702,7 @@ are. Two ship.
 
 | Source | Converted when, within the window of the exposure | Guardrail |
 |---|---|---|
-| `email_click` | the member clicked a link in the email, and it was not the unsubscribe link (that link also sets the click time) | unsubscribing in the window, margin 0.3 points |
+| `email_click` | the member clicked a link in the email, and it was not the unsubscribe link (that link also sets the click time) | clicking the unsubscribe link in the window, margin 0.3 points. That link opens the unsubscribe page, so it counts members who then do nothing, and a mail client's own Unsubscribe button is not seen (`unsubscribeUrl` in `UnifiedDigest.php`, the `unsubscribe` action of `Click` in `emailtracking.go`) |
 | `active_after` | the member has a `users_active` row in the hour of the exposure or inside the window. The site or app writes one when it loads the member's notifications, which it does when they have something unread or when they open the bell, so a member who visits with nothing unread is not counted, in either arm | turning the daily posts push off, for a push only, margin 0.3 points |
 
 Opens are never used: they are folded in nightly, and image proxies open mail for people who never looked
@@ -796,6 +802,51 @@ table exists first, so an erasure, a merge or an export never depends on an anal
 the write node (`UxExperimentExposure::tableExists()`), because `Schema::hasTable` asks the read node, and a
 read node that is behind says no for a table the write node has just made, which would skip an erasure
 without an error. The export reads its rows from the write node too.
+
+### The daily digest subject
+
+`digest-subject` is the first experiment decided in batch code. It changes the subject of the daily digest
+and nothing else: not the body, the From name, the links, the headers or the `email_type`, which
+`MarkDigestSeenCommand` matches exactly. The line an inbox shows under the subject, the first three item
+names, is the same in both arms (`unified.blade.php`), so a run measures the subject together with that
+unchanged line.
+
+- **Where.** The `UnifiedDigest` constructor reads the arm with `UxArm::for` before `initTracking`, because
+  `getSubject()` runs inside it, and writes the exposure straight after the tracking row exists.
+  `getSubject()` returns the items subject for the arm `items` and carries on to the old lines for
+  everyone else. It is an `if` and not `UxArm::pick`, so the control lines are not edited and run exactly as
+  they did.
+- **Who.** The daily digest only, while email tracking is on, and only a digest that lists two or more posts.
+  A digest of one post is not in the experiment: it keeps the control subject and writes no exposure. A
+  digest with no item to name (every title empty after the prefix and location are taken off) has the
+  control subject in both arms and writes no exposure in either. A
+  durable retry that finds fewer than two posts left is out of it too. Immediate, match and reach mail are
+  never touched.
+- **Control.** `What's New (12 posts) - Sofa, Lamp, Books, Chair, Table`. Above the post cap the count is
+  left out, which `docs/members/rippling-out.md` and `docs/moderators/rippling-out.md` describe.
+- **Items.** The same item names, then how many more posts the email lists: `Sofa, Lamp, Books, Chair,
+  Table and 7 more`, or only the names when every post is named. The names and the number both come from the
+  posts the email lists (after the post cap), so the subject never names a post the email does not hold and
+  never counts more than it holds. A name over 25 bytes is cut to 22 bytes and `...`, at a whole character.
+  The whole subject, names and `and N more` together, is at most 50 bytes, so a phone shows the tail: it
+  names as many posts as fit with their tail. A post with no name is skipped.
+- **Counted.** `email_click`: a click on a link in the email within 24 hours, not the unsubscribe link,
+  which is the guardrail. Each member counts once, on the first email. The exposure is written when the
+  mail is built, so a mail that is built and then bounces or is suppressed after it is spooled still counts as
+  exposed, in both arms alike. The guardrail sees the unsubscribe link in the footer. A mail client's own
+  Unsubscribe button (the `List-Unsubscribe` header) reaches `UnsubscribeService` and the Go one-click route,
+  neither of which writes to `email_tracking`, so the engine does not count it.
+- **Previews and replays.** `mail:test digest` rolls back what it writes, so a preview writes no exposure row.
+  `mail:deferrals:replay-missed-posts` builds a real digest for each member it re-sends to, so it writes one
+  while the experiment runs. A member counts once, on the first.
+- **When.** Arms are served for 25 hours and the run ends after 48. Start between 12:30 and 14:00 London
+  time, Monday to Thursday, once no `mail:digest:unified --mode=daily` process is still running, so the
+  intake is one whole morning of sending. An early decision reads the members mailed first, so treat it as
+  provisional.
+- **Cleanup.** One commit takes out the `UxArm::for` line, the exposure, the `if`, the two methods, the
+  property, the import and the entry in `config/ux_switches.php`, or `UxSwitchManifestTest` fails. If `items`
+  is adopted, the same commit makes the items rule the only subject and rewrites the tests and the two pages
+  above that quote the control subject. Nothing changes in Go or JavaScript.
 
 ### Deploying experiments decided on the server
 
