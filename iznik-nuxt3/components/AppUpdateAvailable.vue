@@ -15,13 +15,12 @@
 
 <script setup>
 import { useMobileStore } from '~/stores/mobile'
+import { APP_STORE_URL_ANDROID, APP_STORE_URL_IOS } from '~/constants'
 
 const mobileStore = useMobileStore()
 
 const openStore = () => {
-  const url = mobileStore.isiOS
-    ? 'https://apps.apple.com/gb/app/freegle/id970045029'
-    : 'https://play.google.com/store/apps/details?id=org.ilovefreegle.direct'
+  const url = mobileStore.isiOS ? APP_STORE_URL_IOS : APP_STORE_URL_ANDROID
 
   window.open(url, '_blank')
 }

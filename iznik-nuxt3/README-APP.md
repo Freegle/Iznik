@@ -239,6 +239,11 @@ Mobile-specific Stripe implementation:
    - Check for available updates
    - Version comparison logic
    - Update prompts
+   - Server kill switch: when `GET /session` returns `ret:123` (build older
+     than `app_min_webversion`), `SomethingWentWrong.vue` covers the screen
+     with an "Update required" prompt whose "Update now" button opens the
+     app store. The login modal never opens while this is showing, because
+     signing in again cannot fix an out-of-date build.
 
 8. **Rate App**
    - Native rating prompts

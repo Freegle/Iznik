@@ -1,34 +1,34 @@
 <template>
   <client-only>
     <div v-if="!unloading" class="d-flex justify-content-around">
-      <NoticeMessage
-        v-if="appOutOfDate"
-        variant="danger"
-        class="posit text-center"
-        show
-      >
-        <p class="font-weight-bold mb-2">
-          {{
-            appOutOfDateMessage ||
-            'Freegle is out of date - please update to the latest version.'
-          }}
-        </p>
-        <div v-if="mobileStore.isApp">
-          <p class="mb-0">
-            Please update the Freegle app from your app store to get the latest
-            version, or
-            <a
-              href="https://www.ilovefreegle.org"
-              target="_blank"
-              rel="noopener"
-              >use the website</a
-            >.
+      <div v-if="appOutOfDate" class="app-out-of-date">
+        <NoticeMessage variant="danger" class="text-center" show>
+          <h2 class="h4 mb-3">Update required</h2>
+          <p class="mb-3">
+            {{
+              appOutOfDateMessage ||
+              'Freegle is out of date - please update to the latest version.'
+            }}
           </p>
-        </div>
-        <div v-else class="d-flex justify-content-around">
-          <b-button variant="primary" @click="reload"> Reload now </b-button>
-        </div>
-      </NoticeMessage>
+          <template v-if="mobileStore.isApp">
+            <b-button variant="primary" size="lg" @click="openStore">
+              Update now
+            </b-button>
+            <p class="mt-3 mb-0">
+              Or
+              <a
+                href="https://www.ilovefreegle.org"
+                target="_blank"
+                rel="noopener"
+                >use the website</a
+              >.
+            </p>
+          </template>
+          <b-button v-else variant="primary" @click="reload">
+            Reload now
+          </b-button>
+        </NoticeMessage>
+      </div>
       <NoticeMessage
         v-else-if="showError"
         variant="danger"
@@ -130,7 +130,12 @@ import { ref, watch, onBeforeUnmount } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 import { useMobileStore } from '~/stores/mobile'
 import SupportLink from '~/components/SupportLink'
-import { HARD_RELOAD_COUNTDOWN_SECS, TYPING_TIME_INVERVAL } from '~/constants'
+import {
+  APP_STORE_URL_ANDROID,
+  APP_STORE_URL_IOS,
+  HARD_RELOAD_COUNTDOWN_SECS,
+  TYPING_TIME_INVERVAL,
+} from '~/constants'
 
 const showError = ref(false)
 const showReload = ref(false)
@@ -187,6 +192,13 @@ watch(
 
 function reload() {
   window.location.reload()
+}
+
+function openStore() {
+  window.open(
+    mobileStore.isiOS ? APP_STORE_URL_IOS : APP_STORE_URL_ANDROID,
+    '_blank'
+  )
 }
 
 // Reload unless the user is mid-message — we never want to throw away something
@@ -254,6 +266,19 @@ onBeforeUnmount(() => {
   bottom: 0;
   width: 100%;
   z-index: 10000;
+}
+
+/* The server has refused this build (ret:123), so nothing behind this works.
+   Cover the whole screen rather than leave a page that looks usable. */
+.app-out-of-date {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background-color: $color-white;
 }
 
 .error-stack {

@@ -301,6 +301,10 @@ const marketingConsent = computed({
   set: (value) => miscStore.setMarketingConsent(value),
 })
 const isModTools = computed(() => miscStore.modtools)
+// GET /session said this build is too old (ret:123). We have no user, but
+// signing in again cannot fix that, and the login screen would hide the notice
+// telling them to update. So the modal never opens while that is true.
+const appOutOfDate = computed(() => miscStore.appOutOfDate)
 const showModal = ref(false)
 const pleaseShowModal = ref(false)
 const showSignUp = ref(false)
@@ -1177,18 +1181,12 @@ watch(
 )
 
 watch(
-  pleaseShowModal,
-  (newVal) => {
-    showModal.value = newVal || forceLogin.value
-  },
-  { immediate: true }
-)
-
-watch(
-  forceLogin,
-  (newVal) => {
-    console.log('Force login changed to ' + newVal)
-    showModal.value = pleaseShowModal.value || newVal
+  [pleaseShowModal, forceLogin, appOutOfDate],
+  ([please, force, outOfDate], old) => {
+    if (old && force !== old[1]) {
+      console.log('Force login changed to ' + force)
+    }
+    showModal.value = (please || force) && !outOfDate
   },
   { immediate: true }
 )

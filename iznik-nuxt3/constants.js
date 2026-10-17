@@ -4,6 +4,11 @@ export const EMAIL_REGEX =
 export const MT_EMAIL_REGEX =
   /(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))/g
 
+export const APP_STORE_URL_IOS =
+  'https://apps.apple.com/gb/app/freegle/id970045029'
+export const APP_STORE_URL_ANDROID =
+  'https://play.google.com/store/apps/details?id=org.ilovefreegle.direct'
+
 export const URL_REGEX =
   /(https?:\/\/(?:www\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|www\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|https?:\/\/(?:www\.|(?!www))[a-zA-Z0-9]+\.[^\s]{2,}|www\.[a-zA-Z0-9]+\.[^\s]{2,})/g
 export const POSTCODE_REGEX =
