@@ -2145,6 +2145,26 @@ class ExpandService
                    )
                    {$leftAfterRippleSql}
                    AND NOT EXISTS (
+                       -- A repost of an item the community already carries is a duplicate:
+                       -- same poster, type and subject as an earlier post still live there.
+                       -- Approving the repost on its home group must not ripple it back into
+                       -- the communities that hold the original, or each shows the item twice.
+                       SELECT 1
+                       FROM messages_groups dmg
+                       JOIN messages dm ON dm.id = dmg.msgid
+                       JOIN messages cur ON cur.id = ?
+                       WHERE dmg.groupid = g.id
+                         AND dmg.collection = 'Approved'
+                         AND dmg.deleted = 0
+                         AND dm.id <> cur.id
+                         AND dm.deleted IS NULL
+                         AND dm.fromuser = cur.fromuser
+                         AND dm.type = cur.type
+                         AND dm.subject = cur.subject
+                         AND (dm.arrival < cur.arrival OR (dm.arrival = cur.arrival AND dm.id < cur.id))
+                         AND NOT EXISTS (SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = dm.id)
+                   )
+                   AND NOT EXISTS (
                        -- A ban is an explicit mod ejection: it withdraws the poster's live posts
                        -- and (modern ban) deletes their membership while recording a users_banned
                        -- row. Never ripple a poster's post into a group they are banned from - that
@@ -2169,11 +2189,12 @@ class ExpandService
                          AND UPPER(mp.ourPostingStatus) = 'PROHIBITED'
                    )",
                 // One binding per placeholder, in query order: the reach shape, the
-                // msgid twice (already on the group; turned away by the group), then the
+                // msgid twice (already on the group; turned away by the group), the msgid again
+                // (duplicate of an earlier live post), then the
                 // poster three times (users_banned, Banned membership, PROHIBITED posting
                 // status). The ripple opt-out is spliced in as a group-id list above, so it
                 // has no placeholder.
-                [$reachWkt, $msgid, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser]
+                [$reachWkt, $msgid, $msgid, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser]
             );
 
             // A stored MODERATED posting status on the receiving group does NOT hold the copy.
