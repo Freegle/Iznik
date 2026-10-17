@@ -7,6 +7,7 @@ covers:
   - iznik-batch/app/Services/Ux/UxRng.php
   - iznik-batch/app/Services/Ux/UxExperimentRefused.php
   - iznik-batch/app/Services/Ux/UxArm.php
+  - iznik-batch/app/Services/PushNotificationService.php
   - iznik-batch/app/Services/Ux/UxMetricSource.php
   - iznik-batch/app/Services/Ux/ExposureSource.php
   - iznik-batch/app/Services/Ux/Sources/EmailClickSource.php
@@ -41,6 +42,7 @@ covers:
   - iznik-batch/resources/views/emails/mjml/digest/unified.blade.php
   - iznik-batch/tests/Feature/Ux/DigestSubjectExperimentTest.php
   - iznik-batch/tests/Unit/Mail/UnifiedDigestSubjectExperimentTest.php
+  - iznik-batch/tests/Feature/Ux/PushPostsTitleTest.php
   - iznik-batch/tests/Feature/Ux/UxExposureRetentionTest.php
   - iznik-batch/tests/Feature/Ux/UxExposureErasureTest.php
   - iznik-batch/tests/Feature/Ux/UxExposureTableMissingTest.php
@@ -616,7 +618,7 @@ all three agree. What changes is the counting. A flow event in Loki cannot be sp
 the counts come from the database.
 
 Nothing here changes until the config row `ux_server_arms` is `1` and someone starts an experiment. The batch
-switch list holds one experiment, `digest-subject`, described below. The Go list is empty.
+switch list holds the experiments described below; the Go list is empty.
 
 ### One assignment function, in three places
 
@@ -671,7 +673,8 @@ The code that varies content follows three rules:
 `ux_experiment_exposures` has a row each time server code used a member's arm to decide what they get,
 written for every arm, control included, by `UxArm::expose` or `ux.RecordExposure`. Write it where the
 decision is made, after the row the decision is about exists, and never where content is drawn. It never
-throws: a failed row must not stop a send, a reply or a promise.
+throws: a failed row must not stop a send, a reply or a promise. `UxArm::expose` returns true only when its call
+wrote the row, and `UxArm::retract` deletes the row of a member and subject, for a send that reached no one.
 
 | `subject_type` | `subject_id` |
 |---|---|
@@ -847,6 +850,129 @@ unchanged line.
   property, the import and the entry in `config/ux_switches.php`, or `UxSwitchManifestTest` fails. If `items`
   is adopted, the same commit makes the items rule the only subject and rewrites the tests and the two pages
   above that quote the control subject. Nothing changes in Go or JavaScript.
+
+### The daily posts push title
+
+`push-posts-title` changes the title of the daily posts push for a push of two or more posts, and nothing else: not
+the body, the list, the photo or when it is sent. Control keeps `12 new things near you`. The arm `lead` names the
+newest Offer among the posts and how many others there are: `Sofa and 11 more near you`.
+
+- **Where.** `PushNotificationService::notifyDailyNewPosts` looks the arm up with `UxArm::for` before anything is
+  built and passes it to `buildDailyNewPostsPayload`, so the title and the exposure use the same arm. The builder
+  looks the arm up itself when it is not given one, which is what `push:daily-posts --dry-run` does, so a dry run
+  shows the title of the member's arm. The lead title is built for a member in either arm, once to check that the
+  push has a lead post with a usable name and again to use it in the arm `lead`. A member with no arm costs the
+  lookup and nothing is built for them, which is why the title is chosen with an `if` after the lookup and not with
+  `UxArm::pick`.
+- **Who.** A push of two or more posts. A push of one post is already titled with its item and is outside the
+  experiment. So is a push with no Offer among its posts, and a push whose lead post has no usable name once the
+  prefix and the place are cut (`OFFER: (Kingston)`) or whose name is not valid text: it keeps the control title in
+  both arms and writes no row. A push the lockdown holds, or that no device takes, writes no row either.
+- **The lead post.** The newest Offer among the posts, by arrival in the group; where two arrived together, the one
+  later in the list. The list is oldest first, so the lead is usually not its first line. A Wanted post never leads.
+- **The name.** The bare item name, so a clearance leads as `Office clearance` and not with its item count. It is
+  shown as the body and the list show it, so a stored HTML entity or emoji escape stays as stored in the title too
+  and the arms differ in the title only. The name and its ellipsis fit in 20 columns, so the count stays near the
+  front of the title: a longer name is cut to 19 columns and ends in the ellipsis. Columns are counted, not bytes, so
+  a wide character takes two. A cut lands between pieces: a grapheme (an emoji sequence, a flag, a letter with its
+  accent), a stored entity or a stored emoji escape is never split.
+- **Counted.** `active_after`: the member has a `users_active` row within a day of the push, with the guardrail
+  `push_opt_out` (margin 0.3 points), which reads the member's setting at the time of the read. The exposure is one
+  `push` row for the member and the UTC day. It is written before the first device is sent to, because an Android
+  device shows the push the moment it arrives, and `UxArm::retract` takes it back when no device took the push, so
+  two devices, a second send or a second pass of a shard in a day are one row. A member with no device has no row.
+  The app records no tap, and the site writes a `users_active` row only when it loads the member's notifications, so
+  the measure sees part of the visits, in both arms alike. The daily email digest goes at about the same time and can
+  bring the same visit in either arm, which also hides part of a real gain.
+- **Sizing.** `start` cannot tell how many members a push reaches, so it does not check that the run is big enough.
+  The queries and the chance of adoption are under "Sizing and starting the push title run" below. `push:daily-posts` sends nothing where
+  `FREEGLE_POSTS_PUSH_ALLOWLIST` is unset, so look at that first: a run with no push counts nobody and ends
+  inconclusive.
+- **When.** Intake is 24 hours and the run 48, so one morning's push is measured. The pushes go from 07:30 London
+  time. Start between 13:00 and 06:30, so exactly one morning falls inside the 25 hours the arms are served.
+- **Cleanup.** One commit, whatever the outcome. It takes out the `UxArm::for` call in `dailyPostsTitleArm`, the
+  exposure and the `retract` call, the `$arm` parameter, the entry in `config/ux_switches.php`, `PushPostsTitleTest.php`, its
+  line and the `PushNotificationService.php` line in this page's `covers:` and this section. Take out only the call or only the entry and `UxSwitchManifestTest` fails. `UxArm::retract` stays for the next push experiment.
+  If `lead` is not adopted, the same commit also takes out the `if`, `leadPost`, `leadTitle`, `cutToColumns`, `pieceWidth`,
+  `LEAD_NAME_MAX` and `LEAD_NAME_PIECES`, and `DailyPostsPushTest.php` does not change. If `lead` is adopted, keep
+  those six: the `else` branch becomes `$this->leadTitle($this->leadPost($posts), $count) ?? ($count . ' new things near you')`
+  in place of the `if`, and the two control titles in `DailyPostsPushTest.php` change to the lead form. An adopted run needs the
+  code for its 14 day holdout look, which ends about 17 days after the run starts, so set `keep_until` when it is
+  adopted if the cleanup would pass 30 days from `opened`. Nothing changes in Go or JavaScript: the Go API sends no
+  pushes, so it has no entry.
+
+#### Sizing and starting the push title run
+
+Run these read only queries on the live database, after `EXPLAIN` on each. Half of the result of A is the members
+on each arm. The rate is the average of the `active_members` of C over its `push_members`.
+
+```sql
+SET SESSION TRANSACTION READ ONLY;
+SET SESSION max_execution_time = 120000;
+
+-- A. Members one morning's push could reach with two or more posts, at least one an Offer. An upper bound: it
+--    leaves out the distance setting, the reach limit on a post, the window since the last push and reposts.
+--    Run it at about 07:15 London time.
+SELECT COUNT(*) AS members FROM (
+  SELECT e.id FROM (
+    SELECT u.id FROM (SELECT DISTINCT p.userid FROM users_push_notifications p
+          WHERE p.apptype = 'User' AND p.type IN ('FCMAndroid', 'FCMIOS')) d
+    JOIN users u ON u.id = d.userid
+    WHERE u.deleted IS NULL AND u.lastaccess > NOW() - INTERVAL 4380 HOUR AND u.tnuserid IS NULL AND u.bouncing = 0
+      AND CASE WHEN JSON_VALID(u.settings)
+               THEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.notifications.dailypostspush')), 'true') <> 'false'
+               ELSE 1 END = 1
+  ) e
+  JOIN memberships ms ON ms.userid = e.id AND ms.collection = 'Approved' AND ms.emailfrequency > 0
+  JOIN messages_groups mg ON mg.groupid = ms.groupid AND mg.collection = 'Approved' AND mg.deleted = 0
+       AND mg.arrival >= NOW() - INTERVAL 24 HOUR
+  JOIN messages m ON m.id = mg.msgid AND m.deleted IS NULL AND m.type IN ('Offer', 'Wanted') AND m.fromuser <> e.id
+  WHERE NOT EXISTS (SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = m.id)
+  GROUP BY e.id
+  HAVING COUNT(DISTINCT m.id) >= 2 AND SUM(m.type = 'Offer') >= 1
+) x;
+
+-- B. Is the push live? Members the last run handled. 0 means dark.
+SELECT COUNT(*) AS members_handled FROM users_digests WHERE mode = 'push' AND lastsent >= NOW() - INTERVAL 24 HOUR;
+
+-- C. The rate active_after will see.
+SELECT DATE(ua.timestamp) AS day, COUNT(DISTINCT ua.userid) AS active_members
+FROM users_active ua
+JOIN (SELECT DISTINCT p.userid FROM users_push_notifications p
+      WHERE p.apptype = 'User' AND p.type IN ('FCMAndroid', 'FCMIOS')) d ON d.userid = ua.userid
+WHERE ua.timestamp >= CURDATE() - INTERVAL 7 DAY AND ua.timestamp < CURDATE()
+GROUP BY DATE(ua.timestamp) ORDER BY day;
+SELECT COUNT(*) AS push_members FROM (SELECT DISTINCT p.userid FROM users_push_notifications p
+      WHERE p.apptype = 'User' AND p.type IN ('FCMAndroid', 'FCMIOS')) d;
+```
+
+The chance that a real gain of 2 points is adopted is
+`App\Services\Ux\BetaBinomial::adoptPower($rate, intdiv($A, 2), 0.02, 0.80, 0.005)`. Do not start under 0.30, the
+bar `start` puts to every experiment it can size. From 0.30 to 0.50 it is Edward's call. One morning is the whole
+sample, because intake is 24 hours and the push goes once a day.
+
+| Members on each arm | 250 | 500 | 1,000 | 2,500 | 5,000 |
+| --- | --- | --- | --- | --- | --- |
+| Rate 0.15, gain of 2 points | 0.41 | 0.52 | 0.66 | 0.87 | 0.97 |
+| Rate 0.30, gain of 2 points | 0.36 | 0.44 | 0.55 | 0.76 | 0.91 |
+
+Set `ux_server_arms` to `1` with `PATCH /config/admin`, then run this in the batch container between 13:00 and
+06:30 London time. `expected_points` is the gain the sizing says the run can read.
+
+```bash
+php artisan ux:experiment create --flow=reply --name=push-posts-title \
+  --title="Daily push names a new offer" \
+  --hypothesis="A title that names a new offer gives members more reason to open the app than a title that counts new things." \
+  --change="For half of members, a daily posts push of two or more posts is titled with the newest Offer among them and how many others there are, such as Sofa and 11 more near you. Only the title changes: the body, the list and the photo are the same in both versions. A push of one post, or with no Offer, is not changed." \
+  --expected="More members are active within a day of the push, by 2 points or more, and no more of them turn the push off." \
+  --arms='{"control":[0,49],"lead":[50,99]}' --pr=https://github.com/Freegle/Iznik/pull/1808 \
+  --design='{"channel":"push","type":"daily_new_posts","source":"active_after","window_hours":24,"intake_hours":24,"max_hours":48,"expected_points":2,"copy":{"control":"12 new things near you","lead":"Sofa and 11 more near you"}}'
+php artisan ux:experiment start push-posts-title
+```
+
+A re-run of this name keeps its buckets, so add `"salt":"r2"` to the design. To stop it, run
+`php artisan ux:experiment stop push-posts-title --reason="..."`, or set `ux_server_arms` to `0`: titles are
+control again within a minute.
 
 ### Deploying experiments decided on the server
 

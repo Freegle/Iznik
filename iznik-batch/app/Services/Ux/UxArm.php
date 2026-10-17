@@ -112,39 +112,39 @@ final class UxArm
      * written for every arm, control included, at the place of the decision, never where content is
      * drawn. Does nothing for the arm ''. A second call for the same subject is ignored. It writes on
      * the primary, never throws, and logs what it cannot do: a failed row must not stop a send, a
-     * reply or a promise.
+     * reply or a promise. It returns true only when this call wrote the row.
      *
      * $detail holds ids and numbers only. No text, address or copy is ever stored.
      *
      * @param  array<string, int|float|bool|null>|null  $detail
      */
-    public static function expose(int $userId, string $name, string $arm, string $type, int $subjectId, ?string $stratum = null, ?array $detail = null): void
+    public static function expose(int $userId, string $name, string $arm, string $type, int $subjectId, ?string $stratum = null, ?array $detail = null): bool
     {
         if ($arm === '') {
-            return;
+            return false;
         }
 
         try {
             if ($userId <= 0 || $subjectId < 0) {
-                return;
+                return false;
             }
             if (mb_strlen($name) > 64 || mb_strlen($arm) > self::TYPE_MAX || mb_strlen($type) > self::TYPE_MAX
                 || ($stratum !== null && mb_strlen($stratum) > self::TYPE_MAX)) {
                 Log::warning("UxArm: exposure for {$name} skipped, a value is longer than its column");
 
-                return;
+                return false;
             }
             if ($detail !== null) {
                 foreach ($detail as $key => $value) {
                     if (! is_string($key) || ! preg_match('/^[a-z_]{1,32}\z/', $key) || ! (is_int($value) || is_float($value) || is_bool($value) || $value === null)) {
                         Log::warning("UxArm: exposure for {$name} skipped, detail holds more than ids");
 
-                        return;
+                        return false;
                     }
                 }
             }
 
-            DB::table('ux_experiment_exposures')->insertOrIgnore([
+            $written = DB::table('ux_experiment_exposures')->insertOrIgnore([
                 'experiment' => $name,
                 'arm' => $arm,
                 'userid' => $userId,
@@ -154,8 +154,29 @@ final class UxArm
                 'exposed_at' => Carbon::now('UTC')->format('Y-m-d H:i:s'),
                 'detail' => $detail === null || $detail === [] ? null : json_encode($detail),
             ]);
+
+            return $written > 0;
         } catch (\Throwable $e) {
             Log::warning("UxArm: could not record the exposure for {$name}: ".$e->getMessage());
+
+            return false;
+        }
+    }
+
+    /**
+     * Take back the row expose wrote for a member and subject, for a send that reached no one. Never throws.
+     */
+    public static function retract(int $userId, string $name, string $type, int $subjectId): void
+    {
+        try {
+            DB::table('ux_experiment_exposures')
+                ->where('experiment', $name)
+                ->where('userid', $userId)
+                ->where('subject_type', $type)
+                ->where('subject_id', $subjectId)
+                ->delete();
+        } catch (\Throwable $e) {
+            Log::warning("UxArm: could not take back the exposure for {$name}: ".$e->getMessage());
         }
     }
 

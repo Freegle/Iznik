@@ -43,4 +43,15 @@ return [
         'arms' => ['control', 'items'],
         'metric' => ['source' => 'email_click', 'window_hours' => 24],
     ],
+    [
+        'name' => 'push-posts-title',
+        'opened' => '2026-10-20',
+        'pr' => 'https://github.com/Freegle/Iznik/pull/1808',
+        'keep_until' => null,
+        'channel' => 'push',
+        'type' => 'daily_new_posts',
+        'varies' => 'title',
+        'arms' => ['control', 'lead'],
+        'metric' => ['source' => 'active_after', 'window_hours' => 24],
+    ],
 ];

@@ -523,6 +523,29 @@ class UxArmTest extends TestCase
         $this->assertCount(2, $this->exposures());
     }
 
+    public function test_expose_says_true_only_when_this_call_wrote_the_row(): void
+    {
+        $this->assertTrue(UxArm::expose(7, self::NAME, 'items', 'push', 31));
+        $this->assertFalse(UxArm::expose(7, self::NAME, 'items', 'push', 31), 'the row was there already');
+        $this->assertFalse(UxArm::expose(7, self::NAME, '', 'push', 32), 'no arm');
+        $this->assertFalse(UxArm::expose(0, self::NAME, 'items', 'push', 32), 'nobody');
+        $this->assertFalse(UxArm::expose(7, self::NAME, 'items', str_repeat('x', 17), 32), 'a value too long');
+        $this->assertCount(1, $this->exposures());
+    }
+
+    public function test_retract_removes_the_row_of_that_member_and_subject_only(): void
+    {
+        UxArm::expose(7, self::NAME, 'items', 'push', 31);
+        UxArm::expose(7, self::NAME, 'items', 'push', 32);
+        UxArm::expose(8, self::NAME, 'items', 'push', 31);
+        UxArm::expose(7, self::NAME, 'items', 'email', 31);
+
+        UxArm::retract(7, self::NAME, 'push', 31);
+
+        $left = array_map(fn ($r) => [(int) $r->userid, $r->subject_type, (int) $r->subject_id], $this->exposures());
+        $this->assertSame([[7, 'push', 32], [8, 'push', 31], [7, 'email', 31]], $left);
+    }
+
     public function test_expose_with_the_arm_empty_writes_nothing(): void
     {
         UxArm::expose(7, self::NAME, '', 'email', 31);
