@@ -142,6 +142,14 @@ class ContentCheckServiceTest extends TestCase
         $this->assertFalse($result);
     }
 
+    public function test_matches_fuzzy_rejects_single_substitution_word(): void
+    {
+        // "meditation" is one substitution from "medication" but a different word.
+        $this->assertFalse($this->callPrivate('matchesFuzzy', 'meditation cushion', 'medication'));
+        $this->assertTrue($this->callPrivate('matchesFuzzy', 'spare medication', 'medication'));
+        $this->assertTrue($this->callPrivate('matchesFuzzy', 'spare medicaton', 'medication'));
+    }
+
     public function test_matches_fuzzy_short_keyword_no_levenshtein(): void
     {
         // Short keywords (< 8 chars) use only exact/inflection, not levenshtein

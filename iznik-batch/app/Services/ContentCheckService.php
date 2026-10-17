@@ -1039,7 +1039,8 @@ class ContentCheckService
             if ($kwLen >= self::FUZZY_LEVENSHTEIN_MIN_KW_LEN) {
                 $tokLen = strlen($tokLow);
                 $ratio  = $tokLen / $kwLen;
-                if ($ratio >= 0.75 && $ratio <= 1.25 && $this->damerauLevenshtein($tokLow, $kwLower) <= 1) {
+                if ($ratio >= 0.75 && $ratio <= 1.25 && $this->damerauLevenshtein($tokLow, $kwLower) <= 1
+                    && !$this->isSingleSubstitution($tokLow, $kwLower)) {
                     // Reject initial-consonant swaps: "hangers" vs "bangers" differ only
                     // at position 0 and produce a completely different word, not a typo.
                     $firstDiff = null;
@@ -1058,6 +1059,24 @@ class ContentCheckService
         }
 
         return false;
+    }
+
+    /**
+     * True when the strings are the same length and differ in exactly one
+     * position: a different word ("meditation" vs "medication"), not a typo.
+     */
+    private function isSingleSubstitution(string $a, string $b): bool
+    {
+        if (strlen($a) !== strlen($b)) {
+            return false;
+        }
+        $diffs = 0;
+        for ($i = 0, $n = strlen($a); $i < $n; $i++) {
+            if ($a[$i] !== $b[$i]) {
+                $diffs++;
+            }
+        }
+        return $diffs === 1;
     }
 
     /**
