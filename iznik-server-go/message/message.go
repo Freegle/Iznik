@@ -1301,8 +1301,15 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	return messages
 }
 
+// globalWorryWordsWhere selects the global keywords the display check scans: the fuzzy flag
+// keywords, plus every 'allowed' row whatever its match_mode. Whitelist phrases such as a place
+// name ('Gun Quarter') are stored as literal rows, and the PHP content check strips every allowed
+// row regardless of mode, so loading only fuzzy rows left a literal whitelist entry with no
+// effect here and the post's 'gun' flagged again.
+const globalWorryWordsWhere = "scope = 'global' AND (match_mode = 'fuzzy' OR category = 'allowed')"
+
 // checkWorryWords checks message subjects and textbodies against global concern
-// keywords (fuzzy match mode).  Matches are stored in Message.Worry.
+// keywords (fuzzy match mode, plus the allowed whitelist).  Matches are stored in Message.Worry.
 func checkWorryWords(db *gorm.DB, messages []Message) {
 	var globalWords []WorryWord
 	db.Table("concern_keywords").
@@ -1314,7 +1321,7 @@ func checkWorryWords(db *gorm.DB, messages []Message) {
 			"WHEN 'review' THEN 'Review' " +
 			"WHEN 'allowed' THEN 'Allowed' " +
 			"ELSE 'Review' END AS type").
-		Where("match_mode = 'fuzzy' AND scope = 'global'").
+		Where(globalWorryWordsWhere).
 		Scan(&globalWords)
 
 	// Collect unique group IDs from all messages so we can load group-specific

@@ -7510,6 +7510,45 @@ func TestGetMessageWorryWords(t *testing.T) {
 	assert.True(t, hasWorry6, "Case-insensitive match should trigger worry")
 }
 
+// A whitelist phrase is stored as a LITERAL allowed row (place names like a district), not a
+// fuzzy one. The display check used to load only fuzzy rows, so such a phrase did nothing and
+// the flag word inside it kept flagging the post.
+func TestGetMessageWorryWordsLiteralAllowedPhrase(t *testing.T) {
+	prefix := uniquePrefix("msg_worry_lit")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	flagWord := "zorbtest" + suffix
+	phrase := flagWord + " Quarter"
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, scope, action) VALUES (?, 'review', 'fuzzy', 'global', 'flag')", flagWord)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, scope, action) VALUES (?, 'allowed', 'literal', 'global', 'flag')", phrase)
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword IN (?, ?)", flagWord, phrase)
+
+	worryFor := func(subject string) []interface{} {
+		msgID := CreateTestMessage(t, posterID, groupID, subject, 52.5, -1.8)
+		resp, _ := getApp().Test(httptest.NewRequest("GET",
+			fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var msg map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&msg)
+		if w, ok := msg["worry"]; ok {
+			return w.([]interface{})
+		}
+		return nil
+	}
+
+	assert.Empty(t, worryFor("OFFER: Lamp ("+phrase+" B4)"), "A literal allowed phrase must silence the flag word inside it")
+	assert.NotEmpty(t, worryFor("OFFER: Lamp ("+flagWord+" B4)"), "The flag word on its own must still flag")
+}
+
 func TestPatchMessageDeadline(t *testing.T) {
 	prefix := uniquePrefix("msgmod_deadline")
 	db := database.DBConn
