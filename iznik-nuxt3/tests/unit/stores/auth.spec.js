@@ -1340,9 +1340,24 @@ describe('auth store', () => {
       expect(store.user).toBeNull()
     })
 
-    it('wipes auth on a network error with no response', async () => {
+    // A phone resuming before its connection is back gets "Too many retries"
+    // with no HTTP response at all. That says nothing about the credentials,
+    // so it must not log the member out.
+    it('preserves auth on a network error with no response', async () => {
       store.setAuth('valid-jwt', 'valid-persistent')
-      mockFetchv2.mockRejectedValue(new Error('network down'))
+      mockFetchv2.mockRejectedValue(new Error('Too many retries, give up'))
+
+      await store.fetchUser()
+
+      expect(store.auth.jwt).toBe('valid-jwt')
+      expect(store.auth.persistent).toBe('valid-persistent')
+    })
+
+    it('wipes auth on 404', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      const err = new Error('Not found')
+      err.response = { status: 404 }
+      mockFetchv2.mockRejectedValue(err)
 
       await store.fetchUser()
 
