@@ -1,0 +1,16 @@
+=== promise detector — fine-tune result (2026-06-14T15:39:20Z) ===
+base: microsoft/deberta-v3-base | fp32 | dynamic padding | batch 8 | best=epoch1 (load_best_on_eval_loss)
+train.jsonl: 2984 convs | gold.jsonl: 500 (231 promises)
+
+val ROC-AUC 0.986 | threshold@P>=0.95 = 0.978 (val recall 0.737)
+gold rooms: 500  (positives 231)
+weighted ROC-AUC: 0.991
+>>> max recall @ precision>=0.95 (weighted, real prevalence): 0.810  (threshold 0.957)
+at deployed threshold 0.978: precision 0.960  recall 0.659  F1 0.781
+
+threshold.json:
+{
+  "threshold": 0.9775060415267944,
+  "val_recall_at_p95": 0.7373737373737373,
+  "val_roc_auc": 0.9860965981655636
+}

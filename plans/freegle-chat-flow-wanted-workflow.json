@@ -1,0 +1,68 @@
+{
+  "id": "freegle-chat-flow-wanted",
+  "name": "Freegle Chat Flow - WANTED (reply offering an item)",
+  "description": "Empirical state machine of a single User2User chat started from a WANTED post (a giver replies offering an item, or signposting one, to the wanter who posted). Derived from ~2,980 WANTED-initiated conversations on the live database over one month (2026-05). Roles are FLIPPED vs the Offer flow: the REPLIER is the giver, the POSTER is the wanter/receiver. The offerer machinery (Promised/Address/Reneged) is essentially unused here. Percentages are the approximate share of all WANTED chats traversing that arm; terminal totals are measured, intermediate splits estimated.",
+  "initialState": "START",
+  "guardrails": "Never assume the wanter still needs the item - many are already sorted. A 'Completed' here closes the WANTER's post and may mean they got the item from someone else, not this giver.",
+  "states": {
+    "START": {
+      "nodeType": "start",
+      "description": "Chat room created. The giver replies to a WANTED with an 'Interested' message.",
+      "writeActions": ["send_message"]
+    },
+    "OFFER_MADE": {
+      "nodeType": "agent",
+      "description": "Giver has offered something to the wanter (type=Interested). Two flavours: (a) offering their own item ('I have a spare X you can have'), or (b) SIGNPOSTING - ~16% of openers just point the wanter to another source (a link, another listing, a local project, the NHS) without having the item. Awaiting the wanter to respond.",
+      "prompt": "Offer the item plainly or, if you don't have it, point them to where they might get one. Ask one question only if suitability is genuinely unclear.",
+      "readActions": ["get_message", "get_user_info"],
+      "writeActions": ["send_message"],
+      "timeout": { "duration": 172800000, "toState": "GHOSTED" }
+    },
+    "ENQUIRY": {
+      "nodeType": "agent",
+      "description": "Suitability check - the offered item may not match what was wanted (wrong size, condition, type). The wanter weighs it before accepting.",
+      "prompt": "Give the details the wanter needs to judge suitability (size, condition, photos, location).",
+      "readActions": ["get_message"],
+      "writeActions": ["send_message"],
+      "timeout": { "duration": 172800000, "toState": "GHOSTED" }
+    },
+    "ARRANGING": {
+      "nodeType": "agent",
+      "description": "Wanter accepted; agreeing logistics. Unlike Offers, the handover may be COLLECTION (wanter collects) or DELIVERY (~9% - the giver offers to drop it round).",
+      "prompt": "Agree whether the wanter collects or you deliver, and a time/place. Don't over-message once settled.",
+      "readActions": ["get_user_info"],
+      "writeActions": ["send_message"],
+      "timeout": { "duration": 259200000, "toState": "STALLED" }
+    },
+    "RECEIVED": {
+      "nodeType": "end",
+      "description": "SUCCESS - the wanter got the item from this giver (collected or delivered). ~24% of WANTED chats. Signalled by collection/delivery text or a Completed marked by the wanter after real arranging."
+    },
+    "DECLINED_SORTED": {
+      "nodeType": "end",
+      "description": "The wanter does not take this giver's item. ~6%+ measured (under-counted - many such cases simply ghost). Reasons: 'thanks, I'm already sorted / got one', the item isn't suitable, or the giver only signposted and the wanter sourced it elsewhere. Amicable."
+    },
+    "GHOSTED": {
+      "nodeType": "end",
+      "description": "The wanter never replies (~38% - by far the biggest outcome). Usually because they were already sorted by the time the offer arrived, or the offer wasn't quite right. The high ghost rate is the defining feature of the Wanted flow."
+    },
+    "STALLED": {
+      "nodeType": "end",
+      "description": "Two-sided conversation that faded during arranging with no recorded outcome (~30%). Wanteds mark Completed far less often (~22% vs ~52% for Offers), so many real handovers sit here as latent success."
+    }
+  },
+  "transitions": [
+    { "id": "t_open",        "from": "START",       "to": "OFFER_MADE",      "trigger": "unconditional", "metadata": { "event": "Interested", "approx_share": "100%" } },
+
+    { "id": "t_om_arrange",  "from": "OFFER_MADE",  "to": "ARRANGING",       "trigger": "llm_decision", "condition": "Wanter accepts the offer", "metadata": { "approx_share": "~46%" } },
+    { "id": "t_om_ghost",    "from": "OFFER_MADE",  "to": "GHOSTED",         "trigger": "host_driven",  "condition": "Wanter never replies (already sorted / not suitable)", "metadata": { "signal": "timeout", "approx_share": "~38%" } },
+    { "id": "t_om_enquiry",  "from": "OFFER_MADE",  "to": "ENQUIRY",         "trigger": "llm_decision", "condition": "Wanter asks whether it is suitable", "metadata": { "approx_share": "~10%" } },
+    { "id": "t_om_sorted",   "from": "OFFER_MADE",  "to": "DECLINED_SORTED", "trigger": "llm_decision", "condition": "Wanter is already sorted, declines, or was only signposted", "metadata": { "approx_share": "~6%" } },
+
+    { "id": "t_enq_arrange", "from": "ENQUIRY",     "to": "ARRANGING",       "trigger": "llm_decision", "condition": "Suitable, proceeding", "metadata": { "approx_share": "~7%" } },
+    { "id": "t_enq_sorted",  "from": "ENQUIRY",     "to": "DECLINED_SORTED", "trigger": "llm_decision", "condition": "Not suitable", "metadata": { "approx_share": "~3%" } },
+
+    { "id": "t_arr_received","from": "ARRANGING",   "to": "RECEIVED",        "trigger": "host_driven",  "condition": "Collected or delivered (text / Completed by wanter)", "metadata": { "approx_share": "~24%" } },
+    { "id": "t_arr_stall",   "from": "ARRANGING",   "to": "STALLED",         "trigger": "host_driven",  "condition": "Goes quiet before a recorded outcome", "metadata": { "signal": "timeout", "approx_share": "~30%" } }
+  ]
+}
