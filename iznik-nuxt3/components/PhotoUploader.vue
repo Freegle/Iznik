@@ -130,7 +130,19 @@
       >
         <v-icon icon="camera" /> Add Photos
       </b-button>
-      <p class="skip-link">
+      <!-- Experiment give-photos-carry-on (the offer photos step passes carryOn): only the Skip
+           control changes. -->
+      <b-button
+        v-if="carryOn"
+        variant="outline-primary"
+        size="lg"
+        class="add-photos-button carry-on-button"
+        data-testid="carry-on-button"
+        @click="emit('skip')"
+      >
+        No photo? Carry on
+      </b-button>
+      <p v-else class="skip-link">
         <button class="skip-link-btn" @click="emit('skip')">Skip</button>
       </p>
     </div>
@@ -282,6 +294,13 @@ const props = defineProps({
     type: String,
     required: false,
     default: "You'll get a better response",
+  },
+  // Experiment give-photos-carry-on: on the offer photos step, an outlined "Carry on" button replaces
+  // the small Skip link. Nothing else on the step changes. Delete this prop and the carry-on markup with the experiment.
+  carryOn: {
+    type: Boolean,
+    required: false,
+    default: false,
   },
 })
 
@@ -1274,6 +1293,11 @@ defineExpose({ processPhoto })
     cursor: pointer;
     font: inherit;
   }
+}
+
+.carry-on-button {
+  margin-top: 0.75rem;
+  max-width: 100%;
 }
 
 .add-more-section {

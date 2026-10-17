@@ -1,10 +1,11 @@
 ---
-last_reviewed: 2026-10-15
+last_reviewed: 2026-10-17
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useFlowTelemetry.js
   - iznik-nuxt3/composables/useFlowRoutes.js
   - iznik-nuxt3/composables/useComposeTelemetry.js
+  - iznik-nuxt3/composables/useGivePhotoTelemetry.js
   - iznik-nuxt3/composables/useLoginTelemetry.js
   - iznik-nuxt3/composables/useSettingsTelemetry.js
   - iznik-nuxt3/plugins/flowTelemetry.client.js
@@ -174,6 +175,13 @@ a minute.
 Every flow event carries the member's arms in `variant` as `name:arm` pairs, so the funnel splits by
 arm with no per-experiment recording code. How a member gets an arm, and how an experiment is run, read
 and decided, is on its own page: [UX experiments](ux-experiments.md).
+
+Posts with a photo get more replies, so a change to the give flow can raise completion and lower the
+share of offers with a photo. `useGivePhotoTelemetry.js` measures that: each posted OFFER sends one
+`give_posted` client log (`event_type="give_posted"`) with `photos` (the member's own photos, not an AI
+illustration), `with_photo` and `variant`, the same arm string the flow events carry. The engine's own
+guardrails do not read it. A reviewer of a give experiment reads the share with `with_photo` true for
+each arm from Loki, beside the funnel's completion.
 
 ## 5. Rollup tables
 

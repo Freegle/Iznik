@@ -43,6 +43,16 @@ vi.mock('~/composables/useFlowTelemetry', () => ({
   },
 }))
 
+// Whether an OFFER had a photo, reported once per posted OFFER.
+const mockReportGivePosted = vi.hoisted(() => vi.fn())
+vi.mock('~/composables/useGivePhotoTelemetry', async () => {
+  const real = await vi.importActual('~/composables/useGivePhotoTelemetry')
+  return {
+    givePhotoCount: real.givePhotoCount,
+    reportGivePosted: mockReportGivePosted,
+  }
+})
+
 const mockSetAuth = vi.fn()
 let mockAuthUser = null
 vi.mock('~/stores/auth', () => ({
@@ -1933,6 +1943,54 @@ describe('compose store', () => {
         200,
         null
       )
+    })
+
+    it('reports a posted Offer once, with the photos it had before the submit emptied them', async () => {
+      const store = ready()
+      store.messages = [{ ...offer, attachments: [{ id: 7 }] }]
+      mockMessageSubmit.mockResolvedValue({ id: 99, groupid: 10 })
+
+      await store.submit({ type: 'Offer' })
+
+      expect(mockReportGivePosted).toHaveBeenCalledTimes(1)
+      expect(mockReportGivePosted).toHaveBeenCalledWith(1)
+    })
+
+    it('reports zero photos for an Offer posted without one', async () => {
+      const store = ready()
+      store.messages = [{ ...offer }]
+      mockMessageSubmit.mockResolvedValue({ id: 99, groupid: 10 })
+
+      await store.submit({ type: 'Offer' })
+
+      expect(mockReportGivePosted).toHaveBeenCalledWith(0)
+    })
+
+    it('does not report a failed Offer or a Wanted', async () => {
+      const store = ready()
+      store.messages = [{ ...offer }]
+      mockMessageSubmit.mockRejectedValue(new Error('boom'))
+      await expect(store.submit({ type: 'Offer' })).rejects.toThrow()
+
+      store.messages = [{ ...offer, type: 'Wanted' }]
+      mockMessageSubmit.mockResolvedValue({ id: 99, groupid: 10 })
+      await store.submit({ type: 'Wanted' })
+
+      expect(mockReportGivePosted).not.toHaveBeenCalled()
+    })
+
+    it('reports the deferred Offer posted after login', async () => {
+      const store = ready()
+      mockMessageSubmit.mockResolvedValue({ id: 42, groupid: 10 })
+      store.setPendingSubmit(
+        { type: 'Offer', item: 'Drill', attachments: [{ id: 3 }, { id: 4 }] },
+        'a@b.com'
+      )
+
+      await store.resumePendingSubmit()
+
+      expect(mockReportGivePosted).toHaveBeenCalledTimes(1)
+      expect(mockReportGivePosted).toHaveBeenCalledWith(2)
     })
 
     it('uses the ask flow for a Wanted', async () => {

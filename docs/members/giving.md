@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-14
+last_reviewed: 2026-10-17
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
@@ -42,7 +42,9 @@ reply, you pick someone, and they collect. This guide walks through the whole th
 6. Click **Freegle it!** Your post goes live and starts reaching people nearby.
 
 On a phone the steps are the same but split into photo, details, options and location
-screens.
+screens. The photo screen has an **Add Photos** button. You do not need a photo to carry
+on: below the button is either a small **Skip** link or, for some members while a change is
+being tried, an outlined **No photo? Carry on** button. Both take you to the details screen.
 
 Occasionally, when Freegle is dealing with a wave of spam, new posts are held back for a
 while before they appear. Yours is not lost: it goes through the usual checks once the
