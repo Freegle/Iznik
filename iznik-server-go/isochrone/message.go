@@ -576,7 +576,11 @@ func Messages(c *fiber.Ctx) error {
 			// moderation, so it's less obvious a post is delayed. A REJECTED post is
 			// deliberately NOT shown here - a poster seeing their own rejected post linger in
 			// the browse feed is wrong (Discourse 9808); it belongs only in My Posts.
+			// A post withdrawn while Pending keeps its group row as Pending but deleted, and
+			// gets no outcome, so without the deleted checks it still counted as one of the
+			// viewer's posts (Discourse 10216/7).
 			Where("m.fromuser = ? AND mg.arrival >= ? AND mo.id IS NULL "+
+				"AND mg.deleted = 0 AND m.deleted IS NULL "+
 				"AND (EXISTS (SELECT 1 FROM messages_spatial ms WHERE ms.msgid = m.id) "+
 				"OR mg.collection = ?)", myid, start, utils.COLLECTION_PENDING).
 			Group("m.id").

@@ -62,3 +62,17 @@ func TestBoundsOmitsOwnPostWithdrawnWhilePending(t *testing.T) {
 	ids := browseFeedIDs(t, "/api/message/inbounds?swlat=51.4&swlng=-0.2&nelat=51.6&nelng=0.0&jwt="+token)
 	assert.False(t, ids[withdrawn], "a post withdrawn while Pending is not in the bounds feed")
 }
+
+// The nearby feed is the default Browse view, and its own-posts arm admits a post with a
+// Pending group row. Withdrawing leaves that row Pending but deleted, so without a check on
+// deleted the withdrawn post still counted as one of "your posts" (Discourse 10216/7).
+func TestNearbyOmitsOwnPostWithdrawnWhilePending(t *testing.T) {
+	withdrawn, pending, token := ownWithdrawnAndPending(t, uniquePrefix("nearby_withdrawn"))
+	db := database.DBConn
+	// The own-posts arm needs messages.lat/lng; withdrawal also soft-deletes the message.
+	db.Exec("UPDATE messages SET lat = 51.5, lng = -0.1 WHERE id IN (?, ?)", withdrawn, pending)
+	db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", withdrawn)
+	ids := browseFeedIDs(t, "/api/isochrone/message?jwt="+token)
+	assert.False(t, ids[withdrawn], "a post withdrawn while Pending is not in the nearby feed")
+	assert.True(t, ids[pending], "a post still Pending is in the nearby feed")
+}
