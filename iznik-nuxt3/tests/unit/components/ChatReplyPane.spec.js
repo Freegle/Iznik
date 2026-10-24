@@ -93,6 +93,14 @@ vi.mock('~/composables/useDistance', () => ({
   milesAway: vi.fn().mockReturnValue(5),
 }))
 
+// The experiment arm. The pane asks for it with flowArm(FlowName.REPLY, 'reply-collect-chips').
+let mockArm = null
+const mockFlowArm = vi.fn(() => mockArm)
+vi.mock('~/composables/useFlowTelemetry', () => ({
+  FlowName: { REPLY: 'reply' },
+  flowArm: (...args) => mockFlowArm(...args),
+}))
+
 vi.mock('~/composables/useClientLog', () => ({
   action: vi.fn(),
 }))
@@ -130,6 +138,9 @@ describe('ChatReplyPane', () => {
     mockReplyStateMachine.error.value = null
     mockReplyStateMachine.showWelcomeModal.value = false
     mockReplyStateMachine.replyImage.value = null
+    mockReplyStateMachine.collectText.value = ''
+    mockArm = null
+    mockFlowArm.mockClear()
   })
 
   async function createWrapper(props = {}) {
@@ -431,6 +442,69 @@ describe('ChatReplyPane', () => {
       })
       const wrapper = await createWrapper()
       expect(wrapper.text()).not.toContain('When could you collect?')
+    })
+  })
+
+  describe('reply-collect-chips experiment', () => {
+    it('control: no buttons under the collect box', async () => {
+      mockArm = 'a'
+      const wrapper = await createWrapper()
+      expect(mockFlowArm).toHaveBeenCalledWith('reply', 'reply-collect-chips')
+      expect(wrapper.find('.collect-chips').exists()).toBe(false)
+    })
+
+    it('no arm at all (experiment off): no buttons', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.collect-chips').exists()).toBe(false)
+    })
+
+    it('arm b: three buttons under the collect box', async () => {
+      mockArm = 'b'
+      const wrapper = await createWrapper()
+      const chips = wrapper.findAll('.collect-chip')
+      expect(chips.map((c) => c.text())).toEqual([
+        'This weekend',
+        'Weekday evenings',
+        'Any time',
+      ])
+      expect(chips[0].attributes('type')).toBe('button')
+    })
+
+    it('arm b: tapping a button fills the box and marks it', async () => {
+      mockArm = 'b'
+      const wrapper = await createWrapper()
+      const chips = wrapper.findAll('.collect-chip')
+      await chips[1].trigger('click')
+      expect(mockReplyStateMachine.collectText.value).toBe('Weekday evenings')
+      expect(
+        wrapper.findAll('.collect-chip')[1].attributes('aria-pressed')
+      ).toBe('true')
+      expect(
+        wrapper.findAll('.collect-chip')[0].attributes('aria-pressed')
+      ).toBe('false')
+    })
+
+    it('arm b: the box stays editable after a tap', async () => {
+      mockArm = 'b'
+      const wrapper = await createWrapper()
+      await wrapper.findAll('.collect-chip')[0].trigger('click')
+      expect(mockReplyStateMachine.collectText.value).toBe('This weekend')
+      mockReplyStateMachine.collectText.value = 'Saturday after 2pm'
+      await flushPromises()
+      expect(
+        wrapper.findAll('.collect-chip')[0].attributes('aria-pressed')
+      ).toBe('false')
+    })
+
+    it('a Wanted post never asks for the arm and has no buttons', async () => {
+      mockArm = 'b'
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        type: 'Wanted',
+      })
+      const wrapper = await createWrapper()
+      expect(mockFlowArm).not.toHaveBeenCalled()
+      expect(wrapper.find('.collect-chips').exists()).toBe(false)
     })
   })
 

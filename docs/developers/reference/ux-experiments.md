@@ -3,6 +3,8 @@ last_reviewed: 2026-10-24
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxExperimentService.php
+  - iznik-nuxt3/components/ChatReplyPane.vue
+  - iznik-nuxt3/tests/unit/components/ChatReplyPane.spec.js
   - iznik-batch/app/Services/Ux/BetaBinomial.php
   - iznik-batch/app/Services/Ux/UxRng.php
   - iznik-batch/app/Services/Ux/UxExperimentRefused.php
@@ -778,6 +780,39 @@ first on the Offer flow (`give-photos-carry-on`, inconclusive, removed); this is
   the two flows, which is why a decision to adopt should also say whether to try Offer again. Reverted,
   inconclusive or stopped: the prop, the button, the arm read and the tests go, then
   `ux:experiment close ask-photos-carry-on --cleanup-pr=<url>`.
+
+### Tap an answer for when you could collect
+
+`reply-collect-chips` tests whether tapping an answer is easier than typing one, so fewer members hit the empty-box
+error when they press Send on a reply to an Offer. Sending bounces off validation about one time in five on the phone
+site; an Offer has two required boxes, and the second ("When could you collect?") is free text.
+
+- **Who.** A member replying to an **Offer** (`components/ChatReplyPane.vue`). In arm `b`, three buttons sit under
+  the collect box: **This weekend**, **Weekday evenings** and **Any time**. A tap puts that text in the box and clears
+  the "please suggest" error; the box stays editable and the tapped button shows as selected only while the box still
+  holds exactly its text. Control is the box alone. A Wanted has no collect box, so it never asks for the arm.
+- **Reading the arm.** `flowArm(FlowName.REPLY, 'reply-collect-chips')`, once, when the pane first knows the post is
+  an Offer, so only members who could see the buttons are counted. The app build is always control.
+- **Starts only when `confirm-reply` has stopped.** One experiment per funnel, and `confirm-reply` holds `reply`.
+- **By hand.** Whether members use the buttons: the share of sent replies whose collect text equals a chip.
+- **Starting it.** After the PR is deployed and the manifest entry is live, and `confirm-reply` is stopped:
+
+  ```bash
+  php artisan ux:experiment create --flow=reply --name=reply-collect-chips \
+    --title="Tap an answer for when you could collect" \
+    --hypothesis="Tapping an answer is easier than typing one, so fewer members are stopped by the empty collection-time box when they press Send." \
+    --change="For half of members replying to an Offer on the website, three buttons under the When could you collect? box (This weekend, Weekday evenings, Any time) fill the box when tapped. The box stays editable." \
+    --expected="More members finish a reply, by 3 points or more." \
+    --expected-points=3 --pr=https://github.com/Freegle/Iznik/pull/1909
+  php artisan ux:experiment start reply-collect-chips
+  ```
+
+  The primary event is `flow_complete` per `flow_start` on flow `reply` (base rate about 75%); `validation_failed`
+  per start is the secondary.
+
+- **Cleanup.** Adopted: the buttons always show, and the arm read goes from `ChatReplyPane.vue`. Reverted,
+  inconclusive or stopped: the buttons, their styles, the arm read and the tests go, then
+  `ux:experiment close reply-collect-chips --cleanup-pr=<url>`.
 
 ### Who took it, already chosen
 
