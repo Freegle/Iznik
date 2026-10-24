@@ -502,6 +502,23 @@ Schedule::command('cookieyes:check')
     ->appendOutputTo(cronLog('cookieyes:check'))
     ->runInBackground();
 
+// Google housekeeping: Search Console sitemap/indexing problems and Google Ads (Ad Grants)
+// policy and compliance problems. Results in housekeeper_tasks, failures emailed to geeks.
+// Until the credentials are set up every run fails and says exactly what is missing.
+Schedule::command('google:search-console-check')
+    ->weeklyOn(1, '10:40')
+    ->when(fn () => config('freegle.google.search_console_enabled', true))
+    ->withoutOverlapping(60)
+    ->appendOutputTo(cronLog('google:search-console-check'))
+    ->runInBackground();
+
+Schedule::command('google:ads-check')
+    ->weeklyOn(1, '10:50')
+    ->when(fn () => config('freegle.google.ads_enabled', true))
+    ->withoutOverlapping(60)
+    ->appendOutputTo(cronLog('google:ads-check'))
+    ->runInBackground();
+
 // Moderator work notifications — tells mods about pending messages, events, etc.
 // Only runs 08:00–21:00; deduplicates against last sent summary.
 // V1: cron/mod_notifs.php (hourly)

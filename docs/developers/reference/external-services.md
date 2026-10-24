@@ -57,6 +57,7 @@ Visible, annoying, not fatal.
 | **Playwire** | Advert delivery ([ads.md](ads.md)) |
 | **WhatJobs** | The job listings that fill some advert slots ([ads.md](ads.md)) |
 | **CookieYes** | The cookie consent banner, checked weekly by `cookieyes:check` ([cookieyes-watchdog.md](cookieyes-watchdog.md)) |
+| **Google Search Console and Ads** | Checked weekly by `google:search-console-check` and `google:ads-check` ([google-housekeeping.md](google-housekeeping.md)) |
 | **Google Tag Manager** | Analytics tags, only when `GTM_ID` is set |
 | **Trustpilot** | Review link |
 
