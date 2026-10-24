@@ -718,6 +718,55 @@ describe('ModSysAdminUxProblemGroups', () => {
   })
 
   describe('when there is nothing to show', () => {
+    const asked = (over) => ({
+      prompt_id: 5,
+      question: 'Did you have a problem the last time you used Freegle?',
+      responses: 49,
+      skipped: 26,
+      written: 0,
+      nothing: 23,
+      nothing_label: 'I had no problems',
+      dont_understand: 0,
+      analysed: false,
+      ...over,
+    })
+
+    it('says where things stand when nobody has written anything', async () => {
+      store.groups.data = {
+        answers: 0,
+        left_over: 0,
+        groups: [],
+        open_questions: [asked()],
+      }
+      expect((await make()).find('.none').text()).toBe(
+        'No written answers yet. 49 members answered "Did you have a problem the last time you used Freegle?": 23 said "I had no problems", 26 skipped.'
+      )
+    })
+
+    it('says written answers are waiting to be analysed', async () => {
+      store.groups.data = {
+        answers: 0,
+        left_over: 0,
+        groups: [],
+        open_questions: [asked({ written: 12 })],
+      }
+      const t = (await make()).find('.none').text()
+      expect(t).toContain('12 written answers')
+      expect(t).toContain('Someone runs ux:prompt analyse 5 to sort them.')
+    })
+
+    it('still says no problems match under a funnel', async () => {
+      store.groups.data = {
+        answers: 0,
+        left_over: 0,
+        groups: [],
+        open_questions: [asked()],
+      }
+      expect((await make({ flow: 'give' })).find('.none').text()).toBe(
+        'No problems match.'
+      )
+    })
+
     it('says no problems yet, and when they come', async () => {
       store.groups.data = { answers: 0, left_over: 0, groups: [] }
       const w = await make()

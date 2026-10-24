@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-23
+last_reviewed: 2026-10-24
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
@@ -44,6 +44,9 @@ reply, you pick someone, and they collect. This guide walks through the whole th
 On a phone the steps are the same but split into photo, details, options and location
 screens. The photo screen has an **Add Photos** button. You do not need a photo to carry
 on: below the button is a small **Skip** link, which takes you to the details screen.
+After the details screen, some members (while a change is being tried) go straight to the
+location screen. They have a **Delivery or a deadline?** link under the postcode box, which
+opens the options screen. Everyone else sees the options screen first, as described above.
 
 Occasionally, when Freegle is dealing with a wave of spam, new posts are held back for a
 while before they appear. Yours is not lost: it goes through the usual checks once the

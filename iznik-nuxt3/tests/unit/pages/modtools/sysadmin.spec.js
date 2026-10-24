@@ -80,8 +80,69 @@ describe('sysadmin page tab grouping', () => {
       .findAll('.tab')
       .find((t) => t.text().includes('Behaviour'))
       .findAll('.badge')
-    expect(badges.map((b) => b.text())).toEqual(['2'])
+    expect(badges.map((b) => b.text())).toContain('2')
   })
+
+  it('repeats the red number on the UX sub-tab and says in words what it is', async () => {
+    mockRouteQuery.value = { tab: 'behaviour' }
+    mockWork.value = {
+      emailout: 0,
+      emailin: 0,
+      uxexperiments: 2,
+      uxexperimentsconfirm: 1,
+      uxexperimentsremove: 1,
+    }
+    const wrapper = mountComponent()
+    await flushPromises()
+    const sub = wrapper
+      .findAll('.tab')
+      .find(
+        (t) => t.find('.subtab-label').exists() && t.text().startsWith('UX')
+      )
+    expect(sub.find('.subtab-label .badge').text()).toBe('2')
+    const note = wrapper.find('.ux-verdict-note')
+    expect(note.text()).toContain(
+      '2 experiments have a verdict: 1 to confirm, 1 to remove code'
+    )
+    expect(note.find('a').attributes('href')).toBe(
+      '?tab=ux&ux_section=experiments'
+    )
+  })
+
+  it('draws no verdict line on the UX sub-tab when none is waiting', async () => {
+    mockRouteQuery.value = { tab: 'ux' }
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.find('.ux-verdict-note').exists()).toBe(false)
+  })
+
+  it('opens Behaviour on UX by default, with ?tab=behaviour', async () => {
+    mockRouteQuery.value = { tab: 'behaviour' }
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.find('.c-ux').exists()).toBe(true)
+    expect(wrapper.find('.c-digestclicks').exists()).toBe(false)
+    expect(wrapper.find('.c-reengage').exists()).toBe(false)
+  })
+
+  it('orders the Behaviour sub-tabs UX, Scrolling, Reengagement', () => {
+    const labels = mountComponent()
+      .findAll('.subtab-label')
+      .map((l) => l.text().replace(/\s+\d+$/, ''))
+      .filter((t) => ['UX', 'Scrolling', 'Reengagement'].includes(t))
+    expect(labels).toEqual(['UX', 'Scrolling', 'Reengagement'])
+  })
+
+  it.each(['scrolling', 'digest'])(
+    'lands ?tab=%s on Scrolling',
+    async (tab) => {
+      mockRouteQuery.value = { tab }
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.find('.c-digestclicks').exists()).toBe(true)
+      expect(wrapper.find('.c-ux').exists()).toBe(false)
+    }
+  )
 
   it('shows no number on the Behaviour tab when none is waiting', async () => {
     const wrapper = mountComponent()

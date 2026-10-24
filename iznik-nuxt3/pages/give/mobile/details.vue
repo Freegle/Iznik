@@ -113,6 +113,7 @@ import { useRuntimeConfig } from '#app'
 import { useComposeStore } from '~/stores/compose'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
+import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
 import NumberIncrementDecrement from '~/components/NumberIncrementDecrement'
 import OurUploadedImage from '~/components/OurUploadedImage'
 import api from '~/api'
@@ -359,7 +360,12 @@ function validateAndNext() {
     return
   }
 
-  router.push('/give/mobile/options')
+  // Experiment give-skip-options-screen: arm 'b' goes straight to the postcode step. Control, and
+  // anything but arm 'b', goes to the options screen as before. The arm is read here, on the tap,
+  // so only members who get this far are counted. Delete the read and keep the control push when
+  // the experiment is removed (or push to whereami when it is adopted).
+  const skipOptions = flowArm(FlowName.GIVE, 'give-skip-options-screen') === 'b'
+  router.push(skipOptions ? '/give/mobile/whereami' : '/give/mobile/options')
 }
 </script>
 

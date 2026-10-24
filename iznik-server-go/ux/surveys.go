@@ -39,6 +39,8 @@ const (
 	// surveys all share it.
 	maxSurveys  = 30
 	maxComments = 20
+	// maxOpenQuestions bounds the written-answer questions looked at for an empty list.
+	maxOpenQuestions = 10
 )
 
 // Quote is words copied from one member's answer that the batch checked really are in it. It is
@@ -72,6 +74,9 @@ type ProblemGroupsResponse struct {
 	// LeftOver is how many answers fitted no problem (the sum of mentions of the leftover rows).
 	LeftOver int64          `json:"left_over"`
 	Groups   []ProblemGroup `json:"groups"`
+	// OpenQuestions is where the written-answer questions behind these problems stand, so that an empty
+	// list can say why. Counts only, never an answer.
+	OpenQuestions []OpenQuestion `json:"open_questions"`
 }
 
 // Suggestion is a fix a member suggested for a problem, listed under that problem.
@@ -128,6 +133,26 @@ type Value struct {
 
 type ValuesResponse struct {
 	Values []Value `json:"values"`
+	// OpenQuestions is where the questions about what works stand (see ProblemGroupsResponse).
+	OpenQuestions []OpenQuestion `json:"open_questions"`
+}
+
+// OpenQuestion is where one written-answer question stands, as counts. Problems and values are coded
+// from the written answers by a person running ux:prompt analyse, so an empty list is either nobody
+// writing anything or the answers waiting. No member text is here.
+type OpenQuestion struct {
+	PromptID uint64 `json:"prompt_id"`
+	Question string `json:"question"`
+	// Responses is every answer, a skip included.
+	Responses int64 `json:"responses"`
+	Skipped   int64 `json:"skipped"`
+	// Written is the answers with words in them: what ux:prompt analyse reads.
+	Written int64 `json:"written"`
+	// Nothing is the way out that says there was nothing to say, and NothingLabel is its wording.
+	Nothing        int64  `json:"nothing"`
+	NothingLabel   string `json:"nothing_label"`
+	DontUnderstand int64  `json:"dont_understand"`
+	Analysed       bool   `json:"analysed"`
 }
 
 // SurveyTally is what members said per option: most and least for a ranking, count for an
@@ -310,7 +335,7 @@ func ProblemGroups(c *fiber.Ctx) error {
 	promptIDs = append(promptIDs, otherPrompts...)
 
 	answers, _ := promptBases(promptIDs)
-	out := ProblemGroupsResponse{LeftOver: leftOver.Total, Groups: []ProblemGroup{}}
+	out := ProblemGroupsResponse{LeftOver: leftOver.Total, Groups: []ProblemGroup{}, OpenQuestions: openQuestions(false)}
 	for _, n := range answers {
 		if n > out.Answers {
 			out.Answers = n
@@ -482,7 +507,7 @@ func Values(c *fiber.Ctx) error {
 	}
 	answers, _ := promptBases(promptIDs)
 
-	out := ValuesResponse{Values: []Value{}}
+	out := ValuesResponse{Values: []Value{}, OpenQuestions: openQuestions(true)}
 	for _, r := range rows {
 		out.Values = append(out.Values, Value{ID: r.ID, Title: r.Title, Mentions: r.Mentions, Answers: answerBase(r.PromptID, answers), Quotes: parseProblemEvidence(r.Evidence).Quotes})
 	}
@@ -490,6 +515,84 @@ func Values(c *fiber.Ctx) error {
 }
 
 // ---- the figures behind problems and values ----
+
+// openQuestions says where the written-answer questions stand: the question about what works
+// (values) or every other one (problems and improvements), newest first. Counts only; the free text
+// is never selected.
+func openQuestions(values bool) []OpenQuestion {
+	db := database.DBConn
+	var prompts []struct {
+		ID       uint64  `gorm:"column:id"`
+		Question string  `gorm:"column:question"`
+		Options  string  `gorm:"column:options"`
+		Preset   *string `gorm:"column:preset"`
+	}
+	db.Table("ux_prompts").
+		Select("id, question, options, JSON_UNQUOTE(JSON_EXTRACT(settings, '$.preset')) AS preset").
+		Where("kind = 'open'").Order("id DESC").Limit(maxOpenQuestions).Scan(&prompts)
+
+	out := []OpenQuestion{}
+	ids := []uint64{}
+	for _, p := range prompts {
+		isValues := p.Preset != nil && *p.Preset == "values"
+		if isValues != values {
+			continue
+		}
+		q := OpenQuestion{PromptID: p.ID, Question: p.Question}
+		var options []struct {
+			Key   string `json:"key"`
+			Label string `json:"label"`
+		}
+		_ = json.Unmarshal([]byte(p.Options), &options)
+		for _, o := range options {
+			if o.Key == "nothing" {
+				q.NothingLabel = o.Label
+			}
+		}
+		out = append(out, q)
+		ids = append(ids, p.ID)
+	}
+	if len(ids) == 0 {
+		return out
+	}
+
+	// JSON_REMOVE drops the words on the way out; only whether there were any is kept.
+	var responses []struct {
+		PromptID uint64 `gorm:"column:prompt_id"`
+		Answer   string `gorm:"column:answer"`
+		Written  bool   `gorm:"column:written"`
+	}
+	db.Table("ux_prompt_responses").
+		Select("prompt_id, JSON_REMOVE(answer, '$.text') AS answer, COALESCE(JSON_TYPE(JSON_EXTRACT(answer, '$.text')) = 'STRING' AND TRIM(JSON_UNQUOTE(JSON_EXTRACT(answer, '$.text'))) <> '', 0) AS written").
+		Where("prompt_id IN ?", ids).Scan(&responses)
+	at := map[uint64]int{}
+	for i, q := range out {
+		at[q.PromptID] = i
+	}
+	for _, r := range responses {
+		q := &out[at[r.PromptID]]
+		var a answerShape
+		_ = json.Unmarshal([]byte(r.Answer), &a)
+		q.Responses++
+		switch {
+		case a.Skipped:
+			q.Skipped++
+		case r.Written:
+			q.Written++
+		case a.Choice == "nothing":
+			q.Nothing++
+		case a.Choice == "dont_understand":
+			q.DontUnderstand++
+		}
+	}
+
+	var analysed []uint64
+	db.Table("ux_problems").Where("prompt_id IN ?", ids).Distinct().Pluck("prompt_id", &analysed)
+	for _, id := range analysed {
+		out[at[id]].Analysed = true
+	}
+	return out
+}
 
 func answerBase(promptID *uint64, answers map[uint64]int64) int64 {
 	if promptID == nil {

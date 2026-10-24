@@ -101,3 +101,44 @@ export function kindOf(question) {
 }
 
 export const kindLabel = (question) => KIND_LABELS[kindOf(question)]
+
+/**
+ * Where the written-answer questions stand, for a list that is empty. `questions` is `open_questions`
+ * from the server: counts only. A server that does not send it (the frontend is live before the Go
+ * change) gives `undefined`, and then `fallback` is the whole answer. One sentence for each question.
+ */
+export function standingText(
+  questions,
+  fallback,
+  none = 'No question has been asked yet.'
+) {
+  if (!Array.isArray(questions)) return fallback
+  if (!questions.length) return none
+  return questions
+    .map((q) => {
+      const name = `"${q.question}"`
+      const written = Number(q.written) || 0
+      if (written > 0 && q.analysed) {
+        return `${countOf(written, 'written answer')} to ${name} ${written === 1 ? 'was' : 'were'} analysed and nothing came out of ${written === 1 ? 'it' : 'them'}.`
+      }
+      if (written > 0) {
+        return `${countOf(written, 'written answer')} to ${name} ${written === 1 ? 'is' : 'are'} waiting to be analysed. Someone runs ux:prompt analyse ${q.prompt_id} to sort ${written === 1 ? 'it' : 'them'}.`
+      }
+      const responses = Number(q.responses) || 0
+      if (!responses) return `Nobody has answered ${name} yet.`
+      const parts = []
+      if (q.nothing) {
+        parts.push(
+          `${q.nothing.toLocaleString()} said "${q.nothing_label || 'nothing'}"`
+        )
+      }
+      if (q.dont_understand) {
+        parts.push(
+          `${q.dont_understand.toLocaleString()} did not understand it`
+        )
+      }
+      if (q.skipped) parts.push(`${q.skipped.toLocaleString()} skipped`)
+      return `No written answers yet. ${countOf(responses, 'member')} answered ${name}${parts.length ? ': ' + parts.join(', ') : ''}.`
+    })
+    .join(' ')
+}

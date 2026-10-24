@@ -2,6 +2,7 @@
 last_reviewed: 2026-10-23
 owner: Freegle dev team
 covers:
+  - iznik-nuxt3/modtools/pages/sysadmin/index.vue
   - iznik-nuxt3/modtools/components/ModSysAdminUx.vue
   - iznik-nuxt3/modtools/components/ModSysAdminUxNav.vue
   - iznik-nuxt3/modtools/components/ModSysAdminUxFilters.vue
@@ -40,6 +41,13 @@ telemetry described in [UX telemetry](ux-telemetry.md): where members go back, s
 never find a feature. That page is the contract for the events, the rollup tables and the read
 API. This page is about the tab: how it is laid out, what the address holds, what the filters do,
 and how to read it. The code is the source of truth; this page points into it.
+
+UX is the first and default sub-tab of Behaviour (then Scrolling, then Reengagement), so opening
+Behaviour shows it. `?tab=behaviour` and `?tab=ux` land on UX; `?tab=scrolling`, `digest` and
+`recommendations` land on Scrolling; `?tab=reengagement` lands on Reengagement. The red number on
+the Behaviour tab (experiments with a verdict nobody has closed) is repeated on the UX sub-tab, and
+a line at the top of the sub-tab says in words what it is waiting for and links to the Experiments
+section. The page is `iznik-nuxt3/modtools/pages/sysadmin/index.vue`.
 
 ## What it shows
 

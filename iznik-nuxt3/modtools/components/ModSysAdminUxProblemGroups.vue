@@ -13,7 +13,7 @@
 
     <div v-else :class="{ stale: store.groups.loading }">
       <p v-if="!groups.length" class="none text-muted">
-        {{ filtered ? 'No problems match.' : EMPTY_TEXT }}
+        {{ filtered ? 'No problems match.' : emptyText }}
       </p>
       <p v-else-if="groupMissing" class="not-in-list small text-muted mb-2">
         That group is not in the list.
@@ -133,6 +133,7 @@ import {
   countOf,
   mentionCount,
   ofWrittenAnswers,
+  standingText,
 } from '~/modtools/composables/useUxAnswers'
 import ModSysAdminUxProblem from '~/modtools/components/ModSysAdminUxProblem.vue'
 
@@ -159,6 +160,11 @@ const MOST = 100
 
 const EMPTY_TEXT =
   'No problems yet. They appear after members answer a question in their own words and the answers have been analysed.'
+
+// An older server does not send open_questions, and then this is the plain text.
+const emptyText = computed(() =>
+  standingText(data.value?.open_questions, EMPTY_TEXT)
+)
 
 const data = computed(() => store.groups.data)
 const groups = computed(() => data.value?.groups || [])

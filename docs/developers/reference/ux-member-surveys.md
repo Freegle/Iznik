@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-23
+last_reviewed: 2026-10-24
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxPromptService.php
@@ -338,10 +338,18 @@ Four routes, for Support and Admin (`iznik-server-go/ux/surveys.go`):
 
 | Route | Returns |
 |---|---|
-| `GET /modtools/ux/problem-groups?flow=&q=&min=` | each group with its problem count, mentions and biggest problem; groups ordered by mentions with `Other` last; `left_over` and `answers` |
+| `GET /modtools/ux/problem-groups?flow=&q=&min=` | each group with its problem count, mentions and biggest problem; groups ordered by mentions with `Other` last; `left_over`, `answers` and `open_questions` |
 | `GET /modtools/ux/problems?group=&flow=&q=&min=&limit=` | the problems, each with its quotes, its suggestions and (once ranked) `weight`, `most` and `times_shown`; `total` is counted before `limit` |
-| `GET /modtools/ux/values` | what members value, at most 20 |
+| `GET /modtools/ux/values` | what members value, at most 20, and `open_questions` |
 | `GET /modtools/ux/questions?kind=&status=` | each prompt with its tallies, skips and comments, and the decoy yes rate |
+
+`open_questions` is where the written-answer questions stand, so that an empty Problems or What works list can
+say why: per question the `responses`, `skipped`, `written` (answers with words, which is what `ux:prompt analyse`
+reads), `nothing` (with its `nothing_label`), `dont_understand` and whether it is `analysed`. Problems lists every
+open question except the one about what works; What works lists that one. Counts only. The route cannot tell
+whether `UX_PRIVACY_CLEARED` is set, because that is the batch's setting, so the tab says only that someone runs
+`ux:prompt analyse`. A server that does not send the field is an older one, and the tab then shows its plain
+empty text.
 
 `flow=none` means problems tied to no funnel. Answer text is never sent except as checked quotes and the
 capped comments. The What members say section of the SysAdmin UX tab reads these four routes and nothing

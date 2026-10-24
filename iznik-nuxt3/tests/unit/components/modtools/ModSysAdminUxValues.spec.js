@@ -126,6 +126,54 @@ describe('ModSysAdminUxValues', () => {
     expect(w.find('.value').exists()).toBe(false)
   })
 
+  it('says where things stand when no one has written anything', () => {
+    store.values.data = {
+      values: [],
+      open_questions: [
+        {
+          prompt_id: 7,
+          question: 'What has worked well for you on Freegle?',
+          responses: 10,
+          skipped: 4,
+          written: 0,
+          nothing: 6,
+          nothing_label: "I can't think of one",
+          dont_understand: 0,
+          analysed: false,
+        },
+      ],
+    }
+    expect(make().find('.none').text()).toBe(
+      'No written answers yet. 10 members answered "What has worked well for you on Freegle?": 6 said "I can\'t think of one", 4 skipped.'
+    )
+  })
+
+  it('says written answers are waiting, and that the question has not been asked when it has not', () => {
+    store.values.data = {
+      values: [],
+      open_questions: [
+        {
+          prompt_id: 7,
+          question: 'What has worked well for you on Freegle?',
+          responses: 3,
+          skipped: 0,
+          written: 3,
+          nothing: 0,
+          nothing_label: '',
+          dont_understand: 0,
+          analysed: false,
+        },
+      ],
+    }
+    expect(make().find('.none').text()).toContain(
+      'Someone runs ux:prompt analyse 7 to sort them.'
+    )
+    store.values.data = { values: [], open_questions: [] }
+    expect(make().find('.none').text()).toBe(
+      'The question about what has worked well has not been asked yet.'
+    )
+  })
+
   // A figure with no base is a count of members and not a bare number (finding: a row with no unit).
   it('reads a value with no base as a count of members, never as a bare number', () => {
     give([value({ mentions: 6, answers: 0 })])

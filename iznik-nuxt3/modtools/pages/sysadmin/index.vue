@@ -113,8 +113,8 @@
           </b-tabs>
         </b-tab>
 
-        <!-- Behaviour Tab: scrolling, reengagement effectiveness and UX,
-             grouped as sub-tabs. -->
+        <!-- Behaviour Tab: UX (the default), scrolling and reengagement
+             effectiveness, grouped as sub-tabs. -->
         <b-tab @click="onBehaviourTab">
           <template #title>
             <h2 class="ms-2 me-2">
@@ -129,6 +129,32 @@
             </h2>
           </template>
           <b-tabs v-model="behaviourSubTab" content-class="mt-3" pills>
+            <!-- UX: the default sub-tab, so the red number on Behaviour is explained
+                 on arrival. -->
+            <b-tab @click="onUxTab">
+              <template #title>
+                <span class="subtab-label">
+                  UX
+                  <b-badge
+                    v-if="supportOrAdmin && work?.uxexperiments"
+                    variant="danger"
+                    :title="uxVerdictTitle"
+                  >
+                    {{ work.uxexperiments }}
+                  </b-badge>
+                </span>
+              </template>
+              <p
+                v-if="supportOrAdmin && work?.uxexperiments"
+                class="ux-verdict-note ms-2"
+              >
+                {{ uxVerdictTitle }}.
+                <a href="?tab=ux&ux_section=experiments"
+                  >Open Experiments to act on them.</a
+                >
+              </p>
+              <ModSysAdminUx v-if="showUx" :key="'ux-' + uxBump" />
+            </b-tab>
             <!-- Scrolling: how far people scroll/engage — digest click-through by
                  position, and browse-feed scroll depth. -->
             <b-tab @click="onDigestClicksTab">
@@ -155,12 +181,6 @@
                 v-if="showReengage"
                 :key="'reengage-' + reengageBump"
               />
-            </b-tab>
-            <b-tab @click="onUxTab">
-              <template #title>
-                <span class="subtab-label">UX</span>
-              </template>
-              <ModSysAdminUx v-if="showUx" :key="'ux-' + uxBump" />
             </b-tab>
           </b-tabs>
         </b-tab>
@@ -220,6 +240,7 @@ const route = useRoute()
 
 const activeTab = ref(0)
 const mailSubTab = ref(0)
+// UX is sub-tab 0 (the default), Scrolling 1, Reengagement 2.
 const behaviourSubTab = ref(0)
 
 const showHousekeeping = ref(false)
@@ -246,9 +267,10 @@ const supportAIBump = ref(0)
 const openPaf = ref(false)
 
 // Top-level tab index per deep-link query param. Outgoing/incoming both open the
-// Mail tab; scrolling/reengagement/ux all open the Behaviour tab. The old
-// per-tab params are kept so existing bookmarks/links still land right
-// (recommendations was a sub-tab that has gone, so it lands on Scrolling).
+// Mail tab; scrolling/reengagement/ux all open the Behaviour tab, on their own
+// sub-tab. The old per-tab params are kept so existing bookmarks/links still
+// land right (recommendations was a sub-tab that has gone, so it lands on
+// Scrolling). A bare ?tab=behaviour opens the default sub-tab, UX.
 const topTabMap = {
   housekeeping: 0,
   cronjobs: 1,
@@ -319,12 +341,11 @@ function onUxTab() {
   uxBump.value = Date.now()
 }
 
-// Opening the Behaviour tab shows whichever sub-tab is active (Scrolling by
-// default).
+// Opening the Behaviour tab shows whichever sub-tab is active (UX by default).
 function onBehaviourTab() {
-  if (behaviourSubTab.value === 2) onUxTab()
-  else if (behaviourSubTab.value === 1) onReengageTab()
-  else onDigestClicksTab()
+  if (behaviourSubTab.value === 2) onReengageTab()
+  else if (behaviourSubTab.value === 1) onDigestClicksTab()
+  else onUxTab()
 }
 
 function onRipplingTab() {
@@ -353,20 +374,19 @@ onMounted(() => {
     } else if (tab === 'delayed' || tab === 'deferrals') {
       mailSubTab.value = 2
       onDeferralsTab()
+    } else if (tab === 'behaviour' || tab === 'ux') {
+      behaviourSubTab.value = 0
+      onUxTab()
     } else if (
-      tab === 'behaviour' ||
       tab === 'digest' ||
       tab === 'scrolling' ||
       tab === 'recommendations'
     ) {
-      behaviourSubTab.value = 0
+      behaviourSubTab.value = 1
       onDigestClicksTab()
     } else if (tab === 'reengagement') {
-      behaviourSubTab.value = 1
-      onReengageTab()
-    } else if (tab === 'ux') {
       behaviourSubTab.value = 2
-      onUxTab()
+      onReengageTab()
     } else if (tab === 'rippling') onRipplingTab()
     else if (tab === 'aihelper') onSupportAITab()
     else if (tab === 'paf' || tab === 'addresses') {
@@ -381,6 +401,10 @@ onMounted(() => {
 </script>
 
 <style scoped lang="scss">
+.ux-verdict-note {
+  font-weight: 600;
+}
+
 .subtab-label {
   font-size: 1rem;
   font-weight: 600;
