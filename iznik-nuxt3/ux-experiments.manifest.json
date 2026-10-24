@@ -8,9 +8,19 @@
       "pr": "https://github.com/Freegle/Iznik/pull/1854"
     },
     {
+      "name": "join-name-optional",
+      "opened": "2026-10-24",
+      "pr": "https://github.com/Freegle/Iznik/pull/1906"
+    },
+    {
       "name": "mobile-web-app-interstitial",
       "opened": "2026-10-22",
       "pr": "https://github.com/Freegle/Iznik/pull/1865"
+    },
+    {
+      "name": "ask-description-optional",
+      "opened": "2026-10-24",
+      "pr": "https://github.com/Freegle/Iznik/pull/1907"
     },
     {
       "name": "reply-collect-chips",

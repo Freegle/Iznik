@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Optional pre-commit hook: docs and dependency licences.
+# Optional pre-commit hook: lint, docs and dependency licences.
 #
-# It does three cheap, local things and NEVER blocks your commit (advisory only -
-# CI is where the freshness and licence gates are enforced hard):
+# Steps 1 to 3 are cheap, local and advisory - they never block your commit (CI is
+# where the freshness and licence gates are enforced hard):
 #
 #   1. Runs the documentation freshness gate on your STAGED changes, so if you
 #      staged a change to code a doc covers without updating the doc, you get a
@@ -13,6 +13,10 @@
 #      and is far too slow for a commit hook. See docs/screenshots/README.md.
 #   3. If you staged a lock file, checks that any dependency it adds has a licence
 #      compatible with Freegle's, AGPL-3.0-or-later.
+#
+# Step 4 BLOCKS: if you staged iznik-nuxt3 code, it runs eslint on it the way CI's
+# lint-nuxt job does (errors only). CI fails the build on those errors, so committing
+# them only costs a second CI run. Fix with `npx eslint --fix <file>` in iznik-nuxt3.
 #
 # Install (optional):
 #   ln -sf ../../scripts/hooks/pre-commit .git/hooks/pre-commit
@@ -43,6 +47,11 @@ fi
 # 3. Licence check if a lock file is staged (advisory).
 if command -v node >/dev/null 2>&1 && git diff --cached --name-only | grep -qE '(^|/)(package-lock\.json|composer\.lock|go\.mod)$'; then
   node scripts/check-dependency-licences.mjs --staged || true
+fi
+
+# 4. eslint on staged iznik-nuxt3 code (blocks, like CI).
+if command -v node >/dev/null 2>&1 && [ -f scripts/lint-staged-nuxt.mjs ]; then
+  node scripts/lint-staged-nuxt.mjs
 fi
 
 exit 0

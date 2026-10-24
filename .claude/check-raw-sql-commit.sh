@@ -23,7 +23,9 @@ if ! echo "$COMMAND" | grep -qE '\bgit\s+commit\b'; then
   exit 0
 fi
 
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+. "$(dirname "$0")/lib/commit-repo.sh"
+REPO_ROOT=$(commit_repo_dir "$COMMAND" "$(echo "$INPUT" | jq -r '.cwd // ""' 2>/dev/null)") || exit 0
+[ -n "$REPO_ROOT" ] || exit 0
 cd "$REPO_ROOT" 2>/dev/null || exit 0
 
 # What is about to be committed. `git commit -a` sweeps in tracked-but-unstaged

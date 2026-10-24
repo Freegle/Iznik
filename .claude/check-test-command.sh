@@ -139,7 +139,9 @@ fi
 # these command names blocked the grep.
 if [ "$IS_TEST_COMMAND" = true ] \
    && echo "$SCAN" | grep -qE '(^|[;&|]|&&|\|\|)[[:space:]]*(grep|rg|ag|ack)\b' \
-   && ! echo "$SCAN" | grep -qE '(^|[;&|]|&&|\|\|)[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(go|php|npx|npm|vendor/bin/phpunit)[[:space:]]'; then
+   && ! echo "$SCAN" | sed -E 's/\\\|//g' | grep -qE '(^|[;&|]|&&|\|\|)[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(go|php|npx|npm|vendor/bin/phpunit)[[:space:]]'; then
+  # (\| inside a grep pattern is alternation, not a pipe, so it is dropped before looking
+  # for a real invocation: grep "lint\|go vet" only searches.)
   IS_TEST_COMMAND=false
 fi
 

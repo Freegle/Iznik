@@ -116,6 +116,7 @@ import { useReplyStore } from '~/stores/reply'
 import { useMe } from '~/composables/useMe'
 import { useReplyToPost } from '~/composables/useReplyToPost'
 import { action } from '~/composables/useClientLog'
+import { useAskName } from '~/composables/useAskName'
 import { FlowName, useFlowTelemetry } from '~/composables/useFlowTelemetry'
 import { milesAway } from '~/composables/useDistance'
 
@@ -290,6 +291,7 @@ export function useReplyStateMachine(messageId, options = {}) {
   const replyStore = useReplyStore()
   const { me, myid, myGroups, fetchMe } = useMe()
   const { forceLogin, loggedInEver } = storeToRefs(authStore)
+  const { maybeAskName } = useAskName()
 
   // Core state
   const state = ref(ReplyState.IDLE)
@@ -1237,6 +1239,7 @@ export function useReplyStateMachine(messageId, options = {}) {
           })
           transitionTo(ReplyState.COMPLETED, { event: ReplyEvent.MESSAGE_SENT })
           callback?.()
+          maybeAskName('reply')
         }
       } else {
         log('replyToPost returned falsy - may be stale reply')

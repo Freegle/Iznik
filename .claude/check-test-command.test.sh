@@ -30,6 +30,7 @@ check "heredoc quoting a command" 0 "$QUOTED"
 check "filenames that abut into a trigger" 0 \
   "cp a/dashboard/cache_$T.go b/$T/dashboard_$T.go"
 check "grep for the literal"      0 "grep -rn '$G $T' .claude/*.sh"
+check "grep alternation \\| before a trigger" 0 "grep -n -i \"lint\\\\|$G vet\" .circleci/orb/x.yml | head"
 check "status API POST"           0 "curl -s -X POST http://localhost:12114/api/tests/laravel"
 check "unrelated"                 0 "ls -la"
 

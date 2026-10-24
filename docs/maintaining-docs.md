@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-10-24
 owner: Freegle dev team
 ---
 
@@ -119,9 +119,12 @@ ln -sf ../../scripts/hooks/pre-commit .git/hooks/pre-commit
 It runs the gate on your **staged** changes (never blocking the commit) and reminds you to
 regenerate screenshots if you staged UI changes - it does not run Playwright, which is far
 too slow for a commit hook. If you staged a lock file, it also checks that any new dependency
-has a licence compatible with Freegle's. CI stays the hard gate for both. If you already have
-a pre-commit hook (the ESLint one), append its commands to yours instead, or use a hook manager
-to run both.
+has a licence compatible with Freegle's. CI stays the hard gate for both. One step does
+block: staged `iznik-nuxt3` code is run through eslint the way CI's lint-nuxt job does
+(`scripts/lint-staged-nuxt.mjs`, errors only), because CI fails the build on the same errors.
+Claude sessions get that check from `.claude/check-lint-commit.sh` whether or not the hook is
+installed, in any clone or worktree. If you already have a pre-commit hook, append its commands
+to yours instead, or use a hook manager to run both.
 
 You satisfy the gate by updating the page. If the change genuinely needs no wording update,
 bump the page's `last_reviewed:` date - that still counts as touching the page, so the

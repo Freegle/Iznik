@@ -35,6 +35,8 @@ covers:
   - iznik-nuxt3/tests/e2e/test-mobile-web-app-interstitial.spec.js
   - iznik-nuxt3/plugins/uxExperiments.client.js
   - iznik-nuxt3/ux-experiments.manifest.json
+  - iznik-nuxt3/pages/ask/mobile/details.vue
+  - iznik-nuxt3/tests/unit/pages/ask/mobile/details.spec.js
   - iznik-nuxt3/tests/unit/uxExperimentsManifest.spec.js
   - iznik-batch/tests/Feature/Ux/UxExperimentServiceTest.php
   - iznik-batch/tests/Feature/Ux/UxExperimentBoundaryTest.php
@@ -947,6 +949,93 @@ does not.
   goes. Reverted, inconclusive or stopped: `AppInterstitial.vue`, `useAppInterstitial.js`, the `LayoutCommon` line,
   their tests and the e2e spec go, the `app_store_click` entry stays in the two event lists for the next experiment,
   then `ux:experiment close mobile-web-app-interstitial --cleanup-pr=<url>`.
+
+### Join without a name
+
+`join-name-optional` tests whether leaving the name box off the Join pane gets more people to finish joining.
+
+- **Who.** Anyone who sees the Join pane of the login modal (`components/LoginModal.vue`, the pane shown when the
+  browser has never logged in or the member chose Join), on the website only. In arm `b` the **Your name**
+  box is not drawn and the signup is sent with no `displayname`. Control is the four-field pane as it was. The
+  server already accepts an empty name (`PutUser`, `iznik-server-go/user/user.go`). It does not stay empty: the
+  first time the member is read, `InventName` makes one from the local part of their email address (tidied by
+  `TidyName`), or a generated name when that is unusable, stores it as `users.fullname` and sets
+  `users.inventedname`. "A freegler" is only the fallback when neither works. So other members see a name taken
+  from the joiner's email address.
+- **Asked later.** Givers choose a real name more often when several people reply (live data, 90 days to
+  2026-10-24: from the third reply on, 19% of real-name repliers were chosen against 14% of invented-name ones,
+  accounts over 30 days old). So an arm `b` signup sets `asknamelater` in the member's settings
+  (`composables/useAskName.js`), and the next time they send a reply or finish a post, `AskNameModal` asks
+  "What's your name?" once it has gone, so the ask never stops either from finishing. Save stores the
+  `displayname` and clears the flag; Not now keeps it, so the next post or reply asks again. Client log events
+  `ask_name_shown`, `ask_name_saved` and `ask_name_skipped` count it. Nobody but an arm `b` joiner has the flag.
+- **Not a sign-in.** `loginNative` takes "no name, an email and a password" on the Join pane for a sign-in typed
+  on the wrong pane and logs the member in. With the box hidden that is not the case, so the check is off in arm `b`.
+  Social sign-in is unchanged in both arms.
+- **Reading the arm.** The arm is read once per page view, after mount, when the modal is open on the Join pane,
+  because reading it counts the member as having seen the variant. In the app the arm is always control, as for
+  every web experiment, so the app keeps the four-field pane.
+- **Also check by hand.** The share of new accounts with `users.inventedname = 1` in each arm, and a sample of
+  those names, so moderators are not handed a flood of names made from email addresses. `users.fullname` is no
+  guide: it is filled with the invented name. And how often each arm's joiners are chosen (`messages_by` or
+  `messages_promises`) on Offers with three or more repliers, where a missing name has been seen to cost them.
+- **Starting it.** After the PR is deployed and the manifest entry is live, on the batch host:
+
+  ```bash
+  php artisan ux:experiment create --flow=login --name=join-name-optional \
+    --title="Join without a name" \
+    --hypothesis="The Join pane asks four things and the name is the only one a member does not need to join, so dropping it removes a place to stall." \
+    --change="For half of members, the Join pane has no Your name box. They join with an email and a password." \
+    --expected="More members who start logging in finish, by 5 points or more." \
+    --expected-points=5 --pr=https://github.com/Freegle/Iznik/pull/1906
+  php artisan ux:experiment start join-name-optional
+  ```
+
+- **Cleanup.** Adopted: the box and the `displayname` go from `LoginModal.vue`, with the `confused` check, and
+  the arm read goes; the ask-later prompt stays for every nameless signup. Reverted, inconclusive or stopped: the arm read, `nameHidden`, `useAskName`,
+  `AskNameModal` and the tests go (members still flagged are simply never asked), then
+  `ux:experiment close join-name-optional --cleanup-pr=<url>`.
+
+### The title as the description on the Wanted details step
+
+`ask-description-optional` tests whether letting the item name stand as the description gets more Wanted posts
+finished. On the phone Wanted flow the details step (`pages/ask/mobile/details.vue`) refuses to go on when
+there is no description and no real photo. Skipping the photo is the main way into that step, so a member
+skips one box and meets another.
+
+- **Who.** A member on the phone version of the Wanted flow with no real photo attached (an AI picture does
+  not count as one). In arm `b`, if the description box is empty (or only a number), pressing Next sets the
+  description to the item name and goes on to the location step. The description box stays visible and
+  optional, and nothing is added to the page. Control is the rule as it was: the red "describe" message.
+- **Short item names.** The compose store (`messageValid`) wants at least 3 characters of description when
+  there is no real photo, so an item name under 3 characters ("TV") still gets the prompt in arm `b`.
+- **Not the desktop and tablet page.** `PostMessageTablet` is one form with photos and details together and its
+  rule is unchanged. The flow events of `ask` count both versions, so a desktop member is counted in arm `b`
+  and sees control, which dilutes the effect. The numbers in the plan already allow for it (`expected_points` 3).
+- **Reading the arm.** The arm is read in `onMounted`, never on the server, and only while no real photo is
+  attached, because reading counts the member as under the rule. A member who arrives with a real photo and
+  removes it is counted then, once.
+- **One Wanted experiment at a time.** Both this and `ask-photos-carry-on` change the no-photo path, so this
+  one starts only after `ask-photos-carry-on` has been stopped.
+- **Measured.** The default for a funnel: finishing `ask` per start, so there is no `--primary-event` and no
+  `--base-rate`. The guardrails are the `ask` and `login` funnels. The quality check is the share of Wanted
+  posts whose body equals the item name in each arm, counted from `messages.textbody` over each arm's window.
+- **Starting it.** After the PR is deployed, the manifest entry is live and `ask-photos-carry-on` has stopped,
+  on the batch host:
+
+  ```bash
+  php artisan ux:experiment create --flow=ask --name=ask-description-optional \
+    --title="The title as the description on the Wanted details step" \
+    --hypothesis="Asking for a description after the member skipped the photo is a wall, and the title already describes a wanted post." \
+    --change="For half of members on the phone version of the Wanted flow with no real photo, pressing Next with the description empty uses the item name as the description and goes on, instead of asking for one." \
+    --expected="More members finish posting a Wanted, by 3 points or more." \
+    --expected-points=3 --touches=ask,login --pr=https://github.com/Freegle/Iznik/pull/1907
+  php artisan ux:experiment start ask-description-optional
+  ```
+
+- **Cleanup.** Adopted: delete the arm read and make the title the fallback for everyone, or drop the rule.
+  Reverted, inconclusive or stopped: the arm read, the `titleStands` branch and the tests go, then
+  `ux:experiment close ask-description-optional --cleanup-pr=<url>`.
 
 ## Experiments in mail, push and the server
 

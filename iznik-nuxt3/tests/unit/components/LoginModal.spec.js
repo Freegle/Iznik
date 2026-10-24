@@ -69,6 +69,25 @@ vi.mock('~/composables/useLoginTelemetry', () => ({
   },
 }))
 
+// The experiment arm. The modal asks for it with flowArm(FlowName.LOGIN, 'join-name-optional').
+const { mockFlowArm } = vi.hoisted(() => ({
+  mockFlowArm: vi.fn(() => null),
+}))
+
+vi.mock('~/composables/useFlowTelemetry', () => ({
+  FlowName: { LOGIN: 'login' },
+  flowArm: (...args) => mockFlowArm(...args),
+}))
+
+// A member who joins in arm b is asked for a name when they next post or reply.
+const { mockMarkAskNameLater } = vi.hoisted(() => ({
+  mockMarkAskNameLater: vi.fn(() => Promise.resolve()),
+}))
+
+vi.mock('~/composables/useAskName', () => ({
+  useAskName: () => ({ markAskNameLater: mockMarkAskNameLater }),
+}))
+
 // Mock stores with getter syntax for reactive values
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({
@@ -245,6 +264,7 @@ describe('LoginModal', () => {
   let wrapper = null
 
   beforeEach(() => {
+    mockMarkAskNameLater.mockClear()
     vi.clearAllMocks()
 
     // Reset mock data
@@ -261,6 +281,8 @@ describe('LoginModal', () => {
     mockMe.value = null
     mockLoggedIn.value = false
     mockRouterPush.mockReset()
+    mockFlowArm.mockReset()
+    mockFlowArm.mockReturnValue(null)
 
     // Mock window objects for social login
     global.window.FB = {
@@ -771,6 +793,8 @@ describe('LoginModal', () => {
         email: 'test@example.com',
         password: 'password123',
       })
+      // They gave a name, so nobody asks for one later.
+      expect(mockMarkAskNameLater).not.toHaveBeenCalled()
     })
 
     it('shows error when sign up fails', async () => {
@@ -818,6 +842,86 @@ describe('LoginModal', () => {
 
       // When name is missing but email/password present, it tries login instead (confused user case)
       expect(mockLogin).toHaveBeenCalled()
+    })
+  })
+
+  describe('experiment join-name-optional', () => {
+    beforeEach(() => {
+      mockLoggedInEver.value = false
+      mockForceLogin.value = true
+    })
+
+    async function submitJoin(w) {
+      await w.find('.email-validator').setValue('test@example.com')
+      await w.find('.password-entry').setValue('password123')
+      await flushPromises()
+      await w.find('form').trigger('submit', {
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      })
+      await flushPromises()
+    }
+
+    it('control keeps the name box and asks for the arm', async () => {
+      const w = createWrapper()
+      await flushPromises()
+
+      expect(mockFlowArm).toHaveBeenCalledWith('login', 'join-name-optional')
+      expect(w.find('input[name="fullname"]').exists()).toBe(true)
+    })
+
+    it('control without a name still treats the form as a sign-in', async () => {
+      mockFlowArm.mockReturnValue('a')
+      const w = createWrapper()
+      await flushPromises()
+
+      await submitJoin(w)
+
+      expect(mockLogin).toHaveBeenCalled()
+      expect(mockSignUp).not.toHaveBeenCalled()
+    })
+
+    it('arm b hides the name box', async () => {
+      mockFlowArm.mockReturnValue('b')
+      const w = createWrapper()
+      await flushPromises()
+
+      expect(w.find('input[name="fullname"]').exists()).toBe(false)
+      expect(w.find('.email-validator').exists()).toBe(true)
+      expect(w.find('.password-entry').exists()).toBe(true)
+    })
+
+    it('arm b signs up with no displayname and does not try a login', async () => {
+      mockFlowArm.mockReturnValue('b')
+      const w = createWrapper()
+      await flushPromises()
+
+      await submitJoin(w)
+
+      expect(mockLogin).not.toHaveBeenCalled()
+      expect(mockSignUp).toHaveBeenCalledWith({
+        email: 'test@example.com',
+        password: 'password123',
+      })
+      // No name was given, so they are asked for one when they next post or reply.
+      expect(mockMarkAskNameLater).toHaveBeenCalledTimes(1)
+    })
+
+    it('arm b still asks for an email and a password', async () => {
+      mockFlowArm.mockReturnValue('b')
+      const w = createWrapper()
+      await flushPromises()
+
+      await w.find('.email-validator').setValue('test@example.com')
+      await flushPromises()
+      await w.find('form').trigger('submit', {
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      })
+      await flushPromises()
+
+      expect(mockSignUp).not.toHaveBeenCalled()
+      expect(w.text()).toContain('Please fill out the form.')
     })
   })
 

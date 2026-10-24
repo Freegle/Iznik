@@ -1658,6 +1658,43 @@ return [
         'stale_after_days' => (int) EnvSetting::env('COOKIEYES_STALE_AFTER_DAYS', 45),
     ],
 
+    // Google housekeeping (google:search-console-check, google:ads-check). Credentials come from
+    // the environment, nothing is stored in the database. See
+    // docs/developers/reference/google-housekeeping.md for how to create them.
+    'google' => [
+        'search_console_enabled' => (bool) EnvSetting::env('GOOGLE_SEARCH_CONSOLE_CHECK_ENABLED', true),
+        'ads_enabled' => (bool) EnvSetting::env('GOOGLE_ADS_CHECK_ENABLED', true),
+        // The service account's JSON key, base64 encoded (preferred) or as a file path.
+        'service_account_b64' => EnvSetting::env('GOOGLE_SERVICE_ACCOUNT_B64', ''),
+        'service_account_file' => EnvSetting::env('GOOGLE_SERVICE_ACCOUNT_FILE', ''),
+        'search_console' => [
+            // Comma separated property URLs to check. Empty means every property the service account can see.
+            'sites' => EnvSetting::env('GOOGLE_SEARCH_CONSOLE_SITES', ''),
+            'sitemap_url' => EnvSetting::env('GOOGLE_SEARCH_CONSOLE_SITEMAP', 'https://www.ilovefreegle.org/sitemap.xml'),
+            // Only properties whose URL contains this are expected to have that sitemap.
+            'sitemap_site_match' => 'ilovefreegle.org',
+            'max_sitemap_age_days' => (int) EnvSetting::env('GOOGLE_SEARCH_CONSOLE_MAX_SITEMAP_AGE_DAYS', 14),
+            // Live posts to ask Google about each week, as well as the home page. 0 turns it off.
+            'inspect_posts' => (int) EnvSetting::env('GOOGLE_SEARCH_CONSOLE_INSPECT_POSTS', 3),
+        ],
+        'ads' => [
+            // Optional. Google now grants Ads API access to the Cloud project (Explorer or Basic level in
+            // the Cloud console), and a project with that access needs no developer token. Sent when set.
+            'developer_token' => EnvSetting::env('GOOGLE_ADS_DEVELOPER_TOKEN', ''),
+            'customer_id' => EnvSetting::env('GOOGLE_ADS_CUSTOMER_ID', ''),
+            // Only needed when the account is reached through a manager account.
+            'login_customer_id' => EnvSetting::env('GOOGLE_ADS_LOGIN_CUSTOMER_ID', ''),
+            'client_id' => EnvSetting::env('GOOGLE_ADS_CLIENT_ID', ''),
+            'client_secret' => EnvSetting::env('GOOGLE_ADS_CLIENT_SECRET', ''),
+            'refresh_token' => EnvSetting::env('GOOGLE_ADS_REFRESH_TOKEN', ''),
+            // Google retires old API versions about a year after release; bump when it does. v21 was
+            // already gone (404) and v22 refused as deprecated on 2026-10-24.
+            'api_version' => EnvSetting::env('GOOGLE_ADS_API_VERSION', 'v26'),
+            // The Ad Grants click-through floor. 0 turns the check off.
+            'min_ctr' => (float) EnvSetting::env('GOOGLE_ADS_MIN_CTR', 0.05),
+        ],
+    ],
+
     'lovejunk' => [
         'api' => EnvSetting::env('LOVE_JUNK_API', 'https://elmer.api-lovejunk.com/elmer/v1'),
         'secret' => EnvSetting::env('LOVE_JUNK_SECRET', ''),
