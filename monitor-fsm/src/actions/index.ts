@@ -1513,6 +1513,28 @@ export const deployedReplyDeps = {
 }
 
 /**
+ * Whether the production database answers over the tunnel, behind a name a test can
+ * replace. work_router_decide uses it to reopen reports that were parked only because
+ * the tunnel was down.
+ */
+export const prodReachDeps = {
+  async liveDbAvailable(): Promise<boolean> {
+    const query = groundingActions.find((a) => a.name === 'query_live_db')
+    if (!query) return false
+    const res = (await query.handler({ sql: 'SELECT 1', purpose: 'probe: is the live DB tunnel up' }, {})) as { available?: boolean }
+    return res?.available === true
+  },
+}
+
+// A fix task that could not read production defers the report as ungrounded. That is
+// not a decision about the report: once the tunnel answers again it should be tried
+// again (10277/1 was parked for good by a tunnel outage on 2026-10-23). Only the
+// database counts here; the prod Loki tunnel is down far more often, and a report that
+// needs logs alone would reopen and re-defer every iteration.
+export const UNREACHABLE_DEFER = /DB tunnel unavailable|db failed to connect|live DB tunnel unavailable/i
+export const MAX_UNREACHABLE_REOPENS = 3
+
+/**
  * check_bug_feedback's one call out to Discourse, behind a name a test can replace.
  * What the scan finds then drives bug state, and that half is worth testing without
  * a network.
@@ -4354,6 +4376,26 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         if (typeof b.topic === 'undefined' || typeof b.post === 'undefined') continue
         markDeferred.run(`deferred by fix task: ${reason}`.slice(0, 500), Number(b.topic), Number(b.post))
       }
+
+      // Reopen reports parked only because production could not be read, once it can.
+      // Capped per report, so one that keeps failing for another reason stays parked.
+      const parked = (db.prepare(
+        "SELECT topic, post, reason FROM discourse_bug WHERE state = 'deferred' AND pr_number IS NULL AND reason LIKE 'deferred by fix task:%'"
+      ).all() as Array<{ topic: number; post: number; reason: string }>)
+        .filter((r) => UNREACHABLE_DEFER.test(r.reason ?? '') && !fixedKeys.has(`${r.topic}.${r.post}`))
+        .filter((r) => Number(kvGet(db, `unreachable_reopens_${r.topic}_${r.post}`) ?? 0) < MAX_UNREACHABLE_REOPENS)
+      if (parked.length > 0 && await prodReachDeps.liveDbAvailable()) {
+        const reopen = db.prepare(
+          "UPDATE discourse_bug SET state = 'open', reason = NULL WHERE topic = ? AND post = ? AND state = 'deferred'"
+        )
+        for (const r of parked) {
+          reopen.run(r.topic, r.post)
+          const key = `unreachable_reopens_${r.topic}_${r.post}`
+          kvSet(db, key, String(Number(kvGet(db, key) ?? 0) + 1))
+          out(`  · reopened ${r.topic}/${r.post}: it was deferred because production could not be read, and the live DB answers now`)
+        }
+      }
+
       const dbOpenBugs = (db.prepare(`
         SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle,
                pr_rejections AS prRejections, symptom_tags AS symptomTagsJson, first_seen_at
