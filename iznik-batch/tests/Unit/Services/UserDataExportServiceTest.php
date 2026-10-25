@@ -172,6 +172,43 @@ class UserDataExportServiceTest extends TestCase
         $this->assertContains($email->email, array_column($json['emails'], 'email'));
     }
 
+    public function test_export_contains_addresses_as_text(): void
+    {
+        $user = $this->createTestUser();
+
+        $postcode = 'ZP' . random_int(10, 99) . ' ' . random_int(1, 9) . 'ZZ';
+        $postcodeId = DB::table('locations')->insertGetId([
+            'name' => $postcode,
+            'type' => 'Postcode',
+            'osm_place' => 0,
+            'osm_amenity' => 0,
+            'osm_shop' => 0,
+        ]);
+        $street = 'Export Road ' . uniqid();
+        $pafId = DB::table('paf_addresses')->insertGetId([
+            'postcodeid' => $postcodeId,
+            'udprn' => random_int(900000000, 999999999),
+            'buildingnumber' => 66,
+            'thoroughfaredescriptorid' => DB::table('paf_thoroughfaredescriptor')->insertGetId(['thoroughfaredescriptor' => $street]),
+        ]);
+        DB::table('users_addresses')->insert(['userid' => $user->id, 'pafid' => $pafId]);
+
+        $exportId = DB::table('users_exports')->insertGetId([
+            'userid' => $user->id,
+            'tag' => 'test-tag',
+            'requested' => now(),
+        ]);
+
+        $this->service->processAll();
+
+        $export = DB::table('users_exports')->where('id', $exportId)->first();
+        $json = json_decode(gzinflate($export->data), true);
+
+        $this->assertCount(1, $json['addresses']);
+        $this->assertStringContainsString("66 $street", $json['addresses'][0]['singleline']);
+        $this->assertStringContainsString($postcode, $json['addresses'][0]['multiline']);
+    }
+
     public function test_rippled_post_appears_once_in_export_not_per_group(): void
     {
         // A post that rippled into other groups must appear ONCE in the SAR export (via its origin

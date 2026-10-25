@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Database\Expressions\Comparison;
 use App\Database\Expressions\Length;
+use App\Models\UserAddress;
 use App\Models\UxExperimentExposure;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -381,11 +382,17 @@ class UserDataExportService
 
     private function getAddresses(int $userId): array
     {
-        return DB::table('users_addresses')
-            ->where('userid', $userId)
-            ->select('id', 'pafid', 'lat', 'lng')
-            ->get()
-            ->map(fn($e) => (array) $e)
+        // The address as text, not just its PAF id, so the member can read it.
+        return UserAddress::where('userid', $userId)
+            ->get(['id', 'pafid', 'lat', 'lng'])
+            ->map(fn($a) => [
+                'id' => $a->id,
+                'pafid' => $a->pafid,
+                'lat' => $a->lat,
+                'lng' => $a->lng,
+                'singleline' => $a->getSingleLine(),
+                'multiline' => $a->getMultiLine(),
+            ])
             ->toArray();
     }
 
