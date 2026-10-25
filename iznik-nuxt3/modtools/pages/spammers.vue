@@ -47,14 +47,75 @@
           class="mb-2"
           @search="searched"
         />
-        <ModMember
+        <ModBulkSelectBar
+          v-if="visibleSpammers.length"
+          :count="bulk.count.value"
+          :limit="bulk.limit"
+          :shown-ids="selectableIds"
+          :copy-rows="copyRows"
+          :busy="bulkBusy"
+          @select-all="bulk.selectAll"
+          @clear="bulk.clear"
+        >
+          <b-button
+            v-if="canBulkConfirm"
+            variant="primary"
+            size="sm"
+            :disabled="bulkBusy || !bulk.count.value"
+            data-test="bulk-confirm"
+            @click="confirmSelected"
+          >
+            <v-icon v-if="bulkBusy" icon="sync" class="fa-spin" />
+            <v-icon v-else icon="check" />
+            Confirm add to spammer list ({{ bulk.count.value }})
+          </b-button>
+        </ModBulkSelectBar>
+        <NoticeMessage
+          v-if="bulkResult"
+          :variant="bulkResult.failed.length ? 'warning' : 'success'"
+          class="mb-2"
+          data-test="bulk-result"
+        >
+          <div v-if="bulkResult.done">
+            Added {{ bulkResult.done }} to the spammer list.
+          </div>
+          <div v-if="bulkResult.failed.length">
+            {{ bulkResult.failed.length }} could not be added:
+            <ul class="mb-0">
+              <li v-for="f in bulkResult.failed" :key="'bulkfail-' + f.id">
+                #{{ f.userid }} {{ f.name }}: {{ f.message }}
+              </li>
+            </ul>
+          </div>
+        </NoticeMessage>
+        <div
           v-for="(spammer, index) in visibleSpammers"
           :key="'spammer-' + tabIndex + '-' + spammer.id"
-          :membershipid="spammer.user.id"
-          :sameip="spammer.sameip"
-          class="mb-1"
-          :index="index"
-        />
+          class="d-flex align-items-start mb-1"
+        >
+          <b-form-checkbox
+            :model-value="bulk.isSelected(spammer.id)"
+            :disabled="
+              bulkBusy ||
+              !isSelectable(spammer) ||
+              (bulk.atLimit.value && !bulk.isSelected(spammer.id))
+            "
+            :title="
+              isSelectable(spammer)
+                ? 'Select'
+                : 'Held by a moderator - release before confirming'
+            "
+            class="mt-2 me-1 bulk-check"
+            :data-test="'bulk-check-' + spammer.id"
+            @update:model-value="bulk.toggle(spammer.id)"
+          />
+          <ModMember
+            :membershipid="spammer.user.id"
+            :sameip="spammer.sameip"
+            class="flex-grow-1 min-width-0"
+            :index="index"
+          />
+        </div>
         <infinite-loading
           :distance="10"
           :identifier="infiniteId"
@@ -74,6 +135,8 @@ import { useRoute } from '#imports'
 import { useAuthStore } from '~/stores/auth'
 import { useSpammerStore } from '~/stores/spammer'
 import { useModMe } from '~/composables/useModMe'
+import { useBulkSelect } from '~/modtools/composables/useBulkSelect'
+import { getPreferredEmail } from '~/modtools/composables/usePreferredEmail'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -130,10 +193,104 @@ const visibleSpammers = computed(() => {
   return spammers.value ? spammers.value.slice(0, show.value) : []
 })
 
+// Bulk selection, keyed by the spam_users row id. Capped at fifty: a spammer who
+// has made many accounts can be dealt with in one go, as the spam team asked
+// (Discourse 3802), without a stray "select all" acting on the whole list.
+const bulk = useBulkSelect()
+const bulkBusy = ref(false)
+const bulkResult = ref(null)
+
+// Confirming is a Spam admin decision on a Pending Add report. A held row is
+// somebody else's claim, so it is not selectable there, matching the single
+// Confirm button which hides on a held row.
+const canBulkConfirm = computed(
+  () => collection.value === 'PendingAdd' && hasPermissionSpamAdmin.value
+)
+
+function isSelectable(spammer) {
+  return !(collection.value === 'PendingAdd' && spammer.heldby)
+}
+
+const selectableIds = computed(() =>
+  visibleSpammers.value.filter(isSelectable).map((s) => s.id)
+)
+
+// What "Copy" puts on the clipboard: the selected rows, or everything shown when
+// nothing is selected. Plain fields only, for the spam team's records.
+const copyRows = computed(() => {
+  const rows = bulk.count.value
+    ? visibleSpammers.value.filter((s) => bulk.isSelected(s.id))
+    : visibleSpammers.value
+
+  return rows.map((s) => ({
+    id: s.userid,
+    name: s.user?.displayname || '',
+    email: getPreferredEmail(s.user) || '',
+    reason: s.reason || '',
+    added: s.added ? String(s.added).slice(0, 10) : '',
+    by: s.byuser?.displayname || '',
+  }))
+})
+
+async function confirmSelected() {
+  const items = visibleSpammers.value
+    .filter((s) => bulk.isSelected(s.id) && isSelectable(s))
+    .map((s) => ({
+      id: s.id,
+      userid: s.userid,
+      name: s.user?.displayname || '',
+    }))
+
+  if (!items.length) return
+
+  bulkBusy.value = true
+  bulkResult.value = null
+
+  try {
+    const result = await spammerStore.confirmMany(items)
+
+    bulkResult.value = {
+      done: result.done.length,
+      failed: result.failed.map((f) => ({
+        id: f.item.id,
+        userid: f.item.userid,
+        name: f.item.name,
+        message: f.error?.message || 'Something went wrong',
+      })),
+    }
+
+    if (result.heldConflict) {
+      // Somebody took a hold after we fetched. Fetch the list again, with the
+      // search we are showing, so the holder's name appears on the row.
+      spammerStore.clear()
+      infiniteId.value++
+    }
+  } catch (e) {
+    console.error('Bulk confirm failed', e)
+    bulkResult.value = {
+      done: 0,
+      failed: items.map((item) => ({
+        ...item,
+        message: e?.message || 'Something went wrong',
+      })),
+    }
+  } finally {
+    bulkBusy.value = false
+    bulk.clear()
+  }
+}
+
 // Watchers
 watch(tabIndex, () => {
   spammerStore.clear()
+  bulk.clear()
+  bulkResult.value = null
   infiniteId.value++
+})
+
+// Rows leave the list when they are confirmed, rejected or held elsewhere.
+watch(spammers, (list) => {
+  bulk.keepOnly(list.map((s) => s.id))
 })
 
 watch(
@@ -147,6 +304,7 @@ watch(
 // Methods
 function searched(term) {
   spammerStore.clear()
+  bulk.clear()
   search.value = term
   infiniteId.value++
 }
@@ -195,3 +353,8 @@ onMounted(() => {
   }
 })
 </script>
+<style scoped>
+.min-width-0 {
+  min-width: 0;
+}
+</style>

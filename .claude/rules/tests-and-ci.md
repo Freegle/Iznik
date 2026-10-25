@@ -382,6 +382,13 @@ build, not by bisecting the boundary.
   Go run through the status API. After one, the worktree's Support user was a Moderator again
   and ModTools said "You don't have access to SysAdmin tools". Re-check roles and seeded rows
   after any Go run, before trusting what the dev site shows.
+- **A Playwright POST whose database reset dies part-way leaves the database empty, and the
+  env endpoint still answers.** Under heavy host load (another session's vitest workers, load
+  average over 1,000) the reset's `spawnSync` timed out after dropping the data, so `users` had
+  0 rows, and `GET /api/tests/env/<prefix>` went on returning the seeded ids from
+  `test-envs.json` with a 200. ModTools then said "We don't know that email address" for a
+  moderator the env endpoint had just named. Count `users` before trusting either; a second
+  POST, once the load has gone, resets it properly.
 - **A browser run through the status API empties rows seeded by hand.** It resets the database
   to its fixtures as it starts. Afterwards the seeded session and every `ux_*` rollup row were
   gone, and the UX tab showed each funnel at 0 started with no error. The UX read API keeps each

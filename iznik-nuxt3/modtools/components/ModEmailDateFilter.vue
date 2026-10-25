@@ -158,16 +158,17 @@ function resolvePresetDates(preset) {
   let start
 
   switch (preset) {
+    // The two short presets are a number of hours, not a calendar step. Stepping
+    // the local date or hour back gives the same clock time a day or an hour ago,
+    // which on the day the clocks change is 25 hours, or 2, or 0.
     case 'hour':
-      start = new Date(now)
-      start.setHours(start.getHours() - 1)
+      start = new Date(now.getTime() - 60 * 60 * 1000)
       return {
         start: formatDateTimeForAPI(start),
         end: formatDateTimeForAPI(now),
       }
     case 'day':
-      start = new Date(now)
-      start.setDate(start.getDate() - 1)
+      start = new Date(now.getTime() - 24 * 60 * 60 * 1000)
       return {
         start: formatDateTimeForAPI(start),
         end: formatDateTimeForAPI(now),

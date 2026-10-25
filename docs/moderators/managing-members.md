@@ -7,6 +7,9 @@ covers:
   - iznik-nuxt3/modtools/layouts/default.vue
   - iznik-nuxt3/modtools/pages/spammers.vue
   - iznik-nuxt3/modtools/components/ModMember*.vue
+  - iznik-nuxt3/modtools/components/ModBulk*.vue
+  - iznik-nuxt3/modtools/composables/useBulkSelect.js
+  - iznik-nuxt3/modtools/stores/spammer.js
   - iznik-nuxt3/modtools/components/ModRelatedMember.vue
   - iznik-nuxt3/modtools/components/ModSupportUser.vue
   - iznik-batch/app/Services/ChatProcessService.php
@@ -138,6 +141,30 @@ safelisting and removals. You can add a member to the list, safelist someone wro
 flagged, or request a removal.
 
 Reporting a genuine spammer helps every community, not just yours.
+
+### Dealing with many at once
+
+A spammer often creates dozens of accounts with the same name and different email
+addresses. Both the spammer list and the members list have a bar above the rows for
+dealing with up to fifty of them in one go:
+
+- Tick the members you want, or **Select all shown**. The count shows how many you have.
+- On **Pending Add**, with Spam admin, **Confirm add to spammer list** confirms every
+  ticked report. A report somebody else is holding cannot be ticked there; release it
+  first. If one cannot be confirmed, the notice afterwards says which and why, and the
+  rest still go through.
+- On the members list, **Report N as spammers** asks for one reason and reports every
+  ticked person to the Spam team, Spam admins included: they then confirm the reports in
+  one go on Pending Add. Anyone already reported, already on the list or safelisted is left
+  as they are, and the notice afterwards says how many. Ticking a person who is on several
+  of your communities ticks them once, and the cards show the report straight away.
+- On the spammer list, **Copy list** puts the ticked members on the clipboard as plain
+  text, one per line with the fields separated by tabs: id, name, email, reason, date added
+  and who reported them, always in that order. With nothing ticked it copies everything
+  shown. It pastes into a spreadsheet as columns and into a document as readable lines,
+  with none of the page's other text. A name that starts with a sign a spreadsheet would
+  treat as a formula is prefixed so it stays text. There is no Copy on the members list:
+  moderators do not take member lists away.
 
 ## Chat review
 

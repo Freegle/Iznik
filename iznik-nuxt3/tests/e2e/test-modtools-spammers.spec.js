@@ -7,6 +7,8 @@
  *   - Hold does not crash with a 400 (Sentry issue: missing id in request)
  *   - After Hold, held state is reflected in UI (heldby propagated through addAll)
  *   - Confirm does not crash with a 400
+ *   - Select all shown + Confirm adds every selected report in one go
+ *   - Copy list puts plain tab-separated lines on the clipboard
  */
 
 const { test, expect } = require('./fixtures')
@@ -151,6 +153,178 @@ test.describe('ModTools Spammer List', () => {
     await expect(memberCards.first()).toBeVisible({
       timeout: timeouts.navigation.slowPage,
     })
+  })
+
+  // Put every known test spammer back to Pending Add, unheld, so the bulk tests
+  // start from the same state as the single-action ones.
+  async function resetToPendingAdd(page, testEnv, ids) {
+    const jwt = await page.evaluate(() => {
+      const auth = JSON.parse(localStorage.getItem('auth') || '{}')
+      return auth?.auth?.jwt
+    })
+    for (const sid of ids || testEnv.spammers || []) {
+      await page.request
+        .patch(`${API_V2}/modtools/spammers`, {
+          data: { id: sid, collection: 'PendingAdd', heldby: null },
+          headers: { Authorization: jwt },
+        })
+        .catch(() => {})
+    }
+    return jwt
+  }
+
+  test('Select all shown and confirm adds every selected report in one go', async ({
+    page,
+    testEnv,
+  }) => {
+    await loginViaModTools(page, testEnv.mod.email)
+    await resetToPendingAdd(page, testEnv)
+
+    const pageErrors = []
+    const badResponses = []
+    page.on('pageerror', (err) => pageErrors.push(err.message))
+    page.on('response', (resp) => {
+      if (resp.url().includes('/spammers') && resp.status() >= 400) {
+        badResponses.push({ url: resp.url(), status: resp.status() })
+      }
+    })
+    const patchBodies = []
+    page.on('request', (req) => {
+      if (req.method() === 'PATCH' && req.url().includes('/spammers')) {
+        try {
+          patchBodies.push(JSON.parse(req.postData() || '{}'))
+        } catch {
+          patchBodies.push({})
+        }
+      }
+    })
+
+    await goToSpammersPage(page)
+
+    const bar = page.locator('[data-test="bulk-bar"]')
+    await expect(bar).toBeVisible({ timeout: timeouts.ui.appearance })
+
+    // Nothing selected yet, so Confirm is disabled.
+    const confirm = page.locator('[data-test="bulk-confirm"]')
+    await expect(confirm).toBeVisible()
+    await expect(confirm).toBeDisabled()
+
+    await page.locator('[data-test="bulk-select-all"]').click()
+
+    const checked = page.locator('.bulk-check input:checked')
+    await expect
+      .poll(() => checked.count(), {
+        message: 'Waiting for Select all shown to tick the rows',
+        timeout: timeouts.ui.appearance,
+      })
+      .toBeGreaterThan(0)
+    const selectedCount = await checked.count()
+    await expect(page.locator('[data-test="bulk-count"]')).toContainText(
+      `${selectedCount} selected`
+    )
+    await expect(confirm).toContainText(`(${selectedCount})`)
+    await expect(confirm).toBeEnabled()
+
+    await confirm.click()
+
+    // One PATCH per selected row, each naming its spam_users id and the
+    // confirmed collection.
+    await expect
+      .poll(() => patchBodies.length, {
+        message: 'Waiting for one PATCH /spammers per selected row',
+        timeout: timeouts.api.slowApi,
+      })
+      .toBe(selectedCount)
+    for (const body of patchBodies) {
+      expect(body.id).toBeTruthy()
+      expect(body.collection).toBe('Spammer')
+    }
+
+    await expect(page.locator('[data-test="bulk-result"]')).toContainText(
+      `Added ${selectedCount} to the spammer list`,
+      { timeout: timeouts.api.slowApi }
+    )
+    // The selection is cleared afterwards. When every Pending Add row was
+    // confirmed the list, and the bar with it, is empty, so count boxes rather
+    // than reading the bar.
+    await expect(page.locator('.bulk-check input:checked')).toHaveCount(0)
+
+    expect(badResponses).toHaveLength(0)
+    expect(pageErrors).toHaveLength(0)
+
+    // Put them back for the tests that follow in this serial suite.
+    await resetToPendingAdd(
+      page,
+      testEnv,
+      patchBodies.map((b) => b.id)
+    )
+  })
+
+  test('Copy list puts one plain tab-separated line per member on the clipboard', async ({
+    page,
+    testEnv,
+  }) => {
+    // Capture what the page writes to the clipboard rather than reading the
+    // real one, which needs permissions the headless browser does not grant.
+    await page.addInitScript(() => {
+      window.__copiedText = null
+      const fake = {
+        writeText: (text) => {
+          window.__copiedText = text
+          return Promise.resolve()
+        },
+      }
+      Object.defineProperty(navigator, 'clipboard', {
+        value: fake,
+        configurable: true,
+      })
+    })
+
+    await loginViaModTools(page, testEnv.mod.email)
+    await resetToPendingAdd(page, testEnv)
+    await goToSpammersPage(page)
+
+    const cards = page.locator('.member-card')
+    await expect(cards.first()).toBeVisible({ timeout: timeouts.ui.appearance })
+    // The list shows its rows one loader tick at a time; wait until the count
+    // has stopped moving before taking it.
+    let shown = await cards.count()
+    await expect
+      .poll(
+        async () => {
+          const now = await cards.count()
+          const same = now === shown
+          shown = now
+          return same
+        },
+        { timeout: timeouts.ui.appearance }
+      )
+      .toBe(true)
+
+    // Nothing selected: the whole list is copied.
+    const copy = page.locator('[data-test="bulk-copy"]')
+    await expect(copy).toContainText('Copy list')
+    await copy.click()
+    await expect(copy).toContainText('Copied')
+
+    const text = await page.evaluate(() => window.__copiedText)
+    expect(text).toBeTruthy()
+    const lines = text.split('\n')
+    expect(lines).toHaveLength(shown)
+    for (const line of lines) {
+      // Always the same six columns: id, name, email, reason, added, reported by.
+      const fields = line.split('\t')
+      expect(fields).toHaveLength(6)
+      expect(fields[0]).toMatch(/^\d+$/)
+    }
+    expect(text).not.toMatch(/<|>/)
+
+    // Selecting one narrows the copy to that one.
+    await page.locator('.bulk-check input').first().check()
+    await expect(copy).toContainText('Copy selected')
+    await copy.click()
+    const one = await page.evaluate(() => window.__copiedText)
+    expect(one.split('\n')).toHaveLength(1)
   })
 
   test('Hold button does not crash with a 400 (id present in request)', async ({
