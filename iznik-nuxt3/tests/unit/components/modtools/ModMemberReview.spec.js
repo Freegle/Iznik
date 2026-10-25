@@ -474,16 +474,12 @@ describe('ModMemberReview', () => {
   })
 
   describe('onMounted', () => {
-    it('fetches user when member exists', async () => {
+    it('refetches the user even when the store already holds them', async () => {
+      // A copy cached before a note was added has no note, so the card said
+      // "flagged: Note flagged to other groups" with no note to read.
       mountComponent()
       await flushPromises()
-      expect(mockUserStore.fetch).toHaveBeenCalledWith(456)
-    })
-
-    it('fetches user even when member.info exists', async () => {
-      mountComponent()
-      await flushPromises()
-      expect(mockUserStore.fetch).toHaveBeenCalledWith(456)
+      expect(mockUserStore.fetch).toHaveBeenCalledWith(456, true)
     })
   })
 

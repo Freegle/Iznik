@@ -98,8 +98,8 @@ export const useUserStore = defineStore('user', {
       }
 
       // In modtools context, always use fetchMT so we get emails, memberships,
-      // location, comments etc. This avoids stale cache from non-modtools fetches
-      // and means components don't need to choose between fetch/fetchMT.
+      // location, comments etc., and components don't need to choose between
+      // fetch/fetchMT. Like fetch, it returns the cached copy unless forced.
       const miscStore = useMiscStore()
       if (miscStore.modtools) {
         return this.fetchMT({ id, info: true }, force)

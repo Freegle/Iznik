@@ -841,6 +841,15 @@ describe('ModMember', () => {
       expect(wrapper.vm.banned).toBe(true)
     })
 
+    it('refetches the user even when the store already holds them', async () => {
+      mountComponent()
+      await flushPromises()
+      expect(mockUserStore.fetch).toHaveBeenCalledWith(
+        createMember().userid,
+        true
+      )
+    })
+
     it('sets banned to false when member.banned is false', async () => {
       const wrapper = mountComponent({
         member: createMember({ banned: false }),

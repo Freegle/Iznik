@@ -315,8 +315,10 @@ const user = computed(() => {
 const email = usePreferredEmail(user)
 
 onMounted(() => {
+  // Forced: the tab may hold a copy of this member from before a note was added,
+  // and the card must show the note the review is about.
   if (member.value) {
-    userStore.fetch(member.value.userid)
+    userStore.fetch(member.value.userid, true)
   }
 })
 

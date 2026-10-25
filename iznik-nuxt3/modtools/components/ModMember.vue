@@ -523,9 +523,9 @@ onMounted(() => {
     banned.value = true
   }
 
-  // Fetch user data — in modtools context, fetch() automatically uses fetchMT.
+  // Forced, so a note added since this tab last loaded the member shows.
   if (member.value?.userid) {
-    userStore.fetch(member.value.userid)
+    userStore.fetch(member.value.userid, true)
   }
 
   // V2 API returns heldby as a numeric ID — fetch the user so we can show their name.
