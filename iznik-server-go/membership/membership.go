@@ -170,17 +170,6 @@ func PostMemberships(c *fiber.Ctx) error {
 		}
 	}
 
-	// Whether the member's only tie to this group is a post of theirs that rippled in.
-	// Read once, before the actions below delete the row it lives on. A group removes such
-	// a member as it sees fit, but says nothing to them: they never joined, so a note from
-	// a community they have not heard of is the same confusion as one about their post
-	// (Discourse 10102).
-	rippleOnly := rippling.IsRippleOnlyMembership(db, req.Userid, req.Groupid)
-	notifyMember := 1
-	if rippleOnly {
-		notifyMember = 0
-	}
-
 	switch req.Action {
 	case "Hold":
 		if lockdown.GateMod(c, myid) {
@@ -223,16 +212,6 @@ func PostMemberships(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusForbidden, "This member didn't choose this community, so they can't be contacted")
 		}
 
-		//
-		// This action is nothing but a message, so on a membership rippling created for a
-		// poster it has nothing to do: that membership is a record of where their post
-		// travelled, not a relationship with this community (Discourse 10102). Refuse it
-		// rather than accept and drop it - the moderator wrote those words on purpose.
-		if rippleOnly {
-			return fiber.NewError(fiber.StatusForbidden,
-				"This member's only tie to the group is a post that rippled in, so there is nobody here to write to")
-		}
-
 		subject := ""
 		if req.Subject != nil {
 			subject = *req.Subject
@@ -253,7 +232,7 @@ func PostMemberships(c *fiber.Ctx) error {
 		db.Table("background_tasks").Create(map[string]interface{}{
 			"task_type": "email_mod_stdmsg",
 			"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
-				req.Userid, req.Groupid, myid, subject, body, stdmsgid, "Leave Approved Member", notifyMember),
+				req.Userid, req.Groupid, myid, subject, body, stdmsgid, "Leave Approved Member", 1),
 		})
 		// V1 parity: Leave Approved Member only calls $u->mail(), no log entry.
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -280,7 +259,7 @@ func PostMemberships(c *fiber.Ctx) error {
 			db.Table("background_tasks").Create(map[string]interface{}{
 				"task_type": "email_mod_stdmsg",
 				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
-					req.Userid, req.Groupid, myid, subject, body, 0, "Approve Member", notifyMember),
+					req.Userid, req.Groupid, myid, subject, body, 0, "Approve Member", 1),
 			})
 		}
 
@@ -312,7 +291,7 @@ func PostMemberships(c *fiber.Ctx) error {
 			db.Table("background_tasks").Create(map[string]interface{}{
 				"task_type": "email_mod_stdmsg",
 				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
-					req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action, notifyMember),
+					req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action, 1),
 			})
 		}
 

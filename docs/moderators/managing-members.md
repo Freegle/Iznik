@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-25
+last_reviewed: 2026-10-26
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -282,14 +282,12 @@ still waiting on a second moderator, can write to volunteers as normal, so they 
 their case before the decision is made.
 
 Some members are on your list only because a post of theirs **rippled in**: rippling
-joins the poster so the post can live on your community. That is not a relationship with
-you, so such a member has no **Chat** or **Mail** button and no standard messages that
-only write to them, and the removal standard message shows a plain confirmation instead of a compose
-box. You can still remove or ban them, and it is logged as usual - quietly, since they
-never joined you. The membership becomes an ordinary one once they have something to do
-with your community: they join it, move into your area, post on it, reply to one of its
-posts, or write back to one of your members about their rippled post. See
-[rippling out](rippling-out.md).
+joins the poster so the post can live on your community. You can contact them from the
+member list like anyone else, with **Chat**, **Mail** and the member standard messages.
+Replies about the rippled post itself stay with the community they posted it on. The
+membership becomes an ordinary one once they have something to do with your community:
+they join it, move into your area, post on it, reply to one of its posts, or write back to
+one of your members about their rippled post. See [rippling out](rippling-out.md).
 
 ## Feedback and micro-volunteering
 

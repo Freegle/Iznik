@@ -100,6 +100,43 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertArrayHasKey('subject', $data);
     }
 
+    public function test_spool_keeps_attachments_and_the_quoted_original_email(): void
+    {
+        $email = $this->uniqueEmail('recipient');
+        $mailable = new \App\Mail\Alert\AlertMail(
+            recipientEmail: $email,
+            recipientName: 'Mod',
+            fromAddress: 'support@ilovefreegle.org',
+            fromName: 'Freegle Support',
+            subjectLine: 'About a member',
+            htmlBody: '<p>Please look at this.</p>',
+            textBody: 'Please look at this.',
+            quoted: "Dear Freegle\n<b>not markup</b> & the rest of the member's email",
+            requireReply: true,
+            files: [['name' => 'screen.png', 'mime' => 'image/png', 'data' => "\x89PNG\r\n\x1a\nfake"]],
+        );
+
+        $id = $this->spooler->spool($mailable, $email, 'alert');
+
+        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $this->assertCount(1, $data['attachments']);
+        $this->assertSame('screen.png', $data['attachments'][0]['name']);
+        $this->assertSame('image/png', $data['attachments'][0]['mime']);
+        $this->assertSame("\x89PNG\r\n\x1a\nfake", base64_decode($data['attachments'][0]['content']));
+        // Quoted in full and escaped, never read as markup.
+        $this->assertStringContainsString('&lt;b&gt;not markup&lt;/b&gt; &amp; the rest of the member', $data['html']);
+        $this->assertStringContainsString('A reply is needed', $data['html']);
+    }
+
+    public function test_spool_of_a_mailable_with_no_files_has_no_attachments(): void
+    {
+        $email = $this->uniqueEmail('recipient');
+        $id = $this->spooler->spool(new WelcomeMail($email), $email, 'welcome');
+
+        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $this->assertSame([], $data['attachments']);
+    }
+
     public function test_get_backlog_stats_empty_queue(): void
     {
         $stats = $this->spooler->getBacklogStats();

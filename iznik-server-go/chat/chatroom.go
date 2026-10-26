@@ -17,7 +17,6 @@ import (
 	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/modmessaging"
-	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -434,18 +433,6 @@ func PutChatRoom(c *fiber.Ctx) error {
 			if lockdown.GateMod(c, myid) {
 				return nil
 			}
-		}
-
-		// Rippling auto-joins a poster to every group their post reached
-		// (memberships.rippled = 1, ExpandService::addPosterMembershipToRippledGroups).
-		// That is a record of where a post travelled, not a relationship with the
-		// community, so it gives that group's moderators nobody to start a conversation
-		// with (Discourse 10102). Answering a chat the member started is unaffected: an
-		// existing room is returned above, before this runs. The member's own route to
-		// the volunteers is unaffected too — this only guards the mod-initiated branch.
-		if modOpeningMembersChat && rippling.IsRippleOnlyMembership(db, chatUserID, req.Groupid) {
-			return fiber.NewError(fiber.StatusForbidden,
-				"This member's only tie to the group is a post that rippled in, so there is no chat to start")
 		}
 
 		// Create new User2Mod chat.

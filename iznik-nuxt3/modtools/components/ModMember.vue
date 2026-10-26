@@ -294,12 +294,8 @@
             :groupid="groupid"
             :role="member.role"
           />
-          <!-- A membership rippling created for a poster records where their post
-               travelled, not a relationship with this community, so there is no chat for
-               its volunteers to start (Discourse 10102). If the member writes to us
-               first, that chat appears in Chats as normal. -->
           <ChatButton
-            v-if="modMessagingAllowed && !member.rippled"
+            v-if="modMessagingAllowed"
             :userid="member.userid"
             :groupid="member.groupid"
             title="Chat"

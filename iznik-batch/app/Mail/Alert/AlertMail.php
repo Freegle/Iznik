@@ -4,6 +4,7 @@ namespace App\Mail\Alert;
 
 use App\Mail\MjmlMailable;
 use Illuminate\Mail\Mailables\Address;
+use Illuminate\Mail\Mailables\Attachment;
 use Illuminate\Mail\Mailables\Envelope;
 
 /**
@@ -30,6 +31,10 @@ class AlertMail extends MjmlMailable
         public readonly ?string $groupName = null,
         public readonly ?string $beaconBase = null,
         public readonly ?int $recipientUserId = null,
+        public readonly ?string $quoted = null,
+        public readonly bool $requireReply = false,
+        /** @var array<int, array{name: string, mime: string, data: string}> */
+        public readonly array $files = [],
     ) {
         parent::__construct();
     }
@@ -61,6 +66,14 @@ class AlertMail extends MjmlMailable
         );
     }
 
+    public function attachments(): array
+    {
+        return array_map(
+            fn (array $f) => Attachment::fromData(fn () => $f['data'], $f['name'])->withMime($f['mime']),
+            $this->files
+        );
+    }
+
     public function build(): static
     {
         $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
@@ -81,6 +94,10 @@ class AlertMail extends MjmlMailable
             'clickUrl' => $clickUrl,
             'userSite' => $userSite,
             'email' => $this->recipientEmail,
+            'quoted' => $this->quoted,
+            'requireReply' => $this->requireReply,
+            'fileNames' => array_column($this->files, 'name'),
+            'modSite' => config('freegle.sites.mod', 'https://modtools.org'),
         ]);
     }
 }

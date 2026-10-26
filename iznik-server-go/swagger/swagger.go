@@ -343,6 +343,81 @@ type alertsResponse struct {
 	Body []alert.Alert
 }
 
+// swagger:route GET /modtools/alert/pending modtools getPendingAlerts
+// Alerts awaiting my reply
+//
+// The alerts the caller, as a moderator, must reply to before ModTools lets them carry on.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: alertsResponse
+//	401: errorResponse
+
+// swagger:route POST /modtools/alert/{id}/reply modtools replyToAlert
+// Reply to an alert that requires a reply
+//
+// Sends the reply to the alert's sender as a chat message and records it.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Alert ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: alertResponse
+//	401: errorResponse
+//	404: errorResponse
+
+// swagger:route POST /modtools/alert/{id}/snooze modtools snoozeAlert
+// Sleep an alert for 30 minutes, once
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Alert ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: alertResponse
+//	403: errorResponse
+
+// swagger:route POST /modtools/alert/{id}/cancel modtools cancelAlert
+// Stop requiring replies to an alert
+//
+// The sender, or Support/Admin, releases every moderator.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Alert ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: alertResponse
+//	403: errorResponse
+
 // swagger:route GET /modtools/alert/{id} modtools getAlert
 // Get alert by ID
 //

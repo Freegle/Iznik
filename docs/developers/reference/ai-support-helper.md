@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-20
+last_reviewed: 2026-10-24
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -26,6 +26,9 @@ covers:
   - claude-agent-sdk/ux-groups.js
   - claude-agent-sdk/ux-internal.js
   - claude-agent-sdk/ux-internal.test.js
+  - claude-agent-sdk/images.js
+  - iznik-nuxt3/modtools/components/ModSupportScreenshotStrip.vue
+  - iznik-nuxt3/modtools/composables/useSupportScreenshots.js
 ---
 
 # AI Support Helper
@@ -195,11 +198,39 @@ Style section asks for them in the second person ("you haven't verified your ema
 never "she hasn't"), with no internal names, under a **Suggested reply** heading in a
 blockquote. The draft can then be copied out as-is and the analysis left behind.
 
+**The tone.** The prompt asks for a reply that sounds like a kind, capable volunteer wrote it: a
+greeting, a warm line showing the problem was understood, short sentences, plain words and
+contractions, one apology at most, one or two clear next steps, and none of the stock phrases
+that mark machine writing. It is under about 120 words unless the problem needs more.
+
+**The review pass.** When an answer contains a **Suggested reply**, `support-agent.js` makes a
+second model turn before the volunteer sees anything (`reviewPrompt()` in `prompt.js`). It
+resumes the same session, so every tool result the draft relied on is still in front of the
+model, and asks it to list each factual claim, confirm each against what the tools returned
+(querying again if unsure), remove or turn into a question anything it cannot support, drop
+promises of fixes, dates or refunds, and rewrite the tone if it is off. The answer comes back
+with a short **Fact check** section outside the blockquote. The second turn's tokens are added to
+the run. If the pass fails or returns no reply, the first draft is shown with **Not fact-checked**
+under it, so the volunteer knows to check it by hand.
+
 A reply once sent a member to `/myvolunteering` and an "expired tab", neither of which
 exist. The prompt now asks the agent to find a page under `iznik-nuxt3/pages` before
 linking to it. As a backstop, `links.js` checks every www.ilovefreegle.org link in the
 answer against those pages and the redirects in `nuxt.config.ts`. Any link that matches
 neither is listed under the answer with **Check before sending**.
+
+## Screenshots
+
+A volunteer can attach up to five pictures to any question (the **Attach screenshots** button, or
+paste straight into the box). The browser (`useSupportScreenshots.js`) scales anything over 1600 pixels
+or 1.5MB to a JPEG, so several fit in one request; a GIF is kept as it is. `/api/log-analysis` accepts
+them as `images`: `{name, mime, data}` with `data` base64, in a 20MB body.
+
+`images.js` (no `require`, so CI's bare `node --test` loads it) checks them again: PNG, JPEG, GIF or
+WebP only, the first bytes must match the type, 4MB each and 12MB together. With pictures,
+`buildPrompt()` gives `query()` a one-message stream of text and image blocks, which is the only form the
+SDK takes images in. The system prompt already tells the model to read images. The audit trail records
+how many screenshots came with a question, not the pictures. They show as thumbnails in the chat.
 
 ## Device summary panel
 
@@ -273,6 +304,21 @@ looking at the tool. Two things follow from that:
   frame elements, inline handlers, `javascript:` URLs), not the primary sanitiser.
   Everything else — names, emails, the referral text — is escaped, so a volunteer's typed
   `<script>` shows as visible text and never as markup.
+
+**Screenshots go with it.** Every picture attached during the investigation (the latest ten) is sent as
+`screenshots` and checked again by `images.js`. Each is shown inline in the body by content id and is
+also a real attachment, so it can be saved at full size from any mail client.
+
+**Threading in the support mailbox.** Gmail groups by subject as well as by `References`, and the
+subject used to start with the reference and the question, so every referral was a new conversation.
+Now the subject is the same for one member (`Support referral: <name> (<id>)`, with `Re: ` once an earlier
+referral has gone), and `referralThreadHeaders()` sets the ids: one anchor per member
+(`support-member-<id>@ilovefreegle.org`) in `References`, followed by the earlier referrals the browser
+says were sent in this session (`earlierRefs`, only well-formed `SR-` references are kept); the newest is
+`In-Reply-To`. The `Message-ID` is derived from the reference, so a reply from the geeks, which
+quotes it, joins the same conversation. The reference and the first question are in the body and the
+`X-Freegle-Support-Referral` header. Chat notification mail to moderators already carried the same
+kind of headers per chat (`ChatNotification`), so only this path changed.
 
 SMTP defaults to the local **mailpit** (`SUPPORT_SMTP_HOST`), so a referral sent while
 developing lands at `mailpit.localhost` and never reaches the real geeks list; edge/prod

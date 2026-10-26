@@ -91,6 +91,7 @@ Read these directly; the pages above link into them rather than copy them:
 | TrashNothing / LoveJunk integration | [./reference/trashnothing.md](./reference/trashnothing.md) |
 | SEO: how posts get found | [./reference/seo.md](./reference/seo.md) |
 | ModTools AI Support Helper | [./reference/ai-support-helper.md](./reference/ai-support-helper.md) |
+| Contacting a community's volunteers (alerts) | [./reference/contact-group-alerts.md](./reference/contact-group-alerts.md) |
 | CookieYes watchdog (cookie banner checks) | [./reference/cookieyes-watchdog.md](./reference/cookieyes-watchdog.md) |
 | Google housekeeping (Search Console and Ads weekly checks) | [./reference/google-housekeeping.md](./reference/google-housekeeping.md) |
 | Chat prompts (Freegle's tappable questions) | [./reference/chat-prompts.md](./reference/chat-prompts.md) |

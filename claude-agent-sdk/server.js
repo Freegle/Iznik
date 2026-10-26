@@ -36,7 +36,11 @@ const app = express()
 // problems), so they get their own larger limit below and are skipped here. Without that the default
 // parser would answer 413 before they ran.
 const defaultJson = express.json()
-app.use((req, res, next) => (req.path.startsWith('/internal/') ? next() : defaultJson(req, res, next)))
+// Questions and referrals can carry screenshots (base64), so they too get their own route-level limit.
+const BIG_BODY_PATHS = ['/api/log-analysis', '/api/refer-to-geeks']
+app.use((req, res, next) =>
+  req.path.startsWith('/internal/') || BIG_BODY_PATHS.includes(req.path) ? next() : defaultJson(req, res, next)
+)
 
 // CORS: allow ModTools origins only. Dev uses *.localhost (traefik); prod/edge
 // lists its ModTools origin in ALLOWED_ORIGINS (comma-separated). Requests with
@@ -152,8 +156,10 @@ app.get('/health', (req, res) => {
  */
 const { runSupportQuery, driverMode } = require('./support-agent')
 const { verifyModerator } = require('./auth')
+const { validateImages, MAX_REFERRAL_IMAGES } = require('./images')
 
-app.post('/api/log-analysis', async (req, res) => {
+// Up to 5 screenshots of 4MB (12MB together) as base64 is about 16MB.
+app.post('/api/log-analysis', express.json({ limit: '20mb' }), async (req, res) => {
   // Authenticate the caller as a Freegle moderator/support/admin. This endpoint
   // analyses production logs and incurs Anthropic API cost, so it must not be
   // open to unauthenticated callers — having ANTHROPIC_API_KEY set on the
@@ -178,6 +184,10 @@ app.post('/api/log-analysis', async (req, res) => {
   }
 
   const { query, userId, claudeSessionId } = req.body
+  const { images, error: imageError } = validateImages(req.body.images)
+  if (imageError) {
+    return res.status(400).json({ error: 'BAD_IMAGES', message: imageError })
+  }
   // The caller's JWT is used for get_user_dump against the Go API. Header only —
   // never accept it as a URL query param (which would leak into access logs).
   const jwt = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim()
@@ -205,6 +215,7 @@ app.post('/api/log-analysis', async (req, res) => {
         agentSessionId: claudeSessionId,
         modId: mod.id,
         modEmail: mod.email,
+        images,
         onProgress: (type, message) => {
           res.write(`data: ${JSON.stringify({ type, message })}\n\n`)
         },
@@ -221,7 +232,7 @@ app.post('/api/log-analysis', async (req, res) => {
 
   // Non-streaming fallback
   try {
-    const result = await runSupportQuery({ query, userId: userId || 0, jwt, agentSessionId: claudeSessionId, modId: mod.id, modEmail: mod.email })
+    const result = await runSupportQuery({ query, userId: userId || 0, jwt, agentSessionId: claudeSessionId, modId: mod.id, modEmail: mod.email, images })
     res.json(result)
   } catch (error) {
     console.error('[LogAnalysis] Error:', error)
@@ -367,7 +378,7 @@ const { sendReferral, newReferralRef, GEEKS_EMAIL } = require('./referral-email'
 
 // A referral is a transcript, not a document upload — big enough to need its
 // own limit, small enough that this is a real bound.
-const REFERRAL_BODY_LIMIT = '4mb'
+const REFERRAL_BODY_LIMIT = '20mb'
 
 app.post('/api/refer-to-geeks', express.json({ limit: REFERRAL_BODY_LIMIT }), async (req, res) => {
   const mod = await verifyModerator(req)
@@ -375,7 +386,12 @@ app.post('/api/refer-to-geeks', express.json({ limit: REFERRAL_BODY_LIMIT }), as
     return res.status(403).json({ error: 'FORBIDDEN', message: 'Support or Admin authentication required.' })
   }
 
-  const { member, note, deviceSummary, messages, totals, modToolsUrl } = req.body || {}
+  const { member, note, deviceSummary, messages, totals, modToolsUrl, earlierRefs } = req.body || {}
+  // The screenshots from the investigation, passed on to the geeks with the referral.
+  const { images: screenshots, error: screenshotError } = validateImages((req.body || {}).screenshots, MAX_REFERRAL_IMAGES)
+  if (screenshotError) {
+    return res.status(400).json({ error: 'BAD_IMAGES', message: screenshotError })
+  }
 
   if (!Array.isArray(messages) || !messages.length) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'There is no investigation to refer yet.' })
@@ -400,6 +416,10 @@ app.post('/api/refer-to-geeks', express.json({ limit: REFERRAL_BODY_LIMIT }), as
     totals: totals || {},
     generatedAt: new Date().toISOString(),
     modToolsUrl,
+    screenshots,
+    // References of referrals already sent about this member in this session, so the new one threads
+    // under them in the mailbox. Only well-formed references are kept.
+    earlierRefs: Array.isArray(earlierRefs) ? earlierRefs.filter((r) => /^SR-[A-Z0-9]{5}$/.test(String(r))).slice(-20) : [],
   }
 
   // Record the referral itself: who handed what over, and under which reference.
@@ -410,6 +430,7 @@ app.post('/api/refer-to-geeks', express.json({ limit: REFERRAL_BODY_LIMIT }), as
     tool: 'refer_to_geeks',
     ref,
     messages: messages.length,
+    screenshots: screenshots.length,
   })
 
   try {

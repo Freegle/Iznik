@@ -31,6 +31,7 @@ import {
   upsertPr,
   findTagDuplicate,
   tagJaccard,
+  closeReportConfirmedByReporter,
 } from '../db/index.js'
 import type { DiscourseDraftRow } from '../db/index.js'
 import { renderAllViews } from '../db/views.js'
@@ -4061,6 +4062,20 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         c.post = post
         // Only persist actionable classifications — skip mine/off_topic/already_fixed/confirmed
         const type = c.type as string
+
+        // The reporter coming back to say it works closes their report, however it was fixed. A
+        // "confirmed" or "already_fixed" post used to be dropped here, and a confirming retest only
+        // refreshed the report's timestamp, so a report fixed by hand stayed open for ever (10226/12).
+        if (type === 'confirmed' || type === 'already_fixed' ||
+            (type === 'retest' && retestConfirmsFix(`${c.summary ?? ''} ${c.originalPostText ?? ''}`))) {
+          const closed = closeReportConfirmedByReporter(db, Number(c.topic), Number(post), c.user ?? null)
+          if (closed) {
+            out(`persist_classifications: ${c.topic}/${post} is the reporter confirming it works - closed ${closed.topic}/${closed.post}`)
+            skipped++
+            continue
+          }
+        }
+
         if (!['bug', 'retest', 'deferred', 'question', 'feature_request'].includes(type)) { skipped++; continue }
 
         // Feature requests are stored directly — no dedup, no regression check, no git-fixed check.

@@ -12,7 +12,8 @@ const { query, createSdkMcpServer } = require('@anthropic-ai/claude-agent-sdk')
 const { buildTools, audit } = require('./tools')
 const { driverMode, billableCostUsd, FREEGLE_API_URL } = require('./auth')
 const path = require('path')
-const { systemPrompt } = require('./prompt')
+const { systemPrompt, reviewPrompt, hasSuggestedReply } = require('./prompt')
+const { buildPrompt } = require('./images')
 const { withLinkWarning } = require('./links')
 const { subscriptionToken, fetchQuota, quotaFields, transcriptEntries, serialiseTranscript, recordRun } = require('./run-record')
 // Where runs are recorded: the same Go API that verifies the caller.
@@ -31,13 +32,14 @@ const CODEBASE = process.env.CODEBASE_DIR || '/app/codebase'
  * @param {string} o.jwt          caller JWT (used for get_user_dump against the Go API)
  * @param {string|null} o.agentSessionId  resume id for multi-turn continuity
  * @param {function} o.onProgress (type, message) => void   type: thinking|tool|status
+ * @param {Array} o.images        validated screenshots (images.js), shown to the model with the question
  */
-async function runSupportQuery({ query: userQuery, userId, jwt, agentSessionId, onProgress, modId, modEmail }) {
+async function runSupportQuery({ query: userQuery, userId, jwt, agentSessionId, onProgress, modId, modEmail, images }) {
   const progress = onProgress || (() => {})
   const isNewSession = !agentSessionId
 
   // Audit trail: record who is investigating whom, and the question, at session start.
-  audit({ mod: modId, modEmail, target: userId || 0, tool: 'session', question: String(userQuery || '').slice(0, 200) })
+  audit({ mod: modId, modEmail, target: userId || 0, tool: 'session', question: String(userQuery || '').slice(0, 200), screenshots: (images || []).length })
 
   const { tools, names, cleanup } = buildTools({ jwt, userId: userId || 0, modId, modEmail, progress })
   const mcpServer = createSdkMcpServer({ name: 'freegle', version: '2.0.0', tools })
@@ -84,9 +86,10 @@ async function runSupportQuery({ query: userQuery, userId, jwt, agentSessionId, 
   const quotaToken = subscriptionToken(driverMode())
   const quotaBefore = fetchQuota(quotaToken)
 
-  progress('status', `Investigating (driver=${driverMode()})…`)
-  try {
-    for await (const message of query({ prompt: userQuery, options })) {
+  // One model turn: stream it, collect the answer. Used for the investigation and again for the
+  // fact-check, which resumes the same session so every tool result is still in front of the model.
+  async function drive(promptArg, turnOptions, isReview) {
+    for await (const message of query({ prompt: promptArg, options: turnOptions })) {
       transcript.push(...transcriptEntries(message))
       if (message.type === 'system' && message.subtype === 'init' && message.model) {
         model = message.model
@@ -102,13 +105,21 @@ async function runSupportQuery({ query: userQuery, userId, jwt, agentSessionId, 
       } else if (message.type === 'result') {
         if (message.subtype === 'success') {
           analysis = withLinkWarning(message.result || '', path.join(CODEBASE, 'iznik-nuxt3', 'pages'))
-          costUsd = billableCostUsd(driverMode(), message.total_cost_usd)
-          usage = {
+          // The fact-check is extra work on top of the investigation, so its cost and tokens add to it.
+          const turnUsage = {
             inputTokens: message.usage?.input_tokens || 0,
             outputTokens: message.usage?.output_tokens || 0,
             cacheCreation: message.usage?.cache_creation_input_tokens || 0,
             cacheRead: message.usage?.cache_read_input_tokens || 0,
             durationMs: message.duration_ms || 0,
+          }
+          const turnCost = billableCostUsd(driverMode(), message.total_cost_usd)
+          if (isReview) {
+            costUsd = (costUsd || 0) + (turnCost || 0)
+            for (const k of Object.keys(turnUsage)) usage[k] = (usage[k] || 0) + turnUsage[k]
+          } else {
+            costUsd = turnCost
+            usage = turnUsage
           }
           resultSessionId = message.session_id || resultSessionId
         } else {
@@ -117,6 +128,28 @@ async function runSupportQuery({ query: userQuery, userId, jwt, agentSessionId, 
           analysis = `Investigation error: ${errorText}`
           resultSessionId = message.session_id || resultSessionId
         }
+      }
+    }
+  }
+
+  progress('status', `Investigating (driver=${driverMode()})…`)
+  try {
+    await drive(buildPrompt(userQuery, images, agentSessionId), options, false)
+
+    // A draft reply is read out to a member under a volunteer's name, so it gets a second look before the
+    // volunteer sees it: friendly and human, and every fact traced to something that was actually looked up.
+    // If the check itself fails the original draft is kept and says so, rather than losing the answer.
+    if (status === 'Success' && resultSessionId && hasSuggestedReply(analysis)) {
+      progress('status', 'Checking the draft reply against what was found…')
+      const firstAnalysis = analysis // already link-checked
+      try {
+        await drive(reviewPrompt(), { ...options, resume: resultSessionId }, true)
+        if (!hasSuggestedReply(analysis) || status !== 'Success') throw new Error('the check did not return a reply')
+      } catch (e) {
+        status = 'Success'
+        errorText = ''
+        analysis = firstAnalysis +
+          '\n\n**Not fact-checked.** The automatic check of this draft did not complete, so check each fact in it yourself before sending.'
       }
     }
   } catch (e) {

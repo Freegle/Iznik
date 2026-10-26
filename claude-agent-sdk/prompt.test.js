@@ -57,3 +57,24 @@ test('the agent is told which logs the snapshot leaves out, and where to get the
   assert.match(p, /leave out the member's logged-out \(pre-login\) client lines/)
   assert.match(p, /use \*\*loki_search\*\*/)
 })
+
+test('suggested replies are asked to sound friendly and human, and to claim only what was checked', () => {
+  const p = systemPrompt(1, CODEBASE)
+  assert.match(p, /kind, capable volunteer/)
+  assert.match(p, /contractions/)
+  assert.match(p, /rest assured/)
+  assert.match(p, /Only say what you have checked/)
+  assert.match(p, /second review pass/)
+})
+
+test('the review pass asks for claims to be traced to evidence, removed if unsupported, then a fact check', () => {
+  const { reviewPrompt, hasSuggestedReply } = require('./prompt')
+  const p = reviewPrompt()
+  assert.match(p, /REVIEW PASS/)
+  assert.match(p, /confirm it against what your tools returned/)
+  assert.match(p, /removed, or turned into a question/)
+  assert.match(p, /\*\*Fact check\*\*/)
+  assert.ok(hasSuggestedReply('**Suggested reply**\n> hi'))
+  assert.ok(!hasSuggestedReply('Nothing to send.'))
+  assert.ok(!hasSuggestedReply(null))
+})

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-23
+last_reviewed: 2026-10-26
 owner: Freegle ops
 covers:
   - scripts/maintenance/**
@@ -61,7 +61,8 @@ year does not repeat one. Swap the order with `MAINT_DB_ROTATION`.
 
 1. **Preflight**, read-only. Any failure stops the run before anything changes, and the
    alert says why. See [the gates](#the-gates).
-2. **Plan.** Refresh the package lists and work out what would be upgraded, minus the
+2. **Plan.** Bring the repository signing keys up to date (below), refresh the package
+   lists and work out what would be upgraded, minus the
    packages this tool never touches. Decide whether a reboot is needed: the machine
    already says so (`/var/run/reboot-required`), the upgrade includes a kernel, C
    library, systemd, dbus or OpenSSL, or the uptime has reached the optional cadence.
@@ -81,6 +82,19 @@ the list is `MAINT_SVC_IGNORE_RE` in `lib/common.sh`. Until monit has
 completed a check cycle after boot it reports services it has not polled yet as "Does not
 exist" or "Initializing", so the check after a reboot keeps looking until every service is
 OK, and fails only if one is still not OK after `MAINT_MONIT_TIMEOUT` (300 seconds).
+
+### Repository signing keys
+
+Vendors rotate the keys that sign their repositories. A machine still holding the old one
+cannot refresh that repository, `apt-get update` fails, and the run stops before it
+patches anything. So before refreshing the package lists, each run fetches the current key
+for every keyring in `MAINT_APT_KEYS` (`lib/common.sh`: Google Cloud, NodeSource, Docker)
+from the vendor over HTTPS. When it differs from the one on the machine and holds a public
+key, it replaces it, keeps the old one beside it as `<keyring>.freegle-maint-prev`, and
+puts the undo in the ledger. A keyring the machine does not have is skipped. A key that
+cannot be fetched is a warning, not a stop: the package refresh then shows whether it
+mattered. Repositories not in the list, such as Launchpad PPAs and Percona's (kept current
+by `percona-release`), are not touched.
 
 ### Packages left alone
 

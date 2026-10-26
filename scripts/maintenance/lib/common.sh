@@ -471,8 +471,57 @@ svc_compare() {  # <host> <before file> [timeout]; waits for missing services
 APT_ENV="DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1"
 APT_OPTS="-o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
+# Third-party repository signing keys, as "<keyring>=<vendor key URL>". Vendors rotate
+# these keys, and a stale one makes apt-get update fail on that repository, which stops
+# the run before it patches anything. A keyring that is not on the host is skipped.
+MAINT_APT_KEYS="${MAINT_APT_KEYS:-/usr/share/keyrings/cloud.google.gpg=https://packages.cloud.google.com/apt/doc/apt-key.gpg /usr/share/keyrings/nodesource.gpg=https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key /etc/apt/keyrings/docker.gpg=https://download.docker.com/linux/ubuntu/gpg /etc/apt/keyrings/docker.asc=https://download.docker.com/linux/ubuntu/gpg}"
+
+# The remote script for one key: fetch it into a temporary file in the keyring's own
+# format (armored for .asc, binary otherwise), check it holds a public key, and print
+# absent, fetch-failed, invalid, current or differs. With install, a differing key
+# replaces the keyring and the old one is kept beside it as <keyring>.freegle-maint-prev.
+apt_key_script() {  # <keyring> <url> <check|install>
+  local ring=$1 url=$2 mode=$3
+  cat <<EOF
+[ -f '$ring' ] || { echo absent; exit 0; }
+t=\$(mktemp); k=\$(mktemp); trap 'rm -f "\$t" "\$k"' EXIT
+curl -fsSL --max-time 30 '$url' -o "\$t" || { echo fetch-failed; exit 0; }
+if grep -q 'BEGIN PGP PUBLIC KEY BLOCK' "\$t"; then
+  case '$ring' in *.asc) cp "\$t" "\$k" ;; *) gpg --dearmor < "\$t" > "\$k" 2>/dev/null ;; esac
+else
+  case '$ring' in *.asc) echo invalid; exit 0 ;; *) cp "\$t" "\$k" ;; esac
+fi
+gpg --show-keys --with-colons "\$k" 2>/dev/null | grep -q '^pub' || { echo invalid; exit 0; }
+cmp -s "\$k" '$ring' && { echo current; exit 0; }
+[ '$mode' = install ] || { echo differs; exit 0; }
+cp -a '$ring' '$ring.freegle-maint-prev' && install -m 644 -o root -g root "\$k" '$ring' && echo installed
+EOF
+}
+
+# Bring each known keyring up to date with its vendor before package lists are refreshed.
+# A key that cannot be fetched is reported and left alone: apt-get update then says
+# whether it matters.
+apt_refresh_keys() {  # <host>
+  local h=$1 entry ring url state
+  for entry in $MAINT_APT_KEYS; do
+    ring=${entry%%=*}; url=${entry#*=}
+    state=$(rq "$h" "$(apt_key_script "$ring" "$url" check)" 2>/dev/null)
+    case "$state" in
+      absent|current) ;;
+      differs)
+        if act "$h" "refresh apt signing key $ring from $url" "$(apt_key_script "$ring" "$url" install)"; then
+          $DRY || ledger "$h: apt signing key $ring refreshed from $url" "mv $ring.freegle-maint-prev $ring"
+        else
+          warn "$h: could not install the refreshed apt signing key $ring"
+        fi ;;
+      *) warn "$h: apt signing key $ring not refreshed from $url: ${state:-no answer}" ;;
+    esac
+  done
+}
+
 apt_plan() {  # <host> <exclude-regex> -> sets APT_PKGS, APT_EXCLUDED, APT_REBOOT_LIKELY
   local h=$1 ex=$2 all
+  apt_refresh_keys "$h"
   # Package lists: apt-daily refreshes them; the live run refreshes again.
   act "$h" "refresh package lists" "$APT_ENV apt-get $APT_OPTS -qq update" || die "$h: apt-get update failed"
   all=$(rq "$h" "apt-get -s -o Debug::NoLocking=1 --with-new-pkgs upgrade 2>/dev/null | awk '/^Inst /{print \$2}'" | sort -u)

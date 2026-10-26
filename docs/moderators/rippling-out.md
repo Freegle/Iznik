@@ -62,17 +62,16 @@ What this means in practice:
 
 - You moderate their post exactly as you would any other: approve it, or take it off
   your community.
-- The poster appears in your member list, but with no Chat button and no standard
-  messages that only write to a member, because there is no conversation for you to
-  start. If they write to you first, that chat works as normal.
-- You can still take them off your community or ban them, and that happens as usual. It
-  is done quietly: they never joined you, so a message about it would be as confusing as
-  one about their post.
+- The poster appears in your member list, and you can contact them from there as you
+  would any member: **Chat**, **Mail** and the member standard messages all work. Taking
+  them off your community or banning them works as usual too, with the message you choose.
+  Only replies about the rippled post itself stay with the community they posted it on (see
+  below).
 - Your community's member count may include rippled members.
 - The join is recorded as **'Rippled'** in the membership log, so you can distinguish it
   from a manual or organic join if you need to.
-- The membership becomes an ordinary one, and none of the above applies any more, once
-  they have something to do with your community. That is when they:
+- The membership becomes an ordinary one once they have something to do with your
+  community. That is when they:
   - join it themselves, or move house into your area;
   - post on it;
   - reply to a post that was posted on it;

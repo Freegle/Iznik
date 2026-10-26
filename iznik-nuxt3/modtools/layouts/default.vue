@@ -312,6 +312,7 @@
     />
     <LoginModal v-if="!loggedIn" ref="loginModal" :key="'login-' + bumpLogin" />
     <div id="sizer" ref="sizer" class="d-none d-lg-block" />
+    <ModAlertReplyGate v-if="loggedIn" />
     <SomethingWentWrong />
   </div>
 </template>

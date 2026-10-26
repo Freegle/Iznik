@@ -6,6 +6,8 @@ const {
   buildReferralMjml,
   buildReferralText,
   referralSubject,
+  referralThreadHeaders,
+  screenshotCid,
   formatReferralRef,
   REF_ALPHABET,
   escapeHtml,
@@ -83,29 +85,58 @@ test('formatReferralRef copes with short/absent entropy rather than throwing', (
   assert.match(formatReferralRef([]), /^SR-.{5}$/)
 })
 
-test('referralSubject leads with the reference, then who and what', () => {
-  const s = referralSubject(REFERRAL)
-  assert.ok(s.startsWith('[SR-4F2QW] '), s)
-  assert.ok(s.includes('Edward Hibbert'))
-  assert.ok(s.includes('(35909200)'))
-  assert.ok(s.includes('Why is his reply stuck'))
+test('referralSubject is the same for one member whatever was asked, so Gmail threads them', () => {
+  const first = referralSubject(REFERRAL)
+  assert.strictEqual(first, 'Support referral: Edward Hibbert (35909200)')
+  const other = referralSubject({ ...REFERRAL, ref: 'SR-ZZZZZ', note: 'something else', messages: [{ role: 'user', content: 'a different question' }] })
+  assert.strictEqual(other, first)
+})
+
+test('a later referral about the same member gets Re: and the same base subject', () => {
+  const later = referralSubject({ ...REFERRAL, earlierRefs: ['SR-4F2QW'] })
+  assert.strictEqual(later, 'Re: Support referral: Edward Hibbert (35909200)')
 })
 
 test('referralSubject still works with no reference and no conversation', () => {
-  assert.equal(
-    referralSubject({ member: { displayname: 'Sam', id: 7 }, messages: [], note: 'odd bounce' }),
-    'Support referral: Sam (7) - odd bounce'
-  )
-  assert.equal(referralSubject({ member: {}, messages: [] }), 'Support referral: a member')
+  assert.strictEqual(referralSubject({ member: { displayname: 'Sam', id: 7 }, messages: [], note: 'odd bounce' }), 'Support referral: Sam (7)')
+  assert.strictEqual(referralSubject({ member: {}, messages: [] }), 'Support referral: a member')
 })
 
-test('referralSubject truncates a long question instead of running away', () => {
-  const s = referralSubject({
+test('thread headers: one anchor per member, the newest earlier referral is replied to', () => {
+  const one = referralThreadHeaders(REFERRAL)
+  assert.strictEqual(one.messageId, 'support-referral-SR-4F2QW@ilovefreegle.org')
+  assert.strictEqual(one.inReplyTo, 'support-member-35909200@ilovefreegle.org')
+  assert.deepStrictEqual(one.references, ['support-member-35909200@ilovefreegle.org'])
+
+  const two = referralThreadHeaders({ ...REFERRAL, ref: 'SR-BBBBB', earlierRefs: ['SR-AAAAA', 'SR-4F2QW'] })
+  assert.strictEqual(two.inReplyTo, 'support-referral-SR-4F2QW@ilovefreegle.org')
+  assert.deepStrictEqual(two.references, [
+    'support-member-35909200@ilovefreegle.org',
+    'support-referral-SR-AAAAA@ilovefreegle.org',
+    'support-referral-SR-4F2QW@ilovefreegle.org',
+  ])
+})
+
+test('with no member id the referral is its own thread', () => {
+  const h = referralThreadHeaders({ ref: 'SR-CCCCC', member: {} })
+  assert.deepStrictEqual(h.references, ['support-referral-SR-CCCCC@ilovefreegle.org'])
+})
+
+test('screenshots appear inline by content id with their names, and in the plain text', () => {
+  const withShots = {
     ...REFERRAL,
-    messages: [{ role: 'user', content: 'x'.repeat(500) }],
-  })
-  assert.ok(s.length < 200, `subject was ${s.length} chars`)
-  assert.ok(s.endsWith('…'))
+    screenshots: [
+      { name: 'error.png', mime: 'image/png', data: 'AAAA' },
+      { name: 'basket <b>.jpg', mime: 'image/jpeg', data: 'AAAA' },
+    ],
+  }
+  const mjml = buildReferralMjml(withShots)
+  assert.match(mjml, /src="cid:support-screenshot-1@ilovefreegle.org"/)
+  assert.match(mjml, /src="cid:support-screenshot-2@ilovefreegle.org"/)
+  assert.ok(!mjml.includes('basket <b>'), 'names are escaped')
+  assert.strictEqual(screenshotCid(0), 'support-screenshot-1@ilovefreegle.org')
+  assert.match(buildReferralText(withShots), /Screenshots attached: error.png, basket <b>.jpg/)
+  assert.ok(!buildReferralMjml(REFERRAL).includes('cid:'), 'no screenshots, no section')
 })
 
 test('escapeHtml neutralises member-supplied angle brackets and quotes', () => {

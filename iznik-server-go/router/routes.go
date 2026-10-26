@@ -188,6 +188,10 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Param id path integer true "Alert ID"
 		// @Success 200 {object} map[string]interface{}
+		rg.Get("/modtools/alert/pending", alert.GetPending)
+		rg.Post("/modtools/alert/:id/reply", alert.ReplyToAlert)
+		rg.Post("/modtools/alert/:id/snooze", alert.SnoozeAlert)
+		rg.Post("/modtools/alert/:id/cancel", alert.CancelAlert)
 		rg.Get("/modtools/alert/:id", alert.GetAlert)
 
 		// @Router /alert [put]

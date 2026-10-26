@@ -214,7 +214,7 @@ func TestListStoryGroupReviewedFilter(t *testing.T) {
 // TestGroupStory_ExcludesRippleOnlyMembership verifies that a membership created purely as a
 // side effect of rippling (memberships.rippled = 1) does not attribute a member's story to that
 // group's public Stories feed. A ripple-only membership is not a relationship with the
-// community (see rippling/membership.go's IsRippleOnlyMembership) - it exists only so a post
+// community - it exists only so a post
 // that rippled there can be moderated - so it must not decide which group's Stories page shows
 // somebody's story either.
 func TestGroupStory_ExcludesRippleOnlyMembership(t *testing.T) {
