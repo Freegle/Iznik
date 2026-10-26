@@ -2,6 +2,10 @@ FROM node:20-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json .
+# onnxruntime-node's install script fetches the GPU (CUDA) runtime from NuGet unless told not
+# to. The sidecar runs on CPU, so that download is never used, and a NuGet lookup failure
+# made every PR's "Build containers" step fail on 2026-10-26. Skip it.
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 # npm's --fetch-retries only retries individual package fetches; a mid-stream
 # ECONNRESET (connection reset by the registry/proxy on a build VM) still aborts
 # the whole command. Retry the entire install at the shell level to survive it,
