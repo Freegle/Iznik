@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-10
+last_reviewed: 2026-10-26
 owner: Freegle dev team
 covers:
   - iznik-server-go/message/postmatches.go
@@ -111,9 +111,15 @@ renders it into Mailpit with real recent posts as stand-in matches.
 
 ## Similarity floor
 
-The only quality gate is `MinMatchedPostScore` in `iznik-server-go/message/postmatches.go`.
-Laravel does not apply a floor of its own (it sorts on the scores the API returns),
-so this constant alone decides what lands in someone's inbox.
+There are two quality gates, both in `iznik-server-go/message/postmatches.go`: the cosine
+floor `MinMatchedPostScore` below, and `itemsDiffer`. Laravel does not apply a floor of its own
+(it sorts on the scores the API returns), so these alone decide what lands in someone's inbox.
+
+`itemsDiffer` drops a pair that clears the floor when both posts' cleaned items are known and are
+different things ("Beer dispenser" for a "Water dispenser"). On 30 days of live posts, pairs that
+cleared the floor and had the same item were judged 95% welcome, and pairs that cleared only the
+floor 60%. A post whose item is not known yet is matched on the floor alone. See
+[message-items.md](message-items.md).
 
 It is **0.85, deliberately high**. Matched posts are pushed to an inbox
 unasked rather than offered to someone already browsing, so the bar is higher

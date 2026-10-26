@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-23
+last_reviewed: 2026-10-26
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Support/EnvSetting.php
@@ -54,6 +54,7 @@ variables like every other Freegle setting.
 | `mail.relay_queue.min_queued` | `FREEGLE_MAIL_RELAY_QUEUE_MIN` | `25` | How many messages a recipient domain needs in the relay queue before the delayed view shows it. Lower and every paced provider is listed permanently, because a sending address on a rate delay always has something queued. |
 | `mail.relay_queue.min_age_minutes` | `FREEGLE_MAIL_RELAY_QUEUE_MIN_AGE` | `120` | The other way a domain earns a row. A handful of messages stuck for a day never reaches the size threshold and is the shape nobody notices, so age qualifies on its own. |
 | `mail.relay_queue.max_rows` | `FREEGLE_MAIL_RELAY_QUEUE_MAX_ROWS` | `500` | Most rows kept. An estate-wide episode names thousands of domains; the worst are kept and the rest dropped. |
+| `ai_images.gemini_api_key`, `ai_images.clean_model` | `GOOGLE_GEMINI_API_KEY`, `AI_IMAGE_CLEAN_MODEL` | blank, `gemini-3.5-flash-lite` | With a key, `messages:clean-items` works out each post's item, and AI item pictures, matched posts and search use it (see [message-items.md](message-items.md)). Blank, nothing is cleaned and all three behave as before. The model is fixed because the results were measured on it. |
 | `schedule.profile` | `FREEGLE_SCHEDULE_PROFILE` | `full` | `overlay-only` runs nothing from `routes/console.php` except what the overlay file below schedules. Any other value behaves as `full`, so a typo can never quietly stop the schedule. |
 | `schedule.overlay` | `FREEGLE_SCHEDULE_OVERLAY` | `routes/console.deployment.php` | A schedule file loaded **if it exists** (relative to the app root, or absolute). Freegle ships none. A deployment puts its own jobs there. |
 | `cookieyes.enabled` | `COOKIEYES_ENABLED` | `true` | Off, the weekly `cookieyes:check` is not scheduled. For a deployment with no CookieYes account, which would otherwise fail and email every week. See [cookieyes-watchdog.md](cookieyes-watchdog.md). |

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-24
+last_reviewed: 2026-10-25
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxExperimentService.php
@@ -33,6 +33,15 @@ covers:
   - iznik-nuxt3/composables/useAppInterstitial.js
   - iznik-nuxt3/components/AppInterstitial.vue
   - iznik-nuxt3/tests/e2e/test-mobile-web-app-interstitial.spec.js
+  - iznik-nuxt3/composables/useRatingNudge.js
+  - iznik-nuxt3/components/RatingNudge.vue
+  - iznik-nuxt3/components/RatingNudgeModal.vue
+  - iznik-nuxt3/tests/unit/composables/useRatingNudge.spec.js
+  - iznik-nuxt3/tests/unit/components/RatingNudge.spec.js
+  - iznik-nuxt3/tests/unit/components/RatingNudgeModal.spec.js
+  - iznik-nuxt3/tests/e2e/test-rate-on-return.spec.js
+  - iznik-server-go/user/unrated.go
+  - iznik-server-go/test/user_unrated_test.go
   - iznik-nuxt3/plugins/uxExperiments.client.js
   - iznik-nuxt3/ux-experiments.manifest.json
   - iznik-nuxt3/pages/ask/mobile/details.vue
@@ -414,7 +423,7 @@ that, `design.primary_event` names a client event, and the experiment is judged 
 start of the funnel** instead of on finishing it:
 
 - The event must be listed in `UxExperimentService::PRIMARY_EVENTS`, with the words a read uses for it
-  (`job_ad_click`: "clicked a job advert"; `app_store_click`: "clicked an app store button"). The Go route checks the same list (`primaryEvents` in
+  (`job_ad_click`: "clicked a job advert"; `app_store_click`: "clicked an app store button"; `user_rated`: "rated a freegler"). The Go route checks the same list (`primaryEvents` in
   `iznik-server-go/ux/experiments.go`). The name goes into a LogQL query, so no other name is read.
 - The event's line must carry the member's arms in `variant`, from `experimentVariant()`. A flow event
   gets that for free; an `action()` event has to add it. Without it the event is never counted.
@@ -1037,6 +1046,72 @@ skips one box and meets another.
   Reverted, inconclusive or stopped: the arm read, the `titleStands` branch and the tests go, then
   `ux:experiment close ask-description-optional --cleanup-pr=<url>`.
 
+### Rating the people you dealt with, on the next visit
+
+`rate-on-return` tests whether asking a member, when they arrive, to rate the people they handed an item over
+with gets more ratings. Ratings are what tells a member whether the person offering them a sofa turns up; in the
+week to 11 October 2026 the poster rated the taker after 35% of handovers (the outcome modal asks them), and the
+taker rated the poster after 5% (nobody asks: the thumbs are in the chat header, on desktop only).
+
+- **Who the server names.** `GET /user/unrated` (`iznik-server-go/user/unrated.go`) lists the people the
+  signed-in member handed over with in the last 14 days, from `messages_by` in either direction, newest first,
+  one entry per person and at most five, with the post's item name and whether the member gave or received. A
+  `ratings` row from the member to that person, including one whose rating was later taken back, drops them: a
+  member who withdrew a rating is not asked again. Deleted users are left out.
+- **When it asks.** On arrival at a page, signed in, on the web, in arm `b`, when the page is not one of the
+  interstitial's excluded pages (mid-flow, legal, `/chats` reached from an email) and the member has not been
+  asked in the last 24 hours on this browser (`freegle_rating_nudge_last`), and no other modal is already open (the
+  microvolunteering ask, say: two modals on arrival would be the experiment measuring itself against a mess, so it
+  stands aside, in both arms, with no arm read and the day not used up). `RatingNudge.vue`, mounted in
+  `LayoutCommon`, fetches the list once per page view; only when there is somebody to rate is the arm read, and
+  the time of the visit recorded, **in both arms**, so a member with nobody to rate is counted in neither and
+  control runs on the same 24-hour clock as the variant. The rules are in `composables/useRatingNudge.js`.
+- **What it shows.** `RatingNudgeModal.vue`: "How did it go?", up to three people, each with their photo, name,
+  "You gave them Sofa" or "They gave you Lamp", thumbs up ("Good"), thumbs down ("Not good", which opens the
+  existing reason modal `UserRatingsDownModal`) and Skip. Not now closes it; a tap on the backdrop does not. A
+  person rated or skipped leaves the list; when the list is empty it says Thanks and closes. Skip is kept for
+  30 days on the browser (`freegle_rating_nudge_skipped`), which is longer than the server looks back, so it
+  means "not for this handover".
+- **Telemetry.** `rating_nudge_shown` (`count`), `rating_nudge_skipped` and `rating_nudge_dismissed` (`how`:
+  `not_now`, `done` or `hidden` for Escape or a navigation; `shown`; `rated`), each with `variant`. The rating
+  itself is `user_rated` (`rating`, `source`), logged by `userStore.rate()` for **every** rating given anywhere
+  on the site, with `variant`, so the arms can be compared on all ratings and not only those from the modal.
+  Taking a rating back is not logged.
+- **Measure.** `primary_event` is `user_rated`, read per start of `chat_outcome`: ratings follow handovers, and
+  that funnel's starts are the nearest thing to a count of handovers the engine has. Finishing `chat_outcome`
+  is the guardrail, with `--touches=chat_outcome,reply,give` so a modal on arrival that puts people off
+  replying or posting is reverted. The read counts the whole site's ratings in each arm, which is the point:
+  the thumbs in the chat header and the outcome modal are still there in both arms.
+- **Sizing.** On 25 October 2026 the live site had about 330 ratings a day, 150 of them imported from
+  TrashNothing, so about 180 given on the site, against about 430 handovers and about 500 `chat_outcome`
+  starts a day. That makes the base rate about 0.4 ratings per start. The unrated pool is about 280 poster
+  sides and 410 taker sides a day; if a tenth of those shown rate, the rate rises by about 14 points, so
+  `--expected-points=10` is believable. Replace the base rate from the first day's `user_rated` count over
+  that day's `chat_outcome` starts before trusting the power check.
+- **Starting it.** The Go API must be deployed first: the frontend calls `GET /user/unrated` on every eligible
+  arrival, and an old API answers 404, which the composable treats as nobody to rate (no arm is read, nothing
+  is counted). Then, on the batch host:
+
+  ```bash
+  php artisan ux:experiment create --flow=chat_outcome --name=rate-on-return \
+    --title="Ask members to rate the people they dealt with, on their next visit" \
+    --hypothesis="Takers almost never rate the person who gave to them because nothing asks; a modal on the next visit naming the people they dealt with gets many more ratings." \
+    --change="For half of signed-in members arriving on the web with an unrated handover in the last 14 days, a modal lists up to three people with thumbs up, thumbs down and Skip. At most once a day." \
+    --expected="Far more ratings per outcome start, with members finishing outcomes, replies and posts as often." \
+    --primary-event=user_rated --base-rate=0.4 --expected-points=10 \
+    --touches=chat_outcome,reply,give --pr=https://github.com/Freegle/Iznik/pull/1921
+  php artisan ux:experiment start rate-on-return
+  ```
+
+- **Reading it by hand.** Beside the engine's read: the share of `user_rated` with `source=rating_nudge`, the
+  thumbs down share in each arm (a flood of thumbs down from people who were never going to rate is a reason
+  not to adopt), `rating_nudge_dismissed` by `how`, and `rating_nudge_skipped` per shown.
+- **Cleanup.** Adopted: the arm read in `useRatingNudge.js` goes and every eligible arrival asks, and the
+  manifest entry goes; `GET /user/unrated` and the `user_rated` event stay. Reverted, inconclusive or stopped:
+  `RatingNudge.vue`, `RatingNudgeModal.vue`, `useRatingNudge.js`, the `LayoutCommon` line, their tests and the
+  e2e spec go; `GET /user/unrated`, `userStore.fetchUnrated()` and the `user_rated` logging and event entries
+  stay for the next experiment; then `ux:experiment close rate-on-return --cleanup-pr=<url>`.
+
 ## Experiments in mail, push and the server
 
 An experiment does not have to change the site. Server code can decide what a member gets from the same
@@ -1253,8 +1328,12 @@ without an error. The export reads its rows from the write node too.
   chat "Do you still want it?"; a yes (the button) lets it through, a no or three days of silence drops it. Whatever
   else the replier writes in that chat while the question is open waits behind it and goes the same way. In `control` nothing changes. Both arms write one exposure row per replier and post, with the reply's
   `chat_messages.id` as the subject and `damaged`, `car` or `both` as the stratum.
-- **Where.** `planReplyConfirm` in `iznik-server-go/chat/replyconfirm.go` looks the arm up on its first line with
-  `ux.ExperimentArm`, so with no experiment running a reply costs nothing extra. It only decides, and it decides before
+- **Not a child car seat.** A reply to an offer of a child car seat is asked a safety question whatever the arm,
+  and from the app too; that is policy, writes no exposure and is outside this experiment
+  ([chat-prompts.md](chat-prompts.md#child-car-seats)).
+- **Where.** `planReplyConfirm` in `iznik-server-go/chat/replyconfirm.go` reads the post, and for anything but a car
+  seat looks the arm up with `ux.ExperimentArm` before any other read, so with no experiment running a reply costs
+  one read and nothing more. It only decides, and it decides before
   the reply is written. For `ask`, `CreateChatMessage` then writes the reply, the exposure (`ux.RecordExposure`), the
   question and the hold in one transaction, because the batch takes any committed unprocessed reply, whatever its age: a
   run between the reply and its hold would deliver it. The exposure, the question and the hold are in a savepoint, so if

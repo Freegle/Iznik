@@ -300,8 +300,9 @@ const REPLY_CELL = (o) => ({
 })
 
 // How tall the hosted piece may be at 390 wide, in pixels: with nothing open, and with every row and one reason open. It is
-// about 525 and 1,300. It was about 780, and 2,480 with every reason open, when every reason opened at once.
-const CLOSED_PIECE_MAX = 580
+// about 525 and 1,300 with six summary rows; the two more that show all five ways a question ends add roughly 70.
+// It was about 780, and 2,480 with every reason open, when every reason opened at once.
+const CLOSED_PIECE_MAX = 640
 const OPEN_PIECE_MAX = 1500
 
 const CONFIRM = {
@@ -1125,11 +1126,11 @@ test.describe('ModTools SysAdmin UX tab: Experiments', () => {
       'Without the change',
     ])
     // The rows that tell the story are drawn, and the rest wait for Show every row.
-    await expect(piece.locator('.all tbody tr')).toHaveCount(6)
+    await expect(piece.locator('.all tbody tr')).toHaveCount(8)
     await piece.locator('.rows-toggle').click()
     await expect(piece.locator('.all tbody tr')).toHaveCount(10)
     await piece.locator('.rows-toggle').click()
-    await expect(piece.locator('.all tbody tr')).toHaveCount(6)
+    await expect(piece.locator('.all tbody tr')).toHaveCount(8)
 
     // The reasons are closed rows in the order staff read them, and one opens at a time.
     await expect(piece.locator('.reason-table')).toHaveCount(0)

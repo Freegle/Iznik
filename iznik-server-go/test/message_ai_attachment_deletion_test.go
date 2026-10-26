@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/misc"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -215,4 +216,47 @@ func TestPatchMessage_RemoveAIAttachmentSubset_OnlyDeletedRecorded(t *testing.T)
 	var keptCount int64
 	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE id = ?", keptAttachID).Scan(&keptCount)
 	assert.Equal(t, int64(1), keptCount, "Non-AI attachment should not be deleted")
+}
+
+// A post whose picture was borrowed from another name: removing it says the match was wrong,
+// not the picture. The alias goes and the picture gets no Reject.
+func TestPatchMessage_RemoveBorrowedAIAttachment_RemovesAliasNotPicture(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("ai_att_alias")
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	msgID := CreateTestMessage(t, ownerID, groupID, "Borrowed picture "+prefix, 51.5, -1.0)
+
+	var subject string
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msgID).Scan(&subject)
+	aliasName := misc.IllustrationItemName(subject)
+
+	externalUID := "freegletusd-test-ai-alias-" + prefix
+	db.Exec("INSERT INTO ai_images (name, externaluid, usage_count) VALUES (?, ?, 5)", "picture-"+prefix, externalUID)
+	var aiImageID uint64
+	db.Raw("SELECT id FROM ai_images WHERE externaluid = ? LIMIT 1", externalUID).Scan(&aiImageID)
+	db.Exec("INSERT INTO ai_image_aliases (name, aiimageid, method) VALUES (?, ?, 'embedding')", aliasName, aiImageID)
+	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, ?, 1)",
+		msgID, externalUID, `{"ai":true}`)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM microactions WHERE aiimageid = ?", aiImageID)
+		db.Exec("DELETE FROM ai_images WHERE id = ?", aiImageID)
+	})
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"id": msgID, "attachments": []uint64{}})
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var aliases, rejects int64
+	db.Raw("SELECT COUNT(*) FROM ai_image_aliases WHERE name = ?", aliasName).Scan(&aliases)
+	db.Raw("SELECT COUNT(*) FROM microactions WHERE aiimageid = ?", aiImageID).Scan(&rejects)
+	assert.Equal(t, int64(0), aliases, "the alias should be removed")
+	assert.Equal(t, int64(0), rejects, "the picture itself should get no Reject")
 }

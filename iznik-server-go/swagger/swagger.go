@@ -3589,6 +3589,21 @@ type userResponse struct {
 	Body user.User
 }
 
+// swagger:route GET /user/unrated user getUnrated
+// People the member has handed over with and not rated
+//
+// Lists the freeglers the logged-in member handed an item over with in the last 14 days (either
+// direction) and has not rated, newest first, one entry per person, at most five. Used by the
+// rate-on-return experiment to ask on the next visit.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+
 // swagger:route GET /user/search user searchUsers
 // Search users
 //
@@ -4485,6 +4500,21 @@ type getSupportAIRunParams struct {
 //
 //	200: successResponse
 //	404: errorResponse
+
+// swagger:route POST /discourse/relink sso relinkDiscourse
+// Re-link a moderator's Discourse account after an account merge
+//
+// Support or Admin. Moves the Discourse account linked to an account merged into userid onto
+// userid, then updates its email and name. Merges and Discourse sign-in do this by themselves;
+// this is for merges from before they did.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
 
 // swagger:route GET /discourse_sso sso discourseSSO
 // Discourse SSO login

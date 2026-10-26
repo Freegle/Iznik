@@ -129,6 +129,8 @@ const STORY = [
   'Said yes',
   'Said no',
   'Did not answer',
+  'The offer went first',
+  'Still waiting',
   'Reached the poster',
 ]
 
@@ -240,6 +242,28 @@ describe('ModSysAdminUxReplyConfirmDetail', () => {
     expect(rowNames(w, '.all')).toEqual(STORY)
   })
 
+  it('accounts for everyone asked: the answers in the story add up to the asked', () => {
+    // Staff read yes, no and did not answer as the whole of the asked. They are not: a question also closes when the
+    // offer goes first, and some are still open. Leaving those two out showed 85% that should have been 100%.
+    const w = make(experiment())
+    const rows = w
+      .find('.all')
+      .findAll('tr')
+      .map((r) => r.findAll('td').map((c) => c.text()))
+    const answers = [
+      'Said yes',
+      'Said no',
+      'Did not answer',
+      'The offer went first',
+      'Still waiting',
+    ]
+    const counted = answers.reduce((sum, name) => {
+      const cell = rows.find((r) => r[0] === name)[1]
+      return sum + Number(cell.match(/\((\d+)\/\d+\)/)[1])
+    }, 0)
+    expect(counted).toBe(100)
+  })
+
   it('shows a dash for the answer rows of the version that was not asked', async () => {
     const w = make(experiment())
     await w.find('.rows-toggle').trigger('click')
@@ -251,10 +275,17 @@ describe('ModSysAdminUxReplyConfirmDetail', () => {
 
     // The version with the change comes first and the one without it last. Without it no one is asked, so a share of the
     // asked has nothing to divide by.
-    for (const name of ['Said yes', 'Said no', 'Did not answer']) {
+    for (const name of [
+      'Said yes',
+      'Said no',
+      'Did not answer',
+      'The offer went first',
+      'Still waiting',
+    ]) {
       expect(row(name)[2], name).toBe('–')
     }
-    expect(row('Still waiting')[1]).toBe('5')
+    expect(row('Still waiting')[1]).toBe('5.0% (5/100)')
+    expect(row('Still waiting')[2]).toBe('–')
     expect(row('Repliers')).toEqual(['Repliers', '100', '100'])
   })
 

@@ -7049,7 +7049,7 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 		if aiImageID > 0 {
 			if containsUint64(badAttachmentIDs, att.ID) {
 				microvolunteering.ForceRejectAIImage(db, userID, aiImageID)
-			} else {
+			} else if !removeAIImageAlias(db, msgID, aiImageID) {
 				microvolunteering.RecordAIAttachmentDeletion(db, userID, aiImageID)
 			}
 		}
@@ -7061,6 +7061,22 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 			"msgid": msgID,
 		})
 	}
+}
+
+// removeAIImageAlias handles a moderator removing a picture this post borrowed from another
+// item name (an ai_image_aliases row the batch made). What was wrong is the match, not the
+// picture, so the alias goes and the picture's own votes are left alone. Returns whether
+// there was such an alias.
+func removeAIImageAlias(db *gorm.DB, msgID uint64, aiImageID uint64) bool {
+	var subject string
+	db.Table("messages").Select("COALESCE(subject, '')").Where("id = ?", msgID).Scan(&subject)
+	name := misc.IllustrationItemName(subject)
+	if name == "" {
+		return false
+	}
+
+	res := db.Table("ai_image_aliases").Where("name = ? AND aiimageid = ?", name, aiImageID).Delete(nil)
+	return res.Error == nil && res.RowsAffected > 0
 }
 
 func containsUint64(slice []uint64, val uint64) bool {

@@ -26,6 +26,7 @@ import (
 	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
+	"github.com/freegle/iznik-server-go/sso"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
@@ -3600,6 +3601,17 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	// model, so User.Deleted (a plain *time.Time, not gorm.DeletedAt) can never
 	// turn this into a soft-delete UPDATE.
 	db.Table("users").Where("id = ?", id1).Delete(nil)
+
+	// A moderator's Discourse account may be linked to the account that just went. Move it to the
+	// kept one now, in the background, rather than at their next sign-in, so their email and name
+	// keep updating. Only moderators have Discourse accounts, so members cost one query.
+	if sso.IsModerator(id2) {
+		go func() {
+			if _, err := sso.RelinkMerged(id2); err != nil {
+				log.Printf("[Merge] Discourse relink for %d failed: %v", id2, err)
+			}
+		}()
+	}
 
 	return nil
 }

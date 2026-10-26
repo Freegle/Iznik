@@ -1710,6 +1710,9 @@ return [
     'whatjobs' => [
         'feed1' => EnvSetting::env('WHATJOBS_FEED1', ''),
         'feed2' => EnvSetting::env('WHATJOBS_FEED2', ''),
+        // The newest job may be at most this old before integrations:check-whatjobs-freshness
+        // fails and the SysAdmin Cron Jobs tab goes red.
+        'max_feed_age_hours' => (int) EnvSetting::env('WHATJOBS_MAX_FEED_AGE_HOURS', 48),
     ],
 
     'reach_volunteering' => [
@@ -1721,6 +1724,23 @@ return [
         // a few times before giving up, since the timeout is load-related.
         'fetch_attempts'      => (int) EnvSetting::env('REACH_VOLUNTEERING_FETCH_ATTEMPTS', 3),
         'retry_delay_seconds' => (int) EnvSetting::env('REACH_VOLUNTEERING_RETRY_DELAY_SECONDS', 30),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | AI item pictures
+    |--------------------------------------------------------------------------
+    |
+    | Before a picture is generated for a new item name, Gemini says which item the
+    | name means, so variants share one picture. A fixed model, because the reuse
+    | rate and the judged quality were measured on this one: a "latest" alias would
+    | change the answers underneath. No key means no cleaning: names are generated
+    | as they were. docs/developers/reference/ai-item-images.md.
+    |
+    */
+    'ai_images' => [
+        'gemini_api_key' => EnvSetting::env('GOOGLE_GEMINI_API_KEY', ''),
+        'clean_model' => EnvSetting::env('AI_IMAGE_CLEAN_MODEL', 'gemini-3.5-flash-lite'),
     ],
 
     /*

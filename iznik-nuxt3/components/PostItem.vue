@@ -35,7 +35,7 @@
           {{ warn.type }}
         </h1>
         <p>
-          {{ warn.message }}
+          {{ warnMessage }}
         </p>
       </NoticeMessage>
       <NoticeMessage v-if="duplicate" variant="warning" class="mt-2">
@@ -151,10 +151,21 @@ const warnings = [
     keywords: ['helmet'],
   },
   {
+    // Kept in step with childCarSeatTerms in iznik-server-go/chat/replyconfirm.go, which asks
+    // anyone replying to one of these to check the same things before their reply goes through.
     type: 'Car seats',
     message:
-      "These should be undamaged and suitable for the child's weight and height, and fit securely in the vehicle.",
-    keywords: ['car seat', 'carseat', 'child car'],
+      'Car seats have a limited life: plastics degrade, some seats expire after five years, and a seat should never be used again after an accident. Please say the make and model, how old it is, and that it has never been in a crash. More at childcarseats.org.uk.',
+    wantedMessage:
+      'Second-hand car seats can be unsafe: plastics degrade, some seats expire after five years, and a seat should never be used again after an accident. Ask for the make, model and age, and whether it has ever been in a crash. More at childcarseats.org.uk.',
+    keywords: [
+      'car seat',
+      'carseat',
+      'child car',
+      'booster seat',
+      'isofix',
+      'infant carrier',
+    ],
   },
   {
     type: 'Knives',
@@ -322,6 +333,17 @@ const warn = computed(() => {
   }
 
   return ret
+})
+
+// A warning can say something different to someone asking for the item than to someone offering it.
+const warnMessage = computed(() => {
+  if (!warn.value) return null
+
+  if (props.type === 'Wanted' && warn.value.wantedMessage) {
+    return warn.value.wantedMessage
+  }
+
+  return warn.value.message
 })
 
 const duplicate = computed(() => {

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-23
+last_reviewed: 2026-10-25
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/ask/**
@@ -47,7 +47,7 @@ you when: either when the post is due to reach your area, or, if it is never goi
 spread quite that far, when it stops spreading and your reply goes anyway. It shows as
 "waiting to send" until it has gone.
 
-Freegle may ask you in the chat whether you still want the item before passing your reply on.
+Freegle may ask you in the chat whether you still want the item before passing your reply on. For a child car seat it always asks, and tells you what to check first: that you know the seat's history, that it has never been in an accident, that it carries the E mark, and how long its maker says it lasts.
 It asks when the photo suggests the item may be damaged or not working, or is too big or heavy
 to collect without a car or van. While Freegle tests this, about half of the people who reply
 to such an offer are asked, and the rest are not. The question is addressed to you by name, as

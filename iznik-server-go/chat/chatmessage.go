@@ -929,11 +929,12 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// before the reply is written, so that the reply and what holds it are written together: chats:process-incoming
 	// takes any committed unprocessed reply, whatever its age, and a reply committed before its hold would be
 	// delivered by a run that landed between the two. A reply held by rippling is outside the experiment: the
-	// question would be shown to the poster before the reply. A reply made in the app is outside it too: UX
-	// experiments are not run in the app.
+	// question would be shown to the poster before the reply. A reply made in the app is outside the experiment
+	// too, since UX experiments are not run in the app, but a child car seat is asked about there as well: that
+	// question is policy, not an experiment (replyconfirm.go).
 	var confirm *replyConfirmPlan
-	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply && !utils.RequestFromApp(c) {
-		confirm = planReplyConfirm(db, id, *payload.Refmsgid, myid)
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
+		confirm = planReplyConfirm(db, id, *payload.Refmsgid, myid, utils.RequestFromApp(c))
 	}
 
 	// We can see this chat room.  Create a chat message, but flagged as needing processing.  That means it

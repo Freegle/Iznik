@@ -3,6 +3,8 @@ import { nextTick } from 'vue'
 import api from '~/api'
 import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
+import { action } from '~/composables/useClientLog'
+import { experimentVariant } from '~/composables/useExperiment'
 
 // Debounce delay for batching user fetches (ms)
 const BATCH_DELAY = 50
@@ -270,9 +272,20 @@ export const useUserStore = defineStore('user', {
 
       return this.locationList[id]
     },
-    async rate(id, rating, reason, text) {
+    // `source` says where the thumbs were pressed (chat_header, outcome, rating_nudge...). Every
+    // rating given, from anywhere, is logged as user_rated with the member's experiment arms, so an
+    // experiment can be judged on ratings per start (docs/developers/reference/ux-experiments.md).
+    // Taking a rating back (rating null) is not a rating and is not logged.
+    async rate(id, rating, reason, text, source = null) {
       await api(this.config).user.rate(id, rating, reason, text)
+      if (rating) {
+        action('user_rated', { rating, source, variant: experimentVariant() })
+      }
       await this.fetch(id, true)
+    },
+    async fetchUnrated() {
+      const ret = await api(this.config).user.unrated()
+      return Array.isArray(ret) ? ret : []
     },
     async engaged(engageid) {
       await api(this.config).user.engaged(engageid)

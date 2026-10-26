@@ -42,6 +42,16 @@ func matchedPostsEnabled() bool {
 // match costs one email, a junk match teaches people to ignore the next one.
 const MinMatchedPostScore = 0.85
 
+// itemsDiffer is true when both posts' items are known and are different things. A close
+// subject cosine still lets through near-misses that would be wasted mail: "Beer dispenser"
+// for a "Water dispenser", "Portable TV" for a "Portable TV aerial", "Cello" for a "Violin".
+// Measured on 30 days of live posts: pairs that pass the cosine and have the same item were
+// judged 95% welcome; pairs that pass the cosine only, 60%. A post whose item is not known yet
+// is matched on cosine alone, as before. docs/developers/reference/message-items.md.
+func itemsDiffer(a, b string) bool {
+	return a != "" && b != "" && a != b
+}
+
 // oppositeType maps Offer↔Wanted; any other type yields "" (no matching).
 func oppositeType(t string) string {
 	switch t {
@@ -99,6 +109,7 @@ func PostMatches(c *fiber.Ctx) error {
 	var srcType string
 	var srcFromuser uint64
 	var srcLat, srcLng float64
+	var srcItemKey string
 
 	if e, ok := embedding.Global.FindByMsgid(id); ok {
 		srcVec = e.SubjectVec[:]
@@ -106,6 +117,7 @@ func PostMatches(c *fiber.Ctx) error {
 		srcFromuser = e.Fromuser
 		srcLat = e.Lat
 		srcLng = e.Lng
+		srcItemKey = e.ItemKey
 	} else {
 		var row struct {
 			SubjectEmbedding []byte  `gorm:"column:subject_embedding"`
@@ -132,6 +144,7 @@ func PostMatches(c *fiber.Ctx) error {
 		srcFromuser = row.Fromuser
 		srcLat = row.Lat
 		srcLng = row.Lng
+		database.DBConn.Table("messages_cleaned_items").Select("COALESCE(itemkey, '')").Where("msgid = ?", id).Scan(&srcItemKey)
 	}
 
 	opp := oppositeType(srcType)
@@ -165,6 +178,9 @@ func PostMatches(c *fiber.Ctx) error {
 			continue // the owner's own posts
 		}
 		if cnd.SubjectCos < MinMatchedPostScore {
+			continue
+		}
+		if itemsDiffer(srcItemKey, cnd.ItemKey) {
 			continue
 		}
 		if blocked[cnd.Msgid] {

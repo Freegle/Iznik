@@ -98,6 +98,7 @@ class UxExperimentService
         'job_ad_click' => 'clicked a job advert',
         'job_ad_click_chat' => 'clicked a job advert in a chat or after replying',
         'app_store_click' => 'clicked an app store button',
+        'user_rated' => 'rated a freegler',
     ];
 
     /**

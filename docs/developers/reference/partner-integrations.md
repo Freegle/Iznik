@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-23
+last_reviewed: 2026-10-26
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Console/Commands/Integrations
@@ -138,7 +138,12 @@ A job-listing feed, shown on Freegle as a small revenue stream (see
 - Command: `integrations:sync-whatjobs`, service `WhatJobsService`
 - Config: `freegle.whatjobs.feed1`, `feed2`; geocoding via `freegle.geocoder`
 - Monitoring: `freegle.monitoring.whatjobs_max_age_hours` (24) alerts if `jobs.seenat`
-  stops advancing
+  stops advancing, which proves the sync ran. It stays quiet when WhatJobs stops publishing,
+  because the sync still rebuilds from the old file. `integrations:check-whatjobs-freshness`
+  (hourly) covers that: it fails when the newest job is more than
+  `freegle.whatjobs.max_feed_age_hours` (48) old, which turns the SysAdmin Cron Jobs tab red, and
+  its message gives the date WhatJobs last changed the feed. The feed stopped on 20 October 2026
+  and nobody noticed for days.
 - A feed file that will not open is logged as a warning and skipped, so one bad feed
   does not stop the other one
 

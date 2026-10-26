@@ -1574,6 +1574,14 @@ Schedule::command('integrations:sync-whatjobs')
     ->appendOutputTo(cronLog('integrations:sync-whatjobs'))
     ->runInBackground();
 
+// Fails when the newest WhatJobs job is more than 48 hours old, which turns the SysAdmin Cron
+// Jobs tab red. The sync's own check only proves the sync ran, and it ran happily on a feed
+// WhatJobs had stopped updating (20 October 2026, noticed days later when every job looked old).
+Schedule::command('integrations:check-whatjobs-freshness')
+    ->hourly()
+    ->withoutOverlapping(30)
+    ->appendOutputTo(cronLog('integrations:check-whatjobs-freshness'));
+
 // Weekly full re-geocode of the jobs feed. Each sync seeds its geocoding from
 // the previous run's jobs table, so a tuple that was ever resolved wrongly
 // stays wrong forever (measured 2026-08-31: 2,341 jobs pinned on Glasgow
@@ -1739,6 +1747,23 @@ Schedule::command('ai:usage-counts:update --full')
     ->dailyAt('02:45')
     ->withoutOverlapping(120)
     ->appendOutputTo(cronLog('ai:usage-counts:update-full'))
+    ->runInBackground();
+
+// Gives existing AI item pictures their item key, 500 names a run, most-used first. About 30k
+// names, so it is through in a day; after that each run is one count.
+Schedule::command('ai:images:backfill-items')
+    ->everyThirtyMinutes()
+    ->withoutOverlapping(30)
+    ->appendOutputTo(cronLog('ai:images:backfill-items'))
+    ->runInBackground();
+
+// The single item each new or live post is about, for pictures, matched posts and search. New
+// posts get theirs within the minute, ahead of the illustrations job's next pass; live posts from
+// before this get theirs 1,000 a run.
+Schedule::command('messages:clean-items')
+    ->everyMinute()
+    ->withoutOverlapping(10)
+    ->appendOutputTo(cronLog('messages:clean-items'))
     ->runInBackground();
 
 
