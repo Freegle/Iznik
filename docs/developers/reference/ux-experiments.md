@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-25
+last_reviewed: 2026-10-26
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxExperimentService.php
@@ -1069,7 +1069,7 @@ taker rated the poster after 5% (nobody asks: the thumbs are in the chat header,
 - **What it shows.** `RatingNudgeModal.vue`: "How did it go?", up to three people, each with their photo, name,
   "You gave them Sofa" or "They gave you Lamp", thumbs up ("Good"), thumbs down ("Not good", which opens the
   existing reason modal `UserRatingsDownModal`) and Skip. Not now closes it; a tap on the backdrop does not. A
-  person rated or skipped leaves the list; when the list is empty it says Thanks and closes. Skip is kept for
+  person rated or skipped leaves the list; when the list is empty it says Thanks for a second and a half, then closes. Skip is kept for
   30 days on the browser (`freegle_rating_nudge_skipped`), which is longer than the server looks back, so it
   means "not for this handover".
 - **Telemetry.** `rating_nudge_shown` (`count`), `rating_nudge_skipped` and `rating_nudge_dismissed` (`how`:
@@ -1121,7 +1121,7 @@ all three agree. What changes is the counting. A flow event in Loki cannot be sp
 the counts come from the database.
 
 Nothing here changes until the config row `ux_server_arms` is `1` and someone starts an experiment. The batch
-switch list is empty at present; the Go list holds `confirm-reply` and `interested-button`, described below.
+switch list holds `familiar-poster` ([familiar-posts-email.md](familiar-posts-email.md)); the Go list holds `confirm-reply` and `interested-button`, described below.
 
 **No experiment code in the app build.** An app release takes days to weeks, so a switch shipped in the app cannot be turned on or off quickly. Behaviour in the app that the server decides is fine: a push title, a push's timing or an email chosen on the server per member can be an experiment (`push-posts-title` was stopped on 2026-10-19 because this was misread as "no experiments that reach app members"). See `.claude/rules/conventions.md`.
 
@@ -1189,6 +1189,7 @@ wrote the row, and `UxArm::retract` deletes the row of a member and subject, for
 | `bell` | `users_notifications.id` |
 | `promise` | `messages_promises.id` |
 | `view` | `messages.id` |
+| `post` | `messages.id`: a new post the member was, or in control would have been, told about |
 
 `detail` holds ids and numbers only. No text, address or copy is ever stored, and a value longer than its
 column is skipped and logged, not cut. Rows are kept 90 days: the hourly tick deletes older ones an
@@ -1206,13 +1207,14 @@ no row, so an experiment that changes both mail and the site is measured from it
 counts members per arm and stratum, and the engine does the rest as it does for Loki: the same
 probabilities, the same adopt, revert and inconclusive rules, the same holdout. `ExposureSource` does the
 counting in one grouped query over the cohort above; a subclass says what a conversion and a bad event
-are. Three ship.
+are. Five ship.
 
 | Source | Converted when, within the window of the exposure | Guardrail |
 |---|---|---|
 | `email_click` | the member clicked a link in the email, and it was not the unsubscribe link (that link also sets the click time) | clicking the unsubscribe link in the window, margin 0.3 points. That link opens the unsubscribe page, so it counts members who then do nothing, and a mail client's own Unsubscribe button is not seen (`unsubscribeUrl` in `UnifiedDigest.php`, the `unsubscribe` action of `Click` in `emailtracking.go`) |
 | `active_after` | the member has a `users_active` row in the hour of the exposure or inside the window. The site or app writes one when it loads the member's notifications, which it does when they have something unread or when they open the bell, so a member who visits with nothing unread is not counted, in either arm | turning the daily posts push off, for a push only, margin 0.3 points |
 | `confirm_reply` | the replier is promised the item, or a `messages_by` row names them, within the window of their reply (`primary` `handover`), or also the replier said no, so the reply never reached the poster (`primary` `no_wasted_reply`, the default; a question nobody answered and a post that went while the reply waited do not count) | `never_delivered`, repliers whose reply the question dropped, margin 50 points (`handover`); `fewer_handovers`, the share not handed the item, margin 2 points (`no_wasted_reply`) |
+| `familiar_reply` | the member replied to the post the exposure names (`familiar-poster`) | unsubscribing from any of our mail in the window, margin 0.3 points, because control is sent none of these |
 
 Opens are never used: they are folded in nightly, and image proxies open mail for people who never looked
 at it. A tap on a push is not used because the app records none. The sources write the numbers in their own

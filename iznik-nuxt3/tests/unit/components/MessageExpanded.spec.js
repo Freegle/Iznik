@@ -284,6 +284,10 @@ describe('MessageExpanded', () => {
           },
         },
         stubs: {
+          MessageOwnActions: {
+            template: '<div class="own-post-actions" />',
+            props: ['message'],
+          },
           'v-icon': {
             template: '<span class="v-icon" :data-icon="icon"><slot /></span>',
             props: ['icon'],
@@ -721,6 +725,27 @@ describe('MessageExpanded', () => {
       mockFromme.value = true
       const wrapper = await createWrapper({ replyable: true })
       expect(wrapper.find('.reply-button').exists()).toBe(false)
+    })
+
+    // A poster who reaches their own post from Browse or a link sees this view.
+    // It must still let them finish the post (Discourse 10284).
+    it('lets the poster mark their own post', async () => {
+      mockFromme.value = true
+      const wrapper = await createWrapper({ replyable: true })
+      expect(wrapper.find('.own-post-actions').exists()).toBe(true)
+    })
+
+    it('does not offer the poster controls to anyone else', async () => {
+      mockFromme.value = false
+      const wrapper = await createWrapper({ replyable: true })
+      expect(wrapper.find('.own-post-actions').exists()).toBe(false)
+    })
+
+    it('does not offer them once the post is finished', async () => {
+      mockFromme.value = true
+      mockMessage.value.outcomes = [{ outcome: 'Taken' }]
+      const wrapper = await createWrapper({ replyable: true })
+      expect(wrapper.find('.own-post-actions').exists()).toBe(false)
     })
 
     // Rippling-out: the post is visible but hasn't rippled to this viewer, so a

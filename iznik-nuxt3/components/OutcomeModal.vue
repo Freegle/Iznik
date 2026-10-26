@@ -59,27 +59,38 @@
         />
         <div v-if="showSplitChoice" class="mt-3">
           <div class="strong">Is that everything?</div>
-          <b-button-group class="d-block mt-1">
+          <!-- Two clear choices, the chosen one ticked. The old pair differed
+               only in shade, so a member tapped the one already chosen, saw
+               nothing change, then tapped the other and left the post up
+               without knowing (Discourse 10284). -->
+          <div class="split-choice mt-1" role="radiogroup">
             <b-button
-              :variant="allGone ? 'primary' : 'secondary'"
+              :variant="allGone ? 'primary' : 'outline-secondary'"
               :pressed="allGone"
+              role="radio"
+              :aria-checked="allGone"
               class="all-gone"
               @click="allGone = true"
             >
-              That's everything gone
+              <v-icon :icon="allGone ? 'check-circle' : 'circle'" />
+              Yes, it's all gone
             </b-button>
             <b-button
-              :variant="allGone ? 'secondary' : 'primary'"
+              :variant="allGone ? 'outline-secondary' : 'primary'"
               :pressed="!allGone"
+              role="radio"
+              :aria-checked="!allGone"
               class="some-left"
               @click="allGone = false"
             >
-              There's still some left
+              <v-icon :icon="allGone ? 'circle' : 'check-circle'" />
+              No, some are left
             </b-button>
-          </b-button-group>
-          <p v-if="!allGone" class="text-muted small mt-2">
-            We'll leave your post up, and show it as part gone.
-          </p>
+          </div>
+          <NoticeMessage v-if="!allGone" variant="warning" class="mt-2">
+            Your post will stay up so people can ask for the rest. When it's all
+            gone, mark it TAKEN again and choose "Yes, it's all gone".
+          </NoticeMessage>
         </div>
       </div>
       <div v-if="showCompletion">
@@ -384,6 +395,10 @@ const buttonLabel = computed(() => {
     return 'Submit'
   } else if (props.type === 'Withdrawn') {
     return 'Withdraw'
+  } else if (showSplitChoice.value && !allGone.value) {
+    // Saving with some left does not mark the post TAKEN, so the button must
+    // not say it does.
+    return 'Save, keep my post up'
   } else {
     return 'Mark as ' + props.type.toUpperCase()
   }
@@ -461,6 +476,11 @@ async function submit(callback) {
             throw error
           }
         }
+      } else {
+        // Some are left, so the post stays up. Fetch it again so the card
+        // shows "Part gone" at once: without that nothing on the page changed,
+        // and the member could not tell the save had done anything.
+        await messageStore.fetch(props.id, true)
       }
     } catch (e) {
       flow.submitResult(false, e?.response?.status ?? null, 'error')
@@ -511,5 +531,16 @@ function cancel() {
 
 :deep(.btn-group .btn) {
   border: 1px solid black;
+}
+
+.split-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+
+  .btn {
+    flex: 1 1 12rem;
+    text-align: start;
+  }
 }
 </style>

@@ -66,6 +66,23 @@ return [
         'chunk' => (int) EnvSetting::env('FREEGLE_INTERESTED_CHUNK', 200),
     ],
 
+    // The experiment familiar-poster: new posts from people a member has chatted with
+    // (messages:familiar-posts). docs/developers/reference/familiar-posts-email.md.
+    'familiar_posts' => [
+        // A chat counts when each of the two wrote in it within this many days.
+        'lookback_days' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_LOOKBACK_DAYS', 90),
+        // At most this many members are told about one post, those chatted with most recently first.
+        'max_recipients_per_post' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_MAX_RECIPIENTS_PER_POST', 20),
+        // At most this many posts in one email.
+        'max_posts_per_email' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_MAX_POSTS_PER_EMAIL', 3),
+        // A member is reached at most once in this many hours...
+        'min_gap_hours' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_MIN_GAP_HOURS', 24),
+        // ...and on at most this many of the last seven days.
+        'max_days_per_week' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_MAX_DAYS_PER_WEEK', 2),
+        // A run never reads posts older than this, however long since the last run.
+        'window_hours' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_WINDOW_HOURS', 6),
+    ],
+
     'avatar_server_url' => EnvSetting::env('FREEGLE_AVATAR_SERVER_URL', 'https://api.ilovefreegle.org/avatar'),
 
     'donations' => [
@@ -2004,6 +2021,7 @@ return [
             'active_after' => \App\Services\Ux\Sources\ActiveAfterSource::class,
             'confirm_reply' => \App\Services\Ux\Sources\ConfirmReplySource::class,
             'interested_reply' => \App\Services\Ux\Sources\InterestedReplySource::class,
+            'familiar_reply' => \App\Services\Ux\Sources\FamiliarReplySource::class,
         ],
     ],
 

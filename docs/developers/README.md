@@ -76,6 +76,7 @@ Read these directly; the pages above link into them rather than copy them:
 | Electricals and reuse reporting | [./reference/electricals.md](./reference/electricals.md) |
 | Item desirability scoring | [./reference/item-desirability.md](./reference/item-desirability.md) |
 | Matched-posts email | [./reference/matched-posts-email.md](./reference/matched-posts-email.md) |
+| New posts from people you have chatted with (experiment) | [./reference/familiar-posts-email.md](./reference/familiar-posts-email.md) |
 | AI item images | [./reference/ai-item-images.md](./reference/ai-item-images.md) |
 | The cleaned item of a post | [./reference/message-items.md](./reference/message-items.md) |
 | Getting a first reply in | [./reference/first-reply.md](./reference/first-reply.md) |

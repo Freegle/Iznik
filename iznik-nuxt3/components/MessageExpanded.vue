@@ -438,6 +438,11 @@
                   We'll pass it on to the owner as soon as it does.
                 </span>
               </NoticeMessage>
+              <MessageOwnActions
+                v-if="fromme && !message.outcomes?.length"
+                :message="message"
+                class="mb-2"
+              />
               <div
                 v-if="replyable && !replied && !message.successful"
                 class="footer-buttons"
@@ -541,6 +546,11 @@
             pass it on to the owner as soon as it does.
           </span>
         </NoticeMessage>
+        <MessageOwnActions
+          v-if="fromme && !message.outcomes?.length"
+          :message="message"
+          class="mb-2"
+        />
         <div
           v-if="replyable && !replied && !message.successful"
           class="footer-buttons"
@@ -695,6 +705,7 @@ import MessageTag from '~/components/MessageTag'
 import ChatReplyPane from '~/components/ChatReplyPane'
 import BulkItemsInterest from '~/components/BulkItemsInterest'
 import MessageInterested from '~/components/MessageInterested'
+import MessageOwnActions from '~/components/MessageOwnActions'
 import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import { useModalHistory } from '~/composables/useModalHistory'

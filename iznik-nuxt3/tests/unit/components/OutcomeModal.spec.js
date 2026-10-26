@@ -668,6 +668,46 @@ describe('OutcomeModal', () => {
       expect(mockUpdate).not.toHaveBeenCalled()
     })
 
+    it('ticks the chosen answer', async () => {
+      multiItem()
+      const wrapper = createWrapper()
+      const tick = (sel) =>
+        wrapper.find(`${sel} .v-icon`).attributes('data-icon')
+      expect(tick('.all-gone')).toBe('check-circle')
+      expect(tick('.some-left')).toBe('circle')
+      await wrapper.find('.some-left').trigger('click')
+      expect(tick('.all-gone')).toBe('circle')
+      expect(tick('.some-left')).toBe('check-circle')
+    })
+
+    it('does not say Mark as TAKEN when the post will stay up', async () => {
+      multiItem()
+      const wrapper = createWrapper()
+      expect(wrapper.vm.buttonLabel).toBe('Mark as TAKEN')
+      await wrapper.find('.some-left').trigger('click')
+      expect(wrapper.vm.buttonLabel).toBe('Save, keep my post up')
+      expect(wrapper.text()).toContain('Your post will stay up')
+    })
+
+    it('fetches the post again when some are left, so the card shows it', async () => {
+      multiItem()
+      const wrapper = createWrapper()
+      wrapper.vm.tookUsers = [{ userid: 7 }]
+      await wrapper.find('.some-left').trigger('click')
+      await wrapper.vm.submit(() => {})
+      expect(mockFetch).toHaveBeenCalledWith(123, true)
+    })
+
+    it('finishes a post that is already part gone', async () => {
+      multiItem({ partgone: true, by: { userid: 7, displayname: 'A' } })
+      const wrapper = createWrapper()
+      wrapper.vm.tookUsers = [{ userid: 7 }]
+      await wrapper.vm.submit(() => {})
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'Outcome', outcome: 'Taken' })
+      )
+    })
+
     it('passes a null userid through for someone else', async () => {
       multiItem()
       const wrapper = createWrapper()

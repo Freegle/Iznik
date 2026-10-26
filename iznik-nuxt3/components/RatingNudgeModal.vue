@@ -60,7 +60,13 @@
   </b-modal>
 </template>
 <script setup>
-import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
+import {
+  computed,
+  defineAsyncComponent,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+} from 'vue'
 import { useUserStore } from '~/stores/user'
 import { useOurModal } from '~/composables/useOurModal'
 import { action } from '~/composables/useClientLog'
@@ -79,6 +85,10 @@ const UserRatingsDownModal = defineAsyncComponent(
 
 const SOURCE = 'rating_nudge'
 
+// How long "Thanks!" stays up once everyone is dealt with. Closing at once hid it behind
+// the closing animation, so the member never saw it.
+const THANKS_MS = 1500
+
 const userStore = useUserStore()
 const { modal, hide } = useOurModal()
 
@@ -87,6 +97,7 @@ const downKey = ref(0)
 const shownWith = ref(0)
 const ratedCount = ref(0)
 const closing = ref(false)
+let thanksTimer = null
 
 const userById = computed(() => (id) => userStore.byId(id))
 
@@ -104,10 +115,14 @@ onMounted(() => {
 
 function finishedWith(userid) {
   removeFromNudge(userid)
-  if (!people.value.length) {
-    closeWith('done')
+  if (!people.value.length && !thanksTimer) {
+    thanksTimer = setTimeout(() => closeWith('done'), THANKS_MS)
   }
 }
+
+onBeforeUnmount(() => {
+  clearTimeout(thanksTimer)
+})
 
 async function up(p) {
   await userStore.rate(p.userid, 'Up', null, null, SOURCE)

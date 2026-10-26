@@ -4,6 +4,7 @@ namespace App\Mail\Message;
 
 use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
+use App\Mail\Traits\PostThumbnail;
 use App\Mail\Traits\TrackableEmail;
 use App\Models\Message;
 use App\Models\User;
@@ -21,7 +22,7 @@ use Illuminate\Mail\Mailables\Envelope;
  */
 class InterestedChaseUp extends MjmlMailable implements DescribesMemberContent
 {
-    use TrackableEmail;
+    use PostThumbnail, TrackableEmail;
 
     /**
      * @param  array<int, Message>  $messages  the open posts, with attachments loaded
@@ -92,7 +93,7 @@ class InterestedChaseUp extends MjmlMailable implements DescribesMemberContent
             $posts[] = [
                 'itemName' => MatchedPostsService::itemName($message),
                 'type' => $message->type,
-                'imageUrl' => $this->imageUrl($message) ?? $placeholder,
+                'imageUrl' => $this->postThumbnailUrl($message) ?? $placeholder,
                 'viewUrl' => $this->trackedResourceUrl('s', (int) $message->id, "v$i", "$userSite/message/{$message->id}"),
                 'replyUrl' => $this->trackedResourceUrl('m', (int) $message->id, "p$i", "$userSite/message/{$message->id}?reply=1"),
             ];
@@ -119,27 +120,5 @@ class InterestedChaseUp extends MjmlMailable implements DescribesMemberContent
             'newsfeed' => [],
             'users' => [],
         ];
-    }
-
-    /** Delivery-service cover-crop URL for the post's primary photo, or null. */
-    private function imageUrl(Message $message): ?string
-    {
-        if (! $message->relationLoaded('attachments') || $message->attachments->isEmpty()) {
-            return null;
-        }
-        $attachment = $message->attachments
-            ->filter(fn ($a) => ! empty($a->externaluid) || ! empty($a->externalurl) || (int) ($a->archived ?? 0) === 1)
-            ->sortByDesc('primary')
-            ->first();
-        if (! $attachment) {
-            return null;
-        }
-
-        $source = ! empty($attachment->externalurl)
-            ? $attachment->externalurl
-            : rtrim(config('freegle.images.domain', 'https://images.ilovefreegle.org'), '/').'/timg_'.$attachment->id.'.jpg';
-        $base = rtrim(config('freegle.delivery.base_url', 'https://delivery.ilovefreegle.org'), '/');
-
-        return $base.'/?url='.urlencode($source).'&w=240&h=240&fit=cover';
     }
 }

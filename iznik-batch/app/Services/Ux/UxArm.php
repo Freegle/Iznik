@@ -64,29 +64,58 @@ final class UxArm
      */
     public static function for(int $userId, string $name): string
     {
-        if ($userId <= 0 || ! self::listed($name)) {
+        if ($userId <= 0) {
             return '';
+        }
+
+        $entry = self::servingEntry($name);
+        if ($entry === null) {
+            return '';
+        }
+
+        return ExperimentBucket::armIn($userId, $name, $entry['arms'], $entry['salt']) ?? '';
+    }
+
+    /**
+     * Whether any member can get an arm other than '' for the experiment now. A sender whose only
+     * work is for the experiment asks this first, so it does nothing while the experiment is not live.
+     */
+    public static function serving(string $name): bool
+    {
+        return self::servingEntry($name) !== null;
+    }
+
+    /**
+     * The experiment's entry when it is serving arms: listed in this code, the kill switch on, and an
+     * entry that is adopted or whose until is ahead by no more than MAX_AHEAD_SECONDS.
+     *
+     * @return array{arms: array<string, array{0: int, 1: int}>, until: ?float, adopted: bool, salt: string}|null
+     */
+    private static function servingEntry(string $name): ?array
+    {
+        if (! self::listed($name)) {
+            return null;
         }
 
         $state = self::state();
         if (! $state['on']) {
-            return '';
+            return null;
         }
 
         $entry = $state['entries'][$name] ?? null;
         if ($entry === null) {
-            return '';
+            return null;
         }
 
         if (! $entry['adopted']) {
             $now = Carbon::now()->getTimestamp();
             $until = $entry['until'];
             if ($until === null || $until <= $now || $until > $now + self::MAX_AHEAD_SECONDS) {
-                return '';
+                return null;
             }
         }
 
-        return ExperimentBucket::armIn($userId, $name, $entry['arms'], $entry['salt']) ?? '';
+        return $entry;
     }
 
     /**

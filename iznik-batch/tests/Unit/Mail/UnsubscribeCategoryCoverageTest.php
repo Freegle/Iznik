@@ -70,6 +70,8 @@ class UnsubscribeCategoryCoverageTest extends TestCase
         \App\Mail\Message\ChaseUp::class => null,
         \App\Mail\Message\ChaseUpPromised::class => null,
         \App\Mail\Message\InterestedChaseUp::class => null,
+        // Posts the member might want, like MatchedPosts, so it shares that opt-out.
+        \App\Mail\Message\FamiliarPosts::class => UnsubscribeService::TYPE_RELEVANT,
         \App\Mail\Message\DeadlineReached::class => null,
         \App\Mail\Message\ModStdMessageMail::class => null,
         \App\Mail\Newsfeed\ChitchatReportMail::class => null,

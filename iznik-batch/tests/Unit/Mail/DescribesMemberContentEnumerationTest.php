@@ -39,6 +39,7 @@ class DescribesMemberContentEnumerationTest extends TestCase
         \App\Mail\Message\ChaseUp::class,
         \App\Mail\Message\ChaseUpPromised::class,
         \App\Mail\Message\InterestedChaseUp::class,
+        \App\Mail\Message\FamiliarPosts::class,
         \App\Mail\Message\ModStdMessageMail::class,
         \App\Mail\Newsfeed\ChitchatReportMail::class,
         \App\Mail\Chat\ChatNotification::class,

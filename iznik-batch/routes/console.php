@@ -1179,6 +1179,14 @@ Schedule::command('messages:interested-chaseup')
     ->appendOutputTo(cronLog('messages:interested-chaseup'))
     ->runInBackground();
 
+// The experiment familiar-poster: new posts from people a member has chatted with. Does nothing unless the
+// experiment is serving arms. Hourly so a post is still fresh; each member is reached at most once a day.
+Schedule::command('messages:familiar-posts')
+    ->hourlyAt(43)
+    ->withoutOverlapping(60)
+    ->appendOutputTo(cronLog('messages:familiar-posts'))
+    ->runInBackground();
+
 // Email spool processing - runs continuously in daemon mode via supervisor.
 // See docker/supervisor.conf for the mail-spooler program.
 

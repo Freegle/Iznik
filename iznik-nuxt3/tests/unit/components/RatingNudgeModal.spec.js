@@ -178,16 +178,21 @@ describe('RatingNudgeModal', () => {
     expect(wrapper.findAll('.person')).toHaveLength(1)
   })
 
-  it('closes with a thank you once everyone is dealt with', async () => {
+  it('shows a thank you once everyone is dealt with, then closes', async () => {
     const wrapper = mountModal()
     await flushPromises()
 
     await wrapper.findAll('.person')[0].find('.rate-up').trigger('click')
     await flushPromises()
+    vi.useFakeTimers()
     await wrapper.find('.person').find('.rate-skip').trigger('click')
     await flushPromises()
 
+    // The thank you stays up long enough to read before the modal closes.
     expect(wrapper.text()).toContain('Thanks!')
+    expect(mockHide).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1500)
+    vi.useRealTimers()
     expect(mockHide).toHaveBeenCalledTimes(1)
     expect(mockAction).toHaveBeenCalledWith('rating_nudge_dismissed', {
       how: 'done',

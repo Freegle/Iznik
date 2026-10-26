@@ -359,6 +359,25 @@ describe('MyMessage', () => {
   })
 
   describe('Rendering', () => {
+    // Saving "some are left" must change what the poster sees, or they cannot
+    // tell it worked (Discourse 10284).
+    it('says part gone once someone has taken some', async () => {
+      mockData.message.availablenow = 19
+      mockData.message.availableinitially = 19
+      mockData.message.partgone = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Part gone, some still available')
+      expect(wrapper.text()).not.toContain('19 available')
+    })
+
+    it('shows the number while none have gone', async () => {
+      mockData.message.availablenow = 19
+      mockData.message.availableinitially = 19
+      mockData.message.partgone = false
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('19 available')
+    })
+
     it('renders the main message wrapper', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.find('.my-message-mobile').exists()).toBe(true)
