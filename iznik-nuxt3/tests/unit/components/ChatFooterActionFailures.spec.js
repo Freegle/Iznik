@@ -162,9 +162,7 @@ describe('ChatFooter refused store actions', () => {
     const wrapper = await mountFooter()
     await nudgeButton(wrapper).trigger('click')
     mockChatStore.nudge.mockRejectedValueOnce({ response: { status: 401 } })
-    wrapper
-      .findComponent({ name: 'NudgeWarningModal' })
-      .vm.$emit('confirm')
+    wrapper.findComponent({ name: 'NudgeWarningModal' }).vm.$emit('confirm')
     await flushPromises()
     expect(mockChatStore.nudge).toHaveBeenCalledWith(123)
     expect(wrapper.find('.chat-notice').text()).toContain(
@@ -177,9 +175,7 @@ describe('ChatFooter refused store actions', () => {
     const wrapper = await mountFooter()
     await nudgeButton(wrapper).trigger('click')
     await flushPromises()
-    wrapper
-      .findComponent({ name: 'NudgeWarningModal' })
-      .vm.$emit('confirm')
+    wrapper.findComponent({ name: 'NudgeWarningModal' }).vm.$emit('confirm')
     await flushPromises()
     expect(mockChatStore.nudge).toHaveBeenCalledWith(123)
     expect(mockChatStore.fetchMessages).toHaveBeenCalled()
