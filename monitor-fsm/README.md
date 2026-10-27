@@ -76,6 +76,16 @@ Each iteration is a fresh engine instance. The driver runs a step loop (hard cap
 - **Driver lock**: `/tmp/freegle-monitor-driver.lock` holds the current PID. If the file exists and the PID is alive, a second driver invocation exits immediately. Stale locks (dead PID) are cleaned automatically.
 - **Loop-breakers**: the driver tracks picks and consecutive visits to detect stuck states. If `DIAGNOSE_BUG` runs more than 4 consecutive turns on one bug without producing a brief, the bug is force-deferred and the driver routes on. If the same `(topic, post)` pair is picked twice in one iteration without being recorded in `bugsFixed`, it is force-deferred.
 
+### Reports that are waiting
+
+`chase_waiting_reports` runs in `LOAD_STATE` every lap (`src/chase.ts`).
+
+- **Waiting on the reporter** (`needs-detail`, or deferred because a fix needed detail from them): after 7 quiet days, one reminder is posted under the report, at most 5 a lap and one per person per topic. A report quiet for over 30 days is not chased. With nothing from the reporter 7 days after the reminder, the report closes as `no-reply`.
+- **Their replies.** Anything the reporter posts in the topic stops the no-reply close. A report deferred for detail, or closed as `no-reply`, reopens. A `needs-detail` report reopens only when the reply names what was missing. A reply saying it now works closes the report as `confirmed`, however it was fixed.
+- **Waiting on us** ("needs a human answer"): never chased on Discourse. After 7 days they are listed under "Needs your answer" in `/tmp/freegle-monitor/summary.md`.
+
+The 7 and 30 days are `MONITOR_CHASE_AFTER_DAYS` and `MONITOR_CHASE_MAX_AGE_DAYS`.
+
 ### State flow
 
 ```

@@ -10,6 +10,7 @@ import { dirname } from 'node:path'
 import type { Database as DB } from 'better-sqlite3'
 import { listOpenDiscourseBugs, listFeatureRequests, listPendingDrafts, listTopicCursors, kvGet } from './index.js'
 import { DISCOURSE_BASE } from '../discourse.js'
+import { humanAnswersOverdue, CHASE_AFTER_DAYS } from '../chase.js'
 
 export const FS_DIR = '/tmp/freegle-monitor'
 export const SUMMARY_PATH = `${FS_DIR}/summary.md`
@@ -89,6 +90,21 @@ export async function renderSummaryMd(db: DB, path = SUMMARY_PATH): Promise<void
       const excerpt = (b.excerpt ?? '').replace(/\|/g, '\\|').slice(0, 120)
       lines.push(
         `| [${b.topic}.${b.post}](${DISCOURSE_BASE}/t/${b.topic}/${b.post}) | ${b.reporter ?? '—'} | ${excerpt} | ${b.state} | ${(b.reason ?? '').slice(0, 100)} |`,
+      )
+    }
+    lines.push('')
+  }
+
+  // Questions that are waiting on a Freegle person, not the reporter. The monitor does not chase these
+  // on Discourse; it lists them here so they reach Edward.
+  const overdue = humanAnswersOverdue(db)
+  if (overdue.length > 0) {
+    lines.push(`## Needs your answer (waiting over ${CHASE_AFTER_DAYS} days)`, '')
+    lines.push('| Topic.Post | Reporter | Question | Waiting since |', '|---|---|---|---|')
+    for (const b of overdue) {
+      const excerpt = (b.excerpt ?? '').replace(/\|/g, '\\|').slice(0, 120)
+      lines.push(
+        `| [${b.topic}.${b.post}](${DISCOURSE_BASE}/t/${b.topic}/${b.post}) | ${b.reporter ?? '—'} | ${excerpt} | ${b.last_seen_at.slice(0, 10)} |`,
       )
     }
     lines.push('')

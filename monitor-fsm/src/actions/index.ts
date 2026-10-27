@@ -35,6 +35,7 @@ import {
 } from '../db/index.js'
 import type { DiscourseDraftRow } from '../db/index.js'
 import { renderAllViews } from '../db/views.js'
+import { dueForChase, dueForNoReply, recordChase, unchaseableKey, closeNoReply, noteReporterReply, humanAnswersOverdue, CHASE_BODY, MAX_CHASES_PER_LAP } from '../chase.js'
 import { getPhaseInfo } from '../phase.js'
 import { modelForAdversarialReview } from '../policy.js'
 import { groundingActions } from '../grounding.js'
@@ -1990,6 +1991,55 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates, 'fe
       const res = await flushUnpostedDrafts(db)
       if (res.posted.length > 0) await renderAllViews(db)
       return res
+    },
+  },
+
+  {
+    name: 'chase_waiting_reports',
+    description: 'Called automatically during LOAD_STATE. A report waiting on its reporter (needs-detail, or deferred for detail from them) that has been quiet for 7 days gets one reminder on Discourse, quoted under the report. At most 5 a lap; a report quiet for over 30 days is not chased. A report with nothing from the reporter for 7 days after its reminder is closed as no-reply; anything they post later reopens it. Questions waiting on a Freegle person are not chased; those over 7 days are counted for the iteration summary. One reminder per person per topic covers all their waiting reports there. A report whose post cannot be fetched to quote is noted and not chased. Returns {chased, failed, unchaseable, closedNoReply, humanAnswersOverdue}.',
+    handler: async () => {
+      const db = getDb()
+      const chased: string[] = []
+      const failed: string[] = []
+      const unchaseable: string[] = []
+      const due = dueForChase(db)
+      // One reminder per person per topic: it covers all their waiting reports there.
+      const seen = new Set<string>()
+      const firsts = due.filter(r => { const k = `${r.topic}|${r.reporter}`; if (seen.has(k)) return false; seen.add(k); return true })
+      for (const r of firsts.slice(0, MAX_CHASES_PER_LAP)) {
+        const tag = `${r.topic}/${r.post}`
+        // The quote must come from Discourse: it proves the post number is real. Some rows hold a post
+        // id instead, and a reminder threaded under that would go to the wrong place or fail.
+        let quote = ''
+        try { quote = (await questionAnswerDeps.fetchReporterQuote(r.topic, r.post)) ?? '' } catch { quote = '' }
+        if (!quote.trim()) {
+          kvSet(db, unchaseableKey(r.topic, r.post), new Date().toISOString())
+          outWarn(`chase_waiting_reports: ${tag} - could not fetch the post to quote, not chasing it`)
+          unchaseable.push(tag)
+          continue
+        }
+        const raw = formatReplyRaw({ username: r.reporter ?? 'there', post: r.post, topic: r.topic, quote, body: CHASE_BODY })
+        const res = await questionAnswerDeps.postDiscourseReply(r.topic, raw, r.post)
+        if (!res.ok) {
+          outWarn(`chase_waiting_reports: could not remind ${tag}: ${res.error}`)
+          failed.push(tag)
+          continue
+        }
+        for (const sib of due.filter(d => d.topic === r.topic && d.reporter === r.reporter)) recordChase(db, sib.topic, sib.post)
+        recordPostedReply(db, { topic: r.topic, post: r.post, username: r.reporter ?? 'there', quote, body: CHASE_BODY })
+        out(`chase_waiting_reports: reminded @${r.reporter} about ${tag}`)
+        chased.push(tag)
+      }
+      const closedNoReply: string[] = []
+      for (const r of dueForNoReply(db)) {
+        closeNoReply(db, r)
+        out(`chase_waiting_reports: closed ${r.topic}/${r.post} - no reply to the reminder`)
+        closedNoReply.push(`${r.topic}/${r.post}`)
+      }
+      const overdue = humanAnswersOverdue(db).length
+      if (overdue > 0) out(`chase_waiting_reports: ${overdue} question(s) have waited over a week for a human answer - listed in the summary`)
+      if (chased.length > 0 || closedNoReply.length > 0) await renderAllViews(db)
+      return { chased, failed, unchaseable, closedNoReply, humanAnswersOverdue: overdue }
     },
   },
 
@@ -4071,6 +4121,19 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           const closed = closeReportConfirmedByReporter(db, Number(c.topic), Number(post), c.user ?? null)
           if (closed) {
             out(`persist_classifications: ${c.topic}/${post} is the reporter confirming it works - closed ${closed.topic}/${closed.post}`)
+            skipped++
+            continue
+          }
+        }
+
+        // Anything else the reporter posts on a report that is waiting on them, or that closed for want
+        // of a reply, is their answer. It stops the no-reply close; a report deferred for detail or
+        // closed as no-reply reopens. A needs-detail report goes on to the check below, which reopens
+        // it only when the reply names what was missing.
+        if (['bug', 'retest', 'deferred', 'question'].includes(type)) {
+          const noted = noteReporterReply(db, Number(c.topic), Number(post), c.user ?? null)
+          if (noted?.reopened) {
+            out(`persist_classifications: ${c.topic}/${post} is the reporter replying - reopened ${noted.topic}/${noted.post}`)
             skipped++
             continue
           }

@@ -2,7 +2,7 @@ import Database, { type Database as DB } from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, MIGRATION_V5_SQL, MIGRATION_V6_SQL, MIGRATION_V7_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
+import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, MIGRATION_V5_SQL, MIGRATION_V6_SQL, MIGRATION_V7_SQL, MIGRATION_V8_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -102,6 +102,20 @@ function applySchema(db: DB): void {
     })()
     if (!allowsNeedsDetail) {
       try { db.exec(MIGRATION_V7_SQL) } catch { /* already rebuilt */ }
+    }
+  }
+  if (current < 8) {
+    // Rebuild discourse_bug so 'no-reply' is allowed, guarded the same way.
+    const allowsNoReply = (() => {
+      try {
+        const row = db.prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='discourse_bug'"
+        ).get() as { sql?: string } | undefined
+        return !!row?.sql && row.sql.includes("'no-reply'")
+      } catch { return false }
+    })()
+    if (!allowsNoReply) {
+      try { db.exec(MIGRATION_V8_SQL) } catch { /* already rebuilt */ }
     }
   }
   if (current < SCHEMA_VERSION) {
@@ -216,7 +230,7 @@ export function getDiscourseBug(db: DB, topic: number, post: number): DiscourseB
 export function listOpenDiscourseBugs(db: DB): DiscourseBugRow[] {
   return db.prepare(`
     SELECT * FROM discourse_bug
-    WHERE state NOT IN ('fixed','confirmed','off-topic','duplicate','feature-request')
+    WHERE state NOT IN ('fixed','confirmed','off-topic','duplicate','feature-request','no-reply')
     ORDER BY topic, post
   `).all() as DiscourseBugRow[]
 }

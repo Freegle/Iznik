@@ -104,6 +104,15 @@ A failed post leaves the row unposted, so a question with an unsent row is NOT o
 `SKIP_DISCOURSE_POSTS=1` fails every post closed and the rows wait. To flush by hand:
 `npx tsx scripts/post-pending-drafts.ts` from `monitor-fsm` (`--dry-run` lists first).
 
+## Some reports hold a post id, not a post number
+
+`discourse_bug.post` is meant to be the post's number in its topic, but some rows hold the Discourse
+post id instead (10236/69259, 10255/69394 and 10248/69449 on 2026-10-26). Nothing fails when the row is
+written. A reply threaded under that "post" goes to the wrong place or is refused, and a link to
+`/t/<topic>/<post>` lands at the end of the thread. `chase_waiting_reports` only posts when the
+original post can be fetched to quote, and notes the rest as unchaseable. Do the same before posting
+under any stored report.
+
 ## See also
 
 - `.claude/rules/dev-containers.md` - the worktree isolation this keeps escaping.
