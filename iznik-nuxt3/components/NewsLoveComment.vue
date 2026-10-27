@@ -81,14 +81,16 @@ const getShowLovesLabel = computed(() => {
 async function love(callback) {
   // A refused love (dead session, post since removed, network) must not
   // skip the SpinButton callback or take the news feed down via the global
-  // error page - see .claude/rules/frontend-traps.md.
+  // error page - see .claude/rules/frontend-traps.md. callback(false) stops
+  // the spinner without reporting success.
   try {
     await newsfeedStore.love(props.newsfeed.id, props.newsfeed.threadhead)
   } catch (e) {
     console.error(e)
-  } finally {
-    callback()
+    callback(false)
+    return
   }
+  callback()
 }
 
 async function unlove(callback) {
@@ -96,9 +98,10 @@ async function unlove(callback) {
     await newsfeedStore.unlove(props.newsfeed.id, props.newsfeed.threadhead)
   } catch (e) {
     console.error(e)
-  } finally {
-    callback()
+    callback(false)
+    return
   }
+  callback()
 }
 
 function focusComment() {
