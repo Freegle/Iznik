@@ -655,35 +655,41 @@ const applySuggestedAddress = async () => {
   }
 }
 
+// The server can refuse any chat call (a dead session in a long-open tab, a
+// post removed since, the network). A refusal that escapes a handler or a
+// watcher lands on the global error page, so the calls below go through this:
+// it logs the error and returns false instead of throwing.
+const tryChatCall = async (call) => {
+  try {
+    await call()
+    return true
+  } catch (e) {
+    console.error(e)
+    return false
+  }
+}
+
 const _updateAfterSend = async () => {
   sending.value = false
 
   // By the time this runs the action itself has already succeeded, so a
-  // failed refresh must not escape: callers like send() would skip the
-  // SpinButton callback (20 s spin plus a forgotten-callback report) and
-  // markRead()/doNudge() would fire an unhandled rejection, even though the
-  // message was sent. The chat catches up on the next fetch.
-  try {
-    // Fetch the messages again to pick up the new one.
-    await fetchMessages()
+  // failed refresh must not escape: send() would skip the SpinButton callback
+  // (20 s spin plus a forgotten-callback report). The two refreshes are
+  // independent, so one failing doesn't hold back the other, and the chat
+  // catches up on the next fetch.
+  if (await tryChatCall(fetchMessages)) {
+    // Fetched the messages again to pick up the new one.
     emit('scrollbottom')
-
-    // We also want to trigger an update in the chat list.
-    await chatStore.fetchChat(props.id)
-  } catch (e) {
-    console.error(e)
   }
+
+  // We also want to trigger an update in the chat list.
+  await tryChatCall(() => chatStore.fetchChat(props.id))
 }
 
 const markRead = async () => {
-  // Every chat focus runs this; a refusal (dead session in a long-open tab,
-  // network) must not throw through the focus handler to the global error
-  // page. The read flag is retried on the next focus.
-  try {
-    await chatStore.markRead(props.id)
-  } catch (e) {
-    console.error(e)
-  }
+  // Every chat focus runs this. A refusal is only logged; the read flag is
+  // retried on the next focus.
+  await tryChatCall(() => chatStore.markRead(props.id))
   _updateAfterSend()
 }
 
@@ -697,12 +703,10 @@ const onBlur = () => {
 }
 
 const doNudge = async () => {
-  // A refused nudge must not take down the chat via the global error page.
-  // Say so inline instead, same notice and wording shape as a failed send.
-  try {
-    await chatStore.nudge(props.id)
-  } catch (e) {
-    console.error(e)
+  // A refused nudge is shown inline, same notice and wording shape as a
+  // failed send. Clear any earlier notice first, as send() does.
+  sendError.value = null
+  if (!(await tryChatCall(() => chatStore.nudge(props.id)))) {
     sendError.value =
       "Sorry, your nudge couldn't be sent just now. Please try again."
     return
@@ -908,7 +912,12 @@ const fetchMessages = async () => {
 }
 
 const sendAddress = async (id) => {
-  await chatStore.send(props.id, null, id)
+  sendError.value = null
+  if (!(await tryChatCall(() => chatStore.send(props.id, null, id)))) {
+    sendError.value =
+      "Sorry, your address couldn't be sent just now. Please try again."
+    return
+  }
   await _updateAfterSend()
 
   // If we've sent an address to someone who has recently replied to an offer, then it's quite likely that we
@@ -921,7 +930,8 @@ const typing = async () => {
 
   if (!lastTyping.value || now - lastTyping.value > TYPING_TIME_INVERVAL) {
     // Let the server know that we are typing, no more frequently than every 10 seconds.
-    await chatStore.typing(props.id)
+    // A refused ping is only logged, and still counts for the throttle.
+    await tryChatCall(() => chatStore.typing(props.id))
     lastTyping.value = now
   }
 }
@@ -1012,15 +1022,23 @@ watch(
     const sends = sendNewAttachments(newVal)
     if (sends.length) {
       sending.value = true
+      sendError.value = null
 
       console.log('Upload photos', JSON.stringify(newVal))
 
-      await Promise.all(sends)
+      const sent = await Promise.all(sends.map((s) => tryChatCall(() => s)))
 
       await _updateAfterSend()
       sending.value = false
       uploading.value = false
       currentAtts.value = []
+
+      if (sent.includes(false)) {
+        // The photos that did go through show up after the refresh above, so
+        // the user can see which one to add again.
+        sendError.value =
+          "Sorry, a photo couldn't be sent just now. Please try adding it again."
+      }
     }
   },
   { deep: true }
