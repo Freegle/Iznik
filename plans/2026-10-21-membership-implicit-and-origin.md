@@ -93,11 +93,11 @@ Q2 gives those. "Actor" is how `byuser` relates to the member: `none` = NULL (th
 | `replied` | Joined in order to reply: [chatmessage.go:1097](../iznik-server-go/chat/chatmessage.go#L1097) through `AddMembership` ([user.go:1775](../iznik-server-go/user/user.go#L1775)); LoveJunk replies at [chatmessage.go:1194](../iznik-server-go/chat/chatmessage.go#L1194); the frontend's join-to-reply through the join endpoint with `manual=false` | `Joined to reply to a post` (self), 7,379, since 2026-07; `LoveJunk user joining to reply` (self), 2,917, since 2024-04; `Auto` (self), 63,065, since 2023-07 | first two exact; `Auto` from Q3, as for `posted`, else `replied` |
 | `subscribed` | Email subscribe: [IncomingMailService.php:1275](../iznik-batch/app/Services/Mail/Incoming/IncomingMailService.php#L1275) | `Subscribed` (self), 72, since 2026-09 | exact |
 | `rippled` | [ExpandService.php:2396](../iznik-batch/app/Services/Ripple/ExpandService.php#L2396) | `Rippled` (none), 559,315, since 2026-06-23 | exact |
-| `moderator` | A moderator or support adds a member: the join endpoint with `byuser` ≠ `user`; the group creator ([group.go:1020](../iznik-server-go/group/group.go#L1020)); `AddMembershipCommand` | NULL (other), 769,854; `Manual`/`Auto` (other), 13; the one `Reinstated by Geeks: ...` row | any text with actor `other` → `moderator`; the Geeks row by hand |
+| `moderator` | A moderator or support adds a member: the join endpoint with `byuser` ≠ `user`; the group creator ([group.go:1020](../iznik-server-go/group/group.go#L1020)); `AddMembershipCommand` | NULL (other), 769,854, of which only about 18,400 are a real account (Q10); `Manual`/`Auto` (other), 13; the one `Reinstated by Geeks: ...` row | any text with `byuser` a real account other than the member → `moderator` (support included); `byuser = 0` → `unknown` (see that row); the Geeks row by hand |
 | `partner` | TN membership-add flow, where the member opted in: [membership.go:1489](../iznik-server-go/membership/membership.go#L1489); also TN post ingestion when the post's origin group is in the poster's `freegle_group_ids` (new, Phase 3) | `via partner` (self), 102,119, since 2026-04-28 | exact |
 | `tn_unaddressed` | TN post ingestion when the post's origin group isn't in the poster's `freegle_group_ids` (new, Phase 3) | none yet; Phase 3 adds one | Phase 4b, not 4a |
 | `signup` | Account created with a group: [user.go:2312](../iznik-server-go/user/user.go#L2312). No caller in this repo sends a group today. From Phase 3, `PutUser` takes an `origin` parameter that sets the column | NULL (self), indistinguishable from `posted` | not recoverable: falls into `unknown`. Correct from Phase 3 on |
-| `unknown` | Fallback and column default. **Live code that sets `unknown` reports a Sentry error** (Phase 3); only the backfill may set it without one | NULL (none), 1,739,605, from 2016-02 to 2026-05-25: system joins by the retired V1 code, with no reason recorded | everything not mapped above |
+| `unknown` | Fallback and column default. **Live code that sets `unknown` reports a Sentry error** (Phase 3); only the backfill may set it without one | NULL (none), 1,739,605, from 2016-02 to 2026-05-25: system joins by the retired V1 code, with no reason recorded. Also NULL with `byuser = 0`, 751,442, from 2016-02 to 2018-08: a system placeholder, not an account (Q10) | everything not mapped above. Treat `byuser = 0` as no actor, the same as NULL |
 
 `Ripple-created membership became ordinary: <reason>` (self), 51,139, since 2026-09-04, is a
 change of state and not a creation: the backfill ignores it when picking a membership's latest
@@ -179,9 +179,15 @@ change.
   Phase 7.
 - [ ] Copy existing values: `UPDATE memberships SET implicit = rippled WHERE rippled = 1`, in
   chunks. `added_origin` stays `unknown` until Phase 4a.
-- [ ] Decide whether any query needs an index on `implicit`. Most reads are keyed on
-  `(userid, groupid)`; check the batch scans (birthday appeals, the engagement pass) with
-  `EXPLAIN` against production.
+- [x] **No index on `implicit`.** Decided from Q7 (production, 2026-10-27): 180,982 of
+  5,158,594 memberships (3.5%) have `rippled = 1`, held by 24,530 users across 481 groups.
+  - A flag that is 1 on 3.5% of rows is a poor index on its own. Every live read is already
+    narrowed by `(userid, groupid)`, `userid` or `groupid`.
+  - `rippled` has never had an index, and the same reads have run on it in production since
+    2026-06-23. `implicit` covers the same rows plus the TN implicit memberships (about 100
+    more to start with), so it needs none either.
+  - The only reads of the whole table on the flag are one-off: the Phase 2 copy and the Phase 4
+    backfills. They run in chunks by `id`.
 - [ ] Update the Laravel `Membership` model (casts, constants for the enum values) and the Go
   structs ([membership.go:488](../iznik-server-go/membership/membership.go#L488),
   [user.go:158](../iznik-server-go/user/user.go#L158)).
@@ -266,6 +272,12 @@ From here on `rippled` and `implicit` are written together, so either can be rea
 
     Moderator contact stays blocked in the meantime, because `PostIsUnaddressed` and
     `UserIsUnaddressedOnly` still read `messages_groups`.
+  - **A post with no `freegle_group_ids` field at all is a configuration fault, not a
+    poster's choice.** Q5 suggests a developer key without the field enabled flagged every TN
+    post as unaddressed for 27 hours. With this phase that would make every TN poster implicit
+    on their group. Tell an absent field apart from an empty list: keep reading it as "no
+    consent", but report it to Sentry once per sync run, so a key change is caught in minutes,
+    not weeks.
   - Tests: an unaddressed post, an addressed post, an existing ordinary membership, an existing
     implicit membership with a consenting post, and a dry run (`GroupPostIngestionService`'s
     `dryRun` writes nothing).
@@ -286,10 +298,28 @@ idempotent, safe to re-run, with counts printed at the end.
   map its text to a value as in the Phase 0 table. The latest join is the current row's
   creation, because a membership row is deleted when the member leaves. Do **not** use "any
   `Rippled` log exists": that misreads a member who was rippled in, left, and later joined by hand.
-- [ ] The `logs` table is the main source. It has ripple joins from before
-  `memberships_history.rippled` existed (commit `d24d91564a` came about three hours before
-  `d96b7558f4`), and `Group/Joined` rows are never purged. Cross-check against
+- [ ] The `logs` table is the main source. `Group/Joined` rows are never purged, and they cover
+  ripple joins from before `memberships_history.rippled` existed. Cross-check against
   `memberships_history.rippled = 1` and report the disagreements.
+  - **Q4 (production, 2026-10-26):** 294 `Rippled` join logs have no matching history row with
+    `rippled = 1`. All 294 fall within 17 seconds, 2026-06-23 16:15:20 to 16:15:37: the first
+    ripple run after `d24d91564a` went live, which joined posters from posts that had rippled
+    before it, before `d96b7558f4` added the history flag. Outside that run the two sources
+    agree, so the history table is a reliable fallback for every later ripple join, and the
+    logs are needed only for those 294.
+  - **The other direction:** 4 history rows have `rippled = 1` and no `Rippled` join log. That
+    doesn't affect the backfill, because a membership flagged `rippled = 1` is mapped to
+    `rippled` by the flag, whatever the logs say.
+  - **Q11 (production, 2026-10-27):** all 4 were written on 2026-06-26 between 06:40 and 08:16,
+    and none has any `Group/Joined` log. That is the lock-wait storm described in `7be2ef890c`
+    (deployed 08:41 the same day): concurrent `ripple:expand` runs held locks on `logs`, and
+    `INSERT INTO logs` failed with 1205 after the membership and history rows had been written.
+    Two of the four users were never merged, so a merge doesn't explain them. Three memberships
+    no longer exist. The fourth (56596456) still has `rippled = 1` and maps to `rippled` by the
+    flag. Nothing to handle by hand.
+  - **Lesson for Phase 3:** the membership, history and log writes aren't atomic. Write
+    `added_origin` on the membership row itself, so the backfill is the last time the origin has
+    to be read back from the logs.
 - [ ] Known false reads to handle or report: account merges (logs move to the surviving account,
   but if both accounts were members of the group the survivor keeps its own row), and
   memberships with no join log at all (→ `unknown`).
@@ -300,15 +330,55 @@ idempotent, safe to re-run, with counts printed at the end.
     since. All of them get `added_origin = 'rippled'`; `implicit` copies the current flag.
   - **Every other kind of latest join has `rippled = 0`**, with two exceptions that Q8 and Q9
     are checking:
-    - 105 memberships with `rippled = 1` and no join log.
-    - 1 membership with `rippled = 1` whose latest join was the member's own (NULL text). If Q9
-      shows a ripple join, a leave and a rejoin, this is the `ripple:backfill-memberships`
-      misread: the row should be `implicit = 0` and the origin taken from the rejoin.
+    - 105 memberships with `rippled = 1` and no join log (101 by Q8, 2026-10-27). Most belong
+      to accounts created *after* the membership was added, with no `Merged` log: the
+      signature of the old email-verify merge (`session/merge.go`, until October 2026). That
+      merge moved memberships to the surviving account but left logs and `memberships_history`
+      on the deleted one ([modtools.md](../.claude/rules/modtools.md)). Q13 confirms it by
+      finding each ripple join log under another account. The flag rule handles them. The same
+      merge also strands non-ripple memberships without logs; those fall into `unknown`.
+    - 1 membership with `rippled = 1` whose latest join was the member's own (NULL text).
+      **Q9 (2026-10-27): not the `ripple:backfill-memberships` misread.** The member (2274888)
+      joined and left group 21324 twice in 2018, and that 2018 join is the latest log on
+      their account. The current membership was added on 2026-08-22 at 12:20:02, the same
+      second as their log-less ripple membership of group 21541 in Q8. It is the same
+      email-verify merge pattern as above, so the flag is correct. Q13 checks it with the
+      101.
   - **Rule:** `rippled = 1` now means `added_origin = 'rippled'` whatever the logs say, because
-    only the ripple paths ever set the flag. The one row Q9 finds wrong is the exception.
-  - NULL text with actor `other` (629,704) maps to `moderator` only if Q10 shows real
-    moderators made those joins. If a few system or support accounts made most of them, map
-    those accounts' joins to `unknown`.
+    only the ripple paths ever set the flag. Q8 and Q9 found no exception.
+  - **NULL text made by someone other than the member** (629,704 current memberships). Decided
+    from Q10 (production, 2026-10-27):
+    - **`byuser = 0`: 751,442 of the 769,854 such join logs (97.6%),** from 2016-02 to
+      2018-08. User 0 has no user row; it's the legacy code's placeholder for "the system", so
+      these become `unknown`, the same as a NULL `byuser`.
+    - **The other ~18,400 were made by real accounts:** moderators, support, and some accounts
+      whose current `systemrole` is User. `systemrole` is the role now, not when the join was
+      made, so those were most likely moderators at the time. They become `moderator`, which
+      covers support adding a member too.
+    - Most of the 629,704 current memberships will therefore be `unknown`. Q2 can't split them
+      by `byuser`, but the logs suggest the large majority.
+- [ ] **What Q3 showed** (production, 2026-10-26). The test is whether a post of theirs on the
+  group arrived within 30 minutes of the join:
+
+  | Latest join | Memberships | Post near the join | Backfill gives |
+  |---|---|---|---|
+  | `Auto` (self), since 2023-07-26 | 47,177 | 370 (0.8%) | `replied`; the 370 `posted` |
+  | NULL (self), since 2023-07-26 | 69,137 | 51,090 (74%) | `posted` for the 51,090; `unknown` for the other 18,047 |
+  | NULL (self), before 2023-07-26 | 529,615 | 118,719 (22%) | `posted` for the 118,719; `unknown` for the other 410,896 |
+
+  - **`Auto` is almost entirely joins to reply.** The current frontend sends `manual=false` only
+    from the reply flow ([useReplyStateMachine.js:1140](../iznik-nuxt3/composables/useReplyStateMachine.js#L1140)),
+    and it sends `manual=true` from Join buttons ([GroupHeader.vue:500](../iznik-nuxt3/components/GroupHeader.vue#L500),
+    [explore/join](../iznik-nuxt3/pages/explore/join/[[id]].vue)).
+  - **Since 2023, NULL text from the member is almost all joins to post.** Every self-join from
+    the frontend now sends `manual`, so NULL text from the member themselves comes from the post
+    joins ([message_submit.go:131](../iznik-server-go/message/message_submit.go#L131), `JoinAndPostAs`).
+    The 26% with no post found are probably posts deleted or purged since. They still get
+    `unknown`, because the backfill only claims what it can show.
+  - **Before 2023, no join recorded a reason**, so only the 22% matched to a post can be
+    classified.
+  - One rule covers all three rows: a post within the window means `posted`. Otherwise `Auto`
+    becomes `replied`, and NULL text becomes `unknown`.
 - [ ] Fill `memberships_history.added_origin` too, where the row can be matched.
 - [ ] Rewrite or retire `ripple:backfill-memberships`
   ([RippleMembershipBackfillService.php](../iznik-batch/app/Services/Ripple/RippleMembershipBackfillService.php)).
@@ -330,6 +400,34 @@ idempotent, safe to re-run, with counts printed at the end.
   - **Any other existing membership:** leave it. Never make an ordinary membership implicit.
 - [ ] At about 100 rows this can run in one pass, but keep it a dry run by default with a
   per-row listing, so Edward can read every change before running it with `--send`.
+- [ ] **Hold: Q5 suggests these rows may not be real non-consent** (production, 2026-10-26).
+  - **106 rows, 78 (poster, group) pairs, all arriving in 27 hours:** 2026-09-25 16:55 to
+    2026-09-26 19:38. There are none before or after.
+  - **The window starts 45 minutes after `291e589e0d`,** which moved the posts sync to a new
+    TrashNothing developer key. TN has to turn on `freegle_group_ids` for each key, and
+    ingestion reads a missing field as "no consent". So every post in the window may have been
+    flagged regardless of what the poster chose.
+  - **What "addressed" means for older TN posts:** most `mod_messaging_allowed = 1` TN posts
+    came in by email, before API ingestion. The email path sets `tnpostid`
+    ([IncomingMailService.php:3066](../iznik-batch/app/Services/Mail/Incoming/IncomingMailService.php#L3066))
+    and leaves the column at its default of 1. That is not an explicit consent, but the email
+    path refuses a TN post to a group the poster isn't a member of
+    ([IncomingMailService.php:2674](../iznik-batch/app/Services/Mail/Incoming/IncomingMailService.php#L2674)),
+    so it still means the poster had joined that group. The skip rule below, and Q6, rely on
+    that.
+  - **Q6:** 62 of the 78 posters are "mixed": they have an addressed TN post somewhere. The
+    second half of Q6 (pairs that would lose moderator contact) hasn't been reported yet.
+  - **The rows look like real members:** 50 of the 78 pairs have another post on the same group
+    that *was* addressed. 58 already have an ordinary membership of that group, most of them
+    years old (2015 to 2025).
+  - **What the backfill would do:** create implicit memberships for 15 pairs (22 rows), skip 50
+    pairs that consented, and leave 13 existing memberships alone. Among those 13: one rippled
+    membership (44492943 / 21593) and one Rejected post.
+  - **Before running 4b:** run Q12 (unaddressed vs addressed TN posts by day and by hour), and
+    ask Andrew when `freegle_group_ids` was enabled on the new key. If the window is the key,
+    the 15 pairs are not evidence of anything: don't run 4b, and fix those 106 rows to
+    `mod_messaging_allowed = 1`. Today they are treated as ownerless: moderators can't edit
+    them or reply about them, and two member reports remove them.
 - [ ] Before any write, count the effect of deciding contact per group: how many TN posters
   are currently contactable everywhere through the mixed-poster rule, and how many
   `(poster, group)` pairs will become uncontactable once it is gone. This is to report the
