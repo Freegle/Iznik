@@ -23,6 +23,7 @@ use OwenIt\Auditing\Contracts\Auditable;
  * @property bool|null $eventsallowed
  * @property int $volunteeringallowed
  * @property string|null $ourPostingStatus For Yahoo groups, NULL; for ours, the posting status
+ * @property bool $implicit The member has not knowingly joined this community
  * @property \Illuminate\Support\Carbon|null $reviewrequestedat
  * @property string|null $reviewreason
  * @property \Illuminate\Support\Carbon|null $reviewedat
@@ -128,6 +129,7 @@ class Membership extends Model implements Auditable
         'settings' => 'array',
         'eventsallowed' => 'boolean',
         'emailfrequency' => 'integer',
+        'implicit' => 'boolean',
         'reviewrequestedat' => 'datetime',
         'reviewedat' => 'datetime',
     ];

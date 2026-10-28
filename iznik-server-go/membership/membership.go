@@ -465,6 +465,10 @@ type GetMembershipsMember struct {
 	// ModTools does not offer the group's moderators a chat off the back of it
 	// (Discourse 10102).
 	Rippled bool `json:"rippled" gorm:"column:rippled"`
+	// True while the member has not knowingly joined this community: their post rippled
+	// here, or TrashNothing placed it here. Cleared when they join, move into the area or
+	// deal with the community. Replaces Rippled.
+	Implicit bool `json:"implicit" gorm:"column:implicit"`
 	// Set while the member's email provider is refusing our mail. This is
 	// deliberately NOT the same thing as Bouncing: bouncing means their
 	// address is bad, whereas this is our own sending reputation with their
@@ -562,7 +566,7 @@ func GetMemberships(c *fiber.Ctx) error {
 				"b.date AS added, b.date AS bandate, b.byuser AS bannedby, "+
 				"u.fullname, u.firstname, u.lastname, u.engagement, "+
 				"b.userid AS id, NULL AS heldby, NULL AS settings, "+
-				"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, 0 AS rippled, "+
+				"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, 0 AS rippled, 0 AS implicit, "+
 				"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason, "+mailDelayedCols).
 			Joins("JOIN users u ON u.id = b.userid").
 			Where("b.groupid = ?", groupid)
@@ -593,7 +597,7 @@ func GetMemberships(c *fiber.Ctx) error {
 		db.Table("memberships m").
 			Select("m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
 				"u.fullname, u.firstname, u.lastname, m.settings, "+
-				"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, "+
+				"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, m.implicit, "+
 				"b.date AS bandate, b.byuser AS bannedby, "+
 				"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, "+
 				"MAX(l.timestamp) AS lastmodmail, "+mailDelayedCols).
@@ -620,7 +624,7 @@ func GetMemberships(c *fiber.Ctx) error {
 
 	selectCols := "m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, " +
 		"u.fullname, u.firstname, u.lastname, m.settings, " +
-		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, " +
+		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, m.implicit, " +
 		"b.date AS bandate, b.byuser AS bannedby, " +
 		"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing, " + mailDelayedCols
 
@@ -912,7 +916,7 @@ func getSpamMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error 
 	result := db.Table("memberships m").
 		Select("m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
 			"u.fullname, u.firstname, u.lastname, m.settings, "+
-			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, "+
+			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, m.implicit, "+
 			"b.date AS bandate, b.byuser AS bannedby, "+
 			"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing, "+mailDelayedCols).
 		Joins("JOIN users u ON u.id = m.userid").

@@ -1461,6 +1461,10 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   has made without moving the scheduled run's saved positions. The clear counts
   towards the "Seen on many groups" spam check like any join. `memberships_history` keeps
   its flag, and `ripple:backfill-memberships` leaves a cleared membership alone.
+- `memberships.implicit` is taking over the changing half of `rippled`: 1 while the member has
+  not knowingly joined, copied from `rippled` when the column was added. Until the readers move
+  over, `rippled` is still the flag that decides anything; the member-list API only reports
+  `implicit`.
 - A community a post rippled into may write to the poster about it once the poster is an
   ordinary member there (`PosterMessagingGroups`). Whether an action turns the post away,
   which stops it rippling back, still goes by `HomeGroups`.

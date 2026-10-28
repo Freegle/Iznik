@@ -17,13 +17,14 @@ The steps are in the order they need to happen. Each phase can ship as its own P
 
 ## Phase 0 - Decisions to settle before writing code
 
-- [ ] **The flag's name.** The notes say both `implicit` and "rename `rippled` to mod messaging
-  allowed". Use `implicit`: most of the code that reads this flag is not about messaging
-  (removal on retraction, the leave guard, stories, attribution), and a contact-specific
-  name invites someone to flip it for a contact reason. Add a new column rather than renaming
+- [x] **The flag's name is `implicit`.** Decided 2026-10-28. The notes also said "rename
+  `rippled` to mod messaging allowed"; that was rejected. Most of the code that reads this flag
+  is not about messaging (removal on retraction, the leave guard, stories, attribution), and a
+  contact-specific name invites someone to flip it for a contact reason. Add a new column rather than renaming
   `rippled` in place. Go, batch and the frontend deploy separately, so a rename would break
   whichever deploys second.
-- [ ] **Enum values.** The proposal below maps each place a membership is inserted to a value.
+- [x] **Enum values.** Decided 2026-10-28: the `added_origin` values in the table below, which maps
+  each place a membership is inserted to a value.
 - [x] **A TN implicit membership is treated exactly like a ripple one.** Decided 2026-10-22.
   Whatever a ripple membership gets, a TN implicit membership gets too, and the code decides it
   from `implicit`, never from `added_origin`. The one exception is automatic removal (below):
@@ -34,10 +35,18 @@ The steps are in the order they need to happen. Each phase can ship as its own P
     volunteering are copied as they are. A poster with no membership anywhere gets 0 / 0 / 0.
     Move that rule out of ExpandService into one shared helper that both the ripple join and TN
     ingestion call, so the two cannot drift apart.
-  - **ModTools member lists:** shown, with contact restricted, as ripple members are now.
+  - **ModTools member lists:** shown, with contact restricted (see the contact decision below).
   - **Member counts:** counted. `updateMemberCounts`
     ([GroupMaintenanceService.php:29](../iznik-batch/app/Services/GroupMaintenanceService.php#L29))
     counts every row today, ripple members included.
+- [x] **Moderators cannot contact any implicit member, ripple or TN.** Decided 2026-10-28.
+  Contact keys on `implicit = 1` alone, so it stays inside "decided by `implicit`". This
+  reverses `be0a642faf` (2026-10-26) for ripple members, which made them contactable from the
+  member list like any other member (Discourse 10102, and 10283: moderators had no way to reach
+  one side of a held chat). Phase 5 puts the restriction back, keyed on `implicit`, for chat,
+  mail, member standard messages and the ModTools buttons. Replies about the post itself already
+  stay with its home community (`PosterMessagingGroups`). Check the held-chat case from 10283
+  when doing it, since that was why the restriction was lifted.
 - [x] **Contact is decided per group, not per person.** Decided 2026-10-22. Today
   `UsersUnaddressedOnly` lets moderators of every group contact a TN poster if any one of
   their posts was addressed (the "mixed poster" rule). That rule was a bug: whether a group's
@@ -78,7 +87,7 @@ The steps are in the order they need to happen. Each phase can ship as its own P
   created for them, and existing memberships keep the column defaults (`implicit = 0`, plus
   whatever `added_origin` Phase 4a gives them).
 
-### Proposed `added_origin` values
+### `added_origin` values
 
 Counts are from Q1 of
 [2026-10-22-membership-origin-prod-queries.sql](2026-10-22-membership-origin-prod-queries.sql),
@@ -129,7 +138,7 @@ Both have `implicit = 1`. `added_origin` decides the cases where they differ:
 
 | Behaviour | `rippled` | `tn_unaddressed` |
 |---|---|---|
-| Moderators can't start a chat, send standard messages or write about the post; member actions are silent; ModTools buttons hidden | yes | yes |
+| Moderators can't start a chat, send standard messages or write about the post; member actions are silent; ModTools buttons hidden | yes (decided 2026-10-28; not true today since `be0a642faf`, Phase 5 restores it) | yes |
 | Removed automatically when the post is withdrawn or retracted | yes, once no live post of theirs remains on the group | **no, never**: kept even after every post is gone (Phase 0) |
 | Removed on a ban | yes | yes |
 | Can leave without the moderator-role guard | yes | yes (TN accounts are never moderators anyway) |
@@ -149,19 +158,191 @@ Both have `implicit = 1`. `added_origin` decides the cases where they differ:
 
 ## Phase 1 - Inventory (no code changes)
 
-- [ ] List every reader of `memberships.rippled`, `memberships_history.rippled`, the `Rippled`
-  log text and `messages_groups.mod_messaging_allowed`, using the greps below. Tick each one off
-  in Phase 3 or Phase 5 as it is converted.
-  - `git grep -n -E "\.rippled\b|'rippled'|rippled\s*=|\bRippled\b" -- '*.go' '*.php' '*.vue' '*.js'`
-  - `git grep -n -E "mod_messaging_allowed|ModMessagingAllowed|PostIsUnaddressed|UnaddressedOnly"`
-  - `git grep -n "'Rippled'"` (log text readers: ExpandService rejoin guard, MembershipsProcessingService, ModLog.vue, useSystemLogFormatter.js)
-- [ ] Find every insert into `memberships` (the table above) and every insert into
-  `memberships_history`.
-- [ ] Find how TN removes a membership (unsubscribe or removal through the partner API) and
-  confirm it goes through a path that deletes the row and logs `Group/Left`.
-- [ ] Find where group member counts and member lists are computed, for Phase 6.
-- [ ] On production (Edward), count rows for each `Group/Joined` log text, to size Phase 4a.
-  Phase 4b is already sized: about 100 rows with `mod_messaging_allowed = 0`.
+Done 2026-10-28 against `880d327b7e`. Line numbers in this section are from that commit; the
+links in Phases 3 and 5 date from 2026-10-21 and several have moved, so use this section to find
+the code. Tick each row off in Phase 3 or Phase 5 as it is converted.
+
+- [x] List every reader of `memberships.rippled`, `memberships_history.rippled`, the `Rippled`
+  log text and `messages_groups.mod_messaging_allowed`.
+  - The original grep (`\.rippled\b|'rippled'|rippled\s*=|\bRippled\b`) misses double-quoted
+    `"rippled"`. It also matches the in-memory `rippled` field of rippling analytics samples
+    ([analytics.go:193-730](../iznik-server-go/rippling/analytics.go#L193)), which is not the
+    column. The lists below come from `git grep -n -w -i rippled`, read by hand.
+  - `memberships_history.rippled` and the `Rippled` log text are each read in only two places.
+- [x] Find every insert into `memberships` and every insert into `memberships_history`.
+- [x] Find how TN removes a membership.
+- [x] Find where group member counts and member lists are computed, for Phase 6.
+- [x] Count rows for each `Group/Joined` log text, to size Phase 4a. Done as Q1 to Q3
+  (2026-10-22 to 2026-10-26), in the `added_origin` table and in 4a. Phase 4b is sized at about
+  100 rows.
+
+### What changes the plan
+
+1. **Ripple members are contactable again, since `be0a642faf` (2026-10-26).** That commit
+   removed the ripple checks from the moderator chat, mail and standard-message paths, and from
+   ModTools. Only replies about the rippled post itself stay with its home community
+   (`PosterMessagingGroups`, [message.go:2931](../iznik-server-go/message/message.go#L2931)).
+   Every remaining contact guard is TN-only and reads posts (`UserIsUnaddressedOnly`). So "a
+   TN implicit membership is treated exactly like a ripple one", and "contact restricted, as
+   ripple members are now", no longer hold for contact. Decided 2026-10-28 (Phase 0): no implicit
+   member can be contacted, so Phase 5 restores the restriction for ripple members too.
+2. **ModTools never reads `member.rippled`.** [ModMember.vue:433](../iznik-nuxt3/modtools/components/ModMember.vue#L433)
+   and [ModMemberButtons.vue:230](../iznik-nuxt3/modtools/components/ModMemberButtons.vue#L230)
+   read `member.mod_messaging_allowed`. Go works that out per person from their posts
+   ([membership.go:838-843](../iznik-server-go/membership/membership.go#L838)). The Phase 5
+   frontend item should become a Go change: work out `mod_messaging_allowed` from the
+   membership row being listed, which is already per group. Keep the JSON name. The frontend
+   then needs no change for contact, only for showing the origin.
+3. **Neither account merge looks at the flag when both accounts belong to the group.**
+   [user.go:3307-3341](../iznik-server-go/user/user.go#L3307) (`MergeUsersTx`) and
+   [User.php:1265-1310](../iznik-batch/app/Models/User.php#L1265) (`User::merge`, used by the TN
+   sync) keep the survivor's row and merge role, `added`, `configid`, `settings` and `heldby`.
+   An implicit survivor merged with an ordinary loser stays implicit. Phase 3 should take the
+   lower `implicit` of the two rows. For `added_origin`, keep the survivor's value, or take the
+   older row's, to match how `added` is merged.
+4. **Six of the eleven insert sites write no `memberships_history` row**, and three write no
+   join log (table below). Phase 2 puts `added_origin` on history, but those sites will leave
+   no history row to carry it. Phase 3 has to decide, for each site, whether to add a row. A
+   history row also triggers the welcome and spam checks, so adding one changes behaviour.
+5. **The mail settings rule tries the home group first.** `addPosterMembershipToRippledGroups`
+   first copies the poster's membership of the post's earliest group
+   ([ExpandService.php:2311](../iznik-batch/app/Services/Ripple/ExpandService.php#L2311)).
+   Only when there is none does it use `ORDER BY rippled ASC, added DESC` (line 2328). The
+   shared helper in Phase 0 needs both steps. For a TN post the "home group" is the very group
+   being joined, so the first step finds nothing, and the fallback is all that applies.
+6. **A mail unsubscribe removes the membership without a `Group/Left` log.** See TN removal
+   below.
+
+### Readers of `memberships.rippled`
+
+| Where | What it decides | Becomes | Phase |
+|---|---|---|---|
+| [membership.go:467](../iznik-server-go/membership/membership.go#L467), selected at :596, :623, :915 | `Rippled` on `GetMembershipsMember`: member list, search, spam and related lists | add `implicit` and `added_origin` | 2 |
+| [membership.go:565](../iznik-server-go/membership/membership.go#L565) | Banned list built from `users_banned`, with `0 AS rippled` | also `0 AS implicit, 'unknown' AS added_origin` | 2 |
+| [membership.go:1613](../iznik-server-go/membership/membership.go#L1613) `selfLeaveKeepsRole` | Leave guard | `implicit` | 5 |
+| [user.go:160](../iznik-server-go/user/user.go#L160), selected at :447 | `Rippled` on the member's own membership list | add both | 2 |
+| [user.go:1594](../iznik-server-go/user/user.go#L1594) | Blank posting status not shown as Moderated | `implicit` | 5 |
+| [message.go:2931](../iznik-server-go/message/message.go#L2931) `PosterMessagingGroups` | Which groups may write to the poster about a post | `implicit` | 5 |
+| [message.go:7178](../iznik-server-go/message/message.go#L7178) `withdrawRippledCopiesAndBlock` | Deletes the ripple membership on withdraw | `implicit = 1 AND added_origin = 'rippled'` | 5 |
+| [chatmessage.go:492](../iznik-server-go/chat/chatmessage.go#L492), [:540](../iznik-server-go/chat/chatmessage.go#L540) | Reply attribution: `wasHome`, `wasRippleJoin` | decide per query | 5 |
+| [attribution.go:37](../iznik-server-go/rippling/attribution.go#L37) `EstablishedOriginMemberExists`, [analytics.go:973](../iznik-server-go/rippling/analytics.go#L973), [metrics.go:184](../iznik-server-go/rippling/metrics.go#L184), :189 | Attribution statistics | decide per query | 5 |
+| [rippling/membership.go:32](../iznik-server-go/rippling/membership.go#L32) `ClearRippledMembership` | The clear; callers [membership.go:1480](../iznik-server-go/membership/membership.go#L1480) (partner join), :1534 (join), [user.go:2543](../iznik-server-go/user/user.go#L2543) (postcode change) | write `implicit = 0` too | 3 |
+| [rippling/membership.go:75](../iznik-server-go/rippling/membership.go#L75) `ClearRippledMembershipsAtLocation` | Moved into the area | select on `implicit`. Not decided whether moving in clears a TN implicit membership: Phase 0 names only TN consent as clearing one | 5 |
+| [story.go:149](../iznik-server-go/story/story.go#L149), [:198](../iznik-server-go/story/story.go#L198) | Story group and review queue | `implicit` | 5 |
+| [BirthdayService.php:54](../iznik-batch/app/Services/BirthdayService.php#L54) | Birthday appeals | `implicit` | 5 |
+| [ReengageContentService.php:241](../iznik-batch/app/Services/ReengageContentService.php#L241) | Re-engagement sign-off | `implicit` | 5 |
+| [ExpandService.php:1056](../iznik-batch/app/Services/Ripple/ExpandService.php#L1056) `retractRippledCopyInGroup` | Deletes the ripple membership on retraction | `implicit = 1 AND added_origin = 'rippled'` | 5 |
+| [ExpandService.php:1082](../iznik-batch/app/Services/Ripple/ExpandService.php#L1082), :1124, :1134 `pullBannedRippleMemberships` (`ripple:remove-banned`) | Removes ripple joins into groups the member is banned from | `added_origin = 'rippled'`. A moderator ban already deletes the row ([membership.go:310](../iznik-server-go/membership/membership.go#L310)), and TN ingestion should refuse a banned group | 5 |
+| [ExpandService.php:2328](../iznik-batch/app/Services/Ripple/ExpandService.php#L2328) | Mail settings fallback | `ORDER BY implicit ASC`, in the shared helper (point 5 above) | 3 |
+| [ExpandService.php:2404](../iznik-batch/app/Services/Ripple/ExpandService.php#L2404) | Ripple join insert | write both columns | 3 |
+| [ExpandService.php:2493](../iznik-batch/app/Services/Ripple/ExpandService.php#L2493) | Intro mail welcome list | `added_origin = 'rippled'` | 5 |
+| [RippleEngagementService.php:102](../iznik-batch/app/Services/Ripple/RippleEngagementService.php#L102) | The clear | write `implicit = 0` too | 3 |
+| [RippleEngagementService.php:147](../iznik-batch/app/Services/Ripple/RippleEngagementService.php#L147), :218, :259, :265 | Posting, reply and write-back passes | `implicit`, skipping TN on replies and write-backs | 5 |
+| [ReplyAttributionBackfillService.php:75](../iznik-batch/app/Services/Ripple/ReplyAttributionBackfillService.php#L75), :81 | Attribution backfill | decide per query | 5 |
+| [RippleMembershipBackfillService.php:40-147](../iznik-batch/app/Services/Ripple/RippleMembershipBackfillService.php#L40) | `ripple:backfill-memberships` | retire (4a) | 4a |
+
+The Laravel `Membership` and `MembershipHistory` models have no `rippled` cast or constant, so
+there is nothing to remove from them. Phase 2 adds the new ones.
+
+### Readers of `memberships_history.rippled` and the `Rippled` log text
+
+| Where | What | Becomes | Phase |
+|---|---|---|---|
+| [MembershipsProcessingService.php:66](../iznik-batch/app/Services/MembershipsProcessingService.php#L66) | Welcome email suppression (history) | `added_origin IN ('rippled', 'tn_unaddressed')` | 5 |
+| [user.go:1536](../iznik-server-go/user/user.go#L1536) | Spread check (history) | exclude both origins | 5 |
+| [MembershipsProcessingService.php:158](../iznik-batch/app/Services/MembershipsProcessingService.php#L158) | Spread check (log text) | history `added_origin` | 5 |
+| [ExpandService.php:1991](../iznik-batch/app/Services/Ripple/ExpandService.php#L1991), [:2573](../iznik-batch/app/Services/Ripple/ExpandService.php#L2573) | Rejoin suppression (log text) | stays on logs | - |
+| [ModLog.vue:36](../iznik-nuxt3/modtools/components/ModLog.vue#L36), [useSystemLogFormatter.js:267](../iznik-nuxt3/modtools/composables/useSystemLogFormatter.js#L267) | Display (log text) | keep; add the TN join text | 3 |
+| Writers: [ExpandService.php:2421](../iznik-batch/app/Services/Ripple/ExpandService.php#L2421) (history), [:2436](../iznik-batch/app/Services/Ripple/ExpandService.php#L2436) (log) | | keep writing | - |
+
+### Readers of `mod_messaging_allowed` and the unaddressed checks
+
+| Where | What | Phase |
+|---|---|---|
+| [modmessaging.go:33](../iznik-server-go/modmessaging/modmessaging.go#L33) `PostIsUnaddressed`; callers [chatmessage.go:800](../iznik-server-go/chat/chatmessage.go#L800), [message.go:3751](../iznik-server-go/message/message.go#L3751), [:4499](../iznik-server-go/message/message.go#L4499), [:6326](../iznik-server-go/message/message.go#L6326), [microvolunteering.go:684](../iznik-server-go/microvolunteering/microvolunteering.go#L684), [:1149](../iznik-server-go/microvolunteering/microvolunteering.go#L1149) | Post has no owner | 5 |
+| [modmessaging.go:53](../iznik-server-go/modmessaging/modmessaging.go#L53) `UserIsUnaddressedOnly`, :64 `UsersUnaddressedOnly`; callers [chatroom.go:408](../iznik-server-go/chat/chatroom.go#L408) (chat), [membership.go:211](../iznik-server-go/membership/membership.go#L211) (mail, standard messages), [membership.go:838](../iznik-server-go/membership/membership.go#L838) (member list flag) | Contact, per person; the mixed-poster rule | 5 (becomes per group) |
+| [ProcessBackgroundTasksCommand.php:601](../iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php#L601) `postIsUnaddressed` (caller :730), [:621](../iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php#L621) `userIsUnaddressedOnly` (caller :889) | Batch copies | 5 |
+| [messageGroup.go:91](../iznik-server-go/message/messageGroup.go#L91) `modMessagingAllowed`, used at [message.go:787](../iznik-server-go/message/message.go#L787); selected at message.go:612; carried in [message_list.go:37](../iznik-server-go/message/message_list.go#L37), :58 | Message card flag | 5 |
+| [RippleEngagementService.php:152](../iznik-batch/app/Services/Ripple/RippleEngagementService.php#L152) | Posting pass ignores unaddressed posts | 5 |
+| [GroupPostIngestionService.php:569](../iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php#L569) (writer), [PostSyncer.php:259](../iznik-batch/app/Services/TrashNothing/Sync/PostSyncer.php#L259), `MessageGroup` model cast | Writer | 7 |
+| Frontend: [MessageReportModal.vue:198](../iznik-nuxt3/components/MessageReportModal.vue#L198), [ModMessage.vue:1329](../iznik-nuxt3/modtools/components/ModMessage.vue#L1329) (post flag); [ModMember.vue:433](../iznik-nuxt3/modtools/components/ModMember.vue#L433), [ModMemberButtons.vue:230](../iznik-nuxt3/modtools/components/ModMemberButtons.vue#L230) (member flag) | Reads the JSON name; no change if the name is kept | - |
+
+Tests that pin today's behaviour: the mixed-poster rule is asserted by
+`TestUserIsUnaddressedOnlyIsFalseForMixedAndForOrdinaryPosters`
+([modmessaging_test.go:64](../iznik-server-go/test/modmessaging_test.go#L64)), and
+`TestUserStaysUnaddressedOnlyAfterTheirPostIsRemoved` (:103) bears on the "never removed
+automatically" decision. Other test files that set or assert these columns:
+Go `membership_test.go`, `modmessaging_test.go`, `rippled_in_mod_contact_test.go`,
+`rippled_in_ordinary_member_test.go`, `chatmessage_reach_test.go`, `rippling_metrics_test.go`,
+`story_test.go`, `user_test.go`, `rippling/{analytics_extra,attribution,metrics}_test.go`;
+Laravel `ExpandServiceTest`, `ResumedReachTest`, `RippleMembershipBackfillServiceTest`,
+`ReplyAttributionBackfillServiceTest`, `ClearEngagedMembershipsCommandTest`,
+`MembershipsProcessingServiceTest`, `BirthdayServiceTest`, `ReengageEmailsCommandTest`,
+`ReengageVolunteerResolutionTest`, `DonationAskOptOutTest`, `ProcessBackgroundTasksCommandTest`,
+`GroupPostIngestionServiceTest`, `PostSyncerTest`, `OrmHarness/Wave1ChatRoomExpandTest`,
+`OrmHarness/Wave2RippleTargetsTest`; Vitest `ModMember`, `ModMemberButtons`, `ModMessage`,
+`MessageReportModal`, `ModLog`, `useSystemLogFormatter`.
+
+### Insert sites
+
+Eleven places create a membership. Each one is a Phase 3 checklist row, and every insert must go
+through the per-codebase helper that reports `unknown`.
+
+| Site | Origin | History row | Join log (text) |
+|---|---|---|---|
+| [membership.go:1554](../iznik-server-go/membership/membership.go#L1554) `addMemberToGroup` (join endpoint) | `manual` / `replied` / `moderator` (byuser ≠ user) | yes, :1571 | yes, :1589 (`Manual`, `Auto` or none) |
+| [membership.go:1490](../iznik-server-go/membership/membership.go#L1490) `putMembershipsPartner` | `partner` | yes, :1507 | yes, :1514 (`via partner`) |
+| [user.go:1783](../iznik-server-go/user/user.go#L1783) `AddMembership`; callers [chatmessage.go:1098](../iznik-server-go/chat/chatmessage.go#L1098), [:1195](../iznik-server-go/chat/chatmessage.go#L1195) | `replied` | yes, :1805 | yes (reason passed in) |
+| [user.go:2320](../iznik-server-go/user/user.go#L2320) `PutUser` with `groupid` (`PutUser` at :2190, `UserPutRequest` at :2150) | `signup`, from the new `origin` parameter | yes, :2343 | yes, :2328 (no text) |
+| [message_submit.go:131](../iznik-server-go/message/message_submit.go#L131) | `posted` | **no** | yes (no text) |
+| [message.go:4078](../iznik-server-go/message/message.go#L4078) `JoinAndPostAs` | `posted` | **no** | yes (no text) |
+| [group.go:1020](../iznik-server-go/group/group.go#L1020) group creator | `moderator` | **no** | **no** |
+| [ExpandService.php:2396](../iznik-batch/app/Services/Ripple/ExpandService.php#L2396) | `rippled` | yes, :2416 | yes, :2436 (`Rippled`) |
+| [IncomingMailService.php:1275](../iznik-batch/app/Services/Mail/Incoming/IncomingMailService.php#L1275) email subscribe | `subscribed` | **no** | yes (`Subscribed`) |
+| [AddMembershipCommand.php:53](../iznik-batch/app/Console/Commands/User/AddMembershipCommand.php#L53) | `moderator` | **no** | **no** |
+| [EmailReplaySyncer.php:392](../iznik-batch/app/Services/TrashNothing/Sync/EmailReplaySyncer.php#L392) | `partner`: a test-harness stub that stands in for TN's partner add, never run against production | **no** | **no** |
+
+Phase 3 adds a twelfth, TN post ingestion. The two Go struct inserts go through
+`db.Create(&membership)` and `db.Create(&history)` in `AddMembership`, so the `Membership` and
+`MembershipHistory` structs in [user.go](../iznik-server-go/user/user.go#L150) need the new
+fields as well as the map inserts. Account merges move rows rather than creating them (point 3
+above).
+
+### TN removal
+
+- **TN's API removal** is `DELETE /memberships?partner=` →
+  [`deleteMembershipsPartner`](../iznik-server-go/membership/membership.go#L1735). It deletes the
+  Approved row and logs `Group/Left` (`via partner`). It runs `selfLeaveKeepsRole` first, which
+  never blocks a TN account because they are never moderators.
+- **Mail `{group}-unsubscribe`** ([IncomingMailService.php:1315](../iznik-batch/app/Services/Mail/Incoming/IncomingMailService.php#L1315))
+  deletes the row through Eloquent and **writes no `Group/Left` log**. TN members can use it
+  too. A ripple member who leaves this way is therefore not seen as having opted out by rejoin
+  suppression, which looks for a `Group/Left` after the `Rippled` join. Outside this plan's
+  scope, but worth a fix of its own.
+- The partner `forget` path ([session.go:673](../iznik-server-go/session/session.go#L673)) is for
+  LoveJunk accounts only (`ljuserid`). It logs `Group/Left` for each group.
+- **Other removals**, beyond those Phase 0 names (leaving, TN, moderator remove or ban,
+  merge): spam cleanup bans and deletes
+  ([SpamCleanupService.php:57](../iznik-batch/app/Services/SpamCleanupService.php#L57)); account
+  forget, limbo and purge ([UserManagementService.php:445](../iznik-batch/app/Services/UserManagementService.php#L445),
+  :581, [user.go:3071](../iznik-server-go/user/user.go#L3071), [session.go:704](../iznik-server-go/session/session.go#L704));
+  `RemoveMembershipCommand` and `MoveMembersCommand`. All of them act on an account or are run
+  by hand, not when a post is withdrawn, so they don't conflict with "never removed
+  automatically".
+
+### Member counts, member lists and mailings (Phase 6)
+
+- **`membercount`**: `GroupMaintenanceService::updateMemberCounts`
+  ([GroupMaintenanceService.php:16](../iznik-batch/app/Services/GroupMaintenanceService.php#L16)) counts every Approved row.
+  `queryActiveMembers` ([iznik-routing-go/group_actives.go:83](../iznik-routing-go/group_actives.go#L83)) counts Approved
+  members active in 90 days. Neither excludes ripple members.
+- **Member lists**: `GetMemberships` ([membership.go:499](../iznik-server-go/membership/membership.go#L499)), and
+  `enrichMembers` (:830) for the contact flag.
+- **Mailings**: digests (`UnifiedDigestService`, selecting on `emailfrequency`), ChitChat
+  (`NewsfeedDigestService.php:86`), and events and volunteering roundups
+  (`Concerns/BuildsUserRoundups.php:87`, on `eventsallowed` / `volunteeringallowed` and
+  `emailfrequency != 0`). None of them reads `rippled`, so a TN implicit member's mail depends
+  only on the settings the shared helper copies. That is the intended "same as ripple" result.
 
 ---
 
@@ -172,13 +353,21 @@ Laravel migration plus an idempotent `_migration.sql` for production, following
 an `information_schema` check first, and columns added so that MySQL 8 can do it as an `INSTANT`
 change.
 
-- [ ] `memberships.implicit TINYINT(1) NOT NULL DEFAULT 0`
-- [ ] `memberships.added_origin ENUM(...) NOT NULL DEFAULT 'unknown'`
-- [ ] `memberships_history.added_origin ENUM(...) NOT NULL DEFAULT 'unknown'`. History records
-  creation, so it gets the origin and no `implicit`. Keep `memberships_history.rippled` until
-  Phase 7.
-- [ ] Copy existing values: `UPDATE memberships SET implicit = rippled WHERE rippled = 1`, in
-  chunks. `added_origin` stays `unknown` until Phase 4a.
+Split into two commits, at your request (2026-10-28): `implicit` first, reviewed on its own, then
+`added_origin`. Each column is added `AFTER` an existing one with `ALGORITHM=INSTANT`, so it
+refuses rather than rebuilds if INSTANT is ever unavailable.
+
+### 2a. `implicit` (first commit)
+
+[2026_10_28_000001_add_implicit_to_memberships.php](../iznik-batch/database/migrations/2026_10_28_000001_add_implicit_to_memberships.php)
+and its [`_migration.sql`](../iznik-batch/database/migrations/2026_10_28_000001_add_implicit_to_memberships_migration.sql).
+
+- [x] `memberships.implicit TINYINT(1) NOT NULL DEFAULT 0`, after `rippled`.
+- [x] Copy existing values, in chunks of 10,000 ids, as `SET implicit = rippled WHERE implicit <> rippled`.
+  - **The copy drifts until Phase 3 ships**, because ripple joins and clears write `rippled`
+    alone until then. So it syncs in both directions and can be run again: **re-run the
+    `_migration.sql` just before Phase 3 goes live.** The ALTER skips itself, and the file
+    ends by printing how many rows are out of line, which should be 0.
 - [x] **No index on `implicit`.** Decided from Q7 (production, 2026-10-27): 180,982 of
   5,158,594 memberships (3.5%) have `rippled = 1`, held by 24,530 users across 481 groups.
   - A flag that is 1 on 3.5% of rows is a poor index on its own. Every live read is already
@@ -188,9 +377,34 @@ change.
     more to start with), so it needs none either.
   - The only reads of the whole table on the flag are one-off: the Phase 2 copy and the Phase 4
     backfills. They run in chunks by `id`.
-- [ ] Update the Laravel `Membership` model (casts, constants for the enum values) and the Go
-  structs ([membership.go:488](../iznik-server-go/membership/membership.go#L488),
-  [user.go:158](../iznik-server-go/user/user.go#L158)).
+- [x] Laravel `Membership`: `implicit` cast to boolean. Go: `Implicit` on `GetMembershipsMember`
+  and `user.MembershipTable`, selected by all three member-list queries, the Banned list (`0`) and
+  `user.GetMemberships`. The API reports `implicit` from now on: **run the SQL before deploying
+  this Go API**, or the member lists fail on the missing column.
+- [x] Tests: `MembershipImplicitColumnTest` (Laravel: column, default, copy in both directions,
+  re-run); `membership_implicit_test.go` (Go: member list incl. Banned, `user.GetMemberships`).
+
+### 2b. `added_origin` (second commit, after review of 2a)
+
+- [ ] `memberships.added_origin ENUM(...) NOT NULL DEFAULT 'unknown'`, after `implicit`. The ENUM
+  values are in the `added_origin` table's order.
+- [ ] `memberships_history.added_origin ENUM(...) NOT NULL DEFAULT 'unknown'`, after `rippled`.
+  History records creation, so it gets the origin and no `implicit`. Keep
+  `memberships_history.rippled` until Phase 7.
+- [ ] `added_origin` stays `unknown` until Phase 4a.
+- [ ] Laravel: `Membership::ADDED_ORIGIN_*` and `ADDED_ORIGINS`, with a test that `ADDED_ORIGINS`
+  matches the ENUM on both tables. Go: `AddedOrigin` on the same structs and selects
+  (`'unknown'` on the Banned list).
+- [ ] `user.MembershipTable` is what `AddMembership` inserts, so its `AddedOrigin` needs
+  `gorm:"default:unknown"`: an unset field would otherwise send `''`, which the ENUM refuses in
+  strict mode. The Go test database is not strict, so a test reading the stored value back is
+  what catches it (`TestAddMembershipLeavesAddedOriginOnTheColumnDefault`, already shown red
+  without the tag).
+- [ ] `MembershipHistory` (Go) is not changed: nothing reads it, and Phase 3 adds the field when
+  it writes it.
+- The combined version of both halves passed the full Go and Laravel suites on 2026-10-28
+  (`TestSwaggerSync` aside, which fails on master too: the alert routes from `d4f05ca4be` are
+  not in swagger.json).
 
 ---
 
