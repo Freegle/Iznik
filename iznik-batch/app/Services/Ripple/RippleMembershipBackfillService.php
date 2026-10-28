@@ -3,6 +3,7 @@
 namespace App\Services\Ripple;
 
 use App\Mail\Ripple\RippleIntroMail;
+use App\Models\Membership;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
 use Illuminate\Support\Facades\DB;
@@ -55,9 +56,11 @@ class RippleMembershipBackfillService
                         ->where('l.text', 'Rippled');
                 })
                 ->where('m.userid', $uid)
-                // A membership made ordinary since its ripple join - the member joined,
-                // moved into the area or dealt with the community - stays ordinary.
-                // Flagging it again would make them uncontactable there once more.
+                // The Rippled log must be the latest Group/Joined row for the pair. A later
+                // "became ordinary" row means the member joined, moved into the area or dealt
+                // with the community, and flagging it again would make them uncontactable there
+                // once more. Any other later join means they left and joined again themselves,
+                // so the current row is not the rippled one.
                 ->whereNotExists(function ($q) {
                     $q->select(DB::raw(1))
                         ->from('logs as lc')
@@ -65,8 +68,7 @@ class RippleMembershipBackfillService
                         ->whereColumn('lc.groupid', 'm.groupid')
                         ->where('lc.type', 'Group')
                         ->where('lc.subtype', 'Joined')
-                        ->where('lc.text', 'like', RippleEngagementService::LOG_PREFIX.'%')
-                        ->whereColumn('lc.timestamp', '>=', 'l.timestamp');
+                        ->whereColumn('lc.id', '>', 'l.id');
                 })
                 ->select('m.id', 'm.emailfrequency', 'm.rippled', 'm.implicit')
                 ->distinct()
@@ -95,6 +97,8 @@ class RippleMembershipBackfillService
                     DB::table('memberships')->where('id', $mem->id)->update([
                         'rippled' => 1,
                         'implicit' => 1,
+                        // The latest join is the Rippled one, so that is how the row was made.
+                        'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
                         'emailfrequency' => $newFreq,
                     ]);
                 }

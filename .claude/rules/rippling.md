@@ -167,6 +167,11 @@ job that sets the flag from the original `Rippled` join log, as `ripple:backfill
 does, has to skip memberships with a later clear, or it silently counts those members as
 not already being members again (section 10a of the rippling doc).
 
+"A `Rippled` log exists" is not enough either. A member rippled in who left and later joined
+by hand still has that log, and the current row is the later join. Read the **latest**
+Group/Joined row for the pair, ignoring the "became ordinary" rows, as
+`memberships:backfill-origin` does.
+
 ## A held reply released to somebody who never got the post
 
 Replies held while a post spreads can be released long after, and most of them go to people the

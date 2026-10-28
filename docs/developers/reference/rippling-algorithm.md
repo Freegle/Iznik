@@ -5,6 +5,8 @@ covers:
   - iznik-batch/tests/Unit/Services/Ripple/ResumedReachTest.php
   - iznik-batch/app/Console/Commands/Ripple/**
   - iznik-batch/app/Console/Commands/Browse/**
+  - iznik-batch/app/Services/MembershipOriginBackfillService.php
+  - iznik-batch/app/Console/Commands/Membership/BackfillOriginCommand.php
   - iznik-server-go/rippling/**
   - iznik-nuxt3/composables/rippleStatus.js
   - iznik-server-go/density/**
@@ -1460,7 +1462,9 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   30 days; `ripple:clear-engaged --since=2026-06-23`, run once, checks every membership rippling
   has made without moving the scheduled run's saved positions. The clear counts
   towards the "Seen on many groups" spam check like any join. `memberships_history` keeps
-  its flag, and `ripple:backfill-memberships` leaves a cleared membership alone.
+  its flag. `ripple:backfill-memberships` flags a membership only when the `Rippled` log is the
+  latest Group/Joined row for it, so it leaves alone a cleared membership and one the member
+  left and joined again themselves.
 - `memberships.implicit` is taking over the changing half of `rippled`: 1 while the member has
   not knowingly joined, copied from `rippled` when the column was added. Every write of
   `rippled` writes `implicit` with it: a ripple join sets both, and both clears (`ClearRippledMembership`
@@ -1470,9 +1474,20 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   with the ripple-join settings below: that poster is never told. Until the readers move over, `rippled` is still the flag that
   decides anything else; the member-list API only reports `implicit`.
 - `memberships.added_origin` (also on `memberships_history`) takes over the fixed half: how the
-  row was created (`rippled` for a ripple join), set once at insert. Rows older than the column
-  read `unknown` until they are backfilled from the join logs. Nothing decides on it yet; the
-  member-list API reports it.
+  row was created (`rippled` for a ripple join), set once at insert. Nothing decides on it yet;
+  the member-list API reports it.
+- Rows older than the column read `unknown` until `memberships:backfill-origin` fills them from
+  the join logs (`MembershipOriginBackfillService`; dry run unless `--send`, and it only reads
+  and writes rows still `unknown`, so it can be stopped and run again). A membership takes its
+  latest Group/Joined log, ignoring the "became ordinary" rows, and `rippled = 1` is `rippled`
+  whatever the logs say. A history row takes the join log for its user and group nearest its
+  `added`, within a minute. A join by someone other than the member is `moderator`; one by the
+  system with no reason, or by the legacy placeholder user 0, stays `unknown`; the member's own
+  join with no reason (and `Auto`) is `posted` when a post of theirs reached the group from 5
+  minutes before to 30 after, otherwise `Auto` is `replied` and no reason stays `unknown`. It
+  prints counts by origin and by reason for `unknown`, and reports, without acting on them,
+  memberships whose flag, latest join and history disagree about rippling, and those whose latest
+  join was logged over a day after the row was added (usually carried over by a merge).
 - Every insert into either table sets `added_origin` through one helper per codebase,
   `addedorigin.ForInsert` in Go and `Membership::addedOriginForInsert` in the batch. A new row
   that would be `unknown` is still created, and reported to Sentry as an error naming the

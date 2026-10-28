@@ -136,6 +136,32 @@ class RippleMembershipBackfillServiceTest extends TestCase
             ->where('userid', $userId)->where('groupid', $groupId)->value('rippled'));
     }
 
+    public function test_a_member_who_left_and_joined_by_hand_is_not_flagged(): void
+    {
+        // Rippled in, left, and joined again themselves: the current row is the later join.
+        [$userId, $groupId] = $this->seedPreMitigationRippledMember();
+        DB::table('logs')->insert([
+            'timestamp' => now(), 'type' => 'Group', 'subtype' => 'Joined',
+            'user' => $userId, 'groupid' => $groupId, 'byuser' => $userId, 'text' => 'Manual',
+        ]);
+
+        $stats = $this->service()->backfill($userId, 0, send: true);
+
+        $this->assertSame(0, $stats['flagged']);
+        $this->assertSame(0, (int) DB::table('memberships')
+            ->where('userid', $userId)->where('groupid', $groupId)->value('rippled'));
+    }
+
+    public function test_a_flagged_membership_is_given_the_rippled_origin(): void
+    {
+        [$userId, $groupId] = $this->seedPreMitigationRippledMember();
+
+        $this->service()->backfill($userId, 0, send: true);
+
+        $this->assertSame('rippled', DB::table('memberships')
+            ->where('userid', $userId)->where('groupid', $groupId)->value('added_origin'));
+    }
+
     public function test_user_filter_restricts_scope(): void
     {
         [$userId1] = $this->seedPreMitigationRippledMember();

@@ -587,12 +587,43 @@ idempotent, safe to re-run, with counts printed at the end.
 
 ### 4a. `added_origin` from logs - `memberships:backfill-origin`
 
-- [ ] For each membership with `added_origin = 'unknown'`, take the **most recent** `Group/Joined`
+**Done 2026-10-28** (uncommitted): `memberships:backfill-origin`
+([BackfillOriginCommand.php](../iznik-batch/app/Console/Commands/Membership/BackfillOriginCommand.php),
+[MembershipOriginBackfillService.php](../iznik-batch/app/Services/MembershipOriginBackfillService.php)).
+Dry run unless `--send`; `--user`, `--chunk`. Three passes:
+- **Latest joins:** one keyset read of every Group/Joined log through `FORCE INDEX (type)`
+  (Q1's path, minutes), the latest id per pair kept in a temporary table on the write
+  connection. Plain reads, so no locks on `logs`; an `INSERT ... SELECT` would take shared locks
+  on every row it reads. Production has no `(user, groupid)` index on `logs`, and Q8 showed a
+  per-membership lookup through `logs.user` costs hours.
+- **Memberships:** chunks by id of rows still `unknown`, joined to that table and to the log by
+  primary key. `rippled = 1` → `rippled`, else the Phase 0 mapping. The post test is Q3's,
+  one `EXISTS` per ambiguous row (about 650,000). The UPDATE also requires `unknown`, so it never
+  overwrites a value the live code set.
+- **History:** chunks by id; each chunk reads the join logs in its time window (split where
+  rows are more than 10 minutes apart, so a row with an outlying date doesn't widen the read),
+  and each row takes the nearest join for its pair within 60 seconds. `rippled = 1` → `rippled`.
+
+Decisions to check:
+- Any text whose actor is another real account is `moderator`, including the one `Reinstated by
+  Geeks` row. That row isn't handled separately.
+- Merges are **reported, not handled**: a membership whose latest join was logged more than a day
+  after its `added` is listed (count plus 10 sample ids). Matching the join log to `added` instead
+  would follow Phase 3's merge rule (older row's origin), but it depends on `added` and the log
+  timestamps agreeing, which nothing has checked on production.
+- The report also lists: `rippled = 1` without a `Rippled` latest join (Q8 expects about 102),
+  a `Rippled` latest join with no rippled history row (Q4's June window), and a latest history
+  row with `rippled = 1` whose latest join isn't `Rippled`. None of these changes what is written.
+- `ripple:backfill-memberships` was rewritten, not retired: it now flags only when the `Rippled`
+  log is the latest Group/Joined row for the pair (any later join, including "became ordinary",
+  skips it), and sets `added_origin = 'rippled'` along with the flag.
+
+- [x] For each membership with `added_origin = 'unknown'`, take the **most recent** `Group/Joined`
   log for `(userid, groupid)`, ignoring `Ripple-created membership became ordinary:` rows, and
   map its text to a value as in the Phase 0 table. The latest join is the current row's
   creation, because a membership row is deleted when the member leaves. Do **not** use "any
   `Rippled` log exists": that misreads a member who was rippled in, left, and later joined by hand.
-- [ ] The `logs` table is the main source. `Group/Joined` rows are never purged, and they cover
+- [x] The `logs` table is the main source. `Group/Joined` rows are never purged, and they cover
   ripple joins from before `memberships_history.rippled` existed. Cross-check against
   `memberships_history.rippled = 1` and report the disagreements.
   - **Q4 (production, 2026-10-26):** 294 `Rippled` join logs have no matching history row with
@@ -614,10 +645,10 @@ idempotent, safe to re-run, with counts printed at the end.
   - **Lesson for Phase 3:** the membership, history and log writes aren't atomic. Write
     `added_origin` on the membership row itself, so the backfill is the last time the origin has
     to be read back from the logs.
-- [ ] Known false reads to handle or report: account merges (logs move to the surviving account,
+- [x] Known false reads to handle or report: account merges (logs move to the surviving account,
   but if both accounts were members of the group the survivor keeps its own row), and
   memberships with no join log at all (→ `unknown`).
-- [ ] **What Q2 showed** (production, 2026-10-22, 5,147,813 memberships):
+- [x] **What Q2 showed** (production, 2026-10-22, 5,147,813 memberships):
   - **36% have no join log at all** (1,869,620) and get `unknown`. Logs only go back to 2016-02.
   - **Latest join `Rippled`: 230,296.** 179,477 still have `rippled = 1`. The other 50,819 have
     been cleared, which matches the 51,139 "became ordinary" logs, less memberships deleted
@@ -651,7 +682,7 @@ idempotent, safe to re-run, with counts printed at the end.
       covers support adding a member too.
     - Most of the 629,704 current memberships will therefore be `unknown`. Q2 can't split them
       by `byuser`, but the logs suggest the large majority.
-- [ ] **What Q3 showed** (production, 2026-10-26). The test is whether a post of theirs on the
+- [x] **What Q3 showed** (production, 2026-10-26). The test is whether a post of theirs on the
   group arrived within 30 minutes of the join:
 
   | Latest join | Memberships | Post near the join | Backfill gives |
@@ -673,8 +704,8 @@ idempotent, safe to re-run, with counts printed at the end.
     classified.
   - One rule covers all three rows: a post within the window means `posted`. Otherwise `Auto`
     becomes `replied`, and NULL text becomes `unknown`.
-- [ ] Fill `memberships_history.added_origin` too, where the row can be matched.
-- [ ] Rewrite or retire `ripple:backfill-memberships`
+- [x] Fill `memberships_history.added_origin` too, where the row can be matched.
+- [x] Rewrite or retire `ripple:backfill-memberships`
   ([RippleMembershipBackfillService.php](../iznik-batch/app/Services/Ripple/RippleMembershipBackfillService.php)).
   It uses "any `Rippled` log", which is the misread above.
 
