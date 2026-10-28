@@ -1465,6 +1465,10 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   not knowingly joined, copied from `rippled` when the column was added. Until the readers move
   over, `rippled` is still the flag that decides anything; the member-list API only reports
   `implicit`.
+- `memberships.added_origin` (also on `memberships_history`) takes over the fixed half: how the
+  row was created (`rippled` for a ripple join), set once at insert. Rows older than the column
+  read `unknown` until they are backfilled from the join logs. Nothing decides on it yet; the
+  member-list API reports it.
 - A community a post rippled into may write to the poster about it once the poster is an
   ordinary member there (`PosterMessagingGroups`). Whether an action turns the post away,
   which stops it rippling back, still goes by `HomeGroups`.

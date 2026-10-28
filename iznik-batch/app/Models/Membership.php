@@ -24,6 +24,7 @@ use OwenIt\Auditing\Contracts\Auditable;
  * @property int $volunteeringallowed
  * @property string|null $ourPostingStatus For Yahoo groups, NULL; for ours, the posting status
  * @property bool $implicit The member has not knowingly joined this community
+ * @property string $added_origin How the row was created; one of ADDED_ORIGINS
  * @property \Illuminate\Support\Carbon|null $reviewrequestedat
  * @property string|null $reviewreason
  * @property \Illuminate\Support\Carbon|null $reviewedat
@@ -89,6 +90,33 @@ class Membership extends Model implements Auditable
     public const EMAIL_DIGEST_IMMEDIATE = self::EMAIL_FREQUENCY_IMMEDIATE;
     public const EMAIL_DIGEST_HOURLY = self::EMAIL_FREQUENCY_HOURLY;
     public const EMAIL_DIGEST_DAILY = self::EMAIL_FREQUENCY_DAILY;
+
+    // How the membership row was created (memberships.added_origin and
+    // memberships_history.added_origin). Set once, at insert.
+    public const ADDED_ORIGIN_MANUAL = 'manual';
+    public const ADDED_ORIGIN_POSTED = 'posted';
+    public const ADDED_ORIGIN_REPLIED = 'replied';
+    public const ADDED_ORIGIN_SUBSCRIBED = 'subscribed';
+    public const ADDED_ORIGIN_RIPPLED = 'rippled';
+    public const ADDED_ORIGIN_MODERATOR = 'moderator';
+    public const ADDED_ORIGIN_PARTNER = 'partner';
+    public const ADDED_ORIGIN_TN_UNADDRESSED = 'tn_unaddressed';
+    public const ADDED_ORIGIN_SIGNUP = 'signup';
+    public const ADDED_ORIGIN_UNKNOWN = 'unknown';
+
+    // In the ENUM's order; MembershipAddedOriginColumnTest holds the two together.
+    public const ADDED_ORIGINS = [
+        self::ADDED_ORIGIN_MANUAL,
+        self::ADDED_ORIGIN_POSTED,
+        self::ADDED_ORIGIN_REPLIED,
+        self::ADDED_ORIGIN_SUBSCRIBED,
+        self::ADDED_ORIGIN_RIPPLED,
+        self::ADDED_ORIGIN_MODERATOR,
+        self::ADDED_ORIGIN_PARTNER,
+        self::ADDED_ORIGIN_TN_UNADDRESSED,
+        self::ADDED_ORIGIN_SIGNUP,
+        self::ADDED_ORIGIN_UNKNOWN,
+    ];
 
     /**
      * The posting status this member has been given on each of $groupIds, keyed by group id

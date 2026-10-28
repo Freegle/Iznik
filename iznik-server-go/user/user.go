@@ -159,7 +159,11 @@ type MembershipTable struct {
 	Role                string    `json:"role"`
 	Rippled             int       `json:"rippled"`  // 1 = rippling auto-joined the poster; nobody chose this membership
 	Implicit            int       `json:"implicit"` // 1 = the member has not knowingly joined; replaces Rippled
-	OurPostingStatus    *string   `json:"ourpostingstatus,omitempty" gorm:"column:ourPostingStatus"`
+	// How the row was created (memberships.added_origin). The default tag keeps an insert
+	// that leaves it unset on the column default: an empty string is not a value the ENUM
+	// accepts, so sending one would refuse the join.
+	AddedOrigin      string  `json:"added_origin" gorm:"column:added_origin;default:unknown"`
+	OurPostingStatus *string `json:"ourpostingstatus,omitempty" gorm:"column:ourPostingStatus"`
 }
 
 // This is the membership we return to the client.  It includes some information not stored in the DB.
@@ -445,7 +449,7 @@ func GetMemberships(id uint64) []Membership {
 
 	var memberships []Membership
 	db.Table("memberships").
-		Select("memberships.id, added, role, groupid, emailfrequency, eventsallowed, volunteeringallowed, ourPostingStatus, memberships.rippled, memberships.implicit, microvolunteering AS microvolunteeringallowed, nameshort, namefull, groups.type, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
+		Select("memberships.id, added, role, groupid, emailfrequency, eventsallowed, volunteeringallowed, ourPostingStatus, memberships.rippled, memberships.implicit, memberships.added_origin, microvolunteering AS microvolunteeringallowed, nameshort, namefull, groups.type, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
 		Joins("INNER JOIN `groups` ON groups.id = memberships.groupid").
 		Where("userid = ? AND collection = ?", id, "Approved").
 		Scan(&memberships)

@@ -384,27 +384,29 @@ and its [`_migration.sql`](../iznik-batch/database/migrations/2026_10_28_000001_
 - [x] Tests: `MembershipImplicitColumnTest` (Laravel: column, default, copy in both directions,
   re-run); `membership_implicit_test.go` (Go: member list incl. Banned, `user.GetMemberships`).
 
-### 2b. `added_origin` (second commit, after review of 2a)
+### 2b. `added_origin` (second commit)
 
-- [ ] `memberships.added_origin ENUM(...) NOT NULL DEFAULT 'unknown'`, after `implicit`. The ENUM
+[2026_10_28_000002_add_added_origin_to_memberships.php](../iznik-batch/database/migrations/2026_10_28_000002_add_added_origin_to_memberships.php)
+and its [`_migration.sql`](../iznik-batch/database/migrations/2026_10_28_000002_add_added_origin_to_memberships_migration.sql),
+run after 2a's SQL (the column goes after `implicit`).
+
+- [x] `memberships.added_origin ENUM(...) NOT NULL DEFAULT 'unknown'`, after `implicit`. The ENUM
   values are in the `added_origin` table's order.
-- [ ] `memberships_history.added_origin ENUM(...) NOT NULL DEFAULT 'unknown'`, after `rippled`.
+- [x] `memberships_history.added_origin ENUM(...) NOT NULL DEFAULT 'unknown'`, after `rippled`.
   History records creation, so it gets the origin and no `implicit`. Keep
   `memberships_history.rippled` until Phase 7.
-- [ ] `added_origin` stays `unknown` until Phase 4a.
-- [ ] Laravel: `Membership::ADDED_ORIGIN_*` and `ADDED_ORIGINS`, with a test that `ADDED_ORIGINS`
-  matches the ENUM on both tables. Go: `AddedOrigin` on the same structs and selects
-  (`'unknown'` on the Banned list).
-- [ ] `user.MembershipTable` is what `AddMembership` inserts, so its `AddedOrigin` needs
+- [x] `added_origin` stays `unknown` until Phase 4a. There is no copy step.
+- [x] Laravel: `Membership::ADDED_ORIGIN_*` and `ADDED_ORIGINS`. `MembershipAddedOriginColumnTest`
+  checks that `ADDED_ORIGINS` matches the ENUM on both tables. Go: `AddedOrigin` on the same structs
+  and selects as `implicit` (`'unknown'` on the Banned list). **Run the SQL before deploying this Go
+  API**, or the member lists fail on the missing column.
+- [x] `user.MembershipTable` is what `AddMembership` inserts, so its `AddedOrigin` has
   `gorm:"default:unknown"`: an unset field would otherwise send `''`, which the ENUM refuses in
   strict mode. The Go test database is not strict, so a test reading the stored value back is
-  what catches it (`TestAddMembershipLeavesAddedOriginOnTheColumnDefault`, already shown red
-  without the tag).
-- [ ] `MembershipHistory` (Go) is not changed: nothing reads it, and Phase 3 adds the field when
+  what catches it (`TestAddMembershipLeavesAddedOriginOnTheColumnDefault`, shown red without the
+  tag).
+- [x] `MembershipHistory` (Go) is not changed: nothing reads it, and Phase 3 adds the field when
   it writes it.
-- The combined version of both halves passed the full Go and Laravel suites on 2026-10-28
-  (`TestSwaggerSync` aside, which fails on master too: the alert routes from `d4f05ca4be` are
-  not in swagger.json).
 
 ---
 
