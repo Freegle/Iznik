@@ -80,7 +80,9 @@ describe('spammers.vue page', () => {
             template: '<div class="searchbox-stub" />',
             emits: ['search'],
           },
-          ModMember: { template: '<div class="member-stub" />' },
+          ModMember: {
+            template: '<div class="member-stub"><slot name="select" /></div>',
+          },
           ModBulkSelectBar: {
             template:
               '<div class="bulk-bar-stub" :data-count="count"><slot /></div>',
@@ -330,10 +332,20 @@ describe('spammers.vue page', () => {
       return wrapper
     }
 
-    it('shows the bar with a Confirm button on Pending Add for a Spam admin', async () => {
+    it('shows the bar on Pending Add, with Confirm only once something is selected', async () => {
       const wrapper = await mountPending(pending(2))
       expect(wrapper.find('.bulk-bar-stub').exists()).toBe(true)
+      expect(wrapper.find('[data-test="bulk-confirm"]').exists()).toBe(false)
+      wrapper.vm.bulk.selectAll([1])
+      await wrapper.vm.$nextTick()
       expect(wrapper.find('[data-test="bulk-confirm"]').exists()).toBe(true)
+    })
+
+    it('puts each selection checkbox inside its member card', async () => {
+      const wrapper = await mountPending(pending(2))
+      const cards = wrapper.findAll('.member-stub')
+      expect(cards).toHaveLength(2)
+      expect(cards[0].find('[data-test="bulk-check-1"]').exists()).toBe(true)
     })
 
     it('hides the Confirm button on the confirmed list but keeps the bar for copying', async () => {
@@ -343,6 +355,7 @@ describe('spammers.vue page', () => {
       const wrapper = mountComponent()
       wrapper.vm.tabIndex = 0
       wrapper.vm.show = 2
+      wrapper.vm.bulk.selectAll([1])
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.bulk-bar-stub').exists()).toBe(true)
       expect(wrapper.find('[data-test="bulk-confirm"]').exists()).toBe(false)

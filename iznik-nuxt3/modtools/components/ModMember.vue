@@ -2,7 +2,8 @@
   <div v-if="member" class="member-card">
     <b-card bg-variant="white" no-body>
       <b-card-header class="d-flex justify-content-between flex-wrap">
-        <div>
+        <div class="d-flex align-items-center">
+          <slot name="select" />
           <div v-if="isLJ">LoveJunk user #{{ user.ljuserid }}</div>
           <div v-else-if="email">
             <!-- eslint-disable-next-line -->
