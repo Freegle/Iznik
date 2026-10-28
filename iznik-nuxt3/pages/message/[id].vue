@@ -132,8 +132,10 @@ import {
   useRuntimeConfig,
   useRoute,
   setResponseStatus,
+  useResponseHeader,
 } from '#imports'
 import { useMessageStore } from '~/stores/message'
+import { APIError } from '~/api/APIErrors'
 import { useAuthStore } from '~/stores/auth'
 import { useFavoritePage } from '~/composables/useFavoritePage'
 import { twem } from '~/composables/useTwem'
@@ -178,16 +180,21 @@ const myid = computed(() => authStore.user?.id)
 
 let ret = null
 
+/* We could not reach the API, as opposed to the post not existing. That must not answer
+410: a crawler would drop a live post from its index, and the 410 would sit in the ISR cache. */
+let unavailable = false
+
 try {
   ret = await messageStore.fetch(id)
 } catch (e) {
-  // Likely to be because the message doesn't exist.
   console.log('Message fetch failed', e)
   failed.value = true
+  unavailable = !(e instanceof APIError && e.response?.status === 404)
 }
 
 if (!ret) {
   failed.value = true
+  unavailable = unavailable || Boolean(messageStore.fetchFailed?.[id])
 }
 
 const message = computed(() => {
@@ -204,6 +211,10 @@ const gone = computed(() => {
     return false
   }
 
+  if (unavailable && !message.value) {
+    return false
+  }
+
   if (failed.value || !message.value) {
     return true
   }
@@ -217,7 +228,14 @@ const gone = computed(() => {
   )
 })
 
-if (gone.value) {
+if (unavailable && !message.value) {
+  /* Ask crawlers to come back rather than drop the post, and keep this answer out of the
+  ISR cache. The client fetches again on mount, so a member still sees the post. */
+  setResponseStatus(503)
+  useResponseHeader('Retry-After').value = '300'
+  useResponseHeader('Cache-Control').value = 'no-store'
+  useResponseHeader('Netlify-CDN-Cache-Control').value = 'no-store'
+} else if (gone.value) {
   /* 410 rather than 404: these are posts that genuinely existed and are deliberately
   and permanently finished, which is exactly what Gone means. No-op on the client. */
   setResponseStatus(410)

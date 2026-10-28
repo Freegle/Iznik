@@ -11,9 +11,9 @@ use Illuminate\Support\Facades\Log;
  * Server code's view of an experiment: which arm a member is in, and a record that the arm was used.
  * docs/developers/reference/ux-experiments.md, "Experiments in mail, push and the server".
  *
- *   $arm = UxArm::for($userId, 'digest-subject');                       // 'control', 'items', ... or ''
+ *   $arm = UxArm::for($userId, 'my-experiment');                       // 'control', 'items', ... or ''
  *   $subject = UxArm::pick($arm, ['control' => $a, 'items' => $b]);     // look the arm up BEFORE the content is built
- *   UxArm::expose($userId, 'digest-subject', $arm, 'email', $trackingId);  // after the row the decision is about exists
+ *   UxArm::expose($userId, 'my-experiment', $arm, 'email', $trackingId);  // after the row the decision is about exists
  *
  * The arm is a pure function of the member's id and the weights the engine publishes in the
  * `ux_experiments` config row (ExperimentBucket::armIn, the function the browser and the Go API also
@@ -64,29 +64,58 @@ final class UxArm
      */
     public static function for(int $userId, string $name): string
     {
-        if ($userId <= 0 || ! self::listed($name)) {
+        if ($userId <= 0) {
             return '';
+        }
+
+        $entry = self::servingEntry($name);
+        if ($entry === null) {
+            return '';
+        }
+
+        return ExperimentBucket::armIn($userId, $name, $entry['arms'], $entry['salt']) ?? '';
+    }
+
+    /**
+     * Whether any member can get an arm other than '' for the experiment now. A sender whose only
+     * work is for the experiment asks this first, so it does nothing while the experiment is not live.
+     */
+    public static function serving(string $name): bool
+    {
+        return self::servingEntry($name) !== null;
+    }
+
+    /**
+     * The experiment's entry when it is serving arms: listed in this code, the kill switch on, and an
+     * entry that is adopted or whose until is ahead by no more than MAX_AHEAD_SECONDS.
+     *
+     * @return array{arms: array<string, array{0: int, 1: int}>, until: ?float, adopted: bool, salt: string}|null
+     */
+    private static function servingEntry(string $name): ?array
+    {
+        if (! self::listed($name)) {
+            return null;
         }
 
         $state = self::state();
         if (! $state['on']) {
-            return '';
+            return null;
         }
 
         $entry = $state['entries'][$name] ?? null;
         if ($entry === null) {
-            return '';
+            return null;
         }
 
         if (! $entry['adopted']) {
             $now = Carbon::now()->getTimestamp();
             $until = $entry['until'];
             if ($until === null || $until <= $now || $until > $now + self::MAX_AHEAD_SECONDS) {
-                return '';
+                return null;
             }
         }
 
-        return ExperimentBucket::armIn($userId, $name, $entry['arms'], $entry['salt']) ?? '';
+        return $entry;
     }
 
     /**

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Database\Expressions\Comparison;
 use App\Database\Expressions\Length;
+use App\Models\UserAddress;
 use App\Models\UxExperimentExposure;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -134,6 +135,7 @@ class UserDataExportService
         $data['stories'] = $this->getStories($userId);
         $data['question_answers'] = $this->getQuestionAnswers($userId);
         $data['exports'] = $this->getExportHistory($userId);
+        $data['interested'] = $this->getInterested($userId);
         $data['experiments'] = $this->getExperiments($userId);
         $data['logs'] = $this->getLogs($userId);
 
@@ -380,11 +382,17 @@ class UserDataExportService
 
     private function getAddresses(int $userId): array
     {
-        return DB::table('users_addresses')
-            ->where('userid', $userId)
-            ->select('id', 'pafid', 'lat', 'lng')
-            ->get()
-            ->map(fn($e) => (array) $e)
+        // The address as text, not just its PAF id, so the member can read it.
+        return UserAddress::where('userid', $userId)
+            ->get(['id', 'pafid', 'lat', 'lng'])
+            ->map(fn($a) => [
+                'id' => $a->id,
+                'pafid' => $a->pafid,
+                'lat' => $a->lat,
+                'lng' => $a->lng,
+                'singleline' => $a->getSingleLine(),
+                'multiline' => $a->getMultiLine(),
+            ])
             ->toArray();
     }
 
@@ -667,6 +675,21 @@ class UserDataExportService
             'stories' => $stories,
             'likes' => $likes,
         ];
+    }
+
+    /**
+     * The posts the member marked "I'm interested" in: the post, when they marked it and when the reminder email
+     * named it, if it has.
+     */
+    private function getInterested(int $userId): array
+    {
+        return DB::table('messages_interested')
+            ->where('userid', $userId)
+            ->select('msgid', 'added', 'chasedat')
+            ->orderBy('id', 'asc')
+            ->get()
+            ->map(fn($i) => (array) $i)
+            ->toArray();
     }
 
     /**

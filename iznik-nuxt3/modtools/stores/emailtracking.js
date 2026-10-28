@@ -83,6 +83,8 @@ export const useEmailTrackingStore = defineStore('emailtracking', {
     digestPositions: [],
     digestPositionsLoading: false,
     digestPositionsError: null,
+    // Days in the range the nightly summary has not reached yet (absent on an older API).
+    digestPositionsMissingDays: 0,
 
     // Reengagement effectiveness: send/open/click/reengage funnel, plus
     // breakdowns by stage, experiment arm, and post segment.
@@ -110,6 +112,7 @@ export const useEmailTrackingStore = defineStore('emailtracking', {
       this.aggregateClickedLinks = true
       this.digestPositions = []
       this.digestPositionsError = null
+      this.digestPositionsMissingDays = 0
       this.reengageStats = null
       this.reengageError = null
       this.userEmails = []
@@ -257,6 +260,7 @@ export const useEmailTrackingStore = defineStore('emailtracking', {
           this.config
         ).emailtracking.fetchDigestPositions(params)
         this.digestPositions = response.data || []
+        this.digestPositionsMissingDays = response.missing_days || 0
       } catch (e) {
         this.digestPositionsError =
           e.message || 'Failed to fetch digest position stats'

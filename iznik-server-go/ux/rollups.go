@@ -2,6 +2,8 @@ package ux
 
 import (
 	"sort"
+
+	"github.com/freegle/iznik-server-go/database"
 )
 
 // ---- funnels ----
@@ -36,6 +38,21 @@ type FunnelStep struct {
 	DwellP50Ms         *int64         `json:"dwell_p50_ms"`
 	DwellP90Ms         *int64         `json:"dwell_p90_ms"`
 	By                 *StepBreakdown `json:"by,omitempty"`
+	// Reached, BackedThen and HelpThen count separate visits, and how many of them went on to finish
+	// the flow. Reached is every visit that entered the step, the base the others are compared with.
+	// They are absent for a period the signal rollup has not covered, and BackedThen or HelpThen are
+	// absent when nobody showed that signal at the step.
+	Reached    *Then `json:"reached,omitempty"`
+	BackedThen *Then `json:"backed_then,omitempty"`
+	HelpThen   *Then `json:"help_then,omitempty"`
+}
+
+// Then is a count of separate visits and how many of them finished the flow. A visit that went back
+// three times is one. It comes from ux_flow_signal_daily, which joins each visit to its own end;
+// the event counts elsewhere cannot.
+type Then struct {
+	People   int64 `json:"people"`
+	Finished int64 `json:"finished"`
 }
 
 type FunnelFlow struct {
@@ -198,6 +215,18 @@ var Funnels = serve("funnels", func(r request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	signals, err := signalCounts(r.cur, r.scope())
+	if err != nil {
+		return nil, err
+	}
+	for fi := range cur {
+		for si := range cur[fi].Steps {
+			s := &cur[fi].Steps[si]
+			s.Reached = signals.get(cur[fi].Flow, s.Step, "", signalReached)
+			s.BackedThen = signals.get(cur[fi].Flow, s.Step, "", signalBacked)
+			s.HelpThen = signals.get(cur[fi].Flow, s.Step, "", signalHelp)
+		}
+	}
 	return FunnelsResponse{
 		Start: r.cur.startStr(), End: r.cur.endStr(), Flows: cur,
 		Previous: FlowsPeriod{Start: r.prev.startStr(), End: r.prev.endStr(), Flows: prev},
@@ -268,6 +297,10 @@ type FieldRow struct {
 	Revisits           int64  `json:"revisits" gorm:"column:revisits"`
 	ValidationFailures int64  `json:"validation_failures" gorm:"column:validation_failures"`
 	ChoiceSwitches     int64  `json:"choice_switches" gorm:"column:choice_switches"`
+	// Reached is every visit that entered this field's step. Then is the visits that revisited,
+	// failed validation on or switched this field, and how many of them finished the flow. See Then.
+	Reached *Then `json:"reached,omitempty" gorm:"-"`
+	Then    *Then `json:"then,omitempty" gorm:"-"`
 }
 
 type FieldsPeriod struct {
@@ -304,11 +337,80 @@ var Fields = serve("fields", func(r request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Signed in is not honoured by the field figures, so it is not applied to these either.
+	sc := r.scope()
+	sc.filter.signedIn = ""
+	signals, err := signalCounts(r.cur, sc)
+	if err != nil {
+		return nil, err
+	}
+	for i := range cur {
+		f := &cur[i]
+		f.Reached = signals.get(f.Flow, f.Step, "", signalReached)
+		f.Then = signals.get(f.Flow, f.Step, f.Field, signalField)
+	}
 	return FieldsResponse{
 		Start: r.cur.startStr(), End: r.cur.endStr(), Fields: cur, Previous: FieldsPeriod{Fields: prev},
 		Applied: r.filter.applied("ux_field_daily"),
 	}, nil
 })
+
+// ---- second thoughts followed to the end of the visit ----
+
+// The signal column of ux_flow_signal_daily. The rollup writes them (UxRollupService::collectSignals).
+const (
+	signalReached = "reached"
+	signalBacked  = "backed"
+	signalHelp    = "help"
+	signalField   = "field"
+)
+
+const signalTable = "ux_flow_signal_daily"
+
+// signals holds the summed rows of the signal table for one period, keyed by flow, step, field
+// (empty except for signalField) and signal.
+type signals map[string]Then
+
+func signalKey(flow, step, field, signal string) string {
+	return flow + "\x00" + step + "\x00" + field + "\x00" + signal
+}
+
+// get returns nil when nobody showed the signal there, so the JSON leaves it out.
+func (s signals) get(flow, step, field, signal string) *Then {
+	t, ok := s[signalKey(flow, step, field, signal)]
+	if !ok {
+		return nil
+	}
+	return &t
+}
+
+// signalCounts reads the signal table for the period. The table is new, so before its migration has
+// been run it does not exist; that is no fault, and the answer simply has no such figures.
+func signalCounts(p period, s scope) (signals, error) {
+	out := signals{}
+	if !database.DBConn.Migrator().HasTable(signalTable) {
+		return out, nil
+	}
+	type row struct {
+		Flow     string `gorm:"column:flow"`
+		Step     string `gorm:"column:step"`
+		Field    string `gorm:"column:field"`
+		Signal   string `gorm:"column:signal"`
+		People   int64  `gorm:"column:people"`
+		Finished int64  `gorm:"column:finished"`
+	}
+	var rows []row
+	err := rangeQuery(signalTable, p, s).
+		Select("flow, step, field, `signal`, CAST(SUM(people) AS SIGNED) AS people, CAST(SUM(finished) AS SIGNED) AS finished").
+		Group("flow, step, field, `signal`").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out[signalKey(r.Flow, r.Step, r.Field, r.Signal)] = Then{People: r.People, Finished: r.Finished}
+	}
+	return out, nil
+}
 
 // ---- friction ----
 

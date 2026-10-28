@@ -35,13 +35,13 @@
                      already know where it is; it goes in the meta line
                      instead of eating the title. -->
                 <span class="title-subject">{{ subjectItemName }}</span>
-                <b-badge
-                  v-if="message.availablenow > 1"
-                  variant="info"
-                  class="title-count"
-                >
-                  {{ message.availablenow }} available
-                </b-badge>
+                <MessageAvailability
+                  :availablenow="message.availablenow"
+                  :partgone="message.partgone"
+                  :availableinitially="message.availableinitially"
+                  :bulkcount="message.bulkcount"
+                  badge-class="title-count"
+                />
               </div>
               <div class="photo-actions">
                 <button class="photo-action-btn" @click.stop="share">
@@ -176,6 +176,7 @@
                         >{{ strippedSubject }}
                         <MessageAvailability
                           :availablenow="message.availablenow"
+                          :partgone="message.partgone"
                           :availableinitially="message.availableinitially"
                           :bulkcount="message.bulkcount"
                           badge-class="ms-1"
@@ -247,6 +248,7 @@
                       >{{ strippedSubject }}
                       <MessageAvailability
                         :availablenow="message.availablenow"
+                        :partgone="message.partgone"
                         :availableinitially="message.availableinitially"
                         :bulkcount="message.bulkcount"
                         badge-class="ms-1"

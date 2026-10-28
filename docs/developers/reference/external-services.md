@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-20
+last_reviewed: 2026-10-26
 owner: Freegle dev team
 covers:
   - .env.example
@@ -51,12 +51,13 @@ Visible, annoying, not fatal.
 | **Google Maps / Places** | Address and place lookup in parts of the frontend |
 | **Google Cloud Vision** | Checks uploaded photos for unsuitable images |
 | **Google Perspective** | Scores text for abuse, feeding moderation |
-| **Google Gemini** | The AI features (support helper, classification experiments) |
+| **Google Gemini** | The AI features (support helper, classification experiments), and the cleaned item of each post that AI item pictures, matched posts and search use (`message-items.md`) |
 | **Firebase Cloud Messaging** | Push notifications to the apps (`GOOGLE_PUSH_KEY`) |
 | **MaxMind** | Two free GeoLite2 databases, read from files so a lookup never calls out. **GeoLite2-Country** turns an IP address into a country, used in anti-abuse and by the email job page (the Go API embeds a copy, and iznik-batch carries its own). **GeoLite2-ASN** names the network an address belongs to, and the Go API embeds it too: with the country it decides whether the email job page opens the advert at once ([ads.md](ads.md)). An embedded copy is only as new as the committed file (Country built 13 Oct 2026, ASN 15 Oct 2026), and rebuilding does not refresh it. `scripts/geoip-update.sh` refreshes a system copy (`GEOIP_EDITION=GeoLite2-ASN` for the network database), and `GEOIP_MMDB_PATH` and `GEOIP_ASN_MMDB_PATH` point the Go API at it without a rebuild. This product includes GeoLite Data created by MaxMind, available from https://www.maxmind.com. |
 | **Playwire** | Advert delivery ([ads.md](ads.md)) |
 | **WhatJobs** | The job listings that fill some advert slots ([ads.md](ads.md)) |
 | **CookieYes** | The cookie consent banner, checked weekly by `cookieyes:check` ([cookieyes-watchdog.md](cookieyes-watchdog.md)) |
+| **Google Search Console and Ads** | Checked weekly by `google:search-console-check` and `google:ads-check` ([google-housekeeping.md](google-housekeeping.md)) |
 | **Google Tag Manager** | Analytics tags, only when `GTM_ID` is set |
 | **Trustpilot** | Review link |
 

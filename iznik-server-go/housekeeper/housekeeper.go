@@ -406,6 +406,7 @@ var cronJobs = []CronJob{
 	// (8h) tolerates that + a slow cold sync without false "overdue". Real failures
 	// are caught by the batch-side 24h outcome monitor (ScheduledOutcomeRegistry).
 	{Command: "integrations:sync-whatjobs", Name: "WhatJobs Sync", Description: "Imports WhatJobs XML job feeds, geocodes locations, filters spam, scores clickability", Schedule: "Every 3h, 8am–10pm", IntervalMinutes: 480, Category: "Data", Active: true},
+	{Command: "integrations:check-whatjobs-freshness", Name: "WhatJobs Feed Freshness", Description: "Fails when the newest job from WhatJobs is more than 48 hours old: the feed has stopped updating, or the sync has stopped. Turns this tab red, so a stale feed is noticed within two days rather than when every job looks old", Schedule: "Hourly", IntervalMinutes: 60, Category: "Data", Active: true},
 	{Command: "integrations:sync-restartproject", Name: "Restart Project Sync", Description: "Imports upcoming Restart Project repair café events into community events", Schedule: "Daily at 11pm", IntervalMinutes: 1440, Category: "Data", Active: true},
 	{Command: "integrations:sync-repaircafewales", Name: "Repair Cafe Wales Sync", Description: "Imports upcoming Repair Cafe Wales iCal events into community events", Schedule: "Daily at 11pm", IntervalMinutes: 1440, Category: "Data", Active: true},
 
@@ -459,6 +460,7 @@ var cronJobs = []CronJob{
 	{Command: "stories:newsletter", Name: "Stories Newsletter", Description: "Monthly member-stories newsletter", Schedule: "Monthly (12th 11pm)", IntervalMinutes: 43200, Category: "Email — Engagement", Active: true},
 
 	// Donations / data / groups
+	{Command: "donations:lapse-optouts", Name: "Donation Opt-out Lapse", Description: "Dates undated \"don't ask me to donate\" opt-outs a year ahead and switches off the ones that have lapsed", Schedule: "Daily at 3:15am", IntervalMinutes: 1440, Category: "Data", Active: true},
 	{Command: "donations:correct-userids", Name: "Donation Userid Reconcile", Description: "Re-links unmatched/stranded donations to live accounts (safety net)", Schedule: "Weekly (Tue 2:20am)", IntervalMinutes: 10080, Category: "Data", Active: true},
 	{Command: "stats:generate-daily", Name: "Daily Stats", Description: "Generates per-group daily stats", Schedule: "Daily at 2:30am", IntervalMinutes: 1440, Category: "Data", Active: true},
 	{Command: "volunteering:maintain", Name: "Volunteering Maintenance", Description: "Maintains volunteering opportunities (expiry/renewal upkeep)", Schedule: "Daily at 10pm", IntervalMinutes: 1440, Category: "Data", Active: true},

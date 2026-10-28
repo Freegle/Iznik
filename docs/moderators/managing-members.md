@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-21
+last_reviewed: 2026-10-26
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -7,6 +7,9 @@ covers:
   - iznik-nuxt3/modtools/layouts/default.vue
   - iznik-nuxt3/modtools/pages/spammers.vue
   - iznik-nuxt3/modtools/components/ModMember*.vue
+  - iznik-nuxt3/modtools/components/ModBulk*.vue
+  - iznik-nuxt3/modtools/composables/useBulkSelect.js
+  - iznik-nuxt3/modtools/stores/spammer.js
   - iznik-nuxt3/modtools/components/ModRelatedMember.vue
   - iznik-nuxt3/modtools/components/ModSupportUser.vue
   - iznik-batch/app/Services/ChatProcessService.php
@@ -32,6 +35,9 @@ From here you can:
 
 - **Filter** by type (with notes, moderators, bouncing email, banned, mod-mails) and
   **search** by name, email or id.
+- **Order** the list **Newest first** (the default) or **Oldest first**, by when each person
+  joined. The order works with any filter and with a search. A member who left and joined
+  again keeps their place from when they first joined.
 - **Add** a member by email (this sends the standard welcome).
 - **Ban** a member by id, with a reason.
 - **Merge** two accounts that are the same person (irreversible; you choose which email
@@ -58,7 +64,8 @@ so ask them when you need to see an account that is outside your own communities
 
 If a freegler who has donated asks us to stop asking them for money, Support can turn off
 **Donation requests** on their account in Support Tools. That stops every donation ask, on the
-site and by email. The freegler can also do it themselves in Settings.
+site and by email, for a year; Support Tools shows the date it ends. The freegler can also do it
+themselves in Settings.
 
 You can type the member's number with or without a `#` in front of it. Both work.
 
@@ -134,6 +141,30 @@ safelisting and removals. You can add a member to the list, safelist someone wro
 flagged, or request a removal.
 
 Reporting a genuine spammer helps every community, not just yours.
+
+### Dealing with many at once
+
+A spammer often creates dozens of accounts with the same name and different email
+addresses. Both the spammer list and the members list have a bar above the rows for
+dealing with up to fifty of them in one go:
+
+- Tick the members you want, or **Select all shown**. The count shows how many you have.
+- On **Pending Add**, with Spam admin, **Confirm add to spammer list** confirms every
+  ticked report. A report somebody else is holding cannot be ticked there; release it
+  first. If one cannot be confirmed, the notice afterwards says which and why, and the
+  rest still go through.
+- On the members list, **Report N as spammers** asks for one reason and reports every
+  ticked person to the Spam team, Spam admins included: they then confirm the reports in
+  one go on Pending Add. Anyone already reported, already on the list or safelisted is left
+  as they are, and the notice afterwards says how many. Ticking a person who is on several
+  of your communities ticks them once, and the cards show the report straight away.
+- On the spammer list, **Copy list** puts the ticked members on the clipboard as plain
+  text, one per line with the fields separated by tabs: id, name, email, reason, date added
+  and who reported them, always in that order. With nothing ticked it copies everything
+  shown. It pastes into a spreadsheet as columns and into a document as readable lines,
+  with none of the page's other text. A name that starts with a sign a spreadsheet would
+  treat as a formula is prefixed so it stays text. There is no Copy on the members list:
+  moderators do not take member lists away.
 
 ## Chat review
 
@@ -251,14 +282,12 @@ still waiting on a second moderator, can write to volunteers as normal, so they 
 their case before the decision is made.
 
 Some members are on your list only because a post of theirs **rippled in**: rippling
-joins the poster so the post can live on your community. That is not a relationship with
-you, so such a member has no **Chat** or **Mail** button and no standard messages that
-only write to them, and the removal standard message shows a plain confirmation instead of a compose
-box. You can still remove or ban them, and it is logged as usual - quietly, since they
-never joined you. The membership becomes an ordinary one once they have something to do
-with your community: they join it, move into your area, post on it, reply to one of its
-posts, or write back to one of your members about their rippled post. See
-[rippling out](rippling-out.md).
+joins the poster so the post can live on your community. You can contact them from the
+member list like anyone else, with **Chat**, **Mail** and the member standard messages.
+Replies about the rippled post itself stay with the community they posted it on. The
+membership becomes an ordinary one once they have something to do with your community:
+they join it, move into your area, post on it, reply to one of its posts, or write back to
+one of your members about their rippled post. See [rippling out](rippling-out.md).
 
 ## Feedback and micro-volunteering
 

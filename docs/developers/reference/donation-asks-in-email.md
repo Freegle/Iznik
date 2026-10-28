@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-21
+last_reviewed: 2026-10-23
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/DonateLinkService.php
@@ -89,7 +89,7 @@ the click.
 
 ## Donors who asked not to be asked
 
-A donor can turn donation requests off (`users.settings.nodonationasks`, see
+A donor can turn donation requests off for a year (`users.settings.nodonationasks`, see
 [Donations and Gift Aid](donations-and-gift-aid.md#donors-who-ask-not-to-be-asked)). Each mail
 class sets `donateUrl` to null for that member, and the templates leave out every donate
 element when it is null, the payment-mark strip included. With jobs showing, the "More jobs"

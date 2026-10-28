@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-16
+last_reviewed: 2026-10-23
 owner: Freegle dev team
 covers:
   - iznik-server-go/emailtracking/journal.go
@@ -11,6 +11,12 @@ covers:
   - iznik-batch/app/Services/Mail/DeliveryHealthService.php
   - iznik-batch/tests/Feature/Mail/EmailTrackingFoldTest.php
   - iznik-batch/database/migrations/2026_10_08_000001_create_email_tracking_journal_table.php
+  - iznik-batch/app/Services/Mail/DigestPositionsRollupService.php
+  - iznik-batch/app/Console/Commands/Mail/DigestPositionsRollupCommand.php
+  - iznik-batch/tests/Feature/Mail/DigestPositionsRollupTest.php
+  - iznik-batch/database/migrations/2026_10_23_000001_create_email_digest_positions_daily_table.php
+  - iznik-server-go/test/emailtracking_digestpositions_test.go
+  - iznik-nuxt3/modtools/components/ModSysAdminDigestClicks.vue
 ---
 
 # Email tracking journal
@@ -82,3 +88,26 @@ instead of about four million. The fold does the same row counts in the overnigh
 uncontended batches. The `email_tracking_images` rows are still written because the user data dump
 reads them; nothing else does, so whether 2.2 million rows a day are worth keeping is a separate
 product question.
+
+## Digest click-through by position: the daily summary
+
+The ModTools SysAdmin chart "Digest click-through by position" (`GET /modtools/email/stats/digestpositions`,
+`DigestClickPositions` in `emailtracking.go`) needs, for every post position in a unified digest, how many
+digests showed a post there and how many were clicked there. Working that out from `email_tracking` costs
+about five seconds a day, so a 30 day range returned a 504.
+
+`email:digest-positions-rollup` (daily, 05:35 UTC, outside the backup drain window) writes it into
+`email_digest_positions_daily`: one row per day, email type and position, plus a marker row
+(`email_type` empty, position 0) for every day it has rolled. It recomputes the last 14 days ending
+yesterday (`DIGEST_POSITIONS_ROLLUP_DAYS`), because clicks keep arriving for days after a digest goes
+out. Today is never rolled. `--from` and `--to` do a one-off backfill.
+
+The Go handler sums the rows for whole days that have a marker, and computes live only the days that
+have none, at most three and most recent first (typically today, and yesterday before the nightly run).
+Any further unsummarised days are not computed; the response reports them in `missing_days`, and the chart
+says so. `live_days` is how many days were computed live. A start or end that falls part way through a day
+is computed live, since the summary holds whole days. Only unified digest types are summarised; any other
+exact `type` is computed live for the whole range.
+
+The cohort and counting rules in `DigestPositionsRollupService` (SQL) and `addLiveDigestPositions` (Go) are
+the same on purpose, so a day looks the same before and after it is rolled. Change one, change both.

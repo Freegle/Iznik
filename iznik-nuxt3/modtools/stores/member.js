@@ -14,6 +14,8 @@ export const useMemberStore = defineStore('member', {
     ratings: [],
     rawindex: 0,
     filtercount: null,
+    // The order the last answer says it used: undefined before any answer, null when it did not say.
+    order: undefined,
   }),
   actions: {
     init(config) {
@@ -26,6 +28,7 @@ export const useMemberStore = defineStore('member', {
       this.ratings = []
       this.rawindex = 0
       this.filtercount = null
+      this.order = undefined
     },
     reviewHeld(params) {
       Object.keys(this.list).forEach((key) => {
@@ -109,7 +112,7 @@ export const useMemberStore = defineStore('member', {
         params.context = params.context.id
       }
 
-      const { members, context, ratings, filtercount } = await api(
+      const { members, context, ratings, filtercount, order } = await api(
         this.config
       ).memberships.fetchMembers(params)
 
@@ -117,6 +120,7 @@ export const useMemberStore = defineStore('member', {
 
       if (this.instance === instance) {
         this.filtercount = filtercount
+        this.order = order
         for (let i = 0; i < members.length; i++) {
           // Ensure collection and groupid are set from params as fallback.
           if (!members[i].collection) members[i].collection = params.collection

@@ -15,7 +15,6 @@ use App\Models\Message;
 use App\Models\User;
 use App\Services\DonateLinkService;
 use App\Services\UnifiedDigestService;
-use App\Services\Ux\UxArm;
 use App\Support\AmpEmailSupport;
 use App\Support\EmojiUtils;
 use Carbon\Carbon;
@@ -58,14 +57,6 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, Describes
     protected array $groupLookup = [];
 
     protected int $digestNumber;
-
-    /**
-     * The member's arm of the digest-subject experiment (App\Services\Ux\UxArm): 'items' leads the subject with the
-     * items; 'control' and '' (no experiment running, or not for this email) leave it as it always was. Set in the
-     * constructor before initTracking(), because getSubject() runs inside it.
-     * docs/developers/reference/ux-experiments.md, "The daily digest subject".
-     */
-    protected string $uxArm = '';
 
     /**
      * $matchReason marks this as MATCH MAIL: the recipient has an open post of the
@@ -124,20 +115,6 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, Describes
             $trackingGroupId = $this->preferredGroupForPost($this->posts->first());
         }
 
-        // Experiment digest-subject: the daily roll-up only, of two or more posts, and only while email tracking is on, because the
-        // exposure below points at the tracking row and an arm nobody can count is not worth showing. A digest of one post is not in
-        // the experiment: it keeps the control subject and writes no row. Looked up here, not where the subject is used, because
-        // getSubject() runs inside initTracking().
-        $this->uxArm = ($this->mode === UnifiedDigestService::MODE_DAILY && $userId !== null && $this->cappedPosts->count() >= 2 && config('freegle.mail.tracking_enabled', true))
-            ? UxArm::for($userId, 'digest-subject')
-            : '';
-
-        // A digest with no item to name has the control subject in either arm, so the member sees no change and is in
-        // neither arm: no row for it.
-        if ($this->uxArm !== '' && $this->itemsSubject() === null) {
-            $this->uxArm = '';
-        }
-
         $this->initTracking(
             $this->getEmailType(),
             $this->user->email_preferred,
@@ -164,13 +141,6 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, Describes
             // delivered - the digest "showed no AMP" in the stats. Pass it.
             $this->ampForRecipient()
         );
-
-        // The exposure: this email was built for a member in an arm. One row for every arm, control included, written once the
-        // tracking row it points at exists. It never throws, and a second email for the same member is a second row that is not
-        // counted again.
-        if ($this->uxArm !== '' && $this->tracking !== null) {
-            UxArm::expose((int) $userId, 'digest-subject', $this->uxArm, 'email', (int) $this->tracking->id);
-        }
 
         // Prepare posts with tracking URLs and decoded text.
         $this->preparedPosts = $this->preparePosts();
@@ -871,12 +841,6 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, Describes
             return $groupName ? "[{$groupName}] {$postSubject}" : $postSubject;
         }
 
-        // Experiment digest-subject, arm "items": lead with the items. Control, no arm, and a digest with nothing to name
-        // carry on to the subject below, which is the subject as it always was.
-        if ($this->uxArm === 'items' && ($itemsSubject = $this->itemsSubject()) !== null) {
-            return $itemsSubject;
-        }
-
         // Daily roll-up ("What's New (N posts)") — V1 digest parity, which led
         // with the title and a parenthetical post count. Keep the item-name
         // teaser after it since it lifts open rates and mirrors the immediate
@@ -950,69 +914,6 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, Describes
         $name = preg_replace('/\s*\([^)]+\)\s*$/', '', $name);
 
         return trim($name);
-    }
-
-    /**
-     * The digest-subject "items" subject: item names, then how many more posts the email lists. "Sofa, Lamp, Books, Chair,
-     * Table and 7 more", or just the names when every post is named. Null when there is nothing to name, and the caller
-     * then builds the control subject. The names and the number both come from the posts the email lists (cappedPosts), so
-     * the subject never names a post the email does not hold and never counts more than it holds. The whole subject, the
-     * "and N more" tail included, is at most 50 bytes, the width the control subject gives its names, so a phone shows the
-     * tail: it names as many posts as fit with their tail, and at least one.
-     */
-    private function itemsSubject(): ?string
-    {
-        $names = $this->namedItemsForSubject();
-        if ($names === []) {
-            return null;
-        }
-
-        $total = $this->cappedPosts->count();
-
-        for ($shown = count($names); $shown >= 1; $shown--) {
-            $more = $total - $shown;
-            $subject = implode(', ', array_slice($names, 0, $shown)) . ($more > 0 ? " and {$more} more" : '');
-
-            if (strlen($subject) <= 50) {
-                return $subject;
-            }
-        }
-
-        // One name is at most 25 bytes and the tail at most 13 for 999 posts, so one name always fits and this is not
-        // reached; it keeps the method total.
-        return $names[0];
-    }
-
-    /**
-     * The item names of the posts the email lists, as a list. The same rules as getItemNamesForSubject() (OFFER/WANTED
-     * prefix and location dropped, a name over 25 bytes cut to 22 bytes and "..."), written out again so that the control
-     * subject's own method is not edited. Differences, all on purpose: the names come from the capped set, the cut keeps
-     * whole characters (mb_strcut), so a multi-byte character at byte 22 is dropped and not split, a post whose name comes
-     * out empty is skipped because it would leave an empty or comma-led subject, and the list is not ended at 50 bytes here
-     * because itemsSubject() fits the names and the tail together. A test holds the two together on every other name.
-     *
-     * @return string[]
-     */
-    private function namedItemsForSubject(): array
-    {
-        $names = [];
-
-        foreach ($this->cappedPosts as $post) {
-            $decodedSubject = html_entity_decode($post['message']->subject ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
-            $itemName = $this->extractItemName($decodedSubject);
-
-            if (trim($itemName, ' ,') === '') {
-                continue;
-            }
-
-            if (strlen($itemName) > 25) {
-                $itemName = mb_strcut($itemName, 0, 22, 'UTF-8') . '...';
-            }
-
-            $names[] = $itemName;
-        }
-
-        return $names;
     }
 
     /**

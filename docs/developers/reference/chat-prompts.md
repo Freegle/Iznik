@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-21
+last_reviewed: 2026-10-23
 covers:
   - iznik-server-go/chat/chatprompt.go
   - iznik-server-go/chat/replyconfirm.go
@@ -67,6 +67,20 @@ and does not bar them.
 | The hold chain | The question is skipped when `ChatProcessService` looks for the message before the one it is processing, so it cannot let a message through ahead of a held reply |
 | Merging two accounts | The merge moves `chat_prompts.userid` to the surviving account with the member's chat messages, before the old account is deleted. Left behind, the foreign key would delete the question with the old account and the reply it holds would be delivered unasked. A member who is deleted outright loses their chat messages with them, so nothing is left held |
 | Forgetting a member | `UserManagementService::forgetUser` blanks the questions Freegle asked them, takes them out of the poster's chat, deletes their `chat_prompts` rows and drops a reply of theirs the batch has not processed. The data export has a `questions` section, and the support dump has the rows |
+
+### Child car seats
+
+A reply to an OFFER whose subject says it is a child car seat (`isChildCarSeat`: "car seat", "carseat",
+"child car", "booster seat", "isofix", "infant carrier", the same words that show the poster a note under
+the box in `PostItem.vue`) is asked about whatever the experiment is doing: in either arm, with no experiment
+running, and from the app, which the experiment leaves out. The question is the moderators' wording from
+Discourse 9939/61 (`childCarSeatQuestion`): know its history, never in an accident, the E mark, the maker's
+lifespan, and read childcarseats.org.uk, then "Do you still want it?" with the same two buttons. It is held,
+answered, pushed, expired and withdrawn exactly as the experiment's question is; only the deciding differs. It
+writes no `ux_experiment_exposures` row, so it is not in the experiment's figures, and it is asked once per
+replier and post, which is read from `chat_prompts` rather than from an exposure. A damaged or bulky car seat
+gets the car seat question alone. A WANTED for a car seat is not asked about: the wording is for someone
+accepting one.
 
 `chat_prompts.answered_via` records how the question was answered; it is always `button`. The answer is
 claimed by an update that only an unanswered question matches, in the transaction that withdraws the reply, so

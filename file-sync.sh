@@ -94,7 +94,7 @@ _compute_container_info() {
             targets="$targets"$'\n'"${CN}-modtools-dev-live /app/${relative_path#iznik-nuxt3/} ModTools-Dev-Live"
         fi
         GCI_RESULT="$targets"
-    elif [[ "$relative_path" == iznik-nuxt3/plugins/* || "$relative_path" == iznik-nuxt3/composables/* || "$relative_path" == iznik-nuxt3/stores/* || "$relative_path" == iznik-nuxt3/utils/* || "$relative_path" == iznik-nuxt3/components/* || "$relative_path" == iznik-nuxt3/assets/* || "$relative_path" == iznik-nuxt3/pages/* || "$relative_path" == iznik-nuxt3/layouts/* || "$relative_path" == iznik-nuxt3/middleware/* || "$relative_path" == iznik-nuxt3/api/* || "$relative_path" == iznik-nuxt3/server/* || "$relative_path" == iznik-nuxt3/public/* || "$relative_path" == iznik-nuxt3/nuxt.config.ts || "$relative_path" == iznik-nuxt3/constants.js ]]; then
+    elif [[ "$relative_path" == iznik-nuxt3/plugins/* || "$relative_path" == iznik-nuxt3/composables/* || "$relative_path" == iznik-nuxt3/stores/* || "$relative_path" == iznik-nuxt3/utils/* || "$relative_path" == iznik-nuxt3/components/* || "$relative_path" == iznik-nuxt3/assets/* || "$relative_path" == iznik-nuxt3/pages/* || "$relative_path" == iznik-nuxt3/layouts/* || "$relative_path" == iznik-nuxt3/middleware/* || "$relative_path" == iznik-nuxt3/api/* || "$relative_path" == iznik-nuxt3/server/* || "$relative_path" == iznik-nuxt3/public/* || "$relative_path" == iznik-nuxt3/nuxt.config.ts || "$relative_path" == iznik-nuxt3/constants.js || "$relative_path" == iznik-nuxt3/ux-experiments.manifest.json ]]; then
         # Shared code used by both Freegle and ModTools - sync to all containers.
         # assets/ is here rather than in the generic iznik-nuxt3/* branch below because that
         # branch skips modtools-dev-local, which is where vitest runs: a unit test that reads
@@ -122,6 +122,10 @@ _compute_container_info() {
         # every new export read as undefined in a local vitest run and whole spec files
         # failed on "Cannot destructure property ... of ... as it is undefined" against
         # the copy baked into the image.
+        # ux-experiments.manifest.json is the same kind of top-level file: useExperiment.js
+        # imports it and tests/unit/uxExperimentsManifest.spec.js reads it, so a new
+        # switch listed on disk but not in the container fails that spec locally with
+        # "used in ... but not in ux-experiments.manifest.json" (2026-10-25).
         # When adding a top-level source directory OR file that unit specs import, add it
         # here. Both of these must be a subset of this branch (plus modtools/, handled
         # above), and so must anything a spec opens with readFileSync:

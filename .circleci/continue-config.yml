@@ -96,7 +96,7 @@ orbs:
   # repo already carries the fix (large + the improved logs): publish it as 1.1.386
   # from a machine with a CircleCI token (this host has none) and move this pin
   # forward again.
-  freegle: freegle/tests@1.1.406
+  freegle: freegle/tests@1.1.409
 
 jobs:
   # The CI half of the raw-SQL guard. The Claude Code PreToolUse hook only sees
@@ -139,6 +139,21 @@ jobs:
             git fetch --no-tags --depth=100 origin master
             node scripts/check-dependency-licences.mjs --diff origin/master
 
+  # iznik-batch/config/ux_cleanups.php is the deploy note that closes a finished UX experiment. The batch tests cannot see
+  # the browser manifest or the Go switch list, so this checks that no note names a switch that still exists.
+  check-ux-cleanups:
+    docker:
+      - image: cimg/node:22.23.2
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Self-test the cleanup note check
+          command: node --test scripts/check-ux-cleanups.test.mjs
+      - run:
+          name: No cleanup note names a live switch
+          command: node scripts/check-ux-cleanups.mjs
+
   mark-ci-passed:
     docker:
       - image: cimg/base:current
@@ -180,6 +195,7 @@ workflows:
     jobs:
       - check-raw-sql
       - check-licences
+      - check-ux-cleanups
       - freegle/build-and-test:
           use-executor:
             name: freegle/machine-executor-local
@@ -252,6 +268,7 @@ workflows:
     jobs:
       - check-raw-sql
       - check-licences
+      - check-ux-cleanups
       - freegle/build-and-test:
           post-steps:
             - run:
@@ -456,6 +473,7 @@ workflows:
     jobs:
       - check-raw-sql
       - check-licences
+      - check-ux-cleanups
       - freegle/build-and-test:
           use-executor:
             name: freegle/machine-executor-katapult

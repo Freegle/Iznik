@@ -367,3 +367,17 @@ func TestCronJobsIncludeHostPatchFreshness(t *testing.T) {
 		}
 	}
 }
+
+// A stale WhatJobs feed turns the Cron Jobs tab red: the check fails, and the tab counts a
+// failed last run of any active entry.
+func TestCronJobsIncludeWhatJobsFeedFreshness(t *testing.T) {
+	for _, j := range cronJobs {
+		if j.Command == "integrations:check-whatjobs-freshness" {
+			if !j.Active || j.IntervalMinutes != 60 {
+				t.Errorf("WhatJobs freshness: active %v interval %d", j.Active, j.IntervalMinutes)
+			}
+			return
+		}
+	}
+	t.Error("integrations:check-whatjobs-freshness missing from the cron registry")
+}

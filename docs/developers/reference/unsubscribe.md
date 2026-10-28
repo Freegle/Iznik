@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-10
+last_reviewed: 2026-10-23
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/UnsubscribeService.php
@@ -52,7 +52,8 @@ Two rules that are easy to get wrong, and were both wrong until 2026-08:
 
 Transactional mail — password resets, address verification, receipts, anything about the
 member's own post — declares `unsubscribeType(): null` and carries no `List-Unsubscribe`
-at all.
+at all. The I'm interested reminder (`InterestedChaseUp`) is one of these: the member asked for it
+by pressing the button, and each mark is mailed once.
 
 ## Categories
 

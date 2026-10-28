@@ -249,7 +249,7 @@ silent ways to fail, and a unit test with one mounted copy catches neither:
   during the move. `afterEach` runs before that, so a modal opened there belongs to the copy that is
   about to go: it is thrown away, and the new copy never knew. Wait for Nuxt's `page:finish`
   instead, and keep the request somewhere outside the component (a module-level ref) until the copy
-  that opens it is the one on the new page. `ReplyJobInterstitial.vue` does both.
+  that opens it is the one on the new page.
 
 ## See also
 

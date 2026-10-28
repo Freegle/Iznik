@@ -637,6 +637,7 @@ describe('ModChatHeader', () => {
       ['User2User', 'showChatReport', '.chat-report-modal', true],
       ['User2User', 'showChatHide', '.chat-hide-modal', true],
       ['User2Mod', 'showChatHide', '.chat-hide-modal', true],
+      ['Mod2Mod', 'showChatHide', '.chat-hide-modal', true],
       ['User2Mod', 'showChatBlock', '.chat-block-modal', false],
     ])(
       '%s chat: %s renders modal=%s',

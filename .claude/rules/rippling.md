@@ -164,8 +164,8 @@ The delete handler removes the rows both are read from, so read them before the 
 `memberships.rippled` is cleared once the member joins, moves in, or deals with the community,
 and each clear writes `Ripple-created membership became ordinary: <reason>` to the log. Any
 job that sets the flag from the original `Rippled` join log, as `ripple:backfill-memberships`
-does, has to skip memberships with a later clear, or it silently makes those members
-uncontactable again.
+does, has to skip memberships with a later clear, or it silently counts those members as
+not already being members again (section 10a of the rippling doc).
 
 ## A held reply released to somebody who never got the post
 

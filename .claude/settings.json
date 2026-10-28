@@ -85,6 +85,17 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/check-lint-commit.sh",
+            "if": "Bash(git commit*)",
+            "timeout": 120
+          }
+        ]
+      },
+      {
         "matcher": "Skill",
         "hooks": [
           {
@@ -145,6 +156,16 @@
           {
             "type": "command",
             "command": "$CLAUDE_PROJECT_DIR/.claude/check-pr-text.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/check-pr-screenshots.sh",
+            "timeout": 10
           }
         ]
       },

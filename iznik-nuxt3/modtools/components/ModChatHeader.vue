@@ -322,7 +322,9 @@
       <ChatHideModal
         v-if="
           showChatHide &&
-          (chat.chattype === 'User2User' || chat.chattype === 'User2Mod')
+          (chat.chattype === 'User2User' ||
+            chat.chattype === 'User2Mod' ||
+            chat.chattype === 'Mod2Mod')
         "
         :id="id"
         :user="otheruser"

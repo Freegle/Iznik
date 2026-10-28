@@ -55,6 +55,7 @@ class DumpUserCommand extends Command
         'sessions'                 => ['userid'],
         'messages'                 => ['fromuser'],
         'messages_promises'        => ['userid'],
+        'messages_interested'      => ['userid'],
         'messages_reneged'         => ['userid'],
         'messages_by'              => ['userid'],
         'chat_rooms'               => ['user1', 'user2'],

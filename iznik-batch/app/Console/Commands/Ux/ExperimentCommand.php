@@ -13,7 +13,7 @@ use Symfony\Component\Console\Attribute\AsCommand;
  *
  *   ux:experiment list
  *   ux:experiment create --flow=give --name=give-photos-skip --title=... --hypothesis=... --change=... --expected=... [--touches=give,login --expected-points=5]
- *   ux:experiment create --flow=reply --name=digest-subject ... --design='{"channel":"email","type":"UnifiedDigestDaily","source":"email_click","window_hours":24,"expected_points":0.5,"copy":{"control":"...","items":"..."}}'
+ *   ux:experiment create --flow=reply --name=my-experiment ... --design='{"channel":"email","type":"UnifiedDigestDaily","source":"email_click","window_hours":24,"expected_points":0.5,"copy":{"control":"...","items":"..."}}'
  *   ux:experiment start give-photos-skip
  *   ux:experiment stop give-photos-skip --reason="..."
  *   ux:experiment close give-photos-skip --cleanup-pr=https://...
@@ -36,7 +36,7 @@ class ExperimentCommand extends Command
         {--touches= : create: comma separated funnels the change can affect, whose completion is watched as a guardrail (default: its own funnel and login)}
         {--expected-points= : create: the effect expected, in points of completion, used to check a day of the funnel could show it (default 5)}
         {--design= : create: JSON design keys for an experiment decided on the server (mail, push or server code): channel, type, source, window_hours, intake_hours, max_hours, primary, salt, slot, copy. --touches and --expected-points win over the same keys here}
-        {--primary-event= : create: judge it on this client event per start (job_ad_click everywhere, job_ad_click_chat for clicks in a chat or from the pop-up after a reply, or app_store_click for a store button on the app page shown on arrival) instead of finishing the funnel, which then becomes a guardrail}
+        {--primary-event= : create: judge it on this client event per start (job_ad_click everywhere, job_ad_click_chat for clicks in a chat or from the pop-up after a reply, app_store_click for a store button on the app page shown on arrival, or user_rated for a thumbs up or down given to another freegler) instead of finishing the funnel, which then becomes a guardrail}
         {--base-rate= : create: the usual rate of that event per start, as a share (0.02), for the power check}
         {--reason= : stop: why}
         {--cleanup-pr= : close: the pull request that removed the switch or the variant code (required for a reverted, inconclusive or stopped experiment, which keeps its status)}';

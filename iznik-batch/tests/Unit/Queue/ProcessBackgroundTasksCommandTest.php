@@ -3717,4 +3717,291 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertNull($task->processed_at);
         $this->assertStringContainsString('requires keyword_id', $task->error_message);
     }
+
+    private function configureBothPostFeeds(): void
+    {
+        config(['freegle.freebie_alerts.api_key' => 'fa-key']);
+        config(['freegle.freebie_alerts.api_url' => 'https://api.freebiealerts.app']);
+        config(['freegle.yeybu.api_key' => 'yeybu-key']);
+        config(['freegle.yeybu.api_url' => 'https://db.yeybu.com/feeds/v1']);
+    }
+
+    private function queuePostFeedTask(string $type, array $data, $createdAt = null): int
+    {
+        return DB::table('background_tasks')->insertGetId([
+            'task_type' => $type,
+            'data' => json_encode($data),
+            'created_at' => $createdAt ?? now(),
+        ]);
+    }
+
+    private function postFeedRetries(): array
+    {
+        return DB::table('background_tasks')
+            ->whereNull('processed_at')
+            ->orderBy('id')
+            ->get()
+            ->all();
+    }
+
+    public function test_post_feed_add_retries_only_the_partner_that_timed_out(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_add', ['msgid' => $msgId]);
+        $this->configureBothPostFeeds();
+
+        Http::fake([
+            'api.freebiealerts.app/*' => Http::response([], 200),
+            'db.yeybu.com/*' => Http::response([], 504),
+        ]);
+        \Illuminate\Support\Facades\Log::spy();
+
+        $this->runBackgroundTasksOnce();
+
+        $retries = $this->postFeedRetries();
+        $this->assertCount(1, $retries);
+        $this->assertSame('freebie_alerts_add', $retries[0]->task_type);
+        $data = json_decode($retries[0]->data, true);
+        $this->assertSame($msgId, $data['msgid']);
+        $this->assertSame('yeybu', $data['feed']);
+        $this->assertSame(1, $data['retries']);
+        $this->assertFalse($data['alerted']);
+        $this->assertGreaterThan(now()->getTimestamp(), \Illuminate\Support\Carbon::parse($retries[0]->created_at)->getTimestamp());
+
+        // A first failure is not an error yet.
+        \Illuminate\Support\Facades\Log::shouldNotHaveReceived('error');
+    }
+
+    public function test_post_feed_retry_waits_until_it_is_due(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_add', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->toIso8601String(),
+            'retries' => 1,
+            'alerted' => false,
+        ], now()->addMinutes(2));
+        $this->configureBothPostFeeds();
+        Http::fake();
+
+        $this->runBackgroundTasksOnce();
+
+        Http::assertNothingSent();
+        $this->assertCount(1, $this->postFeedRetries());
+    }
+
+    public function test_post_feed_retry_goes_only_to_its_partner(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $taskId = $this->queuePostFeedTask('freebie_alerts_add', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subMinutes(3)->toIso8601String(),
+            'retries' => 1,
+            'alerted' => false,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake(['*' => Http::response([], 200)]);
+
+        $this->runBackgroundTasksOnce();
+
+        Http::assertSentCount(1);
+        Http::assertSent(fn ($request) => $request->url() === 'https://db.yeybu.com/feeds/v1/freegle/post/create');
+        $this->assertNotNull(DB::table('background_tasks')->where('id', $taskId)->value('processed_at'));
+        $this->assertCount(0, $this->postFeedRetries());
+    }
+
+    public function test_post_feed_retried_add_sends_nothing_once_the_post_is_taken(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        DB::table('messages_outcomes')->insert(['msgid' => $msgId, 'outcome' => 'Taken']);
+        $this->queuePostFeedTask('freebie_alerts_add', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subMinutes(3)->toIso8601String(),
+            'retries' => 1,
+            'alerted' => false,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake();
+
+        $this->runBackgroundTasksOnce();
+
+        Http::assertNothingSent();
+        $this->assertCount(0, $this->postFeedRetries());
+    }
+
+    public function test_post_feed_retried_add_sends_nothing_once_the_post_is_deleted(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        DB::table('messages')->where('id', $msgId)->update(['deleted' => now()]);
+        $this->queuePostFeedTask('freebie_alerts_add', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subMinutes(3)->toIso8601String(),
+            'retries' => 1,
+            'alerted' => false,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake();
+
+        $this->runBackgroundTasksOnce();
+
+        Http::assertNothingSent();
+    }
+
+    public function test_post_feed_retried_remove_is_skipped_when_the_post_is_live_again(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_remove', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subMinutes(3)->toIso8601String(),
+            'retries' => 1,
+            'alerted' => false,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake();
+
+        $this->runBackgroundTasksOnce();
+
+        Http::assertNothingSent();
+        $this->assertCount(0, $this->postFeedRetries());
+    }
+
+    public function test_post_feed_retried_remove_is_sent_when_the_post_is_still_gone(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        DB::table('messages_outcomes')->insert(['msgid' => $msgId, 'outcome' => 'Taken']);
+        $this->queuePostFeedTask('freebie_alerts_remove', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subMinutes(3)->toIso8601String(),
+            'retries' => 1,
+            'alerted' => false,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake(['*' => Http::response([], 200)]);
+
+        $this->runBackgroundTasksOnce();
+
+        Http::assertSentCount(1);
+        Http::assertSent(fn ($request) => $request->url() === "https://db.yeybu.com/feeds/v1/freegle/post/{$msgId}/delete");
+    }
+
+    public function test_post_feed_failure_is_an_error_once_it_has_lasted_an_hour(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_add', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subMinutes(61)->toIso8601String(),
+            'retries' => 6,
+            'alerted' => false,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake(['*' => Http::response([], 504)]);
+        \Illuminate\Support\Facades\Log::spy();
+
+        $this->runBackgroundTasksOnce();
+
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('error')
+            ->withArgs(fn ($message) => $message === 'Post feed add still failing after an hour')
+            ->once();
+
+        $retries = $this->postFeedRetries();
+        $this->assertCount(1, $retries);
+        $data = json_decode($retries[0]->data, true);
+        $this->assertTrue($data['alerted']);
+        $this->assertSame(7, $data['retries']);
+
+        // The delay is capped at half an hour.
+        $due = \Illuminate\Support\Carbon::parse($retries[0]->created_at)->getTimestamp() - now()->getTimestamp();
+        $this->assertLessThanOrEqual(1800, $due);
+        $this->assertGreaterThan(1700, $due);
+    }
+
+    public function test_post_feed_failure_already_reported_is_not_reported_again(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_add', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subHours(3)->toIso8601String(),
+            'retries' => 10,
+            'alerted' => true,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake(['*' => Http::response([], 503)]);
+        \Illuminate\Support\Facades\Log::spy();
+
+        $this->runBackgroundTasksOnce();
+
+        \Illuminate\Support\Facades\Log::shouldNotHaveReceived('error');
+        $this->assertCount(1, $this->postFeedRetries());
+    }
+
+    public function test_post_feed_is_given_up_after_a_day(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_add', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subHours(25)->toIso8601String(),
+            'retries' => 50,
+            'alerted' => true,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake(['*' => Http::response([], 504)]);
+        \Illuminate\Support\Facades\Log::spy();
+
+        $this->runBackgroundTasksOnce();
+
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('error')
+            ->withArgs(fn ($message) => $message === 'Post feed add given up after a day of failures')
+            ->once();
+        $this->assertCount(0, $this->postFeedRetries());
+    }
+
+    public function test_post_feed_connection_failure_is_retried(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_add', ['msgid' => $msgId]);
+        $this->configureBothPostFeeds();
+        Http::fake([
+            'api.freebiealerts.app/*' => Http::failedConnection(),
+            'db.yeybu.com/*' => Http::response([], 200),
+        ]);
+
+        $this->runBackgroundTasksOnce();
+
+        $retries = $this->postFeedRetries();
+        $this->assertCount(1, $retries);
+        $this->assertSame('freebie_alerts', json_decode($retries[0]->data, true)['feed']);
+    }
+
+    public function test_post_feed_refusal_is_not_retried(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_add', ['msgid' => $msgId]);
+        $this->configureBothPostFeeds();
+        Http::fake(['*' => Http::response([], 400)]);
+
+        $this->runBackgroundTasksOnce();
+
+        $this->assertCount(0, $this->postFeedRetries());
+    }
+
+    public function test_post_feed_remove_of_a_post_the_partner_never_had_is_not_retried(): void
+    {
+        $this->queuePostFeedTask('freebie_alerts_remove', ['msgid' => 99999]);
+        $this->configureBothPostFeeds();
+        Http::fake(['*' => Http::response([], 404)]);
+
+        $this->runBackgroundTasksOnce();
+
+        Http::assertSentCount(2);
+        $this->assertCount(0, $this->postFeedRetries());
+    }
 }

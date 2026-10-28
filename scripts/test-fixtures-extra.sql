@@ -40,7 +40,7 @@ VALUES (990101, 0, 'damaged', 'medium', '5_20kg', 'gemini-3.5-flash-lite', 'fixt
 -- ignores a name it has no useExperiment call for) and ux_server_arms is not. Playwright and the dev site read these;
 -- tests in other suites write their own rows.
 INSERT INTO config (`key`, value) VALUES ('ux_server_arms', '1') ON DUPLICATE KEY UPDATE value = VALUES(value);
-INSERT INTO config (`key`, value) VALUES ('ux_experiments', '{"confirm-reply":{"arms":{"ask":[0,99]},"adopted":true}}')
+INSERT INTO config (`key`, value) VALUES ('ux_experiments', '{"confirm-reply":{"arms":{"ask":[0,99]},"adopted":true},"interested-button":{"arms":{"button":[0,99]},"adopted":true}}')
 ON DUPLICATE KEY UPDATE value = VALUES(value);
 -- The control range [1,0] is empty and rebuildConfig leaves it out, so everyone is in ask. fixed_split stops the tick
 -- moving the split. intake_hours 336 puts the published until about 14 days ahead, inside the Go copy's 15 day cap. The
@@ -51,6 +51,18 @@ VALUES ('reply', 'confirm-reply', 'Fixture: ask every replier', 'Fixture for the
         'Everyone is asked.', '{"control":[1,0],"ask":[0,99]}', 'running', NOW(), NOW() + INTERVAL 14 DAY,
         NULL, NULL, NULL,
         '{"channel":"server","source":"confirm_reply","window_hours":168,"intake_hours":336,"max_hours":336,"fixed_split":true,"slot":"server:confirm-reply"}',
+        NOW(), NOW())
+ON DUPLICATE KEY UPDATE arms = VALUES(arms), status = VALUES(status), started_at = VALUES(started_at),
+        ends_at = VALUES(ends_at), decided_at = NULL, decision = NULL, result = NULL, design = VALUES(design), updated_at = NOW();
+
+-- The experiment interested-button for the Playwright case: the arm button for everyone, in the same ux_experiments config
+-- row and with the same upkeep as confirm-reply above. The control range [1,0] is empty, so everyone is in button.
+INSERT INTO ux_experiments (flow, name, title, hypothesis, change_description, expected, arms, status, started_at, ends_at,
+                            decided_at, decision, result, design, created_at, updated_at)
+VALUES ('reply', 'interested-button', 'Fixture: offer the button to everyone', 'Fixture for the Playwright case.',
+        'Everyone is offered the button.', 'Everyone is offered the button.', '{"control":[1,0],"button":[0,99]}', 'running',
+        NOW(), NOW() + INTERVAL 14 DAY, NULL, NULL, NULL,
+        '{"channel":"server","source":"interested_reply","window_hours":168,"intake_hours":336,"max_hours":336,"fixed_split":true,"slot":"server:interested-button"}',
         NOW(), NOW())
 ON DUPLICATE KEY UPDATE arms = VALUES(arms), status = VALUES(status), started_at = VALUES(started_at),
         ends_at = VALUES(ends_at), decided_at = NULL, decision = NULL, result = NULL, design = VALUES(design), updated_at = NOW();

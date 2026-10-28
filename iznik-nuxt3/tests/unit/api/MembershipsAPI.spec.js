@@ -77,6 +77,19 @@ describe('MembershipsAPI', () => {
       expect(result.members).toEqual([pair])
     })
 
+    it('passes on the order the server says it used', async () => {
+      mockFetch.mockResolvedValue([200, { members: [], order: 'oldest' }])
+      const result = await createApi().fetchMembers({ collection: 'Approved' })
+      expect(result.order).toBe('oldest')
+    })
+
+    it('gives a null order when the server does not say', async () => {
+      mockFetch.mockResolvedValue([200, { members: [] }])
+      expect((await createApi().fetchMembers({})).order).toBe(null)
+      mockFetch.mockResolvedValue([200, []])
+      expect((await createApi().fetchMembers({})).order).toBe(null)
+    })
+
     it('returns empty members list when Related API returns empty raw array', async () => {
       mockFetch.mockResolvedValue([200, []])
 

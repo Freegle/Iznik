@@ -171,7 +171,12 @@ test.describe('Starting from a notification', () => {
   // must not take it as a new one. A member's app opened on the same chat for days.
   async function startFromChatNotification(appWebView) {
     await device.forceStop()
-    await device.openFromNotification(chatPayload(`E2E start ${Date.now()}`))
+    // A fixed google.message_id lets a test hand the same tap back from Recents.
+    const payload = {
+      ...chatPayload(`E2E start ${Date.now()}`),
+      'google.message_id': `app-e2e-start-${Date.now()}`,
+    }
+    await device.openFromNotification(payload)
     const page = await appWebView.reattach()
 
     // The tap itself still works: it reaches the app and opens chats.
@@ -183,6 +188,7 @@ test.describe('Starting from a notification', () => {
         timeout: timeouts.ui.appearance,
       })
       .toMatch(/^\/chats/)
+    return payload
   }
 
   test('reopening from the launcher after Android kills the app does not replay the tap', async ({
@@ -204,10 +210,11 @@ test.describe('Starting from a notification', () => {
   test('reopening from Recents after Android kills the app does not replay the tap', async ({
     appWebView,
   }) => {
-    await startFromChatNotification(appWebView)
+    const payload = await startFromChatNotification(appWebView)
 
+    // Recents hands back the intent the task started with: the same message id.
     await device.forceStop()
-    await device.openFromNotification(chatPayload('E2E recents'), {
+    await device.openFromNotification(payload, {
       fromHistory: true,
     })
     const page = await appWebView.reattach()

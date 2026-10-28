@@ -1332,10 +1332,10 @@ func TestPostChatRoomMarkReadKeepsBlocked(t *testing.T) {
 	db.Raw("SELECT status FROM chat_roster WHERE chatid = ? AND userid = ?", chatid, user1ID).Scan(&status)
 	assert.Equal(t, "Online", status)
 
-	// And with no block in place, reading still reopens as before.
+	// A merely hidden chat stays hidden when read; a new message reopens it.
 	postChatRoom(t, token, map[string]interface{}{"id": chatid, "status": "Closed"})
 	result = postChatRoom(t, token, map[string]interface{}{"id": chatid, "lastmsgseen": msgid, "allowback": false})
-	assert.Equal(t, "Online", rosterStatusFor(result, user1ID), "reading a merely hidden chat reopens it")
+	assert.Equal(t, "Closed", rosterStatusFor(result, user1ID), "reading a hidden chat must not reopen it")
 }
 
 func TestPostChatRoomBlockRenegesPromises(t *testing.T) {
@@ -5144,4 +5144,33 @@ func TestChatNameKeepsOrdinaryAndExemptNames(t *testing.T) {
 	listName, oneName = chatNameFor(t, token, supportChat)
 	assert.Equal(t, "Freegle Support", listName, "a Support volunteer keeps a name that uses the brand")
 	assert.Equal(t, "Freegle Support", oneName)
+}
+
+func TestPostChatRoomMarkReadKeepsHiddenMod2Mod(t *testing.T) {
+	// Hiding a mods chat posts Closed, but the open chat pane then marks it
+	// read with a request that carries no status. That used to default to
+	// Online and silently undo the hide, so the chat never left the list.
+	prefix := uniquePrefix("hide_m2m")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	chatid := CreateTestChatRoom(t, modID, nil, &groupID, "Mod2Mod")
+	msgid := CreateTestChatMessage(t, chatid, modID, "hello")
+	_, token := CreateTestSession(t, modID)
+
+	result := postChatRoom(t, token, map[string]interface{}{"id": chatid, "status": "Closed"})
+	assert.Equal(t, "Closed", rosterStatusFor(result, modID))
+
+	result = postChatRoom(t, token, map[string]interface{}{"id": chatid, "lastmsgseen": msgid, "allowback": false})
+	assert.Equal(t, "Closed", rosterStatusFor(result, modID), "reading must not unhide the chat")
+
+	var status string
+	db.Raw("SELECT status FROM chat_roster WHERE chatid = ? AND userid = ?", chatid, modID).Scan(&status)
+	assert.Equal(t, "Closed", status)
+
+	// The Unhide button is an explicit Online.
+	result = postChatRoom(t, token, map[string]interface{}{"id": chatid, "status": "Online"})
+	assert.Equal(t, "Online", rosterStatusFor(result, modID))
 }

@@ -399,3 +399,37 @@ func TestAddressCreateWithoutLatLngUsesPostcodeCoordinates(t *testing.T) {
 	assert.InDelta(t, postcode.Lat, addr.Lat, 0.001, "should use postcode lat from locations table")
 	assert.InDelta(t, postcode.Lng, addr.Lng, 0.001, "should use postcode lng from locations table")
 }
+
+func TestAddressIncludesBuildingNumber(t *testing.T) {
+	// A house with only a number has no building name, so without the number the address is just the street.
+	prefix := uniquePrefix("addr_number")
+	userID, token := CreateFullTestUser(t, prefix)
+
+	db := database.DBConn
+	db.Exec("INSERT IGNORE INTO paf_addresses (id, postcodeid, udprn, buildingnumber) VALUES (102367698, 1687412, 50464674, 66)")
+	db.Exec("INSERT INTO users_addresses (userid, pafid) VALUES (?, 102367698)", userID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/address?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var addresses []address2.Address
+	json2.Unmarshal(rsp(resp), &addresses)
+
+	var numbered *address2.Address
+	for i := range addresses {
+		if addresses[i].Buildingnumber == "66" {
+			numbered = &addresses[i]
+		}
+	}
+	assert.NotNil(t, numbered, "Listed address should carry its building number")
+
+	if numbered != nil {
+		idstr := strconv.FormatUint(numbered.ID, 10)
+		resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/address/"+idstr+"?jwt="+token, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var single address2.Address
+		json2.Unmarshal(rsp(resp), &single)
+		assert.Equal(t, "66", single.Buildingnumber)
+	}
+}

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-21
+last_reviewed: 2026-10-25
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/ask/**
@@ -10,6 +10,8 @@ covers:
   - iznik-nuxt3/tests/e2e/test-reply-to-chat.spec.js
   - iznik-server-go/test/chatmessage_rippling_held_test.go
   - iznik-server-go/test/chatreplyconfirm_test.go
+  - iznik-server-go/test/message_interested_test.go
+  - iznik-nuxt3/tests/e2e/test-interested-button.spec.js
 ---
 
 # Getting something
@@ -32,6 +34,12 @@ the board readable when a popular item gets lots of replies. Say a little about 
 offers are not first come first served, and many people like to give to whoever will make
 good use of the item.
 
+Some people see an **I'm interested** button beside Reply while Freegle tests it. Tap it
+to save the post without writing anything yet. Saved posts are listed under **My Posts**, in
+**Posts you're interested in**, each with Reply and Remove. If you have not replied a day
+later and the item is still there, Freegle sends you one email to remind you. Saving a post
+does not tell the person offering anything: only a reply does.
+
 If a post has not quite reached your area yet (this can happen if you have widened your
 view beyond "Nearby"), you can still reply. Freegle holds your message for a while so that
 people closer to the item get first go, then passes it on. Before you send, the site tells
@@ -39,7 +47,7 @@ you when: either when the post is due to reach your area, or, if it is never goi
 spread quite that far, when it stops spreading and your reply goes anyway. It shows as
 "waiting to send" until it has gone.
 
-Freegle may ask you in the chat whether you still want the item before passing your reply on.
+Freegle may ask you in the chat whether you still want the item before passing your reply on. For a child car seat it always asks, and tells you what to check first: that you know the seat's history, that it has never been in an accident, that it carries the E mark, and how long its maker says it lasts.
 It asks when the photo suggests the item may be damaged or not working, or is too big or heavy
 to collect without a car or van. While Freegle tests this, about half of the people who reply
 to such an offer are asked, and the rest are not. The question is addressed to you by name, as

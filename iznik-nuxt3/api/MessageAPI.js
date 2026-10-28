@@ -28,6 +28,21 @@ export default class MessageAPI extends BaseAPI {
     return await this.$getv2('/message/' + id, rest, logError)
   }
 
+  // The "I'm interested" mark on someone else's post. Failures are not logged: an API that does
+  // not have the routes yet answers 404, and that must read as "no button", not as an error.
+  interestedState(id) {
+    return this.$getv2('/message/' + id + '/interested', {}, false)
+  }
+
+  setInterested(id, interested) {
+    return this.$postv2('/message/' + id + '/interested', { interested }, false)
+  }
+
+  // The member's marks, newest first.
+  interestedList() {
+    return this.$getv2('/message/interested', {}, false)
+  }
+
   // Actual rippling-out progress of a post, for the moderation reach map (mod-of-group only).
   reach(id, logError = true) {
     return this.$getv2('/message/' + id + '/reach', {}, logError)

@@ -170,17 +170,6 @@ func PostMemberships(c *fiber.Ctx) error {
 		}
 	}
 
-	// Whether the member's only tie to this group is a post of theirs that rippled in.
-	// Read once, before the actions below delete the row it lives on. A group removes such
-	// a member as it sees fit, but says nothing to them: they never joined, so a note from
-	// a community they have not heard of is the same confusion as one about their post
-	// (Discourse 10102).
-	rippleOnly := rippling.IsRippleOnlyMembership(db, req.Userid, req.Groupid)
-	notifyMember := 1
-	if rippleOnly {
-		notifyMember = 0
-	}
-
 	switch req.Action {
 	case "Hold":
 		if lockdown.GateMod(c, myid) {
@@ -223,16 +212,6 @@ func PostMemberships(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusForbidden, "This member didn't choose this community, so they can't be contacted")
 		}
 
-		//
-		// This action is nothing but a message, so on a membership rippling created for a
-		// poster it has nothing to do: that membership is a record of where their post
-		// travelled, not a relationship with this community (Discourse 10102). Refuse it
-		// rather than accept and drop it - the moderator wrote those words on purpose.
-		if rippleOnly {
-			return fiber.NewError(fiber.StatusForbidden,
-				"This member's only tie to the group is a post that rippled in, so there is nobody here to write to")
-		}
-
 		subject := ""
 		if req.Subject != nil {
 			subject = *req.Subject
@@ -253,7 +232,7 @@ func PostMemberships(c *fiber.Ctx) error {
 		db.Table("background_tasks").Create(map[string]interface{}{
 			"task_type": "email_mod_stdmsg",
 			"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
-				req.Userid, req.Groupid, myid, subject, body, stdmsgid, "Leave Approved Member", notifyMember),
+				req.Userid, req.Groupid, myid, subject, body, stdmsgid, "Leave Approved Member", 1),
 		})
 		// V1 parity: Leave Approved Member only calls $u->mail(), no log entry.
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -280,7 +259,7 @@ func PostMemberships(c *fiber.Ctx) error {
 			db.Table("background_tasks").Create(map[string]interface{}{
 				"task_type": "email_mod_stdmsg",
 				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
-					req.Userid, req.Groupid, myid, subject, body, 0, "Approve Member", notifyMember),
+					req.Userid, req.Groupid, myid, subject, body, 0, "Approve Member", 1),
 			})
 		}
 
@@ -312,7 +291,7 @@ func PostMemberships(c *fiber.Ctx) error {
 			db.Table("background_tasks").Create(map[string]interface{}{
 				"task_type": "email_mod_stdmsg",
 				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
-					req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action, notifyMember),
+					req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action, 1),
 			})
 		}
 
@@ -514,6 +493,7 @@ type GetMembershipsMember struct {
 // @Param collection query string false "Collection"
 // @Param limit query integer false "Max to return"
 // @Param context query integer false "Pagination cursor"
+// @Param order query string false "newest (default) or oldest: newest or oldest membership first"
 // @Success 200 {object} map[string]interface{}
 // @Router /api/memberships [get]
 func GetMemberships(c *fiber.Ctx) error {
@@ -542,6 +522,18 @@ func GetMemberships(c *fiber.Ctx) error {
 	search := c.Query("search", "")
 	filter := c.QueryInt("filter", 0)
 	contextID := uint64(c.QueryInt("context", 0))
+
+	// Newest membership first unless the moderator asked for the oldest. The cursor is the last id of the
+	// page, so it reads "below" for newest and "above" for oldest. The answer names the order it used, so
+	// a client can tell an API that honours it from one that ignores it.
+	order := memberOrderNewest
+	if c.Query("order", "") == memberOrderOldest {
+		order = memberOrderOldest
+	}
+	dir, after := "DESC", "<"
+	if order == memberOrderOldest {
+		dir, after = "ASC", ">"
+	}
 
 	if groupid == 0 {
 		if search == "" && filter == 0 {
@@ -575,9 +567,9 @@ func GetMemberships(c *fiber.Ctx) error {
 			Joins("JOIN users u ON u.id = b.userid").
 			Where("b.groupid = ?", groupid)
 		if contextID > 0 {
-			bannedTx = bannedTx.Where("b.userid < ?", contextID)
+			bannedTx = bannedTx.Where("b.userid "+after+" ?", contextID)
 		}
-		bannedTx.Order("b.userid DESC").Limit(limit).Scan(&members)
+		bannedTx.Order("b.userid " + dir).Limit(limit).Scan(&members)
 		if members == nil {
 			members = make([]GetMembershipsMember, 0)
 		}
@@ -587,7 +579,7 @@ func GetMemberships(c *fiber.Ctx) error {
 		if len(members) == limit {
 			nextContext = members[len(members)-1].ID
 		}
-		return c.JSON(fiber.Map{"members": members, "context": nextContext})
+		return c.JSON(fiber.Map{"members": members, "context": nextContext, "order": order})
 	}
 
 	// Handle "Received mod mails" filter — returns members who have been sent mod mails,
@@ -613,13 +605,14 @@ func GetMemberships(c *fiber.Ctx) error {
 				"AND l.byuser != l.user").
 			Where("m.groupid = ? AND m.collection = ?", groupid, collection).
 			Group("m.userid").
-			Order("m.added DESC").
+			Order("m.added " + dir).
 			Limit(limit).
 			Scan(&members)
 		if members == nil {
 			members = make([]GetMembershipsMember, 0)
 		}
 		enrichMembers(members)
+		// A plain array, the shape this list has always had, so it carries no order of its own.
 		return c.JSON(members)
 	}
 
@@ -722,11 +715,11 @@ func GetMemberships(c *fiber.Ctx) error {
 			// m.id to match the cursor; both are set at row creation so the practical
 			// order is unchanged.
 			if contextID > 0 {
-				whereSQL += " AND m.id < ?"
+				whereSQL += " AND m.id " + after + " ?"
 				whereArgs = append(whereArgs, contextID)
 			}
 			baseTx().Where(whereSQL, whereArgs...).
-				Order("m.id DESC").Limit(limit).Scan(&members)
+				Order("m.id " + dir).Limit(limit).Scan(&members)
 		} else {
 			searchPattern := "%" + search + "%"
 			// Match firstname/lastname as well as fullname: some members (e.g. LoveJunk
@@ -751,7 +744,7 @@ func GetMemberships(c *fiber.Ctx) error {
 				searchPattern, searchPattern, searchPattern, searchPattern, searchPattern)
 			// Same cursor handling as the numeric branch above - see comment there.
 			if contextID > 0 {
-				whereSQL += " AND m.id < ?"
+				whereSQL += " AND m.id " + after + " ?"
 				whereArgs = append(whereArgs, contextID)
 			}
 			// searchTx, not baseTx: see the comment on searchTx above. The numeric
@@ -760,11 +753,11 @@ func GetMemberships(c *fiber.Ctx) error {
 			// group index there would turn that into a scan of the whole community.
 			searchTx().Joins("LEFT JOIN users_emails ue ON ue.userid = m.userid").
 				Where(whereSQL, whereArgs...).
-				Group("m.id").Order("m.id DESC").Limit(limit).Scan(&members)
+				Group("m.id").Order("m.id " + dir).Limit(limit).Scan(&members)
 		}
 	} else {
 		// Cursor-based pagination: m.id is the cursor (auto-increment correlates with join date).
-		// ORDER BY m.id DESC for deterministic per-page slicing consistent with the cursor.
+		// ORDER BY m.id (DESC for newest, ASC for oldest) for deterministic per-page slicing consistent with the cursor.
 		//
 		// groupid==0,
 		// the filter (0-3), and contextID>0 give 2x4x2 = 16 possible rendered
@@ -774,10 +767,10 @@ func GetMemberships(c *fiber.Ctx) error {
 		whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL()
 		whereArgs := append(append([]interface{}{}, groupArgs...), collection)
 		if contextID > 0 {
-			whereSQL += " AND m.id < ?"
+			whereSQL += " AND m.id " + after + " ?"
 			whereArgs = append(whereArgs, contextID)
 		}
-		result := baseTx().Where(whereSQL, whereArgs...).Order("m.id DESC").Limit(limit).Scan(&members)
+		result := baseTx().Where(whereSQL, whereArgs...).Order("m.id " + dir).Limit(limit).Scan(&members)
 		if result.Error != nil {
 			stdlog.Printf("Failed to query memberships group %d collection %s: %v", groupid, collection, result.Error)
 		}
@@ -816,14 +809,22 @@ func GetMemberships(c *fiber.Ctx) error {
 			"members":     members,
 			"filtercount": filterCount,
 			"context":     nextContext,
+			"order":       order,
 		})
 	}
 
 	return c.JSON(fiber.Map{
 		"members": members,
 		"context": nextContext,
+		"order":   order,
 	})
 }
+
+// The two orders GET /memberships lists an ordinary collection in.
+const (
+	memberOrderNewest = "newest"
+	memberOrderOldest = "oldest"
+)
 
 // enrichMembers computes displayname from name fields, resolves posting status, and parses settings JSON.
 func enrichMembers(members []GetMembershipsMember) {

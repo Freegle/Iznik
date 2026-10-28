@@ -109,7 +109,8 @@
           :msgid="interestedInOthersMsgid"
           :userid="interestedInOthersUserId"
         />
-        <ReplyJobInterstitial />
+        <RatingNudge />
+        <AskNameModal v-if="askNameOpen" />
         <!-- Height detection divs -->
         <div ref="mobileTallDetector" class="mobile-tall-detector" />
         <div ref="desktopTallDetector" class="desktop-tall-detector" />
@@ -133,6 +134,7 @@
   </div>
 </template>
 <script setup>
+import { useAskName } from '~/composables/useAskName'
 import {
   ref,
   computed,
@@ -156,11 +158,14 @@ import { useReplyToPost } from '~/composables/useReplyToPost'
 import { useMe } from '~/composables/useMe'
 import { useMobileStore } from '@/stores/mobile'
 import ChatButton from '~/components/ChatButton'
+const AskNameModal = defineAsyncComponent(
+  () => import('~/components/AskNameModal.vue')
+)
 const InterestedInOthersModal = defineAsyncComponent(
   () => import('~/components/InterestedInOthersModal.vue')
 )
-const ReplyJobInterstitial = defineAsyncComponent(
-  () => import('~/components/ReplyJobInterstitial.vue')
+const RatingNudge = defineAsyncComponent(
+  () => import('~/components/RatingNudge.vue')
 )
 const DeletedRestore = defineAsyncComponent(
   () => import('~/components/DeletedRestore.vue')
@@ -195,6 +200,7 @@ const adRendering = ref(true)
 const firstRender = ref(true)
 const interestedInOthersMsgid = ref(null)
 const interestedInOthersUserId = ref(null)
+const { askNameOpen } = useAskName()
 const showInterestedModal = ref(false)
 const videoAd = ref(true)
 

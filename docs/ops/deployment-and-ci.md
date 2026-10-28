@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-11
+last_reviewed: 2026-10-27
 owner: Freegle dev team
 covers:
   - docs/ops/reference/circleci.md
@@ -28,15 +28,24 @@ flowchart LR
 
 
 1. **Push to `master`.** CircleCI runs the full test suite (Go, PHPUnit, Laravel, Vitest,
-   Playwright) via a shared reusable orb. Two container-free suites run first because they
-   are cheap and fail fast: `claude-agent-sdk` (node:test) and `monitor-fsm` (vitest, which
-   also needs python3 for the specs that execute the Python the FSM shells out to).
+   Playwright) via a shared reusable orb. The `claude-agent-sdk` suite (node:test) runs first,
+   container-free and in a second.
    New raw SQL is kept out by the `.claude/check-raw-sql.sh` hook while editing and by the
    `check-raw-sql` CircleCI job, which runs the same script in `--diff origin/master` mode
    over the branch. A line marked `// keep-raw: <reason>` is allowed.
-   `eslint .` over `iznik-nuxt3` runs as its own step, `Lint iznik-nuxt3 (eslint)`, in the dev
-   container the Vitest runner uses, before Vitest starts. Errors fail the build; warnings are
-   hidden. Fix them with `npx eslint --fix .` in `iznik-nuxt3`.
+   The `check-ux-cleanups` job fails a UX cleanup note (`iznik-batch/config/ux_cleanups.php`) that is
+   malformed or names an experiment switch that still exists.
+   Four checks run as **background steps** so they overlap the container build and the
+   parallel suites instead of sitting on the critical path: `monitor-fsm` (vitest, which also
+   needs python3 and make, started before the build), `eslint .` over `iznik-nuxt3` (in the
+   ModTools dev container, started once the containers are up), and the `spatial-go` and
+   `routing-go` suites (through the status container, started just before the parallel
+   block). A background step cannot fail the job, so each writes `pass` or `fail` to
+   `~/test-output/<name>.result`; the parallel block stops the suites as soon as one says
+   `fail`, and `Collect background checks` is the gate that fails the job and prints the
+   output. eslint errors fail the build; warnings are hidden. Fix them with
+   `npx eslint --fix .` in `iznik-nuxt3`. The Go coverage upload is a background step too,
+   joined by `Wait for Go coverage upload` before the Coveralls webhook.
 2. **On green, `master` auto-merges to `production`.** This is automatic only when all
    tests pass.
 3. **`production` deploys the frontends.** Two Netlify sites build from the same

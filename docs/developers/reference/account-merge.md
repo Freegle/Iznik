@@ -1,8 +1,9 @@
 ---
-last_reviewed: 2026-10-16
+last_reviewed: 2026-10-26
 owner: Freegle dev team
 covers:
   - iznik-server-go/user/merge.go
+  - iznik-server-go/sso/relink.go
   - iznik-server-go/test/user_merge_test.go
   - iznik-batch/app/Services/ChatMergedRoomRepairService.php
   - iznik-batch/app/Console/Commands/Chat/RepairMergedRoomsCommand.php
@@ -99,6 +100,30 @@ when you add a table to one, add it to the other. Compared on 2026-10-15, column
 Everything else is the same: one transaction, deletion of the discarded account after commit,
 highest role and oldest join date, system role, join date, TrashNothing id, bans, the best Gift
 Aid declaration, the two log rows.
+
+## A moderator's Discourse account
+
+Discourse knows a moderator by their Freegle user id. A merge keeps one of the two accounts, and
+if the one that goes is the one Discourse was linked to, Discourse no longer knows the moderator.
+Their email and name stop updating, and their next sign-in would make them a new, empty Discourse
+account. This is not rare: the email-verify merge keeps the account the member is logged in as,
+which is often the new one.
+
+`sso.RelinkMerged` repairs it. It finds the Discourse account linked to an account merged into
+the kept one, using the merge log rows, which travel with the kept account. Then it links that
+Discourse account to the kept id with a `sync_sso` carrying the email Discourse already has, so
+Discourse matches it by email. A second `sync_sso` brings the email, name and avatar up to date.
+The moderator does not need to sign out of ModTools or Discourse.
+
+It runs in three places:
+
+- **After every merge** whose kept account is a moderator, in the background (`MergeUsersTx`).
+- **When a moderator signs in to Discourse**, before the sign-in is answered (`DiscourseSSO`), so a
+  merge from before this existed is repaired the next time they use Discourse.
+- **On request**, `POST /api/discourse/relink` with `{"userid": <kept id>}`, for Support and Admin.
+
+All three need `DISCOURSE_API`, `DISCOURSE_APIKEY` and `DISCOURSE_SECRET` in the Go API, and do
+nothing without them.
 
 ## Finding a merge afterwards
 

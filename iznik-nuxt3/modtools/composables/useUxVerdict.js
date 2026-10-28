@@ -53,10 +53,10 @@ export function verdictNextStep(experiment) {
   const v = verdictOf(experiment)
   const name = experiment.name || '<name>'
   if (v === 'confirm') {
-    return `Waiting for you. Confirm the result, remove the switch from the code, then press Mark as cleaned up, or run ux:experiment close ${name} --cleanup-pr=<url>.`
+    return `Waiting for you. Confirm the result, remove the switch from the code. The pull request that removes it can add a line to iznik-batch/config/ux_cleanups.php, and the batch closes it within the hour of its deploy. Or press Mark as cleaned up, or run ux:experiment close ${name} --cleanup-pr=<url>.`
   }
   if (v === 'remove') {
-    return `Waiting for you. Remove the variant code, then paste the pull request below and press Mark as cleaned up, or run ux:experiment close ${name} --cleanup-pr=<url>.`
+    return `Waiting for you. Remove the variant code. The pull request that removes it can add a line to iznik-batch/config/ux_cleanups.php, and the batch closes it within the hour of its deploy. Or paste the pull request below and press Mark as cleaned up, or run ux:experiment close ${name} --cleanup-pr=<url>.`
   }
   return ''
 }

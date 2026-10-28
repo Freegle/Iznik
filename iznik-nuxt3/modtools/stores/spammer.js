@@ -1,9 +1,40 @@
 import { defineStore } from 'pinia'
-import { runHoldAware } from '~/api/heldConflict'
+import { runHoldAware, asHeldByOtherError } from '~/api/heldConflict'
 import api from '~/api'
 import { fetchMe } from '~/composables/useMe'
 import { useUserStore } from '~/stores/user'
 import { useMemberStore } from '~/stores/member'
+
+// How many of a bulk action's requests run at once. Each member is still its own
+// request to the API, which has no bulk endpoint; this keeps fifty of them from
+// arriving in one burst without making the moderator wait for them one by one.
+const BULK_CONCURRENCY = 5
+
+// Run fn over items, at most BULK_CONCURRENCY at a time. Returns which items went
+// through, with what fn returned for each in `values`, and which did not, with
+// the error for each failure, so the caller can tell the moderator exactly what
+// still needs doing.
+async function runInBatches(items, fn) {
+  const done = []
+  const failed = []
+  const values = new Map()
+
+  for (let i = 0; i < items.length; i += BULK_CONCURRENCY) {
+    const batch = items.slice(i, i + BULK_CONCURRENCY)
+    const results = await Promise.allSettled(batch.map((item) => fn(item)))
+
+    results.forEach((result, j) => {
+      if (result.status === 'fulfilled') {
+        done.push(batch[j])
+        values.set(batch[j], result.value)
+      } else {
+        failed.push({ item: batch[j], error: result.reason })
+      }
+    })
+  }
+
+  return { done, failed, values }
+}
 
 export const useSpammerStore = defineStore('spammer', {
   state: () => ({
@@ -172,6 +203,62 @@ export const useSpammerStore = defineStore('spammer', {
       await fetchMe(true)
 
       this.removeFromList(params.id)
+    },
+
+    // Confirm many Pending Add reports at once. items: [{ id, userid }], where id
+    // is the spam_users row. A row held by another moderator is refused by the
+    // server with a 409 and comes back in `failed` naming the holder; the rest go
+    // through. Rows that went through leave the list.
+    //
+    async confirmMany(items) {
+      const withIds = items.filter((item) => item.id)
+
+      const result = await runInBatches(withIds, async (item) => {
+        try {
+          await api(this.config).spammers.patch({
+            id: item.id,
+            userid: item.userid,
+            collection: 'Spammer',
+          })
+        } catch (e) {
+          throw asHeldByOtherError(e) || e
+        }
+      })
+
+      result.done.forEach((item) => this.removeFromList(item.id))
+      // A hold taken since the list was fetched: the caller fetches the list
+      // again, with whatever search it is showing, so the holder appears.
+      result.heldConflict = result.failed.some((f) => f.error?.heldByOtherMod)
+
+      await fetchMe(true)
+
+      return result
+    },
+
+    // Report many members to the spam team in one go, all with the same reason.
+    // Always Pending Add, even for a Spam admin: the server leaves a member who
+    // already has a spammer-list row alone (safelisted, held, already reported or
+    // listed) and answers id 0, where a direct add would replace that row. Those
+    // come back in `skipped`, not `done`, so the caller does not say they were
+    // reported. `values` carries the new row's id for each reported member.
+    async reportMany({ userids, reason }) {
+      const result = await runInBatches(userids, async (userid) => {
+        const ret = await api(this.config).spammers.add({
+          userid,
+          collection: 'PendingAdd',
+          reason,
+        })
+        return parseInt(ret?.id) || 0
+      })
+
+      result.skipped = result.done.filter(
+        (userid) => !result.values.get(userid)
+      )
+      result.done = result.done.filter((userid) => result.values.get(userid))
+
+      await fetchMe(true)
+
+      return result
     },
 
     async requestremove(params) {

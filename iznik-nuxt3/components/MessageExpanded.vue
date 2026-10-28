@@ -438,6 +438,11 @@
                   We'll pass it on to the owner as soon as it does.
                 </span>
               </NoticeMessage>
+              <MessageOwnActions
+                v-if="fromme && !message.outcomes?.length"
+                :message="message"
+                class="mb-2"
+              />
               <div
                 v-if="replyable && !replied && !message.successful"
                 class="footer-buttons"
@@ -468,6 +473,7 @@
                 >
                   Cancel
                 </b-button>
+                <MessageInterested v-if="canMarkInterested" :id="message.id" />
                 <b-button
                   v-if="!fromme"
                   variant="primary"
@@ -540,6 +546,11 @@
             pass it on to the owner as soon as it does.
           </span>
         </NoticeMessage>
+        <MessageOwnActions
+          v-if="fromme && !message.outcomes?.length"
+          :message="message"
+          class="mb-2"
+        />
         <div
           v-if="replyable && !replied && !message.successful"
           class="footer-buttons"
@@ -569,6 +580,7 @@
           >
             Cancel
           </b-button>
+          <MessageInterested v-if="canMarkInterested" :id="message.id" />
           <b-button
             v-if="!fromme"
             variant="primary"
@@ -692,6 +704,8 @@ import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
 import ChatReplyPane from '~/components/ChatReplyPane'
 import BulkItemsInterest from '~/components/BulkItemsInterest'
+import MessageInterested from '~/components/MessageInterested'
+import MessageOwnActions from '~/components/MessageOwnActions'
 import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import { useModalHistory } from '~/composables/useModalHistory'
@@ -848,6 +862,16 @@ const hideGeneratedBulkBody = computed(() => {
 // A bulk offer is replied to by registering per-item interest, not by opening a
 // reply box — so the main reply button becomes "Register interest". These mirror
 // the BulkItemsInterest child's state (emitted up) so the button can reflect it.
+// The "I'm interested" mark is for a signed-in member looking at someone else's open, single-item post.
+const canMarkInterested = computed(
+  () =>
+    loggedIn.value &&
+    !fromme.value &&
+    !isBulk.value &&
+    !message.value?.successful &&
+    message.value?.id > 0
+)
+
 const bulkInterestRef = ref(null)
 const bulkCanRegister = ref(false)
 const bulkSubmitted = ref(false)
@@ -2476,6 +2500,11 @@ onUnmounted(() => {
     width: auto !important;
     display: flex !important;
     justify-content: center;
+  }
+
+  /* With the interested control beside it, Reply takes the rest of the row rather than all of it. */
+  &:has(.interested-control) .reply-button {
+    width: auto !important;
   }
 
   /* Mobile: only Reply button visible, full width */

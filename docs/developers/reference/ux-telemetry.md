@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-19
+last_reviewed: 2026-10-24
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useFlowTelemetry.js
@@ -17,6 +17,7 @@ covers:
   - iznik-batch/app/Console/Commands/Ux/RollupDailyCommand.php
   - iznik-batch/app/Console/Commands/Ux/WeeklyReportCommand.php
   - iznik-batch/database/migrations/2026_10_12_000001_create_ux_telemetry_tables.php
+  - iznik-batch/database/migrations/2026_10_21_000001_create_ux_flow_signal_daily_table.php
   - iznik-server-go/ux/ux.go
   - iznik-server-go/ux/rollups.go
 ---
@@ -199,6 +200,7 @@ Schema in the migration above.
 | `ux_flow_daily` | flow events | `entered` counts `step_enter` with `first_visit`; `reentered` the rest. `completed`, `backed`, `abandoned` and `help_sought` count once per visit, so rates over them divide by `entered + reentered` |
 | `ux_flow_outcome_daily` | flow events | per flow |
 | `ux_field_daily` | `field_revisit`, `validation_failed`, `choice_switched` | per field |
+| `ux_flow_signal_daily` | `step_enter`, `step_back`, `help_sought`, the three field events, `flow_complete` | Separate visits (flow instances) with each sign of second thoughts, and how many of them also sent `flow_complete`: signal `reached` (entered the step, the base), `backed`, `help`, and `field` (with the field). Loki joins on `flow_instance_id` in one query (`and on (flow_instance_id)`), so no raw line is paged. A visit that goes back on one day and finishes after midnight UTC counts as not finished, a small undercount that is the same for every row. The same visit can split in two where `logged_in` changes at the step. Rows exist only from the day the table was added. The job skips the table, with a warning, when it does not exist yet |
 | `ux_component_daily` | `interaction`, `impressions` | impressions scaled by `1/sample_rate`; dead click = click with `interactive=false` |
 | `ux_feature_adoption_daily` | `page_view` for the routes in `config('freegle.ux.features')`, `users.lastaccess` | |
 | `ux_search_daily` | `source="vector_search"` lines, `browse_scroll_depth` | `re_searched_60s` is a floor: only logged-in searches can be linked |
@@ -235,9 +237,9 @@ outcomes (started, finished) cannot be cut by it: a signed-in rate of finished o
 
 | Route | Returns |
 |---|---|
-| `GET /modtools/ux/funnels?flow=` | per flow and step: entered, reentered, visits (their sum, the denominator for rates), completed, backed, abandoned, revisits, validation_failures, help_sought, dwell p50/p90; `by` breakdown on `device_class`, `logged_in`, `variant` |
+| `GET /modtools/ux/funnels?flow=` | per flow and step: entered, reentered, visits (their sum, the denominator for rates), completed, backed, abandoned, revisits, validation_failures, help_sought, dwell p50/p90; `by` breakdown on `device_class`, `logged_in`, `variant`; and, from `ux_flow_signal_daily` and for the current period only, `reached`, `backed_then` and `help_then`, each `{people, finished}` (separate visits, and how many finished the funnel), left out when there are none |
 | `GET /modtools/ux/outcomes` | per flow: started, submitted, submit_ok, submit_failed, completed, abandoned, resumed |
-| `GET /modtools/ux/fields?flow=` | per field: revisits, validation_failures, choice_switches |
+| `GET /modtools/ux/fields?flow=` | per field: revisits, validation_failures, choice_switches; and, for the current period, `reached` (the step's `{people, finished}`) and `then` (visits with trouble on this field, and how many finished), left out when there are none. Signed in is ignored, as for the rest of this read |
 | `GET /modtools/ux/friction` | top 20 (page, component) by rage, dead, repeated intent, sorted by change against previous |
 | `GET /modtools/ux/adoption` | per feature: using_users / active_users |
 | `GET /modtools/ux/regret` | per signal, per day |

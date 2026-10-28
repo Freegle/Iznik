@@ -205,8 +205,10 @@
             variant="modgreen"
           />
           <span class="small text-muted">
-            Off means we never ask them to donate, on the site or by email. They
-            can change this in their own Settings too.
+            Off means we don't ask them to donate, on the site or by email, for
+            a year<span v-if="donationAsksUntil">
+              (until {{ donationAsksUntil }})</span
+            >. They can change this in their own Settings too.
           </span>
         </div>
       </div>
@@ -632,6 +634,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useUserStore } from '~/stores/user'
 import ExternalLink from '~/components/ExternalLink'
 import api from '~/api'
+import { formatDonationAsksUntil } from '~/composables/useDonationAsks'
 import { usePreferredEmail } from '~/modtools/composables/usePreferredEmail'
 
 const SHOW = 3
@@ -820,7 +823,16 @@ const newsfeedmodstatus = computed({
   },
 })
 
-// Donors can ask never to be asked to donate again; support can set it for them.
+// When a member's "don't ask me to donate" ends. The API sends the date only while it runs.
+const donationAsksUntil = computed(() =>
+  formatDonationAsksUntil(
+    user.value?.nodonationasksuntil
+      ? new Date(user.value.nodonationasksuntil)
+      : null
+  )
+)
+
+// Donors can ask not to be asked to donate for a year; support can set it for them.
 const askForDonations = computed({
   get() {
     // A yes/no from the API: support may not moderate the member's groups, so

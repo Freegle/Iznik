@@ -95,7 +95,8 @@ const share = (n, d) => (d ? withCount(n, d) : '–')
 
 // Each row is a measure; each cell is one version's figure for it, with the count behind it. The first group is
 // the story: how many were counted, how many were asked, how they answered and how many replies reached the poster.
-// The rest is the questions the offer outlived, who is still waiting, and the two figures the block above also gives.
+// Every way a question ends is in the story - yes, no, no answer, the offer going first, or still open - so those five
+// add up to the asked. The rest is the two figures the block above also gives.
 const MEASURES = [
   { name: 'Repliers', cell: (c) => num(c.replies), story: true },
   { name: 'Asked', cell: (c) => share(c.asked, c.replies), story: true },
@@ -106,8 +107,16 @@ const MEASURES = [
     cell: (c) => share(c.never_answered, c.asked),
     story: true,
   },
-  { name: 'The offer went first', cell: (c) => share(c.post_gone, c.asked) },
-  { name: 'Still waiting', cell: (c) => num(c.waiting) },
+  {
+    name: 'The offer went first',
+    cell: (c) => share(c.post_gone, c.asked),
+    story: true,
+  },
+  {
+    name: 'Still waiting',
+    cell: (c) => share(c.waiting, c.asked),
+    story: true,
+  },
   {
     name: 'Reached the poster',
     cell: (c) => share(c.reached, c.replies),

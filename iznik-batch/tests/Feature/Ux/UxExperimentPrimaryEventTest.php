@@ -26,6 +26,7 @@ class UxExperimentPrimaryEventTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        config()->set('ux_cleanups', []);
         Carbon::setTestNow('2026-10-14 10:00:00');
         $this->fakeLoki();
         foreach (['ux_experiment_reads', 'ux_experiments', 'ux_flow_outcome_daily'] as $t) {
@@ -100,6 +101,14 @@ class UxExperimentPrimaryEventTest extends TestCase
 
         $design = json_decode($this->service->find($id)->design, true);
         $this->assertSame('app_store_click', $design['primary_event']);
+    }
+
+    public function test_the_user_rated_event_is_listed(): void
+    {
+        $id = $this->service->create($this->attrs(['flow' => 'chat_outcome', 'name' => 'rate-on-return', 'design' => ['primary_event' => 'user_rated', 'base_rate' => 0.4]]));
+
+        $design = json_decode($this->service->find($id)->design, true);
+        $this->assertSame('user_rated', $design['primary_event']);
     }
 
     public function test_an_event_that_is_not_listed_is_refused_because_it_would_reach_logql(): void

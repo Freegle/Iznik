@@ -60,7 +60,7 @@ function makeAddress(overrides = {}) {
     subbuildingname: null,
     pobox: null,
     departmentname: null,
-    organizationname: null,
+    organisationname: null,
     postcodetype: null,
     suorganizationindicator: null,
     deliverypointsuffix: null,
@@ -666,7 +666,7 @@ describe('usePAF', () => {
     it('includes organisation name when present', () => {
       const result = constructMultiLine(
         makeAddress({
-          organizationname: 'HMRC',
+          organisationname: 'HMRC',
           buildingnumber: 100,
           thoroughfaredescriptor: 'Parliament Street',
         })
@@ -750,7 +750,7 @@ describe('usePAF', () => {
     it('organisation name appears in the single-line result', () => {
       const result = constructSingleLine(
         makeAddress({
-          organizationname: 'HMRC',
+          organisationname: 'HMRC',
           buildingnumber: 100,
           thoroughfaredescriptor: 'Parliament Street',
           posttown: 'LONDON',

@@ -78,6 +78,24 @@ describe('emailtracking store — digest positions', () => {
       expect(store.digestPositionsError).toBeNull()
     })
 
+    it('keeps the number of days the nightly summary has not reached', async () => {
+      fetchDigestPositions.mockResolvedValueOnce({ data: [], missing_days: 3 })
+
+      const store = useEmailTrackingStore()
+      await store.fetchDigestPositions()
+
+      expect(store.digestPositionsMissingDays).toBe(3)
+    })
+
+    it('treats a response without missing_days as none missing', async () => {
+      const store = useEmailTrackingStore()
+      store.digestPositionsMissingDays = 3
+      fetchDigestPositions.mockResolvedValueOnce({ data: [] })
+      await store.fetchDigestPositions()
+
+      expect(store.digestPositionsMissingDays).toBe(0)
+    })
+
     it('records an error when the API rejects', async () => {
       fetchDigestPositions.mockRejectedValueOnce(new Error('nope'))
 

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-19
+last_reviewed: 2026-10-23
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/server/utils/sitemap.ts
@@ -122,6 +122,14 @@ is **gone**. `pages/message/[id].vue` computes this once (`gone`) and:
 
 410 rather than 404 because these are posts that genuinely existed and are
 deliberately, permanently finished.
+
+A post we could not fetch is not gone. If the API errors, times out or cannot be
+reached, the message store marks the id in `fetchFailed`, and the page answers
+**503** with `Retry-After: 300` and `no-store` on both `Cache-Control` and
+`Netlify-CDN-Cache-Control`, so the answer stays out of the ten-minute ISR cache.
+It adds no `noindex`. A crawler retries a 503 and keeps the page; a 410 would tell
+it to drop a live post. Only a real 404 from the API counts as gone. The client
+fetches again on mount, so a member still sees the post.
 
 Why this matters: there are roughly **8.3 million** such URLs against **~42,000**
 live ones. They used to answer HTTP 200 with the item's subject as the `<title>`

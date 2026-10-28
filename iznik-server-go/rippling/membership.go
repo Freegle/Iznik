@@ -12,14 +12,14 @@ import (
 //
 // Rippling auto-joins a poster to every group their post reached, flagged
 // memberships.rippled = 1 (ExpandService::addPosterMembershipToRippledGroups). That flag
-// records how the membership came about, and it gates what the group's moderators may do:
-// a ripple-only membership is not a relationship with the community, so they cannot start
-// a chat off the back of it (Discourse 10102).
+// records how the membership came about. It no longer stops the group's moderators
+// contacting the member: only replies about the rippled post itself are left to the post's
+// home community.
 //
 // Once the member does something that makes it a real membership - joins the group
-// themselves, or moves house into its area - the flag has stopped being true and must go,
-// or they stay permanently uncontactable there. Joining used to return early because a
-// membership row already existed, so the flag survived every subsequent join.
+// themselves, or moves house into its area - the flag has stopped being true and must go.
+// Joining used to return early because a membership row already existed, so the flag
+// survived every subsequent join.
 //
 // This does change rippling attribution for that member: EstablishedOriginMemberExists
 // requires mem.rippled = 0, so a cleared membership counts them as an established member
@@ -99,18 +99,4 @@ func ClearRippledMembershipsAtLocationID(db *gorm.DB, userid uint64, locationid 
 	}
 
 	ClearRippledMembershipsAtLocation(db, userid, *loc.Lat, *loc.Lng)
-}
-
-// IsRippleOnlyMembership reports whether the member's sole tie to the group is a post of
-// theirs that rippled in. Rippling auto-joins the poster so their post can live there and
-// be moderated; it is not a relationship with the community, so the group's moderators
-// have nobody to start a conversation with (Discourse 10102).
-func IsRippleOnlyMembership(db *gorm.DB, userid uint64, groupid uint64) bool {
-	var count int64
-
-	db.Table("memberships").
-		Where("userid = ? AND groupid = ? AND rippled = 1", userid, groupid).
-		Count(&count)
-
-	return count > 0
 }

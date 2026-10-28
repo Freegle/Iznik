@@ -8,6 +8,7 @@ import ModSysAdminUxExperimentsBadge from '~/modtools/components/ModSysAdminUxEx
 import ModSysAdminUxSurveys from '~/modtools/components/ModSysAdminUxSurveys.vue'
 import ModSysAdminUxPages from '~/modtools/components/ModSysAdminUxPages.vue'
 import ModSysAdminUxReplyConfirmDetail from '~/modtools/components/ModSysAdminUxReplyConfirmDetail.vue'
+import ModSysAdminUxInterestedDetail from '~/modtools/components/ModSysAdminUxInterestedDetail.vue'
 
 // A section has:
 //   key        the value of ux_section
@@ -85,7 +86,7 @@ export const SECTIONS = [
 // every experiment draw the ones under `experiment`, so each draws nothing unless the experiment is its own.
 export const HOSTED = {
   problem: [],
-  experiment: [ModSysAdminUxReplyConfirmDetail],
+  experiment: [ModSysAdminUxReplyConfirmDetail, ModSysAdminUxInterestedDetail],
 }
 
 export const uxSections = () => [...SECTIONS].sort((a, b) => a.order - b.order)

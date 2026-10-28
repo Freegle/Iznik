@@ -1695,6 +1695,29 @@
     }
    }
   },
+  "/discourse/relink": {
+   "post": {
+    "description": "Support or Admin. Moves the Discourse account linked to an account merged into userid onto userid, then updates its email and name. Merges and Discourse sign-in do this by themselves; this is for merges from before they did.",
+    "tags": [
+     "discourse"
+    ],
+    "summary": "Re-link a moderator's Discourse account after an account merge",
+    "operationId": "relinkDiscourse",
+    "responses": {
+     "200": {
+      "description": "Whether an account was re-linked"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
   "/discourse_sso": {
    "get": {
     "description": "Handles Discourse single sign-on. Reads sso and sig query params.",
@@ -3703,6 +3726,90 @@
     "responses": {
      "200": {
       "$ref": "#/responses/messagesResponse"
+     }
+    }
+   }
+  },
+  "/message/interested": {
+   "get": {
+    "tags": [
+     "message"
+    ],
+    "summary": "The member's \"I'm interested\" marks from the last 30 days",
+    "operationId": "getMessageInterested",
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "401": {
+      "description": "Not logged in"
+     }
+    }
+   }
+  },
+  "/message/{id}/interested": {
+   "get": {
+    "tags": [
+     "message"
+    ],
+    "summary": "Whether to offer \"I'm interested\" on a post, and whether it is marked",
+    "operationId": "getMessageInterestedState",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "type": "integer",
+      "required": true,
+      "description": "Message ID"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "401": {
+      "description": "Not logged in"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "message"
+    ],
+    "summary": "Mark a post as \"I'm interested\", or remove the mark",
+    "operationId": "postMessageInterested",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "type": "integer",
+      "required": true,
+      "description": "Message ID"
+     },
+     {
+      "name": "body",
+      "in": "body",
+      "required": true,
+      "description": "interested true to mark, false to remove",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "interested": {
+         "type": "boolean"
+        }
+       }
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     },
+     "400": {
+      "description": "Invalid request, or the post cannot be marked"
+     },
+     "401": {
+      "description": "Not logged in"
      }
     }
    }
@@ -8157,6 +8264,29 @@
     "responses": {
      "200": {
       "$ref": "#/responses/genericResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/user/unrated": {
+   "get": {
+    "description": "Lists the freeglers the logged-in member handed an item over with in the last 14 days (either direction) and has not rated, newest first, one entry per person, at most five. Used by the rate-on-return experiment to ask on the next visit.",
+    "tags": [
+     "user"
+    ],
+    "summary": "People the member has handed over with and not rated",
+    "operationId": "getUnrated",
+    "responses": {
+     "200": {
+      "description": "Up to five people to rate"
      },
      "401": {
       "$ref": "#/responses/errorResponse"

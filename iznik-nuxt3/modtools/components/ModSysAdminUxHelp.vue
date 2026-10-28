@@ -26,6 +26,15 @@ import {
   stepsWithPrevious,
 } from '~/modtools/composables/useUxFormat'
 import { stepName, stepWithMost } from '~/modtools/composables/useUxFunnel'
+import {
+  minPeople,
+  compareFinish,
+  finishedCell,
+  othersCell,
+  verdictCell,
+  harmFirst,
+  flagSentence,
+} from '~/modtools/composables/useUxThenFinished'
 import ModSysAdminUxPanel from '~/modtools/components/ModSysAdminUxPanel.vue'
 
 const props = defineProps({
@@ -38,21 +47,58 @@ const emit = defineEmits(['toggle'])
 
 const store = useUxStore()
 
-const fields = [
+// Whether the server sent the finish figures. An older server, or a period the rollup has not covered,
+// does not, and the columns are then left out rather than drawn empty.
+const hasFinish = computed(() => steps.value.some((s) => s.reached))
+
+const fields = computed(() => [
   { key: 'step', label: 'Step' },
   { key: 'help', label: 'Sought help' },
   { key: 'previous', label: 'Previous period' },
-]
+  ...(hasFinish.value
+    ? [
+        { key: 'finished', label: 'Then finished' },
+        { key: 'others', label: 'Others finished' },
+        { key: 'verdict', label: 'What it means' },
+      ]
+    : []),
+])
 
 const steps = computed(() =>
   stepsWithPrevious(store.funnels.data).filter((s) => s.flow === props.flow)
 )
 
-const rows = computed(() =>
+// A filter thins the data, so each side needs more visits before it is compared.
+const min = computed(() => {
+  const a = store.answered.funnels
+  return minPeople(!!(a?.device || a?.signed_in))
+})
+
+// Each step with how its visits that asked for help ended; `c` is null when the server sent no figures.
+const compared = computed(() =>
   steps.value.map((s) => ({
-    step: stepName(props.flow, s.step),
+    s,
+    label: stepName(props.flow, s.step),
+    verb: 'asked for help',
+    c: compareFinish(s.help_then || { people: 0, finished: 0 }, s.reached, {
+      min: min.value,
+    }),
+  }))
+)
+
+const rows = computed(() =>
+  harmFirst(compared.value).map(({ s, label, c }) => ({
+    step: label,
     help: withCount(s.help_sought, s.visits),
     previous: s.prev ? withCount(s.prev.help_sought, s.prev.visits) : '–',
+    ...(c
+      ? {
+          finished: finishedCell(c),
+          others: othersCell(c),
+          verdict: verdictCell(c),
+          ...(c.state === 'gave-up' ? { _rowVariant: 'warning' } : {}),
+        }
+      : {}),
   }))
 )
 
@@ -67,7 +113,10 @@ const summary = computed(() => {
       : 'Nobody asked for help.'
   }
   const s = most.step
-  return `Most asked for help at ${stepName(props.flow, s.step)}: ${pct(s.help_sought, s.visits)} (${s.help_sought.toLocaleString()} of ${s.visits.toLocaleString()}).`
+  const where = `Most asked for help at ${stepName(props.flow, s.step)}: ${pct(s.help_sought, s.visits)} (${s.help_sought.toLocaleString()} of ${s.visits.toLocaleString()}).`
+  // Then whether asking for help is followed by giving up.
+  const flag = flagSentence(compared.value, 'asked for help')
+  return flag ? `${where} ${flag}` : where
 })
 
 const notes = computed(() => store.notes('funnels'))

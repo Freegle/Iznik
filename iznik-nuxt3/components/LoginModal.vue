@@ -157,7 +157,7 @@
           @submit="loginNative"
         >
           <b-form-group
-            v-if="signUp"
+            v-if="signUp && !nameHidden"
             label="Your name"
             label-for="fullname"
             class="mb-2"
@@ -249,6 +249,7 @@
   </b-modal>
 </template>
 <script setup>
+import { useAskName } from '~/composables/useAskName'
 import {
   ref,
   computed,
@@ -272,6 +273,7 @@ import { useMe } from '~/composables/useMe'
 import Api from '~/api'
 import { useMobileStore } from '@/stores/mobile' // APP
 import { useLoginTelemetry } from '~/composables/useLoginTelemetry'
+import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
 
 const NoticeMessage = defineAsyncComponent(
   () => import('~/components/NoticeMessage')
@@ -311,6 +313,7 @@ const isModTools = computed(() => miscStore.modtools)
 // telling them to update. So the modal never opens while that is true.
 const appOutOfDate = computed(() => miscStore.appOutOfDate)
 const showModal = ref(false)
+const mounted = ref(false)
 const pleaseShowModal = ref(false)
 const showSignUp = ref(false)
 const forceSignIn = ref(false)
@@ -417,8 +420,29 @@ const googleUnavailableForGmail = computed(() => {
   )
 })
 
+// Experiment join-name-optional: arm 'b' leaves the "Your name" box off the join pane. Anything but
+// arm 'b' is control. The arm lives in the browser and the page is server rendered, so the arm is read
+// after mount, and only once the join pane is on screen, because reading it counts the member as
+// having seen the variant. It is read at most once per page view.
+const experimentArm = ref(null)
+let armRead = false
+
+function readExperimentArm() {
+  if (armRead || !mounted.value || !showModal.value || !signUp.value) return
+  armRead = true
+  experimentArm.value = flowArm(FlowName.LOGIN, 'join-name-optional')
+}
+
+const { markAskNameLater } = useAskName()
+const nameHidden = computed(() => experimentArm.value === 'b' && signUp.value)
+
 const fullNameError = computed(() => {
-  return nativeBump.value && buttonClicked.value && !fullname.value
+  return (
+    !nameHidden.value &&
+    nativeBump.value &&
+    buttonClicked.value &&
+    !fullname.value
+  )
 })
 
 const formFields = computed(() => {
@@ -436,7 +460,10 @@ const passwordError = computed(() => {
 })
 
 // Lifecycle hooks
+watch([mounted, showModal, signUp], readExperimentArm)
+
 onMounted(() => {
+  mounted.value = true
   document.addEventListener('cookieyes_consent_update', onCookieConsentChanged)
 
   // Set marketing consent to true if it doesn't have a value yet
@@ -546,18 +573,30 @@ function loginNative(e) {
 
   // Probably this is someone who is already a user and is trying to log in, but has cleared their cache
   // (so we've forgotten that they've previously signed in) and hasn't noticed that they need to switch.
-  const confused = !fullname.value && email.value && password.value
+  // With the name box hidden (experiment join-name-optional) an empty name is expected, so it is not
+  // a sign-in typed on the join pane.
+  const confused =
+    !nameHidden.value && !fullname.value && email.value && password.value
 
   if (!confused && signUp.value) {
-    if (!fullname.value || emailError.value || !password.value) {
+    if (
+      (!nameHidden.value && !fullname.value) ||
+      emailError.value ||
+      !password.value
+    ) {
       nativeLoginError.value = 'Please fill out the form.'
     } else {
+      const details = {
+        email: email.value,
+        password: password.value,
+      }
+
+      if (!nameHidden.value) {
+        details.displayname = fullname.value
+      }
+
       authStore
-        .signUp({
-          displayname: fullname.value,
-          email: email.value,
-          password: password.value,
-        })
+        .signUp(details)
         .then(async () => {
           loginType.value = 'email/password'
 
@@ -583,6 +622,11 @@ function loginNative(e) {
 
           // Pick up the new user
           await authStore.fetchUser()
+
+          // Experiment join-name-optional: they gave no name, so ask for one when they next post or reply.
+          if (nameHidden.value) {
+            await markAskNameLater()
+          }
 
           if (route.path === '/' || !route.path) {
             // We've signed up from the home page.  Send them to the explore page to find a group.

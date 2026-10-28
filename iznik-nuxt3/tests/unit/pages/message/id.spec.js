@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, Suspense, h } from 'vue'
 
 import MessagePage from '~/pages/message/[id].vue'
+import { APIError } from '~/api/APIErrors'
 
 // Mock component imports to avoid deep Nuxt chains
 vi.mock('~/components/MyMessage', () => ({
@@ -51,11 +52,13 @@ vi.mock('~/composables/useTimeFormat', () => ({
 // Mock stores
 const mockFetch = vi.fn().mockResolvedValue({})
 const mockById = vi.fn().mockReturnValue(null)
+const mockFetchFailed = {}
 
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({
     fetch: mockFetch,
     byId: mockById,
+    fetchFailed: mockFetchFailed,
   }),
 }))
 
@@ -90,6 +93,8 @@ vi.mock('#imports', async () => {
 
 // Nuxt auto-imports
 const mockStatus = vi.fn()
+const mockHeader = vi.fn()
+globalThis.__testSetResponseHeader = (...args) => mockHeader(...args)
 globalThis.__testUseRoute = () => mockRouteReturn
 globalThis.__testSetResponseStatus = (...args) => mockStatus(...args)
 globalThis.definePageMeta = vi.fn()
@@ -142,6 +147,8 @@ describe('pages/message/[id].vue', () => {
     mockById.mockReturnValue(null)
     mockBuildHead.mockReturnValue({})
     mockStatus.mockClear()
+    mockHeader.mockClear()
+    for (const k of Object.keys(mockFetchFailed)) delete mockFetchFailed[k]
   })
 
   it('mounts without error when route is undefined (SSR hydration race)', async () => {
@@ -301,6 +308,19 @@ describe('pages/message/[id].vue', () => {
       expect(mockStatus).toHaveBeenCalledWith(410)
     })
 
+    it('answers 410 when the API says the post is not found', async () => {
+      mockFetch
+        .mockRejectedValueOnce(
+          new APIError({ response: { status: 404 } }, 'not found')
+        )
+        .mockResolvedValue({})
+
+      mountPage()
+      await flushPromises()
+
+      expect(mockStatus).toHaveBeenCalledWith(410)
+    })
+
     it('leaves a live post alone', async () => {
       mockById.mockReturnValue(LIVE)
 
@@ -400,6 +420,68 @@ describe('pages/message/[id].vue', () => {
 
       const head = mockHead.mock.calls[0][0]
       expect(head.script).toBeUndefined()
+    })
+  })
+
+  /* When the API cannot be reached the post may well be live. Answering 410 would tell a
+  crawler to drop it, and Netlify would cache that answer for ten minutes. */
+  describe('message page when the API is unavailable', () => {
+    beforeEach(() => {
+      vi.clearAllMocks()
+      setActivePinia(createPinia())
+      mockRouteReturn = { params: { id: '123' }, query: {} }
+      mockFetch.mockResolvedValue({})
+      mockById.mockReturnValue(null)
+      mockBuildHead.mockReturnValue({})
+      for (const k of Object.keys(mockFetchFailed)) delete mockFetchFailed[k]
+    })
+
+    function expectUnavailable() {
+      expect(mockStatus).toHaveBeenCalledWith(503)
+      expect(mockStatus).not.toHaveBeenCalledWith(410)
+      expect(mockHeader).toHaveBeenCalledWith('Retry-After', '300')
+      expect(mockHeader).toHaveBeenCalledWith('Cache-Control', 'no-store')
+      expect(mockHeader).toHaveBeenCalledWith(
+        'Netlify-CDN-Cache-Control',
+        'no-store'
+      )
+      const robots = mockHead.mock.calls.flatMap((c) => c[0]?.meta || [])
+      expect(robots.some((m) => m.name === 'robots')).toBe(false)
+    }
+
+    it('answers 503 when the batch fetch failed with a server error', async () => {
+      mockFetch.mockResolvedValueOnce(undefined).mockResolvedValue({})
+      mockFetchFailed[123] = true
+
+      const wrapper = mountPage()
+      await flushPromises()
+
+      expectUnavailable()
+      expect(wrapper.text()).not.toContain("This post isn't available")
+    })
+
+    it('answers 503 when the fetch throws something other than not found', async () => {
+      mockFetch
+        .mockRejectedValueOnce(
+          new APIError({ response: { status: 500 } }, 'boom')
+        )
+        .mockResolvedValue({})
+
+      mountPage()
+      await flushPromises()
+
+      expectUnavailable()
+    })
+
+    it('answers 503 when the fetch fails without reaching the API', async () => {
+      mockFetch
+        .mockRejectedValueOnce(new Error('fetch failed'))
+        .mockResolvedValue({})
+
+      mountPage()
+      await flushPromises()
+
+      expectUnavailable()
     })
   })
 })

@@ -150,8 +150,9 @@ Firebase shows them and a tap starts `MainActivity` with the message data as ext
 keeps that intent with the task. Reopened from Recents after Android has killed the app, it
 hands that intent back marked `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`, and the push plugin read
 it as a new tap: a member's app opened on the same chat every time for days.
-`MainActivity.onCreate` swaps such an intent for a plain launcher one. A new tap is
-unaffected. `tests/e2e/app/notifications.spec.js` covers Recents, the launcher and a new tap.
+`MainActivity.onCreate` swaps such an intent for a plain launcher one, unless it carries a
+`google.message_id` not yet delivered (ids are kept in SharedPreferences): after a kill a genuine
+new tap can carry the history flag too, and must get through. A new tap is unaffected. `tests/e2e/app/notifications.spec.js` covers Recents, the launcher and a new tap.
 
 #### Android backup and FCM tokens
 

@@ -182,6 +182,11 @@ class ProcessBackgroundTasksCommand extends Command
             ->whereNull('processed_at')
             ->whereNull('failed_at')
             ->where('attempts', '<', self::MAX_ATTEMPTS)
+            // A retry is queued with created_at in the future, for when it falls due. Compared on
+            // the database clock, which also stamps rows queued by the Go API, so a database
+            // timezone that differs from the app's cannot hold ordinary tasks back.
+            // keep-raw: NOW() must be the database's clock, and the builder binds a PHP time instead.
+            ->whereRaw('created_at <= NOW()')
             ->orderBy('created_at')
             ->limit($limit)
             ->get()
@@ -1672,15 +1677,38 @@ class ProcessBackgroundTasksCommand extends Command
     ];
 
     /**
-     * The partner post feeds that have a key configured.
+     * A partner that times out or returns a 5xx is retried, one partner at a time, with the
+     * delay doubling from a minute up to this. The retry is a new task row whose created_at
+     * is when it falls due.
+     */
+    private const POST_FEED_RETRY_MAX_DELAY_SECONDS = 1800;
+
+    /**
+     * Partner outages are usually short, so a failure is only reported as an error once it
+     * has gone on this long. Before then each failure is a warning.
+     */
+    private const POST_FEED_ALERT_AFTER_SECONDS = 3600;
+
+    /**
+     * After this long the post is given up on and reported.
+     */
+    private const POST_FEED_GIVE_UP_AFTER_SECONDS = 86400;
+
+    /**
+     * The partner post feeds that have a key configured. A retry carries the one partner it
+     * is for, and goes only to that one.
      *
      * @return array<string, array{name: string, url: string, key: string}>
      */
-    private function configuredPostFeeds(): array
+    private function configuredPostFeeds(array $data = []): array
     {
         $feeds = [];
 
         foreach (self::POST_FEEDS as $configKey => $name) {
+            if (isset($data['feed']) && $data['feed'] !== $configKey) {
+                continue;
+            }
+
             $apiKey = config("freegle.{$configKey}.api_key");
             if (! empty($apiKey)) {
                 $feeds[$configKey] = [
@@ -1695,57 +1723,50 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
-     * Add a post to the partner post feeds (freebiealerts.app, yeybu.com).
+     * What the partners are sent for a post, or null when the post should not be on their
+     * feeds now.
      *
-     * V1 parity with FreebieAlerts::add() — only sends outstanding Offers with
-     * a location. TrashNothing messages are skipped (TN syncs directly).
+     * V1 parity with FreebieAlerts::add() — only outstanding, approved Offers with a
+     * location. TrashNothing messages are skipped (TN syncs directly). It is worked out at
+     * send time, so a retry that falls due after the post was taken, withdrawn or deleted
+     * sends nothing.
      */
-    protected function handleFreebieAlertsAdd(array $data): void
+    private function postFeedPayload(int $msgId): ?array
     {
-        $msgId = (int) ($data['msgid'] ?? 0);
-        if ($msgId === 0) {
-            throw new \RuntimeException('freebie_alerts_add requires msgid');
-        }
-
-        $feeds = $this->configuredPostFeeds();
-        if (empty($feeds)) {
-            Log::debug('No post feed API key configured, skipping add', ['msgid' => $msgId]);
-            return;
-        }
-
         // Only outstanding Offers (no outcome yet).
-        $msg = DB::table('messages')->where('id', $msgId)->first();
+        $msg = DB::table('messages')->where('id', $msgId)->whereNull('deleted')->first();
         if (! $msg || $msg->type !== 'Offer') {
-            return;
+            return null;
         }
 
         $hasOutcome = DB::table('messages_outcomes')->where('msgid', $msgId)->exists();
         if ($hasOutcome) {
-            return;
+            return null;
         }
 
         // Defense-in-depth: skip clearance/bulk-offer posts even if somehow enqueued.
         $isClearance = DB::table('messages_bulk_items')->where('msgid', $msgId)->exists();
         if ($isClearance) {
             Log::info('Skipping freebie_alerts_add for clearance post', ['msgid' => $msgId]);
-            return;
+            return null;
         }
 
         // Skip TrashNothing messages — TN syncs to the partners directly.
         if ($msg->sourceheader && str_starts_with($msg->sourceheader, 'TN-')) {
-            return;
+            return null;
         }
 
         $group = DB::table('messages_groups')
             ->where('msgid', $msgId)
             ->where('collection', 'Approved')
+            ->where('deleted', 0)
             ->first();
         if (! $group) {
-            return;
+            return null;
         }
 
         if (! $msg->lat || ! $msg->lng) {
-            return;
+            return null;
         }
 
         // Build image list from message attachments.
@@ -1760,7 +1781,7 @@ class ProcessBackgroundTasksCommand extends Command
 
         $body = $msg->textbody ?: 'No description';
 
-        $payload = [
+        return [
             'id' => $msgId,
             'title' => $msg->subject,
             'description' => $body,
@@ -1768,11 +1789,33 @@ class ProcessBackgroundTasksCommand extends Command
             'longitude' => $msg->lng,
             'images' => $images,
             // The partners expect "YYYY-MM-DD HH:MM:SS"; arrival comes back with microseconds.
-            'created_at' => \Illuminate\Support\Carbon::parse($group->arrival)->format('Y-m-d H:i:s'),
+            'created_at' => Carbon::parse($group->arrival)->format('Y-m-d H:i:s'),
         ];
+    }
 
-        foreach ($feeds as $feed) {
-            $this->sendToPostFeed($feed, $msgId, 'add', '/freegle/post/create', $payload);
+    /**
+     * Add a post to the partner post feeds (freebiealerts.app, yeybu.com).
+     */
+    protected function handleFreebieAlertsAdd(array $data): void
+    {
+        $msgId = (int) ($data['msgid'] ?? 0);
+        if ($msgId === 0) {
+            throw new \RuntimeException('freebie_alerts_add requires msgid');
+        }
+
+        $feeds = $this->configuredPostFeeds($data);
+        if (empty($feeds)) {
+            Log::debug('No post feed API key configured, skipping add', ['msgid' => $msgId]);
+            return;
+        }
+
+        $payload = $this->postFeedPayload($msgId);
+        if ($payload === null) {
+            return;
+        }
+
+        foreach ($feeds as $configKey => $feed) {
+            $this->sendToPostFeed($configKey, $feed, $msgId, 'add', '/freegle/post/create', $payload, $data);
         }
     }
 
@@ -1788,24 +1831,40 @@ class ProcessBackgroundTasksCommand extends Command
             throw new \RuntimeException('freebie_alerts_remove requires msgid');
         }
 
-        $feeds = $this->configuredPostFeeds();
+        $feeds = $this->configuredPostFeeds($data);
         if (empty($feeds)) {
             Log::debug('No post feed API key configured, skipping remove', ['msgid' => $msgId]);
             return;
         }
 
-        foreach ($feeds as $feed) {
-            $this->sendToPostFeed($feed, $msgId, 'remove', "/freegle/post/{$msgId}/delete", null);
+        // A retried remove can fall due after the post came back - reposted, or its outcome
+        // withdrawn - and a fresh add has gone out since. Deleting it then would take a live
+        // post off the feed. Only retries are checked: a first remove is queued as the post
+        // goes, and its change may not be readable here yet.
+        if (isset($data['feed']) && $this->postFeedPayload($msgId) !== null) {
+            Log::info('Skipping retried post feed remove, the post is live again', [
+                'feed' => $data['feed'],
+                'msgid' => $msgId,
+            ]);
+            return;
+        }
+
+        foreach ($feeds as $configKey => $feed) {
+            $this->sendToPostFeed($configKey, $feed, $msgId, 'remove', "/freegle/post/{$msgId}/delete", null, $data);
         }
     }
 
     /**
-     * POST one add or remove to one partner. A failure is logged and reported, never thrown,
-     * so the other partners still get it. A remove has no body.
+     * POST one add or remove to one partner. A failure is never thrown, so the other
+     * partners still get it. A remove has no body.
+     *
+     * A timeout, connection failure, 408, 429 or 5xx is retried later for this partner
+     * alone. Any other refusal is our request being wrong, so it is reported at once and
+     * not retried - except a 404 on a remove, which means the partner never had the post.
      *
      * @param array{name: string, url: string, key: string} $feed
      */
-    private function sendToPostFeed(array $feed, int $msgId, string $action, string $path, ?array $payload): void
+    private function sendToPostFeed(string $configKey, array $feed, int $msgId, string $action, string $path, ?array $payload, array $data): void
     {
         $name = $feed['name'];
 
@@ -1818,30 +1877,84 @@ class ProcessBackgroundTasksCommand extends Command
             $response = $payload === null
                 ? $request->send('POST', $feed['url'] . $path)
                 : $request->post($feed['url'] . $path, $payload);
-
-            if ($response->successful()) {
-                Log::info("Post feed {$action} succeeded", ['feed' => $name, 'msgid' => $msgId]);
-            } else {
-                Log::warning("Post feed {$action} failed", [
-                    'feed' => $name,
-                    'msgid' => $msgId,
-                    'status' => $response->status(),
-                    'body' => $response->body(),
-                ]);
-                if ($action === 'add' && app()->bound('sentry')) {
-                    app('sentry')->captureMessage("{$name} add failed for message {$msgId}: {$response->status()}");
-                }
-            }
         } catch (\Throwable $e) {
-            Log::error("Post feed {$action} exception", [
+            $this->retryPostFeed($configKey, $name, $msgId, $action, $data, $e->getMessage());
+            return;
+        }
+
+        $status = $response->status();
+
+        if ($response->successful()) {
+            Log::info("Post feed {$action} succeeded", ['feed' => $name, 'msgid' => $msgId]);
+        } elseif ($status >= 500 || $status === 408 || $status === 429) {
+            $this->retryPostFeed($configKey, $name, $msgId, $action, $data, (string) $status);
+        } elseif ($action === 'remove' && $status === 404) {
+            Log::info('Post feed remove found nothing to remove', ['feed' => $name, 'msgid' => $msgId]);
+        } else {
+            Log::warning("Post feed {$action} failed", [
                 'feed' => $name,
                 'msgid' => $msgId,
-                'error' => $e->getMessage(),
+                'status' => $status,
+                'body' => $response->body(),
             ]);
             if (app()->bound('sentry')) {
-                app('sentry')->captureException($e);
+                app('sentry')->captureMessage("{$name} {$action} failed for message {$msgId}: {$status}");
             }
         }
+    }
+
+    /**
+     * Queue another try of one add or remove for one partner, after a failure that may be
+     * temporary. The failure is a warning until it has gone on for an hour, an error once
+     * then, and an error again when it is given up on after a day.
+     */
+    private function retryPostFeed(string $configKey, string $name, int $msgId, string $action, array $data, string $reason): void
+    {
+        $firstFailedAt = isset($data['first_failed_at']) ? Carbon::parse($data['first_failed_at']) : now();
+        $failingFor = now()->getTimestamp() - $firstFailedAt->getTimestamp();
+        $retries = (int) ($data['retries'] ?? 0);
+        $alerted = ! empty($data['alerted']);
+        $context = [
+            'feed' => $name,
+            'msgid' => $msgId,
+            'reason' => $reason,
+            'retries' => $retries,
+            'first_failed_at' => $firstFailedAt->toDateTimeString(),
+        ];
+
+        if ($failingFor >= self::POST_FEED_GIVE_UP_AFTER_SECONDS) {
+            Log::error("Post feed {$action} given up after a day of failures", $context);
+            if (app()->bound('sentry')) {
+                app('sentry')->captureMessage("{$name} {$action} given up for message {$msgId} after a day: {$reason}");
+            }
+            return;
+        }
+
+        if (! $alerted && $failingFor >= self::POST_FEED_ALERT_AFTER_SECONDS) {
+            Log::error("Post feed {$action} still failing after an hour", $context);
+            if (app()->bound('sentry')) {
+                app('sentry')->captureMessage("{$name} {$action} still failing for message {$msgId} after an hour: {$reason}");
+            }
+            $alerted = true;
+        } else {
+            Log::warning("Post feed {$action} failed, will retry", $context);
+        }
+
+        $delay = min(60 * (2 ** min($retries, 10)), self::POST_FEED_RETRY_MAX_DELAY_SECONDS);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => $action === 'add'
+                ? BackgroundTask::TASK_FREEBIE_ALERTS_ADD
+                : BackgroundTask::TASK_FREEBIE_ALERTS_REMOVE,
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'feed' => $configKey,
+                'first_failed_at' => $firstFailedAt->toIso8601String(),
+                'retries' => $retries + 1,
+                'alerted' => $alerted,
+            ]),
+            'created_at' => DB::raw('DATE_ADD(NOW(), INTERVAL ' . (int) $delay . ' SECOND)'),
+        ]);
     }
 
     /**

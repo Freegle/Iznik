@@ -48,8 +48,14 @@
       <p class="small text-muted">
         This sends everything on screen to
         <strong>geeks@ilovefreegle.org</strong>: the member, their recent
-        devices, and every question and answer in this investigation. Replies
-        come back to you.
+        devices, and every question and answer in this investigation, with any
+        screenshots you attached. Replies come back to the support mailbox.
+      </p>
+      <p v-if="conversationScreenshots.length" class="small">
+        <v-icon icon="camera" />
+        {{ conversationScreenshots.length }}
+        screenshot{{ conversationScreenshots.length === 1 ? '' : 's' }} will be
+        attached.
       </p>
       <b-form-group
         label="Why are you referring this?"
@@ -329,6 +335,16 @@
             placeholder="e.g., 'Why are they getting errors?' or 'Show their recent login activity'"
             :disabled="isProcessing"
             @keydown.enter.exact.prevent="submitQuery"
+            @paste="onPaste"
+          />
+          <ModSupportScreenshotStrip
+            class="mt-2"
+            :screenshots="screenshots"
+            :error="screenshotError"
+            :disabled="isProcessing"
+            :max="MAX_SCREENSHOTS"
+            @add="addFiles"
+            @remove="removeScreenshot"
           />
           <div class="d-flex justify-content-between align-items-center mt-2">
             <small v-if="query" class="text-muted">
@@ -363,6 +379,18 @@
               {{ msg.role === 'user' ? 'You' : 'AI Assistant' }}
             </div>
             <div class="message-content" v-html="formatMessageContent(msg)" />
+            <div
+              v-if="msg.images && msg.images.length"
+              class="d-flex flex-wrap gap-2 mt-2"
+            >
+              <img
+                v-for="(img, i) in msg.images"
+                :key="i"
+                :src="img.preview"
+                :alt="img.name"
+                class="message-screenshot"
+              />
+            </div>
             <div
               v-if="msg.role === 'assistant' && (msg.costUsd || msg.usage)"
               class="message-cost"
@@ -497,6 +525,15 @@
 
         <!-- Follow-up input -->
         <div class="chat-input-area p-3">
+          <ModSupportScreenshotStrip
+            class="mb-2"
+            :screenshots="screenshots"
+            :error="screenshotError"
+            :disabled="isProcessing"
+            :max="MAX_SCREENSHOTS"
+            @add="addFiles"
+            @remove="removeScreenshot"
+          />
           <b-form class="d-flex gap-2" @submit.prevent="submitQuery">
             <b-form-input
               v-model="query"
@@ -504,6 +541,7 @@
               :disabled="isProcessing"
               class="flex-grow-1"
               @keydown.enter.exact.prevent="submitQuery"
+              @paste="onPaste"
             />
             <b-button
               type="submit"
@@ -526,6 +564,12 @@ import { marked } from 'marked'
 import DOMPurify from 'isomorphic-dompurify'
 import { useUserStore } from '~/stores/user'
 import { useAuthStore } from '~/stores/auth'
+import ModSupportScreenshotStrip from '~/modtools/components/ModSupportScreenshotStrip.vue'
+import {
+  useSupportScreenshots,
+  forHelper,
+  MAX_SCREENSHOTS,
+} from '~/modtools/composables/useSupportScreenshots'
 
 // AI support helper for Claude integration. Talks directly to the log
 // analysis endpoint - the backend has its own moderator/admin auth and
@@ -575,6 +619,14 @@ const deviceError = ref('')
 
 // Query input
 const query = ref('')
+const {
+  screenshots,
+  screenshotError,
+  addFiles,
+  onPaste,
+  removeScreenshot,
+  takeScreenshots,
+} = useSupportScreenshots()
 
 // Processing
 const isProcessing = ref(false)
@@ -597,6 +649,15 @@ const referralNote = ref('')
 const referring = ref(false)
 const referralError = ref('')
 const referralResult = ref(null)
+// References of the referrals already sent about this member, so a later one threads under them.
+const referralRefs = ref([])
+
+// Every screenshot attached so far in this investigation, newest last. A referral carries up to
+// REFERRAL_SCREENSHOTS of them; the most recent ones win.
+const REFERRAL_SCREENSHOTS = 10
+const conversationScreenshots = computed(() =>
+  messages.value.flatMap((m) => m.images || []).slice(-REFERRAL_SCREENSHOTS)
+)
 
 // Template refs
 const messagesContainer = ref(null)
@@ -689,6 +750,8 @@ function changeUser() {
   referralNote.value = ''
   referralError.value = ''
   referralResult.value = null
+  referralRefs.value = []
+  takeScreenshots()
   showReferralModal.value = false
 }
 
@@ -847,10 +910,12 @@ async function submitQuery() {
 
   const queryText = query.value
   query.value = ''
+  const attached = takeScreenshots()
 
   messages.value.push({
     role: 'user',
     content: queryText,
+    images: attached,
   })
   scrollToBottom()
 
@@ -860,7 +925,7 @@ async function submitQuery() {
   activity.value = null
 
   try {
-    const result = await queryLogsForUser(queryText)
+    const result = await queryLogsForUser(queryText, attached)
 
     messages.value.push({
       role: 'assistant',
@@ -886,7 +951,7 @@ async function submitQuery() {
   }
 }
 
-async function queryLogsForUser(userQuery) {
+async function queryLogsForUser(userQuery, attached = []) {
   if (!aiHelperReachable()) {
     return {
       analysis:
@@ -899,13 +964,17 @@ async function queryLogsForUser(userQuery) {
       query: userQuery,
       userId: selectedUser.value?.id || 0,
     }
+    if (attached.length) requestBody.images = forHelper(attached)
 
     // Include Claude session ID for conversation continuity
     if (claudeSessionId.value) {
       requestBody.claudeSessionId = claudeSessionId.value
     }
 
-    addDebugEntry('request', 'Log Analysis Request', requestBody)
+    addDebugEntry('request', 'Log Analysis Request', {
+      ...requestBody,
+      images: attached.map((a) => a.name),
+    })
 
     // Forward the moderator's JWT so the helper can verify they are an
     // authenticated mod/support before running any log analysis.
@@ -1091,6 +1160,8 @@ async function sendReferral() {
           outputTokens: totalTokens.value.outputTokens,
         },
         modToolsUrl: window.location.origin,
+        screenshots: forHelper(conversationScreenshots.value),
+        earlierRefs: referralRefs.value,
       }),
     })
 
@@ -1102,6 +1173,7 @@ async function sendReferral() {
     }
 
     referralResult.value = { ok: true, ref: data.ref }
+    referralRefs.value = [...referralRefs.value, data.ref]
     showReferralModal.value = false
     referralNote.value = ''
   } catch (e) {
@@ -1247,6 +1319,14 @@ function formatDate(dateStr) {
 
 /* Referral bar - deliberately stands out from the chat so handing over is an
    obvious next step rather than a hidden one. */
+.message-screenshot {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
 .referral-bar {
   background: #fff3cd;
   border-top: 1px solid #dee2e6;

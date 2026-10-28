@@ -1652,3 +1652,139 @@ func TestReplyConfirm_ApprovingAHeldReplyShowsItsQuestionAndRejectingItDoesNot(t
 		assert.NotContains(t, f.messageTypes(t, f.posterToken), "Interested")
 	})
 }
+
+// A child car seat is asked about as policy, outside the experiment (Discourse 9939).
+
+// newCarSeatFixture is newReplyConfirmFixture with an offer whose subject says it is a child car seat.
+func newCarSeatFixture(t *testing.T, name string, subject string) replyConfirmFixture {
+	f := newReplyConfirmFixture(t, name)
+	database.DBConn.Exec("UPDATE messages SET subject = ? WHERE id = ?", subject, f.msgID)
+
+	return f
+}
+
+// carSeatQuestionsAsked counts the reply questions asked in the fixture's chat.
+func carSeatQuestionsAsked(f replyConfirmFixture) int64 {
+	var n int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM chat_prompts cp INNER JOIN chat_messages cm ON cm.id = cp.chatmsgid "+
+		"WHERE cm.chatid = ? AND cp.kind = 'confirm_reply'", f.chatID).Scan(&n)
+
+	return n
+}
+
+func TestReplyConfirm_ChildCarSeatIsAskedAboutWhateverTheExperimentDoes(t *testing.T) {
+	// ask, control, and no experiment at all: the question is asked every time, and no exposure is written,
+	// because this is policy and not the experiment.
+	for _, arm := range []string{"ask", "control", ""} {
+		t.Run("arm="+arm, func(t *testing.T) {
+			f := newCarSeatFixture(t, "rccarseat", "OFFER: Child car seat, group 1 (SW1)")
+			forceReplyConfirmArm(t, arm)
+
+			replyID := f.reply(t, "Is this still available?", true)
+
+			p := f.prompt(t)
+			if assert.NotNil(t, p, "a reply to a child car seat is held for the replier to confirm") {
+				assert.Equal(t, f.replierID, *p.Userid)
+				assert.Equal(t, replyID, *p.Heldchatmsgid)
+				assert.True(t, strings.HasPrefix(p.Message, "@"), "addressed to the replier: %s", p.Message)
+				assert.Contains(t, p.Message, "child car seat")
+				assert.Contains(t, p.Message, "never been in an accident")
+				assert.Contains(t, p.Message, "childcarseats.org.uk")
+				assert.Contains(t, p.Message, "Do you still want it?")
+				assert.Equal(t, 0, p.Processing, "the poster is not shown it until the reply goes through")
+			}
+			assert.Empty(t, replyConfirmExposures(t, f.replierID), "no exposure: the car seat question is not the experiment")
+
+			required, _ := processingState(replyID)
+			assert.Equal(t, 1, required, "the reply waits for the answer")
+		})
+	}
+}
+
+func TestReplyConfirm_ChildCarSeatWordsThatCount(t *testing.T) {
+	forceReplyConfirmArm(t, "")
+	for _, subject := range []string{
+		"OFFER: Maxi-Cosi carseat (SW1)",
+		"OFFER: Booster seat for 4-12 years (SW1)",
+		"OFFER: Isofix base (SW1)",
+		"OFFER: Infant carrier and rain cover (SW1)",
+	} {
+		f := newCarSeatFixture(t, "rccarseatword", subject)
+		f.reply(t, "Yes please", true)
+		assert.NotNil(t, f.prompt(t), subject)
+	}
+
+	// A seat that is not a child car seat is not asked about.
+	g := newCarSeatFixture(t, "rcgardenseat", "OFFER: Garden seat (SW1)")
+	g.reply(t, "Yes please", true)
+	assert.Nil(t, g.prompt(t), "a garden seat is not a car seat")
+}
+
+func TestReplyConfirm_ChildCarSeatIsAskedInTheAppToo(t *testing.T) {
+	// The experiment leaves the app out; the car seat question does not.
+	forceReplyConfirmArm(t, "")
+	f := newCarSeatFixture(t, "rccarseatapp", "OFFER: Child car seat (SW1)")
+
+	body, _ := json.Marshal(map[string]interface{}{"message": "Still available?", "refmsgid": f.msgID})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/chat/%d/message?jwt=%s", f.chatID, f.replierToken), strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "capacitor://localhost")
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	assert.NotNil(t, f.prompt(t), "asked in the app as on the web")
+	assert.Empty(t, replyConfirmExposures(t, f.replierID))
+}
+
+func TestReplyConfirm_ChildCarSeatIsAskedOncePerReplierAndPost(t *testing.T) {
+	forceReplyConfirmArm(t, "")
+	f := newCarSeatFixture(t, "rccarseatonce", "OFFER: Child car seat (SW1)")
+
+	f.reply(t, "Is it still available?", true)
+	p := f.prompt(t)
+	require.NotNil(t, p)
+
+	// The replier says no, then replies again: a second question would be a nag.
+	f.answer(t, p.Chatmsgid, f.replierToken, "no")
+	second := f.reply(t, "Actually, I do want it", true)
+
+	assert.EqualValues(t, 1, carSeatQuestionsAsked(f), "asked once")
+	required, _ := processingState(second)
+	assert.Equal(t, 1, required, "the second reply goes to the batch as an ordinary reply")
+}
+
+func TestReplyConfirm_ChildCarSeatWantedIsNotAskedAbout(t *testing.T) {
+	// The wording is for someone accepting a seat. A WANTED for one is answered by someone offering theirs.
+	forceReplyConfirmArm(t, "")
+	f := newCarSeatFixture(t, "rccarseatwanted", "WANTED: Child car seat (SW1)")
+	database.DBConn.Exec("UPDATE messages SET type = 'Wanted' WHERE id = ?", f.msgID)
+
+	f.reply(t, "I have one", true)
+	assert.Nil(t, f.prompt(t))
+}
+
+func TestReplyConfirm_ADamagedChildCarSeatGetsTheCarSeatQuestionAndNoExposure(t *testing.T) {
+	// Both reasons apply; the car seat wording covers the accident and the age, which is what matters, and
+	// the reply stays out of the experiment's figures.
+	forceReplyConfirmArm(t, "ask")
+	f := newCarSeatFixture(t, "rccarseatdamaged", "OFFER: Child car seat (SW1)")
+	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
+
+	f.reply(t, "Yes please", true)
+	p := f.prompt(t)
+	if assert.NotNil(t, p) {
+		assert.Contains(t, p.Message, "child car seat")
+		assert.NotContains(t, p.Message, "from the photo")
+	}
+	assert.Empty(t, replyConfirmExposures(t, f.replierID))
+}
+
+func TestReplyConfirm_ChildCarSeatNotForTrashNothingMembers(t *testing.T) {
+	forceReplyConfirmArm(t, "")
+	f := newCarSeatFixture(t, "rccarseattn", "OFFER: Child car seat (SW1)")
+	database.DBConn.Exec("UPDATE users SET tnuserid = 12345 WHERE id = ?", f.posterID)
+
+	f.reply(t, "Yes please", true)
+	assert.Nil(t, f.prompt(t), "nobody at TrashNothing would see the question")
+}

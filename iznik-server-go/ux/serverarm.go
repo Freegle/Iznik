@@ -106,6 +106,15 @@ var ServerSwitches = map[string]ServerSwitch{
 		Arms:    []string{"control", "ask"},
 		Metric:  ServerSwitchMetric{Source: "confirm_reply", WindowHours: 168},
 	},
+	"interested-button": {
+		Name:    "interested-button",
+		Opened:  "2026-10-23",
+		Channel: "server",
+		Type:    "interested_button",
+		Varies:  "step",
+		Arms:    []string{"control", "button"},
+		Metric:  ServerSwitchMetric{Source: "interested_reply", WindowHours: 168},
+	},
 }
 
 var serverSwitchMu sync.RWMutex

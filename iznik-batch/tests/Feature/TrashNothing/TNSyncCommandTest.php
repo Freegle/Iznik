@@ -689,6 +689,58 @@ class TNSyncCommandTest extends TestCase
     }
 
     /**
+     * A move TN tells us about is logged like a postcode change in Settings, so moderators
+     * can see it in the member's logs (Discourse 10277). No move, no row.
+     */
+    public function test_sync_location_change_is_logged_once(): void
+    {
+        $user = $this->createTNUser();
+
+        $pcId = 99000203;
+        $lat = 51.5502;
+        $lng = 0.1350;
+        $srid = (int) config('freegle.srid', 3857);
+        DB::table('locations')->updateOrInsert(['id' => $pcId], [
+            'name' => 'RM9 5ZZ',
+            'type' => 'Postcode',
+            'lat' => $lat,
+            'lng' => $lng,
+            'geometry' => DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, $srid)),
+        ]);
+
+        $logged = fn () => DB::table('logs')
+            ->where('user', $user->id)
+            ->where('type', 'User')
+            ->where('subtype', 'PostcodeChange')
+            ->pluck('text')
+            ->all();
+
+        try {
+            Http::fake([
+                '*/ratings*' => Http::response(['ratings' => []], 200),
+                '*/user-changes*' => Http::response([
+                    'changes' => [[
+                        'fd_user_id' => $user->id,
+                        'location' => ['latitude' => $lat, 'longitude' => $lng],
+                        'date' => self::DATE_SYNC,
+                    ]],
+                ], 200),
+                '*/v1/postcodes/knn*' => Http::response(['results' => [['id' => $pcId, 'distance' => 0]]], 200),
+            ]);
+
+            $this->artisan('tn:sync')->assertExitCode(0);
+            $this->assertEquals(['RM9 5ZZ'], $logged(), 'the move is logged with the postcode');
+
+            // The same location again is not a move.
+            $this->artisan('tn:sync', ['--from' => self::DATE_SYNC])->assertExitCode(0);
+            $this->assertEquals(['RM9 5ZZ'], $logged(), 'an unchanged location logs nothing more');
+        } finally {
+            DB::table('logs')->where('user', $user->id)->where('subtype', 'PostcodeChange')->delete();
+            DB::table('locations')->where('id', $pcId)->delete();
+        }
+    }
+
+    /**
      * TN is the master for a TN member's location. A stale FD-side settings.mylocation
      * (V1 data from before the account was linked to TN) is read first by the profile,
      * distances and Browse, so it must go once TN tells us where the member is - even

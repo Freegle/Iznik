@@ -82,6 +82,11 @@ export default class UserAPI extends BaseAPI {
     return await this.$getv2('/user/' + id + '/logins')
   }
 
+  // The people the member handed an item over with lately and has not rated (rate-on-return).
+  unrated() {
+    return this.$getv2('/user/unrated')
+  }
+
   rate(id, rating, reason, text) {
     return this.$postv2('/user', {
       ratee: id,

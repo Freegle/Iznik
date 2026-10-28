@@ -168,6 +168,9 @@ describe('PostItem', () => {
       ['mattress', 'Upholstered household items'],
       ['helmet', 'Motorcycle and cycle helmets'],
       ['car seat', 'Car seats'],
+      ['Isofix base', 'Car seats'],
+      ['booster seat', 'Car seats'],
+      ['infant carrier', 'Car seats'],
       ['knife', 'Knives'],
       ['contact lens solution', 'Sealed and in date'],
       ['all in one contact lens fluid', 'Sealed and in date'],
@@ -179,6 +182,21 @@ describe('PostItem', () => {
       const wrapper = createWrapper()
       expect(wrapper.vm.warn).toBeTruthy()
       expect(wrapper.vm.warn.type).toContain(expectedType)
+    })
+
+    it('tells an offerer of a car seat what to say, and an asker what to ask', () => {
+      mockMessage.mockReturnValue({ item: 'child car seat' })
+      const offer = createWrapper({ type: 'Offer' })
+      expect(offer.vm.warnMessage).toContain('Please say the make and model')
+      expect(offer.vm.warnMessage).toContain('childcarseats.org.uk')
+      const wanted = createWrapper({ type: 'Wanted' })
+      expect(wanted.vm.warnMessage).toContain('Ask for the make, model and age')
+    })
+
+    it('uses the one message for both when a warning has no asker wording', () => {
+      mockMessage.mockReturnValue({ item: 'helmet' })
+      const wanted = createWrapper({ type: 'Wanted' })
+      expect(wanted.vm.warnMessage).toContain('involved in a crash')
     })
 
     it('shows no warning for safe items', () => {

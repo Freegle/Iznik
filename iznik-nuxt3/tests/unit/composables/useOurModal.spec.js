@@ -110,4 +110,96 @@ describe('useOurModal', () => {
       expect(hideSpy).toHaveBeenCalledTimes(1)
     })
   })
+
+  describe('show() without a modal ref', () => {
+    it('logs an error and does not mark shown', async () => {
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const Bare = defineComponent({
+        setup() {
+          const api = useOurModal({ autoShow: false })
+          return { api }
+        },
+        template: '<div />',
+      })
+      const wrapper = mount(Bare)
+      mountedWrappers.push(wrapper)
+      await flushPromises()
+      wrapper.vm.api.show()
+      expect(err).toHaveBeenCalledWith('useOurModal show problem')
+      err.mockRestore()
+    })
+
+    it('hide() with no modal ref does not throw', async () => {
+      const Bare = defineComponent({
+        setup() {
+          return { api: useOurModal({ autoShow: false }) }
+        },
+        template: '<div />',
+      })
+      const wrapper = mount(Bare)
+      mountedWrappers.push(wrapper)
+      await flushPromises()
+      expect(() => wrapper.vm.api.hide()).not.toThrow()
+    })
+  })
+
+  describe('navigation guard', () => {
+    function guard() {
+      return mockBeforeEach.mock.calls[mockBeforeEach.mock.calls.length - 1][0]
+    }
+
+    it('lets navigation through when no modal is shown', async () => {
+      mountWith({ autoShow: false })
+      await flushPromises()
+      const next = vi.fn()
+      guard()({ query: {} }, {}, next)
+      expect(next).toHaveBeenCalledWith()
+    })
+
+    it('cancels navigation and hides the modal when shown', async () => {
+      const { hideSpy } = mountWith()
+      await flushPromises()
+      const next = vi.fn()
+      guard()({ query: {} }, {}, next)
+      expect(hideSpy).toHaveBeenCalledTimes(1)
+      expect(next).toHaveBeenCalledWith(false)
+    })
+
+    it('lets a noguard navigation through even when shown', async () => {
+      const { hideSpy } = mountWith()
+      await flushPromises()
+      const next = vi.fn()
+      guard()({ query: { noguard: 'true' } }, {}, next)
+      expect(hideSpy).not.toHaveBeenCalled()
+      expect(next).toHaveBeenCalledWith()
+    })
+
+    it('copes with a route with no query', async () => {
+      mountWith()
+      await flushPromises()
+      const next = vi.fn()
+      guard()(undefined, {}, next)
+      expect(next).toHaveBeenCalledWith(false)
+    })
+
+    it('stops guarding after hide()', async () => {
+      const { getApi } = mountWith()
+      await flushPromises()
+      getApi().hide()
+      const next = vi.fn()
+      guard()({ query: {} }, {}, next)
+      expect(next).toHaveBeenCalledWith()
+    })
+  })
+
+  describe('unmount', () => {
+    it('unregisters the navigation guard', async () => {
+      const unregister = vi.fn()
+      mockBeforeEach.mockReturnValueOnce(unregister)
+      const { wrapper } = mountWith()
+      await flushPromises()
+      wrapper.unmount()
+      expect(unregister).toHaveBeenCalledTimes(1)
+    })
+  })
 })

@@ -1,11 +1,13 @@
 ---
-last_reviewed: 2026-10-21
+last_reviewed: 2026-10-26
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
   - iznik-nuxt3/pages/myposts.vue
   - iznik-nuxt3/pages/mypost/**
   - iznik-nuxt3/components/MyMessage.vue
+  - iznik-nuxt3/components/OutcomeModal.vue
+  - iznik-nuxt3/components/MessageOwnActions.vue
   - iznik-nuxt3/components/PhotoUploader.vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-post-flow.spec.js
@@ -44,6 +46,9 @@ reply, you pick someone, and they collect. This guide walks through the whole th
 On a phone the steps are the same but split into photo, details, options and location
 screens. The photo screen has an **Add Photos** button. You do not need a photo to carry
 on: below the button is a small **Skip** link, which takes you to the details screen.
+After the details screen, some members (while a change is being tried) go straight to the
+location screen. They have a **Delivery or a deadline?** link under the postcode box, which
+opens the options screen. Everyone else sees the options screen first, as described above.
 
 Occasionally, when Freegle is dealing with a wave of spam, new posts are held back for a
 while before they appear. Yours is not lost: it goes through the usual checks once the
@@ -92,6 +97,8 @@ When someone has collected the item, mark your OFFER as **TAKEN**. This closes t
 you stop getting replies, and lets you thank and rate the person who collected.
 
 - Go to **My Posts**, open the post, and choose **Mark as TAKEN**.
+- Or open your post anywhere on the site, for example from Browse. Your own post shows
+  **Mark as TAKEN** where other people see **Reply**.
 - You can also do this from the "What happened to ..." email we send you.
 
 If nobody took it and you no longer want to offer it, choose **Withdraw** instead. The
@@ -102,9 +109,10 @@ waiting for a moderator's look on a neighbouring community.
 
 Say who took some, then tell us whether that is everything:
 
-- **That's everything gone** closes the post, and asks how it went.
-- **There's still some left** leaves your post up. Other people see it as "Part gone,
-  some still available", and you can come back and add the next person later.
+- **Yes, it's all gone** closes the post, and asks how it went.
+- **No, some are left** leaves your post up. The button then says **Save, keep my post up**,
+  not Mark as TAKEN. Other people see it as "Part gone, some still available". When the
+  rest has gone, choose **Mark as TAKEN** again and pick **Yes, it's all gone**.
 
 You are never asked how many each person took. If you find you have more to give away
 than you posted, change the number on the post itself with **Edit**.

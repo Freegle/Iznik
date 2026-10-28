@@ -10,6 +10,7 @@
         />
         <div v-if="groupid" class="d-flex">
           <ModMemberTypeSelect v-model="filter" />
+          <ModMemberOrderSelect v-model="order" />
           <b-button
             v-if="groupid"
             variant="white"
@@ -51,6 +52,9 @@
           <span v-else>
             This group has {{ pluralise('member', group.membercount, true) }}.
           </span>
+        </p>
+        <p v-if="orderIgnored" class="mt-1 text-muted">
+          Oldest first is not available yet, so this list is newest first.
         </p>
         <ModMembers />
         <infinite-loading
@@ -125,6 +129,7 @@ const {
   groupid,
   search,
   filter,
+  order,
   sort,
   distance,
   members,
@@ -178,8 +183,17 @@ const filterLabels = {
 }
 const filterLabel = computed(() => filterLabels[filter.value] || null)
 
+// An API from before the order existed lists newest first and does not say so. The Received mod mails
+// list never says, so it is not taken as a sign.
+const orderIgnored = computed(
+  () =>
+    order.value === 'oldest' &&
+    filter.value !== '6' &&
+    memberStore.order === null
+)
+
 // Watchers
-watch(filter, (newVal) => {
+watch([filter, order], () => {
   context.value = null
   memberStore.clear()
   bump.value++

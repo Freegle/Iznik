@@ -252,9 +252,10 @@ func TestReplyGroupidMustBeOneTheModAdministers(t *testing.T) {
 		"and no mail is queued in the home group's name")
 }
 
-// A membership that exists only because rippling auto-joined the poster is not a
-// relationship with that community, so its mods cannot open a chat off the back of it.
-func TestModCannotStartChatWithRippleOnlyMember(t *testing.T) {
+// A membership that exists only because rippling auto-joined the poster is still a member
+// the group's mods may contact from the member list. Only replies about the rippled post
+// itself are left to its home community (Discourse 10283).
+func TestModCanStartChatWithRippleOnlyMember(t *testing.T) {
 	prefix := uniquePrefix("ripchat")
 	db := database.DBConn
 
@@ -274,13 +275,13 @@ func TestModCannotStartChatWithRippleOnlyMember(t *testing.T) {
 	resp, err := getApp().Test(req)
 	require.NoError(t, err)
 
-	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode,
-		"a ripple-created membership does not entitle the group's mods to start a chat")
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode,
+		"the group's mods can start a chat with a member who arrived by rippling")
 
 	var chats int64
 	db.Table("chat_rooms").Where("user1 = ? AND groupid = ? AND chattype = ?",
 		memberID, groupID, utils.CHAT_TYPE_USER2MOD).Count(&chats)
-	assert.Equal(t, int64(0), chats, "and no chat room is created")
+	assert.Equal(t, int64(1), chats, "and the chat room is created")
 }
 
 // If the member wrote to the group first, the mods must be able to answer - the block is
@@ -466,10 +467,9 @@ func TestDeleteOnHomeGroupDoesNotRecordARejection(t *testing.T) {
 	assert.Equal(t, 0, recorded, "the home community is never recorded as having turned its own post away")
 }
 
-// The member list is the other door to the same thing. "Leave Member" changes nothing
-// about the membership - it exists only to send the member a message - so on a membership
-// rippling created it has nothing to do, exactly like a reply on a rippled-in post.
-func TestModCannotModmailARippleOnlyMember(t *testing.T) {
+// "Leave Member" from the member list sends the member a message. A member who arrived by
+// rippling can be written to like any other (Discourse 10283).
+func TestModCanModmailARippleOnlyMember(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("ripmodmail")
@@ -490,14 +490,15 @@ func TestModCannotModmailARippleOnlyMember(t *testing.T) {
 	resp, err := getApp().Test(req)
 	require.NoError(t, err)
 
-	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode,
-		"a ripple-created membership is not someone this group's moderators write to")
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode,
+		"a member who arrived by rippling can be written to")
 
 	var queued int64
 	db.Table("background_tasks").
 		Where("task_type = ? AND JSON_EXTRACT(data, '$.userid') = ? AND JSON_EXTRACT(data, '$.groupid') = ?",
 			"email_mod_stdmsg", memberID, groupID).Count(&queued)
-	assert.Equal(t, int64(0), queued, "and no mail is queued")
+	assert.Equal(t, int64(1), queued, "and the mail is queued")
+	assert.Equal(t, 1, memberNotifyFlag(t, memberID, groupID), "and will be sent")
 }
 
 // An ordinary member of the group is unaffected.
@@ -547,10 +548,9 @@ func memberNotifyFlag(t *testing.T, userid, groupid uint64) int {
 	return flags[0]
 }
 
-// Removing a member whose only tie to the group is a ripple is the group's own business,
-// and it happens. What does not happen is a message about it: they never joined, so a note
-// from a community they have not heard of is the same confusion as one about their post.
-func TestRejectingARippleOnlyMemberIsSilent(t *testing.T) {
+// Removing a member whose only tie to the group is a ripple tells them, as it does any
+// member, when the moderator sends a message with it (Discourse 10283).
+func TestRejectingARippleOnlyMemberTellsThem(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("riprejmem")
@@ -576,8 +576,8 @@ func TestRejectingARippleOnlyMemberIsSilent(t *testing.T) {
 	db.Table("memberships").Where("userid = ? AND groupid = ?", memberID, groupID).Count(&remaining)
 	assert.Equal(t, int64(0), remaining, "they are off the group")
 
-	assert.Equal(t, 0, memberNotifyFlag(t, memberID, groupID),
-		"and hear nothing about a community they never joined")
+	assert.Equal(t, 1, memberNotifyFlag(t, memberID, groupID),
+		"and are told, with the message the moderator chose")
 }
 
 // An ordinary member is told, as they always were.

@@ -18,9 +18,9 @@
  *
  * An entry:
  *   [
- *       'name' => 'digest-subject',                 // the experiment's name, as in UxArm::for($id, 'digest-subject')
+ *       'name' => 'my-experiment',                  // the experiment's name, as in UxArm::for($id, 'my-experiment')
  *       'opened' => '2026-10-17',                   // YYYY-MM-DD
- *       'pr' => 'https://github.com/Freegle/Iznik/pull/NNNN',
+ *       'pr' => 'https://github.com/Freegle/Iznik/pull/1927',
  *       'keep_until' => null,                       // YYYY-MM-DD, with the reason in the PR
  *       'channel' => 'email',                       // email, push or server
  *       'type' => 'UnifiedDigestDaily',             // the email_type or the push kind
@@ -33,25 +33,14 @@
  */
 return [
     [
-        'name' => 'digest-subject',
-        'opened' => '2026-10-17',
-        'pr' => 'https://github.com/Freegle/Iznik/pull/1807',
+        'name' => 'familiar-poster',
+        'opened' => '2026-10-26',
+        'pr' => 'https://github.com/Freegle/Iznik/pull/1927',
         'keep_until' => null,
         'channel' => 'email',
-        'type' => 'UnifiedDigestDaily',
-        'varies' => 'subject',
-        'arms' => ['control', 'items'],
-        'metric' => ['source' => 'email_click', 'window_hours' => 24],
-    ],
-    [
-        'name' => 'push-posts-title',
-        'opened' => '2026-10-20',
-        'pr' => 'https://github.com/Freegle/Iznik/pull/1808',
-        'keep_until' => null,
-        'channel' => 'push',
-        'type' => 'daily_new_posts',
-        'varies' => 'title',
-        'arms' => ['control', 'lead'],
-        'metric' => ['source' => 'active_after', 'window_hours' => 24],
+        'type' => 'FamiliarPosts',
+        'varies' => 'step',
+        'arms' => ['control', 'notify'],
+        'metric' => ['source' => 'familiar_reply', 'window_hours' => 48],
     ],
 ];

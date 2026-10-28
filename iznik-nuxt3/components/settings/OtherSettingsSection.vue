@@ -57,9 +57,12 @@
       <div v-if="showDonationAsks" class="option-row">
         <div class="option-info">
           <span class="option-label">Donation requests</span>
-          <span class="option-desc"
-            >Thank you for donating. Turn this off and we won't ask you again,
-            on the site or by email.</span
+          <span v-if="donationAsksUntil" class="option-desc"
+            >We won't ask you to donate until {{ donationAsksUntil }}.</span
+          >
+          <span v-else class="option-desc"
+            >Thank you for donating. Turn this off and we won't ask you to
+            donate for a year, on the site or by email.</span
           >
         </div>
         <OurToggle
@@ -76,6 +79,11 @@
 </template>
 
 <script setup>
+import {
+  donationAsksPaused,
+  donationAsksPausedUntil,
+  formatDonationAsksUntil,
+} from '~/composables/useDonationAsks'
 import { ref, computed, defineEmits, watch } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
@@ -103,6 +111,10 @@ const showDonationAsks = computed(
   () => !!me.value?.donated || !!me.value?.settings?.nodonationasks
 )
 
+const donationAsksUntil = computed(() =>
+  formatDonationAsksUntil(donationAsksPausedUntil(me.value?.settings))
+)
+
 // Methods
 const changeNewLine = async (e) => {
   const settings = me.value.settings
@@ -126,6 +138,8 @@ const changeMarketingConsent = (e) => {
 const changeDonationAsks = async (e) => {
   const settings = me.value.settings
   settings.nodonationasks = !e
+  // The server dates a new opt-out; an old date sent back would read as a lapsed one.
+  delete settings.nodonationasksuntil
   await authStore.saveAndGet({ settings })
   emit('update')
 }
@@ -138,7 +152,7 @@ watch(
       autorepostsLocal.value = !newVal.settings?.autorepostsdisable
       enterNewLineLocal.value = newVal.settings?.enterNewLine || false
       marketingConsentLocal.value = miscStore.marketingConsent
-      donationAsksLocal.value = !newVal.settings?.nodonationasks
+      donationAsksLocal.value = !donationAsksPaused(newVal.settings)
     }
   },
   { immediate: true }

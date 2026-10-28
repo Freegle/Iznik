@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-16
+last_reviewed: 2026-10-21
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/components/ModSysAdminUx.vue

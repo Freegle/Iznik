@@ -3,6 +3,7 @@ import { useMiscStore } from '~/stores/misc'
 import { useRuntimeConfig } from '#app'
 import Api from '~/api'
 import { useMobileStore } from '~/stores/mobile'
+import { donationAsksPaused } from '~/composables/useDonationAsks'
 
 export function useDonationAskModal(requestedVariant = null) {
   const authStore = useAuthStore()
@@ -28,7 +29,7 @@ export function useDonationAskModal(requestedVariant = null) {
       const canAsk =
         !lastAsk || new Date().getTime() - lastAsk > 60 * 60 * 1000 * 24 * 7
 
-      if (!me?.donorrecurring && !me?.settings?.nodonationasks && canAsk) {
+      if (!me?.donorrecurring && !donationAsksPaused(me?.settings) && canAsk) {
         show()
       }
     }

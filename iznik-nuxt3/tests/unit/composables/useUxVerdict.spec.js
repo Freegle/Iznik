@@ -101,6 +101,7 @@ describe('useUxVerdict', () => {
       expect(verdictRowText(e)).toContain('Confirm')
       expect(verdictNextStep(e)).toContain('Mark as cleaned up')
       expect(verdictNextStep(e)).toContain('ux:experiment close give-shorter')
+      expect(verdictNextStep(e)).toContain('ux_cleanups.php')
     })
 
     it('tells an ended one to have its code removed, with the command', () => {
@@ -108,6 +109,7 @@ describe('useUxVerdict', () => {
       expect(verdictRowText(e)).toContain('Remove the variant code')
       expect(verdictNextStep(e)).toContain('paste the pull request')
       expect(verdictNextStep(e)).toContain('ux:experiment close ask-photos')
+      expect(verdictNextStep(e)).toContain('ux_cleanups.php')
     })
 
     it('says nothing for one with no verdict', () => {

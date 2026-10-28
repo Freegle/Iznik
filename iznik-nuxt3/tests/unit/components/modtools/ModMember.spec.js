@@ -841,6 +841,15 @@ describe('ModMember', () => {
       expect(wrapper.vm.banned).toBe(true)
     })
 
+    it('refetches the user even when the store already holds them', async () => {
+      mountComponent()
+      await flushPromises()
+      expect(mockUserStore.fetch).toHaveBeenCalledWith(
+        createMember().userid,
+        true
+      )
+    })
+
     it('sets banned to false when member.banned is false', async () => {
       const wrapper = mountComponent({
         member: createMember({ banned: false }),
@@ -1018,15 +1027,14 @@ describe('ModMember', () => {
     })
   })
 
-  // A membership that exists only because rippling auto-joined the poster is not a
-  // relationship with this community, so its volunteers have no chat to start
-  // (Discourse 10102).
+  // A member who arrived by rippling can be chatted to like any other: only replies about
+  // the rippled post itself are left to its home community (Discourse 10283).
   describe('ripple-created membership', () => {
-    it('offers no chat button', () => {
+    it('offers a chat button', () => {
       const wrapper = mountComponent({
         member: createMember({ rippled: true }),
       })
-      expect(wrapper.find('.chat-button').exists()).toBe(false)
+      expect(wrapper.find('.chat-button').exists()).toBe(true)
     })
 
     it('still offers a chat button for an ordinary member', () => {

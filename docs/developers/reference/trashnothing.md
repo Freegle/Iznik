@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-17
+last_reviewed: 2026-10-24
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -465,6 +465,11 @@ account was linked to TN, so every reader ignores it when `tnuserid` is set:
 The sync also removes the setting when TN sends a location, so the stale data goes as
 members are active. For the same reason a TN post (either path) only writes `lastlocation` when it is
 empty: the post's coordinates are where the item is, not where the member is.
+
+When the sync moves `lastlocation` it writes a `User`/`PostcodeChange` log row with the
+postcode name, the same row a postcode change in Settings writes, so moderators see a TN
+member's moves in their logs. The nightly reach reconcile reads those rows and queues the
+member for reach mail; the digest code skips TN members, so nothing is sent to them.
 
 Each change row carries the member's *current* state, not the state at that row's
 `date`, so re-reading old rows from the feed cannot show what a past sync received;

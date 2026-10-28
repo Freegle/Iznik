@@ -188,6 +188,10 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Param id path integer true "Alert ID"
 		// @Success 200 {object} map[string]interface{}
+		rg.Get("/modtools/alert/pending", alert.GetPending)
+		rg.Post("/modtools/alert/:id/reply", alert.ReplyToAlert)
+		rg.Post("/modtools/alert/:id/snooze", alert.SnoozeAlert)
+		rg.Post("/modtools/alert/:id/cancel", alert.CancelAlert)
 		rg.Get("/modtools/alert/:id", alert.GetAlert)
 
 		// @Router /alert [put]
@@ -897,6 +901,37 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Moderator of the post's group required"
 		rg.Get("/message/:id/reach", message.Reach)
 
+		// The member's "I'm interested" marks. Registered before /message/:ids so
+		// "interested" is not treated as a message id.
+		// @Router /message/interested [get]
+		// @Summary The member's "I'm interested" marks from the last 30 days
+		// @Tags message
+		// @Produce json
+		// @Success 200 {array} message.InterestedMark
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		rg.Get("/message/interested", message.ListInterested)
+
+		// @Router /message/{id}/interested [get]
+		// @Summary Whether to offer "I'm interested" on a post, and whether it is marked
+		// @Tags message
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Success 200 {object} message.InterestedState
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		rg.Get("/message/:id/interested", message.GetInterested)
+
+		// @Router /message/{id}/interested [post]
+		// @Summary Mark a post as "I'm interested", or remove the mark
+		// @Tags message
+		// @Accept json
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Param body body message.InterestedRequest true "interested true to mark, false to remove"
+		// @Success 200 {object} map[string]bool
+		// @Failure 400 {object} fiber.Error "Invalid request, or the post cannot be marked"
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		rg.Post("/message/:id/interested", message.SetInterested)
+
 		// Offers matching a wanted being composed. Registered before /message/:ids
 		// so "matches" is not treated as a message id.
 		// @Router /message/matches [get]
@@ -1048,6 +1083,14 @@ func SetupRoutes(app *fiber.App) {
 		// @Router /user/unsubscribe [post]
 		rg.Get("/user/unsubscribe", user.Unsubscribe)
 		rg.Post("/user/unsubscribe", user.Unsubscribe)
+		// @Summary People the member has not rated
+		// @Description Lists the freeglers the logged-in member handed an item over with in the last 14 days (either direction) and has not rated, newest first, one entry per person, at most five. Used by the rate-on-return experiment to ask on the next visit. Registered before /user/:id? so "unrated" is not treated as a user id.
+		// @Tags users
+		// @Produce json
+		// @Success 200 {array} user.Unrated
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		// @Router /user/unrated [get]
+		rg.Get("/user/unrated", user.GetUnrated)
 		rg.Get("/user/:id?", user.GetUser)
 
 		// User Actions (POST)
@@ -2136,6 +2179,16 @@ func SetupRoutes(app *fiber.App) {
 		rg.Put("/merge", merge.CreateMerge)
 		rg.Post("/merge", merge.PostMerge)
 		rg.Delete("/merge", merge.DeleteMerge)
+
+		// @Router /discourse/relink [post]
+		// @Summary Re-link a moderator's Discourse account after an account merge
+		// @Description Support or Admin. Moves the Discourse account linked to an account merged into userid onto userid, then updates its email and name. Merges and Discourse sign-in do this by themselves; this is for merges from before they did.
+		// @Tags discourse
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} fiber.Map
+		rg.Post("/discourse/relink", sso.RelinkHandler)
 
 		// Domains
 		rg.Get("/domains", domain.GetDomain)

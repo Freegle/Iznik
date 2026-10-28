@@ -46,6 +46,8 @@
 
             <MyPostsClearances :posts="posts" />
 
+            <MyPostsInterested />
+
             <MyPostsPostsList
               :posts="posts"
               :loading="loading"
@@ -97,6 +99,7 @@ import ExpectedRepliesWarning from '~/components/ExpectedRepliesWarning'
 import WantedMatches from '~/components/WantedMatches.vue'
 import MyPostsPostsList from '~/components/MyPostsPostsList.vue'
 import MyPostsClearances from '~/components/MyPostsClearances.vue'
+import MyPostsInterested from '~/components/MyPostsInterested.vue'
 import MyPostsSearchesList from '~/components/MyPostsSearchesList.vue'
 import MyPostsDonationAsk from '~/components/MyPostsDonationAsk.vue'
 import NewUserInfo from '~/components/NewUserInfo.vue'

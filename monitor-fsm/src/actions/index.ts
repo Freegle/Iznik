@@ -31,9 +31,11 @@ import {
   upsertPr,
   findTagDuplicate,
   tagJaccard,
+  closeReportConfirmedByReporter,
 } from '../db/index.js'
 import type { DiscourseDraftRow } from '../db/index.js'
 import { renderAllViews } from '../db/views.js'
+import { dueForChase, dueForNoReply, recordChase, unchaseableKey, closeNoReply, noteReporterReply, humanAnswersOverdue, CHASE_BODY, MAX_CHASES_PER_LAP } from '../chase.js'
 import { getPhaseInfo } from '../phase.js'
 import { modelForAdversarialReview } from '../policy.js'
 import { groundingActions } from '../grounding.js'
@@ -1513,6 +1515,28 @@ export const deployedReplyDeps = {
 }
 
 /**
+ * Whether the production database answers over the tunnel, behind a name a test can
+ * replace. work_router_decide uses it to reopen reports that were parked only because
+ * the tunnel was down.
+ */
+export const prodReachDeps = {
+  async liveDbAvailable(): Promise<boolean> {
+    const query = groundingActions.find((a) => a.name === 'query_live_db')
+    if (!query) return false
+    const res = (await query.handler({ sql: 'SELECT 1', purpose: 'probe: is the live DB tunnel up' }, {})) as { available?: boolean }
+    return res?.available === true
+  },
+}
+
+// A fix task that could not read production defers the report as ungrounded. That is
+// not a decision about the report: once the tunnel answers again it should be tried
+// again (10277/1 was parked for good by a tunnel outage on 2026-10-23). Only the
+// database counts here; the prod Loki tunnel is down far more often, and a report that
+// needs logs alone would reopen and re-defer every iteration.
+export const UNREACHABLE_DEFER = /DB tunnel unavailable|db failed to connect|live DB tunnel unavailable/i
+export const MAX_UNREACHABLE_REOPENS = 3
+
+/**
  * check_bug_feedback's one call out to Discourse, behind a name a test can replace.
  * What the scan finds then drives bug state, and that half is worth testing without
  * a network.
@@ -1967,6 +1991,55 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates, 'fe
       const res = await flushUnpostedDrafts(db)
       if (res.posted.length > 0) await renderAllViews(db)
       return res
+    },
+  },
+
+  {
+    name: 'chase_waiting_reports',
+    description: 'Called automatically during LOAD_STATE. A report waiting on its reporter (needs-detail, or deferred for detail from them) that has been quiet for 7 days gets one reminder on Discourse, quoted under the report. At most 5 a lap; a report quiet for over 30 days is not chased. A report with nothing from the reporter for 7 days after its reminder is closed as no-reply; anything they post later reopens it. Questions waiting on a Freegle person are not chased; those over 7 days are counted for the iteration summary. One reminder per person per topic covers all their waiting reports there. A report whose post cannot be fetched to quote is noted and not chased. Returns {chased, failed, unchaseable, closedNoReply, humanAnswersOverdue}.',
+    handler: async () => {
+      const db = getDb()
+      const chased: string[] = []
+      const failed: string[] = []
+      const unchaseable: string[] = []
+      const due = dueForChase(db)
+      // One reminder per person per topic: it covers all their waiting reports there.
+      const seen = new Set<string>()
+      const firsts = due.filter(r => { const k = `${r.topic}|${r.reporter}`; if (seen.has(k)) return false; seen.add(k); return true })
+      for (const r of firsts.slice(0, MAX_CHASES_PER_LAP)) {
+        const tag = `${r.topic}/${r.post}`
+        // The quote must come from Discourse: it proves the post number is real. Some rows hold a post
+        // id instead, and a reminder threaded under that would go to the wrong place or fail.
+        let quote = ''
+        try { quote = (await questionAnswerDeps.fetchReporterQuote(r.topic, r.post)) ?? '' } catch { quote = '' }
+        if (!quote.trim()) {
+          kvSet(db, unchaseableKey(r.topic, r.post), new Date().toISOString())
+          outWarn(`chase_waiting_reports: ${tag} - could not fetch the post to quote, not chasing it`)
+          unchaseable.push(tag)
+          continue
+        }
+        const raw = formatReplyRaw({ username: r.reporter ?? 'there', post: r.post, topic: r.topic, quote, body: CHASE_BODY })
+        const res = await questionAnswerDeps.postDiscourseReply(r.topic, raw, r.post)
+        if (!res.ok) {
+          outWarn(`chase_waiting_reports: could not remind ${tag}: ${res.error}`)
+          failed.push(tag)
+          continue
+        }
+        for (const sib of due.filter(d => d.topic === r.topic && d.reporter === r.reporter)) recordChase(db, sib.topic, sib.post)
+        recordPostedReply(db, { topic: r.topic, post: r.post, username: r.reporter ?? 'there', quote, body: CHASE_BODY })
+        out(`chase_waiting_reports: reminded @${r.reporter} about ${tag}`)
+        chased.push(tag)
+      }
+      const closedNoReply: string[] = []
+      for (const r of dueForNoReply(db)) {
+        closeNoReply(db, r)
+        out(`chase_waiting_reports: closed ${r.topic}/${r.post} - no reply to the reminder`)
+        closedNoReply.push(`${r.topic}/${r.post}`)
+      }
+      const overdue = humanAnswersOverdue(db).length
+      if (overdue > 0) out(`chase_waiting_reports: ${overdue} question(s) have waited over a week for a human answer - listed in the summary`)
+      if (chased.length > 0 || closedNoReply.length > 0) await renderAllViews(db)
+      return { chased, failed, unchaseable, closedNoReply, humanAnswersOverdue: overdue }
     },
   },
 
@@ -4039,6 +4112,33 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         c.post = post
         // Only persist actionable classifications — skip mine/off_topic/already_fixed/confirmed
         const type = c.type as string
+
+        // The reporter coming back to say it works closes their report, however it was fixed. A
+        // "confirmed" or "already_fixed" post used to be dropped here, and a confirming retest only
+        // refreshed the report's timestamp, so a report fixed by hand stayed open for ever (10226/12).
+        if (type === 'confirmed' || type === 'already_fixed' ||
+            (type === 'retest' && retestConfirmsFix(`${c.summary ?? ''} ${c.originalPostText ?? ''}`))) {
+          const closed = closeReportConfirmedByReporter(db, Number(c.topic), Number(post), c.user ?? null)
+          if (closed) {
+            out(`persist_classifications: ${c.topic}/${post} is the reporter confirming it works - closed ${closed.topic}/${closed.post}`)
+            skipped++
+            continue
+          }
+        }
+
+        // Anything else the reporter posts on a report that is waiting on them, or that closed for want
+        // of a reply, is their answer. It stops the no-reply close; a report deferred for detail or
+        // closed as no-reply reopens. A needs-detail report goes on to the check below, which reopens
+        // it only when the reply names what was missing.
+        if (['bug', 'retest', 'deferred', 'question'].includes(type)) {
+          const noted = noteReporterReply(db, Number(c.topic), Number(post), c.user ?? null)
+          if (noted?.reopened) {
+            out(`persist_classifications: ${c.topic}/${post} is the reporter replying - reopened ${noted.topic}/${noted.post}`)
+            skipped++
+            continue
+          }
+        }
+
         if (!['bug', 'retest', 'deferred', 'question', 'feature_request'].includes(type)) { skipped++; continue }
 
         // Feature requests are stored directly — no dedup, no regression check, no git-fixed check.
@@ -4354,6 +4454,26 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         if (typeof b.topic === 'undefined' || typeof b.post === 'undefined') continue
         markDeferred.run(`deferred by fix task: ${reason}`.slice(0, 500), Number(b.topic), Number(b.post))
       }
+
+      // Reopen reports parked only because production could not be read, once it can.
+      // Capped per report, so one that keeps failing for another reason stays parked.
+      const parked = (db.prepare(
+        "SELECT topic, post, reason FROM discourse_bug WHERE state = 'deferred' AND pr_number IS NULL AND reason LIKE 'deferred by fix task:%'"
+      ).all() as Array<{ topic: number; post: number; reason: string }>)
+        .filter((r) => UNREACHABLE_DEFER.test(r.reason ?? '') && !fixedKeys.has(`${r.topic}.${r.post}`))
+        .filter((r) => Number(kvGet(db, `unreachable_reopens_${r.topic}_${r.post}`) ?? 0) < MAX_UNREACHABLE_REOPENS)
+      if (parked.length > 0 && await prodReachDeps.liveDbAvailable()) {
+        const reopen = db.prepare(
+          "UPDATE discourse_bug SET state = 'open', reason = NULL WHERE topic = ? AND post = ? AND state = 'deferred'"
+        )
+        for (const r of parked) {
+          reopen.run(r.topic, r.post)
+          const key = `unreachable_reopens_${r.topic}_${r.post}`
+          kvSet(db, key, String(Number(kvGet(db, key) ?? 0) + 1))
+          out(`  · reopened ${r.topic}/${r.post}: it was deferred because production could not be read, and the live DB answers now`)
+        }
+      }
+
       const dbOpenBugs = (db.prepare(`
         SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle,
                pr_rejections AS prRejections, symptom_tags AS symptomTagsJson, first_seen_at

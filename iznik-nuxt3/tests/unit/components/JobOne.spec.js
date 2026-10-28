@@ -53,7 +53,7 @@ vi.mock('~/composables/useClientLog', () => ({
 }))
 
 vi.mock('~/composables/useExperiment', () => ({
-  experimentVariant: () => 'reply-job-interstitial:b',
+  experimentVariant: () => 'some-experiment:b',
 }))
 
 vi.mock('~/constants', () => ({
@@ -268,7 +268,7 @@ describe('JobOne', () => {
         'job_ad_click',
         expect.objectContaining({
           context: 'reply_interstitial',
-          variant: 'reply-job-interstitial:b',
+          variant: 'some-experiment:b',
         })
       )
     })

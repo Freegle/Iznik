@@ -182,4 +182,52 @@ describe('useModMembers loadMore - cursor-based pagination', () => {
 
     expect(state2.complete).toHaveBeenCalled()
   })
+
+  it('sends the order and keeps oldest first when asked', async () => {
+    const batch = [
+      {
+        id: 1,
+        userid: 1,
+        groupid: 1,
+        collection: 'Approved',
+        added: '2026-01-01',
+      },
+      {
+        id: 2,
+        userid: 2,
+        groupid: 1,
+        collection: 'Approved',
+        added: '2026-03-01',
+      },
+      {
+        id: 3,
+        userid: 3,
+        groupid: 1,
+        collection: 'Approved',
+        added: '2026-02-01',
+      },
+    ]
+    mockFetchMembers.mockImplementation(() => {
+      batch.forEach((m) => {
+        mockListRef[m.id] = m
+      })
+    })
+
+    const { setupModMembers } =
+      await import('~/modtools/composables/useModMembers')
+    const { loadMore, groupid, collection, order, members } =
+      setupModMembers(true)
+    expect(order.value).toBe('newest')
+
+    groupid.value = 1
+    collection.value = 'Approved'
+    await loadMore({ loaded: vi.fn(), complete: vi.fn() })
+    expect(mockFetchMembers.mock.calls[0][0].order).toBe('newest')
+    expect(members.value.map((m) => m.id)).toEqual([2, 3, 1])
+
+    order.value = 'oldest'
+    expect(members.value.map((m) => m.id)).toEqual([1, 3, 2])
+    await loadMore({ loaded: vi.fn(), complete: vi.fn() })
+    expect(mockFetchMembers.mock.calls.at(-1)[0].order).toBe('oldest')
+  })
 })

@@ -103,6 +103,7 @@ import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import OurUploadedImage from '~/components/OurUploadedImage'
 import api from '~/api'
+import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
 import {
   isUnpostableItem,
   isNumericOnlyBody,
@@ -327,6 +328,35 @@ function onItemBlur() {
   }
 }
 
+// Experiment ask-description-optional: with no description and no real photo, arm 'b' lets the item
+// name stand as the description instead of stopping. Anything but arm 'b' is control. The arm is read
+// once the page is mounted (the server render has no arm) and only while no real photo is attached,
+// which is when the description is required, so reading it counts only members the rule can touch.
+const experimentArm = ref(null)
+let armRead = false
+let mounted = false
+
+const realPhotoCount = computed(
+  () =>
+    (attachments.value || []).filter(
+      (a) => !a.externalmods || a.externalmods.ai !== true
+    ).length
+)
+
+function readExperimentArm() {
+  if (!mounted || armRead || realPhotoCount.value > 0) return
+  armRead = true
+  experimentArm.value = flowArm(FlowName.ASK, 'ask-description-optional')
+}
+
+onMounted(() => {
+  mounted = true
+  readExperimentArm()
+})
+
+// A member who arrived with a photo and removes it is now under the rule.
+watch(realPhotoCount, readExperimentArm)
+
 function validateAndNext() {
   if (!item.value || !item.value.trim() || isUnpostableItem(item.value)) {
     showItemError.value = true
@@ -353,7 +383,13 @@ function validateAndNext() {
     : []
   const hasRealPhotos = realPhotos.length > 0
 
-  if (!hasDescription && !hasRealPhotos) {
+  // Experiment ask-description-optional: in arm b the item name stands as the description. The compose
+  // store wants at least 3 characters when it checks the post, so a shorter item still gets the prompt.
+  const titleStands =
+    experimentArm.value === 'b' && item.value.trim().length >= 3
+  if (!hasDescription && !hasRealPhotos && titleStands) {
+    description.value = item.value.trim()
+  } else if (!hasDescription && !hasRealPhotos) {
     showDescriptionError.value = true
     nextTick(() => {
       const textarea = document.getElementById('description')

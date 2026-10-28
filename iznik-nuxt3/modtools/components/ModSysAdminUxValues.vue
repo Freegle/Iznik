@@ -11,8 +11,7 @@
       Loading...
     </div>
     <p v-else-if="!values.length" class="none text-muted">
-      No answers about what works yet. They appear after members answer the
-      question about what has worked well and the answers have been analysed.
+      {{ emptyText }}
     </p>
 
     <template v-else>
@@ -43,12 +42,24 @@
 import { computed } from 'vue'
 import { useUxSurveysStore } from '~/modtools/stores/uxSurveys'
 import { NOT_SWITCHED_ON } from '~/modtools/composables/useUxSlot'
-import { mentionCount } from '~/modtools/composables/useUxAnswers'
+import { mentionCount, standingText } from '~/modtools/composables/useUxAnswers'
 import ModSysAdminUxSaid from '~/modtools/components/ModSysAdminUxSaid.vue'
 
 const store = useUxSurveysStore()
 
 const values = computed(() => store.values.data?.values || [])
+
+const EMPTY_TEXT =
+  'No answers about what works yet. They appear after members answer the question about what has worked well and the answers have been analysed.'
+
+// An older server does not send open_questions, and then this is the plain text.
+const emptyText = computed(() =>
+  standingText(
+    store.values.data?.open_questions,
+    EMPTY_TEXT,
+    'The question about what has worked well has not been asked yet.'
+  )
+)
 
 // "30 of 100 (30%)" from 100 answers, "14 of 45" below. A value that did not come from a question
 // has no base to be out of, and is a count of members.

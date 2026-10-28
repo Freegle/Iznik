@@ -147,6 +147,9 @@ class User extends Model implements Auditable
     public const USER_INACTIVE_DAYS = 182;
     public const USER_INACTIVE = self::USER_INACTIVE_DAYS * 86400;
 
+    // How long "don't ask me to donate" lasts. Twin of DonationAskOptOutDays in the Go API.
+    public const DONATION_ASK_OPTOUT_DAYS = 365;
+
     // Gift aid period weights for merge comparison (lower = more favourable).
     public const GIFTAID_PERIOD_PAST_4_YEARS_AND_FUTURE = 'Past4YearsAndFuture';
     public const GIFTAID_PERIOD_SINCE = 'Since';
@@ -669,7 +672,8 @@ class User extends Model implements Auditable
      * Whether we may ask this user to donate, on the site or by email.
      *
      * A donor can turn donation requests off in Settings (users.settings.nodonationasks),
-     * and support can set it for them. Absent means we may ask.
+     * and support can set it for them. Absent means we may ask. The opt-out lapses on
+     * users.settings.nodonationasksuntil, which the API sets a year ahead when it is turned on.
      */
     public function wantsDonationAsks(): bool
     {
@@ -685,7 +689,21 @@ class User extends Model implements Auditable
             $settings = json_decode($settings, TRUE);
         }
 
-        return empty($settings['nodonationasks'] ?? FALSE);
+        if (empty($settings['nodonationasks'] ?? FALSE)) {
+            return TRUE;
+        }
+
+        // An opt-out with no date predates the lapse; donations:lapse-optouts dates it.
+        $until = $settings['nodonationasksuntil'] ?? NULL;
+        if (!is_string($until) || $until === '') {
+            return FALSE;
+        }
+
+        try {
+            return \Carbon\Carbon::parse($until)->isPast();
+        } catch (\Throwable) {
+            return FALSE;
+        }
     }
 
     /**
@@ -1839,6 +1857,12 @@ class User extends Model implements Auditable
         Logger::info("TN-SYNC-TRACE [WRITE] table=messages_promises op=delete where=userid={$this->id}");
         if (!$dryRun) {
             MessagePromise::where('userid', $this->id)->get()->each->delete();
+        }
+
+        // --- Delete the posts they marked "I'm interested" in ---
+        Logger::info("TN-SYNC-TRACE [WRITE] table=messages_interested op=delete where=userid={$this->id}");
+        if (!$dryRun) {
+            MessageInterested::where('userid', $this->id)->delete();
         }
 
         // --- Delete experiment exposures (skipped while the table does not exist) ---

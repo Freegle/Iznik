@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\UserAboutMe;
 use App\Models\UserReplyTime;
 use App\Services\LokiService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -131,6 +132,8 @@ class UserChangesSyncer
                         }
                     }
 
+                    $movedTo = NULL;
+
                     if (!empty($change['location'])) {
                         $lat = $change['location']['latitude'] ?? null;
                         $lng = $change['location']['longitude'] ?? null;
@@ -142,6 +145,7 @@ class UserChangesSyncer
                                 Log::info("FD #{$change['fd_user_id']} TN lat/lng {$lat},{$lng} has changed  => {$loc->id} {$loc->name}");
                                 Log::info('TN-SYNC-TRACE [LOCATION] fd_user_id=' . $change['fd_user_id'] . ' lat=' . $lat . ' lng=' . $lng . ' old_loc=' . $user->lastlocation . ' new_loc=' . $loc->id);
                                 $user->lastlocation = $loc->id;
+                                $movedTo = $loc->name;
                             }
 
                             // TN is the master for a TN member's location. settings.mylocation
@@ -159,6 +163,19 @@ class UserChangesSyncer
 
                     if (!$this->dryRun) {
                         $user->save();
+
+                        // The same member log row a postcode change in Settings writes, so
+                        // moderators can see a TN member's moves (Discourse 10277).
+                        if ($movedTo !== NULL) {
+                            DB::table('logs')->insert([
+                                'timestamp' => now(),
+                                'type'      => 'User',
+                                'subtype'   => 'PostcodeChange',
+                                'user'      => $user->id,
+                                'byuser'    => $user->id,
+                                'text'      => $movedTo,
+                            ]);
+                        }
                     }
                     $this->loki->logEvent('tn-sync', 'user-update', ['user_id' => $change['fd_user_id']]);
                     Log::info('TN-SYNC-TRACE [USER-CHANGE] fd_user_id=' . $change['fd_user_id'] . ' action=processed');

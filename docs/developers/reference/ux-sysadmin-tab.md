@@ -1,7 +1,8 @@
 ---
-last_reviewed: 2026-10-22
+last_reviewed: 2026-10-25
 owner: Freegle dev team
 covers:
+  - iznik-nuxt3/modtools/pages/sysadmin/index.vue
   - iznik-nuxt3/modtools/components/ModSysAdminUx.vue
   - iznik-nuxt3/modtools/components/ModSysAdminUxNav.vue
   - iznik-nuxt3/modtools/components/ModSysAdminUxFilters.vue
@@ -26,6 +27,7 @@ covers:
   - iznik-nuxt3/modtools/composables/useUxSlot.js
   - iznik-nuxt3/modtools/composables/useUxFlows.js
   - iznik-nuxt3/modtools/composables/useUxFunnel.js
+  - iznik-nuxt3/modtools/composables/useUxThenFinished.js
   - iznik-nuxt3/modtools/composables/useUxFormat.js
   - iznik-nuxt3/modtools/stores/ux.js
   - iznik-server-go/ux/filters.go
@@ -39,6 +41,13 @@ telemetry described in [UX telemetry](ux-telemetry.md): where members go back, s
 never find a feature. That page is the contract for the events, the rollup tables and the read
 API. This page is about the tab: how it is laid out, what the address holds, what the filters do,
 and how to read it. The code is the source of truth; this page points into it.
+
+UX is the first and default sub-tab of Behaviour (then Scrolling, then Reengagement), so opening
+Behaviour shows it. `?tab=behaviour` and `?tab=ux` land on UX; `?tab=scrolling`, `digest` and
+`recommendations` land on Scrolling; `?tab=reengagement` lands on Reengagement. The red number on
+the Behaviour tab (experiments with a verdict nobody has closed) is repeated on the UX sub-tab, and
+a line at the top of the sub-tab says in words what it is waiting for and links to the Experiments
+section. The page is `iznik-nuxt3/modtools/pages/sysadmin/index.vue`.
 
 ## What it shows
 
@@ -75,7 +84,8 @@ the table above in the same change, because this page covers that file.
 
 A piece that belongs to one experiment is not a section: it goes in `HOSTED.experiment` in the same
 file, the details of every experiment draw it, and it draws nothing unless the experiment is its own
-(`ModSysAdminUxReplyConfirmDetail`, for `confirm-reply`).
+(`ModSysAdminUxReplyConfirmDetail` for `confirm-reply`, `ModSysAdminUxInterestedDetail` for
+`interested-button`).
 
 The tab mounts only the open section. A section never imports another section's component. It
 gets `view` (see below) and sends `navigate(patch)`, which changes the address. Two helpers are
@@ -138,6 +148,7 @@ table that lacks the column.
 | `funnels` | `ux_flow_daily` | cut | cut |
 | `outcomes` | `ux_flow_outcome_daily` | cut | ignored |
 | `fields` | `ux_field_daily` | cut | ignored |
+| the finish figures in `funnels` and `fields` | `ux_flow_signal_daily` | cut | cut for `funnels`, ignored for `fields` (it clears Signed in first) |
 | `friction` | `ux_component_daily` | cut | ignored |
 | `adoption`, `regret`, `search`, `health` | their own tables | ignored | ignored |
 | `samples` | `ux_sample_sessions` | not filtered, not echoed | not filtered, not echoed |
@@ -225,6 +236,22 @@ key). Where each sentence is made:
   back.` or `Nobody asked for help.` when the steps with enough visits had none
   (`stepWithMost` in `useUxFunnel.js`). Friction names the component whose trouble rose most, not
   the one with the most trouble: the server ranks by the rise since the period before.
+- Second thoughts and Help say whether the people who showed a sign went on to finish
+  (`useUxThenFinished.js`). A row gets `Then finished` (the share of those visits that finished the
+  funnel, with the count), `Others finished` (the same for the other visits at that step) and `What it
+  means`. `Many gave up` is shaded and sorted to the top: the people with the sign finished at least 10
+  points less often than the others. `Most still finished` is the same share within 10 points and half
+  or more finished. `No worse than the rest` is within 10 points and fewer than half finished, which
+  says the step loses people anyway and not that the sign did it. `Too few to say` is under 20 visits
+  on either side (50 when Device or Signed in is set, as for Biggest loss). The closed row adds one
+  sentence: the worst place when some gave up ("At Details, 16% of those who went back finished,
+  against 90% who did not."), or "Most who went back or changed a field still finished, so this is
+  less of a worry." when none did. A field's others are the visits at its step without that field
+  trouble. The columns are left out when the server sends no such figures (an older server, or days
+  the rollup has not yet covered). These are separate visits, so a visit that went back three times is
+  one; they are not the event counts beside them. The figures describe what happened to people with
+  the sign. They do not show the sign caused the loss: the people who go back may be the ones more
+  likely to leave anyway.
 - A step is named by `stepName` in `useUxFunnel.js`: its plain label, with the page family added
   (`Options (mobile)`) where a desktop and a mobile page of one funnel share a label. The headline,
   the table of all funnels, the step detail, Second thoughts, Help and the sample sessions use it.
@@ -250,5 +277,13 @@ change to the tab, rebuild `modtools-prod-local` before a run.
 
 ## Deploying
 
-There is no SQL. Deploy the Go API first. Until it is live the old API ignores the filters and sends
+Deploy the Go API first. Until it is live the old API ignores the filters and sends
 no `filters`, and the tab says so rather than showing the figures as filtered.
+
+The finish figures need one new table, `ux_flow_signal_daily`. Run
+`2026_10_21_000001_create_ux_flow_signal_daily_table_migration.sql` before the batch and the Go API. Until
+it exists the nightly rollup skips it with a warning and the read leaves the figures out, and the
+Second thoughts and Help panels draw as they did. The first figures come with the first nightly
+rollup after it is run, for the day before, and the tab shows them over the days that have rows, so
+a seven day period is full after a week. The table cannot be filled back further than Loki's seven
+days.

@@ -29,9 +29,28 @@ write_files:
       SID="$(curl -s http://169.254.169.254/hetzner/v1/metadata/instance-id)"
       IDLE_MIN=10; REAP_WINDOW=10; MAX_UPTIME=9000; ZOMBIE_TASK_AGE=12600; idle_since=""
       CAP_IDLE_MIN=5; cap_idle_since=""
-      reap() { echo "self-destructing: $1 (uptime ${up}s)"; curl -s -X DELETE "https://api.hetzner.cloud/v1/servers/$SID" -H "Authorization: Bearer $TOKEN" -w "\nHTTP %{http_code}\n"; exit 0; }
+      # A boot that has not finished by now never will. On 2026-10-26 Hetzner's Ubuntu mirror had
+      # an expired certificate, apt failed, runcmd stopped before the runner was installed, and the
+      # server sat for 12h unknown to CircleCI, holding the one runner the core cap allows while
+      # every build queued behind it.
+      BOOT_DEADLINE=1200
+      # Overridable so test-reaper.sh can run this against stubs; the defaults are the real ones.
+      UPTIME_FILE="${REAPER_UPTIME_FILE:-/proc/uptime}"
+      READY_FILE="${REAPER_READY_FILE:-/var/log/hetzner-runner-ready}"
+      NAP="${REAPER_SLEEP:-60}"
+      # Exit only when the delete is accepted; a refused one is tried again next minute rather than
+      # leaving a server nobody will remove.
+      reap() {
+        echo "self-destructing: $1 (uptime ${up}s)"
+        code="$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "https://api.hetzner.cloud/v1/servers/$SID" -H "Authorization: Bearer $TOKEN")"
+        echo "HTTP $code"
+        case "$code" in 2*) exit 0 ;; esac
+      }
       while true; do
-        now="$(date +%s)"; up="$(awk '{print int($1)}' /proc/uptime)"
+        now="$(date +%s)"; up="$(awk '{print int($1)}' "$UPTIME_FILE")"
+        if [ ! -f "$READY_FILE" ] && [ "$up" -ge "$BOOT_DEADLINE" ]; then
+          reap "bootstrap did not finish within ${BOOT_DEADLINE}s"
+        fi
         # Task agent alive? -x (exact) so the always-on launch daemon never counts as busy.
         if pgrep -x circleci-agent >/dev/null 2>&1; then agent=1; else agent=0; fi
         # Age of the running task agent, i.e. of the current job, not of the server.
@@ -64,7 +83,7 @@ write_files:
         if [ "$idle" -ge $(( IDLE_MIN*60 )) ] && [ "$hourpos" -ge $(( 3600 - REAP_WINDOW*60 )) ]; then
           reap "idle ${idle}s near hour boundary"
         fi
-        sleep 60
+        sleep "$NAP"
       done
     permissions: '0755'
   - path: /etc/systemd/system/hetzner-reaper.service
@@ -80,6 +99,10 @@ write_files:
 
 runcmd:
   - set -eux
+  # The reaper first, before anything that can fail: a boot that stops part way must still delete
+  # the server, or it holds the one runner the core cap allows and every build queues behind it.
+  - systemctl daemon-reload
+  - systemctl enable --now hetzner-reaper.service
   - systemctl stop apt-daily.timer apt-daily-upgrade.timer unattended-upgrades 2>/dev/null || true
   - systemctl mask apt-daily.timer apt-daily-upgrade.timer unattended-upgrades 2>/dev/null || true
   # 20GB swap (matches Katapult runner)
@@ -94,13 +117,24 @@ runcmd:
   - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   - chmod a+r /etc/apt/keyrings/docker.asc
   - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" > /etc/apt/sources.list.d/docker.list
-  - apt-get update -qq
+  # Hetzner's own Ubuntu mirror is fastest, but on 2026-10-26 its certificate chain had expired and
+  # apt-get update failed for every Ubuntu source. apt only warns about that, so the failure showed
+  # up a step later as "Unable to locate package". Fall back to Ubuntu's own mirrors when it does.
+  - apt-get update -qq 2>&1 | tee /tmp/apt-update.log
+  - |
+    if grep -q "Failed to fetch https://mirror.hetzner.com" /tmp/apt-update.log; then
+      echo "Hetzner Ubuntu mirror failed; using archive.ubuntu.com"
+      sed -i -e 's#https\?://mirror.hetzner.com/ubuntu/packages#http://archive.ubuntu.com/ubuntu#g' \
+             -e 's#https\?://mirror.hetzner.com/ubuntu/security#http://security.ubuntu.com/ubuntu#g' \
+             /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true
+      apt-get update -qq
+    fi
   - DVER='5:27.5.1-1~ubuntu.24.04~noble'
   # buildx is pinned too: 0.38.0 refuses compose builds that use network: host unless every build
   # passes --allow=network.host, so every image build in CI fails at "Build containers".
   - BXVER='0.37.1-1~ubuntu.24.04~noble'
   - CPVER='5.6.0-1~ubuntu.24.04~noble'
-  - apt-get install -y -qq docker-ce=$DVER docker-ce-cli=$DVER containerd.io docker-buildx-plugin=$BXVER docker-compose-plugin=$CPVER sshpass jq
+  - apt-get install -y -qq docker-ce=$DVER docker-ce-cli=$DVER containerd.io docker-buildx-plugin=$BXVER docker-compose-plugin=$CPVER sshpass jq build-essential
   - apt-mark hold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   - ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 2>/dev/null || true
   - systemctl enable --now docker
@@ -134,7 +168,5 @@ runcmd:
     CFG
   - chown -R circleci:circleci /home/circleci /etc/circleci-runner || true
   - systemctl enable --now circleci-runner
-  # Idle self-destruct (no-op if HETZNER_SELF_TOKEN was left empty)
-  - systemctl daemon-reload
-  - systemctl enable --now hetzner-reaper.service
+  # The reaper (started first, above) reads this: without it after BOOT_DEADLINE, the boot failed.
   - echo "runner bootstrap complete" > /var/log/hetzner-runner-ready

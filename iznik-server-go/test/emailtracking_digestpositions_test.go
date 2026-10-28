@@ -254,3 +254,173 @@ func TestDigestPositions_CumulativeShownAcrossSizes(t *testing.T) {
 	assert.Equal(t, float64(1), p3["emails_clicked"])
 	assert.InDelta(t, 100.0, p3["ctr"].(float64), 0.01)
 }
+
+// =============================================================================
+// Rollup (email_digest_positions_daily) behaviour
+// =============================================================================
+
+// uniqueRolledDigestType returns a unified digest email_type unique to this
+// test run, so the rollup path (which only serves UnifiedDigest* types) can be
+// exercised with an exact-type filter.
+func uniqueRolledDigestType() string {
+	dpSeq++
+	return fmt.Sprintf("UnifiedDigestT%d%d", dpSeq, time.Now().UnixNano()%1000000)
+}
+
+// seedRollup writes rollup rows for one day: a marker row (so the day counts as
+// summarised) plus one row per {shown, emails_clicked, clicks} triple, positions
+// 0..n-1. Rows for the day are removed when the test ends.
+func seedRollup(t *testing.T, day string, emailType string, counts [][3]int) {
+	db := database.DBConn
+	assert.NoError(t, db.Exec(
+		"INSERT IGNORE INTO email_digest_positions_daily (day, email_type, position, shown, emails_clicked, clicks) VALUES (?, '', 0, 0, 0, 0)",
+		day).Error)
+	for pos, c := range counts {
+		assert.NoError(t, db.Exec(
+			"INSERT INTO email_digest_positions_daily (day, email_type, position, shown, emails_clicked, clicks) VALUES (?, ?, ?, ?, ?, ?)",
+			day, emailType, pos, c[0], c[1], c[2]).Error)
+	}
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM email_digest_positions_daily WHERE day = ?", day)
+	})
+}
+
+func getDigestPositions(t *testing.T, token string, query string) map[string]interface{} {
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/modtools/email/stats/digestpositions?jwt="+token+"&"+query, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	return result
+}
+
+func supportToken(t *testing.T, name string) string {
+	userID := CreateTestUser(t, uniquePrefix(name), "Support")
+	_, token := CreateTestSession(t, userID)
+	return token
+}
+
+func TestDigestPositions_SumsRollupWithoutLiveQueries(t *testing.T) {
+	token := supportToken(t, "dproll")
+	etype := uniqueRolledDigestType()
+
+	seedRollup(t, "2019-03-10", etype, [][3]int{{10, 2, 3}, {8, 1, 1}})
+	seedRollup(t, "2019-03-11", etype, [][3]int{{5, 1, 1}, {5, 0, 0}, {2, 1, 2}})
+	seedRollup(t, "2019-03-12", etype, nil) // summarised, nothing sent
+
+	result := getDigestPositions(t, token, "type="+etype+"&start=2019-03-10&end=2019-03-12")
+
+	assert.Equal(t, float64(0), result["missing_days"])
+	assert.Equal(t, float64(0), result["live_days"])
+	data := result["data"].([]interface{})
+	assert.Equal(t, 3, len(data))
+
+	p0 := data[0].(map[string]interface{})
+	assert.Equal(t, float64(15), p0["shown"])
+	assert.Equal(t, float64(3), p0["emails_clicked"])
+	assert.Equal(t, float64(4), p0["clicks"])
+	assert.InDelta(t, 20.0, p0["ctr"].(float64), 0.01)
+
+	p1 := data[1].(map[string]interface{})
+	assert.Equal(t, float64(13), p1["shown"])
+	assert.Equal(t, float64(1), p1["emails_clicked"])
+
+	p2 := data[2].(map[string]interface{})
+	assert.Equal(t, float64(2), p2["position"])
+	assert.Equal(t, float64(2), p2["shown"])
+	assert.InDelta(t, 50.0, p2["ctr"].(float64), 0.01)
+}
+
+func TestDigestPositions_RollupTypeFilter(t *testing.T) {
+	token := supportToken(t, "dprolltype")
+	typeA := uniqueRolledDigestType()
+	typeB := uniqueRolledDigestType()
+
+	seedRollup(t, "2019-04-10", typeA, [][3]int{{10, 1, 1}})
+	// typeB shares the day: its rows must not leak into an exact-type request
+	// for A, and both must be summed when no type is given.
+	assert.NoError(t, database.DBConn.Exec(
+		"INSERT INTO email_digest_positions_daily (day, email_type, position, shown, emails_clicked, clicks) VALUES ('2019-04-10', ?, 0, 4, 2, 2)",
+		typeB).Error)
+
+	only := getDigestPositions(t, token, "type="+typeA+"&start=2019-04-10&end=2019-04-10")
+	assert.Equal(t, float64(10), only["data"].([]interface{})[0].(map[string]interface{})["shown"])
+
+	all := getDigestPositions(t, token, "start=2019-04-10&end=2019-04-10")
+	assert.Equal(t, float64(0), all["missing_days"])
+	data := all["data"].([]interface{})
+	assert.Equal(t, float64(14), data[0].(map[string]interface{})["shown"])
+	assert.Equal(t, float64(3), data[0].(map[string]interface{})["emails_clicked"])
+}
+
+func TestDigestPositions_FillsUnsummarisedRecentDaysLive(t *testing.T) {
+	token := supportToken(t, "dprolllive")
+	etype := uniqueRolledDigestType()
+	now := time.Now()
+	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+	today := now.Format("2006-01-02")
+
+	// Yesterday is summarised; today is only in email_tracking.
+	seedRollup(t, yesterday, etype, [][3]int{{6, 1, 1}, {6, 0, 0}})
+	id := createDigestTrackingRecord(t, etype, now, 3)
+	defer cleanupTestTrackingByID([]uint64{id})
+	createPositionClick(t, id, "p0", now)
+
+	result := getDigestPositions(t, token, "type="+etype+"&start="+yesterday+"&end="+today)
+
+	assert.Equal(t, float64(0), result["missing_days"])
+	assert.Equal(t, float64(1), result["live_days"])
+	data := result["data"].([]interface{})
+	assert.Equal(t, 3, len(data))
+	p0 := data[0].(map[string]interface{})
+	assert.Equal(t, float64(7), p0["shown"])          // 6 rolled up + 1 live
+	assert.Equal(t, float64(2), p0["emails_clicked"]) // 1 + 1
+	assert.Equal(t, float64(1), data[2].(map[string]interface{})["shown"])
+}
+
+func TestDigestPositions_CapsLiveDaysAndReportsMissing(t *testing.T) {
+	token := supportToken(t, "dprollcap")
+	etype := uniqueRolledDigestType()
+
+	// Six days, none summarised: the three most recent are computed live and
+	// the other three are reported, not computed.
+	result := getDigestPositions(t, token, "type="+etype+"&start=2019-05-01&end=2019-05-06")
+
+	assert.Equal(t, float64(3), result["live_days"])
+	assert.Equal(t, float64(3), result["missing_days"])
+	assert.Equal(t, 0, len(result["data"].([]interface{})))
+}
+
+func TestDigestPositions_RollupDoesNotCoverPartialDays(t *testing.T) {
+	token := supportToken(t, "dprollpart")
+	etype := uniqueRolledDigestType()
+
+	seedRollup(t, "2019-06-10", etype, [][3]int{{10, 5, 5}})
+
+	// A range that starts mid-day cannot be answered from whole-day rows.
+	result := getDigestPositions(t, token, "type="+etype+"&start=2019-06-10%2012:00:00&end=2019-06-10")
+
+	assert.Equal(t, float64(1), result["live_days"])
+	assert.Equal(t, 0, len(result["data"].([]interface{})))
+}
+
+func TestDigestPositions_FutureDaysAreNotMissing(t *testing.T) {
+	token := supportToken(t, "dprollfuture")
+	etype := uniqueRolledDigestType()
+	now := time.Now()
+
+	result := getDigestPositions(t, token, "type="+etype+
+		"&start="+now.Format("2006-01-02")+"&end="+now.AddDate(0, 0, 10).Format("2006-01-02"))
+
+	assert.Equal(t, float64(0), result["missing_days"])
+	assert.Equal(t, float64(1), result["live_days"]) // today only
+}
+
+func TestDigestPositions_NonDigestTypeStaysLive(t *testing.T) {
+	token := supportToken(t, "dprollother")
+	etype := uniqueDigestType() // not a UnifiedDigest* name: never rolled up
+
+	result := getDigestPositions(t, token, "type="+etype+"&start=2019-07-01&end=2019-07-06")
+
+	assert.Equal(t, float64(0), result["missing_days"])
+	assert.Equal(t, float64(6), result["live_days"])
+}

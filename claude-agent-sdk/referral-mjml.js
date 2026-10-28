@@ -157,13 +157,51 @@ function formatWhen(iso) {
 function referralSubject(referral) {
   const m = referral.member || {}
   const who = m.displayname || (m.id ? `user ${m.id}` : 'a member')
-  const firstQuestion = (referral.messages || []).find((x) => x.role === 'user')
-  const about = truncate(firstQuestion ? firstQuestion.content : referral.note, 80)
   const id = m.id ? ` (${m.id})` : ''
-  const ref = referral.ref ? `[${referral.ref}] ` : ''
-  return about
-    ? `${ref}Support referral: ${who}${id} - ${about}`
-    : `${ref}Support referral: ${who}${id}`
+  // The same subject every time for one member, with "Re: " once an earlier referral has gone, so Gmail
+  // (which groups by subject as well as by References) keeps a member's referrals in one conversation.
+  // The reference and the question are in the body and the X-Freegle-Support-Referral header instead.
+  const re = (referral.earlierRefs || []).length ? 'Re: ' : ''
+  return `${re}Support referral: ${who}${id}`
+}
+
+/**
+ * The Message-ID, In-Reply-To and References for a referral, as bare ids without angle brackets
+ * (nodemailer adds them). One anchor per member, so every referral about a member shares it; the
+ * earlier referrals sent in this session are chained after it, and the newest is what this one
+ * replies to. A reply from the geeks quotes our Message-ID, so it joins the same conversation.
+ */
+function referralThreadHeaders(referral, domain = 'ilovefreegle.org') {
+  const m = referral.member || {}
+  const anchor = m.id ? `support-member-${m.id}@${domain}` : `support-referral-${referral.ref || 'none'}@${domain}`
+  const earlier = (referral.earlierRefs || []).map((r) => `support-referral-${r}@${domain}`)
+  return {
+    messageId: `support-referral-${referral.ref || 'none'}@${domain}`,
+    inReplyTo: earlier.length ? earlier[earlier.length - 1] : anchor,
+    references: [anchor, ...earlier],
+  }
+}
+
+/** The content id an attached screenshot is given, so the email body can show it inline. */
+function screenshotCid(index, domain = 'ilovefreegle.org') {
+  return `support-screenshot-${index + 1}@${domain}`
+}
+
+function screenshotsSection(referral) {
+  const shots = referral.screenshots || []
+  if (!shots.length) return ''
+  return `<mj-section background-color="${C.chatBg}" padding="4px 16px 8px 16px">
+      <mj-column>
+        <mj-text><strong>Screenshots</strong> <span style="color:${C.muted};font-size:12px;font-weight:normal;">${shots.length} attached, also as files</span></mj-text>
+        ${shots
+          .map(
+            (img, i) =>
+              `<mj-image src="cid:${screenshotCid(i)}" alt="${escapeHtml(img.name)}" padding="8px 0 0 0" fluid-on-mobile="true" />` +
+              `<mj-text padding="2px 0 0 0" font-size="11px" color="${C.muted}">${escapeHtml(img.name)}</mj-text>`
+          )
+          .join('\n        ')}
+      </mj-column>
+    </mj-section>`
 }
 
 /** The bold identity on a device card - "App 3.2.28" / "Chrome 150". */
@@ -458,6 +496,8 @@ function buildReferralMjml(referral, nowMs = Date.now()) {
 
     ${messages.map((m) => messageSection(m)).join('\n    ')}
 
+    ${screenshotsSection(referral)}
+
     <mj-section background-color="${C.chatBg}" padding="0 16px 12px 16px">
       <mj-column><mj-spacer height="1px" /></mj-column>
     </mj-section>
@@ -515,6 +555,12 @@ function buildReferralText(referral) {
     }
   }
 
+  const shots = referral.screenshots || []
+  if (shots.length) {
+    lines.push('')
+    lines.push(`Screenshots attached: ${shots.map((x) => x.name).join(', ')}`)
+  }
+
   lines.push('')
   lines.push('The investigation:')
   for (const m of referral.messages || []) {
@@ -529,6 +575,8 @@ module.exports = {
   buildReferralMjml,
   buildReferralText,
   referralSubject,
+  referralThreadHeaders,
+  screenshotCid,
   formatReferralRef,
   REF_ALPHABET,
   escapeHtml,

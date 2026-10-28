@@ -71,6 +71,20 @@ class DonationAskOptOutTest extends TestCase
         $this->assertTrue(User::settingsAllowDonationAsks(NULL));
     }
 
+    public function test_opt_out_holds_until_its_date_then_lapses(): void
+    {
+        $future = now()->utc()->addMonth()->format('Y-m-d\TH:i:s\Z');
+        $past = now()->utc()->subDay()->format('Y-m-d\TH:i:s\Z');
+
+        $this->assertFalse(User::settingsAllowDonationAsks(['nodonationasks' => TRUE, 'nodonationasksuntil' => $future]));
+        $this->assertTrue(User::settingsAllowDonationAsks(['nodonationasks' => TRUE, 'nodonationasksuntil' => $past]),
+            'a lapsed opt-out no longer holds asks back');
+        $this->assertFalse(User::settingsAllowDonationAsks(['nodonationasks' => TRUE, 'nodonationasksuntil' => NULL]),
+            'an undated opt-out runs until donations:lapse-optouts dates it');
+        $this->assertFalse(User::settingsAllowDonationAsks(['nodonationasks' => TRUE, 'nodonationasksuntil' => 'junk']),
+            'an unreadable date errs on not asking');
+    }
+
     public function test_ask_email_skips_opted_out_recipient(): void
     {
         Mail::fake();

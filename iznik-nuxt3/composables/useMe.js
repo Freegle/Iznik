@@ -3,6 +3,7 @@ import Wkt from 'wicket'
 import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import { useTeamStore } from '~/stores/team'
+import { donationAsksPaused } from '~/composables/useDonationAsks'
 
 let fetchingPromise = null
 // A single coalesced "trailing" fetch for forceServer callers that arrive while a fetch is
@@ -229,9 +230,11 @@ export function useMe() {
 
   const donor = computed(() => me.value?.donated)
 
-  // A donor can ask never to be asked to donate again (Settings, or support tools).
+  // A donor can ask not to be asked to donate for a year (Settings, or support tools).
   // Logged-out visitors are asked as usual.
-  const askForDonations = computed(() => !me.value?.settings?.nodonationasks)
+  const askForDonations = computed(
+    () => !donationAsksPaused(me.value?.settings)
+  )
 
   const recentDonor = computed(() => {
     const donated = me.value?.donated

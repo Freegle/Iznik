@@ -294,12 +294,8 @@
             :groupid="groupid"
             :role="member.role"
           />
-          <!-- A membership rippling created for a poster records where their post
-               travelled, not a relationship with this community, so there is no chat for
-               its volunteers to start (Discourse 10102). If the member writes to us
-               first, that chat appears in Chats as normal. -->
           <ChatButton
-            v-if="modMessagingAllowed && !member.rippled"
+            v-if="modMessagingAllowed"
             :userid="member.userid"
             :groupid="member.groupid"
             title="Chat"
@@ -523,9 +519,9 @@ onMounted(() => {
     banned.value = true
   }
 
-  // Fetch user data — in modtools context, fetch() automatically uses fetchMT.
+  // Forced, so a note added since this tab last loaded the member shows.
   if (member.value?.userid) {
-    userStore.fetch(member.value.userid)
+    userStore.fetch(member.value.userid, true)
   }
 
   // V2 API returns heldby as a numeric ID — fetch the user so we can show their name.

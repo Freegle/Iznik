@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-19
+last_reviewed: 2026-10-23
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useMe.js
@@ -92,12 +92,23 @@ Claims are submitted to HMRC by a person, not by this code. Who does that is in
 
 Anyone who has ever donated (`me.donated`, the latest `users_donations` timestamp) gets a
 **Donation requests** switch in Settings (`components/settings/OtherSettingsSection.vue`).
-Turning it off sets `users.settings.nodonationasks = true`. Support can see and change the
+Turning it off sets `users.settings.nodonationasks = true`, and the opt-out lasts a year.
+The server owns the end date, `users.settings.nodonationasksuntil` (UTC, RFC 3339): settings saves
+go through `applyDonationAskLapse` in `iznik-server-go/user/donationasks.go`, which dates a new
+opt-out a year ahead, keeps the date of a running one (clients send the whole settings object on
+unrelated saves), clears it when asks go back on, and lets a lapsed opt-out lapse when a client
+echoes it back with its old date. Every reader treats a passed date as lapsed: `DonationAsksPaused`
+in Go, `User::settingsAllowDonationAsks` in batch and `composables/useDonationAsks.js` on the
+client. An opt-out with no date predates the lapse and still holds. The daily
+`donations:lapse-optouts` command dates those a year from its run, and switches off the ones
+whose date has passed, so app builds that read only the switch catch up. Settings shows "We won't
+ask you to donate until <date>" while one runs. Support can see and change the
 same switch in the ModTools support view (`ModSupportUser.vue`), which saves through
 `PATCH /user`. Support needs to know whether the member has donated to show it, but the
 donation list needs Gift Aid permission, and Admin or Support who do not moderate the member's
 communities do not get their full settings. So `GET /user/:id` also returns two yes/no fields to
-Admin and Support (and to the member themselves): `donor` and `nodonationasks`. No amounts, dates
+Admin and Support (and to the member themselves): `donor` and `nodonationasks`, which is false
+once the opt-out has lapsed, plus `nodonationasksuntil` while it runs. No amounts, donation dates
 or other settings go with them. The switch is shown to people who have never donated only if the flag is
 already set, so it cannot be left stranded.
 

@@ -239,6 +239,204 @@ describe('ModSysAdminUxSecondThoughts', () => {
     ])
   })
 
+  describe('whether second thoughts end in giving up', () => {
+    const withFinish = (name, backed, visits, then, reached) => ({
+      ...step(name, backed, visits),
+      backed_then: then,
+      reached,
+    })
+
+    it('adds the finish columns next to going back, and says what the row means', () => {
+      store.funnels.data = {
+        flows: [
+          {
+            flow: 'give',
+            steps: [
+              withFinish(
+                'give-mobile-details',
+                80,
+                400,
+                { people: 70, finished: 11 },
+                { people: 400, finished: 307 }
+              ),
+            ],
+          },
+        ],
+      }
+      const t = make({ open: true }).text()
+      // 11 of 70 finished; the other 330 visits finished 296 times.
+      expect(t).toContain('16% (11/70)')
+      expect(t).toContain('90% (296/330)')
+      expect(t).toContain('Many gave up')
+    })
+
+    it('flags giving up in the closed row, with both shares', () => {
+      store.funnels.data = {
+        flows: [
+          {
+            flow: 'give',
+            steps: [
+              withFinish(
+                'give-mobile-details',
+                80,
+                400,
+                { people: 70, finished: 11 },
+                { people: 400, finished: 307 }
+              ),
+            ],
+          },
+        ],
+      }
+      expect(make().find('.ux-summary').text()).toBe(
+        'Most went back at Details: 20.0% (80 of 400). At Details, 16% of those who went back finished, against 90% who did not.'
+      )
+    })
+
+    it('says it is less of a worry when most who went back still finished', () => {
+      store.funnels.data = {
+        flows: [
+          {
+            flow: 'give',
+            steps: [
+              withFinish(
+                'give-mobile-details',
+                80,
+                400,
+                { people: 70, finished: 52 },
+                { people: 400, finished: 300 }
+              ),
+            ],
+          },
+        ],
+      }
+      expect(make().find('.ux-summary').text()).toBe(
+        'Most went back at Details: 20.0% (80 of 400). Most who went back or changed a field still finished, so this is less of a worry.'
+      )
+    })
+
+    it('puts the steps where people gave up first', () => {
+      store.funnels.data = {
+        flows: [
+          {
+            flow: 'give',
+            steps: [
+              withFinish(
+                'give-mobile-photos',
+                50,
+                400,
+                { people: 40, finished: 30 },
+                { people: 400, finished: 300 }
+              ),
+              withFinish(
+                'give-mobile-details',
+                60,
+                400,
+                { people: 60, finished: 10 },
+                { people: 400, finished: 300 }
+              ),
+            ],
+          },
+        ],
+      }
+      const cells = make({ open: true })
+        .findAll('td')
+        .map((c) => c.text())
+      expect(cells.indexOf('Details')).toBeLessThan(cells.indexOf('Photos'))
+    })
+
+    it('says nothing about finishing for a step with too few visits to compare', () => {
+      store.funnels.data = {
+        flows: [
+          {
+            flow: 'give',
+            steps: [
+              withFinish(
+                'give-mobile-details',
+                80,
+                400,
+                { people: 10, finished: 0 },
+                { people: 400, finished: 300 }
+              ),
+            ],
+          },
+        ],
+      }
+      const w = make({ open: true })
+      expect(w.text()).toContain('Too few to say')
+      expect(make().find('.ux-summary').text()).toBe(
+        'Most went back at Details: 20.0% (80 of 400).'
+      )
+    })
+
+    it('needs more visits on each side when a filter is set', () => {
+      store.funnels.data = {
+        flows: [
+          {
+            flow: 'give',
+            steps: [
+              withFinish(
+                'give-mobile-details',
+                80,
+                400,
+                { people: 30, finished: 1 },
+                { people: 400, finished: 300 }
+              ),
+            ],
+          },
+        ],
+      }
+      expect(make({ open: true }).text()).toContain('Many gave up')
+      store.answered.funnels = { device: 'mobile', signed_in: '' }
+      expect(make({ open: true }).text()).toContain('Too few to say')
+    })
+
+    it('flags a field where people gave up', () => {
+      store.funnels.data = {
+        flows: [
+          {
+            flow: 'give',
+            steps: [
+              withFinish(
+                'give-mobile-details',
+                80,
+                400,
+                { people: 5, finished: 4 },
+                { people: 400, finished: 300 }
+              ),
+            ],
+          },
+        ],
+      }
+      store.fields.data = {
+        fields: [
+          {
+            flow: 'give',
+            step: 'give-mobile-details',
+            field: 'email',
+            revisits: 20,
+            validation_failures: 5,
+            choice_switches: 0,
+            reached: { people: 400, finished: 300 },
+            then: { people: 40, finished: 4 },
+          },
+        ],
+      }
+      const s = make().find('.ux-summary').text()
+      expect(s).toContain(
+        'At the email field at Details, 10% of those who changed a field finished, against 82% who did not.'
+      )
+    })
+
+    it('leaves the finish columns out when the server sent no figures', () => {
+      const t = make({ open: true }).text()
+      expect(t).not.toContain('Then finished')
+      expect(t).not.toContain('What it means')
+      expect(make().find('.ux-summary').text()).toBe(
+        'Most went back at Photos: 25.0% (25 of 100).'
+      )
+    })
+  })
+
   it('says the part is not switched on when a route is missing', () => {
     store.funnels.data = null
     store.funnels.missing = true

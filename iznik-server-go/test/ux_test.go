@@ -51,7 +51,7 @@ func uxClean(t *testing.T, from, to string) {
 	ux.ResetCache()
 	cleanup := func() {
 		db := database.DBConn
-		for _, tbl := range []string{"ux_flow_daily", "ux_flow_outcome_daily", "ux_field_daily", "ux_component_daily",
+		for _, tbl := range []string{"ux_flow_daily", "ux_flow_outcome_daily", "ux_field_daily", "ux_flow_signal_daily", "ux_component_daily",
 			"ux_feature_adoption_daily", "ux_search_daily", "ux_regret_daily", "ux_telemetry_health_daily", "ux_sample_sessions"} {
 			db.Exec("DELETE FROM "+tbl+" WHERE `date` BETWEEN ? AND ?", from, to)
 		}
@@ -261,6 +261,103 @@ func TestUxFields(t *testing.T) {
 	uxGet(t, token, "fields?start=2033-03-08&end=2033-03-14", &raw)
 	assert.ElementsMatch(t, []string{"flow", "step", "field", "revisits", "validation_failures", "choice_switches"},
 		mapKeys(raw["fields"].([]interface{})[0].(map[string]interface{})))
+}
+
+// uxInsertSignals inserts rows of ux_flow_signal_daily: (date, flow, step, field, signal, device, logged_in, people, finished).
+func uxInsertSignals(t *testing.T, rows string) {
+	t.Helper()
+	require.NoError(t, database.DBConn.Exec("INSERT INTO ux_flow_signal_daily (`date`,flow,step,field,`signal`,device_class,logged_in,people,finished) VALUES "+rows).Error)
+}
+
+func TestUxFunnelsSaySecondThoughtsThenFinished(t *testing.T) {
+	token := uxSupportToken(t, "uxthenfunnel")
+	uxClean(t, "2037-03-01", "2037-03-14")
+	db := database.DBConn
+
+	require.NoError(t, db.Exec("INSERT INTO ux_flow_daily (`date`,flow,step,device_class,logged_in,entered,reentered,backed,help_sought) VALUES "+
+		"('2037-03-08','give','details','mobile',0,100,10,20,4),"+
+		"('2037-03-08','give','photos','mobile',0,80,0,0,0)").Error)
+	uxInsertSignals(t, ""+
+		"('2037-03-08','give','details','','reached','mobile',0,100,70),"+
+		"('2037-03-09','give','details','','reached','desktop',0,50,40),"+
+		"('2037-03-08','give','details','','backed','mobile',0,20,3),"+
+		"('2037-03-09','give','details','','backed','desktop',0,10,5),"+
+		"('2037-03-08','give','details','','help','mobile',0,4,0),"+
+		"('2037-03-08','give','photos','','reached','mobile',0,80,60)")
+
+	var out ux.FunnelsResponse
+	require.Equal(t, 200, uxGet(t, token, "funnels?start=2037-03-08&end=2037-03-14&flow=give", &out))
+	steps := map[string]ux.FunnelStep{}
+	for _, s := range out.Flows[0].Steps {
+		steps[s.Step] = s
+	}
+	d := steps["details"]
+	assert.Equal(t, &ux.Then{People: 150, Finished: 110}, d.Reached, "summed over days and devices")
+	assert.Equal(t, &ux.Then{People: 30, Finished: 8}, d.BackedThen)
+	assert.Equal(t, &ux.Then{People: 4, Finished: 0}, d.HelpThen)
+	p := steps["photos"]
+	assert.Equal(t, &ux.Then{People: 80, Finished: 60}, p.Reached)
+	assert.Nil(t, p.BackedThen, "nobody went back, so there is nothing to say")
+
+	// The Device filter reaches the signal rows, so they never describe a different set of visits
+	// from the rest of the step.
+	var mobile ux.FunnelsResponse
+	require.Equal(t, 200, uxGet(t, token, "funnels?start=2037-03-08&end=2037-03-14&flow=give&device=mobile", &mobile))
+	for _, s := range mobile.Flows[0].Steps {
+		if s.Step == "details" {
+			assert.Equal(t, &ux.Then{People: 100, Finished: 70}, s.Reached)
+			assert.Equal(t, &ux.Then{People: 20, Finished: 3}, s.BackedThen)
+		}
+	}
+}
+
+func TestUxFieldsSaySecondThoughtsThenFinished(t *testing.T) {
+	token := uxSupportToken(t, "uxthenfields")
+	uxClean(t, "2038-03-01", "2038-03-14")
+	db := database.DBConn
+
+	require.NoError(t, db.Exec("INSERT INTO ux_field_daily (`date`,flow,step,field,device_class,revisits,validation_failures,choice_switches) VALUES "+
+		"('2038-03-08','give','A','email','mobile',5,2,1),"+
+		"('2038-03-08','give','A','photo','mobile',1,0,0)").Error)
+	uxInsertSignals(t, ""+
+		"('2038-03-08','give','A','','reached','mobile',1,100,80),"+
+		"('2038-03-08','give','A','email','field','mobile',1,6,2),"+
+		"('2038-03-08','give','A','email','field','mobile',0,2,0)")
+
+	var out ux.FieldsResponse
+	require.Equal(t, 200, uxGet(t, token, "fields?start=2038-03-08&end=2038-03-14", &out))
+	require.Len(t, out.Fields, 2)
+	byField := map[string]ux.FieldRow{}
+	for _, f := range out.Fields {
+		byField[f.Field] = f
+	}
+	e := byField["email"]
+	assert.Equal(t, &ux.Then{People: 8, Finished: 2}, e.Then)
+	assert.Equal(t, &ux.Then{People: 100, Finished: 80}, e.Reached, "the step's own base")
+	assert.Nil(t, byField["photo"].Then, "no visit showed it, so it is left out rather than shown as zero")
+
+	// Signed in is ignored by the field figures, so it must not cut the signal rows either.
+	var signed ux.FieldsResponse
+	require.Equal(t, 200, uxGet(t, token, "fields?start=2038-03-08&end=2038-03-14&signed_in=1", &signed))
+	for _, f := range signed.Fields {
+		if f.Field == "email" {
+			assert.Equal(t, &ux.Then{People: 8, Finished: 2}, f.Then)
+		}
+	}
+	assert.Equal(t, []string{"signed_in"}, signed.Ignored)
+}
+
+func TestUxSecondThoughtsAreLeftOutWhenNoSignalsAreRolledUp(t *testing.T) {
+	token := uxSupportToken(t, "uxthennone")
+	uxClean(t, "2039-03-01", "2039-03-14")
+	require.NoError(t, database.DBConn.Exec("INSERT INTO ux_flow_daily (`date`,flow,step,device_class,entered,backed) VALUES ('2039-03-08','give','A','mobile',50,5)").Error)
+
+	var raw map[string]interface{}
+	require.Equal(t, 200, uxGet(t, token, "funnels?start=2039-03-08&end=2039-03-14&flow=give", &raw))
+	step := raw["flows"].([]interface{})[0].(map[string]interface{})["steps"].([]interface{})[0].(map[string]interface{})
+	for _, k := range []string{"reached", "backed_then", "help_then"} {
+		assert.NotContains(t, step, k)
+	}
 }
 
 func TestUxFriction(t *testing.T) {

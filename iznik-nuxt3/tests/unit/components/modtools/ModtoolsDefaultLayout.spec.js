@@ -148,6 +148,7 @@ function mountLayout(stubs = {}) {
         ModMissingProfile: { template: '<div />' },
         ModLockdownBanner: { template: '<div class="lockdown-banner-stub" />' },
         SomethingWentWrong: { template: '<div />' },
+        ModAlertReplyGate: { template: '<div />' },
         ExternalLink: { template: '<a><slot /></a>' },
         'b-navbar': { template: '<nav><slot /></nav>' },
         'b-navbar-brand': { template: '<div><slot /></div>' },

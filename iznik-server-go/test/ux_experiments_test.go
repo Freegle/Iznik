@@ -340,6 +340,11 @@ func TestUxCreateExperimentDesign(t *testing.T) {
 	code, out = uxPost(t, token, "experiments", store)
 	require.Equal(t, 200, code, out)
 
+	rated := uxExperimentBody(prefix, "-rated", "chat_outcome")
+	rated["design"] = map[string]interface{}{"primary_event": "user_rated", "base_rate": 0.4}
+	code, out = uxPost(t, token, "experiments", rated)
+	require.Equal(t, 200, code, out)
+
 	chat := uxExperimentBody(prefix, "-chat", "reply")
 	chat["design"] = map[string]interface{}{"primary_event": "job_ad_click_chat"}
 	code, out = uxPost(t, token, "experiments", chat)

@@ -209,6 +209,43 @@ describe('OtherSettingsSection', () => {
       expect(wrapper.emitted('update')).toBeTruthy()
     })
 
+    it('says when an opt-out ends', () => {
+      mockMe.donated = '2019-01-01T00:00:00Z'
+      mockMe.settings.nodonationasks = true
+      mockMe.settings.nodonationasksuntil = '2099-03-05T10:00:00Z'
+      const wrapper = createWrapper()
+      expect(wrapper.text()).toContain(
+        "We won't ask you to donate until 5 March 2099."
+      )
+      expect(wrapper.findAll('.our-toggle')[3].attributes('data-checked')).toBe(
+        'false'
+      )
+    })
+
+    it('shows asks as on once an opt-out has lapsed', () => {
+      mockMe.donated = '2019-01-01T00:00:00Z'
+      mockMe.settings.nodonationasks = true
+      mockMe.settings.nodonationasksuntil = '2020-01-01T00:00:00Z'
+      const wrapper = createWrapper()
+      expect(wrapper.text()).toContain('for a year')
+      expect(wrapper.text()).not.toContain("We won't ask you to donate until")
+      expect(wrapper.findAll('.our-toggle')[3].attributes('data-checked')).toBe(
+        'true'
+      )
+    })
+
+    it('does not send an old date when turning asks off again', async () => {
+      mockMe.donated = '2019-01-01T00:00:00Z'
+      mockMe.settings.nodonationasks = true
+      mockMe.settings.nodonationasksuntil = '2020-01-01T00:00:00Z'
+      const wrapper = createWrapper()
+      await wrapper.findAll('.our-toggle')[3].trigger('click')
+      await flushPromises()
+      const sent = mockAuthStore.saveAndGet.mock.calls[0][0].settings
+      expect(sent.nodonationasks).toBe(true)
+      expect(sent).not.toHaveProperty('nodonationasksuntil')
+    })
+
     it('saves nodonationasks false when turned back on', async () => {
       mockMe.donated = '2019-01-01T00:00:00Z'
       mockMe.settings.nodonationasks = true

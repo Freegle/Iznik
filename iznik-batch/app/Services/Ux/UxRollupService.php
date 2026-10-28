@@ -6,6 +6,7 @@ use App\Services\LokiService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Turns one UTC day of client telemetry in Loki, and one day of MySQL history, into the ux_*
@@ -84,6 +85,13 @@ class UxRollupService
 
         $date = $day->toDateString();
         foreach ($data as $table => $rows) {
+            if (! Schema::hasTable($table)) {
+                // Only a table added after the first release can be missing, when this code is live
+                // before its migration has been run. The rest of the day is still worth writing.
+                Log::warning("ux:rollup-daily: table {$table} does not exist, skipped");
+
+                continue;
+            }
             DB::transaction(function () use ($table, $date, $rows) {
                 DB::table($table)->where('date', $date)->delete();
                 foreach (array_chunk($rows, 500) as $chunk) {
@@ -165,6 +173,7 @@ class UxRollupService
             'ux_flow_daily' => $withDate($flowRows),
             'ux_flow_outcome_daily' => $withDate($outcomeRows),
             'ux_field_daily' => $withDate($fieldRows),
+            'ux_flow_signal_daily' => $withDate($this->collectSignals()),
             'ux_component_daily' => $withDate($this->collectComponents($day)),
             'ux_feature_adoption_daily' => $withDate($this->collectAdoption($day)),
             'ux_search_daily' => $withDate([$this->collectSearch($day)]),
@@ -331,6 +340,71 @@ class UxRollupService
         }
 
         return [array_values($flowRows), array_values($outcomeRows), array_values($fieldRows)];
+    }
+
+    /**
+     * Second thoughts followed to the end of the visit. For each step (and field) it counts the
+     * distinct flow instances that showed the signal, and how many of those also sent flow_complete.
+     * LogQL does the join: a set operation on flow_instance_id, so no raw line is paged. 'reached'
+     * is every instance that entered the step, the base the other signals are compared with.
+     *
+     * A visit that goes back and finishes after midnight UTC is counted as not finished, because
+     * the day's completions are the ones sent that day. That is a small undercount of finished,
+     * the same for every row.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function collectSignals(): array
+    {
+        $rows = [];
+        $signals = [
+            ['reached', 'step_enter', 'step', false],
+            ['backed', 'step_back', 'step', false],
+            ['help', 'help_sought', 'step', false],
+            ['field', 'field_revisit|validation_failed|choice_switched', 'step', true],
+        ];
+
+        foreach (self::FLOWS as $flow) {
+            $finished = sprintf(
+                'sum by (flow_instance_id) (count_over_time(%s | json flow, action_name, flow_instance_id | flow="%s" | action_name="flow_complete" | flow_instance_id!="" [1d]))',
+                $this->flowSelector(), $flow
+            );
+
+            foreach ($signals as [$signal, $actions, $stepLabel, $withField]) {
+                $group = array_merge($withField ? [$stepLabel, 'field'] : [$stepLabel], self::FLOW_DIMS);
+                $match = str_contains($actions, '|') ? '=~"^('.$actions.')$"' : '="'.$actions.'"';
+                $visits = sprintf(
+                    'sum by (flow_instance_id, %s) (count_over_time(%s | json %s | flow="%s" | action_name%s | flow_instance_id!="" [1d]))',
+                    implode(', ', $group), $this->flowSelector(),
+                    implode(', ', array_merge(['flow', 'action_name', 'flow_instance_id'], $group)), $flow, $match
+                );
+                $by = implode(', ', $group);
+
+                foreach (['people' => $visits, 'finished' => $visits.' and on (flow_instance_id) '.$finished] as $column => $inner) {
+                    foreach ($this->metric(sprintf('count by (%s) (%s)', $by, $inner), true) as [$labels, $n]) {
+                        $field = $withField ? mb_substr($labels['field'] ?? '', 0, 64) : '';
+                        $key = array_merge(
+                            [$flow, mb_substr($labels[$stepLabel] ?? '', 0, 64), $field, $signal],
+                            [
+                                mb_substr($labels['device_class'] ?? '', 0, 16),
+                                $this->bool($labels['logged_in'] ?? ''),
+                                $this->bool($labels['is_app'] ?? ''),
+                                mb_substr($labels['variant'] ?? '', 0, 64),
+                            ]
+                        );
+                        $k = implode('|', $key);
+                        $rows[$k] ??= [
+                            'flow' => $key[0], 'step' => $key[1], 'field' => $key[2], 'signal' => $key[3],
+                            'device_class' => $key[4], 'logged_in' => $key[5], 'is_app' => $key[6], 'variant' => $key[7],
+                            'people' => 0, 'finished' => 0,
+                        ];
+                        $rows[$k][$column] += (int) $n;
+                    }
+                }
+            }
+        }
+
+        return array_values($rows);
     }
 
     private function &flowRow(array &$rows, array $key): array

@@ -36,6 +36,33 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
   // and make the handling idempotent instead.
   private static final String EXTRA_SHARE_HANDLED = "org.ilovefreegle.direct.SHARE_HANDLED";
 
+  // Message ids (google.message_id, set by Firebase on a notification tap) already
+  // delivered to the app, kept across process death so a replay can be recognised.
+  private static final String PREFS = "notification_taps";
+  private static final String PREF_SEEN = "seen_message_ids";
+  private static final int MAX_SEEN = 20;
+
+  // True if the intent carries a notification payload we have not delivered before.
+  private boolean isFreshNotification(Intent intent) {
+    String id = intent.getStringExtra("google.message_id");
+    if (id == null) return false;
+    return !getSharedPreferences(PREFS, MODE_PRIVATE)
+        .getStringSet(PREF_SEEN, new java.util.HashSet<String>())
+        .contains(id);
+  }
+
+  private void rememberNotification(Intent intent) {
+    if (intent == null) return;
+    String id = intent.getStringExtra("google.message_id");
+    if (id == null) return;
+    android.content.SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+    java.util.Set<String> seen = new java.util.HashSet<>(
+        prefs.getStringSet(PREF_SEEN, new java.util.HashSet<String>()));
+    if (seen.size() >= MAX_SEEN) seen.clear();
+    seen.add(id);
+    prefs.edit().putStringSet(PREF_SEEN, seen).apply();
+  }
+
   public void onCreate(Bundle savedInstanceState) {
     //Log.e("PHDCC","org.ilovefreegle.direct onCreate A");
     // Plugins declared in this project (rather than pulled from node_modules, which
@@ -49,14 +76,22 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
     // and the app opens on that chat every time, long after the member has moved on.
     // The same goes for a deep link or a share. That intent has already been handled
     // once, so start as the launcher would.
+    //
+    // The flag alone is too broad: after Android kills the app, a genuine new tap can
+    // also arrive carrying it, and swapping the intent drops the tap. So only a history
+    // intent that is a replay is swapped: one with no notification payload, or whose
+    // google.message_id we have already delivered. A history intent with a message id
+    // we have not seen is a fresh tap and goes through.
     Intent launch = getIntent();
     if (launch != null
-        && (launch.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) {
+        && (launch.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+        && !isFreshNotification(launch)) {
       setIntent(
           new Intent(Intent.ACTION_MAIN)
               .addCategory(Intent.CATEGORY_LAUNCHER)
               .setClass(this, MainActivity.class));
     }
+    rememberNotification(getIntent());
 
     super.onCreate(savedInstanceState);
 
@@ -79,6 +114,7 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
   @Override
   protected void onNewIntent(Intent intent) {
     super.onNewIntent(intent);
+    rememberNotification(intent);
     // Keep getIntent() current so a later cold-start path sees the right intent.
     setIntent(intent);
     handleSendIntent(intent);

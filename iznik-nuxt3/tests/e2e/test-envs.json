@@ -124,6 +124,45 @@
     "postcode": null,
     "spammers": []
   },
+  "interestedbutton": {
+    "group": {
+      "id": 1,
+      "name": "FreeglePlayground"
+    },
+    "group2": {
+      "id": 1,
+      "name": "FreeglePlayground"
+    },
+    "mod": {
+      "id": 2,
+      "email": "testmod@test.com"
+    },
+    "user": {
+      "id": 1,
+      "email": "test@test.com"
+    },
+    "user2": {
+      "id": 3,
+      "email": "test3@test.com"
+    },
+    "messages": {
+      "offer": 1,
+      "wanted": 2
+    },
+    "pending": {
+      "offer": null,
+      "wanted": null
+    },
+    "rejected": {
+      "offer": null
+    },
+    "chats": {
+      "user2user": null,
+      "user2mod": null
+    },
+    "postcode": null,
+    "spammers": []
+  },
   "browse": {
     "group": {
       "id": 3,

@@ -1479,3 +1479,67 @@ func TestUxSurveysBoundary(t *testing.T) {
 	require.Len(t, files, 2)
 	assert.Equal(t, 2, read, "both files were read")
 }
+
+// An empty Problems or What works list says where the written-answer questions stand: counts only,
+// split by whether the question is about what works, and never the words themselves.
+func TestUxOpenQuestionsSayWhereTheEmptyListStands(t *testing.T) {
+	prefix := uniquePrefix("uxstand")
+	uxPromptClean(t, prefix)
+	token := uxSupportToken(t, "uxstandsup")
+	db := database.DBConn
+
+	problems := insertPrompt(t, "open", prefix+" problem?", `[{"key":"nothing","label":"I had no problems"},{"key":"dont_understand","label":"I don't understand"}]`)
+	db.Exec("UPDATE ux_prompts SET settings = ? WHERE id = ?", `{"preset":"problems"}`, problems)
+	values := insertPrompt(t, "open", prefix+" works?", `[{"key":"nothing","label":"I can't think of one"}]`)
+	db.Exec("UPDATE ux_prompts SET settings = ? WHERE id = ?", `{"preset":"values"}`, values)
+
+	add := func(prompt uint64, answer string) {
+		u := CreateTestUser(t, uniquePrefix("uxstanduser"), "User")
+		db.Exec("INSERT INTO ux_prompt_responses (prompt_id, userid, answer) VALUES (?, ?, ?)", prompt, u, answer)
+	}
+	for i := 0; i < 2; i++ {
+		add(problems, `{"choice":"nothing"}`)
+	}
+	add(problems, `{"skipped":true}`)
+	add(problems, `{"choice":"dont_understand"}`)
+	add(problems, `{"text":"Secret words about photos"}`)
+	add(problems, `{"text":"   "}`)
+	add(values, `{"text":"It is free"}`)
+
+	find := func(qs []ux.OpenQuestion, id uint64) *ux.OpenQuestion {
+		for i := range qs {
+			if qs[i].PromptID == id {
+				return &qs[i]
+			}
+		}
+		return nil
+	}
+
+	var groups ux.ProblemGroupsResponse
+	require.Equal(t, 200, uxGet(t, token, "problem-groups", &groups))
+	q := find(groups.OpenQuestions, problems)
+	require.NotNil(t, q)
+	assert.Equal(t, int64(6), q.Responses)
+	assert.Equal(t, int64(1), q.Skipped)
+	assert.Equal(t, int64(1), q.Written, "a blank answer is not words")
+	assert.Equal(t, int64(2), q.Nothing)
+	assert.Equal(t, int64(1), q.DontUnderstand)
+	assert.Equal(t, "I had no problems", q.NothingLabel)
+	assert.False(t, q.Analysed)
+	assert.Nil(t, find(groups.OpenQuestions, values), "the question about what works is not a problems question")
+
+	var vals ux.ValuesResponse
+	require.Equal(t, 200, uxGet(t, token, "values", &vals))
+	v := find(vals.OpenQuestions, values)
+	require.NotNil(t, v)
+	assert.Equal(t, int64(1), v.Written)
+	assert.Nil(t, find(vals.OpenQuestions, problems))
+
+	raw, _ := json.Marshal(groups.OpenQuestions)
+	assert.NotContains(t, string(raw), "Secret words")
+
+	uxInsertProblem(t, nil, "problem", "Photos and posting", prefix+" slow photos", 1, nil, problems, nil)
+	groups = ux.ProblemGroupsResponse{}
+	require.Equal(t, 200, uxGet(t, token, "problem-groups", &groups))
+	assert.True(t, find(groups.OpenQuestions, problems).Analysed)
+}

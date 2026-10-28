@@ -28,6 +28,16 @@
       {{ emailTrackingStore.digestPositionsError }}
     </NoticeMessage>
 
+    <p
+      v-if="
+        !emailTrackingStore.digestPositionsLoading &&
+        emailTrackingStore.digestPositionsMissingDays > 0
+      "
+      class="missing-days text-muted small"
+    >
+      {{ missingDaysText }}
+    </p>
+
     <!-- Loading -->
     <div
       v-if="emailTrackingStore.digestPositionsLoading"
@@ -115,6 +125,16 @@ const chartData = computed(() => {
     Number((p.ctr || 0).toFixed(3)),
   ])
   return [header, ...rows]
+})
+
+// Shown when the nightly summary has not reached some days in the range.
+const missingDaysText = computed(() => {
+  const n = emailTrackingStore.digestPositionsMissingDays || 0
+  if (n <= 0) return null
+  return (
+    `${n} ${n === 1 ? 'day is' : 'days are'} not summarised yet, so ` +
+    `${n === 1 ? 'it is' : 'they are'} left out. The summary is built nightly.`
+  )
 })
 
 // One-line context under the chart: how much data, and where we stopped.
@@ -206,6 +226,7 @@ defineExpose({
   chartData,
   summary,
   insight,
+  missingDaysText,
   fetchData,
   onFilterFetch,
   getPositionChartOptions,

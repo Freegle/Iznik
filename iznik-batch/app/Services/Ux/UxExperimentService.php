@@ -98,6 +98,7 @@ class UxExperimentService
         'job_ad_click' => 'clicked a job advert',
         'job_ad_click_chat' => 'clicked a job advert in a chat or after replying',
         'app_store_click' => 'clicked an app store button',
+        'user_rated' => 'rated a freegler',
     ];
 
     /**
@@ -117,6 +118,9 @@ class UxExperimentService
 
     /** How long the lock outlives a process that dies holding it. Longer than one tick step's Loki read. */
     private const LOCK_SECONDS = 900;
+
+    /** A cleanup pull request in config/ux_cleanups.php. */
+    public const CLEANUP_PR_PATTERN = '#^https://github\.com/Freegle/Iznik/pull/[1-9][0-9]{0,6}\z#';
 
     /**
      * `\z`, not `$`: `$` also matches before a final newline, and a newline inside the LogQL string
@@ -787,6 +791,57 @@ class UxExperimentService
     }
 
     /**
+     * Apply config/ux_cleanups.php: close each listed experiment that has a verdict and no cleanup recorded yet, with the
+     * pull request on its line. A draft, a running, an unknown or an already closed experiment is left alone, and so is one
+     * whose name is still in config/ux_switches.php, because its code is evidently not removed. A malformed entry or one
+     * that fails is logged and skipped, and the others still run. Safe to repeat: a second pass finds nothing to close.
+     *
+     * @return string[] one line per experiment closed
+     */
+    public function applyCleanups(?Carbon $now = null): array
+    {
+        $now = $now ?: Carbon::now('UTC');
+        $switched = [];
+        foreach ((array) config('ux_switches', []) as $switch) {
+            if (is_array($switch) && is_string($switch['name'] ?? null)) {
+                $switched[$switch['name']] = true;
+            }
+        }
+
+        $lines = [];
+        foreach ((array) config('ux_cleanups', []) as $entry) {
+            $name = is_array($entry) ? ($entry['name'] ?? null) : null;
+            $pr = is_array($entry) ? ($entry['cleanup_pr'] ?? null) : null;
+            if (! is_string($name) || ! preg_match(self::NAME_PATTERN, $name) || ! is_string($pr) || ! preg_match(self::CLEANUP_PR_PATTERN, $pr)) {
+                Log::warning('ux:experiments-tick: a malformed entry in config/ux_cleanups.php was skipped');
+
+                continue;
+            }
+            if (isset($switched[$name])) {
+                Log::warning("ux:experiments-tick: {$name} is listed in config/ux_cleanups.php but its switch is still in config/ux_switches.php, so it is not closed");
+
+                continue;
+            }
+
+            try {
+                $exp = DB::table('ux_experiments')->useWritePdo()->where('name', $name)->first();
+                if (! $exp || ! in_array($exp->status, [self::STATUS_ADOPTED, ...self::ENDED_UNADOPTED], true) || ($exp->cleanup_pr_url ?? '') !== '') {
+                    continue;
+                }
+                $this->close($exp->id, $pr, $now);
+                $line = "{$name}: closed, cleanup {$pr}";
+                Log::info("ux:experiments-tick: {$line}");
+                $lines[] = $line;
+            } catch (\Throwable $e) {
+                Log::error("ux:experiments-tick: cleanup of {$name}: ".$e->getMessage());
+                $lines[] = "{$name}: cleanup failed, left alone ({$e->getMessage()})";
+            }
+        }
+
+        return $lines;
+    }
+
+    /**
      * The hourly tick: read every running experiment, record the read, move traffic, and decide
      * when the time is up or the answer is already clear; then, once a day, look at the holdout of
      * each recently adopted experiment. Returns one line per experiment.
@@ -805,6 +860,9 @@ class UxExperimentService
                 Log::error("ux:experiments-tick: {$exp->name}: ".$e->getMessage());
                 $lines[] = "{$exp->name}: error, left alone ({$e->getMessage()})";
             }
+        }
+        foreach ($this->applyCleanups($now) as $line) {
+            $lines[] = $line;
         }
         foreach ($this->checkAdopted($now) as $line) {
             $lines[] = $line;

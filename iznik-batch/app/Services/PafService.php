@@ -89,7 +89,9 @@ class PafService
         while (($line = fgets($fh)) !== false) {
             $fields = str_getcsv(trim($line));
 
-            if (count($fields) < 16) {
+            // Every PAF line has a numeric UDPRN. A line without one is from some other file:
+            // a postcode directory loaded this way once put 1.9M non-addresses in paf_addresses.
+            if (count($fields) < 16 || !ctype_digit(trim($fields[12]))) {
                 $processed++;
                 continue;
             }
@@ -167,7 +169,9 @@ class PafService
         while (($line = fgets($fh)) !== false) {
             $fields = str_getcsv(trim($line));
 
-            if (count($fields) < 16) {
+            // Every PAF line has a numeric UDPRN. A line without one is from some other file:
+            // a postcode directory loaded this way once put 1.9M non-addresses in paf_addresses.
+            if (count($fields) < 16 || !ctype_digit(trim($fields[12]))) {
                 $processed++;
                 continue;
             }

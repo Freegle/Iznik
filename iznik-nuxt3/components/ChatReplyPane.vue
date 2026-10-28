@@ -241,6 +241,26 @@
                 class="composer-input"
                 placeholder="e.g. weekday evenings or this weekend"
               />
+              <div
+                v-if="collectChips"
+                class="collect-chips"
+                role="group"
+                aria-label="Quick answers"
+              >
+                <button
+                  v-for="chip in COLLECT_CHIPS"
+                  :key="chip"
+                  type="button"
+                  class="collect-chip"
+                  :class="{
+                    'collect-chip--on': stateMachine.collectText.value === chip,
+                  }"
+                  :aria-pressed="stateMachine.collectText.value === chip"
+                  @click="pickCollectChip(chip)"
+                >
+                  {{ chip }}
+                </button>
+              </div>
               <ErrorMessage name="collect" class="composer-error" />
             </div>
           </VeeForm>
@@ -381,7 +401,7 @@ import {
 } from '~/composables/useReplyStateMachine'
 import { useRoute } from '#imports'
 import { action } from '~/composables/useClientLog'
-import { offerReplyJobInterstitial } from '~/composables/useReplyJobInterstitial'
+import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
 import { replySurfaceForRoute } from '~/composables/useReplySurface'
 import EmailValidator from '~/components/EmailValidator'
 import NewUserInfo from '~/components/NewUserInfo'
@@ -681,8 +701,6 @@ watch(
   (isComplete) => {
     if (isComplete) {
       emit('sent')
-      // Experiment reply-job-interstitial: local job adverts once the reply has gone.
-      offerReplyJobInterstitial({ expectNavigation: !props.stayOnSend })
     }
   }
 )
@@ -718,6 +736,30 @@ watch(
 
 function removePhoto() {
   stateMachine.replyImage.value = null
+}
+
+// Experiment reply-collect-chips: under the collection box, three buttons that fill it. Read once, and
+// only for an Offer, the only post with the box. Control (and the app, which is always control) is unchanged.
+const COLLECT_CHIPS = ['This weekend', 'Weekday evenings', 'Any time']
+const collectArm = ref(null)
+let collectArmRead = false
+watch(
+  () => message.value?.type,
+  (type) => {
+    if (type === 'Offer' && !collectArmRead) {
+      collectArmRead = true
+      collectArm.value = flowArm(FlowName.REPLY, 'reply-collect-chips')
+    }
+  },
+  { immediate: true }
+)
+const collectChips = computed(() => collectArm.value === 'b')
+
+function pickCollectChip(chip) {
+  stateMachine.collectText.value = chip
+  // Filled by a button, not typed: clear any "please suggest" error that is showing.
+  form.value?.setFieldValue?.('collect', chip)
+  form.value?.setFieldError?.('collect', undefined)
 }
 
 function validateCollect(value) {
@@ -1039,6 +1081,36 @@ $reply-border: #cdcdcd;
     background: $color-white;
     border-color: $reply-header-green;
     box-shadow: 0 0 0 3px rgba(97, 174, 36, 0.16);
+  }
+}
+
+.collect-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.collect-chip {
+  border: 1px solid $reply-border;
+  border-radius: 999px;
+  background: $color-white;
+  color: $color-gray--dark;
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  min-height: 36px;
+  // Buttons are nowrap site-wide; let a chip wrap rather than run off a narrow screen.
+  white-space: normal !important;
+
+  &:hover {
+    border-color: $reply-header-green;
+  }
+
+  &--on {
+    background: $reply-header-green;
+    border-color: $reply-header-green;
+    color: $color-white;
   }
 }
 

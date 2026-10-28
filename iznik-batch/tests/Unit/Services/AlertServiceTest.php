@@ -505,6 +505,36 @@ class AlertServiceTest extends TestCase
         });
     }
 
+    public function test_processAlerts_single_group_passes_quote_files_and_required_reply(): void
+    {
+        $group = $this->createTestGroup();
+        $mod = $this->createTestUser();
+        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+
+        $alertId = $this->insertAlert([
+            'groupid' => $group->id,
+            'quoted' => "Hello\nMy original email, in full.",
+            'requirereply' => 1,
+        ]);
+        DB::table('alerts_attachments')->insert([
+            'alertid' => $alertId, 'name' => 'screen.png', 'mime' => 'image/png', 'size' => 4, 'data' => 'abcd',
+        ]);
+
+        $this->service->processAlerts();
+
+        Mail::assertSent(\App\Mail\Alert\AlertMail::class, function ($mail) {
+            return $mail->requireReply
+                && $mail->quoted === "Hello\nMy original email, in full."
+                && count($mail->files) === 1
+                && $mail->files[0]['name'] === 'screen.png'
+                && count($mail->attachments()) === 1;
+        });
+        // The self-copy to the sender carries the quote and files but does not ask for a reply.
+        Mail::assertSent(\App\Mail\Alert\AlertMail::class, function ($mail) {
+            return $mail->hasTo('geeks@ilovefreegle.org') && ! $mail->requireReply && $mail->quoted !== null;
+        });
+    }
+
     public function test_processAlerts_single_group_marks_complete(): void
     {
         $group = $this->createTestGroup();

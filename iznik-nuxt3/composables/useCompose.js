@@ -4,6 +4,7 @@ import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
 import { trackConversion } from '~/composables/useTrackConversion'
+import { useAskName } from '~/composables/useAskName'
 import {
   watchComposeFields,
   reportValidationFailure,
@@ -464,6 +465,9 @@ export async function freegleIt(type, router, options = {}) {
       )
     }
     console.log('Navigated successfully')
+
+    // Experiment join-name-optional: a member who joined without a name is asked for one now.
+    useAskName().maybeAskName('post')
   } catch (e) {
     console.log('Submit failed', e, e?.response?.data?.ret)
     submitting.value = false

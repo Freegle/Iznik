@@ -283,4 +283,83 @@ class IrishGridConverterTest extends TestCase
         $this->assertEqualsWithDelta(53.348, $result[0], 0.0001, 'Dublin lat');
         $this->assertEqualsWithDelta(-6.260, $result[1], 0.0001, 'Dublin lng');
     }
+
+    // -------------------------------------------------------------------------
+    // Table-driven reference points (lat and lng). The first four are real
+    // landmarks; the rest pin the current output at the grid origin, the edges
+    // of the island and out-of-range inputs so a change to the maths is noticed.
+    // -------------------------------------------------------------------------
+
+    #[DataProvider('referencePointProvider')]
+    public function test_reference_points(float $e, float $n, float $lat, float $lng, float $delta): void
+    {
+        $result = $this->converter->toWgs84($e, $n);
+
+        $this->assertEqualsWithDelta($lat, $result[0], $delta, "lat for E=$e N=$n");
+        $this->assertEqualsWithDelta($lng, $result[1], $delta, "lng for E=$e N=$n");
+    }
+
+    public static function referencePointProvider(): array
+    {
+        return [
+            'natural origin (TM75 53.5N 8W shifts ~100m by Helmert)' => [200000.0, 250000.0, 53.50021, -8.00074, 1e-4],
+            'Belfast City Hall'            => [333830.0, 374021.0, 54.5967, -5.9301, 1e-4],
+            'Dublin O Connell Bridge'      => [315925.0, 234472.0, 53.348, -6.260, 1e-4],
+            'Mizen Head'                   => [79000.0, 24000.0, 51.4564, -9.7416, 1e-3],
+            'Malin Head'                   => [194000.0, 455000.0, 55.3418, -8.0953, 1e-3],
+            'west of centre'               => [100000.0, 300000.0, 53.93978, -9.52350, 1e-4],
+            'east of centre'               => [300000.0, 300000.0, 53.93978, -6.47798, 1e-4],
+            'on central meridian, south'   => [200000.0, 0.0, 51.25359, -8.00072, 1e-4],
+            'far east (England side)'      => [500000.0, 250000.0, 53.41491, -3.48771, 1e-4],
+            'grid zero'                    => [0.0, 0.0, 51.21856, -10.86344, 1e-4],
+            'negative eastings/northings'  => [-100000.0, -100000.0, 50.27844, -12.20996, 1e-4],
+            'very large inputs (garbage)'  => [10000000.0, 10000000.0, -59.09712, -1.87516, 1e-3],
+        ];
+    }
+
+    public function test_longitude_is_near_central_meridian_on_false_easting(): void
+    {
+        // Points on E=200000 sit on the central meridian whatever the northing.
+        foreach ([0.0, 250000.0, 450000.0] as $n) {
+            $result = $this->converter->toWgs84(200000.0, $n);
+            $this->assertEqualsWithDelta(-8.0, $result[1], 0.001, "lng at N=$n");
+        }
+    }
+
+    public function test_longitude_is_monotonic_in_easting(): void
+    {
+        $previous = -INF;
+        foreach ([0.0, 100000.0, 200000.0, 300000.0, 400000.0] as $e) {
+            $lng = $this->converter->toWgs84($e, 250000.0)[1];
+            $this->assertGreaterThan($previous, $lng, "lng should rise at E=$e");
+            $previous = $lng;
+        }
+    }
+
+    public function test_non_finite_input_does_not_throw_and_gives_nan(): void
+    {
+        // Documents current behaviour: no validation, NAN flows through.
+        $result = $this->converter->toWgs84(NAN, 250000.0);
+
+        $this->assertIsArray($result);
+        $this->assertNan($result[1]);
+    }
+
+    public function test_infinite_input_does_not_throw(): void
+    {
+        $result = $this->converter->toWgs84(INF, 250000.0);
+
+        $this->assertIsArray($result);
+        $this->assertCount(2, $result);
+    }
+
+    public function test_integer_style_floats_match_fractional_equivalents(): void
+    {
+        $a = $this->converter->toWgs84(315925.0, 234472.0);
+        $b = $this->converter->toWgs84(315925.4, 234472.4);
+
+        // 0.4 m is far below 1e-5 degrees (about 1 m).
+        $this->assertEqualsWithDelta($a[0], $b[0], 1e-5);
+        $this->assertEqualsWithDelta($a[1], $b[1], 1e-5);
+    }
 }

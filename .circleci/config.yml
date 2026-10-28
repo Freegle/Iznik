@@ -175,8 +175,10 @@ jobs:
                 USER_DATA=$(sed -e "s|\${RUNNER_NAME}|$RUNNER_NAME|g" \
                                 -e "s|\${RUNNER_AUTH_TOKEN}|$RUNNER_LAUNCH_TOKEN|g" \
                                 -e "s|\${HETZNER_SELF_TOKEN}|$HTOKEN|g" scripts/hetzner/cloud-init.yaml)
+                # role=ci-runner puts it behind the "ci-runner" Hetzner firewall, which lets in SSH only. The
+                # test stack publishes phpMyAdmin (logged in as root), Traefik and the APIs on every interface.
                 BODY=$(jq -n --arg n "$RUNNER_NAME" --arg u "$USER_DATA" \
-                  '{name:$n, server_type:"cpx62", image:"ubuntu-24.04", location:"nbg1", ssh_keys:["hetzner-ci-runner"], user_data:$u, start_after_create:true}')
+                  '{name:$n, server_type:"cpx62", image:"ubuntu-24.04", location:"nbg1", ssh_keys:["hetzner-ci-runner"], labels:{role:"ci-runner"}, user_data:$u, start_after_create:true}')
                 # No -f: on a refusal Hetzner says why in the body (e.g. a resource limit), and -f
                 # threw that away, leaving "provision failed:" with nothing after it.
                 RESP=$(curl -s -w '\n%{http_code}' -X POST "$HAPI/servers" -H "Authorization: Bearer $HTOKEN" -H "Content-Type: application/json" -d "$BODY" 2>&1) || true

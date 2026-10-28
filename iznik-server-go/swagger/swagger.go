@@ -343,6 +343,81 @@ type alertsResponse struct {
 	Body []alert.Alert
 }
 
+// swagger:route GET /modtools/alert/pending modtools getPendingAlerts
+// Alerts awaiting my reply
+//
+// The alerts the caller, as a moderator, must reply to before ModTools lets them carry on.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: alertsResponse
+//	401: errorResponse
+
+// swagger:route POST /modtools/alert/{id}/reply modtools replyToAlert
+// Reply to an alert that requires a reply
+//
+// Sends the reply to the alert's sender as a chat message and records it.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Alert ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: alertResponse
+//	401: errorResponse
+//	404: errorResponse
+
+// swagger:route POST /modtools/alert/{id}/snooze modtools snoozeAlert
+// Sleep an alert for 30 minutes, once
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Alert ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: alertResponse
+//	403: errorResponse
+
+// swagger:route POST /modtools/alert/{id}/cancel modtools cancelAlert
+// Stop requiring replies to an alert
+//
+// The sender, or Support/Admin, releases every moderator.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Alert ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: alertResponse
+//	403: errorResponse
+
 // swagger:route GET /modtools/alert/{id} modtools getAlert
 // Get alert by ID
 //
@@ -3589,6 +3664,21 @@ type userResponse struct {
 	Body user.User
 }
 
+// swagger:route GET /user/unrated user getUnrated
+// People the member has handed over with and not rated
+//
+// Lists the freeglers the logged-in member handed an item over with in the last 14 days (either
+// direction) and has not rated, newest first, one entry per person, at most five. Used by the
+// rate-on-return experiment to ask on the next visit.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+
 // swagger:route GET /user/search user searchUsers
 // Search users
 //
@@ -4486,6 +4576,21 @@ type getSupportAIRunParams struct {
 //	200: successResponse
 //	404: errorResponse
 
+// swagger:route POST /discourse/relink sso relinkDiscourse
+// Re-link a moderator's Discourse account after an account merge
+//
+// Support or Admin. Moves the Discourse account linked to an account merged into userid onto
+// userid, then updates its email and name. Merges and Discourse sign-in do this by themselves;
+// this is for merges from before they did.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
 // swagger:route GET /discourse_sso sso discourseSSO
 // Discourse SSO login
 //
@@ -4649,6 +4754,45 @@ type getSupportAIRunParams struct {
 // Get rippling reach for a message
 //
 // Returns the rippling reach polygon/area for a specific message.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Message ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /message/interested message getMessageInterested
+// List the member's "I'm interested" marks
+//
+// Returns the posts the logged-in member has marked "I'm interested" in the last 30 days.
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /message/{id}/interested message getMessageInterestedState
+// Whether to offer "I'm interested" on a post
+//
+// Returns whether "I'm interested" is offered on the post, and whether the member has marked it.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Message ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /message/{id}/interested message setMessageInterested
+// Mark a post as "I'm interested", or remove the mark
 //
 // Parameters:
 //   + name: id

@@ -10,6 +10,7 @@ import {
   kindOf,
   kindLabel,
   KIND_LABELS,
+  standingText,
 } from '~/modtools/composables/useUxAnswers'
 
 describe('useUxAnswers', () => {
@@ -201,5 +202,81 @@ describe('useUxAnswers', () => {
         expect(label).not.toMatch(/\bopen\b|\bclosed\b/i)
       }
     })
+  })
+})
+
+describe('standingText', () => {
+  const asked = (over) => ({
+    prompt_id: 5,
+    question: 'Did you have a problem the last time you used Freegle?',
+    responses: 49,
+    skipped: 26,
+    written: 0,
+    nothing: 23,
+    nothing_label: 'I had no problems',
+    dont_understand: 0,
+    analysed: false,
+    ...over,
+  })
+
+  const FALLBACK = 'old text'
+
+  it('is the fallback for a server that sends no open_questions', () => {
+    expect(standingText(undefined, FALLBACK)).toBe(FALLBACK)
+    expect(standingText(null, FALLBACK)).toBe(FALLBACK)
+  })
+
+  it('says no question has been asked when there is none', () => {
+    expect(standingText([], FALLBACK)).toBe('No question has been asked yet.')
+    expect(standingText([], FALLBACK, 'Other.')).toBe('Other.')
+  })
+
+  it('says where a question with no written answers stands', () => {
+    expect(standingText([asked()], FALLBACK)).toBe(
+      'No written answers yet. 49 members answered "Did you have a problem the last time you used Freegle?": 23 said "I had no problems", 26 skipped.'
+    )
+  })
+
+  it('says nobody has answered when no one has', () => {
+    expect(
+      standingText([asked({ responses: 0, skipped: 0, nothing: 0 })], FALLBACK)
+    ).toBe(
+      'Nobody has answered "Did you have a problem the last time you used Freegle?" yet.'
+    )
+  })
+
+  it('says written answers are waiting, and which command sorts them', () => {
+    expect(standingText([asked({ written: 12 })], FALLBACK)).toBe(
+      '12 written answers to "Did you have a problem the last time you used Freegle?" are waiting to be analysed. Someone runs ux:prompt analyse 5 to sort them.'
+    )
+    expect(standingText([asked({ written: 1 })], FALLBACK)).toContain(
+      '1 written answer to'
+    )
+    expect(standingText([asked({ written: 1 })], FALLBACK)).toContain(
+      'is waiting to be analysed'
+    )
+  })
+
+  it('says when analysed answers gave nothing', () => {
+    expect(
+      standingText([asked({ written: 3, analysed: true })], FALLBACK)
+    ).toBe(
+      '3 written answers to "Did you have a problem the last time you used Freegle?" were analysed and nothing came out of them.'
+    )
+  })
+
+  it('counts members who did not understand', () => {
+    expect(
+      standingText(
+        [asked({ nothing: 0, skipped: 0, dont_understand: 4, responses: 4 })],
+        FALLBACK
+      )
+    ).toContain('4 members answered')
+    expect(
+      standingText(
+        [asked({ nothing: 0, skipped: 0, dont_understand: 4, responses: 4 })],
+        FALLBACK
+      )
+    ).toContain('4 did not understand it')
   })
 })

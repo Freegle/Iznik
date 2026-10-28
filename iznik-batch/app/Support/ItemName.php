@@ -84,6 +84,18 @@ final class ItemName
     private const EMPTY_SEPARATOR = '/\s*-\s*-\s*/';
 
     /**
+     * The item text of a subject: no "OFFER:"/"OFFERED:"/"REQUESTED:" prefix, no trailing
+     * "(location)", no courtesy words. The Go API's misc.IllustrationItemName does the same.
+     */
+    public static function fromSubject(string $subject): string
+    {
+        $name = preg_replace('/^(OFFER|OFFERED|WANTED|REQUESTED|TAKEN|RECEIVED):\s*/i', '', $subject);
+        $name = preg_replace('/\s*\([^)]+\)\s*$/', '', $name ?? '');
+
+        return self::stripCourtesy(trim($name ?? ''));
+    }
+
+    /**
      * Remove courtesy words and other bias words from an item name: members write "iron
      * please", and an image generator has no way to know that is not part of the item, so
      * it tries to draw it - the WANTED post for "iron please" came out as a smooth white

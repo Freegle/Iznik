@@ -165,7 +165,10 @@ test.describe('ModTools Edit Message', () => {
     page,
     testEnv,
   }) => {
-    expect(testEnv.pending.offer).toBeTruthy()
+    // The first test edits the pending offer and it leaves the pending queue, so this
+    // one uses the env's other pending post.
+    const pendingId = testEnv.pending.wanted
+    expect(pendingId).toBeTruthy()
     const API_V2 = environment.apiV2BaseUrl
     const stamp = Date.now()
     const title = `PW Knives ${stamp}`
@@ -211,10 +214,9 @@ test.describe('ModTools Edit Message', () => {
     })
     expect(memberResp.ok()).toBeTruthy()
 
-    const msgResp = await page.request.get(
-      `${API_V2}/message/${testEnv.pending.offer}`,
-      { headers }
-    )
+    const msgResp = await page.request.get(`${API_V2}/message/${pendingId}`, {
+      headers,
+    })
     const msg = await msgResp.json()
     expect(msg.subject).toBeTruthy()
 
@@ -240,7 +242,12 @@ test.describe('ModTools Edit Message', () => {
       .toBe(true)
     await groupSelect.selectOption(String(testEnv.group.id))
 
-    const card = page.locator('.card').filter({ hasText: msg.subject }).first()
+    // Match the card on the message id, not the subject: the card can show the
+    // pre-edit subject while the API already returns the edited one.
+    const card = page
+      .locator('.card')
+      .filter({ hasText: new RegExp(`#${pendingId}(?!\\d)`) })
+      .first()
     await expect(card).toBeVisible({ timeout: timeouts.navigation.slowPage })
 
     const stdmsgButton = card.locator(`button:has-text("${title}")`).first()
@@ -278,10 +285,9 @@ test.describe('ModTools Edit Message', () => {
       timeout: timeouts.api.default,
     })
 
-    const afterResp = await page.request.get(
-      `${API_V2}/message/${testEnv.pending.offer}`,
-      { headers }
-    )
+    const afterResp = await page.request.get(`${API_V2}/message/${pendingId}`, {
+      headers,
+    })
     const after = await afterResp.json()
     expect(after.textbody).toContain(added)
   })
