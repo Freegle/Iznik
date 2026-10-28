@@ -81,3 +81,34 @@ func TestUserMembershipsCarryImplicit(t *testing.T) {
 	assert.Equal(t, 1, byGroup[rippledGroup].Implicit)
 	assert.Equal(t, 0, byGroup[ordinaryGroup].Implicit)
 }
+
+// A TrashNothing poster placed on a group they never chose has implicit = 1 with rippled = 0.
+// TN adding them to that group is their consent, so the partner join clears it, with the
+// same "became ordinary" log a ripple membership gets.
+func TestPartnerJoinClearsATrashNothingImplicitMembership(t *testing.T) {
+	prefix := uniquePrefix("memimplicit_partner")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	membershipID := CreateTestMembership(t, userID, groupID, "Member")
+	db.Exec("UPDATE memberships SET rippled = 0, implicit = 1 WHERE id = ?", membershipID)
+
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 12346)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 12346, userID)
+	key := insertTestPartnerKey(t, prefix, "test.com")
+
+	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=12346&email=%s@test.com&groupid=%d", key, prefix, groupID)
+	resp, err := getApp().Test(httptest.NewRequest("PUT", url, nil), -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var implicit int
+	db.Raw("SELECT implicit FROM memberships WHERE id = ?", membershipID).Scan(&implicit)
+	assert.Equal(t, 0, implicit, "TN adding them to the group is consent")
+
+	var logs int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE user = ? AND groupid = ? AND type = 'Group' AND subtype = 'Joined' "+
+		"AND text = 'Ripple-created membership became ordinary: joined'", userID, groupID).Scan(&logs)
+	assert.Equal(t, int64(1), logs)
+}

@@ -25,12 +25,16 @@ import (
 // requires mem.rippled = 0, so a cleared membership counts them as an established member
 // of the group from then on. That is the honest reading - they really are one now.
 //
+// memberships.implicit is cleared alongside rippled. Until rippled is retired the two are
+// written together, and a row with implicit = 1 alone is a TrashNothing poster placed on a
+// group they never chose: joining, or TN adding them to the group, is them choosing it.
+//
 // reason is recorded in the log so the provenance is not simply lost. Best-effort: never
 // fails the caller's own action.
 func ClearRippledMembership(db *gorm.DB, userid uint64, groupid uint64, reason string) {
 	result := db.Table("memberships").
-		Where("userid = ? AND groupid = ? AND rippled = 1", userid, groupid).
-		Update("rippled", 0)
+		Where("userid = ? AND groupid = ? AND (rippled = 1 OR implicit = 1)", userid, groupid).
+		Updates(map[string]interface{}{"rippled": 0, "implicit": 0})
 
 	if result.Error != nil {
 		log.Printf("Failed to clear rippled flag for user %d group %d: %v", userid, groupid, result.Error)

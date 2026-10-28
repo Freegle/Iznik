@@ -298,6 +298,21 @@ The rule is read off the **origin** row (`rippled_in = 0`). The rippling engine 
 its copies without the column, so they take the table default and would otherwise make
 every rippled copy of an unaddressed post read as addressed.
 
+**The poster's membership is moving to carry the same answer.** After routing,
+`GroupPostIngestionService::recordImplicitMembership()` gives a poster with no membership of
+the group an **implicit** one (`memberships.implicit = 1`, Member, Approved) when the post is
+unaddressed, with mail off (`emailfrequency`, `eventsallowed` and `volunteeringallowed` all 0).
+A ripple join copies the poster's settings from their home group instead, but a ripple poster is
+told by the intro mail and a TN poster is told nothing; digests already skip TN users, and the
+events and volunteering roundups would otherwise mail them from a group they never chose. Its `ourPostingStatus` is `DEFAULT`, not blank, because `isUserModerated()` reads a
+blank status as moderated and would hold the poster's posts. A post that **is** addressed clears
+an implicit or ripple membership through `RippleEngagementService::clear`, logging
+`Ripple-created membership became ordinary: consented through TrashNothing`; consent only goes
+one way, so a later unaddressed post leaves an ordinary membership alone. A banned poster gets
+no row. The trace tag is `TN-SYNC-TRACE [MEMBERSHIP]`, which the parity comparison ignores.
+No `memberships_history` row or join log is written yet, so the row sends no welcome mail. The
+checks below still read `mod_messaging_allowed`.
+
 `iznik-server-go/modmessaging` is the one place that decides this, and everything else
 asks it:
 

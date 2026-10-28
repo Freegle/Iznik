@@ -2356,6 +2356,7 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(0, (int) $m->eventsallowed, 'eventsallowed copied from home group');
         $this->assertSame(0, (int) $m->volunteeringallowed, 'volunteeringallowed copied from home group');
         $this->assertSame(1, (int) $m->rippled, 'rippled membership marked rippled=1');
+        $this->assertSame(1, (int) $m->implicit, 'and implicit=1 with it');
         $this->assertGreaterThanOrEqual(1, $stats['memberships_added']);
 
         // memberships_history row written (abuse detection) with rippled=1 (welcome suppression).

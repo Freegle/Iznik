@@ -46,6 +46,7 @@ class RippleMembershipBackfillServiceTest extends TestCase
         // Nothing actually changed.
         $m = DB::table('memberships')->where('userid', $userId)->where('groupid', $groupId)->first();
         $this->assertSame(0, (int) $m->rippled, 'dry run does not flag');
+        $this->assertSame(0, (int) $m->implicit, 'dry run does not flag implicit');
         $this->assertSame(-1, (int) $m->emailfrequency, 'dry run does not downgrade');
         $this->assertFalse(
             DB::table('logs')->where('user', $userId)->where('type', 'User')
@@ -63,6 +64,7 @@ class RippleMembershipBackfillServiceTest extends TestCase
 
         $m = DB::table('memberships')->where('userid', $userId)->where('groupid', $groupId)->first();
         $this->assertSame(1, (int) $m->rippled, 'membership flagged rippled=1');
+        $this->assertSame(1, (int) $m->implicit, 'and implicit=1 with it');
         $this->assertSame(24, (int) $m->emailfrequency, 'immediate downgraded to daily');
         $this->assertSame(
             1,

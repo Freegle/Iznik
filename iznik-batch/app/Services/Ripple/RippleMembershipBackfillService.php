@@ -68,7 +68,7 @@ class RippleMembershipBackfillService
                         ->where('lc.text', 'like', RippleEngagementService::LOG_PREFIX.'%')
                         ->whereColumn('lc.timestamp', '>=', 'l.timestamp');
                 })
-                ->select('m.id', 'm.emailfrequency', 'm.rippled')
+                ->select('m.id', 'm.emailfrequency', 'm.rippled', 'm.implicit')
                 ->distinct()
                 ->get();
 
@@ -81,7 +81,7 @@ class RippleMembershipBackfillService
                 $stats['memberships']++;
                 $currentFreq = (int) $mem->emailfrequency;
                 $newFreq = ($currentFreq === -1) ? 24 : $currentFreq;
-                $needsFlag = !$mem->rippled;
+                $needsFlag = !$mem->rippled || !$mem->implicit;
                 $needsDowngrade = $newFreq !== $currentFreq;
 
                 if ($needsFlag) {
@@ -94,6 +94,7 @@ class RippleMembershipBackfillService
                 if ($send && ($needsFlag || $needsDowngrade)) {
                     DB::table('memberships')->where('id', $mem->id)->update([
                         'rippled' => 1,
+                        'implicit' => 1,
                         'emailfrequency' => $newFreq,
                     ]);
                 }

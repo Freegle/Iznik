@@ -1462,9 +1462,13 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   towards the "Seen on many groups" spam check like any join. `memberships_history` keeps
   its flag, and `ripple:backfill-memberships` leaves a cleared membership alone.
 - `memberships.implicit` is taking over the changing half of `rippled`: 1 while the member has
-  not knowingly joined, copied from `rippled` when the column was added. Until the readers move
-  over, `rippled` is still the flag that decides anything; the member-list API only reports
-  `implicit`.
+  not knowingly joined, copied from `rippled` when the column was added. Every write of
+  `rippled` writes `implicit` with it: a ripple join sets both, and both clears (`ClearRippledMembership`
+  and `RippleEngagementService::clear`) set both to 0. The clears also take a row with
+  `implicit = 1` alone, which is a TrashNothing poster placed on a group they never chose (see
+  the TrashNothing reference). A TrashNothing implicit membership starts with mail off, not
+  with the ripple-join settings below: that poster is never told. Until the readers move over, `rippled` is still the flag that
+  decides anything else; the member-list API only reports `implicit`.
 - `memberships.added_origin` (also on `memberships_history`) takes over the fixed half: how the
   row was created (`rippled` for a ripple join), set once at insert. Rows older than the column
   read `unknown` until they are backfilled from the join logs. Nothing decides on it yet; the

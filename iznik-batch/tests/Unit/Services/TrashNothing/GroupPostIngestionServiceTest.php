@@ -2,9 +2,11 @@
 
 namespace Tests\Unit\Services\TrashNothing;
 
+use App\Models\Group;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
+use App\Services\ContentCheckService;
 use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
@@ -1283,5 +1285,164 @@ class GroupPostIngestionServiceTest extends TestCase
         imagedestroy($png);
 
         $this->assertSame(16, strlen($hash($pngData)));
+    }
+
+    // -------------------------------------------------------------------------
+    // The poster's membership of the group. A group the poster did not choose
+    // (not in freegle_group_ids, so modMessagingAllowed = false) gives them an
+    // implicit membership; one they did choose clears an implicit membership.
+    // -------------------------------------------------------------------------
+
+    private function membershipOf(User $user, Group $group): ?object
+    {
+        return DB::table('memberships')->where('userid', $user->id)->where('groupid', $group->id)->first();
+    }
+
+    private function ingestFor(User $user, Group $group, bool $modMessagingAllowed, bool $dryRun = false): string
+    {
+        $post = $this->makePost(['post_id' => 'tn-implicit-' . uniqid(), 'user_id' => $user->tnuserid]);
+
+        return $this->makeService(dryRun: $dryRun)->ingest($post, $group, modMessagingAllowed: $modMessagingAllowed);
+    }
+
+    public function test_a_post_on_a_group_the_poster_did_not_choose_gives_them_an_implicit_membership(): void
+    {
+        $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $group = $this->createTestGroup();
+        // Their own membership elsewhere, with mail on, which the implicit one does not copy.
+        $this->createMembership($user, $this->createTestGroup(), [
+            'emailfrequency' => -1, 'eventsallowed' => 1, 'volunteeringallowed' => 1,
+        ]);
+
+        $this->assertSame('pending', $this->ingestFor($user, $group, false));
+
+        $m = $this->membershipOf($user, $group);
+        $this->assertNotNull($m, 'the poster is now a member of the group the post was placed on');
+        $this->assertSame(1, (int) $m->implicit);
+        $this->assertSame(0, (int) $m->rippled, 'it is not a ripple membership');
+        $this->assertSame('Member', $m->role);
+        $this->assertSame('Approved', $m->collection);
+        $this->assertSame('DEFAULT', $m->ourPostingStatus);
+        // Nothing tells a TN poster they are on the group, so it never starts mailing them.
+        $this->assertSame(0, (int) $m->emailfrequency, 'mail is off, not copied as for a ripple join');
+        $this->assertSame(0, (int) $m->eventsallowed);
+        $this->assertSame(0, (int) $m->volunteeringallowed);
+    }
+
+    public function test_the_implicit_membership_does_not_hold_the_post_for_moderators(): void
+    {
+        $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $group = $this->createTestGroup();
+        $postId = 'tn-implicit-check-' . uniqid();
+        $post = $this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]);
+
+        $this->makeService(dryRun: false)->ingest($post, $group, modMessagingAllowed: false);
+
+        $msgid = (int) Message::where('tnpostid', $postId)->value('id');
+        $this->assertNotNull($this->membershipOf($user, $group));
+        $this->assertFalse(
+            app(ContentCheckService::class)->isUserModerated($msgid, $group->id),
+            'the content check treats the poster as it did with no membership at all'
+        );
+    }
+
+    public function test_a_post_on_a_group_the_poster_chose_creates_no_membership(): void
+    {
+        $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $group = $this->createTestGroup();
+
+        $this->ingestFor($user, $group, true);
+
+        $this->assertNull($this->membershipOf($user, $group));
+    }
+
+    public function test_an_ordinary_membership_is_never_made_implicit(): void
+    {
+        $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT', 'emailfrequency' => 4]);
+
+        $this->ingestFor($user, $group, false);
+
+        $m = $this->membershipOf($user, $group);
+        $this->assertSame(0, (int) $m->implicit);
+        $this->assertSame(4, (int) $m->emailfrequency, 'the existing row is left alone');
+    }
+
+    public function test_a_post_with_consent_makes_an_implicit_membership_ordinary(): void
+    {
+        $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT', 'implicit' => 1]);
+
+        $this->ingestFor($user, $group, true);
+
+        $this->assertSame(0, (int) $this->membershipOf($user, $group)->implicit);
+        $this->assertSame(
+            'Ripple-created membership became ordinary: consented through TrashNothing',
+            DB::table('logs')->where('user', $user->id)->where('groupid', $group->id)
+                ->where('type', 'Group')->where('subtype', 'Joined')->value('text')
+        );
+    }
+
+    public function test_a_post_with_consent_makes_a_ripple_membership_ordinary_too(): void
+    {
+        $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['rippled' => 1, 'implicit' => 1]);
+
+        $this->ingestFor($user, $group, true);
+
+        $m = $this->membershipOf($user, $group);
+        $this->assertSame(0, (int) $m->implicit);
+        $this->assertSame(0, (int) $m->rippled);
+    }
+
+    public function test_a_later_post_without_consent_leaves_a_cleared_membership_ordinary(): void
+    {
+        $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $group = $this->createTestGroup();
+
+        $this->ingestFor($user, $group, false);
+        $this->ingestFor($user, $group, true);
+        $this->ingestFor($user, $group, false);
+
+        $this->assertSame(0, (int) $this->membershipOf($user, $group)->implicit);
+    }
+
+    public function test_a_banned_poster_is_not_given_a_membership(): void
+    {
+        $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $group = $this->createTestGroup();
+        DB::table('users_banned')->insert(['userid' => $user->id, 'groupid' => $group->id]);
+
+        $this->ingestFor($user, $group, false);
+
+        $this->assertNull($this->membershipOf($user, $group));
+    }
+
+    public function test_a_dry_run_writes_no_membership_and_clears_nothing(): void
+    {
+        $user    = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $newTo   = $this->createTestGroup();
+        $implicitOn = $this->createTestGroup();
+        $this->createMembership($user, $implicitOn, ['implicit' => 1]);
+
+        $lines = [];
+        Log::listen(function ($message) use (&$lines) {
+            if (str_contains((string) $message->message, 'TN-SYNC-TRACE [MEMBERSHIP]')) {
+                $lines[] = (string) $message->message;
+            }
+        });
+
+        $this->ingestFor($user, $newTo, false, dryRun: true);
+        $this->ingestFor($user, $implicitOn, true, dryRun: true);
+
+        $this->assertNull($this->membershipOf($user, $newTo));
+        $this->assertSame(1, (int) $this->membershipOf($user, $implicitOn)->implicit);
+        $this->assertSame([
+            'TN-SYNC-TRACE [MEMBERSHIP] op=insert-implicit user_id=' . $user->id . ' group_id=' . $newTo->id . ' emailfrequency=0',
+            'TN-SYNC-TRACE [MEMBERSHIP] op=clear-implicit user_id=' . $user->id . ' group_id=' . $implicitOn->id,
+        ], $lines, 'a dry run still says what it would have done');
     }
 }

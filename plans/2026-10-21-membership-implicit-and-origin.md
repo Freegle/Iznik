@@ -28,13 +28,13 @@ The steps are in the order they need to happen. Each phase can ship as its own P
 - [x] **A TN implicit membership is treated exactly like a ripple one.** Decided 2026-10-22.
   Whatever a ripple membership gets, a TN implicit membership gets too, and the code decides it
   from `implicit`, never from `added_origin`. The one exception is automatic removal (below):
-  - **Mail settings** come from the same rule as a ripple join
-    ([ExpandService.php:2340-2351](../iznik-batch/app/Services/Ripple/ExpandService.php#L2340)).
-    The poster's own setting is copied, preferring a membership they chose
-    (`ORDER BY implicit ASC, added DESC`). Immediate (-1) becomes daily (24). Events and
-    volunteering are copied as they are. A poster with no membership anywhere gets 0 / 0 / 0.
-    Move that rule out of ExpandService into one shared helper that both the ripple join and TN
-    ingestion call, so the two cannot drift apart.
+  - **Mail settings are the second exception.** Changed 2026-10-28: a TN implicit membership
+    starts with mail off (0 / 0 / 0). A ripple poster is told by the intro mail; a TN poster
+    is told nothing, so copying their settings would start the events and volunteering
+    roundups from a group they never chose (digests already skip TN users). Ripple joins keep
+    their rule, inline in `ExpandService::addPosterMembershipToRippledGroups`: the poster's own
+    setting, preferring an organic membership (`ORDER BY rippled ASC, added DESC`), immediate (-1) as daily (24),
+    events and volunteering as they are, 0 / 0 / 0 for a poster with no membership anywhere.
   - **ModTools member lists:** shown, with contact restricted (see the contact decision below).
   - **Member counts:** counted. `updateMemberCounts`
     ([GroupMaintenanceService.php:29](../iznik-batch/app/Services/GroupMaintenanceService.php#L29))
@@ -143,7 +143,7 @@ Both have `implicit = 1`. `added_origin` decides the cases where they differ:
 | Removed on a ban | yes | yes |
 | Can leave without the moderator-role guard | yes | yes (TN accounts are never moderators anyway) |
 | Blank posting status not shown as Moderated | yes | yes |
-| Email settings copied from the poster's other memberships (one shared helper, keyed on `implicit`) | yes | yes |
+| Email settings copied from the poster's other memberships | yes | no: mail off, as nothing tells a TN poster they joined |
 | Shown in ModTools member lists (contact restricted) and counted in `membercount` | yes | yes |
 | Excluded from birthday appeals, re-engagement sign-off, story review queue | yes | yes |
 | Welcome email suppressed | yes (RippleIntroMail instead) | yes, and no intro mail either |
@@ -207,9 +207,9 @@ the code. Tick each row off in Phase 3 or Phase 5 as it is converted.
 5. **The mail settings rule tries the home group first.** `addPosterMembershipToRippledGroups`
    first copies the poster's membership of the post's earliest group
    ([ExpandService.php:2311](../iznik-batch/app/Services/Ripple/ExpandService.php#L2311)).
-   Only when there is none does it use `ORDER BY rippled ASC, added DESC` (line 2328). The
-   shared helper in Phase 0 needs both steps. For a TN post the "home group" is the very group
-   being joined, so the first step finds nothing, and the fallback is all that applies.
+   Only when there is none does it use `ORDER BY rippled ASC, added DESC` (line 2328). TN
+   ingestion does not copy settings (mail off, Phase 0), so the rule stays inline in
+   ExpandService.
 6. **A mail unsubscribe removes the membership without a `Group/Left` log.** See TN removal
    below.
 
@@ -233,7 +233,7 @@ the code. Tick each row off in Phase 3 or Phase 5 as it is converted.
 | [ReengageContentService.php:241](../iznik-batch/app/Services/ReengageContentService.php#L241) | Re-engagement sign-off | `implicit` | 5 |
 | [ExpandService.php:1056](../iznik-batch/app/Services/Ripple/ExpandService.php#L1056) `retractRippledCopyInGroup` | Deletes the ripple membership on retraction | `implicit = 1 AND added_origin = 'rippled'` | 5 |
 | [ExpandService.php:1082](../iznik-batch/app/Services/Ripple/ExpandService.php#L1082), :1124, :1134 `pullBannedRippleMemberships` (`ripple:remove-banned`) | Removes ripple joins into groups the member is banned from | `added_origin = 'rippled'`. A moderator ban already deletes the row ([membership.go:310](../iznik-server-go/membership/membership.go#L310)), and TN ingestion should refuse a banned group | 5 |
-| [ExpandService.php:2328](../iznik-batch/app/Services/Ripple/ExpandService.php#L2328) | Mail settings fallback | `ORDER BY implicit ASC`, in the shared helper (point 5 above) | 3 |
+| [ExpandService.php:2328](../iznik-batch/app/Services/Ripple/ExpandService.php#L2328) | Mail settings fallback | `ORDER BY implicit ASC` (point 5 above) | 5 |
 | [ExpandService.php:2404](../iznik-batch/app/Services/Ripple/ExpandService.php#L2404) | Ripple join insert | write both columns | 3 |
 | [ExpandService.php:2493](../iznik-batch/app/Services/Ripple/ExpandService.php#L2493) | Intro mail welcome list | `added_origin = 'rippled'` | 5 |
 | [RippleEngagementService.php:102](../iznik-batch/app/Services/Ripple/RippleEngagementService.php#L102) | The clear | write `implicit = 0` too | 3 |
@@ -342,7 +342,9 @@ above).
   (`NewsfeedDigestService.php:86`), and events and volunteering roundups
   (`Concerns/BuildsUserRoundups.php:87`, on `eventsallowed` / `volunteeringallowed` and
   `emailfrequency != 0`). None of them reads `rippled`, so a TN implicit member's mail depends
-  only on the settings the shared helper copies. That is the intended "same as ripple" result.
+  only on its own settings. They start at 0 / 0 / 0 (Phase 0), so it gets no roundups from the
+  group; digests skip TN users anyway. ChitChat does not read membership mail settings at all
+  (`NewsfeedDigestService::digestForUser` gates on the user), so this does not change it.
 
 ---
 
@@ -366,8 +368,13 @@ and its [`_migration.sql`](../iznik-batch/database/migrations/2026_10_28_000001_
 - [x] Copy existing values, in chunks of 10,000 ids, as `SET implicit = rippled WHERE implicit <> rippled`.
   - **The copy drifts until Phase 3 ships**, because ripple joins and clears write `rippled`
     alone until then. So it syncs in both directions and can be run again: **re-run the
-    `_migration.sql` just before Phase 3 goes live.** The ALTER skips itself, and the file
-    ends by printing how many rows are out of line, which should be 0.
+    `_migration.sql` once Phase 3's dual writes are live in both Go and the batch.** Go and the
+    batch deploy separately, and a run before both are out lets drift back in. The ALTER skips
+    itself, and the file ends by printing how many rows are out of line, which should be 0.
+  - **That re-run must come before the first TN implicit membership exists, and never run
+    after it.** The copy sets `implicit = rippled`, and a `tn_unaddressed` row has `rippled = 0,
+    implicit = 1`, so the copy would clear it. It can't be filtered on `added_origin`, because
+    2a's SQL runs before that column exists.
 - [x] **No index on `implicit`.** Decided from Q7 (production, 2026-10-27): 180,982 of
   5,158,594 memberships (3.5%) have `rippled = 1`, held by 24,530 users across 481 groups.
   - A flag that is 1 on 3.5% of rows is a poor index on its own. Every live read is already
@@ -414,11 +421,23 @@ run after 2a's SQL (the column goes after `implicit`).
 
 From here on `rippled` and `implicit` are written together, so either can be read.
 
-- [ ] ExpandService ripple join: `implicit = 1`, `added_origin = 'rippled'`; history row
-  `added_origin = 'rippled'`.
-- [ ] Every clear path sets `implicit = 0` alongside `rippled = 0`:
+**3a, the `implicit` writes, done 2026-10-28** (uncommitted): every write of `memberships.rippled`
+now writes `implicit` too, and TN ingestion writes it for unaddressed posts. `added_origin`,
+history rows and join logs for the new TN rows are 3b.
+
+- [x] ExpandService ripple join: `implicit = 1`. (3b: `added_origin = 'rippled'`; history row
+  `added_origin = 'rippled'`.)
+- [x] `ripple:backfill-memberships` sets `implicit = 1` with `rippled = 1`.
+- [x] Every clear path sets `implicit = 0` alongside `rippled = 0`:
   `rippling.ClearRippledMembership` ([rippling/membership.go:30](../iznik-server-go/rippling/membership.go#L30))
-  and `RippleEngagementService::clear`.
+  and `RippleEngagementService::clear`. Both now match `rippled = 1 OR implicit = 1`, so the
+  partner join and the join endpoint clear a TN implicit row. The batch passes and the
+  move-in clear still pick candidates on `rippled = 1`, so they never reach one.
+- [x] Mail settings: TN ingestion starts with mail off (changed 2026-10-28). The ripple join
+  keeps its inline rule in ExpandService; its `ORDER BY rippled ASC` fallback moves to
+  `implicit` with the other readers in Phase 5.
+- [ ] Account merge takes the lower `implicit` of the two rows (Phase 1 point 3). Not done in
+  3a: neither merge writes `rippled` today.
 - [ ] Join endpoint ([membership.go:1553](../iznik-server-go/membership/membership.go#L1553)):
   accept an explicit origin (`manual` / `posted` / `replied` / `moderator`) and set
   `added_origin`. The frontend sends it from `stores/auth.js joinGroup` and
@@ -463,9 +482,19 @@ From here on `rippled` and `implicit` are written together, so either can be rea
   ([GroupPostIngestionService.php:265](../iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php#L265)).
   From now on it must, whether or not the poster consented, so every TN post has a membership
   behind it. In the same transaction as the post:
+  - **3a status** (`recordImplicitMembership`, run after routing and not in a transaction:
+    it logs a failure rather than throwing, so a failed write never leaves the post
+    half-routed). Done: the unaddressed insert (`implicit = 1`, shared mail settings, no row for
+    a banned poster) and the consent clear (through `RippleEngagementService::clear`, reason
+    `consented through TrashNothing`, which also clears a ripple membership). The insert sets
+    `ourPostingStatus = 'DEFAULT'`, not blank: `ContentCheckService::isUserModerated` reads a
+    blank status as moderated, so a blank row would hold every later post by that poster on the
+    group. Not done, for 3b: `added_origin`, the history row and the join log, and the addressed
+    insert (`partner`). The history row must wait for the welcome-mail guard, because a history
+    row with `rippled = 0` sends the per-group welcome.
   - **No membership, and the group isn't in the poster's `freegle_group_ids`:** insert a
-    membership with `added_origin = 'tn_unaddressed'` and `implicit = 1`, mail settings from
-    the shared helper (Phase 0, same as a ripple join), plus a `memberships_history` row (same origin) and a `Group/Joined` log
+    membership with `added_origin = 'tn_unaddressed'` and `implicit = 1`, mail settings off
+    (0 / 0 / 0, Phase 0), plus a `memberships_history` row (same origin) and a `Group/Joined` log
     (text such as `TN cross-post`) so the backfill and ModLog can read it.
   - **No membership, and the group is in `freegle_group_ids`:** insert with
     `added_origin = 'partner'` and `implicit = 0`, plus the history row and log.
@@ -473,16 +502,17 @@ From here on `rippled` and `implicit` are written together, so either can be rea
     was created. Never make an ordinary membership implicit. Clear an implicit one
     (`implicit = 0`, with the "became ordinary" log) when this post comes with consent for the
     group.
-  - **If this ships before the `implicit` column exists** (before Phase 2 reaches production),
-    still create the membership with `added_origin` set. Phase 4b then sets `implicit = 1` from
-    `mod_messaging_allowed`, so it becomes implicit later. In that gap, every reader still on
-    `rippled` treats it as an ordinary membership. These must be guarded before the change goes
+  - **This item is not a dual write.** A TN implicit membership has `rippled = 0`, so every
+    reader still on `rippled` treats it as an ordinary membership until Phase 5 moves that reader.
+    That holds whether or not the `implicit` column exists yet. (If it ships before Phase 2
+    reaches production, still create the membership with `added_origin` set; Phase 4b then sets
+    `implicit = 1` from `mod_messaging_allowed`.) These must be guarded before the change goes
     live, or the change must wait for Phase 5:
     - the per-group welcome email ([MembershipsProcessingService.php:66](../iznik-batch/app/Services/MembershipsProcessingService.php#L66)),
       which would mail TN users;
     - the spread check;
     - birthday appeals and the story queue;
-    - the mail settings, which must come from the shared helper and never from a default.
+    - the mail settings, which must be off (0 / 0 / 0), never copied (Phase 0).
 
     Member lists and counts need no guard: they include TN implicit members on purpose (Phase 0).
 
@@ -608,7 +638,7 @@ idempotent, safe to re-run, with counts printed at the end.
   - **The poster has another post on that group with `mod_messaging_allowed = 1`:** skip. They
     consented to the group once, so the membership is not implicit (Phase 0).
   - **No membership:** create one with `implicit = 1`, `added_origin = 'tn_unaddressed'`, mail
-    settings from the shared helper, a `memberships_history` row (same origin) and a
+    settings off (0 / 0 / 0), a `memberships_history` row (same origin) and a
     `Group/Joined` log, exactly as Phase 3 ingestion does. Set `added` to the post's arrival
     time, not now.
   - **An existing membership whose `added_origin` is `tn_unaddressed`** (created by Phase 3
@@ -765,15 +795,14 @@ membership on that group has `implicit = 1 AND added_origin = 'tn_unaddressed'`.
 
 ## Phase 6 - Side effects of TN memberships
 
-- [ ] Member counts, member lists, digests, ChitChat and events/volunteering mail treat a TN
-  implicit member exactly as they treat a ripple member today (Phase 0). Any place that
+- [ ] Member counts and member lists treat a TN implicit member exactly as they treat a ripple
+  member today (Phase 0). Mail does not: the membership starts with mail off. Any place that
   excludes or limits ripple members must do it by `implicit`, so TN members are covered without
   a second rule. The "statistics that count local activity" rule in
   [rippling.md](../.claude/rules/rippling.md) is one such place: change it from "memberships
   rippling created" to `implicit = 1`.
-- [ ] TN members who never chose the group will now get digests from it whenever the copied
-  `emailfrequency` is not 0. That is what ripple members get today. Say so in the PR
-  description, so it is a known effect and not a surprise.
+- [x] TN members who never chose the group get no mail from it: the membership starts at
+  0 / 0 / 0 (changed 2026-10-28; it used to copy the ripple rule). Say so in the PR description.
 - [ ] Banning a TN implicit member deletes the row, so the post then reads as addressed; check
   that the ban also takes the post down.
 - [ ] TN re-subscribes its members by mail (see [modtools.md](../.claude/rules/modtools.md)). Check that
@@ -801,6 +830,16 @@ membership on that group has `implicit = 1 AND added_origin = 'tn_unaddressed'`.
   falls back to the old field, and the PR description says "deploy Go first" (see
   [frontend-traps.md](../.claude/rules/frontend-traps.md)). Production SQL runs before the code
   that writes the new columns.
+- **Production sequence.** Each step is live before the next starts.
+
+  | # | Step | Why here |
+  |---|---|---|
+  | 1 | Phase 2 SQL (2a, then 2b), then the Phase 2 Go API | The member lists select both columns |
+  | 2 | Phase 3 dual writes and origin on every insert, Go and batch, **without** TN ingestion | TN ingestion has no old-column equivalent (Phase 3) |
+  | 3 | Re-run 2a's sync for the last time, then 4a | The sync clears TN implicit rows, so it runs before any exist. 4a only touches `unknown` and is safe to re-run |
+  | 4 | Phase 5 readers: Go, then batch, then frontend | The frontend ships itself on green master; it falls back to `rippled` |
+  | 5 | TN ingestion (Phase 3), then 4b if Q12 clears it | Needs the Phase 5 batch readers (welcome mail, spread check, birthday, stories), or guards on them |
+  | 6 | Phase 7 code that no longer reads or writes `rippled`, then the drop-column SQL | A Go struct that still selects a dropped column fails every query |
 - **Tests.** For every reader changed, a test with a ripple implicit membership, a TN implicit
   membership, and the same membership after it has been cleared. Run the Go, Laravel, Vitest and
   Playwright suites through the status container. Update the orb if CI test configuration changes.

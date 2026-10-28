@@ -93,14 +93,19 @@ class RippleEngagementService
     /**
      * Makes the member's ripple-created membership of the group ordinary, if it is one.
      * Returns whether anything changed.
+     *
+     * memberships.implicit is cleared alongside rippled, as rippling.ClearRippledMembership
+     * does in iznik-server-go. A row with implicit = 1 alone is a TrashNothing poster placed on
+     * a group they never chose; GroupPostIngestionService clears it here once they consent.
+     * Every pass in this class picks its rows on rippled = 1, so none of them reaches one.
      */
     public function clear(int $userid, int $groupid, string $reason): bool
     {
         $changed = DB::table('memberships')
             ->where('userid', $userid)
             ->where('groupid', $groupid)
-            ->where('rippled', 1)
-            ->update(['rippled' => 0]);
+            ->where(fn ($q) => $q->where('rippled', 1)->orWhere('implicit', 1))
+            ->update(['rippled' => 0, 'implicit' => 0]);
 
         if ($changed < 1) {
             return false;
