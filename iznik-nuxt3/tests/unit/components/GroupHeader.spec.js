@@ -263,7 +263,7 @@ describe('GroupHeader', () => {
       const button = wrapper.find('[data-label="Join"]')
       await button.trigger('click')
       await flushPromises()
-      expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(456, 123, true)
+      expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(456, 123, 'manual')
     })
 
     it('redirects to login when not logged in', async () => {

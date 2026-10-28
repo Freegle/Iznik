@@ -1284,6 +1284,23 @@ class User extends Model implements Auditable
                         Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set=role={$role}");
                     }
 
+                    // added_origin says how the row was created, so it goes with the older added
+                    // date, kept below.
+                    if (strtotime($id2Memb->added) < strtotime($id1Memb->added)) {
+                        $id1Memb->added_origin = $id2Memb->added_origin;
+                        Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set=added_origin={$id1Memb->added_origin}");
+                    }
+
+                    // Implicit only if both were: either account having chosen the group is
+                    // enough. rippled goes with implicit until it is dropped.
+                    foreach (['implicit', 'rippled'] as $key) {
+                        $lower = min((int) $id1Memb->$key, (int) $id2Memb->$key);
+                        if ($lower !== (int) $id1Memb->$key) {
+                            $id1Memb->$key = $lower;
+                            Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set={$key}={$lower}");
+                        }
+                    }
+
                     // Keep the older added date.
                     $date = min(strtotime($id1Memb->added), strtotime($id2Memb->added));
                     $id1Memb->added = date('Y-m-d H:i:s', $date);

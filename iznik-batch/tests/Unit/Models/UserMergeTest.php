@@ -90,6 +90,53 @@ class UserMergeTest extends TestCase
         $this->assertEquals(self::OLDER_DATE, $added);
     }
 
+    public function test_merge_takes_the_older_rows_origin_and_the_lower_implicit(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        // The survivor's row is a newer ripple join; the merged account chose the group earlier.
+        $this->createMembership($user1, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_MANUAL,
+            'implicit' => 0, 'rippled' => 0,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_MANUAL, $m->added_origin, 'the origin goes with the older added date');
+        $this->assertSame(0, (int) $m->implicit, 'either account having chosen the group is enough');
+        $this->assertSame(0, (int) $m->rippled);
+    }
+
+    public function test_merge_keeps_the_survivors_origin_and_implicit_when_its_row_is_older_and_both_are_implicit(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($user1, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+            'implicit' => 1, 'rippled' => 0,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $m->added_origin);
+        $this->assertSame(1, (int) $m->implicit, 'both were implicit, so the merged row still is');
+        $this->assertSame(0, (int) $m->rippled);
+    }
+
     public function test_merge_transfers_unique_memberships(): void
     {
         $user1 = $this->createTestUser();

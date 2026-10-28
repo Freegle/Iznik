@@ -157,6 +157,7 @@ func TestReachQueue_RegisteringWithAGroupQueuesTheNewMember(t *testing.T) {
 		"lastname":    prefix,
 		"displayname": "Test " + prefix,
 		"groupid":     groupID,
+		"origin":      "signup",
 	})
 	req := httptest.NewRequest("PUT", "/api/user", bytes.NewBuffer(payload))
 	req.Header.Set("Content-Type", "application/json")
@@ -173,4 +174,5 @@ func TestReachQueue_RegisteringWithAGroupQueuesTheNewMember(t *testing.T) {
 	reason, count := queuedReason(t, userID)
 	assert.Equal(t, int64(1), count, "registering straight into a group queues the new member")
 	assert.Equal(t, "joined", reason)
+	assert.Equal(t, "signup", addedOriginOf(t, "memberships", userID, groupID))
 }

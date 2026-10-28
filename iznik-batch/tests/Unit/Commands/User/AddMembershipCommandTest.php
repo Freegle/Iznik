@@ -17,7 +17,9 @@ class AddMembershipCommandTest extends TestCase
         $exit = Artisan::call('user:add-membership', ['--email' => $email, '--group' => $group->nameshort]);
 
         $this->assertSame(0, $exit, Artisan::output());
-        $this->assertDatabaseHas('memberships', ['userid' => $user->id, 'groupid' => $group->id, 'collection' => 'Approved']);
+        $this->assertDatabaseHas('memberships', [
+            'userid' => $user->id, 'groupid' => $group->id, 'collection' => 'Approved', 'added_origin' => 'moderator',
+        ]);
         $this->assertSame(
             'joined',
             DB::table('rippling_reach_member_pending')->where('userid', $user->id)->value('reason'),

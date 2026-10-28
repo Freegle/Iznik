@@ -139,6 +139,59 @@ func TestMergeMembershipConflictTakesOlderDate(t *testing.T) {
 	assert.Equal(t, "2013-01-01", added, "merged user should have the older joined date")
 }
 
+// added_origin says how the row was created, so it follows the row whose added date is kept.
+// The merged membership is implicit only if both were: either account having chosen the group
+// is enough.
+func TestMergeMembershipConflictTakesTheOlderOriginAndTheLowerImplicit(t *testing.T) {
+	prefix := uniquePrefix("merge_origin")
+	db := database.DBConn
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	id1 := CreateTestUser(t, prefix+"_u1", "User")
+	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
+		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'manual', 0, 0)", id1, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
+		"VALUES (?, ?, 'Member', NOW(), 'rippled', 1, 1)", id2, groupID)
+
+	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
+
+	var origin string
+	var implicit, rippled int
+	db.Raw("SELECT added_origin, implicit, rippled FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).
+		Row().Scan(&origin, &implicit, &rippled)
+	assert.Equal(t, "manual", origin, "the older row's origin goes with its added date")
+	assert.Equal(t, 0, implicit)
+	assert.Equal(t, 0, rippled)
+}
+
+func TestMergeMembershipConflictKeepsTheSurvivorsOriginWhenItIsOlder(t *testing.T) {
+	prefix := uniquePrefix("merge_origin_keep")
+	db := database.DBConn
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	id1 := CreateTestUser(t, prefix+"_u1", "User")
+	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
+		"VALUES (?, ?, 'Member', NOW(), 'tn_unaddressed', 1, 0)", id1, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
+		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'rippled', 1, 1)", id2, groupID)
+
+	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
+
+	var origin string
+	var implicit, rippled int
+	db.Raw("SELECT added_origin, implicit, rippled FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).
+		Row().Scan(&origin, &implicit, &rippled)
+	assert.Equal(t, "rippled", origin)
+	assert.Equal(t, 1, implicit, "both were implicit, so the merged row still is")
+	assert.Equal(t, 0, rippled, "rippled is merged the same way, and a TN implicit row has rippled = 0")
+}
+
 // ── Section B: messages, history, chat rooms, sessions, logins ───────────────
 
 func TestMergeMessagesTransferred(t *testing.T) {

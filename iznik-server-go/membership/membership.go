@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
@@ -1355,6 +1356,9 @@ type PutMembershipsRequest struct {
 	Userid  uint64 `json:"userid"`
 	Groupid uint64 `json:"groupid"`
 	Manual  *bool  `json:"manual"`
+	// Why the member is joining (memberships.added_origin): manual, posted, replied or signup.
+	// Ignored when a moderator adds someone else, which is always moderator.
+	Origin string `json:"origin"`
 }
 
 // PutMemberships handles PUT /memberships - user joins a group.
@@ -1399,6 +1403,10 @@ func PutMemberships(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
 	}
 
+	if req.Origin != "" && !addedorigin.FromClient(req.Origin) {
+		return fiber.NewError(fiber.StatusBadRequest, addedorigin.ClientValuesMessage())
+	}
+
 	userid := req.Userid
 	if userid == 0 {
 		userid = myid
@@ -1411,7 +1419,28 @@ func PutMemberships(c *fiber.Ctx) error {
 		}
 	}
 
-	return addMemberToGroup(c, db, userid, req.Groupid, myid, req.Manual)
+	return addMemberToGroup(c, db, userid, req.Groupid, myid, req.Manual, joinOrigin(userid, myid, req.Origin, req.Manual))
+}
+
+// joinOrigin decides memberships.added_origin for a join through PUT /memberships. A moderator
+// adding someone else is a moderator add, whatever the request says. Otherwise it is the
+// request's origin, or, for a client from before origin was sent, the manual flag: true is a
+// Join button and false the reply flow, the only caller that sends false. A request with
+// neither is unknown, which addMemberToGroup reports.
+func joinOrigin(userid, byuser uint64, origin string, manual *bool) string {
+	if userid != byuser {
+		return addedorigin.Moderator
+	}
+	if origin != "" {
+		return origin
+	}
+	if manual != nil {
+		if *manual {
+			return addedorigin.Manual
+		}
+		return addedorigin.Replied
+	}
+	return addedorigin.Unknown
 }
 
 // putMembershipsPartner handles the partner auth path for PUT /memberships.
@@ -1494,11 +1523,13 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	// values before comparing (the retired ormharness's normalise_test.go
 	// TestNormaliseColumnOrder_Insert, removed in d22ba1d6c),
 	// so the map-Create reorder is harmless. Identical twin: addMemberToGroup (27aa0e237120).
+	origin := addedorigin.ForInsert("membership.putMembershipsPartner", userid, groupid, addedorigin.Partner)
 	partnerJoin := db.Table("memberships").Create(map[string]interface{}{
-		"userid":     userid,
-		"groupid":    groupid,
-		"role":       utils.ROLE_MEMBER,
-		"collection": utils.COLLECTION_APPROVED,
+		"userid":       userid,
+		"groupid":      groupid,
+		"role":         utils.ROLE_MEMBER,
+		"collection":   utils.COLLECTION_APPROVED,
+		"added_origin": origin,
 	})
 	if partnerJoin.RowsAffected > 0 {
 		reachqueue.QueueMember(db, userid, reachqueue.ReasonJoined)
@@ -1516,6 +1547,7 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 		"groupid":            groupid,
 		"collection":         utils.COLLECTION_APPROVED,
 		"processingrequired": gorm.Expr("1"),
+		"added_origin":       origin,
 	})
 
 	logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, userid, "via partner")
@@ -1524,8 +1556,9 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 }
 
 // addMemberToGroup is the shared logic for adding a user to a group (JWT auth paths).
-// manual mirrors V1 User::addMembership: true→"Manual", false→"Auto", nil→"".
-func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, byuser uint64, manual *bool) error {
+// manual mirrors V1 User::addMembership: true→"Manual", false→"Auto", nil→"". origin is
+// written to memberships.added_origin and the history row (see joinOrigin).
+func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, byuser uint64, manual *bool, origin string) error {
 	// Check the group exists.
 	var groupExists int64
 	db.Table("groups").Where("id = ?", groupid).Count(&groupExists)
@@ -1558,11 +1591,13 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 	// Insert membership as approved member. ORM migration site 27aa0e237120
 	// (wave 2). Identical twin of putMembershipsPartner's insert (759766c83c01);
 	// see the comment there on why the map-Create column reorder is safe.
+	origin = addedorigin.ForInsert("membership.addMemberToGroup", userid, groupid, origin)
 	result := db.Table("memberships").Create(map[string]interface{}{
-		"userid":     userid,
-		"groupid":    groupid,
-		"role":       utils.ROLE_MEMBER,
-		"collection": utils.COLLECTION_APPROVED,
+		"userid":       userid,
+		"groupid":      groupid,
+		"role":         utils.ROLE_MEMBER,
+		"collection":   utils.COLLECTION_APPROVED,
+		"added_origin": origin,
 	})
 
 	if result.RowsAffected > 0 {
@@ -1580,6 +1615,7 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 			"groupid":            groupid,
 			"collection":         utils.COLLECTION_APPROVED,
 			"processingrequired": gorm.Expr("1"),
+			"added_origin":       origin,
 		})
 
 		// V1 parity (User.php:944-957): log text records how the user joined.

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-26
+last_reviewed: 2026-10-28
 owner: Freegle dev team
 covers:
   - iznik-server-go/user/merge.go
@@ -33,7 +33,10 @@ Everything runs in one transaction. In order:
 1. **Emails.** The kept account's preferred address stays preferred. The discarded account's
    addresses move across with their preferred flag cleared.
 2. **Memberships.** Where only one account is a member, the membership moves. Where both are,
-   the kept account takes the higher role and the older join date.
+   the kept account takes the higher role and the older join date, with that older row's
+   `added_origin`. It is `implicit` only if both rows were, since either account having chosen
+   the community is enough; `rippled` is merged the same way. The TrashNothing sync's PHP merge
+   does the same.
 3. **Posts, post history and membership history** move.
 4. **Existing log rows** about or by the discarded account are re-pointed at the kept one.
 5. **Chat rooms.** `mergeChatRooms` in `iznik-server-go/user/merge.go`. A room between the two

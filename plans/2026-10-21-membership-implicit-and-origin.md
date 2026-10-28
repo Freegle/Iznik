@@ -425,8 +425,14 @@ From here on `rippled` and `implicit` are written together, so either can be rea
 now writes `implicit` too, and TN ingestion writes it for unaddressed posts. `added_origin`,
 history rows and join logs for the new TN rows are 3b.
 
-- [x] ExpandService ripple join: `implicit = 1`. (3b: `added_origin = 'rippled'`; history row
-  `added_origin = 'rippled'`.)
+**3b, the `added_origin` writes, done 2026-10-28** (uncommitted): every insert into `memberships`
+and `memberships_history` sets `added_origin` through `addedorigin.ForInsert` (Go, new package
+`iznik-server-go/addedorigin`) or `Membership::addedOriginForInsert` (batch). Both merges take the
+older row's origin and the lower `implicit`. Not done in 3b: history rows and join logs at the
+sites that write none today, and the TN addressed insert (below).
+
+- [x] ExpandService ripple join: `implicit = 1`, `added_origin = 'rippled'`; history row
+  `added_origin = 'rippled'`.
 - [x] `ripple:backfill-memberships` sets `implicit = 1` with `rippled = 1`.
 - [x] Every clear path sets `implicit = 0` alongside `rippled = 0`:
   `rippling.ClearRippledMembership` ([rippling/membership.go:30](../iznik-server-go/rippling/membership.go#L30))
@@ -436,14 +442,22 @@ history rows and join logs for the new TN rows are 3b.
 - [x] Mail settings: TN ingestion starts with mail off (changed 2026-10-28). The ripple join
   keeps its inline rule in ExpandService; its `ORDER BY rippled ASC` fallback moves to
   `implicit` with the other readers in Phase 5.
-- [ ] Account merge takes the lower `implicit` of the two rows (Phase 1 point 3). Not done in
-  3a: neither merge writes `rippled` today.
-- [ ] Join endpoint ([membership.go:1553](../iznik-server-go/membership/membership.go#L1553)):
-  accept an explicit origin (`manual` / `posted` / `replied` / `moderator`) and set
-  `added_origin`. The frontend sends it from `stores/auth.js joinGroup` and
-  `useReplyStateMachine`. Old clients send nothing; fall back to today's `manual` flag
-  (`true` → `manual`, `false` → `replied`).
-- [ ] **`PutUser` takes an `origin` parameter** ([user.go:2182](../iznik-server-go/user/user.go#L2182)).
+- [x] Account merge takes the lower `implicit` of the two rows (Phase 1 point 3), and `rippled`
+  the same way. `added_origin` follows the older row, whose `added` is kept; a tie keeps the
+  survivor's. Go `MergeUsersTx` does it in its own UPDATE...JOIN before the `added` one, since
+  MySQL does not promise the order of a multi-table UPDATE's assignments. Batch `User::merge`
+  does it on the model. No "became ordinary" log is written when a merge lowers `implicit`.
+- [x] Join endpoint ([membership.go:1553](../iznik-server-go/membership/membership.go#L1553)):
+  accepts `origin` and sets `added_origin` on the membership and history row (`joinOrigin`).
+  **Changed from the plan:** the client may send `manual`, `posted`, `replied` or `signup`, not
+  `moderator`. A moderator adding someone else is always `moderator`, decided by the server
+  from `userid ≠ byuser` whatever the request says, so a self-join cannot claim it. Old clients
+  fall back to the `manual` flag (`true` → `manual`, `false` → `replied`, neither → `unknown`,
+  reported). The frontend `joinGroup(userid, groupid, origin)` now takes the origin and still
+  sends `manual` for an old API: `GroupHeader` and `explore/join` send `manual`, the reply
+  flow `replied`. The ModTools Add Member flow sends none and is a moderator add. The
+  `Group/Joined` log text is unchanged (`Manual`, `Auto` or none), since ModLog reads it.
+- [x] **`PutUser` takes an `origin` parameter** ([user.go:2182](../iznik-server-go/user/user.go#L2182)).
   Add `Origin string \`json:"origin"\`` to `UserPutRequest`
   ([user.go:2142](../iznik-server-go/user/user.go#L2142)). When the request also has a `groupid`,
   the membership it creates ([user.go:2312](../iznik-server-go/user/user.go#L2312)) sets
@@ -456,9 +470,19 @@ history rows and join logs for the new TN rows are 3b.
   - Tests: extend the three tests that send `groupid` (`TestPutUserWithGroup`,
     `TestPutUserWithGroupWritesMembershipsHistory`,
     `TestReachQueue_RegisteringWithAGroupQueuesTheNewMember`) to send an `origin` and check the
-    column. Add cases for a missing `origin` and a refused one.
-- [ ] Every other insert site in the Phase 0 table sets its value.
-- [ ] **Any live code that sets `added_origin = 'unknown'` reports a Sentry error.** After this
+    column. Add cases for a missing `origin` and a refused one. Done; the refusal comes before
+    the account is created.
+- [x] Every other insert site in the Phase 0 table sets its value: partner join `partner`
+  (row and history), `user.AddMembership` takes an `origin` argument (both chat callers
+  `replied`; row and history), `SubmitMessage` and `JoinAndPostAs` `posted`, the group creator
+  `moderator`, email subscribe `subscribed`, `AddMembershipCommand` `moderator`, the
+  email-replay stub `partner`. `SubmitMessage`'s raw `INSERT IGNORE` became a GORM chain to match
+  `JoinAndPostAs`. **Still open:** the five sites with no history row (the two post joins, the
+  group creator, email subscribe, `AddMembershipCommand`) still write none. Adding one would
+  start the welcome mail and spam check for them, which is a behaviour change to decide on its
+  own. Moves (`MoveMembersCommand`, merges, restore and demerge of a dump) carry the row's
+  existing value.
+- [x] **Any live code that sets `added_origin = 'unknown'` reports a Sentry error.** After this
   phase, every way of creating a membership should know its origin, so `unknown` on a new row
   means a bug: a new insert path, or a caller that didn't say why. Report it, and still create
   the membership; a join must never fail because its origin is missing.
@@ -475,6 +499,11 @@ history rows and join logs for the new TN rows are 3b.
     old rows, and reporting each one would flood Sentry. It prints its `unknown` count in its
     summary instead.
   - Tests: an insert with no origin creates the membership and reports once.
+  - Done as `addedorigin.ForInsert(site, userid, groupid, origin)` and
+    `Membership::addedOriginForInsert($origin, $site, $userid, $groupid)`. Anything that is not a
+    value, or is `unknown`, is written as `unknown` and reported at error level; the join goes
+    ahead. Go tests swap the reporter with `addedorigin.SetReporter`; batch tests bind a
+    recorder as `sentry`.
 - [ ] **TN post ingestion via the API makes the poster a member of the post's origin group.**
   The origin group is the one ingestion works out from the post's own location
   (`Location::groupsNear()`), the group the post's `rippled_in = 0` row goes on. Today ingestion
@@ -489,9 +518,10 @@ history rows and join logs for the new TN rows are 3b.
     `consented through TrashNothing`, which also clears a ripple membership). The insert sets
     `ourPostingStatus = 'DEFAULT'`, not blank: `ContentCheckService::isUserModerated` reads a
     blank status as moderated, so a blank row would hold every later post by that poster on the
-    group. Not done, for 3b: `added_origin`, the history row and the join log, and the addressed
-    insert (`partner`). The history row must wait for the welcome-mail guard, because a history
-    row with `rippled = 0` sends the per-group welcome.
+    group. 3b: the unaddressed insert sets `added_origin = 'tn_unaddressed'`. Still not done:
+    the history row and the join log, and the addressed insert (`partner`). The history row must
+    wait for the welcome-mail guard, because a history row with `rippled = 0` sends the
+    per-group welcome.
   - **No membership, and the group isn't in the poster's `freegle_group_ids`:** insert a
     membership with `added_origin = 'tn_unaddressed'` and `implicit = 1`, mail settings off
     (0 / 0 / 0, Phase 0), plus a `memberships_history` row (same origin) and a `Group/Joined` log

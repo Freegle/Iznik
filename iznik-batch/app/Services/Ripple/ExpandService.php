@@ -24,6 +24,7 @@ use App\Database\Expressions\StUnion;
 use App\Database\Expressions\StX;
 use App\Database\Expressions\StY;
 use App\Database\Expressions\Value;
+use App\Models\Membership;
 use App\Services\ContentCheckService;
 use App\Services\MessageSpatialService;
 use App\Support\GreatCircle;
@@ -2393,6 +2394,10 @@ class ExpandService
 
             $addedThisCall = 0;
             foreach ($targets as $t) {
+                $origin = Membership::addedOriginForInsert(
+                    Membership::ADDED_ORIGIN_RIPPLED, 'ExpandService::addPosterMembershipToRippledGroups',
+                    (int) $posterId, (int) $t->groupid,
+                );
                 $added = DB::table('memberships')->insertOrIgnore([[
                     'userid' => $posterId,
                     'groupid' => $t->groupid,
@@ -2403,6 +2408,7 @@ class ExpandService
                     'volunteeringallowed' => $volunteeringallowed,
                     'rippled' => 1,
                     'implicit' => 1,
+                    'added_origin' => $origin,
                     'added' => now(),
                 ]]);
                 if ($added > 0) {
@@ -2420,6 +2426,7 @@ class ExpandService
                         'collection' => 'Approved',
                         'processingrequired' => 1,
                         'rippled' => 1,
+                        'added_origin' => $origin,
                     ]);
                     // Log the join with a rippling-specific reason. V1 addMembership logs a
                     // Group/Joined entry whose text is 'Manual' (clicked join) or 'Auto'; we use

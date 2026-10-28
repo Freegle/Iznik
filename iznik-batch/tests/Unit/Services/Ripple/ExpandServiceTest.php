@@ -2357,6 +2357,7 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(0, (int) $m->volunteeringallowed, 'volunteeringallowed copied from home group');
         $this->assertSame(1, (int) $m->rippled, 'rippled membership marked rippled=1');
         $this->assertSame(1, (int) $m->implicit, 'and implicit=1 with it');
+        $this->assertSame('rippled', $m->added_origin);
         $this->assertGreaterThanOrEqual(1, $stats['memberships_added']);
 
         // memberships_history row written (abuse detection) with rippled=1 (welcome suppression).
@@ -2364,6 +2365,7 @@ class ExpandServiceTest extends TestCase
         $this->assertNotNull($hist, 'memberships_history row recorded for the new membership');
         $this->assertSame(1, (int) $hist->rippled, 'history row marked rippled=1 to suppress the per-group welcome');
         $this->assertSame(1, (int) $hist->processingrequired, 'history row still requires processing for abuse detection');
+        $this->assertSame('rippled', $hist->added_origin);
 
         // The intro email is claimed exactly once for the post.
         $this->assertSame(

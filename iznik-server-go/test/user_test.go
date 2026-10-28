@@ -1127,6 +1127,7 @@ func TestPutUserWithGroup(t *testing.T) {
 		"firstname": "Group",
 		"lastname":  "Joiner",
 		"groupid":   groupID,
+		"origin":    "signup",
 	}
 	s, _ := json.Marshal(payload)
 	request := httptest.NewRequest("PUT", "/api/user", bytes.NewBuffer(s))
@@ -1145,6 +1146,7 @@ func TestPutUserWithGroup(t *testing.T) {
 	var memberCount int64
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID).Scan(&memberCount)
 	assert.Equal(t, int64(1), memberCount)
+	assert.Equal(t, "signup", addedOriginOf(t, "memberships", userID, groupID))
 }
 
 // The persistent token returned by signup is used by the client as the

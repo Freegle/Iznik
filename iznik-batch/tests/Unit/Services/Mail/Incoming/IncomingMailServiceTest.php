@@ -285,8 +285,9 @@ class IncomingMailServiceTest extends TestCase
         $result = $this->service->route($parsed);
 
         $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
-        $this->assertTrue(
-            DB::table('memberships')->where('userid', $user->id)->where('groupid', $group->id)->exists()
+        $this->assertSame(
+            'subscribed',
+            DB::table('memberships')->where('userid', $user->id)->where('groupid', $group->id)->value('added_origin')
         );
         $this->assertTrue(
             DB::table('logs')

@@ -453,9 +453,10 @@ class GroupPostIngestionService
      * thrown: until the readers move from messages_groups.mod_messaging_allowed to the
      * membership, a missing row leaves the post exactly as it was before this existed.
      *
-     * Not yet written with it: memberships_history and a Group/Joined log. A history row sends
-     * the per-group welcome, which today is held back only by memberships_history.rippled, so
-     * both wait for added_origin and the guard that reads it.
+     * The new row's added_origin is tn_unaddressed. Not yet written with it: memberships_history
+     * and a Group/Joined log. A history row sends the per-group welcome, which today is held
+     * back only by memberships_history.rippled, so both wait for the guard that reads
+     * added_origin (Phase 5).
      */
     private function recordImplicitMembership(User $user, Group $group, bool $modMessagingAllowed): void
     {
@@ -508,6 +509,10 @@ class GroupPostIngestionService
                     // check already give a TN poster with no membership.
                     'ourPostingStatus' => Membership::POSTING_STATUS_DEFAULT,
                     'implicit' => 1,
+                    'added_origin' => Membership::addedOriginForInsert(
+                        Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'GroupPostIngestionService::recordImplicitMembership',
+                        $user->id, $group->id,
+                    ),
                     'added' => now(),
                 ]);
             }

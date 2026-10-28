@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use OwenIt\Auditing\Contracts\Auditable;
 
 /**
@@ -117,6 +118,31 @@ class Membership extends Model implements Auditable
         self::ADDED_ORIGIN_SIGNUP,
         self::ADDED_ORIGIN_UNKNOWN,
     ];
+
+    /**
+     * The added_origin to write on a new memberships or memberships_history row. Every insert
+     * goes through here. Anything that is not a known origin other than unknown is written as
+     * unknown and reported to Sentry: every way of creating a membership should know why, so an
+     * unknown on a new row is a caller that forgot. The join still goes ahead. The Go API's
+     * addedorigin.ForInsert is the same check.
+     *
+     * $site names the insert, so the report says which path it was.
+     */
+    public static function addedOriginForInsert(string $origin, string $site, int $userid, int $groupid): string
+    {
+        if ($origin !== self::ADDED_ORIGIN_UNKNOWN && in_array($origin, self::ADDED_ORIGINS, TRUE)) {
+            return $origin;
+        }
+
+        $message = sprintf('Membership created with no known origin ("%s") at %s: user %d, group %d',
+            $origin, $site, $userid, $groupid);
+        Log::error($message);
+        if (app()->bound('sentry')) {
+            app('sentry')->captureMessage($message, \Sentry\Severity::error());
+        }
+
+        return self::ADDED_ORIGIN_UNKNOWN;
+    }
 
     /**
      * The posting status this member has been given on each of $groupIds, keyed by group id

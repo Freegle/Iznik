@@ -1320,6 +1320,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertNotNull($m, 'the poster is now a member of the group the post was placed on');
         $this->assertSame(1, (int) $m->implicit);
         $this->assertSame(0, (int) $m->rippled, 'it is not a ripple membership');
+        $this->assertSame('tn_unaddressed', $m->added_origin);
         $this->assertSame('Member', $m->role);
         $this->assertSame('Approved', $m->collection);
         $this->assertSame('DEFAULT', $m->ourPostingStatus);

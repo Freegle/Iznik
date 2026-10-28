@@ -681,12 +681,15 @@ export const useAuthStore = defineStore('auth', {
       await this.fetchUser()
       return this.user
     },
-    async joinGroup(userid, groupid, manual) {
+    // origin says why they are joining: 'manual' (a Join button) or 'replied'. manual is still
+    // sent for an API from before origin, which reads true as manual and false as replied.
+    async joinGroup(userid, groupid, origin) {
       try {
         await this.$api.memberships.joinGroup({
           userid,
           groupid,
-          manual,
+          origin,
+          manual: origin === 'manual',
         })
       } catch (e) {
         // A banned member's own join is refused server-side (403 "Failed - banned").

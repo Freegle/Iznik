@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-11
+last_reviewed: 2026-10-28
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/tests/Unit/Services/Ripple/ResumedReachTest.php
@@ -1473,6 +1473,13 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   row was created (`rippled` for a ripple join), set once at insert. Rows older than the column
   read `unknown` until they are backfilled from the join logs. Nothing decides on it yet; the
   member-list API reports it.
+- Every insert into either table sets `added_origin` through one helper per codebase,
+  `addedorigin.ForInsert` in Go and `Membership::addedOriginForInsert` in the batch. A new row
+  that would be `unknown` is still created, and reported to Sentry as an error naming the
+  insert, so a new join path that forgot its origin shows up. `PUT /memberships` and `PUT /user`
+  take an `origin` (`manual`, `posted`, `replied` or `signup`; anything else is a 400). A
+  moderator adding someone else is always `moderator`, and a client that sends only the old
+  `manual` flag gets `manual` for true and `replied` for false.
 - A community a post rippled into may write to the poster about it once the poster is an
   ordinary member there (`PosterMessagingGroups`). Whether an action turns the post away,
   which stops it rippling back, still goes by `HomeGroups`.

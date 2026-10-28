@@ -1082,14 +1082,30 @@ describe('auth store', () => {
       mockJoinGroup.mockResolvedValue({})
       mockFetchv2.mockResolvedValue({ me: { id: 9 }, groups: [] })
 
-      const user = await store.joinGroup(9, 20, true)
+      const user = await store.joinGroup(9, 20, 'manual')
 
       expect(mockJoinGroup).toHaveBeenCalledWith({
         userid: 9,
         groupid: 20,
+        origin: 'manual',
         manual: true,
       })
       expect(user.id).toBe(9)
+    })
+
+    it('joinGroup still sends manual=false for a reply join, for an API from before origin', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockJoinGroup.mockResolvedValue({})
+      mockFetchv2.mockResolvedValue({ me: { id: 9 }, groups: [] })
+
+      await store.joinGroup(9, 20, 'replied')
+
+      expect(mockJoinGroup).toHaveBeenCalledWith({
+        userid: 9,
+        groupid: 20,
+        origin: 'replied',
+        manual: false,
+      })
     })
 
     it('joinGroup swallows a banned-member 403 and returns the current user silently', async () => {
@@ -1098,7 +1114,7 @@ describe('auth store', () => {
       err.response = { status: 403, data: 'Failed - banned' }
       mockJoinGroup.mockRejectedValue(err)
 
-      const user = await store.joinGroup(9, 20, false)
+      const user = await store.joinGroup(9, 20, 'replied')
 
       expect(user.id).toBe(9)
       expect(mockFetchv2).not.toHaveBeenCalled()
@@ -1109,7 +1125,7 @@ describe('auth store', () => {
       err.response = { status: 500, data: 'boom' }
       mockJoinGroup.mockRejectedValue(err)
 
-      await expect(store.joinGroup(9, 20, false)).rejects.toThrow(
+      await expect(store.joinGroup(9, 20, 'replied')).rejects.toThrow(
         'Server error'
       )
     })

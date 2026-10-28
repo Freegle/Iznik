@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/emailhygiene"
@@ -200,6 +201,8 @@ type MembershipHistory struct {
 	Added              time.Time `json:"added"`
 	Collection         string    `json:"collection"`
 	Processingrequired bool      `json:"processingrequired"`
+	// How the membership was created; the same value as memberships.added_origin.
+	AddedOrigin string `json:"added_origin" gorm:"column:added_origin;default:unknown"`
 }
 
 type Search struct {
@@ -1735,7 +1738,9 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 	}
 }
 
-func AddMembership(userid uint64, groupid uint64, role string, collection string, emailfrequency int, eventsallowed int, volunteeringallowed int, reason string) bool {
+// AddMembership joins userid to groupid unless they are banned there. reason is the join log's
+// text and origin the new row's added_origin.
+func AddMembership(userid uint64, groupid uint64, role string, collection string, emailfrequency int, eventsallowed int, volunteeringallowed int, reason string, origin string) bool {
 	db := database.DBConn
 
 	ret := false
@@ -1778,6 +1783,7 @@ func AddMembership(userid uint64, groupid uint64, role string, collection string
 			membership.Emailfrequency = emailfrequency
 			membership.Eventsallowed = eventsallowed
 			membership.Volunteeringallowed = volunteeringallowed
+			membership.AddedOrigin = addedorigin.ForInsert("user.AddMembership", userid, groupid, origin)
 
 			// Two concurrent joins (double-click, retry) both pass the
 			// membership check above and race the insert; the loser used to
@@ -1803,6 +1809,7 @@ func AddMembership(userid uint64, groupid uint64, role string, collection string
 					history.Groupid = groupid
 					history.Added = membership.Added
 					history.Collection = collection
+					history.AddedOrigin = membership.AddedOrigin
 
 					// Set processingrequired for background processing (welcome email, spam check, etc).
 					history.Processingrequired = true
@@ -2159,6 +2166,9 @@ type UserPutRequest struct {
 	Lastname    string `json:"lastname"`
 	Displayname string `json:"displayname"`
 	GroupID     uint64 `json:"groupid"`
+	// Why the new account joins GroupID (memberships.added_origin): normally signup. The same
+	// values as PUT /memberships' origin; without one the membership is unknown and reported.
+	Origin string `json:"origin"`
 }
 
 // UserPatchRequest is the body for PATCH /user (profile update).
@@ -2200,6 +2210,10 @@ func PutUser(c *fiber.Ctx) error {
 
 	if req.Email == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "email is required")
+	}
+
+	if req.Origin != "" && !addedorigin.FromClient(req.Origin) {
+		return fiber.NewError(fiber.StatusBadRequest, addedorigin.ClientValuesMessage())
 	}
 
 	email := strings.TrimSpace(req.Email)
@@ -2322,11 +2336,13 @@ func PutUser(c *fiber.Ctx) error {
 
 	// If groupid provided, add membership.
 	if req.GroupID > 0 {
+		origin := addedorigin.ForInsert("user.PutUser", newUserID, req.GroupID, req.Origin)
 		result := db.Table("memberships").Create(map[string]interface{}{
-			"userid":     newUserID,
-			"groupid":    req.GroupID,
-			"role":       utils.ROLE_MEMBER,
-			"collection": utils.COLLECTION_APPROVED,
+			"userid":       newUserID,
+			"groupid":      req.GroupID,
+			"role":         utils.ROLE_MEMBER,
+			"collection":   utils.COLLECTION_APPROVED,
+			"added_origin": origin,
 		})
 		if result.RowsAffected > 0 {
 			reachqueue.QueueMember(db, newUserID, reachqueue.ReasonJoined)
@@ -2351,6 +2367,7 @@ func PutUser(c *fiber.Ctx) error {
 				"collection":         utils.COLLECTION_APPROVED,
 				"processingrequired": gorm.Expr("1"),
 				"added":              gorm.Expr("NOW()"),
+				"added_origin":       origin,
 			})
 		}
 	}
@@ -3317,6 +3334,19 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 				newRole = m1.Role
 			}
 			tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).Update("role", newRole)
+			// The merged membership is implicit only if both were: an ordinary membership on
+			// either account means the member chose the group. added_origin follows the older
+			// row, whose added date is kept below, so it must run before that update: a
+			// multi-table UPDATE does not promise to apply its assignments in order.
+			// rippled goes with implicit until Phase 7 drops it.
+			tx.Table("memberships m2 JOIN memberships m1 ON m1.userid = ? AND m1.groupid = m2.groupid", id1).
+				Clauses(clause.Set{
+					{Column: clause.Column{Table: "m2", Name: "added_origin"}, Value: gorm.Expr("IF(m1.added < m2.added, m1.added_origin, m2.added_origin)")},
+					{Column: clause.Column{Table: "m2", Name: "implicit"}, Value: gorm.Expr("LEAST(m2.implicit, m1.implicit)")},
+					{Column: clause.Column{Table: "m2", Name: "rippled"}, Value: gorm.Expr("LEAST(m2.rippled, m1.rippled)")},
+				}).
+				Where("m2.userid = ? AND m2.groupid = ?", id2, m1.Groupid).
+				Updates(map[string]interface{}{})
 			// Take older added date (SQL JOIN to avoid Go datetime string formatting).
 			// Genuine multi-table UPDATE...JOIN: Table()-verbatim JOIN text +
 			// explicit clause.Set, same mechanism as merge.go's

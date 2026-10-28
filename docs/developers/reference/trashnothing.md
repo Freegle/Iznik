@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-24
+last_reviewed: 2026-10-28
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -300,8 +300,8 @@ every rippled copy of an unaddressed post read as addressed.
 
 **The poster's membership is moving to carry the same answer.** After routing,
 `GroupPostIngestionService::recordImplicitMembership()` gives a poster with no membership of
-the group an **implicit** one (`memberships.implicit = 1`, Member, Approved) when the post is
-unaddressed, with mail off (`emailfrequency`, `eventsallowed` and `volunteeringallowed` all 0).
+the group an **implicit** one (`memberships.implicit = 1`, `added_origin = 'tn_unaddressed'`,
+Member, Approved) when the post is unaddressed, with mail off (`emailfrequency`, `eventsallowed` and `volunteeringallowed` all 0).
 A ripple join copies the poster's settings from their home group instead, but a ripple poster is
 told by the intro mail and a TN poster is told nothing; digests already skip TN users, and the
 events and volunteering roundups would otherwise mail them from a group they never chose. Its `ourPostingStatus` is `DEFAULT`, not blank, because `isUserModerated()` reads a
