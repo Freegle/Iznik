@@ -399,3 +399,28 @@ build, not by bisecting the boundary.
 
 - `docs/developers/testing.md` - the four suites and how to run them.
 - `.claude/rules/dev-containers.md` - why a local pass can be testing old code.
+
+## A green background step that failed
+
+`Run monitor-fsm unit tests (background)`, `Lint iznik-nuxt3 (eslint, background)`, the two
+`Run ... tests (background)` Go service steps and `Upload Go coverage (background)` are
+CircleCI background steps, so each one is marked green the moment it starts, whatever
+happens afterwards. The real result is the `pass`/`fail` written to
+`~/test-output/<name>.result`, read by the parallel block (which stops the suites and prints
+`FAIL-FAST: background check <name> failed`) and by `Collect background checks`, which is the
+step that actually goes red and prints the output. A job where the parallel suites show as
+`killed` and nothing names a test is this: read the collect step, not the suites. For Go
+coverage the join is `Wait for Go coverage upload`; a Coveralls job count one short means that
+upload did not finish or did not upload, and its own step's log says which.
+
+## "Coveralls grouped 0 parallel job(s)" on a build that has all four
+
+Coveralls only processes the queued uploads once the webhook closes the build, and the
+webhook reply counts the jobs before it does that. So the reply said `"jobs":0` on every run
+from 2026-08-18 to 2026-10-27 while the four `Coveralls - <flag>` jobs landed 10 to 20s
+later and the aggregate was right (jobs 43482 and 43488: webhook, then the four per-flag
+commit statuses, then the build's `calculated_at`). Waiting before the webhook does not help;
+the statuses never appear until it is sent. The step now checks the real thing after the
+webhook: the per-flag commit statuses on GitHub, counted from when the coverage setup
+started. If that warns, read the commit's statuses first; four of them means the wait ran
+out, not that the ids are wrong.

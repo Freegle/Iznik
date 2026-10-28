@@ -134,7 +134,7 @@ runcmd:
   # passes --allow=network.host, so every image build in CI fails at "Build containers".
   - BXVER='0.37.1-1~ubuntu.24.04~noble'
   - CPVER='5.6.0-1~ubuntu.24.04~noble'
-  - apt-get install -y -qq docker-ce=$DVER docker-ce-cli=$DVER containerd.io docker-buildx-plugin=$BXVER docker-compose-plugin=$CPVER sshpass jq
+  - apt-get install -y -qq docker-ce=$DVER docker-ce-cli=$DVER containerd.io docker-buildx-plugin=$BXVER docker-compose-plugin=$CPVER sshpass jq build-essential
   - apt-mark hold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   - ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 2>/dev/null || true
   - systemctl enable --now docker
