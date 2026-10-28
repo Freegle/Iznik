@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import NewsLoveComment from '~/components/NewsLoveComment.vue'
+import { APIError } from '~/api/APIErrors'
 
 const { mockMyId } = vi.hoisted(() => {
   const { ref } = require('vue')
@@ -291,10 +292,14 @@ describe('NewsLoveComment', () => {
   describe('SpinButton callback', () => {
     // The SpinButton passes its finish callback to @handle; if a refused
     // store call skips it, the button spins its full 20 seconds and reports
-    // a forgotten callback, and the rejection escapes to the error page
-    // (.claude/rules/frontend-traps.md: callback on every exit path).
-    // finishSpinner(false) means the action failed, no argument means success.
-    let errorSpy
+    // a forgotten callback (.claude/rules/frontend-traps.md: callback on
+    // every exit path). finishSpinner(false) means the action failed, no
+    // argument means success. The refusal itself goes on to the global error
+    // handler, which shows the generic notice.
+    let errorHandler
+
+    const refusal = () =>
+      new APIError({ request: {}, response: { status: 401 } }, 'refused')
 
     function mountWithSpy(finishSpy, { loved = false } = {}) {
       return mount(NewsLoveComment, {
@@ -335,16 +340,13 @@ describe('NewsLoveComment', () => {
               emits: ['hidden'],
             },
           },
+          config: { errorHandler },
         },
       })
     }
 
     beforeEach(() => {
-      errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    })
-
-    afterEach(() => {
-      vi.restoreAllMocks()
+      errorHandler = vi.fn()
     })
 
     it('reports success after a love', async () => {
@@ -356,29 +358,32 @@ describe('NewsLoveComment', () => {
       expect(finishSpy).toHaveBeenCalledWith()
     })
 
-    it('stops the SpinButton as failed when a love is refused', async () => {
+    it('stops the SpinButton as failed and passes a refused love on', async () => {
       const finishSpy = vi.fn()
       const wrapper = mountWithSpy(finishSpy)
-      mockNewsfeedStore.love.mockRejectedValueOnce(new Error('refused'))
+      const err = refusal()
+      mockNewsfeedStore.love.mockRejectedValueOnce(err)
       await wrapper.find('button.spin-button').trigger('click')
       await flushPromises()
       expect(mockNewsfeedStore.love).toHaveBeenCalledWith(123, 100)
       expect(finishSpy).toHaveBeenCalledTimes(1)
       expect(finishSpy).toHaveBeenCalledWith(false)
-      expect(errorSpy).toHaveBeenCalled()
-      expect(wrapper.find('.d-flex').exists()).toBe(true)
+      expect(errorHandler).toHaveBeenCalledTimes(1)
+      expect(errorHandler.mock.calls[0][0]).toBe(err)
     })
 
-    it('stops the SpinButton as failed when an unlove is refused', async () => {
+    it('stops the SpinButton as failed and passes a refused unlove on', async () => {
       const finishSpy = vi.fn()
       const wrapper = mountWithSpy(finishSpy, { loved: true })
-      mockNewsfeedStore.unlove.mockRejectedValueOnce(new Error('refused'))
+      const err = refusal()
+      mockNewsfeedStore.unlove.mockRejectedValueOnce(err)
       await wrapper.find('button.spin-button').trigger('click')
       await flushPromises()
       expect(mockNewsfeedStore.unlove).toHaveBeenCalledWith(123, 100)
       expect(finishSpy).toHaveBeenCalledTimes(1)
       expect(finishSpy).toHaveBeenCalledWith(false)
-      expect(wrapper.find('.d-flex').exists()).toBe(true)
+      expect(errorHandler).toHaveBeenCalledTimes(1)
+      expect(errorHandler.mock.calls[0][0]).toBe(err)
     })
   })
 })

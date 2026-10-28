@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ChatFooter from '~/components/ChatFooter.vue'
+import { APIError } from '~/api/APIErrors'
 
 const { mockChatStore, mockMiscStore, mockChat, mockOtheruser, mockMe } =
   vi.hoisted(() => {
@@ -93,10 +94,10 @@ vi.mock('textarea-caret', () => ({
   default: vi.fn(() => ({ top: 0, left: 0 })),
 }))
 
-// Every refusable store call in ChatFooter: a refusal must stay a console
-// error or an inline notice, never reach the global error page, and the
-// SpinButton must always get its callback (frontend-traps rule: callback on
-// every exit path).
+// Every refusable store call in ChatFooter: a refusal from the server stays
+// quiet or shows an inline notice, and the SpinButton always gets its
+// callback (frontend-traps rule: callback on every exit path). Anything that
+// is not a refusal still goes on to the global error handler.
 describe('ChatFooter when the server refuses', () => {
   // The real SpinButton passes its finish callback to the @handle handler;
   // this stub reproduces that so the callback contract can be asserted.
@@ -141,7 +142,12 @@ describe('ChatFooter when the server refuses', () => {
     },
   }
 
+  // What BaseAPI throws when the server refuses a call.
+  const refusal = (status = 401) =>
+    new APIError({ request: {}, response: { status } }, `refused ${status}`)
+
   let errorSpy
+  let errorHandler
 
   async function mountFooter(finishSpy = vi.fn()) {
     const wrapper = mount(ChatFooter, {
@@ -149,6 +155,7 @@ describe('ChatFooter when the server refuses', () => {
       global: {
         stubs: { ...stubs, SpinButton: spinStub(finishSpy) },
         directives: { 'b-tooltip': {} },
+        config: { errorHandler },
       },
     })
     await flushPromises()
@@ -175,6 +182,7 @@ describe('ChatFooter when the server refuses', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    errorHandler = vi.fn()
     for (const fn of Object.values(mockChatStore)) {
       fn.mockResolvedValue()
     }
@@ -202,9 +210,7 @@ describe('ChatFooter when the server refuses', () => {
       // must not be held back by the failed message refresh.
       const finishSpy = vi.fn()
       const wrapper = await mountFooter(finishSpy)
-      mockChatStore.fetchMessages.mockRejectedValueOnce(
-        new Error('network down')
-      )
+      mockChatStore.fetchMessages.mockRejectedValueOnce(refusal(502))
       await sendText(wrapper, 'hello')
       expect(finishSpy).toHaveBeenCalledTimes(1)
       expect(mockChatStore.fetchChat).toHaveBeenCalledWith(123)
@@ -216,7 +222,7 @@ describe('ChatFooter when the server refuses', () => {
     it('stops the SpinButton when the chat-list refresh fails', async () => {
       const finishSpy = vi.fn()
       const wrapper = await mountFooter(finishSpy)
-      mockChatStore.fetchChat.mockRejectedValueOnce(new Error('network down'))
+      mockChatStore.fetchChat.mockRejectedValueOnce(refusal(502))
       await sendText(wrapper, 'hello')
       expect(finishSpy).toHaveBeenCalledTimes(1)
       expect(wrapper.emitted('scrollbottom')).toBeTruthy()
@@ -228,9 +234,7 @@ describe('ChatFooter when the server refuses', () => {
       // Focusing the textarea marks the chat read; a refusal there (401 in a
       // long-open tab, network blip) used to escape the focus handler.
       const wrapper = await mountFooter()
-      mockChatStore.markRead.mockRejectedValueOnce({
-        response: { status: 401 },
-      })
+      mockChatStore.markRead.mockRejectedValueOnce(refusal())
       await wrapper.find('#chatmessage').trigger('focus')
       await flushPromises()
       expect(mockChatStore.markRead).toHaveBeenCalledWith(123)
@@ -240,7 +244,7 @@ describe('ChatFooter when the server refuses', () => {
 
     it('keeps the chat alive when the typing ping is refused', async () => {
       const wrapper = await mountFooter()
-      mockChatStore.typing.mockRejectedValueOnce({ response: { status: 401 } })
+      mockChatStore.typing.mockRejectedValueOnce(refusal())
       await wrapper.find('#chatmessage').trigger('keydown', { key: 'a' })
       await flushPromises()
       expect(mockChatStore.typing).toHaveBeenCalledWith(123)
@@ -260,7 +264,7 @@ describe('ChatFooter when the server refuses', () => {
 
     it('shows an inline notice when a nudge is refused', async () => {
       const wrapper = await mountFooter()
-      mockChatStore.nudge.mockRejectedValueOnce({ response: { status: 401 } })
+      mockChatStore.nudge.mockRejectedValueOnce(refusal())
       await confirmNudge(wrapper)
       expect(mockChatStore.nudge).toHaveBeenCalledWith(123)
       expect(wrapper.find('.chat-notice').text()).toContain(
@@ -269,9 +273,21 @@ describe('ChatFooter when the server refuses', () => {
       expect(wrapper.find('#chatmessage').exists()).toBe(true)
     })
 
+    it('lets an error that is not a refusal through to the error handler', async () => {
+      // Only a refusal from the server is caught. Anything else is a bug and
+      // has to reach the global handler, and so Sentry.
+      const wrapper = await mountFooter()
+      const bug = new TypeError('bug')
+      mockChatStore.nudge.mockRejectedValueOnce(bug)
+      await confirmNudge(wrapper)
+      expect(errorHandler).toHaveBeenCalledTimes(1)
+      expect(errorHandler.mock.calls[0][0]).toBe(bug)
+      expect(wrapper.find('.chat-notice').exists()).toBe(false)
+    })
+
     it('clears the notice when a later nudge goes through', async () => {
       const wrapper = await mountFooter()
-      mockChatStore.nudge.mockRejectedValueOnce({ response: { status: 401 } })
+      mockChatStore.nudge.mockRejectedValueOnce(refusal())
       await confirmNudge(wrapper)
       expect(wrapper.find('.chat-notice').exists()).toBe(true)
       await confirmNudge(wrapper)
@@ -285,7 +301,7 @@ describe('ChatFooter when the server refuses', () => {
       const wrapper = await mountFooter()
       await actionChip(wrapper, 'Address').trigger('click')
       await flushPromises()
-      mockChatStore.send.mockRejectedValueOnce({ response: { status: 401 } })
+      mockChatStore.send.mockRejectedValueOnce(refusal())
       wrapper.findComponent({ name: 'AddressModal' }).vm.$emit('chosen', 55)
       await flushPromises()
       expect(mockChatStore.send).toHaveBeenCalledWith(123, null, 55)
@@ -299,7 +315,7 @@ describe('ChatFooter when the server refuses', () => {
       const wrapper = await mountFooter()
       await actionChip(wrapper, 'Photo').trigger('click')
       await flushPromises()
-      mockChatStore.send.mockRejectedValueOnce({ response: { status: 401 } })
+      mockChatStore.send.mockRejectedValueOnce(refusal())
       wrapper
         .findComponent({ name: 'OurUploader' })
         .vm.$emit('update:modelValue', [{ id: 7 }])

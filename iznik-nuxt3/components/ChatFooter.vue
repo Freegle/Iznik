@@ -386,6 +386,7 @@ import { useTypewriter } from '~/composables/useTypewriter'
 import { isIOS } from '~/composables/useIsIOS'
 import { isSendShortcut } from '~/composables/chatSendShortcut'
 import { createAttachmentSender } from '~/composables/chatAttachmentSender'
+import { APIError } from '~/api/APIErrors'
 import JumpingDots from '~/components/JumpingDots.vue'
 import ChatNotice from '~/components/ChatNotice.vue'
 
@@ -656,14 +657,20 @@ const applySuggestedAddress = async () => {
 }
 
 // The server can refuse any chat call (a dead session in a long-open tab, a
-// post removed since, the network). A refusal that escapes a handler or a
-// watcher lands on the global error page, so the calls below go through this:
-// it logs the error and returns false instead of throwing.
+// post removed since). Uncaught, a refusal gets the generic notice from
+// plugins/something-went-wrong.client.js. The calls below catch it because
+// they can do better: keep the SpinButton callback, show a notice next to
+// what failed, or stay quiet for a background call. BaseAPI has already
+// reported the refusal (all but 401s), so only an APIError is caught here.
+// Anything else is a bug and is rethrown so that it reaches Sentry.
 const tryChatCall = async (call) => {
   try {
     await call()
     return true
   } catch (e) {
+    if (!(e instanceof APIError)) {
+      throw e
+    }
     console.error(e)
     return false
   }
