@@ -44,6 +44,40 @@ class BirthdayServiceTest extends TestCase
         $this->assertSame(1, $count, 'only the genuine member receives the birthday appeal');
     }
 
+    /**
+     * A TrashNothing poster placed on a group they did not choose (implicit = 1, rippled = 0)
+     * never knowingly joined it either.
+     */
+    public function test_trashnothing_implicit_members_are_excluded_from_birthday_appeals(): void
+    {
+        $service = new BirthdayService();
+
+        $group = $this->createTestGroup();
+        DB::table('groups')->where('id', $group->id)->update([
+            'type' => 'Freegle',
+            'publish' => 1,
+            'onmap' => 1,
+            'founded' => now()->subYear()->format('Y-m-d H:i:s'),
+        ]);
+
+        $genuine = $this->makeBirthdayRecipient();
+        $placed = $this->makeBirthdayRecipient();
+
+        DB::table('memberships')->insert([
+            'userid' => $genuine->id, 'groupid' => $group->id,
+            'role' => 'Member', 'collection' => 'Approved', 'added' => now(),
+        ]);
+        DB::table('memberships')->insert([
+            'userid' => $placed->id, 'groupid' => $group->id,
+            'role' => 'Member', 'collection' => 'Approved', 'rippled' => 0, 'implicit' => 1,
+            'added_origin' => 'tn_unaddressed', 'added' => now(),
+        ]);
+
+        $count = $service->sendBirthdayEmails(null, [$group->id], dryRun: true);
+
+        $this->assertSame(1, $count, 'only the genuine member receives the birthday appeal');
+    }
+
     /** A user who passes every birthday gate: consenting, active, contactable, no recent appeal. */
     private function makeBirthdayRecipient(): object
     {

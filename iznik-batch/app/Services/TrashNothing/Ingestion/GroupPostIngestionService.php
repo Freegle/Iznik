@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
+use App\Services\Ripple\ReachMemberQueueService;
 use App\Services\Ripple\RippleEngagementService;
 use App\Services\SpatialQueryService;
 use App\Services\TusService;
@@ -67,6 +68,15 @@ class GroupPostIngestionService
 
     /** Why a post's consent made the poster's implicit membership ordinary, for the log. */
     public const REASON_CONSENTED = 'consented through TrashNothing';
+
+    /**
+     * Group/Joined log text for a membership ingestion creates. A group the poster chose has the
+     * text TN's partner add writes; one they did not has its own, which ModTools shows and the
+     * "seen on many groups" check leaves out, as it does 'Rippled'.
+     */
+    public const JOIN_LOG_CHOSEN = 'via partner';
+
+    public const JOIN_LOG_UNADDRESSED = 'TrashNothing unaddressed';
 
     /**
      * messages.sourceheader for a post ingested from the TN API.
@@ -434,31 +444,33 @@ class GroupPostIngestionService
             // exists. It remains available above on the batch_event stream.
         }
 
-        $this->recordImplicitMembership($user, $group, $modMessagingAllowed);
+        $this->recordMembership($user, $group, $modMessagingAllowed);
 
         return $routingResult;
     }
 
     /**
-     * Keeps memberships.implicit in step with whether the poster chose $group.
+     * Makes sure the poster is a member of $group, and that the membership says whether they
+     * chose it.
      *
      * The group here is the one whose area holds the post, which is often not one the poster
      * chose; freegle_group_ids says which they did ($modMessagingAllowed). A poster with no
-     * membership of a group they did not choose is given an implicit one, as rippling gives a
-     * poster one on every group their post reaches. A post that comes with consent clears an
-     * implicit membership. Consent only goes one way: a later post without it never makes a
-     * membership implicit again.
+     * membership is given one either way, so every TN post has a membership behind it:
+     *
+     * - not chosen: implicit, added_origin tn_unaddressed, mail off, as rippling gives a poster a
+     *   membership on every group their post reaches;
+     * - chosen: ordinary, added_origin partner, as TN's own partner add (PUT
+     *   /memberships?partner=) gives one.
+     *
+     * An existing membership keeps its added_origin, which records how that row was made. A post
+     * that comes with consent clears an implicit membership. Consent only goes one way: a later
+     * post without it never makes a membership implicit again.
      *
      * Runs last, so a failure here never leaves the post half-routed, and is logged rather than
      * thrown: until the readers move from messages_groups.mod_messaging_allowed to the
      * membership, a missing row leaves the post exactly as it was before this existed.
-     *
-     * The new row's added_origin is tn_unaddressed. Not yet written with it: memberships_history
-     * and a Group/Joined log. A history row sends the per-group welcome, which today is held
-     * back only by memberships_history.rippled, so both wait for the guard that reads
-     * added_origin (Phase 5).
      */
-    private function recordImplicitMembership(User $user, Group $group, bool $modMessagingAllowed): void
+    private function recordMembership(User $user, Group $group, bool $modMessagingAllowed): void
     {
         try {
             $existing = DB::table('memberships')
@@ -466,62 +478,115 @@ class GroupPostIngestionService
                 ->where('groupid', $group->id)
                 ->first(['rippled', 'implicit']);
 
-            if ($modMessagingAllowed) {
-                if ($existing === null || (!$existing->rippled && !$existing->implicit)) {
-                    return;
-                }
-
-                Log::info('TN-SYNC-TRACE [MEMBERSHIP] op=clear-implicit user_id=' . $user->id . ' group_id=' . $group->id);
-                if (!$this->dryRun) {
-                    app(RippleEngagementService::class)->clear($user->id, $group->id, self::REASON_CONSENTED);
+            if ($existing !== null) {
+                if ($modMessagingAllowed && ($existing->rippled || $existing->implicit)) {
+                    Log::info('TN-SYNC-TRACE [MEMBERSHIP] op=clear-implicit user_id=' . $user->id . ' group_id=' . $group->id);
+                    if (!$this->dryRun) {
+                        app(RippleEngagementService::class)->clear($user->id, $group->id, self::REASON_CONSENTED);
+                    }
                 }
 
                 return;
             }
 
             // A banned poster's row was deleted by the ban; never put it back.
-            if ($existing !== null
-                || DB::table('users_banned')->where('userid', $user->id)->where('groupid', $group->id)->exists()) {
+            if (DB::table('users_banned')->where('userid', $user->id)->where('groupid', $group->id)->exists()) {
                 return;
             }
 
-            // Mail off. Unlike a ripple join, nothing tells the poster they are on this group (there
-            // is no intro mail), so it must not start mailing them. Digests already skip TN users,
-            // but the events and volunteering roundups read these settings and nothing else.
-            $settings = [
-                'emailfrequency' => Membership::EMAIL_FREQUENCY_NEVER,
-                'eventsallowed' => 0,
-                'volunteeringallowed' => 0,
-            ];
-
-            Log::info('TN-SYNC-TRACE [MEMBERSHIP] op=insert-implicit user_id=' . $user->id . ' group_id=' . $group->id
-                . ' emailfrequency=' . $settings['emailfrequency']);
-            if (!$this->dryRun) {
-                DB::table('memberships')->insertOrIgnore([
-                    'userid' => $user->id,
-                    'groupid' => $group->id,
-                    'role' => Membership::ROLE_MEMBER,
-                    'collection' => Membership::COLLECTION_APPROVED,
-                    ...$settings,
-                    // Not left blank, as a ripple join leaves it: ContentCheckService::
-                    // isUserModerated reads a blank status as moderated, and would hold every
-                    // post this poster makes here. DEFAULT is what ingestion and the content
-                    // check already give a TN poster with no membership.
-                    'ourPostingStatus' => Membership::POSTING_STATUS_DEFAULT,
-                    'implicit' => 1,
-                    'added_origin' => Membership::addedOriginForInsert(
-                        Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'GroupPostIngestionService::recordImplicitMembership',
-                        $user->id, $group->id,
-                    ),
-                    'added' => now(),
-                ]);
-            }
+            $this->insertMembership($user, $group, $modMessagingAllowed);
         } catch (\Throwable $e) {
             Log::error('TN post ingestion: failed to record the poster\'s membership', [
                 'user_id'  => $user->id,
                 'group_id' => $group->id,
                 'error'    => $e->getMessage(),
             ]);
+        }
+    }
+
+    /**
+     * The new membership, its memberships_history row and its Group/Joined log, together.
+     *
+     * The history row is what memberships:process works from: abuse checks, flagged comments,
+     * and for a chosen group the per-group welcome, as TN's partner add gets. For a group the
+     * poster did not choose, MembershipsProcessingService sends no welcome and leaves the join
+     * out of the "seen on many groups" check, as it does for a ripple join, by its added_origin.
+     */
+    private function insertMembership(User $user, Group $group, bool $chosen): void
+    {
+        $origin = Membership::addedOriginForInsert(
+            $chosen ? Membership::ADDED_ORIGIN_PARTNER : Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+            'GroupPostIngestionService::insertMembership', $user->id, $group->id,
+        );
+
+        $row = [
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'role' => Membership::ROLE_MEMBER,
+            'collection' => Membership::COLLECTION_APPROVED,
+            // Not left blank, as a ripple join leaves it: ContentCheckService::isUserModerated
+            // reads a blank status as moderated, and would hold every post this poster makes
+            // here. DEFAULT is what ingestion and the content check already give a TN poster
+            // with no membership.
+            'ourPostingStatus' => Membership::POSTING_STATUS_DEFAULT,
+            'added_origin' => $origin,
+            'added' => now(),
+        ];
+
+        if (!$chosen) {
+            // Mail off. Unlike a ripple join, nothing tells the poster they are on this group
+            // (there is no intro mail), so it must not start mailing them. Digests already skip
+            // TN users, but the events and volunteering roundups read these settings and nothing
+            // else. A chosen group keeps the column defaults, as the partner add does.
+            $row += [
+                'emailfrequency' => Membership::EMAIL_FREQUENCY_NEVER,
+                'eventsallowed' => 0,
+                'volunteeringallowed' => 0,
+                'implicit' => 1,
+            ];
+        }
+
+        Log::info('TN-SYNC-TRACE [MEMBERSHIP] op=insert-' . ($chosen ? 'ordinary' : 'implicit')
+            . ' user_id=' . $user->id . ' group_id=' . $group->id . ' added_origin=' . $origin);
+        if ($this->dryRun) {
+            return;
+        }
+
+        // All three or none: a membership with no history row skips the abuse checks, and one
+        // with no join log is invisible in ModTools and to the origin backfill.
+        $added = DB::transaction(function () use ($row, $user, $group, $origin, $chosen) {
+            if (DB::table('memberships')->insertOrIgnore($row) === 0) {
+                // Someone else made the row in the meantime; theirs stands.
+                return false;
+            }
+
+            DB::table('memberships_history')->insert([
+                'userid' => $user->id,
+                'groupid' => $group->id,
+                'collection' => Membership::COLLECTION_APPROVED,
+                'processingrequired' => 1,
+                'added_origin' => $origin,
+            ]);
+
+            DB::table('logs')->insert([
+                'timestamp' => now(),
+                'type' => 'Group',
+                'subtype' => 'Joined',
+                'user' => $user->id,
+                // A chosen group is the member's own join, as the partner add logs it. A group
+                // they did not choose was the system's doing, as a ripple join is.
+                'byuser' => $chosen ? $user->id : null,
+                'groupid' => $group->id,
+                'text' => $chosen ? self::JOIN_LOG_CHOSEN : self::JOIN_LOG_UNADDRESSED,
+            ]);
+
+            return true;
+        });
+
+        if ($added) {
+            // A join like any other for reach mail. Digests skip TN users, so it sends nothing
+            // today, and every other join path queues the member the same way.
+            ReachMemberQueueService::enqueue($user->id, ReachMemberQueueService::REASON_JOINED);
         }
     }
 

@@ -311,6 +311,65 @@ class PostSyncerTest extends TestCase
         $this->callProcessPost($syncer, $posts[0]);
     }
 
+    /** Binds a recorder as 'sentry' and returns it. */
+    private function recordSentry(): object
+    {
+        $sentry = new class
+        {
+            public array $calls = [];
+
+            public function captureMessage($message, $severity = null): void
+            {
+                $this->calls[] = [(string) $message, (string) $severity];
+            }
+        };
+        $this->app->instance('sentry', $sentry);
+
+        return $sentry;
+    }
+
+    public function test_a_missing_consent_field_is_reported_once_a_run(): void
+    {
+        // A key without freegle_group_ids reads every post as unaddressed, which now makes
+        // every poster an implicit member. That is a configuration fault, so the run says so:
+        // once, however many posts it sees, on either post shape.
+        $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
+        $sentry = $this->recordSentry();
+
+        $syncer = $this->makeSyncer();
+        $spy    = $this->injectIngestionSpy($syncer);
+        $spy->method('ingest')->willReturn('approved');
+
+        $this->callProcessPost($syncer, $this->makePost(['latitude' => 10.0, 'longitude' => 10.0]));
+        $this->callProcessPost($syncer, $this->makePost(['latitude' => 10.0, 'longitude' => 10.0]));
+        $this->callProcessPost($syncer, $this->deserializePosts([
+            $this->makePost(['latitude' => 10.0, 'longitude' => 10.0]),
+        ])[0]);
+
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString('freegle_group_ids', $sentry->calls[0][0]);
+        $this->assertSame((string) \Sentry\Severity::error(), $sentry->calls[0][1]);
+    }
+
+    public function test_an_empty_consent_list_is_the_posters_choice_and_not_reported(): void
+    {
+        $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
+        $sentry = $this->recordSentry();
+
+        $syncer = $this->makeSyncer();
+        $spy    = $this->injectIngestionSpy($syncer);
+        $spy->expects($this->once())
+            ->method('ingest')
+            ->with($this->anything(), $this->anything(), false)
+            ->willReturn('approved');
+
+        $this->callProcessPost($syncer, $this->deserializePosts([$this->makePost([
+            'latitude' => 10.0, 'longitude' => 10.0, 'freegle_group_ids' => [],
+        ])])[0]);
+
+        $this->assertSame([], $sentry->calls);
+    }
+
     /**
      * Guzzle quotes the full request URL, key included, in ApiException's
      * message. The 401 seen on 2026-09-25 wrote the key into the batch log.

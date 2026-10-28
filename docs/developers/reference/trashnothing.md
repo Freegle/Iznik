@@ -241,9 +241,10 @@ within a minute if clean, or holds it for a moderator if a concern keyword or
 content rule matches. `GroupPostIngestionService` deliberately does not notify mods
 or add such a post to the spatial index — both belong to the content check, so a
 clean post makes no mod work and a flagged one is never live in the meantime.
-Because these posts often have no membership row, `ContentCheckService::isUserModerated()`
-applies the same `DEFAULT` fallback for a post with a `tnpostid`; without that they
-would sit in the mod queue with nothing able to promote them.
+Ingestion now gives the poster a membership with `ourPostingStatus` `DEFAULT` (below), but a
+post from before that, or from a poster banned from the group, has no membership row, so
+`ContentCheckService::isUserModerated()` applies the same `DEFAULT` fallback for a post with a
+`tnpostid`; without that they would sit in the mod queue with nothing able to promote them.
 
 **A stale spatial-index location costs the post its location, not the post.** The
 spatial server keeps its own R-tree, rebuilt from MySQL on its own schedule, so its
@@ -299,18 +300,34 @@ its copies without the column, so they take the table default and would otherwis
 every rippled copy of an unaddressed post read as addressed.
 
 **The poster's membership is moving to carry the same answer.** After routing,
-`GroupPostIngestionService::recordImplicitMembership()` gives a poster with no membership of
-the group an **implicit** one (`memberships.implicit = 1`, `added_origin = 'tn_unaddressed'`,
-Member, Approved) when the post is unaddressed, with mail off (`emailfrequency`, `eventsallowed` and `volunteeringallowed` all 0).
-A ripple join copies the poster's settings from their home group instead, but a ripple poster is
-told by the intro mail and a TN poster is told nothing; digests already skip TN users, and the
-events and volunteering roundups would otherwise mail them from a group they never chose. Its `ourPostingStatus` is `DEFAULT`, not blank, because `isUserModerated()` reads a
-blank status as moderated and would hold the poster's posts. A post that **is** addressed clears
-an implicit or ripple membership through `RippleEngagementService::clear`, logging
-`Ripple-created membership became ordinary: consented through TrashNothing`; consent only goes
-one way, so a later unaddressed post leaves an ordinary membership alone. A banned poster gets
-no row. The trace tag is `TN-SYNC-TRACE [MEMBERSHIP]`, which the parity comparison ignores.
-No `memberships_history` row or join log is written yet, so the row sends no welcome mail. The
+`GroupPostIngestionService::recordMembership()` makes sure every TN post has a membership
+behind it. A poster with no membership of the group gets one either way, Member, Approved, with
+`ourPostingStatus` `DEFAULT`, not blank, because `isUserModerated()` reads a blank status as
+moderated and would hold the poster's posts:
+
+- **Unaddressed:** an **implicit** membership (`implicit = 1`, `added_origin =
+  'tn_unaddressed'`) with mail off (`emailfrequency`, `eventsallowed` and `volunteeringallowed`
+  all 0). A ripple join copies the poster's settings from their home group instead, but a ripple
+  poster is told by the intro mail and a TN poster is told nothing; digests already skip TN
+  users, and the events and volunteering roundups would otherwise mail them from a group they
+  never chose. The join log is `TrashNothing unaddressed`, made by nobody.
+- **Addressed:** an ordinary one (`added_origin = 'partner'`) with the column's mail defaults,
+  the same as TN's own partner add, logged `via partner` by the member.
+
+Both write a `memberships_history` row with the same origin, in one transaction with the
+membership and the log. `memberships:process` sends no per-group welcome for a
+`tn_unaddressed` row and leaves those joins out of the "seen on many groups" check, as it does
+for a ripple join; birthday appeals, the re-engagement sign-off and the story feeds leave out
+`implicit = 1` memberships. An existing membership keeps its `added_origin`. A post that **is**
+addressed clears an implicit or ripple membership through `RippleEngagementService::clear`,
+logging `Ripple-created membership became ordinary: consented through TrashNothing`; consent
+only goes one way, so a later unaddressed post leaves an ordinary membership alone. A banned
+poster gets no row. The trace tag is `TN-SYNC-TRACE [MEMBERSHIP]`, which the parity comparison
+ignores.
+
+A post with no `freegle_group_ids` field at all is read as unaddressed, but `PostSyncer`
+reports it to Sentry once a run: TN enables the field per API key, and a key without it would
+make every poster implicit. An empty list is the poster's choice and is not reported. The
 checks below still read `mod_messaging_allowed`.
 
 `iznik-server-go/modmessaging` is the one place that decides this, and everything else

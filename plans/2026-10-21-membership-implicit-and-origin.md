@@ -504,13 +504,31 @@ sites that write none today, and the TN addressed insert (below).
     value, or is `unknown`, is written as `unknown` and reported at error level; the join goes
     ahead. Go tests swap the reporter with `addedorigin.SetReporter`; batch tests bind a
     recorder as `sentry`.
-- [ ] **TN post ingestion via the API makes the poster a member of the post's origin group.**
+- [x] **TN post ingestion via the API makes the poster a member of the post's origin group.**
   The origin group is the one ingestion works out from the post's own location
   (`Location::groupsNear()`), the group the post's `rippled_in = 0` row goes on. Today ingestion
   deliberately creates no membership
   ([GroupPostIngestionService.php:265](../iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php#L265)).
   From now on it must, whether or not the poster consented, so every TN post has a membership
   behind it. In the same transaction as the post:
+  - **3c status, done 2026-10-28** (uncommitted). `recordMembership` (renamed from
+    `recordImplicitMembership`) still runs after routing and outside the post's transaction, as
+    3a decided; the new membership, its history row and its join log are written by
+    `insertMembership` in one transaction of their own. Unaddressed: `tn_unaddressed`,
+    `implicit = 1`, mail 0 / 0 / 0, log `TrashNothing unaddressed` with `byuser` NULL.
+    Addressed with no membership: `partner`, `implicit = 0`, column mail defaults, log
+    `via partner` by the member, as TN's partner add. Both set `ourPostingStatus = 'DEFAULT'` and
+    queue the member for reach mail like every other join. The guards below are in place:
+    welcome mail and the batch spread check read `rippled = 1 OR added_origin =
+    'tn_unaddressed'` and the log text; the Go spread check (`activedistance`) excludes
+    `tn_unaddressed`; birthday, re-engagement sign-off and both story queries add
+    `implicit = 0` beside `rippled = 0`. Phase 5 drops the `rippled` half of each. ModLog shows
+    both log texts (`via partner` used to read as "joined automatically when posting/replying").
+    The missing-field report is `PostSyncer::reportMissingConsentField`, once per `sync()`.
+    **With this, TN ingestion no longer needs to wait for the Phase 5 readers** (production
+    sequence row 5). It must still go live after the last run of 2a's sync (row 3), which would
+    clear every TN implicit row. Moderator contact for these members is still decided by
+    `messages_groups` until Phase 5.
   - **3a status** (`recordImplicitMembership`, run after routing and not in a transaction:
     it logs a failure rather than throwing, so a failed write never leaves the post
     half-routed). Done: the unaddressed insert (`implicit = 1`, shared mail settings, no row for
@@ -557,8 +575,8 @@ sites that write none today, and the TN addressed insert (below).
   - Tests: an unaddressed post, an addressed post, an existing ordinary membership, an existing
     implicit membership with a consenting post, and a dry run (`GroupPostIngestionService`'s
     `dryRun` writes nothing).
-- [ ] Keep writing `messages_groups.mod_messaging_allowed` as now until Phase 7. It is Phase 4b's
-  source, and the post-level checks read it until Phase 5.
+- [x] Keep writing `messages_groups.mod_messaging_allowed` as now until Phase 7. It is Phase 4b's
+  source, and the post-level checks read it until Phase 5. Unchanged.
 
 ---
 

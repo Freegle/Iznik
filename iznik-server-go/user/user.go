@@ -1537,11 +1537,13 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 			// mh.rippled = 0: exclude memberships created by rippling auto-join (Rippling Out,
 			// ExpandService::addPosterMembershipToRippledGroups). Those follow a post's reach, not
 			// a choice by the member, so counting them flags/bans innocent freeglers for spread they
-			// never caused (Discourse 10064/1).
+			// never caused (Discourse 10064/1). The same goes for a TrashNothing post placed on a
+			// group the poster did not pick (added_origin tn_unaddressed).
 			db.Table("memberships_history mh").
 				Select("DISTINCT g.lat, g.lng").
 				Joins("INNER JOIN `groups` g ON mh.groupid = g.id").
-				Where("mh.userid = ? AND mh.rippled = 0 AND DATEDIFF(NOW(), mh.added) <= 31 AND g.publish = 1 AND g.onmap = 1 AND g.lat != 0 AND g.lng != 0", id).
+				Where("mh.userid = ? AND mh.rippled = 0 AND mh.added_origin <> ? AND DATEDIFF(NOW(), mh.added) <= 31 AND g.publish = 1 AND g.onmap = 1 AND g.lat != 0 AND g.lng != 0",
+					id, addedorigin.TNUnaddressed).
 				Scan(&locs)
 			if len(locs) >= 2 {
 				var swlat, swlng, nelat, nelng float64

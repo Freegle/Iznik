@@ -242,6 +242,29 @@ describe('ModLog', () => {
       )
       expect(wrapperRippled.text()).not.toContain('when posting/replying')
 
+      // A TrashNothing post placed in a group the poster did not choose
+      const wrapperTnUnaddressed = createWrapper({
+        id: 1,
+        type: 'Group',
+        subtype: 'Joined',
+        text: 'TrashNothing unaddressed',
+      })
+      expect(wrapperTnUnaddressed.text()).toContain(
+        'Added when their TrashNothing post was placed in this group'
+      )
+      expect(wrapperTnUnaddressed.text()).not.toContain('when posting/replying')
+
+      // TN's partner add, or a TN post in a group the poster chose
+      const wrapperPartner = createWrapper({
+        id: 1,
+        type: 'Group',
+        subtype: 'Joined',
+        text: 'via partner',
+      })
+      expect(wrapperPartner.text()).toContain(
+        'Joined through a partner site, such as TrashNothing'
+      )
+
       // Any other auto-join text still shows the generic message
       const wrapperAuto = createWrapper({
         id: 1,

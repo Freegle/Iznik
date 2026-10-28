@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Mail\Welcome\GroupWelcomeMail;
 use App\Models\Membership;
 use App\Services\MembershipsProcessingService;
+use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
@@ -156,6 +157,52 @@ class MembershipsProcessingServiceTest extends TestCase
         // The entry is still processed (abuse detection runs), only the welcome is suppressed.
         $entry = DB::table('memberships_history')->where('userid', $user->id)->where('groupid', $group->id)->first();
         $this->assertEquals(0, (int) $entry->processingrequired, 'rippled entry still marked processed');
+    }
+
+    public function test_does_not_send_per_group_welcome_to_a_trashnothing_poster_placed_on_a_group(): void
+    {
+        // TN post ingestion puts a poster on the group their post's location falls in, whether
+        // or not they chose it. A group they did not choose (added_origin tn_unaddressed) sends
+        // them nothing; they never knowingly joined it.
+        $user = $this->createTestUser();
+        $this->createTestUserEmail($user);
+        $group = $this->createTestGroup(['welcomemail' => 'Welcome to our group! Please be nice.']);
+        DB::table('groups')->where('id', $group->id)->update(['onhere' => 1]);
+
+        DB::table('memberships_history')->insert([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'processingrequired' => 1,
+            'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+        ]);
+
+        $this->service->processAll();
+
+        Mail::assertNotSent(GroupWelcomeMail::class);
+        $this->assertEquals(0, (int) DB::table('memberships_history')
+            ->where('userid', $user->id)->where('groupid', $group->id)->value('processingrequired'));
+    }
+
+    public function test_a_trashnothing_poster_who_chose_the_group_is_welcomed(): void
+    {
+        // added_origin partner, as TN's own partner add: an ordinary join, welcomed as one.
+        $user = $this->createTestUser();
+        $this->createTestUserEmail($user);
+        $group = $this->createTestGroup(['welcomemail' => 'Welcome to our group! Please be nice.']);
+        DB::table('groups')->where('id', $group->id)->update(['onhere' => 1]);
+
+        DB::table('memberships_history')->insert([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'processingrequired' => 1,
+            'added_origin' => Membership::ADDED_ORIGIN_PARTNER,
+        ]);
+
+        $this->service->processAll();
+
+        Mail::assertSent(GroupWelcomeMail::class);
     }
 
     // --- Flagged mod comments ---
@@ -331,6 +378,51 @@ class MembershipsProcessingServiceTest extends TestCase
             DB::table('logs')->where('user', $user->id)
                 ->where('type', 'User')->where('subtype', 'Suspect')->exists(),
             'no User/Suspect log for a poster whose joins are all rippled'
+        );
+    }
+
+    public function test_trashnothing_placements_do_not_count_toward_seen_on_many_groups(): void
+    {
+        // TN places a post on the group its location falls in, so those joins follow where
+        // the poster's posts are, not a join spree. 35 chosen joins sit exactly on the threshold:
+        // counting either the TN placements or the just-added one would push it over.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        DB::table('memberships')->insertOrIgnore([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+        ]);
+
+        for ($i = 0; $i < 35; $i++) {
+            DB::table('logs')->insert([
+                'type' => 'Group', 'subtype' => 'Joined', 'user' => $user->id,
+                'groupid' => 910000 + $i, 'text' => 'Manual', 'timestamp' => now()->subDays(30),
+            ]);
+        }
+        for ($i = 0; $i < 40; $i++) {
+            DB::table('logs')->insert([
+                'type' => 'Group', 'subtype' => 'Joined', 'user' => $user->id,
+                'groupid' => 920000 + $i, 'text' => GroupPostIngestionService::JOIN_LOG_UNADDRESSED,
+                'timestamp' => now()->subDays(30),
+            ]);
+        }
+
+        DB::table('memberships_history')->insert([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'processingrequired' => 1,
+            'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+        ]);
+
+        $this->service->processAll();
+
+        $this->assertFalse(
+            DB::table('logs')->where('user', $user->id)
+                ->where('type', 'User')->where('subtype', 'Suspect')->exists(),
+            'TrashNothing placements must not trip the spam flag'
         );
     }
 
