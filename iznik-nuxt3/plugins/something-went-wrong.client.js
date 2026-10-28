@@ -15,7 +15,7 @@ export default defineNuxtPlugin((nuxtApp) => {
     if (err instanceof MaintenanceError) {
       // This is thrown in response to API return codes from the server.
       throw err
-    } else if (err instanceof APIError && vm && vm.$bvToast) {
+    } else if (err instanceof APIError) {
       const { request, response } = err
       try {
         // We have seen Sentry issues which look as though our console.error log here is itself causing an exception,
@@ -41,7 +41,10 @@ export default defineNuxtPlugin((nuxtApp) => {
       return true
     }
 
-    if (originalErrorHandler) {
+    // The original handler is Nuxt's, which turns any error into the error page. Nuxt means it for hydration
+    // only and removes it on app:suspense:resolve, but only while it is still the installed handler, and ours
+    // has replaced it. So only pass errors on while hydrating, or every later error would replace the page.
+    if (originalErrorHandler && nuxtApp.isHydrating) {
       return originalErrorHandler(err, vm, info, ...rest)
     }
   }
