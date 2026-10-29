@@ -29,12 +29,16 @@ const (
 // do with - the exact opposite of the truth, since without rippling that member would not have
 // been in the group to see it. That mis-scored ~7% of all "home" replies on production.
 //
+// mem.implicit = 0 keeps out a TrashNothing poster placed on a group they never chose
+// (rippled = 0, implicit = 1) for the same reason. rippled goes when Phase 5 moves this to
+// implicit.
+//
 // msgCol/userCol are the caller's outer columns to correlate against; the fragment owns the
 // aliases og/mem, so it can be nested anywhere those two are free.
 func EstablishedOriginMemberExists(msgCol, userCol string) string {
 	return `EXISTS(SELECT 1 FROM messages_groups og
 	                  INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ` + userCol + `
-	                    AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0
+	                    AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0 AND mem.implicit = 0
 	                  WHERE og.msgid = ` + msgCol + ` AND og.rippled_in = 0 AND og.deleted = 0)`
 }
 

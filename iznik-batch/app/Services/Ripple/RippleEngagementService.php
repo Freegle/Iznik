@@ -259,9 +259,12 @@ class RippleEngagementService
                 $j->on('mg.msgid', '=', 'msg.id')->where('mg.rippled_in', 1);
             })
             ->join('memberships as mr', function ($j) {
+                // A TrashNothing poster placed on the community (implicit = 1) is no more its
+                // member than a ripple join is. rippled goes when Phase 5 moves this to implicit.
                 $j->on('mr.userid', '=', 'r.userid')
                     ->on('mr.groupid', '=', 'mg.groupid')
                     ->where('mr.rippled', 0)
+                    ->where('mr.implicit', 0)
                     ->where('mr.collection', 'Approved');
             })
             ->join('memberships as mp', function ($j) {

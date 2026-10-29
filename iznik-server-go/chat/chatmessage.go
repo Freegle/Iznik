@@ -481,7 +481,8 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	// Established member of an ORIGIN (non-rippled-in) group of the post, whose membership
 	// predates this reply by more than the join grace (300s)? A join made to reply
 	// (added ~ now) is excluded, and so is a membership rippling itself created - see
-	// wasRippleJoin below.
+	// wasRippleJoin below - or one TrashNothing placed them on (implicit = 1). rippled goes
+	// when Phase 5 moves this to implicit.
 	// BuildClauses
 	// override: see amp.go's ValidateToken for the mechanism and
 	// the retired ormharness's bareexists_test.go (removed in d22ba1d6c) for
@@ -490,7 +491,7 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	tx848af7d73bfe := db.Table("messages_groups").Select(
 		"EXISTS(SELECT 1 FROM messages_groups mg "+
 			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
-			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 0 "+
+			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 0 AND mem.implicit = 0 "+
 			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
 		myid, utils.COLLECTION_APPROVED, refmsgid)
 	tx848af7d73bfe.Statement.BuildClauses = []string{"SELECT"}
