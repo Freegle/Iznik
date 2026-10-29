@@ -68,11 +68,18 @@ describe('plugins/sentry.client', () => {
       push: vi.fn(),
       currentRoute: { value: { path: '/' } },
     })
+    // happy-dom reports itself as automated, and beforeSend sends nothing from
+    // an automated browser. Every test is a person's browser unless it says not.
+    Object.defineProperty(window.navigator, 'webdriver', {
+      value: false,
+      configurable: true,
+    })
   })
 
   afterEach(() => {
     delete globalThis.__testRuntimeConfig
     delete globalThis.__testUseRouter
+    delete window.navigator.webdriver
   })
 
   async function runPlugin() {
