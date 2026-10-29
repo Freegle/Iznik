@@ -204,10 +204,9 @@ test.describe('ModTools Spammer List', () => {
     const bar = page.locator('[data-test="bulk-bar"]')
     await expect(bar).toBeVisible({ timeout: timeouts.ui.appearance })
 
-    // Nothing selected yet, so Confirm is disabled.
+    // Nothing selected yet, so Confirm is not shown.
     const confirm = page.locator('[data-test="bulk-confirm"]')
-    await expect(confirm).toBeVisible()
-    await expect(confirm).toBeDisabled()
+    await expect(confirm).toHaveCount(0)
 
     await page.locator('[data-test="bulk-select-all"]').click()
 

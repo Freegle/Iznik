@@ -58,10 +58,10 @@
           @clear="bulk.clear"
         >
           <b-button
-            v-if="canBulkConfirm"
+            v-if="canBulkConfirm && bulk.count.value"
             variant="primary"
             size="sm"
-            :disabled="bulkBusy || !bulk.count.value"
+            :disabled="bulkBusy"
             data-test="bulk-confirm"
             @click="confirmSelected"
           >
@@ -91,30 +91,32 @@
         <div
           v-for="(spammer, index) in visibleSpammers"
           :key="'spammer-' + tabIndex + '-' + spammer.id"
-          class="d-flex align-items-start mb-1"
+          class="mb-1"
         >
-          <b-form-checkbox
-            :model-value="bulk.isSelected(spammer.id)"
-            :disabled="
-              bulkBusy ||
-              !isSelectable(spammer) ||
-              (bulk.atLimit.value && !bulk.isSelected(spammer.id))
-            "
-            :title="
-              isSelectable(spammer)
-                ? 'Select'
-                : 'Held by a moderator - release before confirming'
-            "
-            class="mt-2 me-1 bulk-check"
-            :data-test="'bulk-check-' + spammer.id"
-            @update:model-value="bulk.toggle(spammer.id)"
-          />
           <ModMember
             :membershipid="spammer.user.id"
             :sameip="spammer.sameip"
-            class="flex-grow-1 min-width-0"
             :index="index"
-          />
+          >
+            <template #select>
+              <b-form-checkbox
+                :model-value="bulk.isSelected(spammer.id)"
+                :disabled="
+                  bulkBusy ||
+                  !isSelectable(spammer) ||
+                  (bulk.atLimit.value && !bulk.isSelected(spammer.id))
+                "
+                :title="
+                  isSelectable(spammer)
+                    ? 'Select'
+                    : 'Held by a moderator - release before confirming'
+                "
+                class="me-2 bulk-check"
+                :data-test="'bulk-check-' + spammer.id"
+                @update:model-value="bulk.toggle(spammer.id)"
+              />
+            </template>
+          </ModMember>
         </div>
         <infinite-loading
           :distance="10"
@@ -353,8 +355,3 @@ onMounted(() => {
   }
 })
 </script>
-<style scoped>
-.min-width-0 {
-  min-width: 0;
-}
-</style>
