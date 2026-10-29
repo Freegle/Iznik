@@ -67,10 +67,10 @@ For each post you can:
   refused with a message saying so rather than reported as done.
 
   A post held by another volunteer shows a "Held by" banner and no action buttons. To keep
-  those out of the way, turn on **Hide posts held by others** at the top of the Pending page.
-  Posts you hold yourself still show, and the page says how many are hidden ("3 held by
-  others hidden"). The switch is off by default and your choice is remembered in your browser.
-  It does not change the count on the Pending badge.
+  those out of the way, turn on **Hide held posts** at the top of the Pending page. It hides
+  every held post, including ones you hold yourself, and the page says how many are hidden
+  ("3 held posts hidden"). The switch is off by default and your choice is remembered in your
+  browser. It does not change the count on the Pending badge.
 - **Delete** or **Delete as Spam** (on your own community's posts).
 
 ### A post pending on several of your communities

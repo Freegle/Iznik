@@ -44,7 +44,7 @@ vi.mock('~/composables/useModMessages', () => ({
     summary: mockSummary,
     messages: mockMessages,
     visibleMessages: mockVisibleMessages,
-    hideHeldByOthers: mockHideHeld,
+    hideHeld: mockHideHeld,
     hiddenHeldCount: mockHiddenHeldCount,
     work: mockWork,
     nextAfterRemoved: mockNextAfterRemoved,
@@ -235,8 +235,8 @@ describe('PendingPage', () => {
     localStorage.clear()
   })
 
-  describe('hide posts held by others', () => {
-    const KEY = 'modtools-pending-hide-held-by-others'
+  describe('hide held posts', () => {
+    const KEY = 'modtools-pending-hide-held'
     const switchInput = (wrapper) =>
       wrapper.find('[data-test="hide-held-switch"] input')
 
@@ -249,7 +249,7 @@ describe('PendingPage', () => {
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
 
-      expect(wrapper.text()).toContain('Hide posts held by others')
+      expect(wrapper.text()).toContain('Hide held posts')
       expect(switchInput(wrapper).element.checked).toBe(false)
       expect(mockHideHeld.value).toBe(false)
       expect(wrapper.find('[data-test="hidden-held-count"]').exists()).toBe(
@@ -267,7 +267,7 @@ describe('PendingPage', () => {
       expect(mockHideHeld.value).toBe(true)
       expect(localStorage.getItem(KEY)).toBe('true')
       expect(wrapper.find('[data-test="hidden-held-count"]').text()).toBe(
-        '3 held by others hidden'
+        '3 held posts hidden'
       )
     })
 
@@ -303,7 +303,7 @@ describe('PendingPage', () => {
       expect(mockHideHeld.value).toBe(true)
       expect(switchInput(wrapper).element.checked).toBe(true)
       expect(wrapper.find('[data-test="hidden-held-count"]').text()).toBe(
-        '2 held by others hidden'
+        '2 held posts hidden'
       )
     })
 
@@ -330,7 +330,7 @@ describe('PendingPage', () => {
 
       expect(mockHideHeld.value).toBe(true)
       expect(wrapper.find('[data-test="hidden-held-count"]').text()).toBe(
-        '1 held by others hidden'
+        '1 held post hidden'
       )
     })
 

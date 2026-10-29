@@ -36,12 +36,12 @@ const nextAfterRemoved = ref(null)
 
 const distance = ref(10)
 
-// The Pending page's "Hide posts held by others" switch. It lives here, with
+// The Pending page's "Hide held posts" switch. It lives here, with
 // the rest of the shared list state, so the list and the page agree on it. It
 // is deliberately NOT cleared by setupModMessages(true): the page sets it from
 // the moderator's remembered choice. Hiding is done on the client from the
 // posts already loaded; the server counts and the badge are untouched.
-const hideHeldByOthers = ref(false)
+const hideHeld = ref(false)
 
 // Holds a workdetail refresh that arrived while a modal was open (e.g. a
 // moderator typing a rejection reason). The list is NOT refreshed while a modal
@@ -191,17 +191,10 @@ function heldById(copy) {
   return Number.isInteger(h) ? h : h.id
 }
 
-// Loaded posts the switch hides: held by a moderator other than me. A post I
-// hold myself stays. With no signed-in user nothing can be called "other", so
-// nothing is hidden.
+// Loaded posts the switch hides: every post that is held, whoever holds it.
 const hiddenHeldMessages = computed(() => {
-  if (!hideHeldByOthers.value) return []
-  const myId = useAuthStore().user?.id
-  if (!myId) return []
-  return messages.value.filter((m) => {
-    const holder = heldById(administeredCopy(m))
-    return holder && holder !== myId
-  })
+  if (!hideHeld.value) return []
+  return messages.value.filter((m) => heldById(administeredCopy(m)))
 })
 
 const hiddenHeldCount = computed(() => hiddenHeldMessages.value.length)
@@ -469,7 +462,7 @@ export function setupModMessages(reset) {
     listingIds,
     listingIdOrder,
     visibleMessages,
-    hideHeldByOthers,
+    hideHeld,
     hiddenHeldCount,
     work,
     getMessages,

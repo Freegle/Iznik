@@ -1,7 +1,7 @@
 /**
- * The Pending page's "Hide posts held by others" switch hides, on the client,
- * the loaded posts held by a moderator other than the signed-in one. A post I
- * hold myself stays. The hidden ones are counted so the page can say so, and
+ * The Pending page's "Hide held posts" switch hides, on the client, every
+ * loaded post that is held, whoever holds it. The hidden ones are counted so
+ * the page can say so, and
  * hiding must not stop the list loading more: `messages` (what loadMore
  * compares `show` against) stays complete.
  */
@@ -66,7 +66,7 @@ function post(id, heldby, extra = {}) {
   }
 }
 
-describe('useModMessages - hide posts held by others', () => {
+describe('useModMessages - hide held posts', () => {
   let scope
   let mm
 
@@ -102,30 +102,38 @@ describe('useModMessages - hide posts held by others', () => {
   it('shows every post when the switch is off', async () => {
     await setup()
 
-    expect(mm.hideHeldByOthers.value).toBe(false)
+    expect(mm.hideHeld.value).toBe(false)
     expect(ids(mm.visibleMessages.value)).toEqual([1, 2, 3, 4])
     expect(mm.hiddenHeldCount.value).toBe(0)
   })
 
-  it('hides posts held by others and keeps my own and free ones when on', async () => {
+  it('hides every held post, mine included, and keeps free ones when on', async () => {
     await setup()
-    mm.hideHeldByOthers.value = true
+    mm.hideHeld.value = true
 
-    expect(ids(mm.visibleMessages.value)).toEqual([1, 3])
+    expect(ids(mm.visibleMessages.value)).toEqual([1])
+    expect(mm.hiddenHeldCount.value).toBe(3)
+  })
+
+  it('treats a hold the same whether heldby is an id or an object', async () => {
+    storeMessages.value = [post(2, OTHER), post(4, { id: OTHER })]
+    await setup()
+    mm.hideHeld.value = true
+
     expect(mm.hiddenHeldCount.value).toBe(2)
   })
 
   it('leaves the loaded list complete so loading more is not stalled', async () => {
     await setup()
-    mm.hideHeldByOthers.value = true
+    mm.hideHeld.value = true
 
     expect(ids(mm.messages.value)).toEqual([1, 2, 3, 4])
   })
 
-  it('has nothing visible, but still counts them, when every loaded post is held by others', async () => {
+  it('has nothing visible, but still counts them, when every loaded post is held', async () => {
     storeMessages.value = [post(2, OTHER), post(4, OTHER)]
     await setup()
-    mm.hideHeldByOthers.value = true
+    mm.hideHeld.value = true
 
     expect(mm.visibleMessages.value).toEqual([])
     expect(mm.messages.value).toHaveLength(2)
@@ -142,7 +150,7 @@ describe('useModMessages - hide posts held by others', () => {
     })
     storeMessages.value = [both]
     await setup()
-    mm.hideHeldByOthers.value = true
+    mm.hideHeld.value = true
 
     mm.groupid.value = 1
     expect(ids(mm.visibleMessages.value)).toEqual([5])
@@ -152,23 +160,14 @@ describe('useModMessages - hide posts held by others', () => {
     expect(mm.hiddenHeldCount.value).toBe(1)
   })
 
-  it('hides nothing when nobody is signed in', async () => {
-    mockUser.value = null
-    await setup()
-    mm.hideHeldByOthers.value = true
-
-    expect(ids(mm.visibleMessages.value)).toEqual([1, 2, 3, 4])
-    expect(mm.hiddenHeldCount.value).toBe(0)
-  })
-
   it('is not cleared when the page resets the shared list state', async () => {
     await setup()
-    mm.hideHeldByOthers.value = true
+    mm.hideHeld.value = true
 
     const { setupModMessages } =
       await import('~/modtools/composables/useModMessages')
     scope.run(() => setupModMessages(true))
 
-    expect(mm.hideHeldByOthers.value).toBe(true)
+    expect(mm.hideHeld.value).toBe(true)
   })
 })
