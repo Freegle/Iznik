@@ -93,6 +93,7 @@ class DeadlineReached extends MjmlMailable implements DescribesMemberContent
                 'post' => $this->message,
                 'user' => $this->user,
                 'outcomeType' => $this->outcomeType,
+                'isOffer' => $this->message->type === Message::TYPE_OFFER,
                 'groupName' => $groupName,
                 'extendUrl' => $this->trackedUrl($this->extendUrl, 'extend_button', 'extend'),
                 'completedUrl' => $this->trackedUrl($this->completedUrl, 'completed_button', 'completed'),

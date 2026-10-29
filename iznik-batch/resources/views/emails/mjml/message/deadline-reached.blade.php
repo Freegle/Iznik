@@ -47,9 +47,15 @@
         <mj-section background-color="#ffffff" padding="20px">
             <mj-column>
                 <mj-text font-size="12px" color="#666666">
+                    @if($isOffer)
                     <strong>Extend:</strong> Give yourself more time to find someone for your item.<br />
                     <strong>Mark as {{ ucfirst($outcomeType) }}:</strong> Tell us the item has found a new home.<br />
                     <strong>Withdraw:</strong> Remove the post if you no longer want to give it away.
+                    @else
+                    <strong>Extend:</strong> Give yourself more time to find what you are looking for.<br />
+                    <strong>Mark as {{ ucfirst($outcomeType) }}:</strong> Tell us you have received it.<br />
+                    <strong>Withdraw:</strong> Remove the post if you are no longer looking for it.
+                    @endif
                 </mj-text>
             </mj-column>
         </mj-section>
