@@ -59,7 +59,7 @@ class ProcessBackgroundTasksCommand extends Command
      * Told to a member who replied to an Offer that has since been promised to someone else.
      * Also the key that stops them being told twice about the same post.
      */
-    public const PROMISED_TO_SOMEONE_ELSE_NOTICE = 'This has been promised to someone else for now. If it falls through, the giver may come back to you.';
+    public const PROMISED_TO_SOMEONE_ELSE_NOTICE = 'This has been promised to someone else for now. If they do not collect it, the giver may offer it to you.';
 
     protected $signature = 'queue:background-tasks
                             {--limit=50 : Maximum tasks to process per iteration}

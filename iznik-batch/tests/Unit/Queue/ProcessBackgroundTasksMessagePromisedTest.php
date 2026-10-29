@@ -110,7 +110,7 @@ class ProcessBackgroundTasksMessagePromisedTest extends TestCase
         $this->assertNotNull($notice);
         $this->assertSame($this->giver->id, (int) $notice->userid);
         $this->assertSame(
-            'This has been promised to someone else for now. If it falls through, the giver may come back to you.',
+            'This has been promised to someone else for now. If they do not collect it, the giver may offer it to you.',
             $notice->message
         );
         $this->assertTrue($notice->isVisible());
