@@ -147,7 +147,18 @@ const emit = defineEmits(['update:modelValue'])
 
 const miscStore = useMiscStore()
 const modGroupStore = useModGroupStore()
-const { me } = useMe()
+const { me, myGroups } = useMe()
+
+// A group cached before our memberships arrived (a link such as
+// /messages/pending/<id> opened logged out, then logged in) carries no role.
+// Reading the role from our memberships as well keeps such a community in the
+// moderator-only list; without it the list held nothing but "All my
+// communities" and the selected community showed as a blank dropdown.
+function roleOf(group) {
+  if (group.role) return group.role
+  const mine = (myGroups?.value || []).find((g) => g.id === group.id)
+  return mine?.role
+}
 
 const selectedGroup = computed({
   get() {
@@ -245,8 +256,8 @@ const groupOptions = computed(() => {
     if (
       props.listall ||
       !props.modonly ||
-      group.role === 'Owner' ||
-      group.role === 'Moderator'
+      roleOf(group) === 'Owner' ||
+      roleOf(group) === 'Moderator'
     ) {
       let text = group.namedisplay
       let hasWork = false
