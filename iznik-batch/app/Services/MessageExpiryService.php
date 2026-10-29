@@ -103,12 +103,21 @@ class MessageExpiryService
             ->where('messages.arrival', '>=', $earliestDate)
             ->whereNotNull('messages.deadline')
             ->whereRaw('messages.deadline < CURDATE()')
-            // A post with no group is not on the site, so it cannot expire off it.
-            // This is a static property of the post, so it belongs in the pass that
-            // runs once rather than in the one that runs per chunk.
-            ->whereExists(fn ($q) => $q->selectRaw('1')
-                ->from('messages_groups')
-                ->whereColumn('messages_groups.msgid', 'messages.id'))
+            ->whereNull('messages.deleted')
+            // A post with no live approved posting is not on the site, so it cannot
+            // expire off it. A retracted rippled copy keeps collection = Approved and
+            // is marked only by deleted = 1, so both are tested, as the auto-repost
+            // candidate query does. These are static properties of the post, so they
+            // belong in the pass that runs once rather than in the one that runs per
+            // chunk.
+            ->whereExists(fn ($q) => $q->from('messages_groups')
+                ->whereColumn('messages_groups.msgid', 'messages.id')
+                ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+                ->where('messages_groups.deleted', 0))
+            // A deleted poster gets no mail and has nothing to extend or mark.
+            ->whereExists(fn ($q) => $q->from('users')
+                ->whereColumn('users.id', 'messages.fromuser')
+                ->whereNull('users.deleted'))
             ->orderBy('messages.id')
             ->pluck('messages.id')
             ->all();
