@@ -23,12 +23,11 @@ use Illuminate\Support\Facades\DB;
  *   with no tnuserid: the first API posts were given to the wrong account.
  * - an addressed post of theirs to the group since the membership was added is consent, as it
  *   is to ingestion: an implicit membership (TN or ripple) is cleared, with the "became
- *   ordinary" log, and a tn_unaddressed one that is not implicit stays so. A post from before
- *   the membership was added does not count: they have left since, and were placed back.
- * - a tn_unaddressed membership that is not implicit, with no such post: set implicit, unless a
- *   "became ordinary" log since it was added says it was cleared. A doubtful row ends up
- *   implicit, with contact restricted, rather than open.
- * - any other membership: leave it. An ordinary membership is never made implicit.
+ *   ordinary" log. A post from before the membership was added does not count: they have left
+ *   since, and were placed back.
+ * - any other membership: leave it. An ordinary membership is never made implicit, whatever its
+ *   origin: a tn_unaddressed one that is not implicit was cleared, or merged with one the
+ *   member chose.
  *
  * It also reports the effect of deciding moderator contact per group (Phase 5). Today a TN
  * poster is restricted on every group only when all their posts are unaddressed
@@ -42,11 +41,8 @@ use Illuminate\Support\Facades\DB;
 class TnMembershipBackfillService
 {
     public const ACTION_CREATE = 'create implicit membership';
-    public const ACTION_SET_IMPLICIT = 'set implicit on tn_unaddressed membership';
     public const ACTION_CLEAR = 'clear implicit: addressed a post here since it was added';
-    public const ACTION_CONSENTED = 'skip: tn_unaddressed membership consented to since it was added';
     public const ACTION_ALREADY_IMPLICIT = 'skip: tn_unaddressed membership already implicit';
-    public const ACTION_CLEARED = 'skip: tn_unaddressed membership cleared since it was added';
     public const ACTION_EXISTING = 'leave existing membership';
     public const ACTION_BANNED = 'skip: banned from the group';
     public const ACTION_NO_USER = 'skip: poster deleted or missing';
@@ -184,37 +180,19 @@ class TnMembershipBackfillService
                 : self::ACTION_CREATE;
         }
 
-        $tnUnaddressed = $membership->added_origin === Membership::ADDED_ORIGIN_TN_UNADDRESSED;
-        $consented = $this->addressedPostSince($pair['userid'], $pair['groupid'], $membership->added);
-
         // Either flag: a ripple join made before 2a's last sync can have rippled = 1 and
         // implicit = 0, and RippleEngagementService::clear clears both.
         if ($membership->rippled || $membership->implicit) {
-            if ($consented) {
+            if ($this->addressedPostSince($pair['userid'], $pair['groupid'], $membership->added)) {
                 return self::ACTION_CLEAR;
             }
 
-            return $tnUnaddressed ? self::ACTION_ALREADY_IMPLICIT : self::ACTION_EXISTING;
+            return $membership->added_origin === Membership::ADDED_ORIGIN_TN_UNADDRESSED
+                ? self::ACTION_ALREADY_IMPLICIT
+                : self::ACTION_EXISTING;
         }
 
-        if (!$tnUnaddressed) {
-            return self::ACTION_EXISTING;
-        }
-
-        if ($consented) {
-            return self::ACTION_CONSENTED;
-        }
-
-        $cleared = DB::table('logs')
-            ->where('user', $pair['userid'])
-            ->where('groupid', $pair['groupid'])
-            ->where('type', 'Group')
-            ->where('subtype', 'Joined')
-            ->where('text', 'LIKE', RippleEngagementService::LOG_PREFIX.'%')
-            ->where('timestamp', '>=', $membership->added)
-            ->exists();
-
-        return $cleared ? self::ACTION_CLEARED : self::ACTION_SET_IMPLICIT;
+        return self::ACTION_EXISTING;
     }
 
     private function apply(array $pair): void
@@ -225,11 +203,6 @@ class TnMembershipBackfillService
         } elseif ($pair['action'] === self::ACTION_CLEAR) {
             app(RippleEngagementService::class)->clear($pair['userid'], $pair['groupid'],
                 GroupPostIngestionService::REASON_CONSENTED);
-        } elseif ($pair['action'] === self::ACTION_SET_IMPLICIT) {
-            DB::table('memberships')
-                ->where('id', $pair['membership']->id)
-                ->where('implicit', 0)
-                ->update(['implicit' => 1]);
         }
     }
 
@@ -241,7 +214,7 @@ class TnMembershipBackfillService
     private function ordinaryAfter(array $pair): bool
     {
         $membership = $pair['membership'];
-        if ($membership === null || $pair['action'] === self::ACTION_SET_IMPLICIT) {
+        if ($membership === null) {
             return false;
         }
 

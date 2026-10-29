@@ -162,7 +162,7 @@ class BackfillTnCommandTest extends TestCase
 
         $pair = $this->pairFor($this->backfill(), $user, $group);
 
-        $this->assertSame(Backfill::ACTION_CONSENTED, $pair['action']);
+        $this->assertSame(Backfill::ACTION_EXISTING, $pair['action']);
         $this->assertSame(0, (int) $this->membership($user, $group)->implicit);
         $this->assertTrue($pair['contact_after']);
     }
@@ -173,12 +173,12 @@ class BackfillTnCommandTest extends TestCase
         [$user, $group] = $this->unaddressedPoster();
         $this->tnPost($user, $group, true, now()->subYear());
         $this->createMembership($user, $group, [
-            'implicit' => 0, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now()->subMonth(),
+            'implicit' => 1, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now()->subMonth(),
         ]);
 
         $pair = $this->pairFor($this->backfill(), $user, $group);
 
-        $this->assertSame(Backfill::ACTION_SET_IMPLICIT, $pair['action']);
+        $this->assertSame(Backfill::ACTION_ALREADY_IMPLICIT, $pair['action']);
         $this->assertSame(1, (int) $this->membership($user, $group)->implicit);
     }
 
@@ -198,9 +198,9 @@ class BackfillTnCommandTest extends TestCase
         $this->assertSame(1, DB::table('logs')->where('user', $user->id)->where('groupid', $group->id)
             ->where('text', RippleEngagementService::LOG_PREFIX.GroupPostIngestionService::REASON_CONSENTED)->count());
 
-        // Cleared once: a second run finds it ordinary and consented to.
+        // Cleared once: a second run finds it ordinary and leaves it.
         $pair = $this->pairFor($this->backfill(), $user, $group);
-        $this->assertSame(Backfill::ACTION_CONSENTED, $pair['action']);
+        $this->assertSame(Backfill::ACTION_EXISTING, $pair['action']);
     }
 
     public function test_an_addressed_post_to_another_group_does_not_clear_an_implicit_membership(): void
@@ -286,8 +286,10 @@ class BackfillTnCommandTest extends TestCase
         $this->assertSame(Membership::ADDED_ORIGIN_RIPPLED, $this->membership($user, $group)->added_origin);
     }
 
-    public function test_a_tn_unaddressed_membership_without_the_flag_is_made_implicit(): void
+    public function test_a_tn_unaddressed_membership_without_the_flag_is_never_made_implicit(): void
     {
+        // Cleared with no post (TN's partner add), or merged with a membership the member chose
+        // and left with no "became ordinary" log. Either way it is ordinary, and stays so.
         [$user, $group] = $this->unaddressedPoster();
         $this->createMembership($user, $group, [
             'implicit' => 0, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now()->subMonth(),
@@ -295,44 +297,9 @@ class BackfillTnCommandTest extends TestCase
 
         $pair = $this->pairFor($this->backfill(), $user, $group);
 
-        $this->assertSame(Backfill::ACTION_SET_IMPLICIT, $pair['action']);
-        $this->assertSame(1, (int) $this->membership($user, $group)->implicit);
-    }
-
-    public function test_a_tn_unaddressed_membership_that_was_cleared_stays_ordinary(): void
-    {
-        [$user, $group] = $this->unaddressedPoster();
-        $this->createMembership($user, $group, [
-            'implicit' => 0, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now()->subMonth(),
-        ]);
-        // TN's partner add clears it without a post: consent only goes one way.
-        DB::table('logs')->insert([
-            'timestamp' => now()->subWeek(), 'type' => 'Group', 'subtype' => 'Joined',
-            'user' => $user->id, 'byuser' => $user->id, 'groupid' => $group->id,
-            'text' => RippleEngagementService::LOG_PREFIX.'joined through TrashNothing',
-        ]);
-
-        $pair = $this->pairFor($this->backfill(), $user, $group);
-
-        $this->assertSame(Backfill::ACTION_CLEARED, $pair['action']);
+        $this->assertSame(Backfill::ACTION_EXISTING, $pair['action']);
         $this->assertSame(0, (int) $this->membership($user, $group)->implicit);
-    }
-
-    public function test_a_clear_from_before_the_membership_does_not_count(): void
-    {
-        [$user, $group] = $this->unaddressedPoster();
-        DB::table('logs')->insert([
-            'timestamp' => now()->subYear(), 'type' => 'Group', 'subtype' => 'Joined',
-            'user' => $user->id, 'byuser' => $user->id, 'groupid' => $group->id,
-            'text' => RippleEngagementService::LOG_PREFIX.'posted on this community',
-        ]);
-        $this->createMembership($user, $group, [
-            'implicit' => 0, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now()->subMonth(),
-        ]);
-
-        $pair = $this->pairFor($this->backfill(), $user, $group);
-
-        $this->assertSame(Backfill::ACTION_SET_IMPLICIT, $pair['action']);
+        $this->assertTrue($pair['contact_after']);
     }
 
     public function test_a_banned_poster_gets_no_membership(): void

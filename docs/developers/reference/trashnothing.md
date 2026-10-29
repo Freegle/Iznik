@@ -339,9 +339,9 @@ does. It skips a banned or deleted poster, a poster with no `tnuserid` (the firs
 before posters were resolved through it, went to whichever account had TN's id or to a stub
 made with it). An addressed post to the group since a membership was added is consent, as
 for ingestion: an implicit membership (TN or ripple) is cleared with the "became ordinary"
-log, and a `tn_unaddressed` row without `implicit` stays ordinary. Without such a post, that
-row gets `implicit` unless a "became ordinary" log since it was added says it was cleared, so
-a doubtful row ends up implicit, with contact restricted. Any other membership is left alone. It lists every pair with its contact
+log. Any other membership is left alone: an ordinary membership is never made implicit, a
+`tn_unaddressed` row without `implicit` included (it was cleared, or merged with a membership
+the member chose). It lists every pair with its contact
 today (the mixed-poster rule below, which one addressed post on any group opens) and per group
 (an ordinary membership of that group after the run), and counts the pairs that lose and gain
 contact when contact is decided per group.

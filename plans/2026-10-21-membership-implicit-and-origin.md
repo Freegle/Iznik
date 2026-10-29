@@ -369,16 +369,17 @@ refuses rather than rebuilds if INSTANT is ever unavailable.
 and its [`_migration.sql`](../iznik-batch/database/migrations/2026_10_28_000001_add_implicit_to_memberships_migration.sql).
 
 - [x] `memberships.implicit TINYINT(1) NOT NULL DEFAULT 0`, after `rippled`.
-- [x] Copy existing values, in chunks of 10,000 ids, as `SET implicit = rippled WHERE implicit <> rippled`.
+- [x] Copy existing values, in chunks of 10,000 ids: `implicit = 1` where `rippled = 1`, and
+  `implicit = 0` where `rippled = 0` and the row is not a TN placement.
   - **The copy drifts until Phase 3 ships**, because ripple joins and clears write `rippled`
     alone until then. So it syncs in both directions and can be run again: **re-run the
     `_migration.sql` once Phase 3's dual writes are live in both Go and the batch.** Go and the
     batch deploy separately, and a run before both are out lets drift back in. The ALTER skips
     itself, and the file ends by printing how many rows are out of line, which should be 0.
-  - **That re-run must come before the first TN implicit membership exists, and never run
-    after it.** The copy sets `implicit = rippled`, and a `tn_unaddressed` row has `rippled = 0,
-    implicit = 1`, so the copy would clear it. It can't be filtered on `added_origin`, because
-    2a's SQL runs before that column exists.
+  - **The re-run leaves TN implicit memberships alone**, so it can come before or after them.
+    A `tn_unaddressed` row has `rippled = 0, implicit = 1`, so the clear only matches rows whose
+    `added_origin` is not `tn_unaddressed`. That condition is added only once the column exists:
+    2a's first run comes before 2b, when there is no such row.
 - [x] **No index on `implicit`.** Decided from Q7 (production, 2026-10-27): 180,982 of
   5,158,594 memberships (3.5%) have `rippled = 1`, held by 24,530 users across 481 groups.
   - A flag that is 1 on 3.5% of rows is a poor index on its own. Every live read is already
@@ -742,19 +743,19 @@ counts by action, and the two Q6 counts. Decisions to check:
 - **With a membership, an addressed post since its `added` is consent** (2026-10-29), as it is
   to ingestion. An implicit membership, TN or ripple (either flag, for the pre-sync drift), is
   cleared through `RippleEngagementService::clear` with `consented through TrashNothing`. A
-  `tn_unaddressed` row that is not implicit stays ordinary. A post from before `added` came
-  before the current row (they left and were placed back), so it is not consent to it. Without
-  consent, a non-implicit `tn_unaddressed` row stays ordinary only with a "became ordinary"
-  log; otherwise it is made implicit. **Rule: when in doubt, restrict contact.**
+  post from before `added` came before the current row (they left and were placed back), so it
+  is not consent to it.
+- **An ordinary membership is never made implicit** (2026-10-29), whatever its origin. A
+  `tn_unaddressed` row with `implicit = 0` was cleared (TN's partner add clears one with no
+  post) or merged with a membership the member chose, and is left alone. This replaces "when in
+  doubt, restrict contact", which set such a row back unless a "became ordinary" log said
+  otherwise, and so re-flagged merged rows, which have no such log.
 - **Banned** (`users_banned`) and **deleted** (`users.deleted`) posters get no row, as ingestion
   refuses a banned one.
 - **A poster with no `tnuserid` gets no row** (added after Q12c): ingestion has resolved every
   poster through it since `1c7ac72deb`, and before that a post went to a stranger or a stub.
   The dry run lists them as `skip: poster has no tnuserid`, which should match Q14's
   stub / not-linked rows.
-- **A `tn_unaddressed` row with `implicit = 0`** is set back only when there is no "became
-  ordinary" log for the pair since its `added`. TN's partner add clears one with no post, so
-  the consent check alone would miss it.
 - **Contact today / per group** (reporting only). *Today* is the mixed-poster rule
   (`UsersUnaddressedOnly`): an addressed own-row post on **any** group opens **every** group's
   moderators. That is the bug Phase 5 removes, and the column describes it rather than
