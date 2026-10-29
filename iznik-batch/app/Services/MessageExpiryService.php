@@ -110,14 +110,12 @@ class MessageExpiryService
             // candidate query does. These are static properties of the post, so they
             // belong in the pass that runs once rather than in the one that runs per
             // chunk.
-            ->whereExists(fn ($q) => $q->selectRaw('1')
-                ->from('messages_groups')
+            ->whereExists(fn ($q) => $q->from('messages_groups')
                 ->whereColumn('messages_groups.msgid', 'messages.id')
                 ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
                 ->where('messages_groups.deleted', 0))
             // A deleted poster gets no mail and has nothing to extend or mark.
-            ->whereExists(fn ($q) => $q->selectRaw('1')
-                ->from('users')
+            ->whereExists(fn ($q) => $q->from('users')
                 ->whereColumn('users.id', 'messages.fromuser')
                 ->whereNull('users.deleted'))
             ->orderBy('messages.id')
