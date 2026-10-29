@@ -18,9 +18,9 @@ class ChaseUpPromised extends MjmlMailable implements DescribesMemberContent
     /**
      * Create a new message instance.
      *
-     * V1: Promised variant of the chase-up email. Large "Mark as TAKEN" button,
-     * then smaller Repost/Withdraw. Different wording: "You promised this to
-     * someone. If they've already collected it, please let us know."
+     * Promised variant of the chase-up email. Large "Mark as TAKEN" button,
+     * then smaller Repost/Withdraw. Names the member it was promised to, or
+     * "someone" when no name can be found.
      */
     public function __construct(
         public int $messageId,
@@ -30,6 +30,7 @@ class ChaseUpPromised extends MjmlMailable implements DescribesMemberContent
         public string $userName,
         public string $userEmail,
         public ?int $groupId = null,
+        public ?string $promisedTo = null,
     ) {
         parent::__construct();
 
@@ -55,6 +56,7 @@ class ChaseUpPromised extends MjmlMailable implements DescribesMemberContent
             ->mjmlView('emails.mjml.message.chaseup-promised', array_merge([
                 'userName' => $this->userName,
                 'messageSubject' => $this->messageSubject,
+                'promisedTo' => $this->promisedTo ?: 'someone',
                 'outcomeType' => $outcomeType,
                 'completedUrl' => $this->trackedUrl(
                     "{$userSite}/mypost/{$this->messageId}/completed",
@@ -70,11 +72,6 @@ class ChaseUpPromised extends MjmlMailable implements DescribesMemberContent
                     "{$userSite}/mypost/{$this->messageId}/withdraw",
                     'withdraw_button',
                     'withdraw'
-                ),
-                'myPostsUrl' => $this->trackedUrl(
-                    "{$userSite}/myposts",
-                    'myposts_link',
-                    'myposts'
                 ),
                 'settingsUrl' => $this->trackedUrl(
                     "{$userSite}/settings",
