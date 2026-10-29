@@ -3,22 +3,24 @@ import { mount, flushPromises } from '@vue/test-utils'
 import ModGroupSelect from '~/modtools/components/ModGroupSelect.vue'
 
 // Hoisted mocks - these must be defined before vi.mock calls
-const { mockMiscStore, mockModGroupStore, mockMe, mockMyGroups } = vi.hoisted(() => {
-  return {
-    mockMyGroups: { value: [] },
-    mockMiscStore: {
-      vals: {},
-      set: vi.fn(),
-      get: vi.fn().mockReturnValue(undefined),
-    },
-    mockModGroupStore: {
-      list: {},
-      allGroups: {},
-      received: true,
-    },
-    mockMe: { id: 123, displayname: 'Test User', systemrole: 'Moderator' },
+const { mockMiscStore, mockModGroupStore, mockMe, mockMyGroups } = vi.hoisted(
+  () => {
+    return {
+      mockMyGroups: { value: [] },
+      mockMiscStore: {
+        vals: {},
+        set: vi.fn(),
+        get: vi.fn().mockReturnValue(undefined),
+      },
+      mockModGroupStore: {
+        list: {},
+        allGroups: {},
+        received: true,
+      },
+      mockMe: { id: 123, displayname: 'Test User', systemrole: 'Moderator' },
+    }
   }
-})
+)
 
 // Mock stores
 vi.mock('~/stores/misc', () => ({
