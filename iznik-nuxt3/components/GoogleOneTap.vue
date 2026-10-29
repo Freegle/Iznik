@@ -1,25 +1,18 @@
 <template>
-  <div
-    v-if="show"
-    id="g_id_onload"
-    :data-client_id="clientId"
-    data-callback="handleGoogleCredentialsResponse"
-    data-auto_select="true"
-    data-use_fedcm_for_prompt="true"
-  />
+  <span class="d-none" />
 </template>
 <script setup>
 import { jwtDecode } from 'jwt-decode'
 import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 import { useRuntimeConfig } from '#app'
+import { initGoogleIdentity } from '~/composables/useGoogleIdentity'
 
 const emit = defineEmits(['complete', 'loggedin'])
 
 const authStore = useAuthStore()
 const runtimeConfig = useRuntimeConfig()
 
-const show = ref(false)
 const loginType = ref(null)
 const nativeLoginError = ref(null)
 const socialLoginError = ref(null)
@@ -69,9 +62,6 @@ const handleGoogleCredentialsResponse = async (response) => {
 }
 
 onMounted(() => {
-  // Assign the method to window for callback usage
-  window.handleGoogleCredentialsResponse = handleGoogleCredentialsResponse
-
   // Check if running in CircleCI environment and emit complete immediately
   const runtimeConfig = useRuntimeConfig()
   if (runtimeConfig.public.CIRCLECI) {
@@ -102,13 +92,8 @@ onMounted(() => {
       try {
         // GSI script was loaded in nuxt.config.js
         console.log('Set credentials response')
-        window.google.accounts.id.initialize({
-          client_id: clientId.value,
-          callback: handleGoogleCredentialsResponse,
-        })
+        initGoogleIdentity(clientId.value, handleGoogleCredentialsResponse)
 
-        console.log('Set show')
-        show.value = true
         try {
           window.google.accounts.id.prompt(() => {
             console.log('One Tap prompt returned')

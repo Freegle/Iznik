@@ -5,6 +5,7 @@ import LoginModal from '~/components/LoginModal.vue'
 import { SocialLogin } from '@capgo/capacitor-social-login'
 import * as Sentry from '@sentry/browser'
 import { LoginError, SignUpError } from '~/api/APIErrors'
+import { initGoogleIdentity } from '~/composables/useGoogleIdentity'
 
 // Mock defineAsyncComponent to return proper Vue components
 vi.mock('vue', async (importOriginal) => {
@@ -1348,6 +1349,20 @@ describe('LoginModal', () => {
       await vi.advanceTimersByTimeAsync(0)
       return wrapper
     }
+
+    // ModTools and the login page mount the modal after One Tap has set the
+    // library up; a second initialize() made Google warn on every visit.
+    it('draws its button without setting the library up again', async () => {
+      renderButtonThatWorks()
+      initGoogleIdentity('client-from-one-tap', vi.fn())
+      const { initialize } = global.window.google.accounts.id
+      expect(initialize).toHaveBeenCalledTimes(1)
+
+      await openWithGmail()
+
+      expect(initialize).toHaveBeenCalledTimes(1)
+      expect(global.window.google.accounts.id.renderButton).toHaveBeenCalled()
+    })
 
     it('retries the draw before giving up', async () => {
       await openWithGmail()

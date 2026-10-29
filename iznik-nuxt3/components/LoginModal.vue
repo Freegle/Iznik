@@ -274,6 +274,7 @@ import Api from '~/api'
 import { useMobileStore } from '@/stores/mobile' // APP
 import { useLoginTelemetry } from '~/composables/useLoginTelemetry'
 import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
+import { initGoogleIdentity } from '~/composables/useGoogleIdentity'
 
 const NoticeMessage = defineAsyncComponent(
   () => import('~/components/NoticeMessage')
@@ -1111,10 +1112,7 @@ function drawGoogleButton(attempt) {
 
 function installGoogleSDK() {
   if (window?.google?.accounts?.id) {
-    window.google.accounts.id.initialize({
-      client_id: clientId.value,
-      callback: handleGoogleCredentialsResponse,
-    })
+    initGoogleIdentity(clientId.value, handleGoogleCredentialsResponse)
   } else {
     const prev = window.onGoogleLibraryLoad
     window.onGoogleLibraryLoad = function () {

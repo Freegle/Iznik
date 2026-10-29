@@ -130,6 +130,12 @@ Three things make this worse than it sounds:
   declared, read in two computed properties, and assigned nowhere, so the "social sign in
   blocked" warning could not appear for Google however broken it was.
 
+- **Google's library takes its settings once per page.** A second `google.accounts.id.initialize()`
+  replaces the first, so One Tap's settings were lost whenever the login modal mounted after it, and
+  a `g_id_onload` element rendered after `initialize()` is a third set Google never read. Both
+  components go through `initGoogleIdentity` (`composables/useGoogleIdentity.js`), which sets it up
+  once with FedCM for the prompt and gives each credential to the handler that asked last.
+
 - **Waiting is not failing.** The script is deliberately held back until the browser is idle for
   a first-time visitor, so a retry loop that counts those ticks as attempts will report every
   slow visitor as broken. Only count an attempt when we actually asked.

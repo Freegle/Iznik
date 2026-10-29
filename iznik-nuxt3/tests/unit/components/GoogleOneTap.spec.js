@@ -60,6 +60,11 @@ describe('GoogleOneTap', () => {
     vi.unstubAllGlobals()
   })
 
+  // The callback Google is given: it hands Google's credential to the component.
+  function credentialCallback() {
+    return mockGoogle.accounts.id.initialize.mock.calls[0][0].callback
+  }
+
   function createWrapper() {
     return mount(GoogleOneTap, {
       global: {
@@ -73,46 +78,25 @@ describe('GoogleOneTap', () => {
   }
 
   describe('rendering', () => {
-    it('renders div with g_id_onload id when show is true', async () => {
+    // A g_id_onload element is Google's HTML way to set the library up. One
+    // rendered after initialize() is a second, conflicting set of settings.
+    it('renders no g_id_onload element', async () => {
       const wrapper = createWrapper()
       await flushPromises()
 
-      expect(wrapper.find('#g_id_onload').exists()).toBe(true)
-    })
-
-    it('passes client ID as data attribute', async () => {
-      const wrapper = createWrapper()
-      await flushPromises()
-
-      const div = wrapper.find('#g_id_onload')
-      expect(div.attributes('data-client_id')).toBe('test-client-id')
-    })
-
-    it('sets auto_select to true', async () => {
-      const wrapper = createWrapper()
-      await flushPromises()
-
-      const div = wrapper.find('#g_id_onload')
-      expect(div.attributes('data-auto_select')).toBe('true')
-    })
-
-    it('sets use_fedcm_for_prompt to true', async () => {
-      const wrapper = createWrapper()
-      await flushPromises()
-
-      const div = wrapper.find('#g_id_onload')
-      expect(div.attributes('data-use_fedcm_for_prompt')).toBe('true')
+      expect(wrapper.find('#g_id_onload').exists()).toBe(false)
     })
   })
 
   describe('Google SDK initialization', () => {
-    it('initializes Google SDK on mount', async () => {
+    it('initializes Google SDK on mount, with FedCM for the prompt', async () => {
       createWrapper()
       await flushPromises()
 
       expect(mockGoogle.accounts.id.initialize).toHaveBeenCalledWith({
         client_id: 'test-client-id',
         callback: expect.any(Function),
+        use_fedcm_for_prompt: true,
       })
     })
 
@@ -154,18 +138,11 @@ describe('GoogleOneTap', () => {
   })
 
   describe('credential response handling', () => {
-    it('assigns handler to window on mount', async () => {
-      createWrapper()
-      await flushPromises()
-
-      expect(window.handleGoogleCredentialsResponse).toBeDefined()
-    })
-
     it('calls authStore.login with credential', async () => {
       createWrapper()
       await flushPromises()
 
-      await window.handleGoogleCredentialsResponse({
+      await credentialCallback()({
         credential: 'test-jwt-token',
       })
 
@@ -179,7 +156,7 @@ describe('GoogleOneTap', () => {
       const wrapper = createWrapper()
       await flushPromises()
 
-      await window.handleGoogleCredentialsResponse({
+      await credentialCallback()({
         credential: 'test-jwt-token',
       })
 
@@ -192,7 +169,7 @@ describe('GoogleOneTap', () => {
 
       mockAuthStore.loggedIn = true
 
-      await window.handleGoogleCredentialsResponse({
+      await credentialCallback()({
         credential: 'test-jwt-token',
       })
 
