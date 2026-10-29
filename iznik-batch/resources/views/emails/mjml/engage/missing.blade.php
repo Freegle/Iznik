@@ -43,24 +43,22 @@
     <mj-section background-color="#F7F6EC" padding="0 0 25px">
       <mj-column>
         <mj-button
-          mj-class="btn-warning"
+          mj-class="btn-warning btn-group"
           href="{{ $userSite }}/engage?engageid={{ $engageId }}&action=ask"
           border-radius="3px"
           font-size="15px"
           font-weight="bold"
-          padding="12px 25px"
         >
           WANT something?
         </mj-button>
       </mj-column>
       <mj-column>
         <mj-button
-          mj-class="btn-success"
+          mj-class="btn-success btn-group"
           href="{{ $userSite }}/engage?engageid={{ $engageId }}&action=give"
           border-radius="3px"
           font-size="15px"
           font-weight="bold"
-          padding="12px 25px"
         >
           OFFER something?
         </mj-button>

@@ -13,7 +13,7 @@
                     Dear {{ $user->displayname ?? 'there' }},
                 </mj-text>
                 <mj-text>
-                    Your post "<strong>{{ $post->subject }}</strong>" has now reached the deadline you set.
+                    Your post "<strong>{{ $post->subject }}</strong>" has now reached the deadline you set{{ !empty($deadlineDate) ? ', ' . $deadlineDate : '' }}.
                 </mj-text>
             </mj-column>
         </mj-section>
@@ -28,17 +28,17 @@
 
         <mj-section background-color="#ffffff" padding="10px 20px">
             <mj-column width="33%">
-                <mj-button href="{{ $extendUrl }}" mj-class="btn-secondary" border-radius="3px" font-size="14px">
+                <mj-button href="{{ $extendUrl }}" mj-class="btn-secondary btn-group" border-radius="3px" font-size="14px">
                     Extend Deadline
                 </mj-button>
             </mj-column>
             <mj-column width="33%">
-                <mj-button href="{{ $completedUrl }}" mj-class="btn-success" border-radius="3px" font-size="14px">
+                <mj-button href="{{ $completedUrl }}" mj-class="btn-success btn-group" border-radius="3px" font-size="14px">
                     Mark as {{ ucfirst($outcomeType) }}
                 </mj-button>
             </mj-column>
             <mj-column width="33%">
-                <mj-button href="{{ $withdrawUrl }}" mj-class="btn-dark" border-radius="3px" font-size="14px">
+                <mj-button href="{{ $withdrawUrl }}" mj-class="btn-dark btn-group" border-radius="3px" font-size="14px">
                     Withdraw
                 </mj-button>
             </mj-column>
@@ -64,7 +64,7 @@
             <mj-column>
                 <mj-divider border-color="#eeeeee" />
                 <mj-text font-size="12px" color="#666666">
-                    This message was sent because your post on {{ $groupName }} reached the deadline you set.
+                    This message was sent because your post on {{ $groupName }} reached the deadline you set{{ !empty($deadlineDate) ? ', ' . $deadlineDate : '' }}.
                 </mj-text>
             </mj-column>
         </mj-section>

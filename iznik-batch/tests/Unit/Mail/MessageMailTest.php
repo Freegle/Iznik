@@ -312,7 +312,7 @@ class MessageMailTest extends TestCase
         return $prop->getValue($mail);
     }
 
-    private function renderDeadline(string $type): string
+    private function renderDeadline(string $type, ?string $deadlineDate = '28 October'): string
     {
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -329,6 +329,7 @@ class MessageMailTest extends TestCase
             'user'         => $user,
             'outcomeType'  => $mail->outcomeType,
             'isOffer'      => $type === Message::TYPE_OFFER,
+            'deadlineDate' => $deadlineDate,
             'groupName'    => $group->nameshort,
             'extendUrl'    => 'https://example.com/extend',
             'completedUrl' => 'https://example.com/completed',
@@ -359,6 +360,32 @@ class MessageMailTest extends TestCase
         $this->assertStringContainsString('Tell us you have received it', $html);
         $this->assertStringContainsString('no longer looking for it', $html);
         $this->assertStringContainsString('Mark as Received', $html);
+    }
+
+    public function test_deadline_reached_gives_the_deadline_date(): void
+    {
+        $html = $this->renderDeadline(Message::TYPE_OFFER, '28 October');
+
+        $this->assertStringContainsString('reached the deadline you set, 28 October.', $html);
+    }
+
+    public function test_deadline_reached_without_a_date_keeps_the_plain_wording(): void
+    {
+        $html = $this->renderDeadline(Message::TYPE_OFFER, null);
+
+        $this->assertStringContainsString('reached the deadline you set.', $html);
+        $this->assertStringNotContainsString('you set,', $html);
+    }
+
+    public function test_deadline_reached_build_passes_the_deadline_as_day_and_month(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $message = $this->createTestMessage($user, $group);
+        $message->deadline = '2026-10-28';
+
+        $this->assertSame('28 October', $this->mjmlData(new DeadlineReached($message, $user))['deadlineDate']);
     }
 
     public function test_deadline_reached_build_passes_is_offer(): void

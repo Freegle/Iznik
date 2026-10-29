@@ -23,12 +23,12 @@
 
         <mj-section background-color="#ffffff" padding="10px 20px">
             <mj-column width="50%">
-                <mj-button href="{{ $completedUrl }}" mj-class="btn-success" border-radius="3px" font-size="14px">
+                <mj-button href="{{ $completedUrl }}" mj-class="btn-success btn-group" border-radius="3px" font-size="14px">
                     Mark as {{ $outcomeType }}
                 </mj-button>
             </mj-column>
             <mj-column width="50%">
-                <mj-button href="{{ $withdrawUrl }}" mj-class="btn-dark" border-radius="3px" font-size="14px">
+                <mj-button href="{{ $withdrawUrl }}" mj-class="btn-dark btn-group" border-radius="3px" font-size="14px">
                     Withdraw
                 </mj-button>
             </mj-column>
