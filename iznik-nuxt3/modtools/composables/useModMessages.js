@@ -36,6 +36,13 @@ const nextAfterRemoved = ref(null)
 
 const distance = ref(10)
 
+// The Pending page's "Hide held posts" switch. It lives here, with
+// the rest of the shared list state, so the list and the page agree on it. It
+// is deliberately NOT cleared by setupModMessages(true): the page sets it from
+// the moderator's remembered choice. Hiding is done on the client from the
+// posts already loaded; the server counts and the badge are untouched.
+const hideHeld = ref(false)
+
 // Holds a workdetail refresh that arrived while a modal was open (e.g. a
 // moderator typing a rejection reason). The list is NOT refreshed while a modal
 // is open — re-rendering would unmount the modal and lose the draft — so the
@@ -155,11 +162,51 @@ const messages = computed(() => {
   return messages
 })
 
+// The copy of the post the card is administered on: the community picked in the
+// dropdown, else the first copy awaiting a decision on a community I moderate
+// (the same pick ModMessage.vue's currentGroupid makes).
+function administeredCopy(m) {
+  if (!m.groups?.length) return null
+  const contextGid = groupid.value ? parseInt(groupid.value) : null
+  if (contextGid) {
+    return m.groups.find((g) => parseInt(g.groupid) === contextGid) || null
+  }
+  const authStore = useAuthStore()
+  const moderates = (gid) =>
+    typeof authStore?.member !== 'function' ||
+    ['Moderator', 'Owner'].includes(authStore.member(gid))
+  return (
+    m.groups.find(
+      (g) =>
+        ['Pending', 'PendingOther', 'Spam'].includes(g.collection) &&
+        moderates(g.groupid)
+    ) || m.groups[0]
+  )
+}
+
+// heldby is a user id from the Go API and an object from the PHP API.
+function heldById(copy) {
+  const h = copy?.heldby
+  if (!h) return null
+  return Number.isInteger(h) ? h : h.id
+}
+
+// Loaded posts the switch hides: every post that is held, whoever holds it.
+const hiddenHeldMessages = computed(() => {
+  if (!hideHeld.value) return []
+  return messages.value.filter((m) => heldById(administeredCopy(m)))
+})
+
+const hiddenHeldCount = computed(() => hiddenHeldMessages.value.length)
+
 const visibleMessages = computed(() => {
   const msgs = messages.value
   // console.log('---visibleMessages', show.value, msgs?.length)
   if (show.value === 0 || !msgs || msgs.length === 0) return []
-  return msgs.slice(0, show.value)
+  const shown = msgs.slice(0, show.value)
+  if (!hiddenHeldMessages.value.length) return shown
+  const hidden = new Set(hiddenHeldMessages.value.map((m) => m.id))
+  return shown.filter((m) => !hidden.has(m.id))
 })
 
 export function setupModMessages(reset) {
@@ -415,6 +462,8 @@ export function setupModMessages(reset) {
     listingIds,
     listingIdOrder,
     visibleMessages,
+    hideHeld,
+    hiddenHeldCount,
     work,
     getMessages,
   }

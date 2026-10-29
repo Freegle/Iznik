@@ -101,10 +101,6 @@
             <!-- Location filter -->
             <div class="filter-section">
               <div class="filter-row">
-                <div v-if="areaname" class="location-display">
-                  <v-icon icon="map-marker-alt" class="location-icon" />
-                  <span>{{ areaname }}</span>
-                </div>
                 <DistanceSliderRow
                   id="chitchat-distance"
                   axis="chitchat"
@@ -202,7 +198,6 @@ import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { buildHead } from '~/composables/useBuildHead'
 import { useMiscStore } from '~/stores/misc'
 import { useNewsfeedStore } from '~/stores/newsfeed'
-import { useLocationStore } from '~/stores/location'
 import { useTeamStore } from '~/stores/team'
 import NewsCommunityEventVolunteerSummary from '~/components/NewsCommunityEventVolunteerSummary'
 import { useMe } from '~/composables/useMe'
@@ -267,7 +262,6 @@ useHead(
 // Store setup
 const miscStore = useMiscStore()
 const newsfeedStore = useNewsfeedStore()
-const locationStore = useLocationStore()
 const teamStore = useTeamStore()
 
 // We want this to be our next home page.
@@ -323,9 +317,6 @@ const threadhead = ref(null)
 const loadingThread = ref(false)
 const infiniteId = ref(new Date().getTime())
 const giveAsk = ref(null)
-
-const areaname = ref(me.value?.settings?.mylocation?.area?.name)
-const areaid = computed(() => me.value?.settings?.mylocation?.areaid)
 
 // The travel-time slider (DistanceSliderRow axis="chitchat") owns writes: it
 // persists the minutes plus the derived crow radius into newsfeedarea, which
@@ -658,18 +649,9 @@ watch(allNewsletters, async () => {
   await areaChange()
 })
 
-// Initialize location data if needed
-const initializeLocation = async () => {
-  if (!areaname.value && areaid.value) {
-    const loc = await locationStore.fetchv2(areaid.value)
-    areaname.value = loc.name
-  }
-}
-
 // Lifecycle hooks
 onMounted(() => {
   runCheck()
-  initializeLocation()
 
   // Start 30s timer to mark as seen. The baseline snapshot itself happens
   // before the fetch dispatch below - on every view, not just the feed - so
@@ -932,18 +914,6 @@ if (me.value) {
   width: min(26rem, 100%);
 }
 
-.location-display {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  font-size: 0.9rem;
-  color: $color-gray--darker;
-
-  .location-icon {
-    color: $color-green-background;
-  }
-}
-
 .filter-select {
   flex: 1;
   min-width: 150px;
@@ -964,6 +934,42 @@ if (me.value) {
   font-size: 0.9rem;
   color: $color-gray--darker;
   white-space: nowrap;
+}
+
+// On a phone the composer and the distance filter took most of the first screen
+// before any post showed, so tighten their padding and gaps there.
+@include media-breakpoint-down(md) {
+  .composer-header {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .composer-content {
+    padding: 0.5rem 0.75rem 0.625rem;
+  }
+
+  .composer-textarea {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .composer-actions {
+    margin-top: 0.5rem;
+  }
+
+  .action-btn {
+    padding: 0.4rem 0.875rem;
+  }
+
+  .composer-hint {
+    margin-top: 0.375rem;
+  }
+
+  .filter-section {
+    padding: 0.375rem 0.75rem 0.5rem;
+  }
+
+  .filter-row {
+    row-gap: 0.125rem;
+  }
 }
 
 // Events section

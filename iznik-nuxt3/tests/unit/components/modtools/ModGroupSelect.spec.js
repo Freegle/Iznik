@@ -3,21 +3,24 @@ import { mount, flushPromises } from '@vue/test-utils'
 import ModGroupSelect from '~/modtools/components/ModGroupSelect.vue'
 
 // Hoisted mocks - these must be defined before vi.mock calls
-const { mockMiscStore, mockModGroupStore, mockMe } = vi.hoisted(() => {
-  return {
-    mockMiscStore: {
-      vals: {},
-      set: vi.fn(),
-      get: vi.fn().mockReturnValue(undefined),
-    },
-    mockModGroupStore: {
-      list: {},
-      allGroups: {},
-      received: true,
-    },
-    mockMe: { id: 123, displayname: 'Test User', systemrole: 'Moderator' },
+const { mockMiscStore, mockModGroupStore, mockMe, mockMyGroups } = vi.hoisted(
+  () => {
+    return {
+      mockMyGroups: { value: [] },
+      mockMiscStore: {
+        vals: {},
+        set: vi.fn(),
+        get: vi.fn().mockReturnValue(undefined),
+      },
+      mockModGroupStore: {
+        list: {},
+        allGroups: {},
+        received: true,
+      },
+      mockMe: { id: 123, displayname: 'Test User', systemrole: 'Moderator' },
+    }
   }
-})
+)
 
 // Mock stores
 vi.mock('~/stores/misc', () => ({
@@ -32,6 +35,7 @@ vi.mock('@/stores/modgroup', () => ({
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: { value: mockMe },
+    myGroups: mockMyGroups,
   }),
 }))
 
@@ -115,6 +119,7 @@ describe('ModGroupSelect', () => {
     mockMiscStore.get.mockReturnValue(undefined)
     // Reset me to default moderator role
     mockMe.systemrole = 'Moderator'
+    mockMyGroups.value = []
   })
 
   describe('Rendering', () => {
@@ -271,6 +276,25 @@ describe('ModGroupSelect', () => {
       expect(groupNames).toContain('Beta Group')
       expect(groupNames).toContain('Delta Group')
       expect(groupNames).not.toContain('Gamma Group') // Member role
+    })
+
+    it('lists a group cached with no role when our memberships say we moderate it', () => {
+      // Opened by link while logged out, the group was cached before the
+      // memberships arrived, so it has no role of its own.
+      mockModGroupStore.list = {
+        6: { id: 6, namedisplay: 'Linked Group' },
+        7: { id: 7, namedisplay: 'Someone Else Group' },
+      }
+      mockMyGroups.value = [
+        { id: 6, role: 'Moderator' },
+        { id: 7, role: 'Member' },
+      ]
+      const wrapper = mountComponent({ modonly: true, modelValue: 6 })
+      const groupNames = wrapper.vm.groupOptions.map((o) => o.text)
+
+      expect(groupNames).toContain('Linked Group')
+      expect(groupNames).not.toContain('Someone Else Group')
+      expect(wrapper.find('select').element.value).toBe('6')
     })
 
     it('includes all roles when modonly is false', () => {

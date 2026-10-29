@@ -32,6 +32,8 @@
     <mj-class name="btn-success" background-color="#338808" color="white" font-weight="bold" />
     <mj-class name="btn-secondary" background-color="#00A1CB" color="white" font-weight="bold" />
     <mj-class name="btn-dark" background-color="#333333" color="white" font-weight="bold" />
+    {{-- Buttons grouped in a row: same width (their column) and same height, whatever the label. --}}
+    <mj-class name="btn-group" width="100%" height="44px" padding="10px 8px" />
     <mj-class name="btn-warning" background-color="#e38d13" color="white" font-weight="bold" />
     {{-- ModTools brand colors --}}
     <mj-class name="bg-modtools" background-color="#396aa3" />

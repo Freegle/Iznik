@@ -11,7 +11,10 @@
       <!--NoticeMessage variant="info" class="mb-2 d-block d-md-none">
         <ModZoomStock color-class="text-black" />
       </NoticeMessage-->
-      <div class="d-flex justify-content-between">
+      <div
+        class="d-flex flex-wrap align-items-center column-gap-3 row-gap-1"
+        data-test="pending-controls"
+      >
         <ModGroupSelect
           v-model="groupid"
           all
@@ -20,8 +23,29 @@
           :remember="REMEMBER_KEY"
           :url-override="urlOverride"
         />
+        <div class="d-flex flex-wrap align-items-center column-gap-2 mt-2">
+          <b-form-checkbox
+            :model-value="hideHeld"
+            switch
+            class="mb-0"
+            data-test="hide-held-switch"
+            @update:model-value="setHideHeld"
+          >
+            Hide held posts
+          </b-form-checkbox>
+          <span
+            v-if="hideHeld && hiddenHeldCount > 0"
+            class="text-muted"
+            data-test="hidden-held-count"
+          >
+            {{ hiddenHeldCount }} held
+            {{ hiddenHeldCount === 1 ? 'post' : 'posts' }} hidden
+          </span>
+        </div>
         <ModtoolsViewControl misckey="modtoolsMessagesPendingSummary" />
-        <b-button variant="link" @click="loadAll"> Load all </b-button>
+        <b-button variant="link" class="ms-auto" @click="loadAll">
+          Load all
+        </b-button>
       </div>
       <NoticeMessage v-if="loadError" variant="warning" class="mt-2">
         <p>We couldn't fetch the pending messages just now.</p>
@@ -102,9 +126,34 @@ const {
   messages,
   listingIds,
   visibleMessages,
+  hideHeld,
+  hiddenHeldCount,
   nextAfterRemoved,
   getMessages,
 } = setupModMessages(true)
+
+// The "Hide held posts" choice is remembered per browser. Storage can
+// be empty, full or blocked (private windows), so every access is guarded and
+// the page works with the switch off when it fails.
+const HIDE_HELD_KEY = 'modtools-pending-hide-held'
+
+function readHideHeld() {
+  try {
+    return localStorage.getItem(HIDE_HELD_KEY) === 'true'
+  } catch (e) {
+    return false
+  }
+}
+
+function setHideHeld(value) {
+  hideHeld.value = Boolean(value)
+
+  try {
+    localStorage.setItem(HIDE_HELD_KEY, String(Boolean(value)))
+  } catch (e) {
+    // Not remembered; the switch still works for this visit.
+  }
+}
 
 // ModGroupSelect stores the chosen community under 'groupselect-' + remember.
 // We need the same key to forget it again - see showAllCommunities().
@@ -255,6 +304,8 @@ watch(visibleMessages, (newVal) => {
 
 // Lifecycle
 onMounted(async () => {
+  hideHeld.value = readHideHeld()
+
   // Read group from route params (e.g. /messages/pending/456).
   if (id.value) {
     groupid.value = id.value
@@ -414,5 +465,8 @@ defineExpose({
   loadAll,
   destroy,
   loadMore,
+  hideHeld,
+  hiddenHeldCount,
+  setHideHeld,
 })
 </script>
