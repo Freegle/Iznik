@@ -430,6 +430,22 @@ class MessageMailTest extends TestCase
         $this->assertStringNotContainsString('your message', $html);
     }
 
+    public function test_autorepost_warning_preheader_gives_the_repost_day(): void
+    {
+        $this->assertStringContainsString(
+            '<mj-preview>Will repost on Saturday 31 October: OFFER: Garden Tools (Manchester)',
+            $this->renderWarning('2026-10-31')
+        );
+    }
+
+    public function test_autorepost_warning_preheader_says_soon_without_a_date(): void
+    {
+        $this->assertStringContainsString(
+            '<mj-preview>Will repost soon: OFFER: Garden Tools (Manchester)',
+            $this->renderWarning(null)
+        );
+    }
+
     public function test_autorepost_warning_says_soon_without_a_date(): void
     {
         $html = $this->renderWarning(null);
