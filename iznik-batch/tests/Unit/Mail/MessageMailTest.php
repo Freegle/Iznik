@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Mail;
 
+use App\Mail\Message\AutoRepostWarning;
+use App\Mail\Message\ChaseUp;
 use App\Mail\Message\DeadlineReached;
 use App\Models\Message;
 use App\Models\MessageGroup;
@@ -314,5 +316,84 @@ class MessageMailTest extends TestCase
             $html,
             'mod-std-message preheader must contain the start of the body text'
         );
+    }
+
+    /**
+     * The tracked link carries its destination base64-encoded, so this is how the promise
+     * link appears in a rendered mail.
+     */
+    private function promiseLinkToken(): string
+    {
+        return rawurlencode(base64_encode(config('freegle.sites.user') . '/mypost/123/promise'));
+    }
+
+    private function renderAutoRepostWarning(string $type): string
+    {
+        return (new AutoRepostWarning(
+            messageId: 123,
+            messageSubject: ($type === Message::TYPE_OFFER ? 'OFFER' : 'WANTED') . ': Garden Tools (Manchester)',
+            messageType: $type,
+            userId: 456,
+            userName: 'Alice',
+            userEmail: 'alice@example.com',
+            groupId: 789,
+        ))->render();
+    }
+
+    private function renderChaseUp(string $type): string
+    {
+        return (new ChaseUp(
+            messageId: 123,
+            messageSubject: ($type === Message::TYPE_OFFER ? 'OFFER' : 'WANTED') . ': Oak Bookcase (Leeds)',
+            messageType: $type,
+            userId: 456,
+            userName: 'Bob',
+            userEmail: 'bob@example.com',
+            groupId: 789,
+        ))->render();
+    }
+
+    public function test_autorepost_warning_offer_has_promise_button(): void
+    {
+        $html = $this->renderAutoRepostWarning(Message::TYPE_OFFER);
+
+        $this->assertStringContainsString('Mark as Promised', $html);
+        $this->assertStringContainsString('Mark as Taken', $html);
+        $this->assertStringContainsString($this->promiseLinkToken(), $html);
+        $this->assertStringContainsString('p=promise_button', $html);
+    }
+
+    public function test_autorepost_warning_wanted_has_no_promise_button_or_sentence(): void
+    {
+        $html = $this->renderAutoRepostWarning(Message::TYPE_WANTED);
+
+        $this->assertStringNotContainsString('Mark as Promised', $html);
+        $this->assertStringNotContainsString('Promised', $html);
+        $this->assertStringNotContainsString($this->promiseLinkToken(), $html);
+        $this->assertStringNotContainsString('promise_button', $html);
+        $this->assertStringContainsString('Mark as Received', $html);
+    }
+
+    public function test_chaseup_offer_has_promise_button(): void
+    {
+        $html = $this->renderChaseUp(Message::TYPE_OFFER);
+
+        $this->assertStringContainsString('Mark as Promised', $html);
+        $this->assertStringContainsString($this->promiseLinkToken(), $html);
+        $this->assertStringContainsString('p=promise_button', $html);
+        $this->assertStringContainsString('Mark as Taken', $html);
+        $this->assertStringContainsString('Repost', $html);
+        $this->assertStringContainsString('Withdraw', $html);
+    }
+
+    public function test_chaseup_wanted_has_no_promise_button(): void
+    {
+        $html = $this->renderChaseUp(Message::TYPE_WANTED);
+
+        $this->assertStringNotContainsString('Mark as Promised', $html);
+        $this->assertStringNotContainsString('Promised', $html);
+        $this->assertStringNotContainsString($this->promiseLinkToken(), $html);
+        $this->assertStringNotContainsString('promise_button', $html);
+        $this->assertStringContainsString('Mark as Received', $html);
     }
 }
