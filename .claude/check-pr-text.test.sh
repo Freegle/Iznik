@@ -12,6 +12,9 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 G="gh"; PRC="$G pr create"
 pass=0; fail=0
 
+# CHECK_PR_FILES tells check 7 which files the PR changes, so no test depends on
+# the branch the harness happens to run on. Empty means "no files".
+: "${CHECK_PR_FILES=}"; export CHECK_PR_FILES
 run() { printf '%s' "$(jq -nc --arg c "$1" '{tool_input:{command:$c}}')" | "$HOOK" >/dev/null 2>"$TMP/err"; echo $?; }
 
 check() { # name  want_exit  command  [must_contain]
@@ -84,6 +87,54 @@ check "counts caught" 2 "$PRC --base master --head x --title t --body-file $TMP/
 
 printf 'I then discovered the cause and eventually fixed it.\n' > "$TMP/narr.md"
 check "narrative caught" 2 "$PRC --base master --head x --title t --body-file $TMP/narr.md" "narrative"
+
+echo
+echo "== a visible change needs a screenshot =="
+printf 'The checkbox now sits inside the member card.\n' > "$TMP/visual.md"
+VUE=$'iznik-nuxt3/modtools/components/ModMember.vue\niznik-nuxt3/tests/unit/components/modtools/ModMembersBulk.spec.js'
+CHECK_PR_FILES="$VUE" check "component change with no image blocked" 2 \
+  "$PRC --base master --head x --title t --body-file $TMP/visual.md" "description has no"
+CHECK_PR_FILES="iznik-nuxt3/pages/chitchat/[[id]].vue" check "page change with no image blocked" 2 \
+  "$PRC --base master --head x --title t --body-file $TMP/visual.md" "screenshot"
+CHECK_PR_FILES="iznik-batch/resources/views/emails/mjml/message/chaseup.blade.php" check "mail template change with no image blocked" 2 \
+  "$PRC --base master --head x --title t --body-file $TMP/visual.md" "MJML"
+CHECK_PR_FILES="iznik-nuxt3/assets/css/buttons.scss" check "stylesheet change with no image blocked" 2 \
+  "$PRC --base master --head x --title t --body-file $TMP/visual.md" "screenshot"
+CHECK_PR_FILES="$VUE" check "edit with a body is checked too" 2 \
+  "$G pr edit 1936 --body-file $TMP/visual.md" "screenshot"
+
+printf 'The checkbox now sits inside the member card.\n\n![after](https://raw.githubusercontent.com/Freegle/Iznik/pr-assets/x/after.png)\n' > "$TMP/visual-img.md"
+CHECK_PR_FILES="$VUE" check "markdown image satisfies it" 0 \
+  "$PRC --base master --head x --title t --body-file $TMP/visual-img.md"
+printf 'The checkbox now sits inside the member card.\n\nhttps://github.com/user-attachments/assets/0f1e2d3c-aaaa-bbbb-cccc-000000000000\n' > "$TMP/visual-att.md"
+CHECK_PR_FILES="$VUE" check "GitHub attachment satisfies it" 0 \
+  "$PRC --base master --head x --title t --body-file $TMP/visual-att.md"
+printf 'The checkbox now sits inside the member card.\n\n<img src=\"https://raw.githubusercontent.com/Freegle/Iznik/pr-assets/x/after.png\" width=\"400\">\n' > "$TMP/visual-tag.md"
+CHECK_PR_FILES="$VUE" check "img tag satisfies it" 0 \
+  "$PRC --base master --head x --title t --body-file $TMP/visual-tag.md"
+CHECK_PR_FILES="$VUE" check "override without a reason in the body blocked" 2 \
+  "PR_NO_SCREENSHOT_OK=1 $PRC --base master --head x --title t --body-file $TMP/visual.md" "does not"
+printf 'The checkbox now sits inside the member card.\n\nNo screenshot: only a test id changed, nothing rendered moves.\n' > "$TMP/visual-reason.md"
+CHECK_PR_FILES="$VUE" check "override with a stated reason works" 0 \
+  "PR_NO_SCREENSHOT_OK=1 $PRC --base master --head x --title t --body-file $TMP/visual-reason.md"
+printf -- '- No screenshot, the change is a variable rename.\n' > "$TMP/visual-reason2.md"
+CHECK_PR_FILES="$VUE" check "reason as a bullet also works" 0 \
+  "PR_NO_SCREENSHOT_OK=1 $PRC --base master --head x --title t --body-file $TMP/visual-reason2.md"
+
+NOTVIS=$'iznik-nuxt3/composables/useChat.js\niznik-nuxt3/tests/unit/components/ChatFooter.spec.js\niznik-server-go/chat/chat.go\niznik-batch/resources/views/emails/text/message/chaseup.blade.php\niznik-nuxt3/stores/chat.js'
+CHECK_PR_FILES="$NOTVIS" check "no visible file, no image needed" 0 \
+  "$PRC --base master --head x --title t --body-file $TMP/visual.md"
+CHECK_PR_FILES="iznik-nuxt3/tests/e2e/pages/give.spec.js" check "a spec under a pages dir is not visible" 0 \
+  "$PRC --base master --head x --title t --body-file $TMP/visual.md"
+
+# With CHECK_PR_FILES unset the hook has to resolve the branch itself. A head
+# that does not exist anywhere must block, not pass as "no visible files".
+SAVED_FILES="$CHECK_PR_FILES"; unset CHECK_PR_FILES
+check "unresolvable --head blocks rather than passing" 2 \
+  "$PRC --base master --head no-such-branch-zzz --title t --body-file $TMP/visual.md" "cannot list the files"
+check "unresolvable --head with the override and a reason passes" 0 \
+  "PR_NO_SCREENSHOT_OK=1 $PRC --base master --head no-such-branch-zzz --title t --body-file $TMP/visual-reason.md"
+export CHECK_PR_FILES="$SAVED_FILES"
 
 echo
 echo "== must not fire =="
