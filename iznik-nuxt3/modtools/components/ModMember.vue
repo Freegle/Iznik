@@ -616,4 +616,11 @@ async function unban() {
 .text-link {
   color: var(--color-link);
 }
+
+/* The select checkbox comes from the parent through a slot, so reach it with
+   :deep. Bootstrap's default border is a faint grey that disappears against
+   the card header, so give the unticked box a clear dark border. */
+.member-card :deep(.bulk-check .form-check-input:not(:checked)) {
+  border: 2px solid #495057;
+}
 </style>
