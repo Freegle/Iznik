@@ -13,24 +13,24 @@
                     Dear {{ $userName ?? 'there' }},
                 </mj-text>
                 <mj-text font-size="16px" line-height="1.6">
-                    Please click one of the following buttons to let us know what happened to your message <strong>{{ $messageSubject }}</strong>:
+                    Please click one of the following buttons to let us know what happened to your post <strong>{{ $messageSubject }}</strong>:
                 </mj-text>
             </mj-column>
         </mj-section>
 
         <mj-section background-color="#ffffff" padding="10px 20px">
             <mj-column width="33%">
-                <mj-button href="{{ $repostUrl }}" mj-class="btn-success" border-radius="3px" font-size="14px">
+                <mj-button href="{{ $repostUrl }}" mj-class="btn-success btn-group" border-radius="3px" font-size="14px">
                     Repost
                 </mj-button>
             </mj-column>
             <mj-column width="33%">
-                <mj-button href="{{ $completedUrl }}" mj-class="btn-secondary" border-radius="3px" font-size="14px">
+                <mj-button href="{{ $completedUrl }}" mj-class="btn-secondary btn-group" border-radius="3px" font-size="14px">
                     Mark as {{ $outcomeType }}
                 </mj-button>
             </mj-column>
             <mj-column width="33%">
-                <mj-button href="{{ $withdrawUrl }}" mj-class="btn-dark" border-radius="3px" font-size="14px">
+                <mj-button href="{{ $withdrawUrl }}" mj-class="btn-dark btn-group" border-radius="3px" font-size="14px">
                     Withdraw
                 </mj-button>
             </mj-column>

@@ -551,6 +551,7 @@ class ChaseUpService
                         userName: $user->displayname,
                         userEmail: $user->email_preferred,
                         groupId: $group->id,
+                        promisedTo: $this->promiseeName($msg->msgid),
                     )
                     : new ChaseUpMail(
                         messageId: $msg->msgid,
@@ -760,4 +761,24 @@ class ChaseUpService
             ->exists();
     }
 
+    /**
+     * Display name of the member the post was most recently promised to, or null when
+     * there is no promise or no name can be found.
+     */
+    protected function promiseeName(int $msgid): ?string
+    {
+        $userid = DB::table('messages_promises')
+            ->where('msgid', $msgid)
+            ->orderByDesc('promisedat')
+            ->orderByDesc('id')
+            ->value('userid');
+
+        if (!$userid) {
+            return null;
+        }
+
+        $name = trim((string) User::find($userid)?->displayname);
+
+        return $name !== '' ? $name : null;
+    }
 }
