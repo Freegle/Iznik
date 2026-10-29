@@ -23,6 +23,23 @@
         <ModtoolsViewControl misckey="modtoolsMessagesPendingSummary" />
         <b-button variant="link" @click="loadAll"> Load all </b-button>
       </div>
+      <div class="d-flex flex-wrap align-items-center mt-2">
+        <b-form-checkbox
+          :model-value="hideHeldByOthers"
+          switch
+          data-test="hide-held-switch"
+          @update:model-value="setHideHeld"
+        >
+          Hide posts held by others
+        </b-form-checkbox>
+        <span
+          v-if="hideHeldByOthers && hiddenHeldCount > 0"
+          class="ms-3 text-muted"
+          data-test="hidden-held-count"
+        >
+          {{ hiddenHeldCount }} held by others hidden
+        </span>
+      </div>
       <NoticeMessage v-if="loadError" variant="warning" class="mt-2">
         <p>We couldn't fetch the pending messages just now.</p>
         <b-button variant="primary" @click="retryLoad"> Try again </b-button>
@@ -102,9 +119,34 @@ const {
   messages,
   listingIds,
   visibleMessages,
+  hideHeldByOthers,
+  hiddenHeldCount,
   nextAfterRemoved,
   getMessages,
 } = setupModMessages(true)
+
+// The "Hide posts held by others" choice is remembered per browser. Storage can
+// be empty, full or blocked (private windows), so every access is guarded and
+// the page works with the switch off when it fails.
+const HIDE_HELD_KEY = 'modtools-pending-hide-held-by-others'
+
+function readHideHeld() {
+  try {
+    return localStorage.getItem(HIDE_HELD_KEY) === 'true'
+  } catch (e) {
+    return false
+  }
+}
+
+function setHideHeld(value) {
+  hideHeldByOthers.value = Boolean(value)
+
+  try {
+    localStorage.setItem(HIDE_HELD_KEY, String(Boolean(value)))
+  } catch (e) {
+    // Not remembered; the switch still works for this visit.
+  }
+}
 
 // ModGroupSelect stores the chosen community under 'groupselect-' + remember.
 // We need the same key to forget it again - see showAllCommunities().
@@ -255,6 +297,8 @@ watch(visibleMessages, (newVal) => {
 
 // Lifecycle
 onMounted(async () => {
+  hideHeldByOthers.value = readHideHeld()
+
   // Read group from route params (e.g. /messages/pending/456).
   if (id.value) {
     groupid.value = id.value
@@ -414,5 +458,8 @@ defineExpose({
   loadAll,
   destroy,
   loadMore,
+  hideHeldByOthers,
+  hiddenHeldCount,
+  setHideHeld,
 })
 </script>

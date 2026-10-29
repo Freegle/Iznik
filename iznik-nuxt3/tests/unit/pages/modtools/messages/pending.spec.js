@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref, computed, reactive } from 'vue'
@@ -24,6 +24,8 @@ const mockWork = ref(0)
 const mockNextAfterRemoved = ref(null)
 const mockGetMessages = vi.fn()
 const mockListingIds = ref(new Set())
+const mockHideHeld = ref(false)
+const mockHiddenHeldCount = ref(0)
 
 vi.mock('~/composables/useModMessages', () => ({
   setupModMessages: () => ({
@@ -42,6 +44,8 @@ vi.mock('~/composables/useModMessages', () => ({
     summary: mockSummary,
     messages: mockMessages,
     visibleMessages: mockVisibleMessages,
+    hideHeldByOthers: mockHideHeld,
+    hiddenHeldCount: mockHiddenHeldCount,
     work: mockWork,
     nextAfterRemoved: mockNextAfterRemoved,
     listingIds: mockListingIds,
@@ -181,6 +185,12 @@ describe('PendingPage', () => {
             template: '<button @click="$emit(\'click\')"><slot /></button>',
             props: ['variant'],
           },
+          'b-form-checkbox': {
+            template:
+              '<label><input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" /><slot /></label>',
+            props: ['modelValue', 'switch'],
+            emits: ['update:modelValue'],
+          },
           'b-img': {
             template: '<img />',
             props: ['src', 'alt', 'lazy'],
@@ -220,6 +230,117 @@ describe('PendingPage', () => {
     mockListingIds.value = new Set()
     mockMessageStore.list = {}
     mockMessageStore.context = null
+    mockHideHeld.value = false
+    mockHiddenHeldCount.value = 0
+    localStorage.clear()
+  })
+
+  describe('hide posts held by others', () => {
+    const KEY = 'modtools-pending-hide-held-by-others'
+    const switchInput = (wrapper) =>
+      wrapper.find('[data-test="hide-held-switch"] input')
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('is off by default and says nothing about hidden posts', async () => {
+      mockHiddenHeldCount.value = 3
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.text()).toContain('Hide posts held by others')
+      expect(switchInput(wrapper).element.checked).toBe(false)
+      expect(mockHideHeld.value).toBe(false)
+      expect(wrapper.find('[data-test="hidden-held-count"]').exists()).toBe(
+        false
+      )
+    })
+
+    it('turns on, remembers the choice and reports how many are hidden', async () => {
+      mockHiddenHeldCount.value = 3
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      await switchInput(wrapper).setValue(true)
+
+      expect(mockHideHeld.value).toBe(true)
+      expect(localStorage.getItem(KEY)).toBe('true')
+      expect(wrapper.find('[data-test="hidden-held-count"]').text()).toBe(
+        '3 held by others hidden'
+      )
+    })
+
+    it('shows no count line when the switch is on but nothing is hidden', async () => {
+      mockHiddenHeldCount.value = 0
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      await switchInput(wrapper).setValue(true)
+
+      expect(wrapper.find('[data-test="hidden-held-count"]').exists()).toBe(
+        false
+      )
+    })
+
+    it('turns off again and remembers that', async () => {
+      localStorage.setItem(KEY, 'true')
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      await switchInput(wrapper).setValue(false)
+
+      expect(mockHideHeld.value).toBe(false)
+      expect(localStorage.getItem(KEY)).toBe('false')
+    })
+
+    it('reads the stored choice on load', async () => {
+      localStorage.setItem(KEY, 'true')
+      mockHiddenHeldCount.value = 2
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      expect(mockHideHeld.value).toBe(true)
+      expect(switchInput(wrapper).element.checked).toBe(true)
+      expect(wrapper.find('[data-test="hidden-held-count"]').text()).toBe(
+        '2 held by others hidden'
+      )
+    })
+
+    it('stays off when reading storage throws', async () => {
+      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+        throw new Error('storage blocked')
+      })
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      expect(mockHideHeld.value).toBe(false)
+      expect(wrapper.find('.mod-messages').exists()).toBe(true)
+    })
+
+    it('still switches on for this visit when writing storage throws', async () => {
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('quota exceeded')
+      })
+      mockHiddenHeldCount.value = 1
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      await switchInput(wrapper).setValue(true)
+
+      expect(mockHideHeld.value).toBe(true)
+      expect(wrapper.find('[data-test="hidden-held-count"]').text()).toBe(
+        '1 held by others hidden'
+      )
+    })
+
+    it('does not mistake an unrelated stored value for on', async () => {
+      localStorage.setItem(KEY, 'banana')
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      expect(mockHideHeld.value).toBe(false)
+    })
   })
 
   describe('rendering', () => {
