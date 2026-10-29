@@ -1294,4 +1294,39 @@ describe('MyMessage', () => {
       expect(wrapper.text()).toContain('Group 2')
     })
   })
+
+  describe('Promise action from a mail link', () => {
+    it('opens the promise modal for an Offer with no outcome', async () => {
+      mockData.message.type = 'Offer'
+      mockData.message.outcomes = []
+      const wrapper = await createWrapper({ action: 'promise' })
+      await flushPromises()
+      expect(mockChatStore.fetchChats).toHaveBeenCalled()
+      expect(wrapper.find('.promise-modal').exists()).toBe(true)
+    })
+
+    it('does not open the promise modal for a Wanted', async () => {
+      mockData.message.type = 'Wanted'
+      mockData.message.outcomes = []
+      const wrapper = await createWrapper({ action: 'promise' })
+      await flushPromises()
+      expect(wrapper.find('.promise-modal').exists()).toBe(false)
+    })
+
+    it('does not open the promise modal for a completed Offer', async () => {
+      mockData.message.type = 'Offer'
+      mockData.message.outcomes = [{ outcome: 'Taken' }]
+      const wrapper = await createWrapper({ action: 'promise' })
+      await flushPromises()
+      expect(wrapper.find('.promise-modal').exists()).toBe(false)
+    })
+
+    it('does not open the promise modal when there is no action', async () => {
+      mockData.message.type = 'Offer'
+      mockData.message.outcomes = []
+      const wrapper = await createWrapper()
+      await flushPromises()
+      expect(wrapper.find('.promise-modal').exists()).toBe(false)
+    })
+  })
 })

@@ -1127,6 +1127,15 @@ onMounted(async () => {
     showOutcomeModal.value = true
   } else if (props.action === 'repost') {
     repost()
+  } else if (props.action === 'promise') {
+    // The Promised button in the chase-up and auto-repost mails lands here. Only an Offer with no
+    // outcome can be promised; for anything else we just show the post.
+    const msg = message.value || (await messageStore.fetch(props.id, true))
+
+    if (msg?.type === 'Offer' && !msg?.outcomes?.length) {
+      await chatStore.fetchChats()
+      showPromiseModal.value = true
+    }
   }
 })
 </script>
