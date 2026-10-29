@@ -13,7 +13,7 @@
                     Dear {{ $userName ?? 'there' }},
                 </mj-text>
                 <mj-text>
-                    We will automatically repost your message <strong>{{ $messageSubject }}</strong> soon, so that more people will see it.
+                    We will automatically repost your post <strong>{{ $messageSubject }}</strong> {{ $repostWhen }}, so that more people will see it.
                 </mj-text>
                 <mj-text>
                     If you <strong>don't</strong> want us to do that, please click on one of the following buttons to let us know:
