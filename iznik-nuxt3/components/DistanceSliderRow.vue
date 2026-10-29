@@ -15,14 +15,12 @@
       @change="handleChange"
     />
     <!-- At an "anywhere" top stop a max-miles hint would be wrong - there is
-         no max. Say what the position means instead. -->
-    <div
-      v-if="unlimitedAtTop && sliderValue >= maxMinutes"
-      class="anywhere-hint"
-    >
-      No distance limit
-    </div>
-    <NearbyTowns v-else :minutes="sliderValue" :perspective="perspective" />
+         no max - and the scale's right-hand label already says Anywhere. -->
+    <NearbyTowns
+      v-if="!(unlimitedAtTop && sliderValue >= maxMinutes)"
+      :minutes="sliderValue"
+      :perspective="perspective"
+    />
   </div>
 </template>
 
@@ -69,8 +67,8 @@ const props = defineProps({
   // giving it a dead zone would change what every member sees without them having asked for
   // anything.
   sharedAxis: { type: Boolean, default: false },
-  // The top stop means "anywhere" on this axis (e.g. ChitChat): show a plain
-  // "no limit" line there instead of a max-miles towns hint.
+  // The top stop means "anywhere" on this axis (e.g. ChitChat): show no towns
+  // hint there, as there is no maximum distance to describe.
   unlimitedAtTop: { type: Boolean, default: false },
 })
 
@@ -117,14 +115,6 @@ const deadZoneTitle = computed(() =>
 </script>
 
 <style scoped lang="scss">
-.anywhere-hint {
-  font-size: 0.8rem;
-  color: $color-gray--dark;
-  /* Same vertical space as the towns hint, so toggling between them cannot
-     shift the layout. */
-  min-height: 1.2rem;
-}
-
 .slider-row__label {
   font-weight: 500;
   font-size: 0.9rem;
