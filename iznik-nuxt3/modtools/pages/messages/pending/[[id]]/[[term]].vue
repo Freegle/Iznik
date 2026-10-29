@@ -23,7 +23,7 @@
           :remember="REMEMBER_KEY"
           :url-override="urlOverride"
         />
-        <div class="d-flex align-items-center column-gap-2 mt-2">
+        <div class="d-flex flex-wrap align-items-center column-gap-2 mt-2">
           <b-form-checkbox
             :model-value="hideHeld"
             switch
