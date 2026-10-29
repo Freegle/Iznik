@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-26
+last_reviewed: 2026-10-29
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
@@ -79,6 +79,7 @@ From My Posts, or from the post itself, you can:
 
 - **Promise** the item to a particular person, so others know it is spoken for. If it
   falls through, you can undo this ("renege") and offer it to someone else.
+  The reminder emails about your post have a Mark as Promised button for offers, which opens the Promise window for you.
 - **Edit** the post if you got a detail wrong.
 - **Edit and resend** to freshen it up.
 - **Repost** to bump it back to the top.
