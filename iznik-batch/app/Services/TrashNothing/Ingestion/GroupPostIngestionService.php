@@ -514,14 +514,35 @@ class GroupPostIngestionService
      */
     private function insertMembership(User $user, Group $group, bool $chosen): void
     {
+        Log::info('TN-SYNC-TRACE [MEMBERSHIP] op=insert-' . ($chosen ? 'ordinary' : 'implicit')
+            . ' user_id=' . $user->id . ' group_id=' . $group->id . ' added_origin='
+            . ($chosen ? Membership::ADDED_ORIGIN_PARTNER : Membership::ADDED_ORIGIN_TN_UNADDRESSED));
+        if ($this->dryRun) {
+            return;
+        }
+
+        if (self::writeMembership($user->id, $group->id, $chosen, now())) {
+            // A join like any other for reach mail. Digests skip TN users, so it sends nothing
+            // today, and every other join path queues the member the same way.
+            ReachMemberQueueService::enqueue($user->id, ReachMemberQueueService::REASON_JOINED);
+        }
+    }
+
+    /**
+     * Writes a TN poster's new membership, its history row and its join log, all dated $at.
+     * Ingestion passes now(); memberships:backfill-tn passes the arrival of the post the
+     * membership stands behind. Returns false, writing nothing, when a membership already exists.
+     */
+    public static function writeMembership(int $userId, int $groupId, bool $chosen, \DateTimeInterface $at): bool
+    {
         $origin = Membership::addedOriginForInsert(
             $chosen ? Membership::ADDED_ORIGIN_PARTNER : Membership::ADDED_ORIGIN_TN_UNADDRESSED,
-            'GroupPostIngestionService::insertMembership', $user->id, $group->id,
+            'GroupPostIngestionService::writeMembership', $userId, $groupId,
         );
 
         $row = [
-            'userid' => $user->id,
-            'groupid' => $group->id,
+            'userid' => $userId,
+            'groupid' => $groupId,
             'role' => Membership::ROLE_MEMBER,
             'collection' => Membership::COLLECTION_APPROVED,
             // Not left blank, as a ripple join leaves it: ContentCheckService::isUserModerated
@@ -530,7 +551,7 @@ class GroupPostIngestionService
             // with no membership.
             'ourPostingStatus' => Membership::POSTING_STATUS_DEFAULT,
             'added_origin' => $origin,
-            'added' => now(),
+            'added' => $at,
         ];
 
         if (!$chosen) {
@@ -546,48 +567,37 @@ class GroupPostIngestionService
             ];
         }
 
-        Log::info('TN-SYNC-TRACE [MEMBERSHIP] op=insert-' . ($chosen ? 'ordinary' : 'implicit')
-            . ' user_id=' . $user->id . ' group_id=' . $group->id . ' added_origin=' . $origin);
-        if ($this->dryRun) {
-            return;
-        }
-
         // All three or none: a membership with no history row skips the abuse checks, and one
         // with no join log is invisible in ModTools and to the origin backfill.
-        $added = DB::transaction(function () use ($row, $user, $group, $origin, $chosen) {
+        return DB::transaction(function () use ($row, $userId, $groupId, $origin, $chosen, $at) {
             if (DB::table('memberships')->insertOrIgnore($row) === 0) {
                 // Someone else made the row in the meantime; theirs stands.
                 return false;
             }
 
             DB::table('memberships_history')->insert([
-                'userid' => $user->id,
-                'groupid' => $group->id,
+                'userid' => $userId,
+                'groupid' => $groupId,
                 'collection' => Membership::COLLECTION_APPROVED,
                 'processingrequired' => 1,
                 'added_origin' => $origin,
+                'added' => $at,
             ]);
 
             DB::table('logs')->insert([
-                'timestamp' => now(),
+                'timestamp' => $at,
                 'type' => 'Group',
                 'subtype' => 'Joined',
-                'user' => $user->id,
+                'user' => $userId,
                 // A chosen group is the member's own join, as the partner add logs it. A group
                 // they did not choose was the system's doing, as a ripple join is.
-                'byuser' => $chosen ? $user->id : null,
-                'groupid' => $group->id,
+                'byuser' => $chosen ? $userId : null,
+                'groupid' => $groupId,
                 'text' => $chosen ? self::JOIN_LOG_CHOSEN : self::JOIN_LOG_UNADDRESSED,
             ]);
 
             return true;
         });
-
-        if ($added) {
-            // A join like any other for reach mail. Digests skip TN users, so it sends nothing
-            // today, and every other join path queues the member the same way.
-            ReachMemberQueueService::enqueue($user->id, ReachMemberQueueService::REASON_JOINED);
-        }
     }
 
     private function createMessage(

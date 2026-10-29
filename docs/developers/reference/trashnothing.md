@@ -11,6 +11,8 @@ covers:
   - iznik-batch/app/Services/UnifiedDigestService.php
   - iznik-batch/app/Services/TrashNothing/Ingestion/**
   - iznik-batch/app/Services/TrashNothing/Sync/**
+  - iznik-batch/app/Services/TnMembershipBackfillService.php
+  - iznik-batch/app/Console/Commands/Membership/BackfillTnCommand.php
   - iznik-server-go/modmessaging/**
   - iznik-nuxt3/modtools/components/ModMessageTnNotice.vue
   # cross-stack behaviour tests (change when the behaviour changes)
@@ -288,7 +290,8 @@ account for the whole email side.
 
 Because the API path picks the group from the post's coordinates, a TN poster
 frequently ends up on a Freegle community they never asked for. TN's out-of-spec
-`freegle_group_ids` field says which Freegle groups that poster *did* choose, and
+`freegle_group_ids` field lists the Freegle groups chosen for **this post** that the poster
+has consented to posting to (per post, not a list of their memberships), and
 `PostSyncer::processPost()` compares the resolved group against it, storing the answer
 as `messages_groups.mod_messaging_allowed` (default-deny for TN posts, table default 1
 for everything else). A post with 0 there is **unaddressed**: nobody on Freegle has any
@@ -324,6 +327,20 @@ logging `Ripple-created membership became ordinary: consented through TrashNothi
 only goes one way, so a later unaddressed post leaves an ordinary membership alone. A banned
 poster gets no row. The trace tag is `TN-SYNC-TRACE [MEMBERSHIP]`, which the parity comparison
 ignores.
+
+Posts that arrived unaddressed before ingestion made memberships have the flag and no
+membership. `memberships:backfill-tn` (`TnMembershipBackfillService`; dry run unless `--send`,
+safe to run again) reads only their own rows (`rippled_in = 0`, `mod_messaging_allowed = 0`,
+live or not) and, for each poster and group, writes the membership ingestion would through
+`GroupPostIngestionService::writeMembership`, dated from their earliest such post there. It
+skips a pair where another post of theirs on that group was addressed (consent only goes one
+way; a rippled-in copy is not consent), a banned or deleted poster, a poster with no
+`tnuserid` (the first API posts, before posters were resolved through it, went to whichever
+account had TN's id or to a stub made with it), and any existing
+membership, except that a `tn_unaddressed` row without `implicit` gets it unless a "became
+ordinary" log since it was added says it was cleared. It lists every pair, and counts the
+posters who are mixed today and the pairs whose group's moderators lose contact once contact
+is decided per group.
 
 A post with no `freegle_group_ids` field at all is read as unaddressed, but `PostSyncer`
 reports it to Sentry once a run: TN enables the field per API key, and a key without it would

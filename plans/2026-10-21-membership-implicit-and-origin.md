@@ -711,7 +711,36 @@ Decisions to check:
 
 ### 4b. TN memberships from posts - `memberships:backfill-tn`
 
-- [ ] Scope (Phase 0): only the post rows (`rippled_in = 0`) with `mod_messaging_allowed = 0`,
+**Command written 2026-10-29** (uncommitted, **not run**: the Q12 hold below still stands):
+`memberships:backfill-tn`
+([BackfillTnCommand.php](../iznik-batch/app/Console/Commands/Membership/BackfillTnCommand.php),
+[TnMembershipBackfillService.php](../iznik-batch/app/Services/TnMembershipBackfillService.php)).
+Dry run unless `--send`; one pass, Q5's query (driven from `tnpostid`), grouped by pair. Prints
+a row per pair (posts, earliest arrival, existing membership, mixed, loses contact, action), the
+counts by action, and the two Q6 counts. Decisions to check:
+- **Inserts reuse ingestion's write**, now `GroupPostIngestionService::writeMembership($userId,
+  $groupId, $chosen, $at)`. The membership's `added`, the history row's `added` and the join
+  log's `timestamp` are all the earliest unaddressed post's `messages.arrival` on the group, so
+  4a's "join logged over a day after `added`" check stays quiet. The history row has
+  `processingrequired = 1`, as ingestion's does: `memberships:process` sends no welcome for
+  `tn_unaddressed` and leaves it out of the spread check, but applies flagged comments. The
+  backfill does **not** queue the member for reach mail, which ingestion does.
+- **Consent** is any addressed post of theirs whose own row (`rippled_in = 0`) is on the group,
+  TN or not, as in Q5. A rippled-in copy (column default 1) is not consent.
+- **Banned** (`users_banned`) and **deleted** (`users.deleted`) posters get no row, as ingestion
+  refuses a banned one.
+- **A poster with no `tnuserid` gets no row** (added after Q12c): ingestion has resolved every
+  poster through it since `1c7ac72deb`, and before that a post went to a stranger or a stub.
+  The dry run lists them as `skip: poster has no tnuserid`, which should match Q14's
+  stub / not-linked rows.
+- **A `tn_unaddressed` row with `implicit = 0`** is set back only when there is no "became
+  ordinary" log for the pair since its `added`. TN's partner add clears one with no post, so
+  the consent check alone would miss it.
+- **Mixed / loses contact** (reporting only): mixed = an addressed own-row post on any group.
+  Loses contact = mixed, not consented on this group, and no ordinary (`implicit = 0`,
+  `rippled = 0`) membership left there after this run.
+
+- [x] Scope (Phase 0): only the post rows (`rippled_in = 0`) with `mod_messaging_allowed = 0`,
   about 100, live or not. Rows with `mod_messaging_allowed = 1` are not touched. For each
   distinct `(fromuser, groupid)` in that set:
   - **The poster has another post on that group with `mod_messaging_allowed = 1`:** skip. They
@@ -723,9 +752,18 @@ Decisions to check:
   - **An existing membership whose `added_origin` is `tn_unaddressed`** (created by Phase 3
     ingestion before the `implicit` column existed): set `implicit = 1`.
   - **Any other existing membership:** leave it. Never make an ordinary membership implicit.
-- [ ] At about 100 rows this can run in one pass, but keep it a dry run by default with a
+- [x] At about 100 rows this can run in one pass, but keep it a dry run by default with a
   per-row listing, so Edward can read every change before running it with `--send`.
-- [ ] **Hold: Q5 suggests these rows may not be real non-consent** (production, 2026-10-26).
+- [x] **Hold lifted 2026-10-29: Q14b and Q14c came back empty.** No API post's `fromuser` is
+  another account's `tnuserid`, and no stub from the window is left, so every poster is the
+  right account. 4b can run: dry run first, then `--send`. It needs Phase 2's SQL on
+  production first (`implicit` and `added_origin`; `added_origin` isn't there yet), and the
+  last re-run of 2a's sync, which would clear the rows it writes. It runs before TN ingestion
+  goes live (production sequence, row 3). The `tnuserid` guard stays
+  as a safety net; on today's data it skips nothing.
+- **History of the hold:** First raised as "Q5
+  suggests these rows may not be real non-consent" (production, 2026-10-26); Q12c and the
+  `freegle_group_ids` answer below settled that they are.
   - **106 rows, 78 (poster, group) pairs, all arriving in 27 hours:** 2026-09-25 16:55 to
     2026-09-26 19:38. There are none before or after.
   - **The window starts 45 minutes after `291e589e0d`,** which moved the posts sync to a new
@@ -748,12 +786,56 @@ Decisions to check:
   - **What the backfill would do:** create implicit memberships for 15 pairs (22 rows), skip 50
     pairs that consented, and leave 13 existing memberships alone. Among those 13: one rippled
     membership (44492943 / 21593) and one Rejected post.
-  - **Before running 4b:** run Q12 (unaddressed vs addressed TN posts by day and by hour), and
-    ask Andrew when `freegle_group_ids` was enabled on the new key. If the window is the key,
-    the 15 pairs are not evidence of anything: don't run 4b, and fix those 106 rows to
-    `mod_messaging_allowed = 1`. Today they are treated as ownerless: moderators can't edit
-    them or reply about them, and two member reports remove them.
-- [ ] Before any write, count the effect of deciding contact per group: how many TN posters
+  - **Q12 (production, 2026-10-29):** unaddressed posts only from 2026-09-25 16:00 to
+    2026-09-26 07:00 by `messages.arrival` (Q5's 19:38 end was `messages_groups.arrival`, which
+    moves on approval). There are none in the week before or the 33 days after, against 600 to
+    1,300 addressed TN posts a day throughout. Real non-consent would not start 45 minutes after
+    a key change and stop for good 15 hours later, so it points to the key. But addressed posts
+    kept arriving inside the window, and email TN posts carry the column's default of 1, so Q12
+    can't show that every **API** post in the window was flagged. **Q12c** splits it by path
+    (`sourceheader = 'TN-API'`).
+  - **Q12c (production, 2026-10-29): the key explanation is wrong.** All 106 unaddressed rows
+    are API posts, and API posts exist only in that window: 106 unaddressed against 102
+    addressed. A key without the field would have made every API post unaddressed, so the
+    field was delivered and ingestion read it. The window is just the only time API ingestion
+    ran (the email path stood down 17:00 to 22:00 and took over again at 07:00 on 09-26). So
+    the rows are what ingestion saw, and no more will appear until API ingestion is back on.
+  - **New hold: the poster may be the wrong account.** Until `1c7ac72deb` (committed
+    2026-09-25 23:12 UTC, deployed some time after), the API path read TN's `user_id` as a
+    Freegle id. A post went to whichever account had that id, or to a stub inserted with it
+    (`TN User`, `tn<id>@user.trashnothing.com`, plus an ordinary membership of the group with
+    mail on). By commit time, about 69 of the 106 rows arrived before the fix. 4b would give an
+    implicit membership to an unrelated member, or skip a stub as "existing membership", and
+    neither is the real poster. **Q14** classifies each API post's `fromuser` (stub / not
+    linked / linked). Run 4b only on rows whose poster is `linked`, or repair `fromuser` first.
+    Q6's finding that 50 of the 78 pairs have an addressed post on the same group fits the
+    posters being right, so the posts may have been repaired by hand since; Q14 shows which.
+  - **Q14 (production, 2026-10-29): every one of the 208 API posts has a linked poster**
+    (151 before the fix commit, 57 after). No stub and no unlinked account is a poster now, so
+    the `tnuserid` guard skips nothing. One gap is left: a post handed to an account whose
+    Freegle id equalled the poster's TN id also reads as linked, if that account is a TN user
+    itself. Only 9 posts have a `fromuser` small enough to be a TN id. Of those, one is a
+    pair 4b would create a membership for (895374 / 506166); the rest already have a
+    membership and are left alone. **Q14b** checks whether any `fromuser` is another
+    account's `tnuserid`. If none is, the posters are right and 4b can run. **Q14c** lists any
+    stubs that remain, with the ordinary memberships they were given, for the separate
+    clean-up.
+  - **Q14b and Q14c (production, 2026-10-29): both empty.** No `fromuser` is another
+    account's `tnuserid`, and no stub is left. So no rows need repairing, and there are no
+    stub memberships to clean up. Every one of the 106 rows names its real poster.
+  - **What `freegle_group_ids` holds** (answered 2026-10-29): the Freegle group ids chosen for
+    this post that the poster has consented to posting to. It is per post, not a list of
+    memberships. So an unaddressed row is real non-consent **for that post**: the group our
+    location picked was not one they chose this time. That explains the 50 of 78 pairs who
+    had posted to the same group by email before. They chose a different group for this post,
+    and 4b's skip rule (consent once, consent for good) covers them, as Phase 0 intends. The
+    15 pairs 4b would create are posters with no earlier consent to that group and no
+    membership of it, which is the case the implicit membership exists for.
+  - **So the only hold left is Q14** (wrong `fromuser` before `1c7ac72deb`). The command now
+    skips any poster with no `tnuserid`, so it can't create a membership for a stub or a
+    stranger whatever Q14 shows. Q14 still decides what to do with those skipped rows, which
+    stay ownerless until `fromuser` is repaired or the flag is set to 1.
+- [x] Before any write, count the effect of deciding contact per group (the dry run prints both): how many TN posters
   are currently contactable everywhere through the mixed-poster rule, and how many
   `(poster, group)` pairs will become uncontactable once it is gone. This is to report the
   effect, not to reopen the decision.
@@ -915,9 +997,9 @@ membership on that group has `implicit = 1 AND added_origin = 'tn_unaddressed'`.
   |---|---|---|
   | 1 | Phase 2 SQL (2a, then 2b), then the Phase 2 Go API | The member lists select both columns |
   | 2 | Phase 3 dual writes and origin on every insert, Go and batch, **without** TN ingestion | TN ingestion has no old-column equivalent (Phase 3) |
-  | 3 | Re-run 2a's sync for the last time, then 4a | The sync clears TN implicit rows, so it runs before any exist. 4a only touches `unknown` and is safe to re-run |
+  | 3 | Re-run 2a's sync for the last time, then 4a and 4b (either order) | The sync clears TN implicit rows, so it runs before any exist: 4b's as much as ingestion's. 4a only touches `unknown` and 4b only the 106 historical rows; both are safe to re-run. 4b's rows need the 3c guards (welcome mail, spread check, birthday, stories), which ship in the same batch deploy as the command |
   | 4 | Phase 5 readers: Go, then batch, then frontend | The frontend ships itself on green master; it falls back to `rippled` |
-  | 5 | TN ingestion (Phase 3), then 4b if Q12 clears it | Needs the Phase 5 batch readers (welcome mail, spread check, birthday, stories), or guards on them |
+  | 5 | TN ingestion (Phase 3) | Has the 3c guards, so it no longer waits for the Phase 5 readers; it only has to follow row 3. Doing 4b first means 4b's dry run reads exactly the 106 rows Q5 and Q14 checked, with no new posts mixed in |
   | 6 | Phase 7 code that no longer reads or writes `rippled`, then the drop-column SQL | A Go struct that still selects a dropped column fails every query |
 - **Tests.** For every reader changed, a test with a ripple implicit membership, a TN implicit
   membership, and the same membership after it has been cleared. Run the Go, Laravel, Vitest and
