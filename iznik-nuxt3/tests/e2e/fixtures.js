@@ -574,6 +574,35 @@ const fixtures = {
       }
     }
 
+    // Google's sign-in script throws inside its own callbacks when Google's service answers it
+    // with an error (seen as "Error: pa" after a 400 from accounts.google.com). That is no fault
+    // of ours, and it failed whichever spec was collecting page errors at that moment. A spec's
+    // pageerror listener never sees an error whose top stack frame is in that script; one thrown
+    // by our code, even when Google's script called it, still reaches it.
+    const isGoogleSignInError = (error) => {
+      const topFrame = (error?.stack || '')
+        .split('\n')
+        .find((line) => /^\s*at /.test(line))
+      return /accounts\.google\.com\/gsi\//.test(topFrame || '')
+    }
+    for (const method of ['on', 'once', 'addListener']) {
+      const original = page[method].bind(page)
+      page[method] = (event, listener) => {
+        if (event !== 'pageerror') {
+          return original(event, listener)
+        }
+        return original(event, (error) => {
+          if (isGoogleSignInError(error)) {
+            console.log(
+              `[page error from Google sign-in, ignored] ${error.message}`
+            )
+            return
+          }
+          return listener(error)
+        })
+      }
+    }
+
     // Create a logging proxy for the page
     const loggingPage = logger.createLoggingPage(page)
 
