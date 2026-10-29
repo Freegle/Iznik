@@ -182,4 +182,62 @@ describe('plugins/sentry.client', () => {
       expect(result).toBe(event)
     })
   })
+
+  // Sentry MODTOOLS "Error: pa": 1,689 events in a week from CI's
+  // modtools-prod-local, tagged production, because Playwright's 'Desktop
+  // Chrome' profile reports Windows Chrome and the HeadlessChrome check missed it.
+  describe('beforeSend under automation', () => {
+    const playwrightUserAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.34 Safari/537.36'
+
+    function setBrowser(userAgent, webdriver) {
+      for (const [key, value] of Object.entries({ userAgent, webdriver })) {
+        Object.defineProperty(window.navigator, key, {
+          value,
+          configurable: true,
+        })
+      }
+    }
+
+    afterEach(() => {
+      // The own properties shadow happy-dom's; removing them brings its values back.
+      delete window.navigator.userAgent
+      delete window.navigator.webdriver
+      vi.restoreAllMocks()
+    })
+
+    it('logs the exception to the console but does not send it', async () => {
+      setBrowser(playwrightUserAgent, true)
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      vi.spyOn(console, 'log').mockImplementation(() => {})
+      await runPlugin()
+      const options = mockInit.mock.calls[0][0]
+
+      const result = options.beforeSend(
+        { extra: {}, exception: {} },
+        { originalException: new Error('pa') }
+      )
+
+      expect(result).toBeNull()
+      expect(consoleError).toHaveBeenCalledWith(
+        '[Exception for Sentry]: (Error: pa)',
+        expect.anything()
+      )
+    })
+
+    it('still sends from the same browser when a person is using it', async () => {
+      setBrowser(playwrightUserAgent, false)
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      vi.spyOn(console, 'log').mockImplementation(() => {})
+      await runPlugin()
+      const options = mockInit.mock.calls[0][0]
+      const event = { extra: {}, exception: {} }
+
+      expect(
+        options.beforeSend(event, { originalException: new Error('pa') })
+      ).toBe(event)
+    })
+  })
 })
