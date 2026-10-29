@@ -24,6 +24,13 @@
 #   6. COMPLEXITY        -> no override. Reading grade, sentence length and
 #      invented hyphenated adjectives, measured rather than listed, so writing
 #      nobody predicted still gets caught.
+#   7. SCREENSHOT        -> override with PR_NO_SCREENSHOT_OK=1, meaning "the
+#      change touches a visible file but nothing a person could see has moved".
+#      A branch that changes a Vue component, page or layout, a stylesheet or an
+#      MJML mail template is describing something that can be looked at, and a
+#      reviewer should be able to look at it without building the branch. The
+#      body must carry an image. PRs #1936 and #1937 (a checkbox moved inside a
+#      card; less space above the first ChitChat post) went out with none.
 #
 # ON FAILING CLOSED (check 1). This hook used to read the body only from a
 # literal --body-file path. Two extremely common shapes defeated that and it
@@ -404,6 +411,140 @@ if command -v node >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/pr-complexity.mjs" ]; th
     } >&2
     FAILED=1
   fi
+fi
+
+# --- Check 7: a visible change needs a screenshot ---------------------------
+# Which files the PR changes. On create, from git against the base branch; on
+# edit, from GitHub. CHECK_PR_FILES (set, even if empty) overrides both so the
+# test harness can run this without a branch or a network.
+pr_changed_files() {
+  if [ -n "${CHECK_PR_FILES+x}" ]; then
+    printf '%s\n' "$CHECK_PR_FILES"
+    return 0
+  fi
+  local base head mb num repo gitdir
+  # The hook's own working directory is wherever the shell last was, which is
+  # often not a checkout at all (PR #1941's create ran from the scratchpad). The
+  # command usually says where it means to run: honour a leading `cd DIR &&`,
+  # then the project directory, then wherever we are.
+  gitdir=$(echo "$COMMAND" | grep -oE '^[[:space:]]*cd[[:space:]]+[^[:space:];&|]+' | head -1 | sed -E 's/^[[:space:]]*cd[[:space:]]+//; s/^["'"'"']//; s/["'"'"']$//')
+  if [ -z "$gitdir" ] || [ ! -d "$gitdir" ] || ! git -C "$gitdir" rev-parse --git-dir >/dev/null 2>&1; then
+    if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && git -C "$CLAUDE_PROJECT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+      gitdir="$CLAUDE_PROJECT_DIR"
+    else
+      gitdir="."
+    fi
+  fi
+  if echo "$TRIGGER" | grep -qE '\bgh[[:space:]]+pr[[:space:]]+create\b'; then
+    base=$(echo "$COMMAND" | grep -oE -- '--base[=[:space:]]+[^[:space:]]+' | head -1 | sed -E "s/^--base[=[:space:]]+//; s/^['\"]//; s/['\"]$//")
+    head=$(echo "$COMMAND" | grep -oE -- '--head[=[:space:]]+[^[:space:]]+' | head -1 | sed -E "s/^--head[=[:space:]]+//; s/^['\"]//; s/['\"]$//")
+    base=${base:-master}; head=${head:-HEAD}
+    # The branch may only exist on the remote from where this runs (a PR opened
+    # from the main checkout for a branch pushed from a worktree), so try the
+    # remote-tracking name too.
+    local h
+    for h in "$head" "origin/$head"; do
+      git -C "$gitdir" rev-parse --verify --quiet "$h^{commit}" >/dev/null 2>&1 || continue
+      mb=$(git -C "$gitdir" merge-base "origin/$base" "$h" 2>/dev/null) \
+        || mb=$(git -C "$gitdir" merge-base "$base" "$h" 2>/dev/null) || continue
+      git -C "$gitdir" diff --name-only "$mb" "$h" 2>/dev/null
+      return 0
+    done
+    return 1
+  else
+    num=$(echo "$TRIGGER" | grep -oE 'pulls?/[0-9]+|pr[[:space:]]+edit[[:space:]]+[0-9]+' | grep -oE '[0-9]+' | head -1)
+    [ -z "$num" ] && return 1
+    repo=$(echo "$COMMAND" | grep -oE -- '--repo[=[:space:]]+[^[:space:]]+' | head -1 | sed -E 's/^--repo[=[:space:]]+//')
+    [ -z "$repo" ] && repo=$(echo "$COMMAND" | grep -oE 'repos/[^/[:space:]]+/[^/[:space:]]+' | head -1 | sed 's#^repos/##')
+    command -v timeout >/dev/null 2>&1 || return 1
+    timeout 10 gh pr view "$num" ${repo:+--repo "$repo"} --json files -q '.files[].path' 2>/dev/null
+  fi
+}
+
+# A file whose change a person could see. Tests and specs are not, however
+# they are named. Plain-text mail templates are not.
+VISUAL_RE='(^|/)(components|pages|layouts)/[^[:space:]]*\.vue$|\.(scss|css)$|resources/views/emails/(mjml|amp)/[^[:space:]]*\.blade\.php$'
+CHANGED_FILES=$(pr_changed_files 2>/dev/null); FILES_RESOLVED=$?
+VISUAL_FILES=$(echo "$CHANGED_FILES" \
+  | grep -E "$VISUAL_RE" \
+  | grep -vE '(^|/)tests?/|\.spec\.|\.test\.' \
+  | head -12)
+
+# Same rule as check 1: if the hook cannot see what it is meant to judge, it
+# must not pass. PR #1941 changed a mail template and was accepted with no
+# image because the branch could not be resolved from where the command ran,
+# and an empty file list looked like "nothing visible changed".
+if [ "$FILES_RESOLVED" != "0" ] && [ "$HAS_BODY_FLAG" = "1" ] \
+   && ! echo "$COMMAND" | grep -qE '\bPR_NO_SCREENSHOT_OK=1\b' && [ "${PR_NO_SCREENSHOT_OK:-}" != "1" ]; then
+  {
+    echo "STOP. This command sets a PR body, but the hook cannot list the files the PR"
+    echo "changes, so it cannot tell whether a screenshot is needed."
+    echo ""
+    echo "On create it diffs the --head branch against the base with git, from the current"
+    echo "directory; on edit it asks GitHub for the PR's files. Run it from a checkout that"
+    echo "has the branch (or fetch it so origin/<branch> exists), or pass --head with a"
+    echo "branch name git can resolve here."
+    echo ""
+    echo "If nothing visible changed, prefix with PR_NO_SCREENSHOT_OK=1 and say why in a"
+    echo "body line starting \"No screenshot\"."
+  } >&2
+  FAILED=1
+fi
+
+# An image in the body: markdown, an img tag, a URL to an image file, or an
+# attachment GitHub itself hosts.
+HAS_IMAGE=0
+echo "$TEXT" | grep -qiE '!\[[^]]*\]\([^)]+\)|<img[[:space:]>]|https?://[^[:space:])]+\.(png|jpe?g|gif|webp)(\?[^[:space:])]*)?([[:space:])]|$)|github\.com/user-attachments/assets/|user-images\.githubusercontent\.com' \
+  && HAS_IMAGE=1
+
+# The override is a claim that nothing visible moved. It has to be made where the
+# reviewer can see it, not only on the command line: a line in the body starting
+# "No screenshot" with the reason. PR #1941 changed a mail template and went out
+# with neither an image nor a word about why.
+NO_SHOT_OVERRIDE=0
+if echo "$COMMAND" | grep -qE '\bPR_NO_SCREENSHOT_OK=1\b' || [ "${PR_NO_SCREENSHOT_OK:-}" = "1" ]; then
+  NO_SHOT_OVERRIDE=1
+fi
+NO_SHOT_REASON=0
+echo "$TEXT" | grep -qiE '^[[:space:]]*(-[[:space:]]*|\*[[:space:]]*)?No screenshot[^[:alnum:]]+[[:alnum:]]' && NO_SHOT_REASON=1
+
+if [ -n "$VISUAL_FILES" ] && [ "$HAS_IMAGE" = "0" ] && [ "$NO_SHOT_OVERRIDE" = "1" ] && [ "$NO_SHOT_REASON" = "0" ]; then
+  {
+    echo "STOP. PR_NO_SCREENSHOT_OK=1 says nothing visible changed, but the body does not"
+    echo "say so. The reviewer has to see that claim, not just the hook."
+    echo ""
+    echo "Add a line to the body starting \"No screenshot\" and giving the reason, e.g."
+    echo "  No screenshot: the template change is a variable rename, nothing rendered moves."
+    echo ""
+    echo "Files the hook counts as visible:"
+    echo "$VISUAL_FILES" | sed 's/^/  /'
+  } >&2
+  FAILED=1
+elif [ -n "$VISUAL_FILES" ] && [ "$HAS_IMAGE" = "0" ] && [ "$NO_SHOT_OVERRIDE" = "0" ]; then
+  {
+    echo "STOP. This PR changes something a person can see, and the description has no"
+    echo "screenshot."
+    echo ""
+    echo "$VISUAL_FILES" | sed 's/^/  /'
+    echo ""
+    echo "A reviewer should be able to see the change without building the branch. Put"
+    echo "a before and after image in the body, or one image if there was nothing before."
+    echo "For a mail, render it through the real MJML pipeline and screenshot the HTML."
+    echo ""
+    echo "To host images from the CLI without adding them to the code diff, push them on"
+    echo "a throwaway branch and link the raw files (the repo is public):"
+    echo "  b=\$(git hash-object -w shot.png)"
+    echo "  t=\$(printf '100644 blob %s\\tshot.png\\n' \"\$b\" | git mktree)"
+    echo "  c=\$(git commit-tree \"\$t\" -m 'PR screenshots')"
+    echo "  git push origin \"\$c:refs/heads/pr-assets/<branch-slug>\""
+    echo "  https://raw.githubusercontent.com/Freegle/Iznik/pr-assets/<branch-slug>/shot.png"
+    echo "Check the link answers 200 image/png before you reference it, and say in the"
+    echo "body that the pr-assets branch can be deleted after merge."
+    echo ""
+    echo "If nothing visible has changed (a refactor, a handler, a test id), prefix with"
+    echo "PR_NO_SCREENSHOT_OK=1. That is a claim about the change, so be sure of it."
+  } >&2
+  FAILED=1
 fi
 
 [ "$FAILED" = "1" ] && exit 2
