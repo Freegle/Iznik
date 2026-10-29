@@ -134,6 +134,13 @@ check "unresolvable --head blocks rather than passing" 2 \
   "$PRC --base master --head no-such-branch-zzz --title t --body-file $TMP/visual.md" "cannot list the files"
 check "unresolvable --head with the override and a reason passes" 0 \
   "PR_NO_SCREENSHOT_OK=1 $PRC --base master --head no-such-branch-zzz --title t --body-file $TMP/visual-reason.md"
+# A real branch, resolved through the command's own `cd DIR &&` even though the
+# harness runs from a directory that is not a checkout. The branch is one this
+# repo always has: master against itself changes nothing, so no visible files
+# and no block; the point is that it resolves instead of failing closed.
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+( cd /tmp && check "cd prefix names the checkout to read" 0 \
+  "cd $REPO && $PRC --base master --head master --title t --body-file $TMP/visual.md" ) | tee "$TMP/cdcase"; grep -q PASS "$TMP/cdcase" && pass=$((pass+1)) || fail=$((fail+1))
 export CHECK_PR_FILES="$SAVED_FILES"
 
 echo

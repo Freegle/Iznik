@@ -422,7 +422,19 @@ pr_changed_files() {
     printf '%s\n' "$CHECK_PR_FILES"
     return 0
   fi
-  local base head mb num repo
+  local base head mb num repo gitdir
+  # The hook's own working directory is wherever the shell last was, which is
+  # often not a checkout at all (PR #1941's create ran from the scratchpad). The
+  # command usually says where it means to run: honour a leading `cd DIR &&`,
+  # then the project directory, then wherever we are.
+  gitdir=$(echo "$COMMAND" | grep -oE '^[[:space:]]*cd[[:space:]]+[^[:space:];&|]+' | head -1 | sed -E 's/^[[:space:]]*cd[[:space:]]+//; s/^["'"'"']//; s/["'"'"']$//')
+  if [ -z "$gitdir" ] || [ ! -d "$gitdir" ] || ! git -C "$gitdir" rev-parse --git-dir >/dev/null 2>&1; then
+    if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && git -C "$CLAUDE_PROJECT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+      gitdir="$CLAUDE_PROJECT_DIR"
+    else
+      gitdir="."
+    fi
+  fi
   if echo "$TRIGGER" | grep -qE '\bgh[[:space:]]+pr[[:space:]]+create\b'; then
     base=$(echo "$COMMAND" | grep -oE -- '--base[=[:space:]]+[^[:space:]]+' | head -1 | sed -E "s/^--base[=[:space:]]+//; s/^['\"]//; s/['\"]$//")
     head=$(echo "$COMMAND" | grep -oE -- '--head[=[:space:]]+[^[:space:]]+' | head -1 | sed -E "s/^--head[=[:space:]]+//; s/^['\"]//; s/['\"]$//")
@@ -432,10 +444,10 @@ pr_changed_files() {
     # remote-tracking name too.
     local h
     for h in "$head" "origin/$head"; do
-      git rev-parse --verify --quiet "$h^{commit}" >/dev/null 2>&1 || continue
-      mb=$(git merge-base "origin/$base" "$h" 2>/dev/null) \
-        || mb=$(git merge-base "$base" "$h" 2>/dev/null) || continue
-      git diff --name-only "$mb" "$h" 2>/dev/null
+      git -C "$gitdir" rev-parse --verify --quiet "$h^{commit}" >/dev/null 2>&1 || continue
+      mb=$(git -C "$gitdir" merge-base "origin/$base" "$h" 2>/dev/null) \
+        || mb=$(git -C "$gitdir" merge-base "$base" "$h" 2>/dev/null) || continue
+      git -C "$gitdir" diff --name-only "$mb" "$h" 2>/dev/null
       return 0
     done
     return 1
