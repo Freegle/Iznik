@@ -125,8 +125,8 @@ A promise counts as one item, so if one person is having the whole lot, mark the
 taken once they have collected.
 
 When a post becomes promised, everyone else who replied to it gets one message in their chat
-with you: "This has been promised to someone else for now. If they do not collect it, the giver may offer
-it to you." The person promised to is not sent it, nobody is sent it twice for the same post,
+with you: "This has been promised to someone else for now. If they do not collect it, I will let you know." followed by
+a line saying it is an automated message, as other automated chat messages carry. The person promised to is not sent it, nobody is sent it twice for the same post,
 and undoing the promise sends nothing. It is sent for Offers only, and only once every item is promised.
 
 ## Reminders and auto-reposting
