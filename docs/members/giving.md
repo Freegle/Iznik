@@ -8,6 +8,7 @@ covers:
   - iznik-nuxt3/components/MyMessage.vue
   - iznik-nuxt3/components/OutcomeModal.vue
   - iznik-nuxt3/components/MessageOwnActions.vue
+  - iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php
   - iznik-nuxt3/components/PhotoUploader.vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-post-flow.spec.js
@@ -123,6 +124,11 @@ been promised as there are items left. Promise one of seven jars and the post st
 with six to go; the people you have promised to still see "promised to you" in their chat.
 A promise counts as one item, so if one person is having the whole lot, mark the post
 taken once they have collected.
+
+When a post becomes promised, everyone else who replied to it gets one message in their chat
+with you: "This has been promised to someone else for now. If they do not collect it, I will let you know." followed by
+a line saying it is an automated message, as other automated chat messages carry. The person promised to is not sent it, nobody is sent it twice for the same post,
+and undoing the promise sends nothing. It is sent for Offers only, and only once every item is promised.
 
 ## Reminders and auto-reposting
 
