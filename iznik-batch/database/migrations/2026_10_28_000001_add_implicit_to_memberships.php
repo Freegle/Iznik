@@ -18,7 +18,9 @@ use Illuminate\Support\Facades\Schema;
  *
  * The copy is safe to run again, and should be run again just before the code that writes both
  * columns goes live: until then ripple joins and clears change rippled alone. It brings implicit
- * into line with rippled in both directions, in id ranges so no statement holds many rows.
+ * into line with rippled in both directions, in id ranges so no statement holds many rows, except
+ * on TrashNothing placements (added_origin tn_unaddressed): those are implicit with rippled = 0 by
+ * design, so it leaves them alone and is safe to run after memberships:backfill-tn too.
  */
 return new class extends Migration
 {
@@ -34,10 +36,22 @@ return new class extends Migration
 
         $maxId = (int) DB::table('memberships')->max('id');
 
+        // added_origin arrives in the next migration. Before it does there is no TrashNothing
+        // placement to keep.
+        $keepTnPlacements = Schema::hasColumn('memberships', 'added_origin')
+            ? " AND added_origin <> 'tn_unaddressed'"
+            : '';
+
         for ($from = 0; $from < $maxId; $from += self::CHUNK) {
+            $range = [$from, $from + self::CHUNK];
             DB::update(
-                'UPDATE memberships SET implicit = rippled WHERE id > ? AND id <= ? AND implicit <> rippled',
-                [$from, $from + self::CHUNK]
+                'UPDATE memberships SET implicit = 1 WHERE id > ? AND id <= ? AND rippled = 1 AND implicit = 0',
+                $range
+            );
+            DB::update(
+                'UPDATE memberships SET implicit = 0 WHERE id > ? AND id <= ? AND rippled = 0 AND implicit = 1'
+                    .$keepTnPlacements,
+                $range
             );
         }
     }

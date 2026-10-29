@@ -1063,7 +1063,7 @@ The TN-only side effects (bans, TN's re-subscribe by mail) are in the
   |---|---|---|
   | 1 | Phase 2 SQL (2a, then 2b), then the Phase 2 Go API | The member lists select both columns |
   | 2 | Phase 3 dual writes and origin on every insert, Go and batch, **without** TN ingestion | TN ingestion has no old-column equivalent (Phase 3) |
-  | 3 | Re-run 2a's sync for the last time, then 4a and 4b (either order) | The sync clears TN implicit rows, so it runs before any exist: 4b's as much as ingestion's. 4a only touches `unknown` and 4b only the 106 historical rows; both are safe to re-run. 4b's rows need the 3c guards (welcome mail, spread check, birthday, stories), which ship in the same batch deploy as the command |
+  | 3 | Re-run 2a's sync for the last time, then 4a and 4b (either order) | The sync leaves TN placements (`added_origin = 'tn_unaddressed'`) implicit, so its order against 4b doesn't matter. 4a only touches `unknown` and 4b only the 106 historical rows; both are safe to re-run. 4b's rows need the 3c guards (welcome mail, spread check, birthday, stories), which ship in the same batch deploy as the command |
   | 4 | Phase 5 readers: Go, then batch, then frontend | The frontend ships itself on green master; it falls back to `rippled` |
   | 5 | Phase 7 code that no longer reads or writes the dropped columns, the `Received` log copy, then the drop-column SQL | A Go struct that still selects a dropped column fails every query |
   | 6 | The [TN plan](2026-10-29-tn-api-ingestion-fixes.md) | Its fixes have to be in before TN API ingestion goes live |

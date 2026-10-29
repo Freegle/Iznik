@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Database;
 
+use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -50,5 +51,23 @@ class MembershipImplicitColumnTest extends TestCase
         $this->assertTrue($rippled->refresh()->implicit);
         $this->assertFalse($clearedSinceTheCopy->refresh()->implicit);
         $this->assertFalse($ordinary->refresh()->implicit);
+    }
+
+    /**
+     * A TrashNothing placement is implicit with rippled = 0 by design. memberships:backfill-tn
+     * and ingestion write them, so the copy must leave them alone whenever it is run again.
+     */
+    public function test_up_leaves_trashnothing_placements_implicit(): void
+    {
+        $placement = $this->createMembership($this->createTestUser(), $this->createTestGroup(), [
+            'rippled' => 0,
+            'implicit' => 1,
+            'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+        ]);
+
+        $this->migration()->up();
+        $this->migration()->up();
+
+        $this->assertTrue($placement->refresh()->implicit);
     }
 }
