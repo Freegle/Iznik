@@ -332,15 +332,19 @@ Posts that arrived unaddressed before ingestion made memberships have the flag a
 membership. `memberships:backfill-tn` (`TnMembershipBackfillService`; dry run unless `--send`,
 safe to run again) reads only their own rows (`rippled_in = 0`, `mod_messaging_allowed = 0`,
 live or not) and, for each poster and group, writes the membership ingestion would through
-`GroupPostIngestionService::writeMembership`, dated from their earliest such post there. It
-skips a pair where another post of theirs on that group was addressed (consent only goes one
-way; a rippled-in copy is not consent), a banned or deleted poster, a poster with no
-`tnuserid` (the first API posts, before posters were resolved through it, went to whichever
-account had TN's id or to a stub made with it), and any existing
-membership, except that a `tn_unaddressed` row without `implicit` gets it unless a "became
-ordinary" log since it was added says it was cleared. It lists every pair, and counts the
-posters who are mixed today and the pairs whose group's moderators lose contact once contact
-is decided per group.
+`GroupPostIngestionService::writeMembership`, dated from their earliest such post there. An
+earlier addressed post to the group does not stop it: consent lives on the membership, and a
+poster with none has left since, so being placed back makes a new implicit row, as ingestion
+does. It skips a banned or deleted poster, a poster with no `tnuserid` (the first API posts,
+before posters were resolved through it, went to whichever account had TN's id or to a stub
+made with it). An addressed post to the group since a membership was added is consent, as
+for ingestion: an implicit membership (TN or ripple) is cleared with the "became ordinary"
+log, and a `tn_unaddressed` row without `implicit` stays ordinary. Without such a post, that
+row gets `implicit` unless a "became ordinary" log since it was added says it was cleared, so
+a doubtful row ends up implicit, with contact restricted. Any other membership is left alone. It lists every pair with its contact
+today (the mixed-poster rule below, which one addressed post on any group opens) and per group
+(an ordinary membership of that group after the run), and counts the pairs that lose and gain
+contact when contact is decided per group.
 
 A post with no `freegle_group_ids` field at all is read as unaddressed, but `PostSyncer`
 reports it to Sentry once a run: TN enables the field per API key, and a key without it would

@@ -126,28 +126,128 @@ class BackfillTnCommandTest extends TestCase
         $this->assertSame(1, DB::table('logs')->where('user', $user->id)->count());
     }
 
-    public function test_an_addressed_post_on_the_same_group_means_they_consented(): void
+    public function test_a_poster_who_consented_once_and_has_no_membership_now_gets_an_implicit_one(): void
     {
         [$user, $group] = $this->unaddressedPoster();
         // A TN post by email keeps the column default, and the email path only takes a post to
-        // a group the poster has joined.
+        // a group the poster has joined. With no membership now, they have left since, and
+        // leaving and being placed back makes a new implicit row.
         $this->tnPost($user, $group, true, now()->subYear());
 
         $pair = $this->pairFor($this->backfill(), $user, $group);
 
-        $this->assertSame(Backfill::ACTION_CONSENTED, $pair['action']);
-        $this->assertNull($this->membership($user, $group));
+        $this->assertSame(Backfill::ACTION_CREATE, $pair['action']);
+        $this->assertSame(1, (int) $this->membership($user, $group)->implicit);
     }
 
-    public function test_an_addressed_rippled_in_copy_is_not_consent(): void
+    public function test_a_poster_who_consented_and_is_still_a_member_is_left_alone(): void
     {
         [$user, $group] = $this->unaddressedPoster();
-        // Rippling inserts its copies with the column default of 1. The poster chose nothing.
-        $this->tnPost($user, $group, true, now()->subWeek(), ['rippled_in' => 1]);
+        $this->tnPost($user, $group, true, now()->subYear());
+        $this->createMembership($user, $group, ['added_origin' => Membership::ADDED_ORIGIN_PARTNER]);
 
         $pair = $this->pairFor($this->backfill(), $user, $group);
 
-        $this->assertSame(Backfill::ACTION_CREATE, $pair['action']);
+        $this->assertSame(Backfill::ACTION_EXISTING, $pair['action']);
+        $this->assertSame(0, (int) $this->membership($user, $group)->implicit);
+    }
+
+    public function test_an_addressed_post_since_it_was_added_keeps_a_tn_unaddressed_membership_ordinary(): void
+    {
+        [$user, $group] = $this->unaddressedPoster();
+        $this->tnPost($user, $group, true, now()->subWeek());
+        $this->createMembership($user, $group, [
+            'implicit' => 0, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now()->subMonth(),
+        ]);
+
+        $pair = $this->pairFor($this->backfill(), $user, $group);
+
+        $this->assertSame(Backfill::ACTION_CONSENTED, $pair['action']);
+        $this->assertSame(0, (int) $this->membership($user, $group)->implicit);
+        $this->assertTrue($pair['contact_after']);
+    }
+
+    public function test_an_addressed_post_from_before_the_membership_is_not_consent_to_it(): void
+    {
+        // They consented, left, and were placed back: the consent went with the old row.
+        [$user, $group] = $this->unaddressedPoster();
+        $this->tnPost($user, $group, true, now()->subYear());
+        $this->createMembership($user, $group, [
+            'implicit' => 0, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now()->subMonth(),
+        ]);
+
+        $pair = $this->pairFor($this->backfill(), $user, $group);
+
+        $this->assertSame(Backfill::ACTION_SET_IMPLICIT, $pair['action']);
+        $this->assertSame(1, (int) $this->membership($user, $group)->implicit);
+    }
+
+    public function test_an_addressed_post_since_it_was_added_clears_an_implicit_membership(): void
+    {
+        [$user, $group] = $this->unaddressedPoster();
+        $this->tnPost($user, $group, true, now()->subWeek());
+        $this->createMembership($user, $group, [
+            'implicit' => 1, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now()->subMonth(),
+        ]);
+
+        $pair = $this->pairFor($this->backfill(), $user, $group);
+
+        $this->assertSame(Backfill::ACTION_CLEAR, $pair['action']);
+        $this->assertSame(0, (int) $this->membership($user, $group)->implicit);
+        $this->assertTrue($pair['contact_after']);
+        $this->assertSame(1, DB::table('logs')->where('user', $user->id)->where('groupid', $group->id)
+            ->where('text', RippleEngagementService::LOG_PREFIX.GroupPostIngestionService::REASON_CONSENTED)->count());
+
+        // Cleared once: a second run finds it ordinary and consented to.
+        $pair = $this->pairFor($this->backfill(), $user, $group);
+        $this->assertSame(Backfill::ACTION_CONSENTED, $pair['action']);
+    }
+
+    public function test_an_addressed_post_to_another_group_does_not_clear_an_implicit_membership(): void
+    {
+        // Consent is per group. The mixed-poster rule (one addressed post anywhere opens every
+        // group) is today's contact rule and is going; it must not decide anything here.
+        [$user, $group] = $this->unaddressedPoster();
+        $this->tnPost($user, $this->createTestGroup(), true, now()->subWeek());
+        $this->createMembership($user, $group, [
+            'implicit' => 1, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now()->subMonth(),
+        ]);
+
+        $pair = $this->pairFor($this->backfill(), $user, $group);
+
+        $this->assertSame(Backfill::ACTION_ALREADY_IMPLICIT, $pair['action']);
+        $this->assertSame(1, (int) $this->membership($user, $group)->implicit);
+        $this->assertTrue($pair['contact_today']);
+        $this->assertFalse($pair['contact_after']);
+    }
+
+    public function test_an_addressed_post_since_it_was_added_clears_a_ripple_membership(): void
+    {
+        [$user, $group] = $this->unaddressedPoster();
+        $this->tnPost($user, $group, true, now()->subWeek());
+        // Before 2a's last sync a ripple join can have rippled = 1 and implicit = 0.
+        $this->createMembership($user, $group, [
+            'rippled' => 1, 'implicit' => 0, 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED, 'added' => now()->subMonth(),
+        ]);
+
+        $pair = $this->pairFor($this->backfill(), $user, $group);
+
+        $this->assertSame(Backfill::ACTION_CLEAR, $pair['action']);
+        $m = $this->membership($user, $group);
+        $this->assertSame([0, 0], [(int) $m->rippled, (int) $m->implicit]);
+        $this->assertSame(Membership::ADDED_ORIGIN_RIPPLED, $m->added_origin);
+    }
+
+    public function test_an_addressed_rippled_in_copy_does_not_count_as_contact_today(): void
+    {
+        [$user, $group] = $this->unaddressedPoster();
+        // Rippling inserts its copies with the column default of 1. The poster chose nothing,
+        // and modmessaging.UsersUnaddressedOnly reads only a post's own row.
+        $this->tnPost($user, $this->createTestGroup(), true, now()->subWeek(), ['rippled_in' => 1]);
+
+        $pair = $this->pairFor($this->backfill(send: false), $user, $group);
+
+        $this->assertFalse($pair['contact_today']);
     }
 
     public function test_an_unaddressed_rippled_in_copy_is_not_read(): void
@@ -271,34 +371,48 @@ class BackfillTnCommandTest extends TestCase
         $this->assertNull($this->membership($user, $group));
     }
 
-    public function test_reports_which_pairs_lose_contact_once_it_is_per_group(): void
+    public function test_reports_contact_today_and_per_group(): void
     {
-        // Mixed: addressed a post to another group, so contactable everywhere today.
+        // An addressed post to another group: today's mixed-poster rule opens this group too.
+        // Per group, an implicit membership here is not contactable.
         [$mixed, $group] = $this->unaddressedPoster();
         $this->tnPost($mixed, $this->createTestGroup(), true, now()->subYear());
-        // Mixed, but an ordinary member of this group, so its moderators keep contact.
+        // Mixed, and an ordinary member of this group, so its moderators keep contact.
         [$member, $memberGroup] = $this->unaddressedPoster();
         $this->tnPost($member, $this->createTestGroup(), true, now()->subYear());
         $this->createMembership($member, $memberGroup);
-        // Never addressed anything: not contactable today either.
+        // Never addressed anything, so restricted everywhere today, but an ordinary member of
+        // this group: per group, its moderators gain contact.
+        [$restricted, $restrictedGroup] = $this->unaddressedPoster();
+        $this->createMembership($restricted, $restrictedGroup);
+        // Never addressed anything and no membership: no contact either way.
         [$only, $onlyGroup] = $this->unaddressedPoster();
 
         $stats = $this->backfill(send: false);
 
-        $pair = $this->pairFor($stats, $mixed, $group);
-        $this->assertTrue($pair['mixed']);
-        $this->assertTrue($pair['losing_contact']);
-
-        $pair = $this->pairFor($stats, $member, $memberGroup);
-        $this->assertTrue($pair['mixed']);
-        $this->assertFalse($pair['losing_contact']);
-
-        $pair = $this->pairFor($stats, $only, $onlyGroup);
-        $this->assertFalse($pair['mixed']);
-        $this->assertFalse($pair['losing_contact']);
+        $contact = fn (User $u, Group $g) => array_intersect_key($this->pairFor($stats, $u, $g),
+            ['contact_today' => 1, 'contact_after' => 1]);
+        $this->assertSame(['contact_today' => true, 'contact_after' => false], $contact($mixed, $group));
+        $this->assertSame(['contact_today' => true, 'contact_after' => true], $contact($member, $memberGroup));
+        $this->assertSame(['contact_today' => false, 'contact_after' => true], $contact($restricted, $restrictedGroup));
+        $this->assertSame(['contact_today' => false, 'contact_after' => false], $contact($only, $onlyGroup));
 
         $this->assertGreaterThanOrEqual(2, $stats['mixed_posters']);
         $this->assertGreaterThanOrEqual(1, $stats['pairs_losing_contact']);
+        $this->assertGreaterThanOrEqual(1, $stats['pairs_gaining_contact']);
+    }
+
+    public function test_a_ripple_membership_is_not_contactable_per_group(): void
+    {
+        [$user, $group] = $this->unaddressedPoster();
+        $this->tnPost($user, $this->createTestGroup(), true, now()->subYear());
+        // Before 2a's last sync a ripple join can have rippled = 1 and implicit = 0.
+        $this->createMembership($user, $group, ['rippled' => 1, 'implicit' => 0]);
+
+        $pair = $this->pairFor($this->backfill(send: false), $user, $group);
+
+        $this->assertTrue($pair['contact_today']);
+        $this->assertFalse($pair['contact_after']);
     }
 
     public function test_command_is_a_dry_run_unless_sent(): void

@@ -725,8 +725,18 @@ counts by action, and the two Q6 counts. Decisions to check:
   `processingrequired = 1`, as ingestion's does: `memberships:process` sends no welcome for
   `tn_unaddressed` and leaves it out of the spread check, but applies flagged comments. The
   backfill does **not** queue the member for reach mail, which ingestion does.
-- **Consent** is any addressed post of theirs whose own row (`rippled_in = 0`) is on the group,
-  TN or not, as in Q5. A rippled-in copy (column default 1) is not consent.
+- **An earlier addressed post does not skip a pair with no membership** (changed 2026-10-29,
+  after the backup dry run). Consent lives on the membership. A poster who consented once and
+  has no membership now has left since, so being placed back makes a new implicit row, as
+  ingestion does. The backup run had 3 such pairs (37512623 / 21257, 40979027 / 49861,
+  41679318 / 507531), whose posts would otherwise read as addressed after Phase 5.
+- **With a membership, an addressed post since its `added` is consent** (2026-10-29), as it is
+  to ingestion. An implicit membership, TN or ripple (either flag, for the pre-sync drift), is
+  cleared through `RippleEngagementService::clear` with `consented through TrashNothing`. A
+  `tn_unaddressed` row that is not implicit stays ordinary. A post from before `added` came
+  before the current row (they left and were placed back), so it is not consent to it. Without
+  consent, a non-implicit `tn_unaddressed` row stays ordinary only with a "became ordinary"
+  log; otherwise it is made implicit. **Rule: when in doubt, restrict contact.**
 - **Banned** (`users_banned`) and **deleted** (`users.deleted`) posters get no row, as ingestion
   refuses a banned one.
 - **A poster with no `tnuserid` gets no row** (added after Q12c): ingestion has resolved every
@@ -736,15 +746,18 @@ counts by action, and the two Q6 counts. Decisions to check:
 - **A `tn_unaddressed` row with `implicit = 0`** is set back only when there is no "became
   ordinary" log for the pair since its `added`. TN's partner add clears one with no post, so
   the consent check alone would miss it.
-- **Mixed / loses contact** (reporting only): mixed = an addressed own-row post on any group.
-  Loses contact = mixed, not consented on this group, and no ordinary (`implicit = 0`,
-  `rippled = 0`) membership left there after this run.
+- **Contact today / per group** (reporting only). *Today* is the mixed-poster rule
+  (`UsersUnaddressedOnly`): an addressed own-row post on **any** group opens **every** group's
+  moderators. That is the bug Phase 5 removes, and the column describes it rather than
+  endorsing it. *Per group* is Phase 5's rule: an ordinary (`implicit = 0`, `rippled = 0`)
+  membership of that group after this run. The run counts pairs that lose contact (today yes,
+  per group no) and gain it (today no, per group yes).
 
 - [x] Scope (Phase 0): only the post rows (`rippled_in = 0`) with `mod_messaging_allowed = 0`,
   about 100, live or not. Rows with `mod_messaging_allowed = 1` are not touched. For each
   distinct `(fromuser, groupid)` in that set:
-  - **The poster has another post on that group with `mod_messaging_allowed = 1`:** skip. They
-    consented to the group once, so the membership is not implicit (Phase 0).
+  - ~~**The poster has another post on that group with `mod_messaging_allowed = 1`:** skip.~~
+    Dropped 2026-10-29: see "An earlier addressed post" above.
   - **No membership:** create one with `implicit = 1`, `added_origin = 'tn_unaddressed'`, mail
     settings off (0 / 0 / 0), a `memberships_history` row (same origin) and a
     `Group/Joined` log, exactly as Phase 3 ingestion does. Set `added` to the post's arrival
@@ -903,6 +916,13 @@ Go API first, then the batch jobs, then the frontend (see Deploy order).
 
 `PostIsUnaddressed(msgid)` becomes: the post's own row (`rippled_in = 0`) joined to the poster's
 membership on that group has `implicit = 1 AND added_origin = 'tn_unaddressed'`.
+
+- **When in doubt, restrict contact** (decided 2026-10-29). A TN post with no membership behind
+  it must not read as addressed. Ingestion and 4b leave some without one on purpose (a banned
+  poster, a deleted one, one with no `tnuserid`), and a failed membership write leaves others.
+  So until Phase 7: no membership and `mod_messaging_allowed = 0` on the own row → unaddressed.
+  The same goes for moderator contact with a TN account that has no ordinary membership of the
+  group (TN-specific changes below).
 
 - [ ] [modmessaging.go](../iznik-server-go/modmessaging/modmessaging.go) and the batch copy at
   [ProcessBackgroundTasksCommand.php:596](../iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php#L596).

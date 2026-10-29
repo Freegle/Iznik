@@ -41,7 +41,7 @@ class BackfillTnCommand extends Command
             $stats = $service->backfill($send);
 
             $this->table(
-                ['User', 'Group', 'Posts', 'Earliest arrival', 'Membership', 'Mixed', 'Loses contact', 'Action'],
+                ['User', 'Group', 'Posts', 'Earliest arrival', 'Membership', 'Contact today', 'Contact per group', 'Action'],
                 collect($stats['pairs'])->map(fn ($p) => [
                     $p['userid'],
                     $p['groupid'],
@@ -50,8 +50,8 @@ class BackfillTnCommand extends Command
                     $p['membership'] === null ? '-' : sprintf('%d (%s, implicit %d, rippled %d)',
                         $p['membership']->id, $p['membership']->added_origin,
                         $p['membership']->implicit, $p['membership']->rippled),
-                    $p['mixed'] ? 'yes' : 'no',
-                    $p['losing_contact'] ? 'yes' : 'no',
+                    $p['contact_today'] ? 'yes' : 'no',
+                    $p['contact_after'] ? 'yes' : 'no',
                     $p['action'],
                 ])->all(),
             );
@@ -61,9 +61,13 @@ class BackfillTnCommand extends Command
             arsort($stats['actions']);
             $this->table(['Action', 'Pairs'], collect($stats['actions'])->map(fn ($n, $a) => [$a, $n])->values()->all());
 
-            // Reporting only: the effect of deciding contact per group instead of per person.
-            $this->line("Mixed posters (an addressed post somewhere, so contactable everywhere today): {$stats['mixed_posters']}");
-            $this->line("Pairs whose group's moderators lose contact once contact is per group: {$stats['pairs_losing_contact']}");
+            // Reporting only: the effect of Phase 5 deciding contact per group instead of per person.
+            $this->line('Contact today is the mixed-poster rule, which Phase 5 removes: one addressed post on ANY group');
+            $this->line("opens EVERY group's moderators to the poster. Contact per group is Phase 5's rule: only an");
+            $this->line('ordinary (not implicit) membership of that group, after this run.');
+            $this->line("Posters contactable on every group today through the mixed-poster rule: {$stats['mixed_posters']}");
+            $this->line("Pairs whose group's moderators lose contact under the per-group rule: {$stats['pairs_losing_contact']}");
+            $this->line("Pairs whose group's moderators gain contact under the per-group rule: {$stats['pairs_gaining_contact']}");
 
             Log::info('memberships:backfill-tn complete', [
                 'send' => $send,
@@ -71,6 +75,7 @@ class BackfillTnCommand extends Command
                 'rows' => $stats['rows'],
                 'mixed_posters' => $stats['mixed_posters'],
                 'pairs_losing_contact' => $stats['pairs_losing_contact'],
+                'pairs_gaining_contact' => $stats['pairs_gaining_contact'],
             ]);
 
             return Command::SUCCESS;
