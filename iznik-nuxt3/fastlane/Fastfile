@@ -21,6 +21,8 @@ def dump_mem_samples(label, lines)
   UI.message(File.read(MEM_SAMPLE_LOG).split("\n").last(lines).join("\n"))
 end
 
+require File.expand_path('apple_agreements.rb', __dir__)
+
 platform :android do
   error do |lane, exception|
     dump_mem_samples("#{lane} failed", 90)
@@ -429,6 +431,14 @@ platform :android do
 end
 
 platform :ios do
+  # Any iOS lane can be stopped by an agreement waiting in Apple's portal. Say what to do,
+  # rather than leave it to Apple's raw error further up the log.
+  error do |lane, exception|
+    if AppleAgreements.waiting?(exception&.message)
+      UI.error("🚨 #{lane} stopped: #{AppleAgreements.instruction}")
+    end
+  end
+
   desc "Build and upload to TestFlight"
   lane :beta do
     # Validate environment variables
