@@ -10,10 +10,9 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Community-event roundup: one email per opted-in member covering every upcoming
- * event, each shown once. The site is national, so there are no communities to
- * scope events or members by. An event carries no coordinates, so the roundup is
- * not filtered by distance either.
+ * Community-event roundup: one email per opted-in member covering the upcoming
+ * events whose reach covers them, nearest first. There are no communities to scope
+ * events by; each event is shown around its own centre instead (see itemsReaching).
  */
 class EventsDigestService
 {
@@ -59,6 +58,11 @@ class EventsDigestService
                 continue;
             }
 
+            $userEvents = $this->itemsReaching($events, $this->memberLatLng($user));
+            if (empty($userEvents)) {
+                continue;
+            }
+
             if (!$dryRun) {
                 $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($email);
                 // spool() builds the message (incl. MJML render) up front and only
@@ -68,7 +72,7 @@ class EventsDigestService
                 try {
                     app(EmailSpoolerService::class)->spool(new EventsDigestMail(
                         recipientEmail: $email,
-                        events: $events,
+                        events: $userEvents,
                         unsubscribeUrl: $unsubscribeUrl,
                         userId: $user->id,
                     ), $email);
@@ -120,6 +124,9 @@ class EventsDigestService
                 'communityevents.contactphone',
                 'communityevents.contactemail',
                 'communityevents.contacturl',
+                'communityevents.lat',
+                'communityevents.lng',
+                'communityevents.reachmiles',
                 'communityevents_dates.start',
                 'communityevents_dates.end',
             ])
@@ -193,6 +200,9 @@ class EventsDigestService
                 'end'          => $end,
                 'imageUrl'     => $imageUrl,
                 'url'          => "{$userSite}/communityevent/{$event->id}",
+                'lat'          => $event->lat !== null ? (float) $event->lat : null,
+                'lng'          => $event->lng !== null ? (float) $event->lng : null,
+                'reachmiles'   => $event->reachmiles !== null ? (float) $event->reachmiles : null,
             ];
         }
 

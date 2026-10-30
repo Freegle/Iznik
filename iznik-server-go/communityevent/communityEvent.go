@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/localreach"
 	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/newsfeed"
@@ -11,7 +12,6 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"os"
 	"strconv"
 	"sync"
@@ -36,23 +36,13 @@ type CommunityEvent struct {
 	Description    string               `json:"description"`
 	Timecommitment string               `json:"timecommitment"`
 	Added          time.Time            `json:"added"`
+	Lat            *float64             `json:"lat"`
+	Lng            *float64             `json:"lng"`
+	Reachminutes   *int                 `json:"reachminutes"`
+	Reachmiles     *float64             `json:"reachmiles"`
 	Image          *CommunityEventImage `json:"image" gorm:"-"`
 	Dates          []CommunityEventDate `json:"dates" gorm:"-"`
 	Canmodify      bool                 `json:"canmodify" gorm:"-"`
-}
-
-// distanceOrder orders by great-circle distance in miles from (lat, lng) to the
-// poster's location (locations.lat/lng, joined via users.lastlocation), with
-// rows lacking a poster location sorted last rather than first. GORM's Order
-// switch has no default branch, so this must be a clause.OrderBy - a bare
-// gorm.Expr passed straight to Order is silently dropped.
-func distanceOrder(lat, lng float32) clause.OrderBy {
-	return clause.OrderBy{Expression: gorm.Expr(
-		"(locations.lat IS NULL OR locations.lng IS NULL) ASC, "+
-			"3959 * ACOS(GREATEST(-1.0, LEAST(1.0, "+
-			"COS(RADIANS(?)) * COS(RADIANS(locations.lat)) * COS(RADIANS(locations.lng) - RADIANS(?)) "+
-			"+ SIN(RADIANS(?)) * SIN(RADIANS(locations.lat))))) ASC",
-		lat, lng, lat)}
 }
 
 func List(c *fiber.Ctx) error {
@@ -80,19 +70,23 @@ func List(c *fiber.Ctx) error {
 		}
 	} else {
 		loc := user.GetLatLng(myid)
+		lat, lng := float64(loc.Lat), float64(loc.Lng)
 
 		query := db.Table("communityevents").
 			Select("DISTINCT communityevents.id").
 			Joins("LEFT JOIN communityevents_dates ON communityevents.id = communityevents_dates.eventid").
 			Joins("LEFT JOIN users ON communityevents.userid = users.id").
-			Joins("LEFT JOIN locations ON locations.id = users.lastlocation").
 			Where("end IS NOT NULL AND end >= ? AND communityevents.deleted = 0 AND (pending = 0 OR communityevents.userid = ?) AND users.deleted IS NULL",
 				start, myid)
 
-		if loc.Lat != 0 || loc.Lng != 0 {
-			query = query.Order(distanceOrder(loc.Lat, loc.Lng))
+		// A member sees the events whose reach covers them, nearest first, and always
+		// their own. With no location there is nothing to measure from, so only their own.
+		if lat != 0 || lng != 0 {
+			within, args := localreach.Within("communityevents", lat, lng)
+			query = query.Where("(communityevents.userid = ? OR ("+within+"))", append([]interface{}{myid}, args...)...).
+				Order(localreach.Nearest("communityevents", lat, lng))
 		} else {
-			query = query.Order("end ASC")
+			query = query.Where("communityevents.userid = ?", myid).Order("end ASC")
 		}
 
 		query.Pluck("id", &ids)
@@ -179,6 +173,12 @@ func Single(c *fiber.Ctx) error {
 				communityevent.Canmodify = canModify(myid, communityevent.ID)
 			}
 
+			// The centre is usually the poster's own location, so only someone who can
+			// edit the event sees it. Everyone else gets the free-text location.
+			if !communityevent.Canmodify {
+				communityevent.Lat, communityevent.Lng = nil, nil
+			}
+
 			return c.JSON(communityevent)
 		}
 	}
@@ -207,6 +207,11 @@ type CreateRequest struct {
 	Contactemail string `json:"contactemail"`
 	Contacturl   string `json:"contacturl"`
 	Description  string `json:"description"`
+	// Where the event is shown around, if not the poster's own location.
+	Lat *float64 `json:"lat,omitempty"`
+	Lng *float64 `json:"lng,omitempty"`
+	// How far it is shown, as a drive time; the density cap at the centre if absent.
+	Reachminutes *int `json:"reachminutes,omitempty"`
 }
 
 // Create handles POST /communityevent - create a new community event.
@@ -232,6 +237,11 @@ func Create(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "title, location and description are required")
 	}
 
+	reach, ok := localreach.Resolve(myid, req.Lat, req.Lng, req.Reachminutes)
+	if !ok {
+		return fiber.NewError(fiber.StatusBadRequest, "We need to know where the event is - please add a postcode")
+	}
+
 	db := database.DBConn
 
 	// Plain, isolated, literal single-row
@@ -248,6 +258,9 @@ func Create(c *fiber.Ctx) error {
 		"contacturl":   req.Contacturl,
 		"description":  req.Description,
 	}
+	for k, v := range reach.Columns() {
+		row[k] = v
+	}
 	if err := db.Table("communityevents").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create community event")
 	}
@@ -262,20 +275,23 @@ func Create(c *fiber.Ctx) error {
 }
 
 type PatchRequest struct {
-	ID           uint64  `json:"id"`
-	Action       string  `json:"action"`
-	Title        *string `json:"title,omitempty"`
-	Location     *string `json:"location,omitempty"`
-	Pending      *bool   `json:"pending,omitempty"`
-	Contactname  *string `json:"contactname,omitempty"`
-	Contactphone *string `json:"contactphone,omitempty"`
-	Contactemail *string `json:"contactemail,omitempty"`
-	Contacturl   *string `json:"contacturl,omitempty"`
-	Description  *string `json:"description,omitempty"`
-	DateID       uint64  `json:"dateid"`
-	PhotoID      uint64  `json:"photoid"`
-	Start        string  `json:"start"`
-	End          string  `json:"end"`
+	ID           uint64   `json:"id"`
+	Action       string   `json:"action"`
+	Title        *string  `json:"title,omitempty"`
+	Location     *string  `json:"location,omitempty"`
+	Pending      *bool    `json:"pending,omitempty"`
+	Contactname  *string  `json:"contactname,omitempty"`
+	Contactphone *string  `json:"contactphone,omitempty"`
+	Contactemail *string  `json:"contactemail,omitempty"`
+	Contacturl   *string  `json:"contacturl,omitempty"`
+	Description  *string  `json:"description,omitempty"`
+	Lat          *float64 `json:"lat,omitempty"`
+	Lng          *float64 `json:"lng,omitempty"`
+	Reachminutes *int     `json:"reachminutes,omitempty"`
+	DateID       uint64   `json:"dateid"`
+	PhotoID      uint64   `json:"photoid"`
+	Start        string   `json:"start"`
+	End          string   `json:"end"`
 }
 
 // Update handles PATCH /communityevent - update a community event.
@@ -360,7 +376,7 @@ func Update(c *fiber.Ctx) error {
 	isApprove := req.Pending != nil && !*req.Pending && req.Action == "" &&
 		req.Title == nil && req.Location == nil && req.Contactname == nil &&
 		req.Contactphone == nil && req.Contactemail == nil && req.Contacturl == nil &&
-		req.Description == nil
+		req.Description == nil && req.Lat == nil && req.Lng == nil && req.Reachminutes == nil
 	if isApprove && auth.IsModerator(myid) {
 		lockdown.CountApproval(myid)
 	} else if lockdown.GateMember(c, myid, "events") {
@@ -373,6 +389,11 @@ func Update(c *fiber.Ctx) error {
 	}
 	if req.Location != nil {
 		db.Table("communityevents").Where("id = ?", req.ID).Update("location", *req.Location)
+	}
+	if req.Lat != nil || req.Lng != nil || req.Reachminutes != nil {
+		if err := localreach.Update(db, "communityevents", req.ID, req.Lat, req.Lng, req.Reachminutes); err != nil {
+			return err
+		}
 	}
 	if req.Pending != nil {
 		// Approving out of moderation is terminal, so clear the hold with it rather

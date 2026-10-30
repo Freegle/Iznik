@@ -181,6 +181,8 @@ class ReachVolunteeringService
                     'contacturl' => $url,
                     'externalid' => $externalId,
                     'timecommitment' => $commitment,
+                    'lat' => $locRow->lat,
+                    'lng' => $locRow->lng,
                 ]);
 
                 $updated++;
@@ -198,6 +200,10 @@ class ReachVolunteeringService
                     'contacturl' => $url,
                     'timecommitment' => $commitment,
                     'externalid' => $externalId,
+                    // Shown around its postcode. The reach is left to the fallback radius:
+                    // sizing it needs routing, and the batch does not route.
+                    'lat' => $locRow->lat,
+                    'lng' => $locRow->lng,
                     'pending' => true,
                     'online' => false,
                     'deleted' => 0,

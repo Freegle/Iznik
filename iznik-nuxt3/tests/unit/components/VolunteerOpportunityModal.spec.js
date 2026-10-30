@@ -255,6 +255,14 @@ describe('VolunteerOpportunityModal', () => {
             template: '<span class="error-message"></span>',
             props: ['name'],
           },
+          ReachPicker: {
+            props: ['modelValue', 'online'],
+            template: '<div class="reach-picker-stub" />',
+          },
+          'b-form-checkbox': {
+            props: ['modelValue'],
+            template: '<label class="b-form-checkbox"><slot /></label>',
+          },
           StartEndCollection: {
             template: '<div class="start-end-collection"></div>',
             props: ['modelValue'],
@@ -342,6 +350,13 @@ describe('VolunteerOpportunityModal', () => {
       const wrapper = createWrapper({ id: 123, startEdit: true })
       await flushPromises()
       expect(wrapper.text()).toContain('Edit Volunteer Opportunity')
+    })
+
+    it('shows the reach picker and the online choice in edit mode', async () => {
+      const wrapper = createWrapper({ startEdit: true })
+      await flushPromises()
+      expect(wrapper.text()).toContain('People can do this online')
+      expect(wrapper.find('.reach-picker-stub').exists()).toBe(true)
     })
   })
 

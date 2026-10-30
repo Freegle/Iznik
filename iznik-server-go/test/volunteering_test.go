@@ -101,13 +101,13 @@ func TestVolunteeringCreateNoGroupAdminAllowed(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 }
 
-// A member of no communities at all should still be shown national opportunities.
+// A national (online) opportunity is shown to everyone, whatever their location.
 func TestVolunteering_NationalOpsListedWithNoGroups(t *testing.T) {
 	prefix := uniquePrefix("volnatnogrp")
 	db := database.DBConn
 
 	creatorID := CreateTestUser(t, prefix+"_creator", "User")
-	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) VALUES (?, 'National Only Vol', 'national desc', '', 0, 0, 0)", creatorID)
+	db.Exec("INSERT INTO volunteering (userid, title, description, location, online, pending, deleted, expired) VALUES (?, 'National Only Vol', 'national desc', '', 1, 0, 0, 0)", creatorID)
 	var nationalOpID uint64
 	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND title = 'National Only Vol' ORDER BY id DESC LIMIT 1", creatorID).Scan(&nationalOpID)
 	assert.Greater(t, nationalOpID, uint64(0))

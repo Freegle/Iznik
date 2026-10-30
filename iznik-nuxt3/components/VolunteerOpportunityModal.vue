@@ -264,6 +264,12 @@
               />
               <ErrorMessage name="location" class="text-danger fw-bold" />
             </b-form-group>
+            <b-form-group label="Who should see it?" :state="true">
+              <b-form-checkbox v-model="volunteering.online" class="mb-2">
+                <span class="fw-normal">People can do this online, from anywhere</span>
+              </b-form-checkbox>
+              <ReachPicker v-model="reach" :online="volunteering.online" />
+            </b-form-group>
             <b-form-group label="When is it?" :state="true">
               <p>
                 You can add multiple dates if the opportunity occurs several
@@ -389,7 +395,7 @@
   />
 </template>
 <script setup>
-import { ref, computed, defineAsyncComponent, watch } from 'vue'
+import { ref, reactive, computed, defineAsyncComponent, watch } from 'vue'
 import { defineRule, Form as VeeForm, Field, ErrorMessage } from 'vee-validate'
 import { required, email, min, max } from '@vee-validate/rules'
 import EmailValidator from './EmailValidator'
@@ -415,14 +421,18 @@ const DonationButton = defineAsyncComponent(
 const ExternalLink = defineAsyncComponent(
   () => import('~/components/ExternalLink')
 )
+const ReachPicker = defineAsyncComponent(
+  () => import('~/components/ReachPicker')
+)
 
 defineRule('required', required)
 defineRule('email', email)
 defineRule('min', min)
 defineRule('max', max)
 
+// Reactive, so a child writing into it through v-model (ReachPicker) sees its own change.
 function initialVolunteering() {
-  return {
+  return reactive({
     id: null,
     title: null,
     description: null,
@@ -431,12 +441,16 @@ function initialVolunteering() {
     url: null,
     timecommitment: null,
     location: null,
+    online: false,
+    lat: null,
+    lng: null,
+    reachminutes: null,
     dates: [],
     contactname: null,
     contactemail: null,
     contactphone: null,
     contacturl: null,
-  }
+  })
 }
 
 const props = defineProps({
@@ -496,6 +510,20 @@ const volunteering = computed(() => {
   }
 
   return ret
+})
+
+// Where the opportunity is shown and how far, for ReachPicker.
+const reach = computed({
+  get: () => ({
+    lat: volunteering.value?.lat ?? null,
+    lng: volunteering.value?.lng ?? null,
+    reachminutes: volunteering.value?.reachminutes ?? null,
+  }),
+  set: (v) => {
+    volunteering.value.lat = v.lat
+    volunteering.value.lng = v.lng
+    volunteering.value.reachminutes = v.reachminutes
+  },
 })
 
 const canmodify = computed(() => {

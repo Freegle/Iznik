@@ -1663,6 +1663,13 @@ return [
         'feed2' => EnvSetting::env('WHATJOBS_FEED2', ''),
     ],
 
+    // How far a community event or volunteering opportunity is shown when routing could not
+    // size its reach when it was saved (imports, or a routing outage). About what a 30-minute
+    // drive reaches. Mirrors localreach.FallbackMiles in iznik-server-go.
+    'local_reach' => [
+        'fallback_miles' => (float) EnvSetting::env('LOCAL_REACH_FALLBACK_MILES', 15),
+    ],
+
     'reach_volunteering' => [
         'feed_url' => EnvSetting::env('REACH_VOLUNTEERING_FEED_URL', ''),
         'username' => EnvSetting::env('REACH_VOLUNTEERING_USER', ''),

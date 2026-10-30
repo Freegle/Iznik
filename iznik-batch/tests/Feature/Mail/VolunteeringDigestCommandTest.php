@@ -10,6 +10,23 @@ use Tests\TestCase;
 
 class VolunteeringDigestCommandTest extends TestCase
 {
+    // Every fixture member and item is in London unless a test says otherwise, so the reach
+    // filter keeps them; the reach tests move one or the other.
+    private const LONDON_LAT = 51.5074;
+
+    private const LONDON_LNG = -0.1278;
+
+    private const EDINBURGH_LAT = 55.9533;
+
+    private const EDINBURGH_LNG = -3.1883;
+
+    protected function createTestUser(array $attributes = []): \App\Models\User
+    {
+        return parent::createTestUser(array_merge([
+            'settings' => ['mylocation' => ['lat' => self::LONDON_LAT, 'lng' => self::LONDON_LNG]],
+        ], $attributes));
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -26,9 +43,12 @@ class VolunteeringDigestCommandTest extends TestCase
         DB::statement('SET FOREIGN_KEY_CHECKS=1');
     }
 
-    private function createVolunteering(string $title = 'Test Volunteering'): int
+    private function createVolunteering(string $title = 'Test Volunteering', array $fields = []): int
     {
-        $volId = DB::table('volunteering')->insertGetId([
+        $volId = DB::table('volunteering')->insertGetId(array_merge([
+            'lat' => self::LONDON_LAT,
+            'lng' => self::LONDON_LNG,
+            'reachmiles' => 15,
             'title' => $title,
             'location' => 'Community Centre',
             'description' => 'Help needed at local centre.',
@@ -36,7 +56,7 @@ class VolunteeringDigestCommandTest extends TestCase
             'deleted' => 0,
             'expired' => 0,
             'added' => now(),
-        ]);
+        ], $fields));
 
         return $volId;
     }
@@ -343,6 +363,8 @@ class VolunteeringDigestCommandTest extends TestCase
 
         DB::table('volunteering')->insertGetId([
             'title' => 'Contact Test',
+            'lat' => self::LONDON_LAT,
+            'lng' => self::LONDON_LNG,
             'location' => 'Town Hall',
             'description' => 'Contact details test.',
             'contactname' => 'Jane Smith',
@@ -391,6 +413,42 @@ class VolunteeringDigestCommandTest extends TestCase
 
         Mail::assertSent(VolunteeringDigestMail::class, function (VolunteeringDigestMail $mail) {
             return $mail->volunteerings[0]['photo_thumb'] === 'https://cdn.example.com/image.jpg';
+        });
+    }
+
+    public function test_online_opportunities_reach_everyone_and_in_person_ones_do_not(): void
+    {
+        Mail::fake();
+
+        $this->createVolunteering('London in person');
+        $this->createVolunteering('Online anywhere', ['online' => 1]);
+
+        $scot = $this->createTestUser([
+            'settings' => ['mylocation' => ['lat' => self::EDINBURGH_LAT, 'lng' => self::EDINBURGH_LNG]],
+        ]);
+        DB::table('users')->where('id', $scot->id)->update(['volunteeringallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->artisan('mail:volunteering-digest')->assertExitCode(0);
+
+        Mail::assertSent(VolunteeringDigestMail::class, function (VolunteeringDigestMail $mail) {
+            return array_column($mail->volunteerings, 'title') === ['Online anywhere'];
+        });
+    }
+
+    public function test_local_opportunities_come_before_online_ones(): void
+    {
+        Mail::fake();
+
+        $this->createVolunteering('Online anywhere', ['online' => 1]);
+        $this->createVolunteering('London in person');
+
+        $member = $this->createTestUser();
+        DB::table('users')->where('id', $member->id)->update(['volunteeringallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->artisan('mail:volunteering-digest')->assertExitCode(0);
+
+        Mail::assertSent(VolunteeringDigestMail::class, function (VolunteeringDigestMail $mail) {
+            return array_column($mail->volunteerings, 'title') === ['London in person', 'Online anywhere'];
         });
     }
 }

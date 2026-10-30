@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/localreach"
 	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/newsfeed"
@@ -11,7 +12,6 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"html"
 	"os"
 	"strconv"
@@ -25,50 +25,39 @@ func (Volunteering) TableName() string {
 }
 
 type Volunteering struct {
-	ID             uint64             `json:"id" gorm:"primary_key"`
-	Userid         uint64             `json:"userid"`
-	Pending        bool               `json:"pending"`
-	Heldby         *uint64            `json:"heldby"`
-	Title          string             `json:"title"`
-	Online         bool               `json:"online"`
-	Location       string             `json:"location"`
-	Contactname    string             `json:"contactname"`
-	Contactphone   string             `json:"contactphone"`
-	Contactemail   string             `json:"contactemail"`
-	Contacturl     string             `json:"contacturl"`
-	Description    string             `json:"description"`
-	Timecommitment string             `json:"timecommitment"`
-	Added          time.Time          `json:"added"`
+	ID             uint64    `json:"id" gorm:"primary_key"`
+	Userid         uint64    `json:"userid"`
+	Pending        bool      `json:"pending"`
+	Heldby         *uint64   `json:"heldby"`
+	Title          string    `json:"title"`
+	Online         bool      `json:"online"`
+	Location       string    `json:"location"`
+	Contactname    string    `json:"contactname"`
+	Contactphone   string    `json:"contactphone"`
+	Contactemail   string    `json:"contactemail"`
+	Contacturl     string    `json:"contacturl"`
+	Description    string    `json:"description"`
+	Timecommitment string    `json:"timecommitment"`
+	Added          time.Time `json:"added"`
 	// Renewed is when the owner last confirmed the opportunity is still active. The
 	// client needs it to know whether a confirmation is due, so that it only asks when
 	// the batch renewal clock says so rather than on every visit.
-	Renewed        *time.Time         `json:"renewed"`
-	Image          *VolunteeringImage `json:"image" gorm:"-"`
-	Dates          []VolunteeringDate `json:"dates" gorm:"-"`
-	Expired        bool               `json:"expired"`
-	Canmodify      bool               `json:"canmodify" gorm:"-"`
-	Url            string             `json:"url" gorm:"-"`
-
+	Renewed      *time.Time         `json:"renewed"`
+	Lat          *float64           `json:"lat"`
+	Lng          *float64           `json:"lng"`
+	Reachminutes *int               `json:"reachminutes"`
+	Reachmiles   *float64           `json:"reachmiles"`
+	Image        *VolunteeringImage `json:"image" gorm:"-"`
+	Dates        []VolunteeringDate `json:"dates" gorm:"-"`
+	Expired      bool               `json:"expired"`
+	Canmodify    bool               `json:"canmodify" gorm:"-"`
+	Url          string             `json:"url" gorm:"-"`
 }
 
 // listLimit caps how many opportunities a member's list returns. National ops are taken
 // first, so a very large number of them could in principle crowd out local ones - there
 // are none live today, and any that appear are central Freegle asks worth seeing.
 const listLimit = 20
-
-// distanceOrder orders by great-circle distance in miles from (lat, lng) to the
-// poster's location (locations.lat/lng, joined via users.lastlocation), with
-// rows lacking a poster location sorted last rather than first. GORM's Order
-// switch has no default branch, so this must be a clause.OrderBy - a bare
-// gorm.Expr passed straight to Order is silently dropped.
-func distanceOrder(lat, lng float32) clause.OrderBy {
-	return clause.OrderBy{Expression: gorm.Expr(
-		"(locations.lat IS NULL OR locations.lng IS NULL) ASC, "+
-			"3959 * ACOS(GREATEST(-1.0, LEAST(1.0, "+
-			"COS(RADIANS(?)) * COS(RADIANS(locations.lat)) * COS(RADIANS(locations.lng) - RADIANS(?)) "+
-			"+ SIN(RADIANS(?)) * SIN(RADIANS(locations.lat))))) ASC",
-		lat, lng, lat)}
-}
 
 func List(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
@@ -99,15 +88,22 @@ func List(c *fiber.Ctx) error {
 			Select("DISTINCT volunteering.id").
 			Joins("LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid").
 			Joins("LEFT JOIN users ON volunteering.userid = users.id").
-			Joins("LEFT JOIN locations ON locations.id = users.lastlocation").
 			Where("(applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?) AND volunteering.deleted = 0 AND expired = 0 AND (pending = 0 OR volunteering.userid = ?) AND users.deleted IS NULL",
 				start, start, myid).
 			Limit(listLimit)
 
-		if loc.Lat != 0 || loc.Lng != 0 {
-			query = query.Order(distanceOrder(loc.Lat, loc.Lng))
+		// A member sees the opportunities whose reach covers them, nearest first, then the
+		// online ones, which are shown everywhere. Their own are always shown. With no
+		// location there is nothing to measure from, so only online ones and their own.
+		lat, lng := float64(loc.Lat), float64(loc.Lng)
+		if lat != 0 || lng != 0 {
+			within, args := localreach.Within("volunteering", lat, lng)
+			query = query.Where("(volunteering.userid = ? OR volunteering.online = 1 OR ("+within+"))", append([]interface{}{myid}, args...)...).
+				Order("volunteering.online ASC").
+				Order(localreach.Nearest("volunteering", lat, lng))
 		} else {
-			query = query.Order("volunteering.id DESC")
+			query = query.Where("(volunteering.userid = ? OR volunteering.online = 1)", myid).
+				Order("volunteering.id DESC")
 		}
 
 		query.Pluck("id", &ids)
@@ -215,6 +211,12 @@ func Single(c *fiber.Ctx) error {
 				volunteering.Canmodify = canModify(myid, volunteering.ID)
 			}
 
+			// The centre is usually the poster's own location, so only someone who can
+			// edit the opportunity sees it. Everyone else gets the free-text location.
+			if !volunteering.Canmodify {
+				volunteering.Lat, volunteering.Lng = nil, nil
+			}
+
 			return c.JSON(volunteering)
 		}
 	}
@@ -245,6 +247,11 @@ type CreateRequest struct {
 	Contacturl     string `json:"contacturl"`
 	Description    string `json:"description"`
 	Timecommitment string `json:"timecommitment"`
+	// Where it is shown around, if not the poster's own location.
+	Lat *float64 `json:"lat,omitempty"`
+	Lng *float64 `json:"lng,omitempty"`
+	// How far it is shown, as a drive time; the density cap at the centre if absent.
+	Reachminutes *int `json:"reachminutes,omitempty"`
 }
 
 // Create handles POST /volunteering - create a new volunteering opportunity.
@@ -270,6 +277,12 @@ func Create(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "title, location and description are required")
 	}
 
+	// An online opportunity is shown everywhere, so it needs no centre. Anything else does.
+	reach, ok := localreach.Resolve(myid, req.Lat, req.Lng, req.Reachminutes)
+	if !ok && !req.Online {
+		return fiber.NewError(fiber.StatusBadRequest, "We need to know where the opportunity is - please add a postcode")
+	}
+
 	db := database.DBConn
 
 	// Plain, isolated, literal single-row
@@ -288,6 +301,11 @@ func Create(c *fiber.Ctx) error {
 		"description":    req.Description,
 		"timecommitment": req.Timecommitment,
 	}
+	if ok {
+		for k, v := range reach.Columns() {
+			row[k] = v
+		}
+	}
 	if err := db.Table("volunteering").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create volunteering")
 	}
@@ -302,23 +320,26 @@ func Create(c *fiber.Ctx) error {
 }
 
 type PatchRequest struct {
-	ID             uint64  `json:"id"`
-	Action         string  `json:"action"`
-	Title          *string `json:"title,omitempty"`
-	Location       *string `json:"location,omitempty"`
-	Online         *bool   `json:"online,omitempty"`
-	Pending        *bool   `json:"pending,omitempty"`
-	Contactname    *string `json:"contactname,omitempty"`
-	Contactphone   *string `json:"contactphone,omitempty"`
-	Contactemail   *string `json:"contactemail,omitempty"`
-	Contacturl     *string `json:"contacturl,omitempty"`
-	Description    *string `json:"description,omitempty"`
-	Timecommitment *string `json:"timecommitment,omitempty"`
-	DateID         uint64  `json:"dateid"`
-	PhotoID        uint64  `json:"photoid"`
-	Start          string  `json:"start"`
-	End            string  `json:"end"`
-	Applyby        string  `json:"applyby"`
+	ID             uint64   `json:"id"`
+	Action         string   `json:"action"`
+	Title          *string  `json:"title,omitempty"`
+	Location       *string  `json:"location,omitempty"`
+	Online         *bool    `json:"online,omitempty"`
+	Pending        *bool    `json:"pending,omitempty"`
+	Contactname    *string  `json:"contactname,omitempty"`
+	Contactphone   *string  `json:"contactphone,omitempty"`
+	Contactemail   *string  `json:"contactemail,omitempty"`
+	Contacturl     *string  `json:"contacturl,omitempty"`
+	Description    *string  `json:"description,omitempty"`
+	Timecommitment *string  `json:"timecommitment,omitempty"`
+	Lat            *float64 `json:"lat,omitempty"`
+	Lng            *float64 `json:"lng,omitempty"`
+	Reachminutes   *int     `json:"reachminutes,omitempty"`
+	DateID         uint64   `json:"dateid"`
+	PhotoID        uint64   `json:"photoid"`
+	Start          string   `json:"start"`
+	End            string   `json:"end"`
+	Applyby        string   `json:"applyby"`
 }
 
 // volunteeringHeldByAnother returns the id and name of a DIFFERENT moderator holding
@@ -404,7 +425,8 @@ func Update(c *fiber.Ctx) error {
 	isApprove := req.Pending != nil && !*req.Pending && req.Action == "" &&
 		req.Title == nil && req.Location == nil && req.Online == nil &&
 		req.Contactname == nil && req.Contactphone == nil && req.Contactemail == nil &&
-		req.Contacturl == nil && req.Description == nil && req.Timecommitment == nil
+		req.Contacturl == nil && req.Description == nil && req.Timecommitment == nil &&
+		req.Lat == nil && req.Lng == nil && req.Reachminutes == nil
 	if isApprove && auth.IsModerator(myid) {
 		lockdown.CountApproval(myid)
 	} else if lockdown.GateMember(c, myid, "events") {
@@ -420,6 +442,11 @@ func Update(c *fiber.Ctx) error {
 	}
 	if req.Online != nil {
 		db.Table("volunteering").Where("id = ?", req.ID).Update("online", *req.Online)
+	}
+	if req.Lat != nil || req.Lng != nil || req.Reachminutes != nil {
+		if err := localreach.Update(db, "volunteering", req.ID, req.Lat, req.Lng, req.Reachminutes); err != nil {
+			return err
+		}
 	}
 	if req.Pending != nil {
 		// Approving out of moderation is terminal, so clear the hold with it rather

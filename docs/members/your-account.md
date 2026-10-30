@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-13
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/settings/**
@@ -8,6 +8,7 @@ covers:
   - iznik-nuxt3/pages/mydata.vue
   - iznik-nuxt3/components/StoryAddModal.vue
   - iznik-nuxt3/pages/story/[id].vue
+  - iznik-nuxt3/components/ReachPicker.vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-settings.spec.js
   - iznik-nuxt3/tests/e2e/test-register-unsubscribe.spec.js
@@ -126,7 +127,9 @@ Freegle's own statistics and so you always have a record of what you gave or rec
 - **Stories** (`/stories`): share why you freegle. Good stories may feature in the
   newsletter.
 - **Community events** (`/communityevents`) and **volunteering** (`/volunteerings`):
-  browse and add local events and volunteering opportunities.
+  browse and add local events and volunteering opportunities. You add one once, and choose
+  how far away people see it: it is shown around your location, or a postcode you give,
+  out to the distance you set on the slider. Online volunteering is shown everywhere.
 - **Invite a friend** (`/promote`): invite someone by email, or print a poster.
 - **The app** (`/mobile`): the Freegle app does everything the site does, plus native
   camera, push notifications and calendar integration.

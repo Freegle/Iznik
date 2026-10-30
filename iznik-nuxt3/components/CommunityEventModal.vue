@@ -53,6 +53,16 @@
                 <span class="detail-value">{{ event.location }}</span>
               </div>
             </div>
+            <div v-if="canmodify && event.reachmiles" class="detail-item">
+              <v-icon icon="users" class="detail-icon" />
+              <div class="detail-content">
+                <span class="detail-label">Shown to</span>
+                <span class="detail-value">
+                  Freeglers within about
+                  {{ Math.max(1, Math.round(event.reachmiles)) }} miles
+                </span>
+              </div>
+            </div>
             <div v-if="event?.dates?.length" class="detail-item">
               <v-icon icon="calendar-alt" class="detail-icon" />
               <div class="detail-content">
@@ -226,6 +236,9 @@
               />
               <ErrorMessage name="location" class="text-danger fw-bold" />
             </b-form-group>
+            <b-form-group label="Who should see it?" :state="true">
+              <ReachPicker v-model="reach" />
+            </b-form-group>
             <b-form-group label="When is it?" :state="true">
               <p>
                 You can add multiple dates if the event occurs several times.
@@ -348,7 +361,7 @@
   </b-modal>
 </template>
 <script setup>
-import { ref, computed, watch, defineAsyncComponent } from 'vue'
+import { ref, reactive, computed, watch, defineAsyncComponent } from 'vue'
 import { defineRule, Form as VeeForm, Field, ErrorMessage } from 'vee-validate'
 import { required, email, min, max } from '@vee-validate/rules'
 import EmailValidator from './EmailValidator'
@@ -380,6 +393,9 @@ const DonationButton = defineAsyncComponent(
 )
 const ExternalLink = defineAsyncComponent(
   () => import('~/components/ExternalLink')
+)
+const ReachPicker = defineAsyncComponent(
+  () => import('~/components/ReachPicker')
 )
 
 // Props
@@ -423,8 +439,9 @@ const { modal, hide } = useOurModal()
 const { supportOrAdmin } = useMe()
 
 // Helper function to create initial event
+// Reactive, so a child writing into it through v-model (ReachPicker) sees its own change.
 function initialEvent() {
-  return {
+  return reactive({
     id: null,
     title: null,
     description: null,
@@ -432,6 +449,9 @@ function initialEvent() {
     user: null,
     url: null,
     location: null,
+    lat: null,
+    lng: null,
+    reachminutes: null,
     dates: [
       {
         uniqueid: uid('date-'),
@@ -446,7 +466,7 @@ function initialEvent() {
     contactemail: null,
     contactphone: null,
     contacturl: null,
-  }
+  })
 }
 
 // Fetch data
@@ -470,6 +490,20 @@ const event = computed(() => {
   }
 
   return ret
+})
+
+// Where the event is shown and how far, for ReachPicker.
+const reach = computed({
+  get: () => ({
+    lat: event.value?.lat ?? null,
+    lng: event.value?.lng ?? null,
+    reachminutes: event.value?.reachminutes ?? null,
+  }),
+  set: (v) => {
+    event.value.lat = v.lat
+    event.value.lng = v.lng
+    event.value.reachminutes = v.reachminutes
+  },
 })
 
 const canmodify = computed(() => {

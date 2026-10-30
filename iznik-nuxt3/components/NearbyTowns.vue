@@ -47,6 +47,10 @@ const props = defineProps({
     default: 'inbound',
     validator: (v) => ['inbound', 'outbound'].includes(v),
   },
+  // Measure from this point instead of the member's own location: an event or volunteering
+  // opportunity is shown around its own centre (ReachPicker).
+  lat: { type: Number, default: null },
+  lng: { type: Number, default: null },
 })
 
 const runtimeConfig = useRuntimeConfig()
@@ -125,8 +129,8 @@ function reset() {
 
 async function fetchTowns() {
   if (!visible.value) return
-  const lat = me.value?.lat
-  const lng = me.value?.lng
+  const lat = props.lat ?? me.value?.lat
+  const lng = props.lng ?? me.value?.lng
   const minutes = props.minutes
   if ((!lat && !lng) || !minutes) {
     reset()
@@ -161,7 +165,7 @@ function onVisibility(isVisible) {
   }
 }
 watch(
-  () => props.minutes,
+  () => [props.minutes, props.lat, props.lng],
   () => {
     if (visible.value) schedule()
   }

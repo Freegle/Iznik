@@ -358,3 +358,32 @@ func Near(c *fiber.Ctx) error {
 	}
 	return c.JSON(out)
 }
+
+// ReachRadius is the crow-flies radius, in miles, that a drive time reaches from (lat, lng): the
+// same figure Near returns as reach_radius_miles, for callers that want the number without the
+// town hint. Nil when the routing server cannot answer, so the caller can tell a failed
+// derivation from a small reach rather than store a made-up one.
+func ReachRadius(lat, lng, minutes float64) *float64 {
+	if (lat == 0 && lng == 0) || minutes <= 0 {
+		return nil
+	}
+	if minutes > 120 {
+		minutes = 120
+	}
+
+	body, _ := json.Marshal(rippleEvalReq{
+		Lat: lat, Lng: lng, Mode: "drive", MaxMinutes: minutes, Points: [][2]float64{},
+		PointsOnly: true, Frontier: true,
+	})
+	resp, err := routingClient.Post(routingEvalURL()+"/v1/ripple-eval", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var r rippleEvalResp
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&r) != nil || r.FrontierMedianMiles == nil {
+		return nil
+	}
+	radius := reachRadiusMiles(*r.FrontierMedianMiles)
+	return &radius
+}

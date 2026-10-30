@@ -183,4 +183,25 @@ describe('NearbyTowns', () => {
       'nearby-towns--wrap'
     )
   })
+
+  // An event or opportunity is shown around its own centre, not the viewer's home.
+  it('measures from a given point when one is passed', async () => {
+    mockFetchNear.mockResolvedValue({ towns: ['Leith'] })
+    mount(NearbyTowns, {
+      props: { minutes: 20, lat: 55.95, lng: -3.19 },
+      global: {
+        directives: {
+          'observe-visibility': {
+            mounted(el, binding) {
+              binding.value(true)
+            },
+          },
+        },
+      },
+    })
+    await vi.advanceTimersByTimeAsync(350)
+    await flushPromises()
+
+    expect(mockFetchNear).toHaveBeenCalledWith(55.95, -3.19, 20)
+  })
 })

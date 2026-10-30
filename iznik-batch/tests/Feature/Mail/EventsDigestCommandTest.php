@@ -10,6 +10,23 @@ use Tests\TestCase;
 
 class EventsDigestCommandTest extends TestCase
 {
+    // Every fixture member and item is in London unless a test says otherwise, so the reach
+    // filter keeps them; the reach tests move one or the other.
+    private const LONDON_LAT = 51.5074;
+
+    private const LONDON_LNG = -0.1278;
+
+    private const EDINBURGH_LAT = 55.9533;
+
+    private const EDINBURGH_LNG = -3.1883;
+
+    protected function createTestUser(array $attributes = []): \App\Models\User
+    {
+        return parent::createTestUser(array_merge([
+            'settings' => ['mylocation' => ['lat' => self::LONDON_LAT, 'lng' => self::LONDON_LNG]],
+        ], $attributes));
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -31,6 +48,9 @@ class EventsDigestCommandTest extends TestCase
         $eventId = DB::table('communityevents')->insertGetId(array_merge([
             'title'       => $title,
             'location'    => 'Test Hall, Test Town',
+            'lat'         => self::LONDON_LAT,
+            'lng'         => self::LONDON_LNG,
+            'reachmiles'  => 15,
             'description' => 'A test event description.',
             'pending'     => 0,
             'deleted'     => 0,
@@ -493,6 +513,8 @@ class EventsDigestCommandTest extends TestCase
 
         $eventId = DB::table('communityevents')->insertGetId([
             'title'    => 'No End Time Event',
+            'lat'      => self::LONDON_LAT,
+            'lng'      => self::LONDON_LNG,
             'location' => 'Somewhere',
             'pending'  => 0,
             'deleted'  => 0,
@@ -508,6 +530,90 @@ class EventsDigestCommandTest extends TestCase
 
         Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
             return $mail->events[0]['end'] === null;
+        });
+    }
+
+    private function eventsMember(array $attributes = []): \App\Models\User
+    {
+        $member = $this->createTestUser($attributes);
+        DB::table('users')->where('id', $member->id)->update(['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        return $member;
+    }
+
+    public function test_an_event_is_only_sent_to_members_inside_its_reach(): void
+    {
+        Mail::fake();
+
+        $this->createEvent('London Event');
+        $this->createEvent('Edinburgh Event', 7, ['lat' => self::EDINBURGH_LAT, 'lng' => self::EDINBURGH_LNG]);
+
+        $londoner = $this->eventsMember();
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) use ($londoner) {
+            return $mail->userId === $londoner->id
+                && array_column($mail->events, 'title') === ['London Event'];
+        });
+    }
+
+    public function test_a_member_with_no_event_in_reach_gets_no_email(): void
+    {
+        Mail::fake();
+
+        $this->createEvent('Edinburgh Event', 7, ['lat' => self::EDINBURGH_LAT, 'lng' => self::EDINBURGH_LNG]);
+        $this->eventsMember();
+
+        $this->artisan('mail:events-digest')
+            ->expectsOutputToContain('Sent 0 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_a_member_with_no_location_gets_no_events(): void
+    {
+        Mail::fake();
+
+        $this->createEvent();
+        $this->eventsMember(['settings' => []]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_events_are_nearest_first(): void
+    {
+        Mail::fake();
+
+        // About 10 miles north, then the member's own spot. Both reach 15 miles.
+        $this->createEvent('Further', 7, ['lat' => self::LONDON_LAT + 0.145]);
+        $this->createEvent('Nearer', 8);
+        $this->eventsMember();
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return array_column($mail->events, 'title') === ['Nearer', 'Further'];
+        });
+    }
+
+    public function test_an_event_with_no_routed_reach_uses_the_fallback_radius(): void
+    {
+        Mail::fake();
+        config(['freegle.local_reach.fallback_miles' => 15]);
+
+        // About 10 and 20 miles north, neither sized by routing.
+        $this->createEvent('Ten miles', 7, ['lat' => self::LONDON_LAT + 0.145, 'reachmiles' => null]);
+        $this->createEvent('Twenty miles', 7, ['lat' => self::LONDON_LAT + 0.29, 'reachmiles' => null]);
+        $this->eventsMember();
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return array_column($mail->events, 'title') === ['Ten miles'];
         });
     }
 }

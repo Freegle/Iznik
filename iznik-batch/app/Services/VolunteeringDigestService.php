@@ -10,9 +10,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Volunteering-opportunity roundup: one email per opted-in member covering every
- * active opportunity, each shown once. The site is national, so there are no
- * communities to scope opportunities or members by.
+ * Volunteering-opportunity roundup: one email per opted-in member covering the
+ * active opportunities whose reach covers them, nearest first, then the online ones,
+ * which reach everyone. There are no communities to scope opportunities by; each is
+ * shown around its own centre instead (see itemsReaching).
  */
 class VolunteeringDigestService
 {
@@ -53,6 +54,11 @@ class VolunteeringDigestService
                 continue;
             }
 
+            $userOpps = $this->itemsReaching($opps, $this->memberLatLng($user));
+            if (empty($userOpps)) {
+                continue;
+            }
+
             // Local job ads are personalised by the user's location;
             // getJobAds() returns an empty collection when no location is set.
             $jobAds = $user->getJobAds()['jobs'] ?? collect();
@@ -65,7 +71,7 @@ class VolunteeringDigestService
                 try {
                     app(EmailSpoolerService::class)->spool(new VolunteeringDigestMail(
                         recipientEmail: $email,
-                        volunteerings: $opps,
+                        volunteerings: $userOpps,
                         unsubscribeUrl: $unsubscribeUrl,
                         jobAds: $jobAds,
                         userId: $user->id,
@@ -119,6 +125,9 @@ class VolunteeringDigestService
                 'volunteering.contactphone',
                 'volunteering.contactemail',
                 'volunteering.contacturl',
+                'volunteering.lat',
+                'volunteering.lng',
+                'volunteering.reachmiles',
                 'volunteering_images.id as photo_id',
                 'volunteering_images.externaluid as photo_externaluid',
                 'volunteering_images.externalmods as photo_externalmods',
@@ -177,6 +186,9 @@ class VolunteeringDigestService
                 'photo_thumb'    => $photoThumb,
                 'applyby'        => $applyby,
                 'url'            => "{$userSite}/volunteering/{$id}",
+                'lat'            => $v->lat !== null ? (float) $v->lat : null,
+                'lng'            => $v->lng !== null ? (float) $v->lng : null,
+                'reachmiles'     => $v->reachmiles !== null ? (float) $v->reachmiles : null,
             ];
         }
 

@@ -222,6 +222,14 @@ describe('CommunityEventModal', () => {
             props: ['modelValue', 'type'],
             emits: ['update:modelValue'],
           },
+          ReachPicker: {
+            props: ['modelValue', 'online'],
+            template: '<div class="reach-picker-stub" />',
+          },
+          'b-form-checkbox': {
+            props: ['modelValue'],
+            template: '<label class="b-form-checkbox"><slot /></label>',
+          },
           StartEndCollection: {
             template: '<div class="start-end-collection" />',
             props: ['modelValue', 'time'],
@@ -379,6 +387,11 @@ describe('CommunityEventModal', () => {
     it('shows location field in edit mode', async () => {
       const wrapper = await createWrapper({ startEdit: true })
       expect(wrapper.find('#location').exists()).toBe(true)
+    })
+
+    it('shows the reach picker in edit mode', async () => {
+      const wrapper = await createWrapper({ startEdit: true })
+      expect(wrapper.find('.reach-picker-stub').exists()).toBe(true)
     })
 
     it('shows StartEndCollection for dates', async () => {

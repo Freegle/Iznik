@@ -363,4 +363,25 @@ class SyncReachVolunteeringCommandTest extends TestCase
         $this->assertSame(1, (int) $record->pending,
             'New Reach opportunity must be pending=1 so it appears in the ModTools approval queue, not live');
     }
+
+    // With no communities, an imported opportunity is shown around its own postcode.
+    public function test_stores_the_postcode_as_the_centre_on_insert_and_update(): void
+    {
+        $this->seedLocation('SW1A 1AA', 51.5007, -0.1246);
+
+        $this->makeService([$this->opportunity()])->sync();
+
+        $row = DB::table('volunteering')->where('externalid', 'reach-12345')->first();
+        $this->assertEqualsWithDelta(51.5007, (float) $row->lat, 0.0001);
+        $this->assertEqualsWithDelta(-0.1246, (float) $row->lng, 0.0001);
+
+        DB::table('volunteering')->where('id', $row->id)->update(['lat' => null, 'lng' => null]);
+        $this->makeService([$this->opportunity()])->sync();
+
+        $this->assertEqualsWithDelta(
+            51.5007,
+            (float) DB::table('volunteering')->where('id', $row->id)->value('lat'),
+            0.0001
+        );
+    }
 }

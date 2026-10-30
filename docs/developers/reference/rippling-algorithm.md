@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-11
+last_reviewed: 2026-10-30
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/tests/Unit/Services/Ripple/ResumedReachTest.php

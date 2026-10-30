@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-15
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Console/Commands/Integrations
@@ -107,6 +107,9 @@ volunteering listings.
 - Service: `ReachVolunteeringService`
 - Config: `freegle.reach_volunteering.feed_url`, `username`, `password`,
   `fetch_attempts` (3), `retry_delay_seconds` (30)
+- Each opportunity is shown around its postcode. The batch does not route, so its reach is
+  the fallback radius, `freegle.local_reach.fallback_miles` (15 miles), rather than a drive
+  time. Members add their own with a drive-time slider; see `iznik-server-go/localreach`.
 
 **Known fragility, already handled in code:** their Drupal feed intermittently returns a
 PHP fatal-error page (execution time exceeded) with an HTTP 200 status instead of JSON. The

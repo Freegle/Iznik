@@ -350,6 +350,21 @@ Per-community statistics (`stats`, `stats_outcomes`, `stats_summaries`, `users_d
 ### Chat
 - `chat_rooms.groupid` is gone. A `User2Mod` room is a member's room with Freegle; the recipients are the national moderators. Two members can always chat.
 
+### Events and volunteering
+- With no community to post to, each event or opportunity is shown around a place. The
+  centre is the poster's location unless they give a postcode; it is stored on the item
+  (`lat`, `lng`), so the poster moving later does not move it.
+- The reach is a drive time set on the same slider Browse uses, defaulting to the density cap
+  at the centre: as far as a post from there reaches. Routing turns it into a radius
+  (`reachmiles`) when the item is saved, and the lists and roundup emails show the item to
+  members inside that radius, nearest first. One post covers what used to take several
+  community posts.
+- Online volunteering is shown everywhere. Reach Volunteering imports are centred on their
+  postcode with the fallback radius, since the batch does not route.
+- The centre is often the poster's home, so only the poster and moderators are sent it.
+- `iznik-server-go/localreach` holds the rule; `BuildsUserRoundups::itemsReaching` mirrors it
+  for the emails.
+
 ### Rules
 - One rule set, site-wide, at `/rules`, and the same rules are the judge's questions. Personal details are always kept out of posts.
 
