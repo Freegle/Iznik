@@ -35,6 +35,8 @@ use Tests\TestCase;
  */
 class UnifiedDigestServiceLockdownTest extends TestCase
 {
+    use \Tests\Support\MembersLiveInLondon;
+
     use SeedsReachCells;
 
     private LockdownService $lockdown;

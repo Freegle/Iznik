@@ -58,6 +58,8 @@ describe('ModAdmin', () => {
     text: 'Test body',
     created: '2024-01-01',
     pending: true,
+    // Sent to the whole country unless a test gives it an area.
+    national: true,
   }
 
   function mountComponent(props = {}, adminOverrides = {}) {
@@ -724,6 +726,26 @@ describe('ModAdmin', () => {
     it('mounts without error and renders nothing', () => {
       const wrapper = mountComponent({ id: 99 }, null)
       expect(wrapper.find('.card').exists()).toBe(false)
+    })
+  })
+
+  describe('who it goes to', () => {
+    it.each([
+      [{ national: true }, 'Goes to everyone in the UK'],
+      [{ national: false, lat: 51.5, reachmiles: 14.6 }, 'Goes to members within about 15 miles'],
+      [{ national: false, lat: null }, 'Goes to nobody yet'],
+    ])('says who %o goes to', async (audience, text) => {
+      const wrapper = mountComponent({ open: true }, audience)
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain(text)
+    })
+
+    it('says an area ADMIN goes to the members in the area, not all members', () => {
+      const wrapper = mountComponent(
+        {},
+        { national: false, lat: 51.5, reachmiles: 10 }
+      )
+      expect(wrapper.vm.audience).toBe('members in the area')
     })
   })
 })

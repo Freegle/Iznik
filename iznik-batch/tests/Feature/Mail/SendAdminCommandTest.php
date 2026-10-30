@@ -14,17 +14,18 @@ class SendAdminCommandTest extends TestCase
     {
         parent::setUp();
 
-        // An admin goes to every member, so the fixture members are taken out of the way
+        // A national admin goes to every member, so the fixture members are taken out of the way
         // and each test counts only the members it creates. The transaction undoes this.
         DB::table('users')->whereNull('deleted')->update(['deleted' => now()]);
     }
 
     /**
-     * Create an approved admin.
+     * Create an approved admin. It goes to the whole country unless a test gives it an area.
      */
     private function createAdmin(array $overrides = []): int
     {
         return DB::table('admins')->insertGetId(array_merge([
+            'national' => true,
             'createdby' => null,
             'created' => now(),
             'subject' => 'Test Admin Email',
@@ -727,5 +728,52 @@ class SendAdminCommandTest extends TestCase
 
         // Sending must not touch the guidance column.
         $this->assertEquals($guidance, DB::table('admins')->where('id', $adminId)->value('modguidance'));
+    }
+
+    /**
+     * With no communities, an ADMIN that is not national goes only to members inside its area,
+     * as an event does. A member with no location is outside every area.
+     */
+    public function test_area_admin_sends_only_to_members_inside_it(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $london = ['lat' => 51.5074, 'lng' => -0.1278];
+        $inside = $this->createTestUser(['lastaccess' => now(), 'settings' => ['mylocation' => $london]]);
+        $outside = $this->createTestUser(['lastaccess' => now(), 'settings' => ['mylocation' => ['lat' => 55.9533, 'lng' => -3.1883]]]);
+        $nowhere = $this->createTestUser(['lastaccess' => now()]);
+
+        $adminId = $this->createAdmin(['national' => false, 'lat' => $london['lat'], 'lng' => $london['lng'], 'reachmiles' => 15]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])->assertSuccessful();
+
+        $to = [];
+        Mail::assertSent(AdminMail::class, function (AdminMail $mail) use (&$to) {
+            $to[] = $mail->user->id;
+
+            return true;
+        });
+        $this->assertSame([$inside->id], $to);
+        $this->assertNotContains($outside->id, $to);
+        $this->assertNotContains($nowhere->id, $to);
+    }
+
+    /**
+     * An ADMIN that says neither national nor where it goes is not sent to everyone. It is not
+     * sent at all, and stays incomplete so it can be fixed.
+     */
+    public function test_admin_with_no_audience_sends_nothing(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $this->createTestUser(['lastaccess' => now()]);
+        $adminId = $this->createAdmin(['national' => false]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])->assertSuccessful();
+
+        Mail::assertNothingSent();
+        $this->assertNull(DB::table('admins')->where('id', $adminId)->value('complete'));
     }
 }

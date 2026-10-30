@@ -36,9 +36,14 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
         DB::table('messages')->update(['arrival' => now()->subYear()]);
     }
 
-    private function createUser(string $trustlevel = 'Basic'): int
+    // Reviewers are only asked about posts near them, so every fixture member and post is in
+    // London unless a test moves one.
+    private const LONDON = ['lat' => 51.5074, 'lng' => -0.1278];
+
+    private function createUser(string $trustlevel = 'Basic', ?array $at = self::LONDON): int
     {
         $userId = DB::table('users')->insertGetId([
+            'settings'   => $at ? json_encode(['mylocation' => $at]) : null,
             'fullname'   => 'Test User ' . uniqid(),
             'trustlevel' => $trustlevel,
             'lastaccess' => now(),
@@ -57,9 +62,11 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
         return $userId;
     }
 
-    private function createMessage(int $fromuser, string $collection = 'Approved', ?int $heldBy = null): int
+    private function createMessage(int $fromuser, string $collection = 'Approved', ?int $heldBy = null, ?array $at = self::LONDON): int
     {
         $msgId = DB::table('messages')->insertGetId([
+            'lat'      => $at['lat'] ?? null,
+            'lng'      => $at['lng'] ?? null,
             'subject'  => 'OFFER: Test item (Test Area)',
             'message'  => 'Test item description.',
             'type'     => 'Offer',
@@ -378,5 +385,56 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
         $stats = (new MicrovolunteeringNotifyService())->notifyForMessages();
 
         $this->assertSame(0, $stats['messages_considered'], 'a message already exhorted must not be offered again');
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Only members near the post are asked
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private function notifiedAbout(int $msgId): array
+    {
+        return DB::table('users_notifications')
+            ->where('url', '/microvolunteering/message/'.$msgId)
+            ->pluck('touser')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+    }
+
+    // A post is only shown to members inside its reach, so it is not sent for review to
+    // someone at the other end of the country.
+    public function test_a_member_far_from_the_post_is_not_asked(): void
+    {
+        $poster = $this->createUser('Basic');
+        $near = $this->createUser('Moderate');
+        $far = $this->createUser('Moderate', ['lat' => 55.9533, 'lng' => -3.1883]);
+
+        $msgId = $this->createMessage($poster, 'Pending');
+        (new MicrovolunteeringNotifyService())->notifyForMessages();
+
+        $asked = $this->notifiedAbout($msgId);
+        $this->assertContains($near, $asked);
+        $this->assertNotContains($far, $asked);
+    }
+
+    public function test_a_member_with_no_location_is_not_asked(): void
+    {
+        $poster = $this->createUser('Basic');
+        $nowhere = $this->createUser('Moderate', null);
+
+        $msgId = $this->createMessage($poster, 'Pending');
+        (new MicrovolunteeringNotifyService())->notifyForMessages();
+
+        $this->assertNotContains($nowhere, $this->notifiedAbout($msgId));
+    }
+
+    public function test_a_post_with_no_location_asks_nobody(): void
+    {
+        $poster = $this->createUser('Basic');
+        $this->createUser('Moderate');
+
+        $msgId = $this->createMessage($poster, 'Pending', null, null);
+        (new MicrovolunteeringNotifyService())->notifyForMessages();
+
+        $this->assertSame([], $this->notifiedAbout($msgId));
     }
 }

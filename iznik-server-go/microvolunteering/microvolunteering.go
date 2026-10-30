@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/localreach"
 	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/user"
@@ -304,6 +305,11 @@ func getPendingMessageChallenge(db *gorm.DB, userID uint64) *Challenge {
 	}
 	var msg MessageResult
 
+	near, nearArgs, ok := nearMember("messages", userID)
+	if !ok {
+		return nil
+	}
+
 	pendingWhereSQL := "DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
 		"AND messages.deleted IS NULL AND microactions.id IS NULL " +
 		"AND collection = ? AND autoreposts = 0"
@@ -311,6 +317,7 @@ func getPendingMessageChallenge(db *gorm.DB, userID uint64) *Challenge {
 		Select("messages.id AS msgid").
 		Joins("LEFT JOIN microactions ON microactions.msgid = messages.id AND microactions.userid = ?", userID).
 		Where(pendingWhereSQL, userID, utils.COLLECTION_PENDING).
+		Where(near, nearArgs...).
 		Order("messages.arrival ASC").Limit(1).Scan(&msg).Error
 
 	if err == nil && msg.Msgid > 0 {
@@ -332,6 +339,11 @@ func getApprovedMessageChallenge(db *gorm.DB, userID uint64) *Challenge {
 
 	resultApprove := "Approve"
 
+	near, nearArgs, ok := nearMember("messages", userID)
+	if !ok {
+		return nil
+	}
+
 	approvedWhereSQL := "DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
 		"AND messages_outcomes.id IS NULL AND messages.deleted IS NULL AND microactions.id IS NULL " +
 		"AND collection = ? AND autoreposts = 0"
@@ -343,6 +355,7 @@ func getApprovedMessageChallenge(db *gorm.DB, userID uint64) *Challenge {
 		Joins("LEFT JOIN microactions ON microactions.msgid = messages.id AND microactions.userid = ?", userID).
 		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id").
 		Where(approvedWhereSQL, userID, utils.COLLECTION_APPROVED).
+		Where(near, nearArgs...).
 		Having("approvalcount < ? AND reviewcount < ?", ApprovalQuorum, DissentingQuorum).
 		Order("messages.arrival ASC").Limit(1).Scan(&msg).Error
 
@@ -365,12 +378,19 @@ func getPhotoRotateChallenge(db *gorm.DB, userID uint64) *Challenge {
 
 	today := time.Now().Format("2006-01-02")
 
+	near, nearArgs, ok := nearMember("messages", userID)
+	if !ok {
+		return nil
+	}
+
 	err := db.Table("messages_attachments").
 		Select("messages_attachments.id, "+
 			"(SELECT COUNT(*) AS count FROM microactions WHERE rotatedimage = messages_attachments.id) AS reviewcount").
 		Joins("INNER JOIN messages ON messages.id = messages_attachments.msgid").
 		Joins("LEFT JOIN microactions ON microactions.rotatedimage = messages_attachments.id AND userid = ?", userID).
-		Where("messages.arrival >= ? AND microactions.id IS NULL", today).
+		Where("messages.arrival >= ? AND microactions.id IS NULL AND messages.deleted IS NULL AND messages.collection = ?",
+			today, utils.COLLECTION_APPROVED).
+		Where(near, nearArgs...).
 		Having("reviewcount < ?", DissentingQuorum).
 		Order("RAND()").Limit(9).Scan(&photos).Error
 
@@ -567,11 +587,16 @@ func PostResponse(c *fiber.Ctx) error {
 			// not the member's own post. Without this any logged-in account could
 			// vote on an arbitrary live post and, at quorum, force it back to
 			// Pending (a platform-wide content-takedown).
+			// Only a post near the member can have been offered to them, so only that one
+			// can be voted on.
 			var eligible int64
-			db.Table("messages").
-				Select("COUNT(*)").
-				Where("id = ? AND COALESCE(fromuser, 0) != ? AND deleted IS NULL", req.Msgid, myid).
-				Scan(&eligible)
+			if near, nearArgs, ok := nearMember("messages", myid); ok {
+				db.Table("messages").
+					Select("COUNT(*)").
+					Where("id = ? AND COALESCE(fromuser, 0) != ? AND deleted IS NULL", req.Msgid, myid).
+					Where(near, nearArgs...).
+					Scan(&eligible)
+			}
 			if eligible == 0 {
 				return fiber.NewError(fiber.StatusForbidden, "Not eligible to review this message")
 			}
@@ -630,11 +655,14 @@ func PostResponse(c *fiber.Ctx) error {
 		// exclusion: getPhotoRotateChallenge can legitimately serve a user their
 		// own freshly-posted photo to review.
 		var eligible int64
-		db.Table("messages_attachments").
-			Select("COUNT(*)").
-			Joins("INNER JOIN messages ON messages.id = messages_attachments.msgid").
-			Where("messages_attachments.id = ? AND messages.deleted IS NULL", req.Photoid).
-			Scan(&eligible)
+		if near, nearArgs, ok := nearMember("messages", myid); ok {
+			db.Table("messages_attachments").
+				Select("COUNT(*)").
+				Joins("INNER JOIN messages ON messages.id = messages_attachments.msgid").
+				Where("messages_attachments.id = ? AND messages.deleted IS NULL", req.Photoid).
+				Where(near, nearArgs...).
+				Scan(&eligible)
+		}
 		if eligible == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Not eligible to review this photo")
 		}
@@ -1027,4 +1055,21 @@ func checkAIImageSuppressQuorum(db *gorm.DB, aiImageID uint64) {
 		db.Table("ai_images").Where("id = ? AND status IN ('active','rejected')", aiImageID).
 			Update("status", gorm.Expr("'suppressed'"))
 	}
+}
+
+// ReviewMiles is how far from a member a post can be and still be offered to them for review.
+// A post is only shown in browse to members inside its reach, so a review task must not carry
+// it to someone who could never have seen it. About what a 30-minute drive reaches, the same
+// as localreach.FallbackMiles.
+const ReviewMiles = 15.0
+
+// nearMember is a WHERE fragment keeping posts (table.lat/lng) within ReviewMiles of the
+// member. ok is false when the member has no location, and then there is nothing to offer.
+func nearMember(table string, userID uint64) (string, []interface{}, bool) {
+	loc := user.GetLatLng(userID)
+	if loc.Lat == 0 && loc.Lng == 0 {
+		return "", nil, false
+	}
+	frag, args := localreach.Near(table, float64(loc.Lat), float64(loc.Lng), ReviewMiles)
+	return frag, args, true
 }

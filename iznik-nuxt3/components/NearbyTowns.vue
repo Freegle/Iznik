@@ -26,7 +26,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useMe } from '~/composables/useMe'
 import api from '~/api'
 
@@ -51,6 +51,9 @@ const props = defineProps({
   // opportunity is shown around its own centre (ReachPicker).
   lat: { type: Number, default: null },
   lng: { type: Number, default: null },
+  // Fetch at once rather than when scrolled into view. For a picker, where the hint is part of
+  // the control rather than a passing extra.
+  eager: { type: Boolean, default: false },
 })
 
 const runtimeConfig = useRuntimeConfig()
@@ -158,6 +161,10 @@ async function fetchTowns() {
 }
 
 // Lazy: first time it scrolls into view, fetch. Thereafter re-fetch on slider changes.
+if (props.eager) {
+  onMounted(() => onVisibility(true))
+}
+
 function onVisibility(isVisible) {
   if (isVisible && !visible.value) {
     visible.value = true

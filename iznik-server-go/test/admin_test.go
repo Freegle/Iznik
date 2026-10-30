@@ -15,7 +15,8 @@ import (
 // createTestAdmin creates an admin record for testing and returns its ID.
 func createTestAdmin(t *testing.T, createdby uint64, subject string) uint64 {
 	db := database.DBConn
-	db.Exec("INSERT INTO admins (createdby, subject, text, created) VALUES (?, ?, 'Test admin text', NOW())",
+	// Every ADMIN says who it goes to; fixtures go to members around Edinburgh.
+	db.Exec("INSERT INTO admins (createdby, subject, text, created, lat, lng, reachminutes, reachmiles) VALUES (?, ?, 'Test admin text', NOW(), 55.9533, -3.1883, 30, 15)",
 		createdby, subject)
 
 	var id uint64

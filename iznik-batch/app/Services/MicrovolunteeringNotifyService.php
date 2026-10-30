@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\GreatCircle;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -31,8 +32,20 @@ class MicrovolunteeringNotifyService
     // index range-scans this cheaply, so a 7-day bound keeps it correct + tiny.
     private const MARK_SEEN_WINDOW_DAYS = 7;
 
-    /** @var array<string, int[]> "P|A" => active member userid[] cache for the current run */
+    /**
+     * "P|A" => active members for the current run, bucketed by grid cell so a post only
+     * looks at members near it: "cellLat:cellLng" => list of [userid, lat, lng].
+     *
+     * @var array<string, array<string, array<int, array{0:int,1:float,2:float}>>>
+     */
     private array $eligibleCache = [];
+
+    // Grid cell size in degrees. A cell is about 17 miles each way at UK latitudes, wider than
+    // the review distance, so the cell a post is in and its eight neighbours hold every member
+    // within reach of it.
+    private const CELL_LAT = 0.25;
+
+    private const CELL_LNG = 0.4;
 
     /** @var array<int, bool> userid => true for users with any Exhort microvolunteering notification today */
     private array $alreadyNotifiedToday = [];
@@ -82,7 +95,7 @@ class MicrovolunteeringNotifyService
         // distinct message ids in 7 chunked lookups, returning a result set identical row
         // for row (23,926 rows both ways).
         $msgs = DB::select("
-            SELECT messages.id, messages.fromuser, messages.subject, messages.collection
+            SELECT messages.id, messages.fromuser, messages.subject, messages.collection, messages.lat, messages.lng
             FROM messages
             WHERE messages.arrival > DATE_SUB(NOW(), INTERVAL 1 DAY)
               AND messages.deleted IS NULL
@@ -194,7 +207,7 @@ class MicrovolunteeringNotifyService
      */
     private function pickCandidates(object $msg, array $notifiedThisRun): array
     {
-        $pool = $this->getActivePool($msg->collection);
+        $pool = $this->nearbyPool($msg);
 
         if (empty($pool)) {
             return [];
@@ -250,7 +263,9 @@ class MicrovolunteeringNotifyService
      * per-message via the run-scoped `alreadyNotifiedToday` map — it
      * doesn't appear here so this query stays index-friendly.
      *
-     * @return int[]
+     * Members with no location are left out: there is no telling which posts are near them.
+     *
+     * @return array<string, array<int, array{0:int,1:float,2:float}>>
      */
     private function getActivePool(string $collection): array
     {
@@ -261,10 +276,11 @@ class MicrovolunteeringNotifyService
         }
 
         $query = DB::table('users')
+            ->leftJoin('locations', 'locations.id', '=', 'users.lastlocation')
             ->whereNull('users.deleted')
             ->whereNull('users.banned')
             ->where('users.lastaccess', '>=', now()->subDays(31))
-            ->select('users.id');
+            ->select('users.id', 'users.settings', 'users.tnuserid', 'locations.lat', 'locations.lng');
 
         if ($collection === 'Pending') {
             $query->whereIn('users.trustlevel', ['Moderate', 'Advanced']);
@@ -273,9 +289,56 @@ class MicrovolunteeringNotifyService
                   ->whereIn('users.trustlevel', ['Basic', 'Moderate', 'Advanced']);
         }
 
-        $this->eligibleCache[$key] = $query->pluck('id')->map(fn ($v) => (int) $v)->all();
+        $cells = [];
+        foreach ($query->cursor() as $row) {
+            $latLng = \App\Models\User::chosenLatLng($row->settings, $row->tnuserid)
+                ?? (($row->lat !== null && $row->lng !== null) ? [(float) $row->lat, (float) $row->lng] : null);
+            if ($latLng === null) {
+                continue;
+            }
+            $cells[$this->cellKey($latLng[0], $latLng[1])][] = [(int) $row->id, $latLng[0], $latLng[1]];
+        }
 
-        return $this->eligibleCache[$key];
+        return $this->eligibleCache[$key] = $cells;
+    }
+
+    /**
+     * The active members within review distance of a post. A post is only shown in browse to
+     * members inside its reach, so it is not sent for review to anyone far away; a post with no
+     * location goes to nobody.
+     *
+     * @return int[]
+     */
+    private function nearbyPool(object $msg): array
+    {
+        if ($msg->lat === null || $msg->lng === null) {
+            return [];
+        }
+
+        $lat = (float) $msg->lat;
+        $lng = (float) $msg->lng;
+        $miles = (float) config('freegle.local_reach.fallback_miles');
+        $cells = $this->getActivePool($msg->collection);
+        $cy = (int) floor($lat / self::CELL_LAT);
+        $cx = (int) floor($lng / self::CELL_LNG);
+
+        $near = [];
+        for ($dy = -1; $dy <= 1; $dy++) {
+            for ($dx = -1; $dx <= 1; $dx++) {
+                foreach ($cells[($cy + $dy).':'.($cx + $dx)] ?? [] as [$uid, $uLat, $uLng]) {
+                    if (GreatCircle::distanceMiles($lat, $lng, $uLat, $uLng) <= $miles) {
+                        $near[] = $uid;
+                    }
+                }
+            }
+        }
+
+        return $near;
+    }
+
+    private function cellKey(float $lat, float $lng): string
+    {
+        return ((int) floor($lat / self::CELL_LAT)).':'.((int) floor($lng / self::CELL_LNG));
     }
 
     /**

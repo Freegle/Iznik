@@ -99,6 +99,10 @@
             </span>
           </span>
         </p>
+        <p class="mb-2 admin-audience">
+          <v-icon icon="users" class="text-muted" />
+          {{ whereTo }}
+        </p>
         <OurToggle
           v-if="admin.pending && !admin.template && !admin.editprotected"
           v-model="essential"
@@ -414,13 +418,29 @@ const showConfirmModal = ref(false)
 
 const admin = computed(() => adminsStore.get(props.id))
 
-// Copies of a central ADMIN go only to members active recently; a community's own ADMIN goes to
-// everyone (iznik-batch SendAdminCommand, CopyAdminsCommand).
-const audience = computed(() =>
-  admin.value?.activeonly
-    ? 'members active in the last six months'
-    : 'all members'
-)
+// Who this ADMIN goes to. With no communities it is either everyone or the members around a
+// place; one that says neither goes to nobody, so the approver is told that rather than left to
+// assume.
+const whereTo = computed(() => {
+  const a = admin.value
+  if (a?.national) return 'Goes to everyone in the UK'
+  if (a?.reachmiles) {
+    return `Goes to members within about ${Math.max(1, Math.round(a.reachmiles))} miles`
+  }
+  if (a?.lat) return 'Goes to members near the place chosen'
+  return 'Goes to nobody yet - say who it is for before approving'
+})
+
+// Who, among those whereTo covers, gets it: an ADMIN marked active-only skips members not seen
+// in six months (iznik-batch SendAdminCommand).
+const audience = computed(() => {
+  const where = admin.value?.national ? '' : ' in the area'
+  return admin.value?.activeonly
+    ? `members${where} active in the last six months`
+    : admin.value?.national
+      ? 'all members'
+      : 'members in the area'
+})
 
 // Essential (an ADMIN everyone gets) or Newsletter (members can opt out). Saved with the rest.
 const essential = computed({

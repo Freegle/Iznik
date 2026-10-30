@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-20
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/**
@@ -49,7 +49,9 @@ A few pages do not fit the home page's nine lists, but are still worth knowing a
   [Moderating posts](moderating-posts.md#standard-messages), configured nationally.
 - **Stories and newsletters** (`/members/stories`, `/members/newsletter`) - member stories
   and what goes out in the newsletter.
-- **Broadcasts** (`/admins`) - essential and newsletter messages sent to everyone.
+- **Broadcasts** (`/admins`) - essential and newsletter messages. Each one goes to the members
+  around a place, out to a distance set on a slider; only Support and Admin can send one to
+  everyone in the UK.
 - **Logs** (`/logs`) - the audit trail of moderator actions.
 - **Rippling explorer** (`/rippling`) - visualises how far a given post's reach goes. See
   [how far a post travels](../members/rippling-out.md).

@@ -223,6 +223,19 @@
                     style="max-width: 250px"
                   />
                 </b-form-group>
+                <b-form-group label="Who gets it?" class="mb-3">
+                  <b-form-radio-group
+                    v-if="supportOrAdmin"
+                    v-model="national"
+                    :options="audienceOptions"
+                    class="mb-2 admin-audience-choice"
+                  />
+                  <ReachPicker
+                    v-if="!national"
+                    v-model="reach"
+                    hint="Members who live within this distance get the email."
+                  />
+                </b-form-group>
               </div>
             </VeeForm>
             <NoticeMessage variant="info" class="mb-3 test-first">
@@ -306,6 +319,7 @@ import {
   MJML_TRY_IT,
 } from '~/modtools/composables/useAdminContent'
 import ModAdminFooterPreview from '~/modtools/components/ModAdminFooterPreview.vue'
+import ReachPicker from '~/components/ReachPicker.vue'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/modtools/composables/useModMe'
 
@@ -329,6 +343,14 @@ const body = ref(null)
 const ctatext = ref(null)
 const ctalink = ref(null)
 const sendafter = ref('')
+// Who it goes to: members around a place (the sender's location unless they give a postcode),
+// or, for Support and Admin only, the whole country.
+const national = ref(false)
+const reach = ref({ lat: null, lng: null, reachminutes: null })
+const audienceOptions = [
+  { text: 'Members near a place', value: false },
+  { text: 'Everyone in the UK', value: true },
+]
 const creating = ref(false)
 const created = ref(false)
 const essential = ref(true)
@@ -470,7 +492,10 @@ async function create() {
     return
   }
 
-  const params = contentParams()
+  // Who it goes to is not content, so it stays out of contentParams and the test token.
+  const params = national.value
+    ? { ...contentParams(), national: true }
+    : { ...contentParams(), national: false, ...reach.value }
 
   if (selectedTemplate.value) {
     params.editprotected = true
@@ -537,6 +562,12 @@ function copyAdmin(admin) {
   useMjml.value = !!admin.mjml
   ctatext.value = admin.ctatext
   ctalink.value = admin.ctalink
+  national.value = !!admin.national && supportOrAdmin.value
+  reach.value = {
+    lat: admin.lat ?? null,
+    lng: admin.lng ?? null,
+    reachminutes: admin.reachminutes ?? null,
+  }
   tabIndex.value = 1
 }
 
@@ -547,7 +578,8 @@ onMounted(() => {
 </script>
 <style scoped>
 /* The global form label style (bold, pushed down) is for field labels, not a checkbox. */
-.mjml-part :deep(.form-check-label) {
+.mjml-part :deep(.form-check-label),
+.admin-audience-choice :deep(.form-check-label) {
   margin-top: 0;
   font-weight: normal;
 }

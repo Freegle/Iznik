@@ -76,15 +76,21 @@ func HasRecentGradedPass(db *gorm.DB, userid uint64) bool {
 // getGradedMessageChallenge picks a settled post that the member has not answered on and did
 // not write. Newest first, so the post is still recognisable.
 func getGradedMessageChallenge(db *gorm.DB, userID uint64) *Challenge {
+	near, nearArgs, ok := nearMember("m", userID)
+	if !ok {
+		return nil
+	}
+
 	var candidates []uint64
 	db.Table("messages AS m").
+		Where(near, nearArgs...).
 		Select("m.id").
 		Where("m.collection = ? AND m.deleted IS NULL "+
 			"AND COALESCE(m.fromuser, 0) <> ? "+
 			"AND NOT EXISTS (SELECT 1 FROM microactions mine WHERE mine.msgid = m.id AND mine.userid = ? AND mine.actiontype = ?) "+
 			"AND (SELECT COUNT(*) FROM microactions o WHERE o.msgid = m.id AND o.actiontype = ? AND o.userid <> ?) >= ?",
 			utils.COLLECTION_APPROVED, userID, userID, ChallengeCheckMessage, ChallengeCheckMessage, userID, ApprovalQuorum).
-		Order("m.arrival DESC").
+		Order("m.arrival DESC, m.id DESC").
 		Limit(25).
 		Scan(&candidates)
 

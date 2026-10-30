@@ -1379,7 +1379,7 @@ class UnifiedDigestService
         // per-member reach-gate, so they recur every day until the goods are gone. Fetched and
         // deduplicated separately, and never fed to the cursor (updateDigestTracker uses only
         // $allPosts), so a pinned post never suppresses itself on the next run.
-        $pinnedCards = $this->deduplicatePosts($this->getPinnedOpenPostsForUser());
+        $pinnedCards = $this->deduplicatePosts($this->getPinnedOpenPostsForUser($this->resolveUserLatLng($user)));
 
         if ($allPosts->isEmpty() && $pinnedCards->isEmpty()) {
             return ['status' => 'no_posts', 'count' => 0];
@@ -1625,9 +1625,8 @@ class UnifiedDigestService
         // Reach-gate rippling posts for the daily digest and the daily-posts push (both
         // call this) just like the immediate path: a post with a rippling_reach row is only
         // included once its reach covers this member (nearest-first), so daily/push members
-        // are not notified of posts they cannot yet reply to. Posts with no reach row are
-        // unaffected. Skipped entirely when we can't resolve the member's location (fail
-        // open — no regression for locationless members).
+        // are not notified of posts they cannot yet reply to. Posts with no reach row, and members
+        // with no location, are handled below.
         // A frozen reach (status 'held') means the post's origin copy has been pulled back for
         // moderation. Browse, the badge and search hide it outright, so the daily digest and
         // the daily-posts push (which share this query) must not carry it either.
@@ -1642,55 +1641,70 @@ class UnifiedDigestService
             [],
         ]];
 
+        // With no communities, a member's posts are the ones whose reach covers where they are.
+        // A member with no location therefore has none: there is no group to fall back on, and
+        // failing open would mail them the newest posts in the whole country.
         $latlng = $this->resolveUserLatLng($user);
-        if ($latlng !== null) {
-            // The member's whole containment universe comes from the spatial
-            // index as an id list (the same authority, and the same call
-            // shape, the feed and badge use) and the gate is a pure id
-            // comparison - no geometry in this query at all. Failure fails
-            // CLOSED, like RingIndex::admits: a spatial outage holds
-            // reach-gated posts for a later digest rather than mailing what
-            // nobody could check.
-            [$ringRescue, $ringParams] = $this->ringRescueIds($user, $latlng);
-            $containing = app(\App\Services\Ripple\CellSetService::class)
-                ->reachContaining($latlng[0], $latlng[1]) ?? [];
-            // Stored labels are the deciding record wherever they exist: drop
-            // any grid-admitted post whose label says this member is NOT
-            // reachable by road at the post's current budget, and ADD any
-            // labelled post the grid prefilter missed whose label admits the
-            // member (discover) - the same narrowing-plus-union, from the same
-            // one-call authority, the browse feed applies, so the digest can
-            // never mail what browse hides nor hide what browse shows.
-            // Posts without labels, and everything when routing is
-            // unavailable, keep the grid verdict.
-            $eval = app(\App\Services\Ripple\ReachService::class)
-                ->labelVerdictsWithDiscover((float) $latlng[0], (float) $latlng[1], $containing);
-            if ($containing !== [] && $eval['verdicts'] !== []) {
-                $containing = array_values(array_filter(
-                    $containing,
-                    fn ($id) => ($eval['verdicts'][(int) $id] ?? '') !== 'out'
-                ));
-            }
-            foreach ($eval['discovered'] as $id) {
-                $containing[] = $id;
-            }
-            $inSql = '';
-            $inParams = [];
-            if ($containing !== []) {
-                $inSql = ' AND rr.msgid NOT IN ('.implode(',', array_fill(0, count($containing), '?')).')';
-                $inParams = $containing;
-            }
-            // Exclude a post when a reach row exists, the member is not in
-            // its containment list, and no ring rescues them.
-            // keep-raw: correlated NOT EXISTS with a spliced ringRescue fragment
-            // (ringRescueIds returns SQL text) - the builder cannot compose
-            // another service's fragment.
-            $exclusions[] = [
-                "NOT EXISTS (SELECT 1 FROM rippling_reach rr
-                    WHERE rr.msgid = messages.id$inSql$ringRescue)",
-                array_merge($inParams, $ringParams),
-            ];
+        if ($latlng === null) {
+            return collect();
         }
+
+        // A post with no reach row yet (not seeded, or unroutable and retried next run) is
+        // not gated by the reach below, so it is kept to the fallback radius around the
+        // member instead of going to everyone. A member's own posts are always theirs.
+        $exclusions[] = [
+            '(EXISTS (SELECT 1 FROM rippling_reach rr0 WHERE rr0.msgid = messages.id)
+                OR messages.fromuser = ?
+                OR (messages.lat IS NOT NULL AND '.\App\Support\GreatCircle::milesSql('messages').' <= ?))',
+            [$user->id, $latlng[0], $latlng[1], $latlng[0], (float) config('freegle.local_reach.fallback_miles')],
+        ];
+
+        // The member's whole containment universe comes from the spatial
+        // index as an id list (the same authority, and the same call
+        // shape, the feed and badge use) and the gate is a pure id
+        // comparison - no geometry in this query at all. Failure fails
+        // CLOSED, like RingIndex::admits: a spatial outage holds
+        // reach-gated posts for a later digest rather than mailing what
+        // nobody could check.
+        [$ringRescue, $ringParams] = $this->ringRescueIds($user, $latlng);
+        $containing = app(\App\Services\Ripple\CellSetService::class)
+            ->reachContaining($latlng[0], $latlng[1]) ?? [];
+        // Stored labels are the deciding record wherever they exist: drop
+        // any grid-admitted post whose label says this member is NOT
+        // reachable by road at the post's current budget, and ADD any
+        // labelled post the grid prefilter missed whose label admits the
+        // member (discover) - the same narrowing-plus-union, from the same
+        // one-call authority, the browse feed applies, so the digest can
+        // never mail what browse hides nor hide what browse shows.
+        // Posts without labels, and everything when routing is
+        // unavailable, keep the grid verdict.
+        $eval = app(\App\Services\Ripple\ReachService::class)
+            ->labelVerdictsWithDiscover((float) $latlng[0], (float) $latlng[1], $containing);
+        if ($containing !== [] && $eval['verdicts'] !== []) {
+            $containing = array_values(array_filter(
+                $containing,
+                fn ($id) => ($eval['verdicts'][(int) $id] ?? '') !== 'out'
+            ));
+        }
+        foreach ($eval['discovered'] as $id) {
+            $containing[] = $id;
+        }
+        $inSql = '';
+        $inParams = [];
+        if ($containing !== []) {
+            $inSql = ' AND rr.msgid NOT IN ('.implode(',', array_fill(0, count($containing), '?')).')';
+            $inParams = $containing;
+        }
+        // Exclude a post when a reach row exists, the member is not in
+        // its containment list, and no ring rescues them.
+        // keep-raw: correlated NOT EXISTS with a spliced ringRescue fragment
+        // (ringRescueIds returns SQL text) - the builder cannot compose
+        // another service's fragment.
+        $exclusions[] = [
+            "NOT EXISTS (SELECT 1 FROM rippling_reach rr
+                WHERE rr.msgid = messages.id$inSql$ringRescue)",
+            array_merge($inParams, $ringParams),
+        ];
 
         $armFor = function () use ($baseQuery, $exclusions) {
             $q = $baseQuery();
@@ -1762,13 +1776,19 @@ class UnifiedDigestService
      *
      * "Open" mirrors getPostsForUser: Approved, not deleted, an Offer/Wanted, and with NO
      * outcome (Taken/Received/Withdrawn/Expired). Deliberately NOT window-limited and NOT
-     * reach-gated, so a pinned post recurs in every daily digest, for every member, until it
-     * closes.
+     * reach-gated, so a pinned post recurs in every daily digest until it closes. It goes to
+     * members within the fallback radius of the post, as a community's members once were the
+     * bound; a member with no location gets none.
      *
+     * @param  array{0: float, 1: float}|null  $latlng  the member's location
      * @return Collection of Message (each with has_outcome/has_success=0)
      */
-    private function getPinnedOpenPostsForUser(): Collection
+    private function getPinnedOpenPostsForUser(?array $latlng): Collection
     {
+        if ($latlng === null) {
+            return collect();
+        }
+
         // views/replies: correlated aggregate subqueries via selectSub() with the
         // sub-builder's ->aggregate set directly (see getPostsForUser() above for the
         // full explanation). "views" drops the SQL COALESCE(...,0) because its one
@@ -1796,6 +1816,9 @@ class UnifiedDigestService
                 $q->from('messages_outcomes')
                     ->whereColumn('messages_outcomes.msgid', 'messages.id');
             })
+            ->whereNotNull('messages.lat')
+            ->whereRaw(\App\Support\GreatCircle::milesSql('messages').' <= ?',
+                [$latlng[0], $latlng[1], $latlng[0], (float) config('freegle.local_reach.fallback_miles')])
             ->orderBy('messages.arrival', 'desc')
             ->with($this->digestPostEagerLoads())
             ->get();

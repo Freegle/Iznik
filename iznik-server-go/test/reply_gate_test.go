@@ -65,7 +65,8 @@ func sendInterested(t *testing.T, f replyGateFixture, chatID, msgID uint64) int 
 func settledPost(t *testing.T, f replyGateFixture, prefix string, verdict string, n int) uint64 {
 	db := database.DBConn
 	posterID := CreateTestUser(t, prefix+"_settledposter_"+verdict, "User")
-	msgID := CreateTestMessage(t, posterID, "OFFER: settled "+verdict+" item", 51.5, -0.1)
+	// Near the members (test users live in Edinburgh): a review task only offers posts near the reviewer.
+	msgID := CreateTestMessage(t, posterID, "OFFER: settled "+verdict+" item", 55.9533, -3.1883)
 	for i := 0; i < n; i++ {
 		voterID := CreateTestUser(t, fmt.Sprintf("%s_voter_%s_%d", prefix, verdict, i), "User")
 		db.Exec("INSERT INTO microactions (actiontype, userid, msgid, result, comments, timestamp, score_negative) VALUES ('CheckMessage', ?, ?, ?, 'settled', NOW(), 0)",

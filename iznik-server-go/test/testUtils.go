@@ -494,9 +494,9 @@ func CreateTestMessage(t *testing.T, userID uint64, subject string, lat float64,
 	// these fixtures have no reach row, so a fixture stamped NOW() would be
 	// invisible to every feed test. Tests that want the grace window itself set
 	// arrival back to NOW() explicitly.
-	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, collection, autoreposts, approvedat) "+
-		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL 15 MINUTE), 'Approved', 0, DATE_SUB(NOW(), INTERVAL 15 MINUTE))",
-		userID, subject, locationID)
+	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, lat, lng, arrival, collection, autoreposts, approvedat) "+
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, ?, ?, DATE_SUB(NOW(), INTERVAL 15 MINUTE), 'Approved', 0, DATE_SUB(NOW(), INTERVAL 15 MINUTE))",
+		userID, subject, locationID, lat, lng)
 
 	if result.Error != nil {
 		t.Fatalf("ERROR: Failed to create message: %v", result.Error)
@@ -639,9 +639,9 @@ func CreateTestMessageWithArrival(t *testing.T, userID uint64, subject string, l
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
 
-	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, collection, autoreposts, approvedat) "+
-		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL ? DAY), 'Approved', 0, DATE_SUB(NOW(), INTERVAL ? DAY))",
-		userID, subject, locationID, daysAgo, daysAgo)
+	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, lat, lng, arrival, collection, autoreposts, approvedat) "+
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, ?, ?, DATE_SUB(NOW(), INTERVAL ? DAY), 'Approved', 0, DATE_SUB(NOW(), INTERVAL ? DAY))",
+		userID, subject, locationID, lat, lng, daysAgo, daysAgo)
 
 	if result.Error != nil {
 		t.Fatalf("ERROR: Failed to create message: %v", result.Error)

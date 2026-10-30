@@ -76,6 +76,10 @@ describe('admins.vue page', () => {
       global: {
         stubs: {
           ModHelpAdmins: { template: '<div class="help-stub" />' },
+          ReachPicker: {
+            template: '<div class="reach-picker-stub" />',
+            props: ['modelValue', 'hint'],
+          },
           ModAdmin: {
             template: '<div class="admin-stub" />',
             props: ['id', 'open'],
@@ -428,6 +432,37 @@ describe('admins.vue page', () => {
       )
     })
   })
+  describe('who gets it', () => {
+    it('sends the area chosen, and shows the picker', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.subject = 'Subject'
+      wrapper.vm.body = 'Body'
+      wrapper.vm.reach = { lat: 51.5, lng: -0.12, reachminutes: 20 }
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.reach-picker-stub').exists()).toBe(true)
+
+      await wrapper.vm.create()
+      expect(mockAdminsStore.add.mock.calls[0][0]).toMatchObject({
+        national: false,
+        lat: 51.5,
+        lng: -0.12,
+        reachminutes: 20,
+      })
+    })
+
+    it('sends national without an area', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.subject = 'Subject'
+      wrapper.vm.body = 'Body'
+      wrapper.vm.national = true
+      await wrapper.vm.create()
+
+      const params = mockAdminsStore.add.mock.calls[0][0]
+      expect(params.national).toBe(true)
+      expect(params).not.toHaveProperty('lat')
+    })
+  })
+
   describe('MJML part', () => {
     const mjml =
       '<mj-section><mj-column><mj-text>Designed</mj-text></mj-column></mj-section>'

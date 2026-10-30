@@ -391,7 +391,7 @@ func Update(c *fiber.Ctx) error {
 		db.Table("communityevents").Where("id = ?", req.ID).Update("location", *req.Location)
 	}
 	if req.Lat != nil || req.Lng != nil || req.Reachminutes != nil {
-		if err := localreach.Update(db, "communityevents", req.ID, req.Lat, req.Lng, req.Reachminutes); err != nil {
+		if err := localreach.Update(db, "communityevents", "userid", req.ID, req.Lat, req.Lng, req.Reachminutes); err != nil {
 			return err
 		}
 	}

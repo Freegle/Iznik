@@ -19,9 +19,14 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
         DB::table('messages')->update(['arrival' => now()->subYear()]);
     }
 
-    private function createUser(string $trustlevel = 'Basic'): int
+    // Reviewers are only asked about posts near them, so every fixture member and post is in
+    // London unless a test moves one.
+    private const LONDON = ['lat' => 51.5074, 'lng' => -0.1278];
+
+    private function createUser(string $trustlevel = 'Basic', ?array $at = self::LONDON): int
     {
         $userId = DB::table('users')->insertGetId([
+            'settings'   => $at ? json_encode(['mylocation' => $at]) : null,
             'fullname'   => 'Test User ' . uniqid(),
             'trustlevel' => $trustlevel,
             'lastaccess' => now(),
@@ -40,9 +45,11 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
         return $userId;
     }
 
-    private function createMessage(int $fromuser, string $collection = 'Approved', ?int $heldBy = null): int
+    private function createMessage(int $fromuser, string $collection = 'Approved', ?int $heldBy = null, ?array $at = self::LONDON): int
     {
         $msgId = DB::table('messages')->insertGetId([
+            'lat'      => $at['lat'] ?? null,
+            'lng'      => $at['lng'] ?? null,
             'subject'  => 'OFFER: Test item (Test Area)',
             'message'  => 'Test item description.',
             'type'     => 'Offer',

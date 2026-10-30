@@ -179,7 +179,7 @@ func TestAdminUneditedSuggestionNeedsNoTest(t *testing.T) {
 	var parentID uint64
 	db.Raw("SELECT id FROM admins WHERE subject = ? AND parentid IS NULL ORDER BY id DESC LIMIT 1", subject).Scan(&parentID)
 	copyOf := func() uint64 {
-		db.Exec("INSERT INTO admins (createdby, subject, text, mjml, parentid, created) VALUES (?, ?, 'Suggested text', ?, ?, NOW())",
+		db.Exec("INSERT INTO admins (createdby, subject, text, mjml, parentid, created, lat, lng, reachmiles) VALUES (?, ?, 'Suggested text', ?, ?, NOW(), 55.9533, -3.1883, 15)",
 			modID, subject, adminMjmlPart, parentID)
 		var id uint64
 		db.Raw("SELECT id FROM admins WHERE parentid = ? ORDER BY id DESC LIMIT 1", parentID).Scan(&id)

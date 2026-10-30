@@ -365,6 +365,24 @@ Per-community statistics (`stats`, `stats_outcomes`, `stats_summaries`, `users_d
 - `iznik-server-go/localreach` holds the rule; `BuildsUserRoundups::itemsReaching` mirrors it
   for the emails.
 
+### Nothing a community bounded goes national by default
+A community used to bound everything sent through it to about a town. Deleting the group filter
+without putting a place in its place makes a thing national, which is the opposite of what it
+was. An audit on 2026-10-30 found and fixed these:
+- **ADMIN emails** went to every member. An ADMIN now has the same centre and reach as an event,
+  or `national`, which only Support or Admin may set or approve, as only they could send an ADMIN
+  with no community before. One with neither is not approved and is not sent.
+- **The daily digest** mailed a member with no location the newest posts in the country, and a
+  post with no reach row yet to every member. The first now gets nothing; the second is kept to
+  the fallback radius around the member.
+- **Pinned clearances** sat at the top of every member's digest in the country. They now go to
+  members within the fallback radius.
+- **Review tasks** ("does this post look OK?", photo rotation, the reply gate's graded check) and
+  the review-request notifications drew posts and reviewers from the whole country, pending posts
+  included. A post is only offered to, and can only be voted on by, members within 15 miles of it.
+- Left national on purpose: the stats and donation totals, which describe Freegle rather than
+  send anything to anyone, and stories, which were already national.
+
 ### Rules
 - One rule set, site-wide, at `/rules`, and the same rules are the judge's questions. Personal details are always kept out of posts.
 

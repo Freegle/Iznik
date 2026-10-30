@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/localreach"
 	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
@@ -38,6 +39,13 @@ type Admin struct {
 	Essential     bool       `json:"essential"`
 	Template      *string    `json:"template"`
 	Editprotected bool       `json:"editprotected"`
+	// Who it goes to. National sends to every member and only Support or Admin may set it.
+	// Otherwise it goes to members within reachmiles of lat/lng, and with neither, to nobody.
+	National     bool     `json:"national"`
+	Lat          *float64 `json:"lat"`
+	Lng          *float64 `json:"lng"`
+	Reachminutes *int     `json:"reachminutes"`
+	Reachmiles   *float64 `json:"reachmiles"`
 	// Unedited is set on a copy of a suggested ADMIN that is still exactly as suggested; it can be
 	// approved without a test.
 	Unedited bool `json:"unedited" gorm:"-"`
@@ -51,7 +59,7 @@ type AdminUser struct {
 
 // adminColumns are the admins columns returned to moderators. V1's Admin publicatts.
 const adminColumns = "id, createdby, subject, text, mjml, ctatext, ctalink, created, complete, heldby, heldat, " +
-	"pending, parentid, activeonly, sendafter, essential, template, editprotected"
+	"pending, parentid, activeonly, sendafter, essential, template, editprotected, national, lat, lng, reachminutes, reachmiles"
 
 // addUnedited marks the copies of suggested ADMINs that are still exactly as suggested.
 func addUnedited(db *gorm.DB, admins []Admin) {
@@ -238,6 +246,11 @@ type PostAdminRequest struct {
 	SendAfter     *string `json:"sendafter,omitempty"`
 	// Email is the one address a Test goes to.
 	Email string `json:"email,omitempty"`
+	// Who it goes to; see Admin.National.
+	National     *bool    `json:"national,omitempty"`
+	Lat          *float64 `json:"lat,omitempty"`
+	Lng          *float64 `json:"lng,omitempty"`
+	Reachminutes *int     `json:"reachminutes,omitempty"`
 }
 
 // checkNewAdmin applies the rules shared by Test and Create: what the content may contain. Who may
@@ -388,6 +401,13 @@ func PostAdmin(c *fiber.Ctx) error {
 			"sendafter":     sendAfter,
 			"created":       gorm.Expr("NOW()"),
 		}
+		audience, err := audienceColumns(myid, req.National, req.Lat, req.Lng, req.Reachminutes)
+		if err != nil {
+			return err
+		}
+		for k, v := range audience {
+			row[k] = v
+		}
 		if err := db.Table("admins").Create(row).Error; err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create admin")
 		}
@@ -421,6 +441,11 @@ type PatchAdminRequest struct {
 	Editprotected *bool   `json:"editprotected,omitempty"`
 	// Sendafter is held raw so an explicit null or "" (clear it) can be told from absent.
 	Sendafter json.RawMessage `json:"sendafter,omitempty"`
+	// Who it goes to; see Admin.National.
+	National     *bool    `json:"national,omitempty"`
+	Lat          *float64 `json:"lat,omitempty"`
+	Lng          *float64 `json:"lng,omitempty"`
+	Reachminutes *int     `json:"reachminutes,omitempty"`
 	// TestToken is what a Test returned. Approving (pending false) an ADMIN with an MJML version needs
 	// one for exactly the content being approved, unless it is a copy of a suggestion nobody edited.
 	TestToken string `json:"testtoken,omitempty"`
@@ -566,6 +591,38 @@ func PatchAdmin(c *fiber.Ctx) error {
 		}
 	}
 
+	// Sending to the whole country is for Support and Admin, as an ADMIN with no community was
+	// when there were communities.
+	if req.National != nil && *req.National && !auth.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Only Support or Admin can send an ADMIN to the whole country")
+	}
+	if req.Pending != nil && !*req.Pending {
+		var stored struct {
+			National bool
+			Lat      *float64
+		}
+		db.Table("admins").Select("national, lat").Where("id = ?", req.ID).Scan(&stored)
+		national := stored.National
+		if req.National != nil {
+			national = *req.National
+		}
+		if national && !auth.IsAdminOrSupport(myid) {
+			return fiber.NewError(fiber.StatusForbidden, "Only Support or Admin can approve an ADMIN to the whole country")
+		}
+		if !national && stored.Lat == nil && req.Lat == nil {
+			return fiber.NewError(fiber.StatusBadRequest, "Choose who this ADMIN goes to before approving it")
+		}
+	}
+
+	if req.National != nil {
+		db.Table("admins").Where("id = ?", req.ID).Update("national", *req.National)
+	}
+	if req.Lat != nil || req.Lng != nil || req.Reachminutes != nil {
+		if err := localreach.Update(db, "admins", "createdby", req.ID, req.Lat, req.Lng, req.Reachminutes); err != nil {
+			return err
+		}
+	}
+
 	if req.Subject != nil {
 		db.Table("admins").Where("id = ?", req.ID).Update("subject", *req.Subject)
 	}
@@ -658,4 +715,24 @@ func DeleteAdmin(c *fiber.Ctx) error {
 	db.Table("admins").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"success": true})
+}
+
+// audienceColumns works out who a new ADMIN goes to. National is the whole country and is for
+// Support and Admin only. Anything else is shown around a centre, the place given or the
+// sender's own location, out to a drive time, exactly as an event is (see localreach).
+func audienceColumns(myid uint64, national *bool, lat, lng *float64, minutes *int) (map[string]interface{}, error) {
+	if national != nil && *national {
+		if !auth.IsAdminOrSupport(myid) {
+			return nil, fiber.NewError(fiber.StatusForbidden, "Only Support or Admin can send an ADMIN to the whole country")
+		}
+		return map[string]interface{}{"national": true}, nil
+	}
+
+	reach, ok := localreach.Resolve(myid, lat, lng, minutes)
+	if !ok {
+		return nil, fiber.NewError(fiber.StatusBadRequest, "Choose where this ADMIN goes - give a postcode")
+	}
+	cols := reach.Columns()
+	cols["national"] = false
+	return cols, nil
 }

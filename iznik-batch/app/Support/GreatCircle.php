@@ -20,6 +20,17 @@ class GreatCircle
      * Haversine, so it is stable for the short distances this is used at (a few
      * miles) where the spherical law of cosines loses precision.
      */
+    /**
+     * SQL for the great-circle distance in miles from a point to table.lat/lng. Its bindings are
+     * lat, lng, lat, in that order. The same sum as distanceMiles, for use inside a query.
+     */
+    public static function milesSql(string $table): string
+    {
+        return "3959 * ACOS(GREATEST(-1.0, LEAST(1.0, "
+            ."COS(RADIANS(?)) * COS(RADIANS({$table}.lat)) * COS(RADIANS({$table}.lng) - RADIANS(?)) "
+            ."+ SIN(RADIANS(?)) * SIN(RADIANS({$table}.lat)))))";
+    }
+
     public static function distanceMiles(float $lat1, float $lng1, float $lat2, float $lng2): float
     {
         $dLat = deg2rad($lat2 - $lat1);

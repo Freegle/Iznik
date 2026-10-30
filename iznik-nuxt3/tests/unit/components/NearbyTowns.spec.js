@@ -204,4 +204,17 @@ describe('NearbyTowns', () => {
 
     expect(mockFetchNear).toHaveBeenCalledWith(55.95, -3.19, 20)
   })
+
+  // In a picker the hint is part of the control, so it does not wait to be scrolled into view.
+  it('fetches straight away when eager, without a visibility signal', async () => {
+    mockFetchNear.mockResolvedValue({ towns: ['Leith'] })
+    mount(NearbyTowns, {
+      props: { minutes: 15, eager: true },
+      global: { directives: { 'observe-visibility': {} } },
+    })
+    await vi.advanceTimersByTimeAsync(350)
+    await flushPromises()
+
+    expect(mockFetchNear).toHaveBeenCalledWith(51.5, -0.1, 15)
+  })
 })

@@ -118,16 +118,16 @@ func Nearest(table string, lat, lng float64) clause.OrderBy {
 }
 
 // Update changes the centre or reach of a stored item. Anything not given keeps its stored
-// value, and an item that has never had a centre takes its owner's location, so a moderator
+// value, and an item that has never had a centre takes its owner's location (ownerColumn), so a moderator
 // editing someone else's item never moves it to where the moderator lives.
-func Update(db *gorm.DB, table string, id uint64, lat, lng *float64, minutes *int) error {
+func Update(db *gorm.DB, table, ownerColumn string, id uint64, lat, lng *float64, minutes *int) error {
 	var stored struct {
 		Userid       uint64
 		Lat          *float64
 		Lng          *float64
 		Reachminutes *int
 	}
-	if err := db.Table(table).Select("userid, lat, lng, reachminutes").Where("id = ?", id).
+	if err := db.Table(table).Select("COALESCE("+ownerColumn+", 0) AS userid, lat, lng, reachminutes").Where("id = ?", id).
 		Scan(&stored).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to read reach")
 	}
@@ -145,4 +145,12 @@ func Update(db *gorm.DB, table string, id uint64, lat, lng *float64, minutes *in
 	}
 
 	return db.Table(table).Where("id = ?", id).Updates(reach.Columns()).Error
+}
+
+// Near is a WHERE fragment keeping the rows of table whose own lat/lng lie within miles of
+// (lat, lng). For things that have a location but no stored reach, such as a post being
+// offered to a member for review.
+func Near(table string, lat, lng, miles float64) (string, []interface{}) {
+	return table + ".lat IS NOT NULL AND " + distanceSQL(table) + " <= ?",
+		[]interface{}{lat, lng, lat, miles}
 }

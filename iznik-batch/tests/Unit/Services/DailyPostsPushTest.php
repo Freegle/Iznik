@@ -27,6 +27,8 @@ use Tests\TestCase;
  */
 class DailyPostsPushTest extends TestCase
 {
+    use \Tests\Support\MembersLiveInLondon;
+
     private PushNotificationService $pushService;
     private UnifiedDigestService    $digestService;
 

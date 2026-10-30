@@ -8,6 +8,7 @@ use App\Mail\Traits\AvatarResolver;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
+use App\Support\GreatCircle;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -89,6 +90,7 @@ class SendAdminCommand extends Command
             'skipped_activeonly' => 0,
             'skipped_relevantallowed' => 0,
             'skipped_dedup' => 0,
+            'skipped_outside_area' => 0,
             'skipped_no_email' => 0,
             'skipped_simplemail' => 0,
             'errors' => 0,
@@ -128,6 +130,7 @@ class SendAdminCommand extends Command
                 ['Skipped (active only)', $stats['skipped_activeonly']],
                 ['Skipped (relevantallowed)', $stats['skipped_relevantallowed']],
                 ['Skipped (dedup)', $stats['skipped_dedup']],
+                ['Skipped (outside the area)', $stats['skipped_outside_area']],
                 ['Skipped (no email)', $stats['skipped_no_email']],
                 ['Skipped (simplemail=None)', $stats['skipped_simplemail']],
                 ['Errors', $stats['errors']],
@@ -247,7 +250,21 @@ class SendAdminCommand extends Command
     }
 
     /**
-     * Process a single admin — send to all eligible members.
+     * Whether a member lives within radius miles of an ADMIN's centre: the place they chose in
+     * their settings, else their last location. A member with no location is outside every area.
+     */
+    private function inArea(object $member, float $lat, float $lng, float $radius): bool
+    {
+        $at = User::chosenLatLng($member->settings, $member->tnuserid)
+            ?? (($member->loclat !== null && $member->loclng !== null)
+                ? [(float) $member->loclat, (float) $member->loclng]
+                : null);
+
+        return $at !== null && GreatCircle::distanceMiles($lat, $lng, $at[0], $at[1]) <= $radius;
+    }
+
+    /**
+     * Process a single admin: send to every eligible member in its audience.
      */
     protected function processAdmin(
         object $admin,
@@ -264,6 +281,18 @@ class SendAdminCommand extends Command
 
         $this->info("Processing admin {$admin->id}...");
 
+        // Who it goes to. With no communities an ADMIN is either national or shown around a centre,
+        // like an event; one with neither goes to nobody rather than to everyone.
+        if (! $admin->national && ($admin->lat === null || $admin->lng === null)) {
+            $this->warn("Admin {$admin->id} says neither national nor where it goes; not sending.");
+            Log::warning('SendAdmin: admin has no audience', ['admin_id' => $admin->id]);
+
+            return 0;
+        }
+        $radius = $admin->national
+            ? null
+            : (float) ($admin->reachmiles ?? config('freegle.local_reach.fallback_miles'));
+
         // Pre-load dedup set: all user IDs already sent for this admin's parent (or self).
         // Uses a flipped collection for O(1) lookups instead of per-user DB queries.
         $dedupAdminId = $admin->parentid ?: $admin->id;
@@ -276,6 +305,7 @@ class SendAdminCommand extends Command
         $volunteers = self::getVolunteers();
 
         $members = DB::table('users')
+            ->leftJoin('locations', 'locations.id', '=', 'users.lastlocation')
             ->whereNull('users.deleted')
             ->whereNull('users.banned')
             ->select([
@@ -284,6 +314,10 @@ class SendAdminCommand extends Command
                 'users.relevantallowed',
                 'users.lastaccess',
                 'users.deleted',
+                'users.settings',
+                'users.tnuserid',
+                'locations.lat AS loclat',
+                'locations.lng AS loclng',
             ])
             ->orderBy('users.id')
             ->cursor();
@@ -316,6 +350,12 @@ class SendAdminCommand extends Command
 
             // Apply lightweight filters before buffering (no User model needed).
             if ($member->deleted) {
+                continue;
+            }
+
+            if ($radius !== null && ! $this->inArea($member, (float) $admin->lat, (float) $admin->lng, $radius)) {
+                $stats['skipped_outside_area']++;
+
                 continue;
             }
 

@@ -17,6 +17,8 @@ use Tests\TestCase;
 
 class UnifiedDigestServiceTest extends TestCase
 {
+    use \Tests\Support\MembersLiveInLondon;
+
     use FakesRingIndex;
     use SeedsReachCells;
 
@@ -1027,7 +1029,9 @@ class UnifiedDigestServiceTest extends TestCase
         // reaches afterwards (the exact case the cursor-based approach silently dropped).
         config(['freegle.digest.immediate_allowlist' => '*']);
 
-        $poster = $this->createTestUser();
+        // The poster has no location, so only A and B are mailed. A poster inside the reach is
+        // mailed their own post: test_mail_newly_reached_own_post_bypasses_distance_preference.
+        $poster = $this->createTestUser(['lastlocation' => null]);
         DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
         $memberA = $this->createTestUser();
         DB::table('users')->where('id', $memberA->id)->update(['emailfrequency' => -1]);
@@ -1680,7 +1684,7 @@ class UnifiedDigestServiceTest extends TestCase
         ]);
         $far = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Far (TestLocation)',
-            'lat' => 53.0, 'lng' => -0.12, 'arrival' => now()->subHours(10),
+            'lat' => 51.62, 'lng' => -0.12, 'arrival' => now()->subHours(10),
         ]);
 
         // Spy the spooler so we can read the posts handed to the daily UnifiedDigest.
@@ -1957,9 +1961,9 @@ class UnifiedDigestServiceTest extends TestCase
         DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
         $this->createTestMessage($poster, [
-            'subject' => 'OFFER: Far item (Edinburgh)',
-            'lat' => 55.9533,
-            'lng' => -3.1889,
+            'subject' => 'OFFER: Far item (Hertford)',
+            'lat' => 51.65,
+            'lng' => -0.1278,
         ]);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
@@ -1985,9 +1989,9 @@ class UnifiedDigestServiceTest extends TestCase
         DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
         $this->createTestMessage($poster, [
-            'subject' => 'OFFER: Far item (Edinburgh)',
-            'lat' => 55.9533,
-            'lng' => -3.1889,
+            'subject' => 'OFFER: Far item (Hertford)',
+            'lat' => 51.65,
+            'lng' => -0.1278,
         ]);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
@@ -2109,7 +2113,7 @@ class UnifiedDigestServiceTest extends TestCase
         $this->createTestMessage($poster, [
             'subject' => 'OFFER: Wider-reach item',
             'lat' => 51.5,
-            'lng' => 0.4,
+            'lng' => 0.05,
         ]);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
@@ -2144,11 +2148,16 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(1, $stats['emails_sent'], 'own post is always included regardless of distance preference');
     }
 
-    public function test_daily_digest_distance_preference_fails_open_without_recipient_location(): void
+    /**
+     * With no communities, the posts a member gets are the ones around where they live. A member
+     * whose location cannot be resolved therefore gets none: this used to fail open, which with the
+     * group filter gone mailed them the newest posts in the whole country.
+     */
+    public function test_daily_digest_sends_nothing_to_a_recipient_with_no_location(): void
     {
         config(['freegle.digest.daily_allowlist' => '*']);
 
-        $recipient = $this->createTestUser();
+        $recipient = $this->createTestUser(['lastlocation' => null]);
         $recipient->settings = [
             'simplemail' => User::SIMPLE_MAIL_BASIC,
             'browseMaxDistance' => 1,
@@ -2169,7 +2178,7 @@ class UnifiedDigestServiceTest extends TestCase
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
 
-        $this->assertEquals(1, $stats['emails_sent'], 'cannot resolve recipient location — fail open, no filtering');
+        $this->assertEquals(0, $stats['emails_sent'], 'no location, so no posts are near them');
     }
 
     /**
@@ -2192,8 +2201,8 @@ class UnifiedDigestServiceTest extends TestCase
 
         $far = $this->createTestMessage($poster, [
             'subject' => 'OFFER: Far item (Edinburgh)',
-            'lat' => 55.9533,
-            'lng' => -3.1889,
+            'lat' => 51.65,
+            'lng' => -0.1278,
         ]);
 
         $tracker = UserDigest::create([
@@ -2381,7 +2390,8 @@ class UnifiedDigestServiceTest extends TestCase
         string $ringKey = 'sparse'
     ): array {
         config(['freegle.digest.immediate_allowlist' => '*']);
-        $poster = $this->createTestUser();
+        // The poster lives nowhere in particular, so the only member the lane can consider is $member.
+        $poster = $this->createTestUser(['lastlocation' => null]);
         DB::table('users')->where('id', $poster->id)->update(['emailfrequency' => -1]);
 
         $member = $this->createTestUser();
@@ -2928,5 +2938,78 @@ class UnifiedDigestServiceTest extends TestCase
         $this->service->sendReachDigests(null, false, $mine, 2);
         $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count());
         $this->assertTrue($this->ledgered($msgid, $member->id));
+    }
+
+    /**
+     * Spool one daily digest for a London recipient and return the ids of the posts in it, or
+     * null if nothing was sent.
+     */
+    private function dailyDigestPostIds(User $recipient): ?array
+    {
+        $captured = null;
+        $spy = \Mockery::mock(\App\Services\EmailSpoolerService::class);
+        $spy->shouldReceive('spool')->andReturnUsing(function ($mailable) use (&$captured) {
+            $captured = $mailable;
+
+            return 'spooled';
+        });
+        $this->app->instance(\App\Services\EmailSpoolerService::class, $spy);
+
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        return $captured?->getPosts()->map(fn ($p) => $p['message']->id)->all();
+    }
+
+    private function londonDailyRecipient(): User
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        DB::table('users')->where('id', $recipient->id)->update(['emailfrequency' => 24]);
+
+        return $recipient->refresh();
+    }
+
+    /**
+     * A post with no reach row yet is not gated by a reach, so it is kept to the fallback radius
+     * around the member rather than going to every member in the country.
+     */
+    public function test_a_post_with_no_reach_row_reaches_only_members_near_it(): void
+    {
+        $recipient = $this->londonDailyRecipient();
+        $poster = $this->createTestUser();
+
+        $near = $this->createTestMessage($poster, [
+            'subject' => 'OFFER: near, no reach yet (London)', 'lat' => 51.51, 'lng' => -0.12, 'arrival' => now()->subHour(),
+        ]);
+        $far = $this->createTestMessage($poster, [
+            'subject' => 'OFFER: far, no reach yet (Edinburgh)', 'lat' => 55.9533, 'lng' => -3.1883, 'arrival' => now()->subHour(),
+        ]);
+
+        $ids = $this->dailyDigestPostIds($recipient) ?? [];
+        $this->assertContains($near->id, $ids);
+        $this->assertNotContains($far->id, $ids);
+    }
+
+    /**
+     * A pinned clearance recurs at the top of the digest for members near it, as it once did for
+     * the members of its community, not for everyone in the country.
+     */
+    public function test_a_pinned_post_is_only_pinned_for_members_near_it(): void
+    {
+        $recipient = $this->londonDailyRecipient();
+        $poster = $this->createTestUser();
+
+        $this->createTestMessage($poster, [
+            'subject' => 'OFFER: normal (London)', 'lat' => 51.51, 'lng' => -0.12, 'arrival' => now()->subHour(),
+        ]);
+        $farPinned = $this->createTestMessage($poster, [
+            'subject' => 'OFFER: clearance (Edinburgh)', 'lat' => 55.9533, 'lng' => -3.1883, 'arrival' => now()->subDays(10),
+        ]);
+        DB::table('messages_pinned')->insert(['msgid' => $farPinned->id]);
+
+        $this->assertNotContains($farPinned->id, $this->dailyDigestPostIds($recipient) ?? []);
     }
 }

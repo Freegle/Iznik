@@ -54,14 +54,14 @@
       />
       <NearbyTowns
         v-if="centre"
+        eager
         :minutes="minutes"
         :lat="centre.lat"
         :lng="centre.lng"
         perspective="outbound"
       />
       <p class="text-muted small mt-2 mb-0">
-        You only need to add it once. Everyone within this distance can see
-        it.
+        {{ hint }}
       </p>
     </template>
   </div>
@@ -97,6 +97,12 @@ const props = defineProps({
   modelValue: { type: Object, required: true },
   // An online volunteering opportunity is shown everywhere, so there is nothing to pick.
   online: { type: Boolean, default: false },
+  // What the distance means for the thing being placed.
+  hint: {
+    type: String,
+    default:
+      'You only need to add it once. Everyone within this distance can see it.',
+  },
 })
 
 const emit = defineEmits(['update:modelValue'])
