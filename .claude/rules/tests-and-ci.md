@@ -90,6 +90,11 @@ test, both invisible in CI.
 - **Adding a dispatch arm to `ChatMessage.vue` without a matching stub in `ChatMessage.spec.js`
   fails the whole vitest run**, as an unhandled rejection blamed on an unrelated file. If the
   suite breaks somewhere strange after a chat change, look here first.
+- **Playwright's browser says it is Chrome on Windows.** `playwright.config.js` spreads
+  `devices['Desktop Chrome']`, whose User-Agent has no `HeadlessChrome`, so app code that spots
+  "not a real user" by User-Agent never fires under test. Sentry's HeadlessChrome check missed it
+  and CI's ModTools runs sent 1,689 Google sign-in errors a week to the live project as
+  `production`. Test for automation with `navigator.webdriver`.
 - **Seeding rows with identical timestamps gives non-deterministic order.** Newsfeed replies are
   ordered by `timestamp`, not `added`, so a test can appear to prove an ordering it does not.
 
@@ -399,3 +404,28 @@ build, not by bisecting the boundary.
 
 - `docs/developers/testing.md` - the four suites and how to run them.
 - `.claude/rules/dev-containers.md` - why a local pass can be testing old code.
+
+## A green background step that failed
+
+`Run monitor-fsm unit tests (background)`, `Lint iznik-nuxt3 (eslint, background)`, the two
+`Run ... tests (background)` Go service steps and `Upload Go coverage (background)` are
+CircleCI background steps, so each one is marked green the moment it starts, whatever
+happens afterwards. The real result is the `pass`/`fail` written to
+`~/test-output/<name>.result`, read by the parallel block (which stops the suites and prints
+`FAIL-FAST: background check <name> failed`) and by `Collect background checks`, which is the
+step that actually goes red and prints the output. A job where the parallel suites show as
+`killed` and nothing names a test is this: read the collect step, not the suites. For Go
+coverage the join is `Wait for Go coverage upload`; a Coveralls job count one short means that
+upload did not finish or did not upload, and its own step's log says which.
+
+## "Coveralls grouped 0 parallel job(s)" on a build that has all four
+
+Coveralls only processes the queued uploads once the webhook closes the build, and the
+webhook reply counts the jobs before it does that. So the reply said `"jobs":0` on every run
+from 2026-08-18 to 2026-10-27 while the four `Coveralls - <flag>` jobs landed 10 to 20s
+later and the aggregate was right (jobs 43482 and 43488: webhook, then the four per-flag
+commit statuses, then the build's `calculated_at`). Waiting before the webhook does not help;
+the statuses never appear until it is sent. The step now checks the real thing after the
+webhook: the per-flag commit statuses on GitHub, counted from when the coverage setup
+started. If that warns, read the commit's statuses first; four of them means the wait ran
+out, not that the ids are wrong.

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
@@ -465,6 +466,14 @@ type GetMembershipsMember struct {
 	// ModTools does not offer the group's moderators a chat off the back of it
 	// (Discourse 10102).
 	Rippled bool `json:"rippled" gorm:"column:rippled"`
+	// True while the member has not knowingly joined this community: their post rippled
+	// here, or TrashNothing placed it here. Cleared when they join or deal with the
+	// community; moving into the area clears it only for a ripple join, and a TrashNothing
+	// placement only through TrashNothing. Replaces Rippled.
+	Implicit bool `json:"implicit" gorm:"column:implicit"`
+	// How the membership row was created (memberships.added_origin). Never changes after
+	// insert; 'unknown' for rows from before it was recorded.
+	AddedOrigin string `json:"added_origin" gorm:"column:added_origin"`
 	// Set while the member's email provider is refusing our mail. This is
 	// deliberately NOT the same thing as Bouncing: bouncing means their
 	// address is bad, whereas this is our own sending reputation with their
@@ -562,7 +571,7 @@ func GetMemberships(c *fiber.Ctx) error {
 				"b.date AS added, b.date AS bandate, b.byuser AS bannedby, "+
 				"u.fullname, u.firstname, u.lastname, u.engagement, "+
 				"b.userid AS id, NULL AS heldby, NULL AS settings, "+
-				"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, 0 AS rippled, "+
+				"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, 0 AS rippled, 0 AS implicit, 'unknown' AS added_origin, "+
 				"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason, "+mailDelayedCols).
 			Joins("JOIN users u ON u.id = b.userid").
 			Where("b.groupid = ?", groupid)
@@ -593,7 +602,7 @@ func GetMemberships(c *fiber.Ctx) error {
 		db.Table("memberships m").
 			Select("m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
 				"u.fullname, u.firstname, u.lastname, m.settings, "+
-				"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, "+
+				"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, m.implicit, m.added_origin, "+
 				"b.date AS bandate, b.byuser AS bannedby, "+
 				"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, "+
 				"MAX(l.timestamp) AS lastmodmail, "+mailDelayedCols).
@@ -620,7 +629,7 @@ func GetMemberships(c *fiber.Ctx) error {
 
 	selectCols := "m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, " +
 		"u.fullname, u.firstname, u.lastname, m.settings, " +
-		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, " +
+		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, m.implicit, m.added_origin, " +
 		"b.date AS bandate, b.byuser AS bannedby, " +
 		"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing, " + mailDelayedCols
 
@@ -912,7 +921,7 @@ func getSpamMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error 
 	result := db.Table("memberships m").
 		Select("m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
 			"u.fullname, u.firstname, u.lastname, m.settings, "+
-			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, "+
+			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, m.rippled, m.implicit, m.added_origin, "+
 			"b.date AS bandate, b.byuser AS bannedby, "+
 			"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing, "+mailDelayedCols).
 		Joins("JOIN users u ON u.id = m.userid").
@@ -1347,7 +1356,12 @@ func getVisibleRatings(db *gorm.DB, groupIDs []uint64) []Rating {
 type PutMembershipsRequest struct {
 	Userid  uint64 `json:"userid"`
 	Groupid uint64 `json:"groupid"`
-	Manual  *bool  `json:"manual"`
+	// Manual is how a client from before origin says why: true a Join button, false the reply
+	// flow. Ignored when origin is given.
+	Manual *bool `json:"manual"`
+	// Why the member is joining (memberships.added_origin): manual, posted, replied or signup.
+	// Ignored when a moderator adds someone else, which is always moderator.
+	Origin string `json:"origin"`
 }
 
 // PutMemberships handles PUT /memberships - user joins a group.
@@ -1397,14 +1411,59 @@ func PutMemberships(c *fiber.Ctx) error {
 		userid = myid
 	}
 
+	// A member says why they are joining. A moderator adding someone else is a moderator add
+	// whatever the request says (joinOrigin), so their origin is ignored rather than checked.
+	if userid == myid && req.Origin != "" && !addedorigin.FromClient(req.Origin) {
+		return fiber.NewError(fiber.StatusBadRequest, addedorigin.ClientValuesMessage())
+	}
+
 	// Non-self joins require moderator permissions on the target group.
 	if userid != myid {
 		if !isModOfGroup(myid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
 		}
+
+		// A TrashNothing member joins communities through TrashNothing. An add here would also
+		// turn a TrashNothing placement into an ordinary membership they never chose.
+		if isTrashNothingAccount(userid) {
+			return fiber.NewError(fiber.StatusForbidden, "Failed - TrashNothing member")
+		}
 	}
 
-	return addMemberToGroup(c, db, userid, req.Groupid, myid, req.Manual)
+	return addMemberToGroup(c, db, userid, req.Groupid, myid, joinManual(userid, myid, req.Origin, req.Manual), joinOrigin(userid, myid, req.Origin, req.Manual))
+}
+
+// joinManual decides the Joined log's Manual or Auto text for a join through PUT /memberships.
+// When the member's own request gives an origin, the text follows it, so the log and
+// added_origin cannot disagree: manual is a Join button, anything else joined automatically.
+// The manual flag is read only from a client from before origin, or for a moderator's add.
+func joinManual(userid, byuser uint64, origin string, manual *bool) *bool {
+	if userid != byuser || origin == "" {
+		return manual
+	}
+	isManual := origin == addedorigin.Manual
+	return &isManual
+}
+
+// joinOrigin decides memberships.added_origin for a join through PUT /memberships. A moderator
+// adding someone else is a moderator add, whatever the request says. Otherwise it is the
+// request's origin, or, for a client from before origin was sent, the manual flag: true is a
+// Join button and false the reply flow, the only caller that sends false. A request with
+// neither is unknown, which addMemberToGroup reports.
+func joinOrigin(userid, byuser uint64, origin string, manual *bool) string {
+	if userid != byuser {
+		return addedorigin.Moderator
+	}
+	if origin != "" {
+		return origin
+	}
+	if manual != nil {
+		if *manual {
+			return addedorigin.Manual
+		}
+		return addedorigin.Replied
+	}
+	return addedorigin.Unknown
 }
 
 // putMembershipsPartner handles the partner auth path for PUT /memberships.
@@ -1487,11 +1546,13 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	// values before comparing (the retired ormharness's normalise_test.go
 	// TestNormaliseColumnOrder_Insert, removed in d22ba1d6c),
 	// so the map-Create reorder is harmless. Identical twin: addMemberToGroup (27aa0e237120).
+	origin := addedorigin.ForInsert("membership.putMembershipsPartner", userid, groupid, addedorigin.Partner)
 	partnerJoin := db.Table("memberships").Create(map[string]interface{}{
-		"userid":     userid,
-		"groupid":    groupid,
-		"role":       utils.ROLE_MEMBER,
-		"collection": utils.COLLECTION_APPROVED,
+		"userid":       userid,
+		"groupid":      groupid,
+		"role":         utils.ROLE_MEMBER,
+		"collection":   utils.COLLECTION_APPROVED,
+		"added_origin": origin,
 	})
 	if partnerJoin.RowsAffected > 0 {
 		reachqueue.QueueMember(db, userid, reachqueue.ReasonJoined)
@@ -1509,6 +1570,7 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 		"groupid":            groupid,
 		"collection":         utils.COLLECTION_APPROVED,
 		"processingrequired": gorm.Expr("1"),
+		"added_origin":       origin,
 	})
 
 	logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, userid, "via partner")
@@ -1517,8 +1579,9 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 }
 
 // addMemberToGroup is the shared logic for adding a user to a group (JWT auth paths).
-// manual mirrors V1 User::addMembership: true→"Manual", false→"Auto", nil→"".
-func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, byuser uint64, manual *bool) error {
+// manual mirrors V1 User::addMembership: true→"Manual", false→"Auto", nil→"". origin is
+// written to memberships.added_origin and the history row (see joinOrigin).
+func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, byuser uint64, manual *bool, origin string) error {
 	// Check the group exists.
 	var groupExists int64
 	db.Table("groups").Where("id = ?", groupid).Count(&groupExists)
@@ -1551,11 +1614,13 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 	// Insert membership as approved member. ORM migration site 27aa0e237120
 	// (wave 2). Identical twin of putMembershipsPartner's insert (759766c83c01);
 	// see the comment there on why the map-Create column reorder is safe.
+	origin = addedorigin.ForInsert("membership.addMemberToGroup", userid, groupid, origin)
 	result := db.Table("memberships").Create(map[string]interface{}{
-		"userid":     userid,
-		"groupid":    groupid,
-		"role":       utils.ROLE_MEMBER,
-		"collection": utils.COLLECTION_APPROVED,
+		"userid":       userid,
+		"groupid":      groupid,
+		"role":         utils.ROLE_MEMBER,
+		"collection":   utils.COLLECTION_APPROVED,
+		"added_origin": origin,
 	})
 
 	if result.RowsAffected > 0 {
@@ -1573,6 +1638,7 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 			"groupid":            groupid,
 			"collection":         utils.COLLECTION_APPROVED,
 			"processingrequired": gorm.Expr("1"),
+			"added_origin":       origin,
 		})
 
 		// V1 parity (User.php:944-957): log text records how the user joined.

@@ -20,6 +20,7 @@ use App\Models\BackgroundTask;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\Group;
+use App\Models\Message;
 use App\Models\User;
 use App\Services\BlockedKeywordBackfillService;
 use App\Services\EmailSpoolerService;
@@ -53,6 +54,12 @@ class ProcessBackgroundTasksCommand extends Command
 {
     use GracefulShutdown;
     use PreventsOverlapping;
+
+    /**
+     * Told to a member who replied to an Offer that has since been promised to someone else.
+     * Also the key that stops them being told twice about the same post.
+     */
+    public const PROMISED_TO_SOMEONE_ELSE_NOTICE = "This has been promised to someone else for now. If they do not collect it, I will let you know.\n\nThis is an automated message.";
 
     protected $signature = 'queue:background-tasks
                             {--limit=50 : Maximum tasks to process per iteration}
@@ -288,6 +295,7 @@ class ProcessBackgroundTasksCommand extends Command
             BackgroundTask::TASK_EMAIL_VERIFY            => $this->handleEmailVerify($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_REFER_TO_SUPPORT        => $this->handleReferToSupport($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_MESSAGE_OUTCOME         => $this->handleMessageOutcome($data),
+            BackgroundTask::TASK_MESSAGE_PROMISED        => $this->handleMessagePromised($data),
             BackgroundTask::TASK_FREEBIE_ALERTS_ADD      => $this->handleFreebieAlertsAdd($data),
             BackgroundTask::TASK_FREEBIE_ALERTS_REMOVE   => $this->handleFreebieAlertsRemove($data),
             BackgroundTask::TASK_HOUSEKEEPER_NOTIFY      => $this->handleHousekeeperNotify($data),
@@ -454,7 +462,7 @@ class ProcessBackgroundTasksCommand extends Command
             $groupName = $group->namefull ?: $group->nameshort;
             $modsEmail = $group->nameshort ? "{$group->nameshort}-volunteers@groups.ilovefreegle.org" : null;
             $groupShort = $group->nameshort;
-            $volunteers = SendAdminCommand::getLocalVolunteers($group->id);
+            $volunteers = ($data['volunteercredits'] ?? TRUE) ? SendAdminCommand::getLocalVolunteers($group->id) : [];
         }
 
         $admin = SendAdminCommand::personalise([
@@ -466,6 +474,7 @@ class ProcessBackgroundTasksCommand extends Command
             'ctalink' => $data['ctalink'] ?? null,
             'essential' => $data['essential'] ?? true,
             'template' => ($data['template'] ?? '') ?: null,
+            'volunteercredits' => $data['volunteercredits'] ?? TRUE,
         ], $groupName, $modsEmail, $user);
 
         $mail = new AdminMail($user, $admin, $groupName, $modsEmail, $groupShort, $volunteers, $data['email']);
@@ -1077,11 +1086,7 @@ class ProcessBackgroundTasksCommand extends Command
         // 2. Notify interested users who replied but didn't get the item.
         // Find User2User chat rooms with INTERESTED messages referencing this message,
         // excluding users who are in messages_by (i.e. who got the item).
-        $replies = DB::table('chat_messages')
-            ->join('chat_rooms', function ($join) {
-                $join->on('chat_rooms.id', '=', 'chat_messages.chatid')
-                    ->where('chat_rooms.chattype', 'User2User');
-            })
+        $replies = $this->interestedChatsQuery($msgId)
             ->leftJoin('messages_by', function ($join) {
                 $join->on('messages_by.msgid', '=', 'chat_messages.refmsgid')
                     ->on(function ($j) {
@@ -1089,21 +1094,7 @@ class ProcessBackgroundTasksCommand extends Command
                             ->orOn('messages_by.userid', '=', 'chat_rooms.user2');
                     });
             })
-            ->where('refmsgid', $msgId)
-            ->where('chat_messages.type', 'Interested')
-            ->where('reviewrejected', 0)
             ->whereNull('messages_by.id')
-            // The poster never had a reply that is held for its sender's answer, or that the sender or the outcome
-            // withdrew, so a message from the poster would land in a chat they have nothing in.
-            ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('chat_prompts as cpr')
-                    ->whereColumn('cpr.heldchatmsgid', 'chat_messages.id')
-                    ->where('cpr.kind', 'confirm_reply')
-                    ->where('chat_messages.processingsuccessful', 0);
-            })
-            ->distinct()
-            ->select('chatid')
             ->get();
 
         foreach ($replies as $reply) {
@@ -1143,6 +1134,105 @@ class ProcessBackgroundTasksCommand extends Command
             'groups' => $groups->count(),
             'notified_chats' => count($replies),
         ]);
+    }
+
+    /**
+     * The User2User chats of members who replied to a post: those with an Interested message about it. A reply
+     * still held for its sender's answer is left out, because the poster never had it, and a message from the
+     * poster would land in a chat they have nothing in.
+     */
+    protected function interestedChatsQuery(int $msgId): \Illuminate\Database\Query\Builder
+    {
+        return DB::table('chat_messages')
+            ->join('chat_rooms', function ($join) {
+                $join->on('chat_rooms.id', '=', 'chat_messages.chatid')
+                    ->where('chat_rooms.chattype', 'User2User');
+            })
+            ->where('refmsgid', $msgId)
+            ->where('chat_messages.type', 'Interested')
+            ->where('reviewrejected', 0)
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('chat_prompts as cpr')
+                    ->whereColumn('cpr.heldchatmsgid', 'chat_messages.id')
+                    ->where('cpr.kind', 'confirm_reply')
+                    ->where('chat_messages.processingsuccessful', 0);
+            })
+            ->distinct()
+            ->select('chatid', 'chat_rooms.user1', 'chat_rooms.user2');
+    }
+
+    /**
+     * Handle a promise of an Offer: tell the other members who replied that it has been promised to someone else.
+     *
+     * Mirrors the Taken notice in handleMessageOutcome: one message in each replier's chat with the giver, written
+     * by the giver and inserted already processed. A member is told once per post, however often it is promised
+     * again. Nothing is sent when the promise no longer exists, when items are still unpromised, or when the post
+     * has gone.
+     */
+    protected function handleMessagePromised(array $data): void
+    {
+        $msgId = (int) ($data['msgid'] ?? 0);
+        $promisee = (int) ($data['userid'] ?? 0);
+
+        if ($msgId === 0) {
+            throw new \RuntimeException('message_promised requires msgid');
+        }
+
+        $message = DB::table('messages')->where('id', $msgId)->first(['fromuser', 'type', 'availablenow']);
+        if (! $message || $message->type !== Message::TYPE_OFFER || DB::table('messages_outcomes')->where('msgid', $msgId)->exists()) {
+            return;
+        }
+
+        // The same test as message.PromisedFor in the Go API: one promise is one item.
+        $promises = DB::table('messages_promises')->where('msgid', $msgId)->count();
+        if ($promises === 0 || $promises < max((int) $message->availablenow, 1)) {
+            return;
+        }
+
+        $fromUser = (int) $message->fromuser;
+        $told = 0;
+
+        foreach ($this->interestedChatsQuery($msgId)->get() as $chat) {
+            $replier = (int) $chat->user1 === $fromUser ? (int) $chat->user2 : (int) $chat->user1;
+
+            if ($replier === $promisee) {
+                continue;
+            }
+
+            $alreadyTold = DB::table('chat_messages')
+                ->where('chatid', $chat->chatid)
+                ->where('refmsgid', $msgId)
+                ->where('type', ChatMessage::TYPE_SYSTEM)
+                ->where('message', self::PROMISED_TO_SOMEONE_ELSE_NOTICE)
+                ->exists();
+            if ($alreadyTold) {
+                continue;
+            }
+
+            DB::table('chat_messages')->insert([
+                'chatid' => $chat->chatid,
+                'userid' => $fromUser,
+                'message' => self::PROMISED_TO_SOMEONE_ELSE_NOTICE,
+                'type' => ChatMessage::TYPE_SYSTEM,
+                'refmsgid' => $msgId,
+                'date' => now(),
+                'reviewrequired' => 0,
+                'processingrequired' => 0,
+                'processingsuccessful' => 1,
+            ]);
+
+            // Mark the giver as up-to-date in this chat so it doesn't appear as unread to them.
+            $lastMsgId = DB::table('chat_messages')->where('chatid', $chat->chatid)->max('id');
+            DB::table('chat_roster')->updateOrInsert(
+                ['chatid' => $chat->chatid, 'userid' => $fromUser],
+                ['lastmsgseen' => $lastMsgId, 'date' => now()]
+            );
+
+            $told++;
+        }
+
+        Log::info('Processed message promise', ['msgid' => $msgId, 'notified_chats' => $told]);
     }
 
     /**

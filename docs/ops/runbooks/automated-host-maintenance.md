@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-26
+last_reviewed: 2026-10-30
 owner: Freegle ops
 covers:
   - scripts/maintenance/**
@@ -45,7 +45,7 @@ outside its start window.
 | Slot | When | Machine | Why this time |
 |---|---|---|---|
 | `lb` | Monday 04:00 UK time | the load balancer | The overnight low, when its reboot outage is accepted. |
-| `db` | Tuesday 04:40 | db2 in even weeks, db3 in odd weeks | After the backup drain and the backup's desync on db2, before the morning digest. Each data node is done every other week, and never both in one week. |
+| `db` | Tuesday 04:40 | the data node patched least recently | After the backup drain and the backup's desync on db2, before the morning digest. Each data node is done every other week, and never both in one week. |
 | `mail` | Wednesday 02:15 | bulk2 | The overnight low in outgoing mail, clear of the relay's own 05:00 log rotation. |
 | `docker` | Wednesday 23:35 | the Docker host | After the 23:00 jobs and before the 00:30 log rotation and 01:00 postcode remap. Wednesday has no 23:00 digest. |
 | `arbitrator` | Friday 04:40 | db1 | Three days clear of the data-node slot. |
@@ -54,8 +54,15 @@ Nothing runs at the weekend, the busiest time. Slots start at least 21 hours apa
 run refuses when the last live run finished less than 20 hours before, so a long run can
 push the next slot to the following week; the Cron Jobs tab then shows it failed.
 
-Weeks are counted from the Unix epoch, so the data nodes alternate strictly. A 53-week
-year does not repeat one. Swap the order with `MAINT_DB_ROTATION`.
+The `db` slot takes the data node whose last live run finished longest ago, so a slot
+that was skipped or failed, or a node done by hand on another day, is made up the next
+Tuesday rather than a fortnight later. A node that has never had a live run counts as
+the oldest. While neither has one, the node goes by the week, counted from the Unix
+epoch (db2 in even weeks, db3 in odd; swap with `MAINT_DB_ROTATION`).
+
+When the other data node finished a live run less than 6 days before, nothing is due
+that week: the slot starts no run, sends no alert, and the Cron Jobs tab shows a success
+that says which node is next. That is the spacing working, not a failure.
 
 ## What every run does
 
@@ -230,7 +237,7 @@ Preflight refuses, and changes nothing, if any of these holds:
   both API servers and the other node's routing server UP; an API or batch database
   setting naming neither node, or batch-prod running with settings that differ from its
   `.env`; batch-prod unhealthy or running a daily digest or a backup; the other data node
-  done within 6 days.
+  done within 6 days (a manual `run`; the timer reports that week as not due instead).
 - **Arbitrator:** either data node unhealthy as above, or its API not answering;
   `garbd` not active or not enabled at boot; monit not enabled at boot.
 - **Load balancer:** HAProxy not active or not enabled; `haproxy -c` failing; a backend

@@ -1279,6 +1279,9 @@ class IncomingMailService
             'collection' => 'Approved',
             'added' => now(),
             'emailfrequency' => 24, // Daily digest by default
+            'added_origin' => Membership::addedOriginForInsert(
+                Membership::ADDED_ORIGIN_SUBSCRIBED, 'IncomingMailService::subscribe', $user->id, $group->id,
+            ),
         ]);
 
         // Record the join the way every other join path does, so moderators can see how

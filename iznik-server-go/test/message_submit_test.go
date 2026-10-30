@@ -79,6 +79,7 @@ func TestSubmitMessageSingleCall(t *testing.T) {
 	var memberCount int64
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID).Scan(&memberCount)
 	assert.Equal(t, int64(1), memberCount, "single-call submit must auto-join the group")
+	assert.Equal(t, "posted", addedOriginOf(t, "memberships", userID, groupID))
 
 	// Posting recorded.
 	var postingCount int64

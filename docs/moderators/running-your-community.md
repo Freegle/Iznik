@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-19
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/settings/**
@@ -127,7 +127,9 @@ unsubscribe links, and both versions end with the community's volunteers ("Your 
 are ...") and the standard footer: the HMRC charity line and the registered address. So you do not
 need to add your own names. A moderator is named if they have used Freegle in the last year and
 have *Show me as a volunteer* on in their own Settings; anyone with it off is left out. That
-footer, with the names it will use, is shown under the message box, and under the MJML box with a
+footer, with the names it will use, is shown under the message box. An ADMIN sent on behalf of
+someone else, such as a council partner, can leave the volunteers out and come from Freegle instead of
+the community's volunteers, so it does not look as if they wrote it; that is set centrally (`admins.volunteercredits`), not in ModTools. The footer is also shown under the MJML box, with a
 copy button that gives the designed version, the names and the footer as one document for the
 [MJML live editor](https://mjml.io/try-it-live). Members whose email shows formatted mail get the designed version and
 everyone else gets the plain text, so both must say the same. Before it is sent, scripts, forms,
@@ -200,7 +202,10 @@ chat and moderate them as normal.
   who joined through TrashNothing appears as an ordinary member and posts and replies just
   like anyone else. A few of their settings (some email and notification preferences) are
   managed by TrashNothing rather than Freegle, so those options may be hidden on their
-  member panel.
+  member panel. You cannot add a TrashNothing member to your community yourself, and they
+  are not sent the Stories newsletter, engagement emails or Community News. A member whose
+  post TrashNothing placed on your community without them choosing it is flagged on the members
+  page, as described in [managing members](managing-members.md).
 - **LoveJunk** is a reuse marketplace that Freegle shares OFFERs with, to help more items
   get taken. By default your community's OFFERs are also shown on LoveJunk, and LoveJunk
   users can reply through the normal chat. Those members show a "LoveJunk user" note on

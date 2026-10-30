@@ -124,6 +124,10 @@ func TestMessageGroupsSayWhetherModsCanWriteToThePoster(t *testing.T) {
 	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", posterID, rippled)
 	assert.Equal(t, false, canMessage()[rippled], "a membership rippling made does not change that")
 
-	db.Exec("UPDATE memberships SET rippled = 0 WHERE userid = ? AND groupid = ?", posterID, rippled)
+	db.Exec("UPDATE memberships SET rippled = 0, implicit = 1, added_origin = 'tn_unaddressed' "+
+		"WHERE userid = ? AND groupid = ?", posterID, rippled)
+	assert.Equal(t, false, canMessage()[rippled], "nor does one TrashNothing placed them on")
+
+	db.Exec("UPDATE memberships SET implicit = 0 WHERE userid = ? AND groupid = ?", posterID, rippled)
 	assert.Equal(t, true, canMessage()[rippled], "an ordinary membership does")
 }

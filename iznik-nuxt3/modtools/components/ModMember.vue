@@ -2,7 +2,8 @@
   <div v-if="member" class="member-card">
     <b-card bg-variant="white" no-body>
       <b-card-header class="d-flex justify-content-between flex-wrap">
-        <div>
+        <div class="d-flex align-items-center">
+          <slot name="select" />
           <div v-if="isLJ">LoveJunk user #{{ user.ljuserid }}</div>
           <div v-else-if="email">
             <!-- eslint-disable-next-line -->
@@ -614,5 +615,12 @@ async function unban() {
 <style scoped lang="scss">
 .text-link {
   color: var(--color-link);
+}
+
+/* The select checkbox comes from the parent through a slot, so reach it with
+   :deep. Bootstrap's default border is a faint grey that disappears against
+   the card header, so give the unticked box a clear dark border. */
+.member-card :deep(.bulk-check .form-check-input:not(:checked)) {
+  border: 2px solid #495057;
 }
 </style>

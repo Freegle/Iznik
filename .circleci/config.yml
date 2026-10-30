@@ -23,6 +23,10 @@ parameters:
     type: boolean
     default: false
     description: "Set to true to run the Android app emulator tests on their own (the promote workflow runs them itself)"
+  run_apple_agreement_check:
+    type: boolean
+    default: false
+    description: "Set to true to check that no Apple agreement is waiting for the Account Holder (run daily by a schedule)"
 
 orbs:
   continuation: circleci/continuation@2
@@ -56,7 +60,8 @@ jobs:
             if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || \
                [ "<< pipeline.parameters.build_testflight >>" = "true" ] || \
                [ "<< pipeline.parameters.build_modtools_production >>" = "true" ] || \
-               [ "<< pipeline.parameters.run_app_emulator_test >>" = "true" ]; then
+               [ "<< pipeline.parameters.run_app_emulator_test >>" = "true" ] || \
+               [ "<< pipeline.parameters.run_apple_agreement_check >>" = "true" ]; then
               echo "Manual workflow trigger — skipping pipeline cancellation"
               exit 0
             fi
@@ -148,7 +153,8 @@ jobs:
             if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || \
                [ "<< pipeline.parameters.build_testflight >>" = "true" ] || \
                [ "<< pipeline.parameters.build_modtools_production >>" = "true" ] || \
-               [ "<< pipeline.parameters.run_app_emulator_test >>" = "true" ]; then
+               [ "<< pipeline.parameters.run_app_emulator_test >>" = "true" ] || \
+               [ "<< pipeline.parameters.run_apple_agreement_check >>" = "true" ]; then
               echo "Manual workflow trigger — skipping self-hosted runner check"
               echo "{\"use_self_hosted\": false}" > /tmp/pipeline-params.json
               cat /tmp/pipeline-params.json
@@ -348,7 +354,8 @@ jobs:
             if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || \
                [ "<< pipeline.parameters.build_testflight >>" = "true" ] || \
                [ "<< pipeline.parameters.build_modtools_production >>" = "true" ] || \
-               [ "<< pipeline.parameters.run_app_emulator_test >>" = "true" ]; then
+               [ "<< pipeline.parameters.run_app_emulator_test >>" = "true" ] || \
+               [ "<< pipeline.parameters.run_apple_agreement_check >>" = "true" ]; then
               echo "Manual workflow trigger — skipping pipeline cancellation"
 
               SIBLINGS=$(curl -sf \

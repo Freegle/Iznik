@@ -359,6 +359,14 @@ Schedule::command('items:backfill-popularity')
     ->appendOutputTo(cronLog('items:backfill-popularity'))
     ->runInBackground();
 
+// Look at the web domains in active members' email addresses for the Krystal hosting ad. A few
+// hundred a night, one page fetch each, outside the backup drain window.
+Schedule::command('hosting:scan-domains --limit=300')
+    ->dailyAt('02:20')
+    ->withoutOverlapping(180)
+    ->appendOutputTo(cronLog('hosting:scan-domains'))
+    ->runInBackground();
+
 // Link accounts that gave the same mobile number or street address in chat, so they show up
 // in ModTools Related Members. Daily rather than hourly: nothing here is urgent, and a
 // duplicate account that has sat unnoticed for years does not need spotting within the hour.
@@ -814,6 +822,16 @@ Schedule::command('tn:verify-email-coverage')
     ->appendOutputTo(cronLog('tn:verify-email-coverage'))
     ->runInBackground();
 
+// Give a recent TN API post's poster the membership ingestion failed to write. Each repair is
+// reported to Sentry, since it means a write failed. Only TN API posts are read, so it is gated
+// on the same switch as the API path.
+Schedule::command('tn:reconcile-memberships')
+    ->hourly()
+    ->withoutOverlapping(60)
+    ->when(fn () => (bool) config('freegle.trashnothing.ingest_posts_via_api', false))
+    ->appendOutputTo(cronLog('tn:reconcile-memberships'))
+    ->runInBackground();
+
 // =============================================================================
 // UNIFIED DIGEST (daily "What's New" + immediate notifications)
 // =============================================================================
@@ -898,7 +916,9 @@ foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
 //
 // So the seven-day window is gone, and dormancy is excluded by asking whether the member has
 // used the site rather than by how long ago we last managed to mail them. Never-sent recipients
-// still have no row here, so they are still out of scope.
+// still have no row here, so they are still out of scope. Neither are TrashNothing accounts,
+// bouncing addresses or members with no community on a daily digest any more: the digest never
+// mails them, so counting them made a backlog nothing could clear (DailyDigestLagService).
 //
 // The same slot also asks whether the mail we sent actually arrived, per receiving domain. That
 // is not the same question and the lag figures cannot answer it. On 2026-08-16 every Yahoo-run
@@ -909,24 +929,10 @@ foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
 // production on 18 August the check below flags those six domains and nothing else. See
 // DeliveryHealthService.
 Schedule::call(function () {
-    $londonDayStartUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->setTimezone('UTC')->toDateTimeString();
-    $activeSinceUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->subDays(30)->setTimezone('UTC')->toDateTimeString();
-
-    $laggingQuery = \Illuminate\Support\Facades\DB::table('users_digests')
-        ->join('users', 'users.id', '=', 'users_digests.userid')
-        ->where('users_digests.mode', 'daily')
-        ->where('users_digests.lastsent', '<', $londonDayStartUtc)
-        ->whereNull('users.deleted')
-        ->where('users.lastaccess', '>=', $activeSinceUtc);
-
-    $lagging = (clone $laggingQuery)->count();
-
-    // How much of that is more than a week old. The old measure could not see any of this, so
-    // report it separately: a rising figure here means the backlog is not rotating but settling
-    // on the same people.
-    $overAWeek = (clone $laggingQuery)
-        ->where('users_digests.lastsent', '<', \Carbon\Carbon::parse($londonDayStartUtc)->subDays(7)->toDateTimeString())
-        ->count();
+    // Only members the digest would mail are counted; see DailyDigestLagService. over_a_week is
+    // the part more than a week old: if it rises, the backlog is settling on the same people
+    // rather than rotating.
+    ['lagging' => $lagging, 'over_a_week' => $overAWeek] = app(\App\Services\Mail\DailyDigestLagService::class)->measure();
 
     $threshold = (int) env('FREEGLE_DIGEST_DAILY_LAG_ALERT_THRESHOLD', 5000);
     if ($lagging > $threshold) {

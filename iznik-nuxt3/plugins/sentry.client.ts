@@ -395,6 +395,14 @@ export default defineNuxtPlugin((nuxtApp) => {
             }
           }
 
+          // A browser driven by automation is our own test suite, not a member. Playwright's
+          // 'Desktop Chrome' profile reports Windows Chrome rather than HeadlessChrome, so the
+          // check above misses it, and CI runs sent Google sign-in errors to the live project
+          // as 'production'. The console line above stays: the e2e fixtures read it.
+          if (window.navigator.webdriver) {
+            return null
+          }
+
           // Log to Loki for correlation with Sentry.
           if (event.event_id) {
             const errorMessage =

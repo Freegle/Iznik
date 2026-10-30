@@ -347,7 +347,7 @@ func TestJoiningClearsTheRippledFlag(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 	CreateTestMembership(t, memberID, groupID, "Member")
-	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", memberID, groupID)
+	db.Exec("UPDATE memberships SET rippled = 1, implicit = 1 WHERE userid = ? AND groupid = ?", memberID, groupID)
 	_, memberToken := CreateTestSession(t, memberID)
 
 	payload, _ := json.Marshal(map[string]interface{}{"groupid": groupID})
@@ -357,9 +357,13 @@ func TestJoiningClearsTheRippledFlag(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
-	var rippled int
-	db.Raw("SELECT rippled FROM memberships WHERE userid = ? AND groupid = ?", memberID, groupID).Scan(&rippled)
-	assert.Equal(t, 0, rippled, "joining for real makes it an ordinary membership")
+	var flags struct {
+		Rippled  int
+		Implicit int
+	}
+	db.Raw("SELECT rippled, implicit FROM memberships WHERE userid = ? AND groupid = ?", memberID, groupID).Scan(&flags)
+	assert.Equal(t, 0, flags.Rippled, "joining for real makes it an ordinary membership")
+	assert.Equal(t, 0, flags.Implicit, "implicit is cleared with rippled")
 }
 
 // Moving house into a community's area does the same: the person now lives there, so the
@@ -375,7 +379,7 @@ func TestPostcodeMoveIntoGroupAreaClearsTheRippledFlag(t *testing.T) {
 	// The member's post rippled into both groups, so both memberships are ripple-created.
 	CreateTestMembership(t, memberID, inside, "Member")
 	CreateTestMembership(t, memberID, elsewhere, "Member")
-	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid IN (?, ?)", memberID, inside, elsewhere)
+	db.Exec("UPDATE memberships SET rippled = 1, implicit = 1 WHERE userid = ? AND groupid IN (?, ?)", memberID, inside, elsewhere)
 
 	// One group covers where they have moved to; the other is far away.
 	db.Exec(fmt.Sprintf("UPDATE `groups` SET polyindex = ST_GeomFromText("+
@@ -408,6 +412,13 @@ func TestPostcodeMoveIntoGroupAreaClearsTheRippledFlag(t *testing.T) {
 
 	assert.Equal(t, 0, here, "the group they have moved into is now an ordinary membership")
 	assert.Equal(t, 1, away, "a group they have not moved into is left alone")
+
+	var implicitHere, implicitAway int
+	db.Raw("SELECT implicit FROM memberships WHERE userid = ? AND groupid = ?", memberID, inside).Scan(&implicitHere)
+	db.Raw("SELECT implicit FROM memberships WHERE userid = ? AND groupid = ?", memberID, elsewhere).Scan(&implicitAway)
+
+	assert.Equal(t, 0, implicitHere, "implicit is cleared with rippled")
+	assert.Equal(t, 1, implicitAway, "and left alone with it")
 }
 
 // Taking a rippled-in copy off a community must stick. A delete HARD-deletes that group's

@@ -239,6 +239,27 @@ func TestGroupStory_ExcludesRippleOnlyMembership(t *testing.T) {
 	assert.NotContains(t, ids, storyID, "A ripple-only membership must not attribute a story to that group's feed")
 }
 
+// A TrashNothing poster placed on a group they did not choose (implicit = 1, rippled = 0) has no
+// more of a relationship with it than a ripple-only member does.
+func TestGroupStory_ExcludesTrashNothingImplicitMembership(t *testing.T) {
+	prefix := uniquePrefix("story_tnimplicit")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	db.Exec("UPDATE memberships SET rippled = 0, implicit = 1, added_origin = 'tn_unaddressed' WHERE userid = ? AND groupid = ?",
+		userID, groupID)
+
+	storyID := CreateTestStory(t, userID, "TN Implicit Membership "+prefix, "story text", true, true)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/story/group/%d?limit=1000", groupID), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var ids []uint64
+	json2.Unmarshal(rsp(resp), &ids)
+	assert.NotContains(t, ids, storyID, "an implicit membership must not attribute a story to that group's feed")
+}
+
 func TestListStoryNewsletterReviewedFilter(t *testing.T) {
 	prefix := uniquePrefix("story_nlrev")
 	userID := CreateTestUser(t, prefix, "User")
@@ -631,6 +652,32 @@ func TestReviewStory_ExcludesRippleOnlyMembership(t *testing.T) {
 	json2.Unmarshal(rsp(resp), &ids)
 	assert.NotContains(t, ids, storyID,
 		"a ripple-only membership must not put a story in that group's review queue")
+}
+
+func TestReviewStory_ExcludesTrashNothingImplicitMembership(t *testing.T) {
+	prefix := uniquePrefix("story_rev_tnimplicit")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	authorID := CreateTestUser(t, prefix+"_author", "User")
+	CreateTestMembership(t, authorID, groupID, "Member")
+	// TrashNothing placed the author's post on this group; they did not choose it.
+	db.Exec("UPDATE memberships SET rippled = 0, implicit = 1, added_origin = 'tn_unaddressed' WHERE userid = ? AND groupid = ?",
+		authorID, groupID)
+
+	storyID := CreateTestStory(t, authorID, "TN Implicit Review "+prefix, "story text", false, true)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/story?reviewed=0&limit=1000&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var ids []uint64
+	json2.Unmarshal(rsp(resp), &ids)
+	assert.NotContains(t, ids, storyID,
+		"an implicit membership must not put a story in that group's review queue")
 }
 
 func TestPatchStoryAuthorCannotApprove(t *testing.T) {

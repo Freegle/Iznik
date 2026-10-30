@@ -4,6 +4,7 @@ namespace Tests\Unit\Services\Ripple;
 
 use App\Models\ChatMessage;
 use App\Models\Group;
+use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
@@ -2356,6 +2357,8 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(0, (int) $m->eventsallowed, 'eventsallowed copied from home group');
         $this->assertSame(0, (int) $m->volunteeringallowed, 'volunteeringallowed copied from home group');
         $this->assertSame(1, (int) $m->rippled, 'rippled membership marked rippled=1');
+        $this->assertSame(1, (int) $m->implicit, 'and implicit=1 with it');
+        $this->assertSame(Membership::ADDED_ORIGIN_RIPPLED, $m->added_origin);
         $this->assertGreaterThanOrEqual(1, $stats['memberships_added']);
 
         // memberships_history row written (abuse detection) with rippled=1 (welcome suppression).
@@ -2363,6 +2366,7 @@ class ExpandServiceTest extends TestCase
         $this->assertNotNull($hist, 'memberships_history row recorded for the new membership');
         $this->assertSame(1, (int) $hist->rippled, 'history row marked rippled=1 to suppress the per-group welcome');
         $this->assertSame(1, (int) $hist->processingrequired, 'history row still requires processing for abuse detection');
+        $this->assertSame(Membership::ADDED_ORIGIN_RIPPLED, $hist->added_origin);
 
         // The intro email is claimed exactly once for the post.
         $this->assertSame(

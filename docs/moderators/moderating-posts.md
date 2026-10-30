@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-19
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -65,6 +65,12 @@ For each post you can:
   already live on yours does not show the Pending actions just because a neighbouring
   community's copy is still waiting, and a Delete on a copy that is no longer pending is
   refused with a message saying so rather than reported as done.
+
+  A post held by another volunteer shows a "Held by" banner and no action buttons. To keep
+  those out of the way, turn on **Hide held posts** at the top of the Pending page. It hides
+  every held post, including ones you hold yourself, and the page says how many are hidden
+  ("3 held posts hidden"). The switch is off by default and your choice is remembered in your
+  browser. It does not change the count on the Pending badge.
 - **Delete** or **Delete as Spam** (on your own community's posts).
 
 ### A post pending on several of your communities
@@ -98,6 +104,12 @@ Reject only for the core rules: a post must be **free** and **legal**.
 Posts left unmoderated auto-approve after a period (historically around 48 hours) so a
 community keeps running through gaps in cover. You can put reliably well-behaved members
 onto immediate posting so their posts do not queue at all (see below).
+
+This applies to TrashNothing posts too, including ones the poster did not address to your
+community. A TrashNothing poster has a membership of the community their post was placed
+on, so a post flagged by the content check and left alone goes live about 49 hours after
+that membership was added, like any other member's. If you do not want it live, approve
+or delete it before then. Details are in [TrashNothing](../developers/reference/trashnothing.md#posts-nobody-chose-unaddressed-tn-posts).
 
 ## Why a post is held or flagged
 
@@ -155,8 +167,10 @@ the poster is not told. Approve, Hold and Release stay as plain buttons. Taken, 
 and Withdrawn are not offered either: an outcome is a fact about the whole post, so it is
 recorded by the poster or by the moderators of the community it was posted on, and the
 server refuses it from anywhere else. Once the poster is an ordinary member of your
-community, for example because they posted there or wrote back to one of your members
-about this post, Blank Reply and those standard messages come back, and Reject (or a
+community, Blank Reply and those standard messages come back. "Ordinary" means an Approved
+member who joined, moved into your area, or dealt with your community themselves. Someone
+rippling joined to your community, or whom TrashNothing placed there with a post they did
+not address to it, is not ordinary until they do something with it. Once they are, and Reject (or a
 standard message that rejects or deletes) sends them your message. The plain **Delete**
 button is offered too, and removes the copy from your community without sending anything.
 The notice on the post says when this applies. A rippled-in copy

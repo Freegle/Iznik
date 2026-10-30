@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-24
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/index.vue

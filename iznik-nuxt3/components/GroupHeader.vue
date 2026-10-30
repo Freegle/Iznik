@@ -497,7 +497,7 @@ async function join(callback) {
     callback()
     router.push('/explore/join/' + props.group.id)
   } else {
-    await authStore.joinGroup(myid.value, props.group.id, true)
+    await authStore.joinGroup(myid.value, props.group.id, 'manual')
     callback()
   }
 }

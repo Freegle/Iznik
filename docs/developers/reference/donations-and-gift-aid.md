@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-23
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useMe.js
@@ -8,6 +8,8 @@ covers:
   - iznik-server-go/user/user.go
   - iznik-batch/app/Services/DonationService.php
   - iznik-batch/app/Services/GiftAidClaimService.php
+  - iznik-batch/app/Services/DonationThankPrepService.php
+  - iznik-batch/resources/views/emails/mjml/donation/thank-prep.blade.php
   - iznik-batch/app/Services/PaypalDownloadService.php
   - iznik-batch/app/Console/Commands/Donation/**
 ---
@@ -87,6 +89,11 @@ Claims are submitted to HMRC by a person, not by this code. Who does that is in
 `donations:thank` and `donations:thank-prep` send thank-you mail; `thanked` on
 `users_donations` stops anyone being thanked twice. A separate daily summary
 (`donations:summary`) reports the day's takings to the people who need to see it.
+
+The Gift Aid status on each thank-prep card has four states: Active, Just declared, On file: Declined,
+and no declaration. With no declaration the card reads "Asked on <date>, no reply" when any of the
+donor's donations has `giftaidchaseup` set, otherwise "Never asked / not on file". The ModTools Gift Aid
+page searches declarations only, so it never lists a donor who was asked and did not reply.
 
 ## Donors who ask not to be asked
 

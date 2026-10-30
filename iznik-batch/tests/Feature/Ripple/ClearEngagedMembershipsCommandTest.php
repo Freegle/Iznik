@@ -3,6 +3,7 @@
 namespace Tests\Feature\Ripple;
 
 use App\Models\Group;
+use App\Models\Membership;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -219,6 +220,30 @@ class ClearEngagedMembershipsCommandTest extends TestCase
         $group = $this->createTestGroup();
         $this->rippleMembership($poster, $group);
         $this->rippleMembership($other, $group);
+
+        $post = $this->rippledPost($poster, $home, $group);
+        $chat = $this->chat($other, $poster);
+        $this->say($chat, $other, $post);
+        $this->say($chat, $poster);
+
+        $this->run_();
+
+        $this->assertTrue($this->isRippled($poster, $group));
+    }
+
+    public function test_writing_back_to_a_trashnothing_placement_there_does_not_count(): void
+    {
+        // TrashNothing put the replier on the community without them choosing it, so they
+        // are no more its member than the poster is.
+        $poster = $this->createTestUser();
+        $other = $this->createTestUser();
+        $home = $this->createTestGroup();
+        $group = $this->createTestGroup();
+        $this->rippleMembership($poster, $group);
+        $this->createMembership($other, $group, [
+            'implicit' => 1,
+            'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+        ]);
 
         $post = $this->rippledPost($poster, $home, $group);
         $chat = $this->chat($other, $poster);

@@ -36,7 +36,7 @@ vi.mock('~/composables/useMe', () => ({
 
 const stubs = {
   ModMember: {
-    template: '<div class="member-stub" />',
+    template: '<div class="member-stub"><slot name="select" /></div>',
     props: ['membershipid'],
   },
   ModBulkSelectBar: {
@@ -137,6 +137,24 @@ describe('ModMembers bulk report', () => {
     mockVisibleMembers.value = []
     await w.vm.$nextTick()
     expect(w.vm.bulk.count.value).toBe(0)
+  })
+
+  it('shows Report only once something is selected', async () => {
+    const w = mountIt()
+    await w.vm.$nextTick()
+    expect(w.find('[data-test="bulk-spam"]').exists()).toBe(false)
+    w.vm.bulk.selectAll([1])
+    await w.vm.$nextTick()
+    expect(w.find('[data-test="bulk-spam"]').text()).toContain(
+      'Report 1 as spammers'
+    )
+  })
+
+  it('puts each selection checkbox inside its member card', async () => {
+    const w = mountIt()
+    await w.vm.$nextTick()
+    const card = w.find('.member-stub')
+    expect(card.find('[data-test^="bulk-check-"]').exists()).toBe(true)
   })
 
   it('always reports to the Spam team, never adds directly', async () => {

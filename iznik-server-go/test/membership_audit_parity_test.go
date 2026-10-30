@@ -95,6 +95,7 @@ func TestPutUserWithGroupWritesMembershipsHistory(t *testing.T) {
 		"firstname": "Hist",
 		"lastname":  "Joiner",
 		"groupid":   groupID,
+		"origin":    "signup",
 	}
 	s, _ := json.Marshal(payload)
 	req := httptest.NewRequest("PUT", "/api/user", strings.NewReader(string(s)))
@@ -112,4 +113,5 @@ func TestPutUserWithGroupWritesMembershipsHistory(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM memberships_history WHERE userid = ? AND groupid = ? AND collection = 'Approved' AND processingrequired = 1",
 		userID, groupID).Scan(&histCount)
 	assert.Equal(t, int64(1), histCount, "expected a memberships_history row with processingrequired=1 for the signup join")
+	assert.Equal(t, "signup", addedOriginOf(t, "memberships_history", userID, groupID))
 }

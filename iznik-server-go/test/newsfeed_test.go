@@ -2,16 +2,16 @@ package test
 
 import (
 	"bytes"
-	json2 "encoding/json"
 	"encoding/json"
+	json2 "encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"strconv"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
-	newsfeed2 "github.com/freegle/iznik-server-go/newsfeed"
 	"github.com/freegle/iznik-server-go/newsfeed"
+	newsfeed2 "github.com/freegle/iznik-server-go/newsfeed"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
@@ -554,6 +554,50 @@ func TestNewsfeedCreatePost(t *testing.T) {
 	db.Raw("SELECT id FROM newsfeed WHERE userid = ? AND message = ? ORDER BY id DESC LIMIT 1",
 		userID, "Hello chitchat "+prefix).Scan(&nfID)
 	assert.NotZero(t, nfID)
+}
+
+func TestNewsfeedCreatePostAfterDeletingSameText(t *testing.T) {
+	// Support reference SR-CB4ZR: a member deleted their chitchat post, then
+	// posted the same wording again. The duplicate check saw the soft-deleted
+	// row as their most recent post and returned its id without inserting, so
+	// the new post never appeared.
+	prefix := uniquePrefix("nfwr_redel")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	db.Exec("INSERT INTO locations (name, lat, lng, type) VALUES (?, 52.2, -0.1, 'Polygon')", "TestLoc_"+prefix)
+	var locID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", "TestLoc_"+prefix).Scan(&locID)
+	db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", locID, userID)
+
+	message := "Have you got old reel to reel tapes " + prefix
+	body := fmt.Sprintf(`{"message":%q}`, message)
+
+	post := func() uint64 {
+		req := httptest.NewRequest("POST", "/api/newsfeed?jwt="+token, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 200, resp.StatusCode)
+		var result map[string]interface{}
+		json2.Unmarshal(rsp(resp), &result)
+		return uint64(result["id"].(float64))
+	}
+
+	firstID := post()
+	assert.NotZero(t, firstID)
+
+	// Delete it, as the member did.
+	resp, _ := getApp().Test(httptest.NewRequest("DELETE", fmt.Sprintf("/api/newsfeed/%d?jwt=%s", firstID, token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	secondID := post()
+	assert.NotZero(t, secondID)
+	assert.NotEqual(t, firstID, secondID, "posting the same text after deleting must create a new post, not return the deleted one")
+
+	var deleted *string
+	db.Raw("SELECT deleted FROM newsfeed WHERE id = ?", secondID).Scan(&deleted)
+	assert.Nil(t, deleted, "the new post must be live")
 }
 
 func TestNewsfeedCreateReply(t *testing.T) {

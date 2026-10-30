@@ -1,0 +1,88 @@
+<mj-section background-color="#1d6607" padding="28px 20px 24px">
+  <mj-column>
+    <mj-text font-size="13px" font-weight="bold" color="#cfe8bf" letter-spacing="1px" padding-bottom="4px">
+      YORK AND NORTH YORKSHIRE
+    </mj-text>
+    <mj-text font-size="26px" font-weight="bold" color="#ffffff" line-height="1.25" padding-top="0">
+      Know a community organisation? ReYorkshire would love to hear from them
+    </mj-text>
+  </mj-column>
+</mj-section>
+
+<mj-section background-color="#ffffff" padding="20px 20px 0">
+  <mj-column>
+    <mj-text font-size="16px" color="#333333" line-height="1.6">
+      <p style="margin: 0 0 12px;">Hello,</p>
+      <p style="margin: 0 0 12px;">Do you know, or are you involved with, a community organisation in York and North Yorkshire? If so, we'd love your help.</p>
+      <p style="margin: 0;">The <strong>ReYorkshire Circular Economy &amp; Community Survey</strong> is now live, and the ReYorkshire team want to hear from as many local organisations as possible.</p>
+    </mj-text>
+    <mj-button href="https://forms.cloud.microsoft/e/jdFQpRXVym" background-color="#338808" color="#ffffff" font-size="16px" font-weight="bold" border-radius="6px" inner-padding="12px 28px" padding="10px 25px 20px">
+      Take the survey
+    </mj-button>
+  </mj-column>
+</mj-section>
+
+<mj-section background-color="#ffffff" padding="0 20px 10px">
+  <mj-column>
+    <mj-text font-size="20px" font-weight="bold" color="#338808" padding-bottom="4px">
+      What is ReYorkshire?
+    </mj-text>
+    <mj-text font-size="16px" color="#333333" line-height="1.6" padding-top="0">
+      It's a collaborative project, run in partnership with North Yorkshire Council and City of York Council, that aims to increase reuse, reduce waste and support circular economy initiatives across the region. Over the next 18 months, the team will look at which waste streams could become valuable resources and set up pilot projects to reuse them across different sectors.
+    </mj-text>
+  </mj-column>
+</mj-section>
+
+<mj-section background-color="#f0f7e6" padding="20px">
+  <mj-column>
+    <mj-text font-size="20px" font-weight="bold" color="#338808" padding-bottom="4px">
+      Why the survey?
+    </mj-text>
+    <mj-text font-size="16px" color="#333333" line-height="1.6" padding-top="0">
+      <p style="margin: 0 0 10px;">Our region is full of organisations doing great work to support others. The survey will help us understand:</p>
+      <ul style="margin: 0 0 12px; padding-left: 22px;">
+        <li style="margin-bottom: 6px;">How interested and involved community organisations are in reuse and recycling</li>
+        <li style="margin-bottom: 6px;">The challenges they face</li>
+        <li>Needs and opportunities linked to upcoming refurbishment and new-build projects</li>
+      </ul>
+      <p style="margin: 0;">Your responses will give valuable insight to the ReYorkshire project and both councils. They will also help highlight the important work organisations are doing, which could open the door to extra funding to grow or diversify.</p>
+    </mj-text>
+  </mj-column>
+</mj-section>
+
+<mj-section background-color="#ffffff" padding="20px 20px 0">
+  <mj-column border-left="4px solid #338808" padding-left="6px">
+    <mj-text font-size="18px" font-weight="bold" color="#338808" padding-bottom="4px">
+      A bonus for organisations with building plans
+    </mj-text>
+    <mj-text font-size="16px" color="#333333" line-height="1.6" padding-top="0">
+      If an organisation has a refurbishment or building project coming up, ReYorkshire may be able to help source low-cost, low-carbon materials.
+    </mj-text>
+  </mj-column>
+</mj-section>
+
+<mj-section background-color="#ffffff" padding="20px 20px 10px">
+  <mj-column>
+    <mj-text font-size="20px" font-weight="bold" color="#338808" padding-bottom="4px">
+      How you can help
+    </mj-text>
+    <mj-text font-size="16px" color="#333333" line-height="1.6" padding-top="0">
+      <ul style="margin: 0; padding-left: 22px;">
+        <li style="margin-bottom: 6px;">Complete the survey if you're part of a community organisation: <a href="https://forms.cloud.microsoft/e/jdFQpRXVym" style="color: #338808;">https://forms.cloud.microsoft/e/jdFQpRXVym</a></li>
+        <li>Forward this email to anyone you know who might be interested</li>
+      </ul>
+    </mj-text>
+    <mj-button href="https://forms.cloud.microsoft/e/jdFQpRXVym" background-color="#338808" color="#ffffff" font-size="16px" font-weight="bold" border-radius="6px" inner-padding="12px 28px" padding="15px 25px 10px">
+      Complete the survey
+    </mj-button>
+  </mj-column>
+</mj-section>
+
+<mj-section background-color="#ffffff" padding="10px 20px 20px">
+  <mj-column>
+    <mj-text font-size="16px" color="#333333" line-height="1.6">
+      <p style="margin: 0 0 12px;">Thank you for helping us build a more circular Yorkshire.</p>
+      <p style="margin: 0;">Kind regards,<br /><strong>The ReYorkshire team</strong></p>
+    </mj-text>
+  </mj-column>
+</mj-section>

@@ -4471,6 +4471,131 @@
     }
    }
   },
+  "/modtools/alert/pending": {
+   "get": {
+    "description": "The alerts the caller, as a moderator, must reply to before ModTools lets them carry on.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Alerts awaiting my reply",
+    "operationId": "getPendingAlerts",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/alertsResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   }
+  },
+  "/modtools/alert/{id}/reply": {
+   "post": {
+    "description": "Sends the reply to the alert's sender as a chat message and records it.\nBody: { message: \u003cstring\u003e }",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Reply to an alert that requires a reply",
+    "operationId": "replyToAlert",
+    "parameters": [
+     {
+      "type": "integer",
+      "format": "int64",
+      "description": "Alert ID",
+      "name": "id",
+      "in": "path",
+      "required": true
+     }
+    ],
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/alertResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "404": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   }
+  },
+  "/modtools/alert/{id}/snooze": {
+   "post": {
+    "description": "Sleeps the alert for 30 minutes. Allowed once per moderator per alert.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Sleep an alert for 30 minutes, once",
+    "operationId": "snoozeAlert",
+    "parameters": [
+     {
+      "type": "integer",
+      "format": "int64",
+      "description": "Alert ID",
+      "name": "id",
+      "in": "path",
+      "required": true
+     }
+    ],
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/alertResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   }
+  },
+  "/modtools/alert/{id}/cancel": {
+   "post": {
+    "description": "The sender, or Support/Admin, releases every moderator.",
+    "tags": [
+     "modtools"
+    ],
+    "summary": "Stop requiring replies to an alert",
+    "operationId": "cancelAlert",
+    "parameters": [
+     {
+      "type": "integer",
+      "format": "int64",
+      "description": "Alert ID",
+      "name": "id",
+      "in": "path",
+      "required": true
+     }
+    ],
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/alertResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   }
+  },
   "/modtools/alert/{id}": {
    "get": {
     "description": "Returns a single alert by ID (public access)",

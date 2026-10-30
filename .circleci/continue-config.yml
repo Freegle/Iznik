@@ -25,6 +25,10 @@ parameters:
     type: boolean
     default: false
     description: "Forwarded from trigger — true when run_app_emulator_test was set"
+  run_apple_agreement_check:
+    type: boolean
+    default: false
+    description: "Forwarded from trigger — true when run_apple_agreement_check was set"
 
 orbs:
   # 1.1.373 drops the ORM migration inventory ratchet (Gate 1) and the Go/PHP
@@ -96,7 +100,7 @@ orbs:
   # repo already carries the fix (large + the improved logs): publish it as 1.1.386
   # from a machine with a CircleCI token (this host has none) and move this pin
   # forward again.
-  freegle: freegle/tests@1.1.406
+  freegle: freegle/tests@1.1.409
 
 jobs:
   # The CI half of the raw-SQL guard. The Claude Code PreToolUse hook only sees
@@ -118,6 +122,24 @@ jobs:
           command: |
             git fetch --no-tags --depth=100 origin master
             .claude/check-raw-sql.sh --diff origin/master
+
+  # Apple refuses App Store requests while an agreement waits for the Account Holder, and
+  # only they can accept it. Run daily so a new one fails this job, and sends CircleCI's
+  # failure notice, before it stops a deploy. Defined here rather than in the orb so it
+  # needs no orb release; it uses the orb's executor and fastlane setup.
+  check-apple-agreements:
+    executor: freegle/android-executor
+    working_directory: ~/project/iznik-nuxt3
+    steps:
+      - checkout:
+          path: ~/project
+      - freegle/setup-android-fastlane
+      - run:
+          name: Self-test the agreement matcher
+          command: ruby fastlane/test/apple_agreements_test.rb
+      - run:
+          name: Check no Apple agreement is waiting
+          command: bundle exec fastlane ios check_apple_agreements
 
   # Freegle is AGPL-3.0-or-later (NOTICE), so every dependency a branch adds or upgrades
   # must carry a compatible licence. The commit hook gives the same answer earlier, but
@@ -191,6 +213,7 @@ workflows:
         - not: << pipeline.parameters.run_manual_promote >>
         - not: << pipeline.parameters.build_testflight >>
         - not: << pipeline.parameters.run_app_emulator_test >>
+        - not: << pipeline.parameters.run_apple_agreement_check >>
         - not: << pipeline.parameters.build_modtools_production >>
     jobs:
       - check-raw-sql
@@ -264,6 +287,7 @@ workflows:
         - not: << pipeline.parameters.run_manual_promote >>
         - not: << pipeline.parameters.build_testflight >>
         - not: << pipeline.parameters.run_app_emulator_test >>
+        - not: << pipeline.parameters.run_apple_agreement_check >>
         - not: << pipeline.parameters.build_modtools_production >>
     jobs:
       - check-raw-sql
@@ -335,6 +359,7 @@ workflows:
         - not: << pipeline.parameters.run_manual_promote >>
         - not: << pipeline.parameters.build_testflight >>
         - not: << pipeline.parameters.run_app_emulator_test >>
+        - not: << pipeline.parameters.run_apple_agreement_check >>
         - not: << pipeline.parameters.build_modtools_production >>
     jobs:
       - freegle/increment-version:
@@ -470,6 +495,7 @@ workflows:
         # whatever the setup workflow decided about runners.
         - not: << pipeline.parameters.run_manual_promote >>
         - not: << pipeline.parameters.run_app_emulator_test >>
+        - not: << pipeline.parameters.run_apple_agreement_check >>
     jobs:
       - check-raw-sql
       - check-licences
@@ -573,6 +599,16 @@ workflows:
     when: << pipeline.parameters.build_testflight >>
     jobs:
       - freegle/build-ios-testflight
+
+  # Daily via the CircleCI scheduled pipeline "daily-apple-agreement-check" (branch master,
+  # parameters run_apple_agreement_check: true). On demand:
+  #   curl -X POST -H "Circle-Token: $CIRCLE_TOKEN" -H "Content-Type: application/json" \
+  #     -d '{"branch":"master","parameters":{"run_apple_agreement_check":true}}' \
+  #     https://circleci.com/api/v2/project/gh/Freegle/Iznik/pipeline
+  apple-agreement-check:
+    when: << pipeline.parameters.run_apple_agreement_check >>
+    jobs:
+      - check-apple-agreements
 
   # On demand, any branch: the emulator gate alone, without promoting anything.
   #   curl -X POST -H "Circle-Token: $CIRCLE_TOKEN" -H "Content-Type: application/json" \

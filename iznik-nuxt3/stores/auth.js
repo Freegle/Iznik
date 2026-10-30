@@ -28,6 +28,10 @@ import {
   saveSessionForRestore,
 } from '~/composables/useSessionRestore'
 
+// Why a member joins a group, as PUT /memberships accepts it from the member themselves
+// (addedorigin.fromClient in iznik-server-go).
+export const JOIN_ORIGINS = ['manual', 'posted', 'replied', 'signup']
+
 // How many 100ms retries we give the Google script before accepting that it is
 // not coming. Five seconds is well past a normal load, and stopping matters:
 // privacy extensions block the script outright, and an unbounded retry keeps a
@@ -681,12 +685,23 @@ export const useAuthStore = defineStore('auth', {
       await this.fetchUser()
       return this.user
     },
-    async joinGroup(userid, groupid, manual) {
+    // origin says why they are joining: one of JOIN_ORIGINS, the values the server accepts
+    // from a member. Anything else is a caller's mistake, refused here rather than stored as a
+    // wrong reason. manual is still sent for an API from before origin, which reads true as
+    // manual and false as replied.
+    async joinGroup(userid, groupid, origin) {
+      if (!JOIN_ORIGINS.includes(origin)) {
+        throw new Error(
+          `joinGroup: origin must be one of ${JOIN_ORIGINS.join(', ')}, not ${origin}`
+        )
+      }
+
       try {
         await this.$api.memberships.joinGroup({
           userid,
           groupid,
-          manual,
+          origin,
+          manual: origin === 'manual',
         })
       } catch (e) {
         // A banned member's own join is refused server-side (403 "Failed - banned").

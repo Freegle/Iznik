@@ -71,6 +71,9 @@
             $gaLabel = 'Just declared — needs review (' . $ga['period'] . ')';
             $gaClass = '';
           }
+        } elseif (!empty($card['giftaidAskedOn'])) {
+          $gaLabel = 'Asked on ' . $card['giftaidAskedOn']->format('j M Y') . ', no reply';
+          $gaClass = 'flag-pill-warn';
         } else {
           $gaLabel = 'Never asked / not on file';
           $gaClass = 'flag-pill-warn';

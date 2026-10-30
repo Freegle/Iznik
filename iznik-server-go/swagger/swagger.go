@@ -3679,6 +3679,36 @@ type userResponse struct {
 //	200: successResponse
 //	401: errorResponse
 
+// swagger:route GET /user/hostingad user getHostingAd
+// Whether to show the Krystal hosting ad
+//
+// Decides once, for the logged-in member, whether the Krystal hosting ad modal is shown: their email
+// domain must host a WordPress site not on Krystal, and the server experiment krystal-hosting-ad
+// gives the arm. Both arms are recorded as an exposure.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+
+// swagger:route POST /user/hostingad user postHostingAd
+// Record what the member did with the hosting ad
+//
+// Writes the time of the member's first click through to Krystal ("click") or first dismissal
+// ("dismiss") on their krystal-hosting-ad exposure row.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+
 // swagger:route GET /user/search user searchUsers
 // Search users
 //

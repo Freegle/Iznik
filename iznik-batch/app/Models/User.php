@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\Ripple\RippleEngagementService;
 use App\Support\EloquentUtils;
 use App\Support\NameSanitiser;
 use Illuminate\Database\Eloquent\Builder;
@@ -121,6 +122,9 @@ class User extends Model implements Auditable
     protected $table = 'users';
     protected $guarded = ['id'];
     public $timestamps = FALSE;
+
+    // The domain of a TrashNothing member's address.
+    public const TN_EMAIL_SUFFIX = '@user.trashnothing.com';
 
     // Group membership roles.
     public const ROLE_NONMEMBER = 'Non-member';
@@ -435,7 +439,7 @@ class User extends Model implements Auditable
     public function isTN(): bool
     {
         $email = $this->email_preferred;
-        return $email && str_ends_with($email, '@user.trashnothing.com');
+        return $email && str_ends_with($email, self::TN_EMAIL_SUFFIX);
     }
 
     /**
@@ -822,6 +826,64 @@ class User extends Model implements Auditable
         }
 
         return $query;
+    }
+
+    /**
+     * Merge two memberships of one group when their accounts merge, into a state the writers
+     * themselves make:
+     *   - an ordinary membership on either side means the member chose the group: ordinary,
+     *     with the older row's origin;
+     *   - both implicit, and either a TrashNothing placement: a placement (implicit, not
+     *     rippled). A placement is never removed automatically, so it must not become a ripple
+     *     join that is;
+     *   - two ripple joins: the older row's origin and rippled flag, together.
+     *
+     * Go's user.MergedMembershipFlags is the same rule.
+     *
+     * @return array{implicit: int, rippled: int, added_origin: string}
+     */
+    public static function mergedMembershipFlags(object $a, object $b): array
+    {
+        $older = strtotime($b->added) < strtotime($a->added) ? $b : $a;
+
+        if (!(int) $a->implicit || !(int) $b->implicit) {
+            return ['implicit' => 0, 'rippled' => 0, 'added_origin' => $older->added_origin];
+        }
+
+        if (in_array(Membership::ADDED_ORIGIN_TN_UNADDRESSED, [$a->added_origin, $b->added_origin], TRUE)) {
+            return ['implicit' => 1, 'rippled' => 0, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED];
+        }
+
+        return ['implicit' => 1, 'rippled' => (int) $older->rippled, 'added_origin' => $older->added_origin];
+    }
+
+    /**
+     * Leave out TrashNothing members: stamped with a tnuserid, or with a TrashNothing address
+     * as their preferred email. Same definition as isTrashNothingAccount() and Go's
+     * user.TrashNothingSQL. Freegle's own mailings (the Stories newsletter, the engage mails,
+     * Community News) are not for them, whatever memberships they hold. Requires `users` in
+     * the query under that name.
+     */
+    public function scopeNotTrashNothing(Builder $query): Builder
+    {
+        return $query
+            ->whereNull('users.tnuserid')
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('users_emails as tne')
+                    ->whereColumn('tne.userid', 'users.id')
+                    ->where('tne.preferred', 1)
+                    ->where('tne.email', 'LIKE', '%' . self::TN_EMAIL_SUFFIX);
+            });
+    }
+
+    /**
+     * A TrashNothing member, by the same definition as scopeNotTrashNothing(). Unlike isTN(),
+     * a tnuserid stamp counts even when the preferred email is not a TrashNothing address.
+     */
+    public function isTrashNothingAccount(): bool
+    {
+        return $this->tnuserid !== NULL || $this->isTN();
     }
 
     /**
@@ -1284,6 +1346,20 @@ class User extends Model implements Auditable
                         Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set=role={$role}");
                     }
 
+                    // Whether one account was placed on the group (by rippling or TrashNothing)
+                    // and the other chose it, and how the placed one was made, before either row
+                    // changes below.
+                    $placed1 = (int) $id1Memb->implicit || (int) $id1Memb->rippled;
+                    $becameOrdinary = $placed1 !== ((int) $id2Memb->implicit || (int) $id2Memb->rippled);
+                    $placedOrigin = $placed1 ? $id1Memb->added_origin : $id2Memb->added_origin;
+
+                    foreach (self::mergedMembershipFlags($id1Memb, $id2Memb) as $key => $value) {
+                        if ($value !== ($key === 'added_origin' ? $id1Memb->$key : (int) $id1Memb->$key)) {
+                            $id1Memb->$key = $value;
+                            Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set={$key}={$value}");
+                        }
+                    }
+
                     // Keep the older added date.
                     $date = min(strtotime($id1Memb->added), strtotime($id2Memb->added));
                     $id1Memb->added = date('Y-m-d H:i:s', $date);
@@ -1299,6 +1375,24 @@ class User extends Model implements Auditable
 
                     if (!$dryRun) {
                         $id1Memb->save();
+                    }
+
+                    // The merged membership has become ordinary: log it as every other clear
+                    // does, or the kept added_origin reads as a placement with its flag lost.
+                    if ($becameOrdinary) {
+                        $text = RippleEngagementService::logPrefix($placedOrigin).RippleEngagementService::REASON_MERGED;
+                        $log = new Log();
+                        $log->timestamp = now();
+                        $log->type = 'Group';
+                        $log->subtype = 'Joined';
+                        $log->groupid = $id2Memb->groupid;
+                        $log->user = $id1;
+                        $log->byuser = $byUserId;
+                        $log->text = $text;
+                        Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Group,subtype=Joined,user={$id1},groupid={$id2Memb->groupid},text={$text}");
+                        if (!$dryRun) {
+                            $log->save();
+                        }
                     }
 
                     // id2's row for this group is now redundant — delete it after commit.

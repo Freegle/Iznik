@@ -266,6 +266,13 @@ const LOG_FORMATTERS = {
           text += ' (clicked Join button)'
         } else if (log.text === 'Rippled') {
           text += ' (auto-joined - post rippled into this group)'
+        } else if (log.text === 'TrashNothing unaddressed') {
+          text +=
+            ' (added - TrashNothing post placed in this group, not chosen)'
+        } else if (log.text === 'via partner') {
+          text += ' (through a partner site such as TrashNothing)'
+        } else if (log.text === 'Subscribed') {
+          text += " (by emailing the group's subscribe address)"
         } else if (log.text) {
           text += ' (auto-joined when posting/replying)'
         }

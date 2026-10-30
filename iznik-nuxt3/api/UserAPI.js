@@ -87,6 +87,16 @@ export default class UserAPI extends BaseAPI {
     return this.$getv2('/user/unrated')
   }
 
+  // The Krystal hosting ad (krystal-hosting-ad): whether to show it, decided once on the server, and
+  // what the member did with it. Quietly, because an API from before the route answers 404.
+  hostingAd() {
+    return this.$getv2('/user/hostingad', {}, false)
+  }
+
+  hostingAdEvent(event) {
+    return this.$postv2('/user/hostingad', { event }, false)
+  }
+
   rate(id, rating, reason, text) {
     return this.$postv2('/user', {
       ratee: id,

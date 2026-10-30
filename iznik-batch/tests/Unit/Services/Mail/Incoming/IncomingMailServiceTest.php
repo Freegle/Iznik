@@ -4,6 +4,7 @@ namespace Tests\Unit\Services\Mail\Incoming;
 
 use App\Models\ChatMessage;
 use App\Models\Group;
+use App\Models\Membership;
 use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\Mail\Incoming\IncomingMailService;
@@ -285,8 +286,9 @@ class IncomingMailServiceTest extends TestCase
         $result = $this->service->route($parsed);
 
         $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
-        $this->assertTrue(
-            DB::table('memberships')->where('userid', $user->id)->where('groupid', $group->id)->exists()
+        $this->assertSame(
+            Membership::ADDED_ORIGIN_SUBSCRIBED,
+            DB::table('memberships')->where('userid', $user->id)->where('groupid', $group->id)->value('added_origin')
         );
         $this->assertTrue(
             DB::table('logs')

@@ -208,6 +208,8 @@ class StoriesNewsletterService
             })
             ->where('users.newslettersallowed', 1)
             ->receivingOurMails()
+            // Not for TrashNothing members, whatever memberships they hold.
+            ->notTrashNothing()
             ->where(function ($q) {
                 // newsletter defaults to on (1) when not set; only excluded if explicitly set to 0.
                 // keep-raw: the COALESCE half could use App\Database\Expressions\Coalesce, but

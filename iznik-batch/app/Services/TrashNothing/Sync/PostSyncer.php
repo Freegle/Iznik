@@ -54,6 +54,10 @@ class PostSyncer
     // routed Loki entry is distinguishable from one the scheduled sync caught.
     private bool $backfill = false;
 
+    // Whether this run has already reported a post with no freegle_group_ids field, so a key
+    // without the field reports once a run rather than once a post.
+    private bool $missingConsentFieldReported = false;
+
     public function __construct(
         private bool $dryRun,
         private bool $localTesting,
@@ -82,6 +86,8 @@ class PostSyncer
         $count   = 0;
         $maxDate = null;
         $api     = $this->buildApiClient();
+
+        $this->missingConsentFieldReported = false;
 
         // /posts/all requires date_max within 1 day of date_min, so walk day-by-day.
         $cursor = new \DateTime($from, new \DateTimeZone('UTC'));
@@ -260,12 +266,16 @@ class PostSyncer
         // for ordinary Freegle posts), every TN post is disallowed by default: TN
         // posters haven't consented to mod contact unless the resolved group is
         // explicitly present in freegle_group_ids. A missing/empty field (e.g. a
-        // non-FD API key) means no consent was given, so it stays disallowed.
+        // non-FD API key) means no consent was given, so it stays disallowed. An
+        // empty list is a poster's choice; a missing field is not, so it is reported.
         //
         // Ids are normalized before the strict comparison: the live path deserializes them
         // as int[], but fixtures are raw JSON that can carry them as strings, and a strict
         // in_array() against a string id would silently read as "no consent".
-        $freegleGroupIds           = $post['freegle_group_ids'] ?? [];
+        $freegleGroupIds = $post['freegle_group_ids'] ?? null;
+        if ($freegleGroupIds === null) {
+            $this->reportMissingConsentField($postId);
+        }
         $freegleGroupIds           = array_map('intval', is_array($freegleGroupIds) ? $freegleGroupIds : []);
         $moderatorMessagingAllowed = in_array((int) $group->id, $freegleGroupIds, true);
 
@@ -293,9 +303,10 @@ class PostSyncer
                 $this->ingestionService->getLastRoutingContext(),
             );
         } catch (\Throwable $e) {
-            Log::error('TN sync: post ingestion failed', [
+            // Reported, not just logged: the sync moves past this post, and only
+            // tn:verify-email-coverage, hours later, fetches it again.
+            GroupPostIngestionService::reportFailure('TN sync: post ingestion failed', $e, [
                 'post_id' => $postId,
-                'error'   => $e->getMessage(),
             ]);
             // The one place this path deliberately does NOT mirror the email
             // path: IncomingMailController's own catch emits no Loki entry, so a
@@ -310,6 +321,29 @@ class PostSyncer
         }
 
         return $maxDate;
+    }
+
+    /**
+     * A post with no freegle_group_ids field at all is a configuration fault, not a poster's
+     * choice: TN turns the field on per API key, and a key without it reads every post as
+     * unaddressed. That makes every poster an implicit member of their post's group, and takes
+     * moderator contact away. That looks to be what happened for 27 hours after the key changed
+     * on 2026-09-25. The post is still read as "no consent", but the run reports it, once, so
+     * a key change is caught in minutes rather than weeks.
+     */
+    private function reportMissingConsentField(string $postId): void
+    {
+        if ($this->missingConsentFieldReported) {
+            return;
+        }
+        $this->missingConsentFieldReported = true;
+
+        $message = 'TrashNothing posts API returned a post with no freegle_group_ids field (post '
+            . $postId . '): every post is read as unaddressed until TN enables the field for this API key';
+        Log::error($message);
+        if (app()->bound('sentry')) {
+            app('sentry')->captureMessage($message, \Sentry\Severity::error());
+        }
     }
 
     /**

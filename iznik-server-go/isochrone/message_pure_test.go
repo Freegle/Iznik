@@ -121,7 +121,9 @@ func TestToSummary(t *testing.T) {
 			assert.Equal(t, bl, s.Lat, "summary exposes the blurred latitude")
 			assert.Equal(t, bg, s.Lng, "summary exposes the blurred longitude")
 			assert.Equal(t, dist, s.Distance)
-			assert.NotEqual(t, tc.row.Lat, s.Lat, "real coordinates are never exposed")
+			// Road-aware blur can legitimately move a point along one axis only (and 3dp
+			// rounding can hide a tiny shift), so assert the pair differs, not each axis.
+			assert.False(t, tc.row.Lat == s.Lat && tc.row.Lng == s.Lng, "real coordinates are never exposed")
 			assert.GreaterOrEqual(t, s.Score, 0.0)
 		})
 	}
