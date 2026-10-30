@@ -167,7 +167,10 @@ func TestMergeMembershipConflictTakesTheOlderOriginAndTheLowerImplicit(t *testin
 	assert.Equal(t, 0, rippled)
 }
 
-func TestMergeMembershipConflictKeepsTheSurvivorsOriginWhenItIsOlder(t *testing.T) {
+// An older ripple join and a newer TN placement merge to a TN placement: a state ingestion
+// writes. The older row's origin with the lower rippled would be a ripple-origin row with
+// rippled = 0, which no writer makes and which ripple clean-up would delete.
+func TestMergeMembershipConflictOfARippleJoinAndATNPlacementIsATNPlacement(t *testing.T) {
 	prefix := uniquePrefix("merge_origin_keep")
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
@@ -187,9 +190,35 @@ func TestMergeMembershipConflictKeepsTheSurvivorsOriginWhenItIsOlder(t *testing.
 	var implicit, rippled int
 	db.Raw("SELECT added_origin, implicit, rippled FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).
 		Row().Scan(&origin, &implicit, &rippled)
-	assert.Equal(t, "rippled", origin)
+	assert.Equal(t, "tn_unaddressed", origin)
 	assert.Equal(t, 1, implicit, "both were implicit, so the merged row still is")
-	assert.Equal(t, 0, rippled, "rippled is merged the same way, and a TN implicit row has rippled = 0")
+	assert.Equal(t, 0, rippled)
+}
+
+// Two ripple joins stay a ripple join.
+func TestMergeMembershipConflictOfTwoRippleJoinsIsARippleJoin(t *testing.T) {
+	prefix := uniquePrefix("merge_origin_ripples")
+	db := database.DBConn
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	id1 := CreateTestUser(t, prefix+"_u1", "User")
+	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
+		"VALUES (?, ?, 'Member', NOW(), 'rippled', 1, 1)", id1, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
+		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'rippled', 1, 1)", id2, groupID)
+
+	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
+
+	var origin string
+	var implicit, rippled int
+	db.Raw("SELECT added_origin, implicit, rippled FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).
+		Row().Scan(&origin, &implicit, &rippled)
+	assert.Equal(t, "rippled", origin)
+	assert.Equal(t, 1, implicit)
+	assert.Equal(t, 1, rippled)
 }
 
 // ── Section B: messages, history, chat rooms, sessions, logins ───────────────

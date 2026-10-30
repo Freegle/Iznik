@@ -137,6 +137,58 @@ class UserMergeTest extends TestCase
         $this->assertSame(0, (int) $m->rippled);
     }
 
+    /**
+     * An older ripple join and a newer TN placement: the merged row is a TN placement, a state
+     * ingestion writes, not a ripple-origin row with rippled = 0 that no writer makes and that
+     * ripple clean-up would delete.
+     */
+    public function test_merge_of_an_older_ripple_join_and_a_tn_placement_is_a_tn_placement(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($user1, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+            'implicit' => 1, 'rippled' => 0,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $m->added_origin);
+        $this->assertSame(1, (int) $m->implicit);
+        $this->assertSame(0, (int) $m->rippled);
+        $this->assertEquals(self::OLDER_DATE, $m->added);
+    }
+
+    /** Two ripple joins stay a ripple join, with the older row's flags. */
+    public function test_merge_of_two_ripple_joins_is_a_ripple_join(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($user1, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_RIPPLED, $m->added_origin);
+        $this->assertSame([1, 1], [(int) $m->implicit, (int) $m->rippled]);
+    }
+
     public function test_merge_transfers_unique_memberships(): void
     {
         $user1 = $this->createTestUser();

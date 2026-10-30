@@ -3336,19 +3336,16 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 				newRole = m1.Role
 			}
 			tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).Update("role", newRole)
-			// The merged membership is implicit only if both were: an ordinary membership on
-			// either account means the member chose the group. added_origin follows the older
-			// row, whose added date is kept below, so it must run before that update: a
-			// multi-table UPDATE does not promise to apply its assignments in order.
-			// rippled goes with implicit until Phase 7 drops it.
-			tx.Table("memberships m2 JOIN memberships m1 ON m1.userid = ? AND m1.groupid = m2.groupid", id1).
-				Clauses(clause.Set{
-					{Column: clause.Column{Table: "m2", Name: "added_origin"}, Value: gorm.Expr("IF(m1.added < m2.added, m1.added_origin, m2.added_origin)")},
-					{Column: clause.Column{Table: "m2", Name: "implicit"}, Value: gorm.Expr("LEAST(m2.implicit, m1.implicit)")},
-					{Column: clause.Column{Table: "m2", Name: "rippled"}, Value: gorm.Expr("LEAST(m2.rippled, m1.rippled)")},
-				}).
-				Where("m2.userid = ? AND m2.groupid = ?", id2, m1.Groupid).
-				Updates(map[string]interface{}{})
+			// implicit, rippled and added_origin are read from both rows before the added date
+			// below changes, and merged by MergedMembershipFlags.
+			var flags []MembershipFlags
+			tx.Raw("SELECT implicit, rippled, added_origin, added FROM memberships WHERE groupid = ? AND userid IN (?, ?)",
+				m1.Groupid, id2, id1).Scan(&flags)
+			if len(flags) == 2 {
+				merged := MergedMembershipFlags(flags[0], flags[1])
+				tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).
+					Updates(map[string]interface{}{"implicit": merged.Implicit, "rippled": merged.Rippled, "added_origin": merged.AddedOrigin})
+			}
 			// Take older added date (SQL JOIN to avoid Go datetime string formatting).
 			// Genuine multi-table UPDATE...JOIN: Table()-verbatim JOIN text +
 			// explicit clause.Set, same mechanism as merge.go's
@@ -3989,6 +3986,40 @@ func GetUserLogins(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(logins)
+}
+
+// MembershipFlags are the columns that say why a membership exists.
+type MembershipFlags struct {
+	Implicit    int
+	Rippled     int
+	AddedOrigin string
+	Added       time.Time
+}
+
+// MergedMembershipFlags merges two memberships of one group when their accounts merge, into a
+// state the writers themselves make:
+//   - an ordinary membership on either side means the member chose the group: ordinary, with the
+//     older row's origin;
+//   - both implicit, and either a TrashNothing placement: a placement (implicit, not rippled).
+//     A placement is never removed automatically, so it must not become a ripple join that is;
+//   - two ripple joins: the older row's origin and rippled flag, together.
+//
+// Laravel's User::mergedMembershipFlags is the same rule.
+func MergedMembershipFlags(a, b MembershipFlags) MembershipFlags {
+	older := a
+	if b.Added.Before(a.Added) {
+		older = b
+	}
+
+	if a.Implicit == 0 || b.Implicit == 0 {
+		return MembershipFlags{Implicit: 0, Rippled: 0, AddedOrigin: older.AddedOrigin, Added: older.Added}
+	}
+
+	if a.AddedOrigin == addedorigin.TNUnaddressed || b.AddedOrigin == addedorigin.TNUnaddressed {
+		return MembershipFlags{Implicit: 1, Rippled: 0, AddedOrigin: addedorigin.TNUnaddressed, Added: older.Added}
+	}
+
+	return MembershipFlags{Implicit: 1, Rippled: older.Rippled, AddedOrigin: older.AddedOrigin, Added: older.Added}
 }
 
 // TrashNothingSQL is a SQL condition that is true when the users row aliased as alias is a

@@ -828,6 +828,35 @@ class User extends Model implements Auditable
     }
 
     /**
+     * Merge two memberships of one group when their accounts merge, into a state the writers
+     * themselves make:
+     *   - an ordinary membership on either side means the member chose the group: ordinary,
+     *     with the older row's origin;
+     *   - both implicit, and either a TrashNothing placement: a placement (implicit, not
+     *     rippled). A placement is never removed automatically, so it must not become a ripple
+     *     join that is;
+     *   - two ripple joins: the older row's origin and rippled flag, together.
+     *
+     * Go's user.MergedMembershipFlags is the same rule.
+     *
+     * @return array{implicit: int, rippled: int, added_origin: string}
+     */
+    public static function mergedMembershipFlags(object $a, object $b): array
+    {
+        $older = strtotime($b->added) < strtotime($a->added) ? $b : $a;
+
+        if (!(int) $a->implicit || !(int) $b->implicit) {
+            return ['implicit' => 0, 'rippled' => 0, 'added_origin' => $older->added_origin];
+        }
+
+        if (in_array(Membership::ADDED_ORIGIN_TN_UNADDRESSED, [$a->added_origin, $b->added_origin], TRUE)) {
+            return ['implicit' => 1, 'rippled' => 0, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED];
+        }
+
+        return ['implicit' => 1, 'rippled' => (int) $older->rippled, 'added_origin' => $older->added_origin];
+    }
+
+    /**
      * Leave out TrashNothing members: stamped with a tnuserid, or with a TrashNothing address
      * as their preferred email. Same definition as isTrashNothingAccount() and Go's
      * user.TrashNothingSQL. Freegle's own mailings (the Stories newsletter, the engage mails,
@@ -1316,20 +1345,10 @@ class User extends Model implements Auditable
                         Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set=role={$role}");
                     }
 
-                    // added_origin says how the row was created, so it goes with the older added
-                    // date, kept below.
-                    if (strtotime($id2Memb->added) < strtotime($id1Memb->added)) {
-                        $id1Memb->added_origin = $id2Memb->added_origin;
-                        Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set=added_origin={$id1Memb->added_origin}");
-                    }
-
-                    // Implicit only if both were: either account having chosen the group is
-                    // enough. rippled goes with implicit until it is dropped.
-                    foreach (['implicit', 'rippled'] as $key) {
-                        $lower = min((int) $id1Memb->$key, (int) $id2Memb->$key);
-                        if ($lower !== (int) $id1Memb->$key) {
-                            $id1Memb->$key = $lower;
-                            Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set={$key}={$lower}");
+                    foreach (self::mergedMembershipFlags($id1Memb, $id2Memb) as $key => $value) {
+                        if ($value !== ($key === 'added_origin' ? $id1Memb->$key : (int) $id1Memb->$key)) {
+                            $id1Memb->$key = $value;
+                            Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set={$key}={$value}");
                         }
                     }
 
