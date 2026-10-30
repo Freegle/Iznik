@@ -10,7 +10,7 @@
 --
 -- The copy at the end is safe to re-run, and should be re-run just before the code that writes
 -- implicit alongside rippled goes live, because until then ripple joins and clears change rippled
--- alone. It brings implicit into line with rippled in both directions, 10,000 ids at a time,
+-- alone. It brings implicit into line with rippled in both directions, 10,000 rows at a time,
 -- except on TrashNothing placements (added_origin tn_unaddressed): those are implicit with
 -- rippled = 0 by design, so it leaves them alone and is safe to run after memberships:backfill-tn.
 SET SESSION lock_wait_timeout = 5;
@@ -29,6 +29,7 @@ DELIMITER //
 CREATE PROCEDURE memberships_sync_implicit_2026_10_28()
 BEGIN
     DECLARE from_id BIGINT UNSIGNED DEFAULT 0;
+    DECLARE to_id BIGINT UNSIGNED;
     DECLARE max_id BIGINT UNSIGNED;
     DECLARE has_origin INT;
 
@@ -39,23 +40,24 @@ BEGIN
     SELECT COUNT(*) INTO has_origin FROM information_schema.columns
         WHERE table_schema = DATABASE() AND table_name = 'memberships' AND column_name = 'added_origin';
 
-    SET @sync_raise := 'UPDATE memberships SET implicit = 1
-        WHERE id > ? AND id <= ? AND rippled = 1 AND implicit = 0';
-    SET @sync_clear := CONCAT('UPDATE memberships SET implicit = 0
-        WHERE id > ? AND id <= ? AND rippled = 0 AND implicit = 1',
+    -- One statement per range, both directions. A TrashNothing placement has rippled = 0, so only
+    -- the clearing direction could reach one, and the guard stops it.
+    SET @sync := CONCAT('UPDATE memberships SET implicit = rippled
+        WHERE id > ? AND id <= ? AND implicit <> rippled',
         IF(has_origin > 0, ' AND added_origin <> ''tn_unaddressed''', ''));
-    PREPARE sync_raise FROM @sync_raise;
-    PREPARE sync_clear FROM @sync_clear;
+    PREPARE sync FROM @sync;
 
+    -- 10,000 rows at a time, not 10,000 ids: ids are sparse (about 5M rows under ids up to 59M
+    -- on production in October 2026), so id ranges would mostly be empty.
     WHILE from_id < max_id DO
-        SET @sync_from := from_id, @sync_to := from_id + 10000;
-        EXECUTE sync_raise USING @sync_from, @sync_to;
-        EXECUTE sync_clear USING @sync_from, @sync_to;
-        SET from_id = from_id + 10000;
+        SELECT COALESCE(MAX(id), max_id) INTO to_id
+            FROM (SELECT id FROM memberships WHERE id > from_id ORDER BY id LIMIT 10000) chunk;
+        SET @sync_from := from_id, @sync_to := to_id;
+        EXECUTE sync USING @sync_from, @sync_to;
+        SET from_id = to_id;
     END WHILE;
 
-    DEALLOCATE PREPARE sync_raise;
-    DEALLOCATE PREPARE sync_clear;
+    DEALLOCATE PREPARE sync;
 END //
 DELIMITER ;
 CALL memberships_sync_implicit_2026_10_28();

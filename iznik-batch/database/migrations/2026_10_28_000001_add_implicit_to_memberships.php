@@ -42,16 +42,18 @@ return new class extends Migration
             ? " AND added_origin <> 'tn_unaddressed'"
             : '';
 
-        for ($from = 0; $from < $maxId; $from += self::CHUNK) {
-            $range = [$from, $from + self::CHUNK];
+        // One statement per CHUNK rows, both directions. A TrashNothing placement has rippled = 0,
+        // so only the clearing direction could reach one, and the guard stops it. Chunked by rows,
+        // not ids: ids are sparse, so id ranges would mostly be empty.
+        for ($from = 0; $from < $maxId; $from = $to) {
+            $to = (int) (DB::selectOne(
+                'SELECT MAX(id) AS id FROM (SELECT id FROM memberships WHERE id > ? ORDER BY id LIMIT ?) chunk',
+                [$from, self::CHUNK]
+            )->id ?? $maxId);
             DB::update(
-                'UPDATE memberships SET implicit = 1 WHERE id > ? AND id <= ? AND rippled = 1 AND implicit = 0',
-                $range
-            );
-            DB::update(
-                'UPDATE memberships SET implicit = 0 WHERE id > ? AND id <= ? AND rippled = 0 AND implicit = 1'
+                'UPDATE memberships SET implicit = rippled WHERE id > ? AND id <= ? AND implicit <> rippled'
                     .$keepTnPlacements,
-                $range
+                [$from, $to]
             );
         }
     }
