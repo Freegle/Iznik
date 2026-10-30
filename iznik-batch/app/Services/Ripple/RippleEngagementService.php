@@ -2,6 +2,7 @@
 
 namespace App\Services\Ripple;
 
+use App\Support\TransactionPolicy;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -101,27 +102,31 @@ class RippleEngagementService
      */
     public function clear(int $userid, int $groupid, string $reason): bool
     {
-        $changed = DB::table('memberships')
-            ->where('userid', $userid)
-            ->where('groupid', $groupid)
-            ->where(fn ($q) => $q->where('rippled', 1)->orWhere('implicit', 1))
-            ->update(['rippled' => 0, 'implicit' => 0]);
+        // The flag and its "became ordinary" log go together or not at all, and a deadlock is
+        // retried. A retry re-runs the update on rows the failed attempt rolled back.
+        return TransactionPolicy::atomic(function () use ($userid, $groupid, $reason) {
+            $changed = DB::table('memberships')
+                ->where('userid', $userid)
+                ->where('groupid', $groupid)
+                ->where(fn ($q) => $q->where('rippled', 1)->orWhere('implicit', 1))
+                ->update(['rippled' => 0, 'implicit' => 0]);
 
-        if ($changed < 1) {
-            return false;
-        }
+            if ($changed < 1) {
+                return false;
+            }
 
-        DB::table('logs')->insert([
-            'timestamp' => now(),
-            'type' => 'Group',
-            'subtype' => 'Joined',
-            'groupid' => $groupid,
-            'user' => $userid,
-            'byuser' => $userid,
-            'text' => self::LOG_PREFIX.$reason,
-        ]);
+            DB::table('logs')->insert([
+                'timestamp' => now(),
+                'type' => 'Group',
+                'subtype' => 'Joined',
+                'groupid' => $groupid,
+                'user' => $userid,
+                'byuser' => $userid,
+                'text' => self::LOG_PREFIX.$reason,
+            ]);
 
-        return true;
+            return true;
+        }, 'Clearing the ripple flag and logging it');
     }
 
     /**

@@ -1448,6 +1448,55 @@ class GroupPostIngestionServiceTest extends TestCase
         );
     }
 
+    public function test_a_membership_failure_is_reported_to_sentry_and_the_post_is_still_ingested(): void
+    {
+        $sentry = new class {
+            public array $calls = [];
+
+            public function captureException(\Throwable $e): void
+            {
+                $this->calls[] = $e->getMessage();
+            }
+        };
+        $this->app->instance('sentry', $sentry);
+        $engagement = $this->createMock(\App\Services\Ripple\RippleEngagementService::class);
+        $engagement->method('clear')->willThrowException(new \RuntimeException('lock wait timeout'));
+        $this->app->instance(\App\Services\Ripple\RippleEngagementService::class, $engagement);
+
+        $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT', 'implicit' => 1]);
+
+        $postId = 'tn-implicit-fail-' . uniqid();
+        $post = $this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]);
+        $this->makeService(dryRun: false)->ingest($post, $group, modMessagingAllowed: true);
+
+        $this->assertNotNull(Message::where('tnpostid', $postId)->first(), 'the post is kept');
+        $this->assertSame(['lock wait timeout'], $sentry->calls);
+    }
+
+    public function test_the_join_log_carries_its_reason_in_the_same_transaction_as_the_membership(): void
+    {
+        $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $group = $this->createTestGroup();
+
+        // The log insert fails: nothing of the join may be left behind.
+        DB::listen(function ($query) {
+            if (str_starts_with($query->sql, 'insert into `logs`')
+                && in_array(GroupPostIngestionService::JOIN_LOG_UNADDRESSED, $query->bindings, true)) {
+                throw new \RuntimeException('log insert failed');
+            }
+        });
+        try {
+            $this->ingestFor($user, $group, false);
+        } finally {
+            DB::getEventDispatcher()->forget(\Illuminate\Database\Events\QueryExecuted::class);
+        }
+
+        $this->assertNull($this->membershipOf($user, $group));
+        $this->assertCount(0, $this->historyOf($user, $group));
+    }
+
     public function test_a_post_with_consent_makes_a_ripple_membership_ordinary_too(): void
     {
         $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);

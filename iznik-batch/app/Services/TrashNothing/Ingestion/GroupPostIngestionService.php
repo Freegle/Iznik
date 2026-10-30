@@ -15,6 +15,7 @@ use App\Services\Ripple\ReachMemberQueueService;
 use App\Services\Ripple\RippleEngagementService;
 use App\Services\SpatialQueryService;
 use App\Services\TusService;
+use App\Support\TransactionPolicy;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -466,9 +467,9 @@ class GroupPostIngestionService
      * that comes with consent clears an implicit membership. Consent only goes one way: a later
      * post without it never makes a membership implicit again.
      *
-     * Runs last, so a failure here never leaves the post half-routed, and is logged rather than
-     * thrown: until the readers move from messages_groups.mod_messaging_allowed to the
-     * membership, a missing row leaves the post exactly as it was before this existed.
+     * Runs last, so a failure here never leaves the post half-routed. A failure is reported to
+     * Sentry rather than thrown, and the post stays: with no membership behind it the post is
+     * never auto-approved, and its poster cannot be contacted by that group's moderators.
      */
     private function recordMembership(User $user, Group $group, bool $modMessagingAllowed): void
     {
@@ -496,11 +497,23 @@ class GroupPostIngestionService
 
             $this->insertMembership($user, $group, $modMessagingAllowed);
         } catch (\Throwable $e) {
-            Log::error('TN post ingestion: failed to record the poster\'s membership', [
+            self::reportFailure('TN post ingestion: failed to record the poster\'s membership', $e, [
                 'user_id'  => $user->id,
                 'group_id' => $group->id,
-                'error'    => $e->getMessage(),
             ]);
+        }
+    }
+
+    /**
+     * Logs a membership write that failed and sends it to Sentry, so it is seen and not just
+     * left in the daily log. The caller carries on: a post is never lost for this.
+     */
+    public static function reportFailure(string $message, \Throwable $e, array $context = []): void
+    {
+        Log::error($message, $context + ['error' => $e->getMessage()]);
+
+        if (app()->bound('sentry')) {
+            app('sentry')->captureException($e);
         }
     }
 
@@ -521,17 +534,18 @@ class GroupPostIngestionService
             return;
         }
 
-        if (self::writeMembership($user->id, $group->id, $chosen, now())) {
-            // A join like any other for reach mail. Digests skip TN users, so it sends nothing
-            // today, and every other join path queues the member the same way.
-            ReachMemberQueueService::enqueue($user->id, ReachMemberQueueService::REASON_JOINED);
-        }
+        self::writeMembership($user->id, $group->id, $chosen, now());
     }
 
     /**
-     * Writes a TN poster's new membership, its history row and its join log, all dated $at.
-     * Ingestion passes now(); memberships:backfill-tn passes the arrival of the post the
-     * membership stands behind. Returns false, writing nothing, when a membership already exists.
+     * Writes a TN poster's new membership, its history row and its join log, all dated $at, and
+     * queues the member for reach mail as every other join path does. Ingestion passes now();
+     * memberships:backfill-tn passes the arrival of the post the membership stands behind, so
+     * both go through here and behave alike. Returns false, writing nothing, when a membership
+     * already exists.
+     *
+     * The join log's text is the reason for the join: JOIN_LOG_CHOSEN for a group the poster
+     * chose, JOIN_LOG_UNADDRESSED for one the post was placed on.
      */
     public static function writeMembership(int $userId, int $groupId, bool $chosen, \DateTimeInterface $at): bool
     {
@@ -569,7 +583,11 @@ class GroupPostIngestionService
 
         // All three or none: a membership with no history row skips the abuse checks, and one
         // with no join log is invisible in ModTools and to the origin backfill.
-        return DB::transaction(function () use ($row, $userId, $groupId, $origin, $chosen, $at) {
+        // atomic() retries a deadlock or lock wait on a Galera cluster, which a bare transaction
+        // does not. A retry starts again from the insertOrIgnore, with the earlier attempt rolled
+        // back, so it can never leave a half-written membership; if another writer has made the
+        // row by then, the retry returns false.
+        $written = TransactionPolicy::atomic(function () use ($row, $userId, $groupId, $origin, $chosen, $at) {
             if (DB::table('memberships')->insertOrIgnore($row) === 0) {
                 // Someone else made the row in the meantime; theirs stands.
                 return false;
@@ -597,7 +615,23 @@ class GroupPostIngestionService
             ]);
 
             return true;
-        });
+        }, 'TN membership, history row and join log must exist together');
+
+        if ($written) {
+            // Digests skip TN users and reach mail only considers members with mail on, so it
+            // sends nothing today; queued anyway so TN joins match every other join path.
+            // The membership is already committed, so a failure here is reported and not thrown.
+            try {
+                ReachMemberQueueService::enqueue($userId, ReachMemberQueueService::REASON_JOINED);
+            } catch (\Throwable $e) {
+                self::reportFailure('TN membership written but reach mail queueing failed', $e, [
+                    'user_id'  => $userId,
+                    'group_id' => $groupId,
+                ]);
+            }
+        }
+
+        return $written;
     }
 
     private function createMessage(

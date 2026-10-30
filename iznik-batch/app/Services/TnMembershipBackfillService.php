@@ -37,6 +37,10 @@ use Illuminate\Support\Facades\DB;
  * moderators to them, the mixed-poster rule. Phase 5 decides it from the poster's membership of
  * that group alone: contactable only with an ordinary (not implicit) membership there.
  *
+ * A pair that throws is reported to Sentry and marked failed, and the run carries on with the
+ * rest; the result counts them in 'failed'. Both writes go through GroupPostIngestionService::
+ * writeMembership, which also queues reach mail as ingestion does.
+ *
  * About a hundred rows on production, so it reads them all in one go. Re-running finds the
  * memberships it wrote already implicit and changes nothing.
  */
@@ -54,8 +58,9 @@ class TnMembershipBackfillService
     /**
      * @return array{
      *     pairs: list<array{userid:int, groupid:int, msgids:int[], arrival:string, action:string,
-     *         membership: ?object, contact_today: bool, contact_after: bool}>,
-     *     actions: array<string,int>, rows: int, mixed_posters: int,
+     *         membership: ?object, contact_today: bool, contact_after: bool,
+     *         failed: bool, error: ?string}>,
+     *     actions: array<string,int>, rows: int, failed: int, mixed_posters: int,
      *     pairs_losing_contact: int, pairs_gaining_contact: int
      * }
      */
@@ -65,6 +70,7 @@ class TnMembershipBackfillService
         $actions = [];
         $mixedPosters = [];
         $rows = 0;
+        $failed = 0;
 
         foreach ($pairs as &$pair) {
             $rows += count($pair['msgids']);
@@ -74,8 +80,22 @@ class TnMembershipBackfillService
                 ->first(['id', 'rippled', 'implicit', 'added_origin', 'added']);
             $pair['action'] = $this->actionFor($pair);
 
+            $pair['failed'] = false;
+            $pair['error'] = null;
             if ($send) {
-                $this->apply($pair);
+                // One pair failing must not lose the rest of the run or its report.
+                try {
+                    $this->apply($pair);
+                } catch (\Throwable $e) {
+                    $pair['failed'] = true;
+                    $pair['error'] = $e->getMessage();
+                    $failed++;
+                    GroupPostIngestionService::reportFailure('memberships:backfill-tn: failed to apply a pair', $e, [
+                        'user_id' => $pair['userid'],
+                        'group_id' => $pair['groupid'],
+                        'action' => $pair['action'],
+                    ]);
+                }
             }
 
             $pair['contact_today'] = $this->isMixed($pair['userid']);
@@ -91,6 +111,7 @@ class TnMembershipBackfillService
             'pairs' => $pairs,
             'actions' => $actions,
             'rows' => $rows,
+            'failed' => $failed,
             'mixed_posters' => count($mixedPosters),
             'pairs_losing_contact' => count(array_filter($pairs, fn ($p) => $p['contact_today'] && !$p['contact_after'])),
             'pairs_gaining_contact' => count(array_filter($pairs, fn ($p) => !$p['contact_today'] && $p['contact_after'])),
@@ -222,6 +243,13 @@ class TnMembershipBackfillService
      */
     private function ordinaryAfter(array $pair): bool
     {
+        // A pair that failed was not changed, so it stays as it was found.
+        if ($pair['failed'] ?? false) {
+            $membership = $pair['membership'];
+
+            return $membership !== null && !$membership->rippled && !$membership->implicit;
+        }
+
         if ($pair['action'] === self::ACTION_CREATE_AND_CLEAR) {
             return true;
         }

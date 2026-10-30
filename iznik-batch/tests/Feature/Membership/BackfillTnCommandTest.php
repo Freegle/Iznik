@@ -425,4 +425,114 @@ class BackfillTnCommandTest extends TestCase
             ->assertSuccessful();
         $this->assertSame(1, (int) $this->membership($user, $group)->implicit);
     }
+
+    /** Records what reaches Sentry, as PostSyncerTest does. */
+    private function recordSentryExceptions(): object
+    {
+        $sentry = new class {
+            public array $exceptions = [];
+
+            public function captureException(\Throwable $e): void
+            {
+                $this->exceptions[] = $e->getMessage();
+            }
+        };
+        $this->app->instance('sentry', $sentry);
+
+        return $sentry;
+    }
+
+    public function test_a_backfilled_membership_queues_the_member_for_reach_mail_as_ingestion_does(): void
+    {
+        [$user] = $this->unaddressedPoster();
+
+        $this->backfill();
+
+        $this->assertSame(
+            'joined',
+            DB::table('rippling_reach_member_pending')->where('userid', $user->id)->value('reason')
+        );
+    }
+
+    public function test_a_dry_run_queues_nothing_for_reach_mail(): void
+    {
+        [$user] = $this->unaddressedPoster();
+
+        $this->backfill(send: false);
+
+        $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $user->id)->count());
+    }
+
+    public function test_one_pair_failing_is_reported_and_the_rest_of_the_run_still_happens(): void
+    {
+        $sentry = $this->recordSentryExceptions();
+
+        [$bad, $badGroup] = $this->unaddressedPoster();
+        $this->tnPost($bad, $badGroup, true, now()->subWeek());
+        $this->createMembership($bad, $badGroup, [
+            'implicit' => 1, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now()->subMonth(),
+        ]);
+        [$good, $goodGroup] = $this->unaddressedPoster();
+
+        $engagement = $this->createMock(RippleEngagementService::class);
+        $engagement->method('clear')->willThrowException(new \RuntimeException('deadlock persisted'));
+        $this->app->instance(RippleEngagementService::class, $engagement);
+
+        $stats = $this->backfill();
+
+        $badPair = $this->pairFor($stats, $bad, $badGroup);
+        $this->assertTrue($badPair['failed']);
+        $this->assertSame('deadlock persisted', $badPair['error']);
+        $this->assertFalse($badPair['contact_after'], 'a failed pair is left as it was found');
+        $this->assertSame(1, (int) $this->membership($bad, $badGroup)->implicit);
+
+        $this->assertFalse($this->pairFor($stats, $good, $goodGroup)['failed']);
+        $this->assertNotNull($this->membership($good, $goodGroup), 'the pairs after the failure were still done');
+        $this->assertSame(1, $stats['failed']);
+        $this->assertSame(['deadlock persisted'], $sentry->exceptions);
+    }
+
+    public function test_the_command_exits_non_zero_when_a_pair_failed(): void
+    {
+        $this->recordSentryExceptions();
+        [$user, $group] = $this->unaddressedPoster();
+        $this->tnPost($user, $group, true, now()->subWeek());
+        $this->createMembership($user, $group, [
+            'implicit' => 1, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now()->subMonth(),
+        ]);
+        $engagement = $this->createMock(RippleEngagementService::class);
+        $engagement->method('clear')->willThrowException(new \RuntimeException('boom'));
+        $this->app->instance(RippleEngagementService::class, $engagement);
+
+        $this->artisan('memberships:backfill-tn', ['--send' => true])
+            ->expectsOutputToContain('failed')
+            ->assertFailed();
+    }
+
+    public function test_clearing_the_flag_and_logging_it_are_one_transaction(): void
+    {
+        $user = $this->tnUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['implicit' => 1, 'rippled' => 1]);
+
+        // The log insert fails after it has run; the flag must not stay cleared without it.
+        DB::listen(function ($query) {
+            if (str_starts_with($query->sql, 'insert into `logs`')) {
+                throw new \RuntimeException('log insert failed');
+            }
+        });
+
+        try {
+            app(RippleEngagementService::class)->clear($user->id, $group->id, 'test');
+            $this->fail('the failure should reach the caller');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('log insert failed', $e->getMessage());
+        } finally {
+            DB::getEventDispatcher()->forget(\Illuminate\Database\Events\QueryExecuted::class);
+        }
+
+        $m = $this->membership($user, $group);
+        $this->assertSame(1, (int) $m->implicit);
+        $this->assertSame(1, (int) $m->rippled);
+    }
 }

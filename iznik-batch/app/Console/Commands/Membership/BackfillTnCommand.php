@@ -52,7 +52,7 @@ class BackfillTnCommand extends Command
                         $p['membership']->implicit, $p['membership']->rippled),
                     $p['contact_today'] ? 'yes' : 'no',
                     $p['contact_after'] ? 'yes' : 'no',
-                    $p['action'],
+                    $p['failed'] ? 'FAILED: '.$p['error'] : $p['action'],
                 ])->all(),
             );
 
@@ -73,10 +73,17 @@ class BackfillTnCommand extends Command
                 'send' => $send,
                 'actions' => $stats['actions'],
                 'rows' => $stats['rows'],
+                'failed' => $stats['failed'],
                 'mixed_posters' => $stats['mixed_posters'],
                 'pairs_losing_contact' => $stats['pairs_losing_contact'],
                 'pairs_gaining_contact' => $stats['pairs_gaining_contact'],
             ]);
+
+            if ($stats['failed'] > 0) {
+                $this->error("{$stats['failed']} pair(s) failed and were not changed; see the table above and Sentry.");
+
+                return Command::FAILURE;
+            }
 
             return Command::SUCCESS;
         } finally {
