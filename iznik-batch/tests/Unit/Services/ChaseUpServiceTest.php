@@ -274,6 +274,93 @@ class ChaseUpServiceTest extends TestCase
         $this->assertEquals(0, $stats['chased']);
     }
 
+    public function test_skips_post_from_deleted_user(): void
+    {
+        $data = $this->createChaseCandidate();
+
+        DB::table('users')->where('id', $data['user']->id)->update(['deleted' => now()]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(0, $stats['chased']);
+        $this->assertNull(DB::table('messages_groups')->where('msgid', $data['message']->id)->value('lastchaseup'));
+    }
+
+    public function test_skips_retracted_rippled_copy(): void
+    {
+        $data = $this->createChaseCandidate();
+
+        // Rippling retracts a copy with deleted = 1 and leaves collection = Approved.
+        DB::table('messages_groups')
+            ->where('msgid', $data['message']->id)
+            ->update(['deleted' => 1]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(0, $stats['chased']);
+        $this->assertNull(DB::table('messages_groups')->where('msgid', $data['message']->id)->value('lastchaseup'));
+    }
+
+    public function test_a_modmail_is_not_a_reply(): void
+    {
+        $data = $this->createChaseCandidate();
+
+        DB::table('chat_messages')
+            ->where('chatid', $data['room']->id)
+            ->update(['type' => 'ModMail']);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(0, $stats['chased'], 'a post whose only chat row is a ModMail has no reply to chase');
+    }
+
+    public function test_a_recent_modmail_does_not_hide_an_old_reply(): void
+    {
+        $data = $this->createChaseCandidate();
+
+        $this->createTestChatMessage($data['room'], $data['replier'], [
+            'type' => 'ModMail',
+            'date' => now()->subHour(),
+        ]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(1, $stats['chased']);
+    }
+
+    private function holdReply(array $data, string $status): void
+    {
+        $chatMessage = DB::table('chat_messages')->where('chatid', $data['room']->id)->first();
+
+        DB::table('rippling_held_replies')->insert([
+            'chatid' => $chatMessage->chatid,
+            'chatmsgid' => $chatMessage->id,
+            'msgid' => $data['message']->id,
+            'replieruserid' => $data['replier']->id,
+            'status' => $status,
+        ]);
+    }
+
+    public function test_a_held_rippling_reply_is_not_a_reply(): void
+    {
+        $data = $this->createChaseCandidate();
+        $this->holdReply($data, 'held');
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(0, $stats['chased'], 'the poster has not seen a held reply, so there is nothing to chase');
+    }
+
+    public function test_a_released_rippling_reply_counts_as_a_reply(): void
+    {
+        $data = $this->createChaseCandidate();
+        $this->holdReply($data, 'released');
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(1, $stats['chased']);
+    }
+
     public function test_crosspost_chased_up_once_not_per_group(): void
     {
         // A message cross-posted to two groups, both eligible for chase-up. The

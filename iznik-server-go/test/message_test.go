@@ -4868,6 +4868,56 @@ func TestPostMessagePromiseWithChatPostsPromisedMessage(t *testing.T) {
 	assert.Equal(t, int64(1), chatMsgCount)
 }
 
+func promiseNoticeTasks(msgID uint64) (count int64, promisee int64) {
+	db := database.DBConn
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'message_promised' AND JSON_EXTRACT(data, '$.msgid') = ?", msgID).Scan(&count)
+	db.Raw("SELECT COALESCE(MAX(JSON_EXTRACT(data, '$.userid')), -1) FROM background_tasks WHERE task_type = 'message_promised' AND JSON_EXTRACT(data, '$.msgid') = ?", msgID).Scan(&promisee)
+	return
+}
+
+func postPromiseAction(t *testing.T, token string, body map[string]interface{}) {
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+}
+
+func TestPostMessagePromiseQueuesNoticeForOtherRepliers(t *testing.T) {
+	prefix := uniquePrefix("msgw_prm_notice")
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
+
+	postPromiseAction(t, ownerToken, map[string]interface{}{"id": msgID, "action": "Promise", "userid": otherID})
+
+	count, promisee := promiseNoticeTasks(msgID)
+	assert.Equal(t, int64(1), count, "a promise queues one task to tell the other repliers")
+	assert.Equal(t, int64(otherID), promisee, "the task names the promisee so they are not told")
+}
+
+func TestPostMessageRenegeQueuesNoPromiseNotice(t *testing.T) {
+	prefix := uniquePrefix("msgw_prm_cancel")
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
+
+	postPromiseAction(t, ownerToken, map[string]interface{}{"id": msgID, "action": "Promise", "userid": otherID})
+	postPromiseAction(t, ownerToken, map[string]interface{}{"id": msgID, "action": "Renege", "userid": otherID})
+
+	count, _ := promiseNoticeTasks(msgID)
+	assert.Equal(t, int64(1), count, "cancelling the promise queues nothing further")
+}
+
 func TestPostMessageOutcomeTakenWithUserRecordsBy(t *testing.T) {
 	// H3: Outcome Taken/Received with userid should insert into messages_by.
 	prefix := uniquePrefix("msgw_out_by")

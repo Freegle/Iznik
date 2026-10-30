@@ -149,7 +149,9 @@ A spammer often creates dozens of accounts with the same name and different emai
 addresses. Both the spammer list and the members list have a bar above the rows for
 dealing with up to fifty of them in one go:
 
-- Tick the members you want, or **Select all shown**. The count shows how many you have.
+- Tick the members you want, or **Select all shown**. Each tick box sits in the top
+  corner of its card. The count shows how many you have, and the button that acts on them
+  appears once at least one is ticked.
 - On **Pending Add**, with Spam admin, **Confirm add to spammer list** confirms every
   ticked report. A report somebody else is holding cannot be ticked there; release it
   first. If one cannot be confirmed, the notice afterwards says which and why, and the

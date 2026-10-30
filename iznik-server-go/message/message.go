@@ -6394,6 +6394,19 @@ func handlePromise(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		createSystemChatMessage(db, myid, *req.Userid, req.ID, utils.CHAT_MESSAGE_PROMISED)
 	}
 
+	// Tell the other members who replied that it is promised to someone else. Queued rather than
+	// done here, like the Taken notice: the batch finds the repliers, skips the promisee and
+	// anyone already told, and checks the promise still stands when it runs. A promise to
+	// nobody in particular (userid 0) tells every replier.
+	notifiedPromisee := uint64(0)
+	if promisedTo != myid {
+		notifiedPromisee = promisedTo
+	}
+	db.Table("background_tasks").Create(map[string]interface{}{
+		"task_type": "message_promised",
+		"data":      gorm.Expr("JSON_OBJECT('msgid', ?, 'userid', ?, 'byuser', ?)", req.ID, notifiedPromisee, myid),
+	})
+
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 

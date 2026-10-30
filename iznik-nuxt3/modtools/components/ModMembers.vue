@@ -11,9 +11,10 @@
       @clear="bulk.clear"
     >
       <b-button
+        v-if="bulk.count.value"
         variant="danger"
         size="sm"
-        :disabled="bulkBusy || !bulk.count.value"
+        :disabled="bulkBusy"
         data-test="bulk-spam"
         @click="showBulkSpam = true"
       >
@@ -47,24 +48,27 @@
     <div
       v-for="member in visibleMembers"
       :key="'memberlist-' + member.id"
-      class="p-0 mt-2 d-flex align-items-start"
+      class="p-0 mt-2"
     >
-      <b-form-checkbox
-        :model-value="bulk.isSelected(member.userid)"
-        :disabled="
-          bulkBusy || (bulk.atLimit.value && !bulk.isSelected(member.userid))
-        "
-        title="Select"
-        class="mt-2 me-1 bulk-check"
-        :data-test="'bulk-check-' + member.userid"
-        @update:model-value="bulk.toggle(member.userid)"
-      />
       <ModMember
         :membershipid="member.id"
         :actions="false"
         :expand-comments="parseInt(filter) === 1"
-        class="flex-grow-1 min-width-0"
-      />
+      >
+        <template #select>
+          <b-form-checkbox
+            :model-value="bulk.isSelected(member.userid)"
+            :disabled="
+              bulkBusy ||
+              (bulk.atLimit.value && !bulk.isSelected(member.userid))
+            "
+            title="Select"
+            class="me-2 bulk-check"
+            :data-test="'bulk-check-' + member.userid"
+            @update:model-value="bulk.toggle(member.userid)"
+          />
+        </template>
+      </ModMember>
     </div>
     <ModBulkSpammerReport
       v-if="showBulkSpam"
@@ -170,8 +174,3 @@ async function bulkReport(reason) {
   }
 }
 </script>
-<style scoped>
-.min-width-0 {
-  min-width: 0;
-}
-</style>

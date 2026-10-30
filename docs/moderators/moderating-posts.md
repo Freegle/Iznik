@@ -65,6 +65,12 @@ For each post you can:
   already live on yours does not show the Pending actions just because a neighbouring
   community's copy is still waiting, and a Delete on a copy that is no longer pending is
   refused with a message saying so rather than reported as done.
+
+  A post held by another volunteer shows a "Held by" banner and no action buttons. To keep
+  those out of the way, turn on **Hide held posts** at the top of the Pending page. It hides
+  every held post, including ones you hold yourself, and the page says how many are hidden
+  ("3 held posts hidden"). The switch is off by default and your choice is remembered in your
+  browser. It does not change the count on the Pending badge.
 - **Delete** or **Delete as Spam** (on your own community's posts).
 
 ### A post pending on several of your communities
