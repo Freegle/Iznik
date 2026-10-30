@@ -820,7 +820,8 @@ class SendAdminCommandTest extends TestCase
         $this->artisan('mail:admin:send', ['--id' => $adminId])
             ->assertSuccessful();
 
-        Mail::assertSent(AdminMail::class, fn (AdminMail $mail) => $mail->volunteers === []);
+        Mail::assertSent(AdminMail::class, fn (AdminMail $mail) => $mail->volunteers === []
+            && $mail->envelope()->from->name === config('freegle.branding.name'));
     }
 
     /**

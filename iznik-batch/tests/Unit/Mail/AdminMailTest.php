@@ -207,6 +207,18 @@ class AdminMailTest extends TestCase
         $this->assertEquals('Freegle Testington Volunteers', $envelope->from->name);
     }
 
+    public function test_admin_mail_without_volunteer_credits_comes_from_freegle(): void
+    {
+        $user = $this->createTestUser();
+        $admin = $this->makeAdmin(['volunteercredits' => 0]);
+
+        $mail = new AdminMail($user, $admin, 'Freegle Testington', null, 'FreegleTestington');
+        $envelope = $mail->envelope();
+
+        $this->assertEquals(config('freegle.mail.noreply_addr'), $envelope->from->address);
+        $this->assertEquals(config('freegle.branding.name'), $envelope->from->name);
+    }
+
     public function test_admin_mail_has_attachments(): void
     {
         $user = $this->createTestUser();

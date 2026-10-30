@@ -474,6 +474,7 @@ class ProcessBackgroundTasksCommand extends Command
             'ctalink' => $data['ctalink'] ?? null,
             'essential' => $data['essential'] ?? true,
             'template' => ($data['template'] ?? '') ?: null,
+            'volunteercredits' => $data['volunteercredits'] ?? TRUE,
         ], $groupName, $modsEmail, $user);
 
         $mail = new AdminMail($user, $admin, $groupName, $modsEmail, $groupShort, $volunteers, $data['email']);
