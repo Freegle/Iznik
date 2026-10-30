@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 ---
 
@@ -210,9 +210,8 @@ was.
 - **`ISAPP=true` changes the build.** The app is a static site, not the server-rendered one
   the website uses. Anything relying on server rendering behaves differently, and some
   features are stripped from the app build to keep the download small.
-- **`freegle-app/` is not the app.** It is a Kotlin Multiplatform prototype that has never
-  shipped and is not on a path to shipping. If you find a `freegle-mobile/` directory, it is
-  local scratch and not in git.
+- **There is no native app.** If you find a `freegle-mobile/` directory, it is local scratch
+  and not in git.
 - **Names are historical.** `iznik-nuxt3/` runs Nuxt 4 and Capacitor 8. Do not try to make
   it consistent.
 
