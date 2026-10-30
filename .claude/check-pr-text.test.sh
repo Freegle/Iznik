@@ -15,6 +15,9 @@ pass=0; fail=0
 # CHECK_PR_FILES tells check 7 which files the PR changes, so no test depends on
 # the branch the harness happens to run on. Empty means "no files".
 : "${CHECK_PR_FILES=}"; export CHECK_PR_FILES
+# The fixtures below each test one rule and carry no Summary or Tests section, so
+# the layout check (8) is off for them and on for its own cases.
+export CHECK_PR_STRUCTURE=0
 run() { printf '%s' "$(jq -nc --arg c "$1" '{tool_input:{command:$c}}')" | "$HOOK" >/dev/null 2>"$TMP/err"; echo $?; }
 
 check() { # name  want_exit  command  [must_contain]
@@ -142,6 +145,36 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 ( cd /tmp && check "cd prefix names the checkout to read" 0 \
   "cd $REPO && $PRC --base master --head master --title t --body-file $TMP/visual.md" ) | tee "$TMP/cdcase"; grep -q PASS "$TMP/cdcase" && pass=$((pass+1)) || fail=$((fail+1))
 export CHECK_PR_FILES="$SAVED_FILES"
+
+echo
+echo "== house layout and stranded work (checks 8 and 9) =="
+printf '## Summary\n\n- It remembers the answer.\n\n## Tests\n\n- The new test failed before the change and passes now.\n' > "$TMP/laid.md"
+printf 'It remembers the answer.\n' > "$TMP/bare.md"
+printf '## Summary\n\n- It remembers the answer.\n' > "$TMP/notests.md"
+printf '## Summary\n\n- It remembers the answer.\n\n## Tests\n\n- It passes.\n\n## Future work\n\n- Drop the old column.\n' > "$TMP/stranded.md"
+printf '## Summary\n\n- It remembers the answer. A follow-up PR will drop the old column.\n\n## Tests\n\n- It passes.\n' > "$TMP/inline.md"
+printf '## Summary\n\n- It remembers the answer.\n\n## Tests\n\n- It passes.\n\n## Future work\n\n- Drop the old column once readers have moved: #1234\n- A follow-up PR removes the backfill: https://github.com/Freegle/Iznik/issues/99\n' > "$TMP/linked.md"
+CHECK_PR_STRUCTURE=1 check "summary and tests present passes" 0 \
+  "$PRC --base master --head x --title t --body-file $TMP/laid.md"
+CHECK_PR_STRUCTURE=1 check "no sections blocks" 2 \
+  "$PRC --base master --head x --title t --body-file $TMP/bare.md" "house layout"
+CHECK_PR_STRUCTURE=1 check "no tests section blocks" 2 \
+  "$PRC --base master --head x --title t --body-file $TMP/notests.md" "## Tests"
+CHECK_PR_STRUCTURE=1 check "future work with no issue blocks" 2 \
+  "$PRC --base master --head x --title t --body-file $TMP/stranded.md" "Drop the old column"
+CHECK_PR_STRUCTURE=1 check "a follow-up PR mentioned in passing blocks" 2 \
+  "$PRC --base master --head x --title t --body-file $TMP/inline.md" "without an issue"
+printf '## Summary\n\n- It remembers the answer.\n\n## Tests\n\n- It passes.\n\n## Not in this PR\n\n- Retire the backfill commands.\n' > "$TMP/notinpr.md"
+CHECK_PR_STRUCTURE=1 check "a 'Not in this PR' list with no issue blocks" 2 \
+  "$PRC --base master --head x --title t --body-file $TMP/notinpr.md" "Retire the backfill"
+printf '## Summary\n\n- It refuses a `follow-up PR` mentioned with no issue.\n\n## Tests\n\n- It passes.\n' > "$TMP/quoted.md"
+CHECK_PR_STRUCTURE=1 check "a phrase quoted in backticks is not future work" 0 \
+  "$PRC --base master --head x --title t --body-file $TMP/quoted.md"
+CHECK_PR_STRUCTURE=1 check "future work linked to issues passes" 0 \
+  "$PRC --base master --head x --title t --body-file $TMP/linked.md"
+CHECK_PR_STRUCTURE=1 check "a title-only edit is not checked for layout" 0 \
+  "$G pr edit 12 --title 'Better title'"
+export CHECK_PR_STRUCTURE=0
 
 echo
 echo "== must not fire =="
