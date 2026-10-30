@@ -1449,8 +1449,8 @@ Go, so the app build carries no switch, and the ad never shows in the app.
   is off nothing is decided or written, so the member is still eligible when it starts. It answers `show` only;
   the arm stays on the server.
 - **What it shows.** In the arm `ad`, `HostingAdModal.vue`: "A greener home for your website", three short
-  lines (it looks like you have a WordPress site; Krystal hosts Freegle for free, is a UK company on green
-  energy and moves sites over; if you switch through this link Freegle gets a small payment and it costs you
+  lines (it looks like you have a WordPress site; Freegle is very happy to be hosted on Krystal, a UK company on
+  green energy that moves sites over; if you switch through this link Freegle gets a small payment and it costs you
   nothing extra), **Take a look** and **No thanks**. Take a look opens `/shortlink/krystalhosting` in a new tab:
   the shortlink counts the click and sends the member to the Awin affiliate link for Krystal's WordPress hosting
   page, with `clickref=hostingad` so the Awin dashboard can tell these clicks from the footer's. `HostingAd.vue`,

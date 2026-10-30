@@ -77,6 +77,7 @@ class DomainHostingService
             ->whereNull('u.deleted')
             ->where('u.lastaccess', '>', $now->copy()->subDays(self::ACTIVE_DAYS))
             ->where('e.email', 'like', '%@%')
+            // keep-raw: the domain is an expression over the email, not a column, and the count is grouped by it
             ->selectRaw("LOWER(SUBSTRING_INDEX(e.email, '@', -1)) AS domain, COUNT(DISTINCT e.userid) AS n")
             ->groupBy('domain')
             ->having('n', '<=', self::MAX_USERS)

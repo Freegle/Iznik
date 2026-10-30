@@ -7,20 +7,16 @@
     @hidden="onHidden"
   >
     <template #default>
-      <div class="d-flex align-items-start gap-3">
-        <img src="/krystal.png" alt="Krystal" class="logo flex-shrink-0" />
-        <div>
-          <p>It looks like you have a WordPress website.</p>
-          <p>
-            Krystal hosts Freegle for free. They're a UK company, run on green
-            energy, and they'll move your site over for you.
-          </p>
-          <p class="mb-0">
-            If you switch through this link, Freegle gets a small payment. It
-            costs you nothing extra.
-          </p>
-        </div>
-      </div>
+      <img src="/krystal.png" alt="Krystal" class="logo mb-3" />
+      <p>It looks like you have a WordPress website.</p>
+      <p>
+        Freegle is very happy to be hosted on Krystal. They're a UK company, run
+        on green energy, and they'll move your site over for you.
+      </p>
+      <p class="mb-0">
+        If you switch through this link, Freegle gets a small payment. It costs
+        you nothing extra.
+      </p>
     </template>
     <template #footer>
       <b-button variant="link" class="no-thanks" @click="noThanks">
@@ -91,9 +87,11 @@ function onHidden() {
 }
 </script>
 <style scoped lang="scss">
+/* The logo at its own size (165 by 87), never squashed into a square. */
 .logo {
-  width: 48px;
-  height: 48px;
-  object-fit: contain;
+  display: block;
+  width: 165px;
+  height: auto;
+  max-width: 100%;
 }
 </style>

@@ -8,6 +8,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/ux"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 	"gorm.io/plugin/dbresolver"
 )
 
@@ -78,7 +79,7 @@ func Get(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var decided int64
-	db.Raw("SELECT COUNT(*) FROM users WHERE id = ? AND JSON_VALID(settings) AND JSON_EXTRACT(settings, '$.hostingad') IS NOT NULL", myid).Scan(&decided)
+	db.Table("users").Where("id = ? AND JSON_VALID(settings) AND JSON_EXTRACT(settings, '$.hostingad') IS NOT NULL", myid).Count(&decided)
 	if decided > 0 {
 		return c.JSON(Response{Show: false})
 	}
@@ -102,8 +103,9 @@ func Get(c *fiber.Ctx) error {
 	// The guard on the key makes the decision once even when two tabs ask at the same moment: the
 	// second finds the key written and decides nothing. Settings that are not valid JSON are replaced
 	// by an empty object, as the settings writers elsewhere do.
-	res := tx.Exec("UPDATE users SET settings = JSON_SET(CASE WHEN JSON_VALID(settings) THEN settings ELSE '{}' END, '$.hostingad', ?) "+
-		"WHERE id = ? AND (NOT JSON_VALID(settings) OR JSON_EXTRACT(settings, '$.hostingad') IS NULL)", time.Now().Unix(), myid)
+	res := tx.Table("users").
+		Where("id = ? AND (NOT JSON_VALID(settings) OR JSON_EXTRACT(settings, '$.hostingad') IS NULL)", myid).
+		Update("settings", gorm.Expr("JSON_SET(CASE WHEN JSON_VALID(settings) THEN settings ELSE '{}' END, '$.hostingad', ?)", time.Now().Unix()))
 	if res.Error != nil || res.RowsAffected == 0 {
 		tx.Rollback()
 
@@ -146,10 +148,10 @@ func Post(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Unknown event")
 	}
 
-	res := database.DBConn.Clauses(dbresolver.Write).Exec("UPDATE ux_experiment_exposures "+
-		"SET detail = JSON_SET(COALESCE(detail, '{}'), "+path+", ?) "+
-		"WHERE experiment = ? AND userid = ? AND subject_type = ? AND JSON_EXTRACT(COALESCE(detail, '{}'), "+path+") IS NULL",
-		time.Now().Unix(), Experiment, myid, subjectType)
+	res := database.DBConn.Clauses(dbresolver.Write).Table("ux_experiment_exposures").
+		Where("experiment = ? AND userid = ? AND subject_type = ? AND JSON_EXTRACT(COALESCE(detail, '{}'), "+path+") IS NULL",
+			Experiment, myid, subjectType).
+		Update("detail", gorm.Expr("JSON_SET(COALESCE(detail, '{}'), "+path+", ?)", time.Now().Unix()))
 	if res.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Could not record")
 	}
