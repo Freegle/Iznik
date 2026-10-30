@@ -59,10 +59,7 @@ import { ref, computed } from 'vue'
 import { useMemberStore } from '~/stores/member'
 import { useUserStore } from '~/stores/user'
 import { useOurModal } from '~/composables/useOurModal'
-import {
-  isBannedFailure,
-  isTrashNothingFailure,
-} from '~/api/bannedFailure'
+import { isBannedFailure, isTrashNothingFailure } from '~/api/bannedFailure'
 
 const props = defineProps({
   groupid: {

@@ -2,10 +2,6 @@ import { defineStore } from 'pinia'
 import { SocialLogin } from '@capgo/capacitor-social-login'
 import { LoginError, SignUpError } from '~/api/APIErrors'
 import { isBannedFailure } from '~/api/bannedFailure'
-
-// Why a member joins a group, as PUT /memberships accepts it from the member themselves
-// (addedorigin.fromClient in iznik-server-go).
-export const JOIN_ORIGINS = ['manual', 'posted', 'replied', 'signup']
 import { asLockdownError, runLockdownAware } from '~/api/lockdownConflict'
 import {
   abortAllPendingRequests,
@@ -31,6 +27,10 @@ import {
   restoreSessionFromDevice,
   saveSessionForRestore,
 } from '~/composables/useSessionRestore'
+
+// Why a member joins a group, as PUT /memberships accepts it from the member themselves
+// (addedorigin.fromClient in iznik-server-go).
+export const JOIN_ORIGINS = ['manual', 'posted', 'replied', 'signup']
 
 // How many 100ms retries we give the Google script before accepting that it is
 // not coming. Five seconds is well past a normal load, and stopping matters:

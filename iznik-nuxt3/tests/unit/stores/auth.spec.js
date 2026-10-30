@@ -1111,9 +1111,7 @@ describe('auth store', () => {
     it.each([undefined, '', 'moderator', 'tn_unaddressed', true, false])(
       'joinGroup refuses an origin a member cannot give (%s) without calling the API',
       async (origin) => {
-        await expect(store.joinGroup(9, 20, origin)).rejects.toThrow(
-          /origin/
-        )
+        await expect(store.joinGroup(9, 20, origin)).rejects.toThrow(/origin/)
         expect(mockJoinGroup).not.toHaveBeenCalled()
       }
     )

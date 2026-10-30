@@ -22,7 +22,10 @@ describe('bannedFailure', () => {
 
     it('suppresses (false) the TrashNothing member refusal', () => {
       expect(
-        notABannedFailure({ error: 403, message: 'Failed - TrashNothing member' })
+        notABannedFailure({
+          error: 403,
+          message: 'Failed - TrashNothing member',
+        })
       ).toBe(false)
     })
 
