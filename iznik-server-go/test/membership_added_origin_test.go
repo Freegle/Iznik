@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/database"
@@ -52,6 +53,23 @@ func TestAddedOriginEnumMatchesTheGoList(t *testing.T) {
 			"AND TABLE_NAME = ? AND COLUMN_NAME = 'added_origin'", table).Scan(&colType)
 		assert.Equal(t, want, colType, table)
 	}
+}
+
+// A membership or history row inserted through its struct with no origin set is stored as
+// unknown, through the structs' default tags, not as an empty string.
+func TestMembershipStructsWithNoOriginStoreUnknown(t *testing.T) {
+	prefix := uniquePrefix("memorigin_default")
+	group := CreateTestGroup(t, prefix)
+	member := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+
+	assert.NoError(t, db.Create(&user.MembershipTable{Userid: member, Groupid: group, Role: utils.ROLE_MEMBER,
+		Collection: utils.COLLECTION_APPROVED, Added: time.Now()}).Error)
+	assert.NoError(t, db.Create(&user.MembershipHistory{Userid: member, Groupid: group,
+		Collection: utils.COLLECTION_APPROVED, Added: time.Now()}).Error)
+
+	assert.Equal(t, "unknown", addedOriginOf(t, "memberships", member, group))
+	assert.Equal(t, "unknown", addedOriginOf(t, "memberships_history", member, group))
 }
 
 // joinGroup sends PUT /memberships as the holder of token.

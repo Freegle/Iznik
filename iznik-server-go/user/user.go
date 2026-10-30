@@ -160,9 +160,9 @@ type MembershipTable struct {
 	Role                string    `json:"role"`
 	Rippled             int       `json:"rippled"`  // 1 = rippling auto-joined the poster; nobody chose this membership
 	Implicit            int       `json:"implicit"` // 1 = the member has not knowingly joined; replaces Rippled
-	// How the row was created (memberships.added_origin). The default tag keeps an insert
-	// that leaves it unset on the column default: an empty string is not a value the ENUM
-	// accepts, so sending one would refuse the join.
+	// How the row was created (memberships.added_origin). The default tag makes an insert that
+	// leaves it unset write unknown. An empty string is not one of the ENUM's values, and
+	// production runs without strict mode, so MySQL would store it as an empty string.
 	AddedOrigin      string  `json:"added_origin" gorm:"column:added_origin;default:unknown"`
 	OurPostingStatus *string `json:"ourpostingstatus,omitempty" gorm:"column:ourPostingStatus"`
 }
