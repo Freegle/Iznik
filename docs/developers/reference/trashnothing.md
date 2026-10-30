@@ -342,6 +342,14 @@ A moderator can still approve or delete it first. A banned
 poster gets no row. The trace tag is `TN-SYNC-TRACE [MEMBERSHIP]`, which the parity comparison
 ignores.
 
+The membership is written after the post, so a failure there keeps the post and leaves the
+poster with no membership. The write is retried on a deadlock, and a failure goes to Sentry.
+`tn:reconcile-memberships` (`TnMembershipReconcileService`, hourly while the API path is on)
+then writes it for any TN API post from the last seven days whose poster has no membership of
+the group, unless they are banned or have left it since; each repair is reported to Sentry
+too. A post that fails to ingest at all is reported, and `tn:verify-email-coverage` fetches it
+again from the email archive.
+
 Posts that arrived unaddressed before ingestion made memberships have the flag and no
 membership. `memberships:backfill-tn` (`TnMembershipBackfillService`; dry run unless `--send`,
 safe to run again) reads only their own rows (`rippled_in = 0`, `mod_messaging_allowed = 0`,

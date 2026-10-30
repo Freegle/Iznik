@@ -303,9 +303,10 @@ class PostSyncer
                 $this->ingestionService->getLastRoutingContext(),
             );
         } catch (\Throwable $e) {
-            Log::error('TN sync: post ingestion failed', [
+            // Reported, not just logged: the sync moves past this post, and only
+            // tn:verify-email-coverage, hours later, fetches it again.
+            GroupPostIngestionService::reportFailure('TN sync: post ingestion failed', $e, [
                 'post_id' => $postId,
-                'error'   => $e->getMessage(),
             ]);
             // The one place this path deliberately does NOT mirror the email
             // path: IncomingMailController's own catch emits no Loki entry, so a
