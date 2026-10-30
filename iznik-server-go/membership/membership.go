@@ -1355,7 +1355,9 @@ func getVisibleRatings(db *gorm.DB, groupIDs []uint64) []Rating {
 type PutMembershipsRequest struct {
 	Userid  uint64 `json:"userid"`
 	Groupid uint64 `json:"groupid"`
-	Manual  *bool  `json:"manual"`
+	// Manual is how a client from before origin says why: true a Join button, false the reply
+	// flow. Ignored when origin is given.
+	Manual *bool `json:"manual"`
 	// Why the member is joining (memberships.added_origin): manual, posted, replied or signup.
 	// Ignored when a moderator adds someone else, which is always moderator.
 	Origin string `json:"origin"`
@@ -1425,7 +1427,19 @@ func PutMemberships(c *fiber.Ctx) error {
 		}
 	}
 
-	return addMemberToGroup(c, db, userid, req.Groupid, myid, req.Manual, joinOrigin(userid, myid, req.Origin, req.Manual))
+	return addMemberToGroup(c, db, userid, req.Groupid, myid, joinManual(userid, myid, req.Origin, req.Manual), joinOrigin(userid, myid, req.Origin, req.Manual))
+}
+
+// joinManual decides the Joined log's Manual or Auto text for a join through PUT /memberships.
+// When the member's own request gives an origin, the text follows it, so the log and
+// added_origin cannot disagree: manual is a Join button, anything else joined automatically.
+// The manual flag is read only from a client from before origin, or for a moderator's add.
+func joinManual(userid, byuser uint64, origin string, manual *bool) *bool {
+	if userid != byuser || origin == "" {
+		return manual
+	}
+	isManual := origin == addedorigin.Manual
+	return &isManual
 }
 
 // joinOrigin decides memberships.added_origin for a join through PUT /memberships. A moderator

@@ -114,7 +114,32 @@ func TestJoinRecordsTheOriginTheClientSends(t *testing.T) {
 
 	assert.Equal(t, "posted", addedOriginOf(t, "memberships", member, group))
 	assert.Equal(t, "posted", addedOriginOf(t, "memberships_history", member, group))
+	assert.Equal(t, "Auto", joinLogText(t, member, group), "the log text follows origin too")
 	assert.Empty(t, *reports)
+}
+
+// The Joined log's text comes from origin when the client sends one, so the log and
+// added_origin cannot disagree: manual is a Join button, anything else joined automatically.
+func TestJoinLogTextFollowsTheOrigin(t *testing.T) {
+	prefix := uniquePrefix("memorigin_logtext")
+	group := CreateTestGroup(t, prefix)
+
+	for origin, want := range map[string]string{"manual": "Manual", "replied": "Auto", "posted": "Auto", "signup": "Auto"} {
+		member := CreateTestUser(t, prefix+"_"+origin, "User")
+		_, token := CreateTestSession(t, member)
+
+		assert.Equal(t, 200, joinGroup(t, token, map[string]interface{}{"groupid": group, "origin": origin, "manual": origin != "manual"}))
+		assert.Equal(t, want, joinLogText(t, member, group), origin)
+	}
+}
+
+// joinLogText reads the text of the member's Group/Joined log on group.
+func joinLogText(t *testing.T, userid, groupid uint64) string {
+	t.Helper()
+	var text string
+	database.DBConn.Raw("SELECT COALESCE(text, '') FROM logs WHERE type = 'Group' AND subtype = 'Joined' AND user = ? AND groupid = ? ORDER BY id DESC LIMIT 1",
+		userid, groupid).Scan(&text)
+	return text
 }
 
 // A client from before origin existed sends only the manual flag: true from a Join button, false
