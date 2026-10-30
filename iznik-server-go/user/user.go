@@ -3339,8 +3339,8 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 			// implicit, rippled and added_origin are read from both rows before the added date
 			// below changes, and merged by MergedMembershipFlags.
 			var flags []MembershipFlags
-			tx.Raw("SELECT implicit, rippled, added_origin, added FROM memberships WHERE groupid = ? AND userid IN (?, ?)",
-				m1.Groupid, id2, id1).Scan(&flags)
+			tx.Table("memberships").Select("implicit, rippled, added_origin, added").
+				Where("groupid = ? AND userid IN (?, ?)", m1.Groupid, id2, id1).Scan(&flags)
 			if len(flags) == 2 {
 				merged := MergedMembershipFlags(flags[0], flags[1])
 				tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).
