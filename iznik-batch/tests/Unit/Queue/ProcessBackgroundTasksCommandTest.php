@@ -182,6 +182,36 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertNull($task->failed_at);
     }
 
+    public function test_email_admin_test_without_volunteer_credits_lists_no_volunteers(): void
+    {
+        Mail::fake();
+
+        $mod = $this->createTestUser(['fullname' => 'Jane Smith', 'lastaccess' => now()]);
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_admin_test',
+            'data' => json_encode([
+                'user_id' => $mod->id,
+                'email' => 'tester@example.com',
+                'groupid' => $group->id,
+                'subject' => 'A message from a partner',
+                'text' => 'Hello',
+                'volunteercredits' => false,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, fn (AdminMail $mail) => $mail->hasTo('tester@example.com')
+            && $mail->volunteers === []
+            && $mail->groupName === ($group->namefull ?: $group->nameshort));
+    }
+
     public function test_email_admin_test_requires_an_address(): void
     {
         Mail::fake();
