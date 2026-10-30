@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\Group;
+use App\Models\Membership;
 use App\Services\BirthdayService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -54,7 +56,7 @@ class BirthdayServiceTest extends TestCase
 
         $group = $this->createTestGroup();
         DB::table('groups')->where('id', $group->id)->update([
-            'type' => 'Freegle',
+            'type' => Group::TYPE_FREEGLE,
             'publish' => 1,
             'onmap' => 1,
             'founded' => now()->subYear()->format('Y-m-d H:i:s'),
@@ -65,12 +67,12 @@ class BirthdayServiceTest extends TestCase
 
         DB::table('memberships')->insert([
             'userid' => $genuine->id, 'groupid' => $group->id,
-            'role' => 'Member', 'collection' => 'Approved', 'added' => now(),
+            'role' => Membership::ROLE_MEMBER, 'collection' => Membership::COLLECTION_APPROVED, 'added' => now(),
         ]);
         DB::table('memberships')->insert([
             'userid' => $placed->id, 'groupid' => $group->id,
-            'role' => 'Member', 'collection' => 'Approved', 'rippled' => 0, 'implicit' => 1,
-            'added_origin' => 'tn_unaddressed', 'added' => now(),
+            'role' => Membership::ROLE_MEMBER, 'collection' => Membership::COLLECTION_APPROVED, 'rippled' => 0, 'implicit' => 1,
+            'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now(),
         ]);
 
         $count = $service->sendBirthdayEmails(null, [$group->id], dryRun: true);

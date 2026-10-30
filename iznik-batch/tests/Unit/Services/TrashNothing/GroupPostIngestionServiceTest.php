@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services\TrashNothing;
 
 use App\Models\Group;
+use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
@@ -1332,9 +1333,9 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertNotNull($m, 'the poster is now a member of the group the post was placed on');
         $this->assertSame(1, (int) $m->implicit);
         $this->assertSame(0, (int) $m->rippled, 'it is not a ripple membership');
-        $this->assertSame('tn_unaddressed', $m->added_origin);
-        $this->assertSame('Member', $m->role);
-        $this->assertSame('Approved', $m->collection);
+        $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $m->added_origin);
+        $this->assertSame(Membership::ROLE_MEMBER, $m->role);
+        $this->assertSame(Membership::COLLECTION_APPROVED, $m->collection);
         $this->assertSame('DEFAULT', $m->ourPostingStatus);
         // Nothing tells a TN poster they are on the group, so it never starts mailing them.
         $this->assertSame(0, (int) $m->emailfrequency, 'mail is off, not copied as for a ripple join');
@@ -1345,7 +1346,7 @@ class GroupPostIngestionServiceTest extends TestCase
         // sends no welcome), and a join log ModTools shows, made by nobody.
         $history = $this->historyOf($user, $group);
         $this->assertCount(1, $history);
-        $this->assertSame('tn_unaddressed', $history[0]->added_origin);
+        $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $history[0]->added_origin);
         $this->assertSame(1, (int) $history[0]->processingrequired);
         $this->assertSame(0, (int) $history[0]->rippled);
 
@@ -1370,17 +1371,17 @@ class GroupPostIngestionServiceTest extends TestCase
         $m = $this->membershipOf($user, $group);
         $this->assertNotNull($m, 'every TN post has a membership behind it');
         $this->assertSame(0, (int) $m->implicit);
-        $this->assertSame('partner', $m->added_origin, 'consent through TN, as TN\'s own partner add');
-        $this->assertSame('Approved', $m->collection);
+        $this->assertSame(Membership::ADDED_ORIGIN_PARTNER, $m->added_origin, 'consent through TN, as TN\'s own partner add');
+        $this->assertSame(Membership::COLLECTION_APPROVED, $m->collection);
         $this->assertSame('DEFAULT', $m->ourPostingStatus, 'a blank status would hold their posts');
 
         $history = $this->historyOf($user, $group);
         $this->assertCount(1, $history);
-        $this->assertSame('partner', $history[0]->added_origin);
+        $this->assertSame(Membership::ADDED_ORIGIN_PARTNER, $history[0]->added_origin);
 
         $logs = $this->joinLogsOf($user, $group);
         $this->assertCount(1, $logs);
-        $this->assertSame('via partner', $logs[0]->text);
+        $this->assertSame(GroupPostIngestionService::JOIN_LOG_CHOSEN, $logs[0]->text);
         $this->assertSame($user->id, (int) $logs[0]->byuser, 'their own join, as the partner add logs it');
     }
 
@@ -1418,7 +1419,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, [
-            'ourPostingStatus' => 'DEFAULT', 'emailfrequency' => 4, 'added_origin' => 'manual',
+            'ourPostingStatus' => 'DEFAULT', 'emailfrequency' => 4, 'added_origin' => Membership::ADDED_ORIGIN_MANUAL,
         ]);
 
         $this->ingestFor($user, $group, false);
@@ -1426,7 +1427,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $m = $this->membershipOf($user, $group);
         $this->assertSame(0, (int) $m->implicit);
         $this->assertSame(4, (int) $m->emailfrequency, 'the existing row is left alone');
-        $this->assertSame('manual', $m->added_origin, 'it keeps the origin of how it was made');
+        $this->assertSame(Membership::ADDED_ORIGIN_MANUAL, $m->added_origin, 'it keeps the origin of how it was made');
         $this->assertCount(0, $this->historyOf($user, $group), 'nobody joined, so no history row');
         $this->assertCount(0, $this->joinLogsOf($user, $group));
     }

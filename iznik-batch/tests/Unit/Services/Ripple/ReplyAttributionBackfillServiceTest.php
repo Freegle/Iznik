@@ -246,7 +246,7 @@ class ReplyAttributionBackfillServiceTest extends TestCase
         DB::table('messages_groups')->insert([
             'msgid' => $message->id,
             'groupid' => $groupB->id,
-            'collection' => 'Approved',
+            'collection' => Membership::COLLECTION_APPROVED,
             'arrival' => now()->subDays(10),
             'rippled_in' => 0,
         ]);

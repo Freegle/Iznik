@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Commands\User;
 
+use App\Models\Membership;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -18,7 +19,7 @@ class AddMembershipCommandTest extends TestCase
 
         $this->assertSame(0, $exit, Artisan::output());
         $this->assertDatabaseHas('memberships', [
-            'userid' => $user->id, 'groupid' => $group->id, 'collection' => 'Approved', 'added_origin' => 'moderator',
+            'userid' => $user->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'added_origin' => Membership::ADDED_ORIGIN_MODERATOR,
         ]);
         $this->assertSame(
             'joined',

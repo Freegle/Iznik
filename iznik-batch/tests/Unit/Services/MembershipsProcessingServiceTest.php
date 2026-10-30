@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Mail\Welcome\GroupWelcomeMail;
 use App\Models\Membership;
 use App\Services\MembershipsProcessingService;
+use App\Services\MembershipOriginBackfillService;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -172,7 +173,7 @@ class MembershipsProcessingServiceTest extends TestCase
         DB::table('memberships_history')->insert([
             'userid' => $user->id,
             'groupid' => $group->id,
-            'collection' => 'Approved',
+            'collection' => Membership::COLLECTION_APPROVED,
             'processingrequired' => 1,
             'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
         ]);
@@ -195,7 +196,7 @@ class MembershipsProcessingServiceTest extends TestCase
         DB::table('memberships_history')->insert([
             'userid' => $user->id,
             'groupid' => $group->id,
-            'collection' => 'Approved',
+            'collection' => Membership::COLLECTION_APPROVED,
             'processingrequired' => 1,
             'added_origin' => Membership::ADDED_ORIGIN_PARTNER,
         ]);
@@ -392,13 +393,13 @@ class MembershipsProcessingServiceTest extends TestCase
         DB::table('memberships')->insertOrIgnore([
             'userid' => $user->id,
             'groupid' => $group->id,
-            'collection' => 'Approved',
+            'collection' => Membership::COLLECTION_APPROVED,
         ]);
 
         for ($i = 0; $i < 35; $i++) {
             DB::table('logs')->insert([
                 'type' => 'Group', 'subtype' => 'Joined', 'user' => $user->id,
-                'groupid' => 910000 + $i, 'text' => 'Manual', 'timestamp' => now()->subDays(30),
+                'groupid' => 910000 + $i, 'text' => MembershipOriginBackfillService::JOIN_TEXT_MANUAL, 'timestamp' => now()->subDays(30),
             ]);
         }
         for ($i = 0; $i < 40; $i++) {
@@ -412,7 +413,7 @@ class MembershipsProcessingServiceTest extends TestCase
         DB::table('memberships_history')->insert([
             'userid' => $user->id,
             'groupid' => $group->id,
-            'collection' => 'Approved',
+            'collection' => Membership::COLLECTION_APPROVED,
             'processingrequired' => 1,
             'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
         ]);
