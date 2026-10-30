@@ -10,7 +10,7 @@
 #
 # Fires on: gh pr create / gh pr edit / gh api ... /pulls/N (PATCH or POST).
 #
-# Six independent checks:
+# Independent checks:
 #   1. BODY IS READABLE   -> no override. See the note below; this one is the
 #      reason the other three are worth anything.
 #   2. PLAIN ENGLISH      -> override with PR_PLAIN_ENGLISH_OK=1
@@ -31,6 +31,10 @@
 #      reviewer should be able to look at it without building the branch. The
 #      body must carry an image. PRs #1936 and #1937 (a checkbox moved inside a
 #      card; less space above the first ChitChat post) went out with none.
+#   8. LAYOUT            -> no override. The body has a "## Summary" and a
+#      "## Tests" section, as the PR template lays out.
+#   9. STRANDED WORK     -> no override. Work left for later is linked to an
+#      issue on the same line; otherwise it is done in this PR.
 #
 # ON FAILING CLOSED (check 1). This hook used to read the body only from a
 # literal --body-file path. Two extremely common shapes defeated that and it
@@ -545,6 +549,73 @@ elif [ -n "$VISUAL_FILES" ] && [ "$HAS_IMAGE" = "0" ] && [ "$NO_SHOT_OVERRIDE" =
     echo "PR_NO_SCREENSHOT_OK=1. That is a claim about the change, so be sure of it."
   } >&2
   FAILED=1
+fi
+
+# --- Check 8: the house layout ---------------------------------------------
+# A description has a "## Summary" of what the branch does and a "## Tests"
+# section with the evidence (what was run, what failed before the change, what
+# passes now), as .github/pull_request_template.md lays out. A reviewer looks
+# for both, and a description without the evidence asks them to take it on trust.
+# Only a body is checked: a title-only edit has none. CHECK_PR_STRUCTURE=0 is the
+# test harness's way to run older single-purpose fixtures; it is not an override.
+STRUCT_SRC="$BODY_TEXT"
+[ -z "$STRUCT_SRC" ] && [ "$BODY_RESOLVED" = "1" ] && STRUCT_SRC="$TEXT"
+if [ "${CHECK_PR_STRUCTURE:-1}" = "1" ] && [ -n "$STRUCT_SRC" ]; then
+  MISSING=""
+  echo "$STRUCT_SRC" | grep -qiE '^##[[:space:]]+Summary[[:space:]]*$' || MISSING="$MISSING
+  ## Summary   - what the branch does, in plain English, as it stands now"
+  echo "$STRUCT_SRC" | grep -qiE '^##[[:space:]]+(Tests|Testing|Test plan|Test evidence)[[:space:]]*$' || MISSING="$MISSING
+  ## Tests     - what was run, which new tests failed before the change, what passes now"
+  if [ -n "$MISSING" ]; then
+    {
+      echo "STOP. This PR description does not follow the house layout. Missing:"
+      echo "$MISSING"
+      echo ""
+      echo "See .github/pull_request_template.md and a recent merged PR for the shape."
+    } >&2
+    FAILED=1
+  fi
+fi
+
+# --- Check 9: future work is done now or is an issue ------------------------
+# "Follow-up PR to ...", a "## TODO" list, "future work" - work that lives only
+# in a PR description is never done: nobody reads a merged PR's description
+# again. Either do it in this PR, or open an issue and link it on the same line.
+# A line that names an issue (#123 or .../issues/123) passes, and so does every
+# bullet under a future-work heading that does.
+if [ -n "$STRUCT_SRC" ]; then
+  STRANDED=$(echo "$STRUCT_SRC" | awk '
+    /^[[:space:]]*```/ { infence = !infence; next }
+    infence { next }
+    /^#+[[:space:]]/ {
+      h = tolower($0)
+      under = (h ~ /(future|follow[- ]?(up|on)|todo|to do|later|next steps|out of scope|not in this pr|not done here|remaining)/)
+      if (under) { heading = $0 }
+      next
+    }
+    {
+      line = $0
+      # A phrase quoted in backticks is being talked about, not promised.
+      gsub(/`[^`]*`/, "", line)
+      l = tolower(line)
+      hasissue = (line ~ /#[0-9]+/ || line ~ /\/issues\/[0-9]+/)
+      futurish = (l ~ /(follow[- ]?(up|on) (pr|work|change)|future (pr|work|change)|later pr|next pr|separate pr|another pr|in a follow|todo:?)/)
+      bullet = (line ~ /^[[:space:]]*([-*+]|[0-9]+\.)[[:space:]]/)
+      if (!hasissue && (futurish || (under && bullet))) print "  " line
+    }')
+  if [ -n "$STRANDED" ]; then
+    {
+      echo "STOP. This description leaves work for later without an issue:"
+      echo "$STRANDED" | head -12
+      echo ""
+      echo "Work mentioned only in a PR description does not get done. For each item:"
+      echo "do it in this PR, or open an issue (gh issue create) and link it on the"
+      echo "same line, e.g. '- Drop memberships.rippled once readers have moved: #1234'."
+      echo "Work that can only happen later (after a deploy, after a backfill) is fine"
+      echo "as an issue."
+    } >&2
+    FAILED=1
+  fi
 fi
 
 [ "$FAILED" = "1" ] && exit 2
