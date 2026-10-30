@@ -57,6 +57,9 @@ class AdminMail extends MjmlMailable implements DescribesMemberContent
 
     public ?string $groupShort;
 
+    /** False for an ADMIN sent on behalf of someone else: no volunteer names, and it comes from Freegle. */
+    public bool $volunteerCredits;
+
     public array $volunteers;
 
     /**
@@ -89,6 +92,7 @@ class AdminMail extends MjmlMailable implements DescribesMemberContent
         $this->template = $admin['template'] ?? null;
         $this->isMarketing = !empty($this->template);
         $this->groupShort = $groupShort;
+        $this->volunteerCredits = (bool) ($admin['volunteercredits'] ?? TRUE);
         $this->volunteers = $volunteers;
         $this->userSite = config('freegle.sites.user');
 
@@ -239,7 +243,8 @@ class AdminMail extends MjmlMailable implements DescribesMemberContent
     public function envelope(): Envelope
     {
         // V1 sends from {groupshort}-auto@groups.ilovefreegle.org with display name "{GroupName} Volunteers".
-        if ($this->groupShort) {
+        // An ADMIN that does not name the volunteers was not written by them, so it comes from Freegle.
+        if ($this->groupShort && $this->volunteerCredits) {
             $fromAddress = "{$this->groupShort}-auto@groups.ilovefreegle.org";
             $fromName = ($this->groupName ?? $this->groupShort) . ' Volunteers';
         } else {

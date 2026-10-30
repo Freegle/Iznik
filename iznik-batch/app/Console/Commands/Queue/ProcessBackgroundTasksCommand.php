@@ -462,7 +462,7 @@ class ProcessBackgroundTasksCommand extends Command
             $groupName = $group->namefull ?: $group->nameshort;
             $modsEmail = $group->nameshort ? "{$group->nameshort}-volunteers@groups.ilovefreegle.org" : null;
             $groupShort = $group->nameshort;
-            $volunteers = SendAdminCommand::getLocalVolunteers($group->id);
+            $volunteers = ($data['volunteercredits'] ?? TRUE) ? SendAdminCommand::getLocalVolunteers($group->id) : [];
         }
 
         $admin = SendAdminCommand::personalise([
@@ -474,6 +474,7 @@ class ProcessBackgroundTasksCommand extends Command
             'ctalink' => $data['ctalink'] ?? null,
             'essential' => $data['essential'] ?? true,
             'template' => ($data['template'] ?? '') ?: null,
+            'volunteercredits' => $data['volunteercredits'] ?? TRUE,
         ], $groupName, $modsEmail, $user);
 
         $mail = new AdminMail($user, $admin, $groupName, $modsEmail, $groupShort, $volunteers, $data['email']);

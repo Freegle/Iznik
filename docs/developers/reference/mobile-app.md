@@ -4,6 +4,7 @@ owner: Freegle dev team
 covers:
   - iznik-nuxt3/capacitor.config.ts
   - iznik-nuxt3/fastlane/Fastfile
+  - iznik-nuxt3/fastlane/apple_agreements.rb
   - iznik-nuxt3/README-APP.md
   - iznik-nuxt3/android/app/build.gradle
   - iznik-nuxt3/tests/e2e/app
@@ -70,8 +71,23 @@ flowchart LR
 
 Lanes you will meet: `beta`, `promote_beta`, `auto_promote` (waits 24 hours before
 promoting), `auto_submit` and `auto_release` for iOS review, `expire_test_versions` (the
-99.x.x test builds), and `check_release_divergence`, which alerts when the live Play and
-App Store versions have been different for over a week.
+99.x.x test builds), `check_release_divergence`, which alerts when the live Play and
+App Store versions have been different for over a week, and `check_apple_agreements`.
+
+### Apple agreements
+
+Apple refuses every App Store request while an agreement, such as an updated Program
+License Agreement, waits for the Account Holder. Only the Account Holder can accept it,
+signed in at <https://developer.apple.com/account>; there is no API. On 29 and 30 October
+2026 this stopped every production deploy at the iOS build until it was accepted.
+
+- `check_apple_agreements` makes the two kinds of request the deploys make, and fails if
+  either is refused. The CircleCI schedule `daily-apple-agreement-check` runs it each day
+  on `master` (pipeline parameter `run_apple_agreement_check`), so the failure notice
+  arrives before a deploy is blocked.
+- Any iOS lane that is refused for an agreement says what to do at the end of its log. The
+  wordings Apple uses are in `fastlane/apple_agreements.rb`, with tests beside it in
+  `fastlane/test/`.
 
 Two traps that have bitten before:
 

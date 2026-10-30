@@ -2022,6 +2022,7 @@ return [
             'confirm_reply' => \App\Services\Ux\Sources\ConfirmReplySource::class,
             'interested_reply' => \App\Services\Ux\Sources\InterestedReplySource::class,
             'familiar_reply' => \App\Services\Ux\Sources\FamiliarReplySource::class,
+            'hosting_ad_click' => \App\Services\Ux\Sources\HostingAdClickSource::class,
         ],
     ],
 
