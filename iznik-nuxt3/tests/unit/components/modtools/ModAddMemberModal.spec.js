@@ -196,5 +196,25 @@ describe('ModAddMemberModal', () => {
       })
       expect(wrapper.vm.addedId).toBe(456)
     })
+
+    it('shows the TrashNothing notice when the server refuses a TrashNothing member', async () => {
+      mockUserStore.add.mockResolvedValue(456)
+      mockMemberStore.add.mockRejectedValue({
+        response: {
+          status: 403,
+          data: { message: 'Failed - TrashNothing member' },
+        },
+      })
+
+      const wrapper = mountComponent({ groupid: 789 })
+      wrapper.vm.email = 'someone@user.trashnothing.com'
+      await wrapper.vm.$nextTick()
+
+      await wrapper.vm.add()
+      await flushPromises()
+
+      expect(wrapper.vm.addedId).toBe(null)
+      expect(wrapper.text()).toContain('TrashNothing member')
+    })
   })
 })

@@ -1254,7 +1254,7 @@ describe('handleJoinGroup (via submit with logged-in user)', () => {
     result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
     await doLoggedInSubmit(result)
 
-    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(10, 200, false)
+    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(10, 200, 'replied')
     expect(result.state.value).toBe(ReplyState.COMPLETED)
   })
 
@@ -1414,7 +1414,7 @@ describe('handleJoinGroup: closest-group selection for multi-group posts', () =>
     expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(
       10,
       GROUP_CLOSEST.id,
-      false
+      'replied'
     )
     expect(result.state.value).toBe(ReplyState.COMPLETED)
   })
@@ -1440,7 +1440,7 @@ describe('handleJoinGroup: closest-group selection for multi-group posts', () =>
     expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(
       10,
       GROUP_MEDIUM.id,
-      false
+      'replied'
     )
     expect(result.state.value).toBe(ReplyState.COMPLETED)
     // No location known, so there's nothing to look distances up against.
@@ -1464,7 +1464,7 @@ describe('handleJoinGroup: closest-group selection for multi-group posts', () =>
     expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(
       10,
       GROUP_CLOSEST.id,
-      false
+      'replied'
     )
     expect(result.state.value).toBe(ReplyState.COMPLETED)
     // A single-group post has a forced answer - no need to look up distance.
@@ -1975,7 +1975,11 @@ describe('closestGroupToReplier edge cases', () => {
     ],
   ])('%s', async (_n, me, groups, fetchImpl, expectedId, expectLookup) => {
     await joinWith({ me, groups, fetchImpl })
-    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(10, expectedId, false)
+    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(
+      10,
+      expectedId,
+      'replied'
+    )
     expect(mockGroupFetch).toHaveBeenCalledTimes(
       expectLookup ? groups.length : 0
     )
@@ -1991,7 +1995,7 @@ describe('closestGroupToReplier edge cases', () => {
     result.replyText.value = 'Hello'
     await result.submit()
     await flushPromises()
-    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(10, 100, false)
+    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(10, 100, 'replied')
   })
 })
 

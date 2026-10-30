@@ -4370,6 +4370,54 @@ func TestPutMembershipsModAddsMember(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 }
 
+// A moderator cannot add a TrashNothing member: they join through TrashNothing, and an add on an
+// existing TrashNothing placement would turn it into a membership they never chose. Recognised
+// by the tnuserid stamp or a preferred @user.trashnothing.com address.
+func TestPutMembershipsModCannotAddTNMember(t *testing.T) {
+	db := database.DBConn
+
+	for _, mark := range []string{"tnuserid", "tnemail"} {
+		for _, placed := range []bool{false, true} {
+			prefix := uniquePrefix(fmt.Sprintf("mem_modadd_tn_%s_%v", mark, placed))
+			modID := CreateTestUser(t, prefix+"_mod", "User")
+			tnID := CreateTestUser(t, prefix+"_tn", "User")
+			_, modToken := CreateTestSession(t, modID)
+			groupID := CreateTestGroup(t, prefix)
+			CreateTestMembership(t, modID, groupID, "Owner")
+
+			if mark == "tnuserid" {
+				db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", tnID+900000000, tnID)
+			} else {
+				db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", tnID)
+				db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)",
+					tnID, prefix+"-g1@user.trashnothing.com")
+			}
+			if placed {
+				CreateTestMembership(t, tnID, groupID, "Member")
+				db.Exec("UPDATE memberships SET implicit = 1, added_origin = 'tn_unaddressed' WHERE userid = ? AND groupid = ?",
+					tnID, groupID)
+			}
+
+			bodyBytes, _ := json.Marshal(map[string]interface{}{"userid": tnID, "groupid": groupID})
+			req := httptest.NewRequest("PUT", fmt.Sprintf("/api/memberships?jwt=%s", modToken), bytes.NewBuffer(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := getApp().Test(req, -1)
+			assert.NoError(t, err)
+			assert.Equal(t, 403, resp.StatusCode, "%s placed=%v", mark, placed)
+
+			var rows, implicit int64
+			db.Raw("SELECT COUNT(*), COALESCE(MAX(implicit), 0) FROM memberships WHERE userid = ? AND groupid = ?",
+				tnID, groupID).Row().Scan(&rows, &implicit)
+			if placed {
+				assert.Equal(t, int64(1), rows, "%s placement kept", mark)
+				assert.Equal(t, int64(1), implicit, "%s placement still implicit", mark)
+			} else {
+				assert.Equal(t, int64(0), rows, "%s not added", mark)
+			}
+		}
+	}
+}
+
 // TestPatchMembershipsConfigidInSettings verifies that when the frontend sends
 // configid nested inside the settings object (as ModSettingsGroup.vue does),
 // the memberships.configid column is updated and configid is stripped from

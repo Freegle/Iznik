@@ -1127,6 +1127,7 @@ func TestPutUserWithGroup(t *testing.T) {
 		"firstname": "Group",
 		"lastname":  "Joiner",
 		"groupid":   groupID,
+		"origin":    "signup",
 	}
 	s, _ := json.Marshal(payload)
 	request := httptest.NewRequest("PUT", "/api/user", bytes.NewBuffer(s))
@@ -1145,6 +1146,7 @@ func TestPutUserWithGroup(t *testing.T) {
 	var memberCount int64
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID).Scan(&memberCount)
 	assert.Equal(t, int64(1), memberCount)
+	assert.Equal(t, "signup", addedOriginOf(t, "memberships", userID, groupID))
 }
 
 // The persistent token returned by signup is used by the client as the
@@ -4796,6 +4798,45 @@ func TestActivedistanceExcludesRippleOnlyMemberships(t *testing.T) {
 	// window with no `rippled` filter, so a member who never chose to spread out still gets flagged.
 	assert.Nil(t, u.Activedistance,
 		"activedistance must not be computed from memberships created purely by rippling auto-join")
+}
+
+// TrashNothing post ingestion places a poster on the group their post's location falls in,
+// whether or not they chose it (memberships_history.added_origin = 'tn_unaddressed', rippled = 0).
+// Those follow where their posts are, not anything the member did, so they are left out of the
+// spread exactly as ripple joins are.
+func TestActivedistanceExcludesTrashNothingPlacements(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("activedisttn")
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	group1 := CreateTestGroup(t, prefix+"_g1")
+	group2 := CreateTestGroup(t, prefix+"_g2")
+	CreateTestMembership(t, modID, group1, "Moderator")
+	CreateTestMembership(t, targetID, group1, "Member")
+
+	db.Exec("UPDATE `groups` SET lat = 55.9533, lng = -3.1883, publish = 1, onmap = 1 WHERE id = ?", group1)
+	db.Exec("UPDATE `groups` SET lat = 51.5074, lng = -0.1278, publish = 1, onmap = 1 WHERE id = ?", group2)
+
+	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, added, rippled, added_origin) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 'tn_unaddressed')", targetID, group1)
+	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, added, rippled, added_origin) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 'tn_unaddressed')", targetID, group2)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM memberships_history WHERE userid = ?", targetID)
+	})
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&u))
+	assert.Equal(t, targetID, u.ID)
+	assert.Nil(t, u.Activedistance,
+		"activedistance must not be computed from groups TrashNothing placed the member's posts on")
 }
 
 // Regression guard for the fix above: a member who genuinely joined distant groups themselves

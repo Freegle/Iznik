@@ -39,6 +39,7 @@ const {
   mockRouterPush,
   mockBandit,
   mockLoginTele,
+  mockRoute,
 } = vi.hoisted(() => {
   return {
     mockLogin: vi.fn().mockResolvedValue(),
@@ -59,6 +60,7 @@ const {
     mockRouterPush: vi.fn(),
     mockBandit: { chosen: vi.fn(), shown: vi.fn() },
     mockLoginTele: { submit: vi.fn(), forgot: vi.fn(), used: vi.fn() },
+    mockRoute: { path: '/', params: {} },
   }
 })
 
@@ -180,11 +182,11 @@ vi.mock('#imports', async () => {
   return {
     ...actual,
     useRoute: () => ({
-      params: {},
+      params: mockRoute.params,
       query: {},
-      path: '/',
+      path: mockRoute.path,
       name: 'index',
-      fullPath: '/',
+      fullPath: mockRoute.path,
       matched: [],
       redirectedFrom: undefined,
       meta: {},
@@ -220,11 +222,11 @@ vi.mock('#app', async () => {
 })
 
 globalThis.__testUseRoute = () => ({
-  params: {},
+  params: mockRoute.params,
   query: {},
-  path: '/',
+  path: mockRoute.path,
   name: 'index',
-  fullPath: '/',
+  fullPath: mockRoute.path,
   matched: [],
   redirectedFrom: undefined,
   meta: {},
@@ -283,6 +285,8 @@ describe('LoginModal', () => {
     mockRouterPush.mockReset()
     mockFlowArm.mockReset()
     mockFlowArm.mockReturnValue(null)
+    mockRoute.path = '/'
+    mockRoute.params = {}
 
     // Mock window objects for social login
     global.window.FB = {
@@ -795,6 +799,34 @@ describe('LoginModal', () => {
       })
       // They gave a name, so nobody asks for one later.
       expect(mockMarkAskNameLater).not.toHaveBeenCalled()
+    })
+
+    it('signs up on the community when on its join page', async () => {
+      // Every logged-out Join lands on /explore/join/<id>, so the account is created on that
+      // community with added_origin signup (PutUser's groupid and origin).
+      mockRoute.path = '/explore/join/123'
+      mockRoute.params = { id: '123' }
+      const wrapper = createWrapper()
+      await flushPromises()
+
+      await wrapper.find('input[name="fullname"]').setValue('Test User')
+      await wrapper.find('.email-validator').setValue('test@example.com')
+      await wrapper.find('.password-entry').setValue('password123')
+      await flushPromises()
+
+      await wrapper.find('form').trigger('submit', {
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      })
+      await flushPromises()
+
+      expect(mockSignUp).toHaveBeenCalledWith({
+        displayname: 'Test User',
+        email: 'test@example.com',
+        password: 'password123',
+        groupid: 123,
+        origin: 'signup',
+      })
     })
 
     it('shows error when sign up fails', async () => {

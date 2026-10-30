@@ -24,6 +24,7 @@ use App\Database\Expressions\StUnion;
 use App\Database\Expressions\StX;
 use App\Database\Expressions\StY;
 use App\Database\Expressions\Value;
+use App\Models\Membership;
 use App\Services\ContentCheckService;
 use App\Services\MessageSpatialService;
 use App\Support\GreatCircle;
@@ -2282,7 +2283,7 @@ class ExpandService
      */
     /**
      * Add the poster as a member of every group their post has rippled into (role Member,
-     * collection Approved), marked rippled=1. Email settings come from the poster's home/origin
+     * collection Approved), marked rippled=1 and implicit=1. Email settings come from the poster's home/origin
      * group membership, except immediate (-1) is downgraded to daily (24) so an unrequested
      * membership never starts a flood of immediate mail (a no-email 0 or daily 24 home setting is
      * preserved). A poster who has left every group on the post falls back to any membership they
@@ -2393,6 +2394,10 @@ class ExpandService
 
             $addedThisCall = 0;
             foreach ($targets as $t) {
+                $origin = Membership::addedOriginForInsert(
+                    Membership::ADDED_ORIGIN_RIPPLED, 'ExpandService::addPosterMembershipToRippledGroups',
+                    (int) $posterId, (int) $t->groupid,
+                );
                 $added = DB::table('memberships')->insertOrIgnore([[
                     'userid' => $posterId,
                     'groupid' => $t->groupid,
@@ -2402,6 +2407,8 @@ class ExpandService
                     'eventsallowed' => $eventsallowed,
                     'volunteeringallowed' => $volunteeringallowed,
                     'rippled' => 1,
+                    'implicit' => 1,
+                    'added_origin' => $origin,
                     'added' => now(),
                 ]]);
                 if ($added > 0) {
@@ -2419,6 +2426,7 @@ class ExpandService
                         'collection' => 'Approved',
                         'processingrequired' => 1,
                         'rippled' => 1,
+                        'added_origin' => $origin,
                     ]);
                     // Log the join with a rippling-specific reason. V1 addMembership logs a
                     // Group/Joined entry whose text is 'Manual' (clicked join) or 'Auto'; we use

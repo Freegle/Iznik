@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Mail\Welcome\GroupWelcomeMail;
 use App\Models\Group;
+use App\Models\Membership;
 use App\Models\User;
+use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -60,11 +62,16 @@ class MembershipsProcessingService
             $group = Group::find($groupId);
             $hasWelcome = $group && $group->onhere && !empty($group->welcomemail);
             $user = $hasWelcome ? User::find($userId) : null;
-            // Rippled auto-joins (Rippling Out) get NO per-group welcome - a single bundled intro
-            // email (RippleIntroMail) is sent by the ripple expander instead. Suppressing here
-            // (not skipping the history row) keeps abuse detection running for the join.
-            $isRippled = (bool) ($entry->rippled ?? false);
-            $wouldSendWelcome = $hasWelcome && $user && $user->email_preferred && !$isRippled;
+            // A membership the member did not choose gets NO per-group welcome. Rippled auto-joins
+            // (Rippling Out) get a single bundled intro email (RippleIntroMail) from the ripple
+            // expander instead; a TrashNothing poster placed on a group they did not pick
+            // (tn_unaddressed) is sent nothing, since they never chose it.
+            // Suppressing here (not skipping the history row) keeps abuse detection running.
+            // rippled is read as well as added_origin until ripple history rows have their origin
+            // backfilled (Phase 4a).
+            $isImplicitJoin = (bool) ($entry->rippled ?? false)
+                || ($entry->added_origin ?? null) === Membership::ADDED_ORIGIN_TN_UNADDRESSED;
+            $wouldSendWelcome = $hasWelcome && $user && $user->email_preferred && !$isImplicitJoin;
 
             $flaggedCount = $this->countFlaggedComments($userId, $groupId);
 
@@ -96,7 +103,7 @@ class MembershipsProcessingService
             }
 
             $this->applyFlaggedComments($userId, $groupId);
-            $this->checkSeenOnManyGroups($userId, $groupId, $isRippled);
+            $this->checkSeenOnManyGroups($userId, $groupId, $isImplicitJoin);
         }
 
         if (!$dryRun) {
@@ -117,7 +124,7 @@ class MembershipsProcessingService
      * memberships_processing, but only the flagged-comments check was ported.
      * The result was that the members-flagged-for-review queue dried up to ~0.
      */
-    private function checkSeenOnManyGroups(int $userId, int $groupJustAdded, bool $justAddedIsRippled = false): void
+    private function checkSeenOnManyGroups(int $userId, int $groupJustAdded, bool $justAddedIsImplicit = false): void
     {
         // Distinct groups joined/applied to in a year before a member is "suspect" and flagged.
         // Relaxed 16 -> 35 for rippling-out: a post's reach now follows the poster's declared
@@ -151,11 +158,14 @@ class MembershipsProcessingService
             ->where('logs.user', $userId)
             ->where('logs.type', 'Group')
             ->where('logs.subtype', 'Joined')
-            // Exclude rippling auto-joins (text='Rippled'): they follow the poster's post reaching
-            // a group, not a deliberate join spree, so they must not count toward "seen on many
-            // groups" - otherwise a single far-reaching post would flag the poster everywhere.
+            // Exclude rippling auto-joins (text='Rippled') and TrashNothing posts placed on a group
+            // the poster did not choose: they follow where the post is, not a deliberate join
+            // spree, so they must not count toward "seen on many groups" - otherwise a single
+            // far-reaching post would flag the poster everywhere.
             ->where(function ($q) {
-                $q->whereNull('logs.text')->orWhere('logs.text', '!=', 'Rippled');
+                $q->whereNull('logs.text')->orWhereNotIn('logs.text', [
+                    'Rippled', GroupPostIngestionService::JOIN_LOG_UNADDRESSED,
+                ]);
             })
             ->where('logs.groupid', '!=', $groupJustAdded)
             ->whereNull('spam_users.userid')
@@ -164,8 +174,8 @@ class MembershipsProcessingService
             ->count('logs.groupid');
 
         // The just-added group is excluded from the query above and counted here - but NOT when it
-        // is itself a rippling auto-join, so a rippled membership never pushes the total over.
-        if (!$justAddedIsRippled) {
+        // is itself a join the member did not choose, so such a membership never pushes the total over.
+        if (!$justAddedIsImplicit) {
             $count++;
         }
 

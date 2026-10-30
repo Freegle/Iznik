@@ -204,7 +204,8 @@ class ReengageContentService
     /**
      * Find a real local volunteer to sign the tip off:
      *   - only communities the member GENUINELY joined (collection Approved,
-     *     rippled = 0 - never a Rippling-Out auto-join);
+     *     rippled = 0 and implicit = 0 - never a Rippling-Out auto-join, nor a
+     *     TrashNothing poster placed on a group they did not pick);
      *   - the member's HOME group first: the community whose catchment actually
      *     contains where they live (see below);
      *   - the volunteer must be an active (accessed within a year), publicly
@@ -239,6 +240,7 @@ class ReengageContentService
             ->where('memberships.userid', $user->id)
             ->where('memberships.collection', Membership::COLLECTION_APPROVED)
             ->where('memberships.rippled', 0)
+            ->where('memberships.implicit', 0)
             ->where('groups.type', Group::TYPE_FREEGLE)
             ->select('groups.id', 'groups.nameshort', 'groups.namefull');
 

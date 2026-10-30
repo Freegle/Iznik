@@ -65,6 +65,12 @@ class EngageEmailService
                 continue;
             }
 
+            // Not for TrashNothing members, whatever memberships they hold, and even when
+            // forced: TrashNothing keeps in touch with its own members.
+            if ($user->isTrashNothingAccount()) {
+                continue;
+            }
+
             // Provider is refusing our mail. Skipped without writing to the
             // `engage` table, so the RESEND_INTERVAL_DAYS clock does not
             // start: when they recover, this member is a fresh candidate

@@ -11,8 +11,11 @@ use App\Models\User;
 use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
+use App\Services\Ripple\ReachMemberQueueService;
+use App\Services\Ripple\RippleEngagementService;
 use App\Services\SpatialQueryService;
 use App\Services\TusService;
+use App\Support\TransactionPolicy;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -63,6 +66,18 @@ class GroupPostIngestionService
     public const REASON_CROSSPOST = 'crosspost';
 
     public const REASON_MESSAGE_CREATE_FAILED = 'message-create-failed';
+
+    /** Why a post's consent made the poster's implicit membership ordinary, for the log. */
+    public const REASON_CONSENTED = 'consented through TrashNothing';
+
+    /**
+     * Group/Joined log text for a membership ingestion creates. A group the poster chose has the
+     * text TN's partner add writes; one they did not has its own, which ModTools shows and the
+     * "seen on many groups" check leaves out, as it does 'Rippled'.
+     */
+    public const JOIN_LOG_CHOSEN = 'via partner';
+
+    public const JOIN_LOG_UNADDRESSED = 'TrashNothing unaddressed';
 
     /**
      * messages.sourceheader for a post ingested from the TN API.
@@ -430,7 +445,193 @@ class GroupPostIngestionService
             // exists. It remains available above on the batch_event stream.
         }
 
+        $this->recordMembership($user, $group, $modMessagingAllowed);
+
         return $routingResult;
+    }
+
+    /**
+     * Makes sure the poster is a member of $group, and that the membership says whether they
+     * chose it.
+     *
+     * The group here is the one whose area holds the post, which is often not one the poster
+     * chose; freegle_group_ids says which they did ($modMessagingAllowed). A poster with no
+     * membership is given one either way, so every TN post has a membership behind it:
+     *
+     * - not chosen: implicit, added_origin tn_unaddressed, mail off, as rippling gives a poster a
+     *   membership on every group their post reaches;
+     * - chosen: ordinary, added_origin partner, as TN's own partner add (PUT
+     *   /memberships?partner=) gives one.
+     *
+     * An existing membership keeps its added_origin, which records how that row was made. A post
+     * that comes with consent clears an implicit membership. Consent only goes one way: a later
+     * post without it never makes a membership implicit again.
+     *
+     * Runs last, so a failure here never leaves the post half-routed. A failure is reported to
+     * Sentry rather than thrown, and the post stays: with no membership behind it the post is
+     * never auto-approved, and its poster cannot be contacted by that group's moderators.
+     */
+    private function recordMembership(User $user, Group $group, bool $modMessagingAllowed): void
+    {
+        try {
+            $existing = DB::table('memberships')
+                ->where('userid', $user->id)
+                ->where('groupid', $group->id)
+                ->first(['rippled', 'implicit']);
+
+            if ($existing !== null) {
+                if ($modMessagingAllowed && ($existing->rippled || $existing->implicit)) {
+                    Log::info('TN-SYNC-TRACE [MEMBERSHIP] op=clear-implicit user_id=' . $user->id . ' group_id=' . $group->id);
+                    if (!$this->dryRun) {
+                        app(RippleEngagementService::class)->clear($user->id, $group->id, self::REASON_CONSENTED);
+                    }
+                }
+
+                return;
+            }
+
+            // A banned poster's row was deleted by the ban; never put it back.
+            if (DB::table('users_banned')->where('userid', $user->id)->where('groupid', $group->id)->exists()) {
+                return;
+            }
+
+            $this->insertMembership($user, $group, $modMessagingAllowed);
+        } catch (\Throwable $e) {
+            self::reportFailure('TN post ingestion: failed to record the poster\'s membership', $e, [
+                'user_id'  => $user->id,
+                'group_id' => $group->id,
+            ]);
+        }
+    }
+
+    /**
+     * Logs a membership write that failed and sends it to Sentry, so it is seen and not just
+     * left in the daily log. The caller carries on: a post is never lost for this.
+     */
+    public static function reportFailure(string $message, \Throwable $e, array $context = []): void
+    {
+        Log::error($message, $context + ['error' => $e->getMessage()]);
+
+        if (app()->bound('sentry')) {
+            app('sentry')->captureException($e);
+        }
+    }
+
+    /**
+     * The new membership, its memberships_history row and its Group/Joined log, together.
+     *
+     * The history row is what memberships:process works from: abuse checks, flagged comments,
+     * and for a chosen group the per-group welcome, as TN's partner add gets. For a group the
+     * poster did not choose, MembershipsProcessingService sends no welcome and leaves the join
+     * out of the "seen on many groups" check, as it does for a ripple join, by its added_origin.
+     */
+    private function insertMembership(User $user, Group $group, bool $chosen): void
+    {
+        Log::info('TN-SYNC-TRACE [MEMBERSHIP] op=insert-' . ($chosen ? 'ordinary' : 'implicit')
+            . ' user_id=' . $user->id . ' group_id=' . $group->id . ' added_origin='
+            . ($chosen ? Membership::ADDED_ORIGIN_PARTNER : Membership::ADDED_ORIGIN_TN_UNADDRESSED));
+        if ($this->dryRun) {
+            return;
+        }
+
+        self::writeMembership($user->id, $group->id, $chosen, now());
+    }
+
+    /**
+     * Writes a TN poster's new membership, its history row and its join log, all dated $at, and
+     * queues the member for reach mail as every other join path does. Ingestion passes now();
+     * memberships:backfill-tn passes the arrival of the post the membership stands behind, so
+     * both go through here and behave alike. Returns false, writing nothing, when a membership
+     * already exists.
+     *
+     * The join log's text is the reason for the join: JOIN_LOG_CHOSEN for a group the poster
+     * chose, JOIN_LOG_UNADDRESSED for one the post was placed on.
+     */
+    public static function writeMembership(int $userId, int $groupId, bool $chosen, \DateTimeInterface $at): bool
+    {
+        $origin = Membership::addedOriginForInsert(
+            $chosen ? Membership::ADDED_ORIGIN_PARTNER : Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+            'GroupPostIngestionService::writeMembership', $userId, $groupId,
+        );
+
+        $row = [
+            'userid' => $userId,
+            'groupid' => $groupId,
+            'role' => Membership::ROLE_MEMBER,
+            'collection' => Membership::COLLECTION_APPROVED,
+            // Not left blank, as a ripple join leaves it: ContentCheckService::isUserModerated
+            // reads a blank status as moderated, and would hold every post this poster makes
+            // here. DEFAULT is what ingestion and the content check already give a TN poster
+            // with no membership.
+            'ourPostingStatus' => Membership::POSTING_STATUS_DEFAULT,
+            'added_origin' => $origin,
+            'added' => $at,
+        ];
+
+        if (!$chosen) {
+            // Mail off. Unlike a ripple join, nothing tells the poster they are on this group
+            // (there is no intro mail), so it must not start mailing them. Digests already skip
+            // TN users, but the events and volunteering roundups read these settings and nothing
+            // else. A chosen group keeps the column defaults, as the partner add does.
+            $row += [
+                'emailfrequency' => Membership::EMAIL_FREQUENCY_NEVER,
+                'eventsallowed' => 0,
+                'volunteeringallowed' => 0,
+                'implicit' => 1,
+            ];
+        }
+
+        // All three or none: a membership with no history row skips the abuse checks, and one
+        // with no join log is invisible in ModTools and to the origin backfill.
+        // atomic() retries a deadlock or lock wait on a Galera cluster, which a bare transaction
+        // does not. A retry starts again from the insertOrIgnore, with the earlier attempt rolled
+        // back, so it can never leave a half-written membership; if another writer has made the
+        // row by then, the retry returns false.
+        $written = TransactionPolicy::atomic(function () use ($row, $userId, $groupId, $origin, $chosen, $at) {
+            if (DB::table('memberships')->insertOrIgnore($row) === 0) {
+                // Someone else made the row in the meantime; theirs stands.
+                return false;
+            }
+
+            DB::table('memberships_history')->insert([
+                'userid' => $userId,
+                'groupid' => $groupId,
+                'collection' => Membership::COLLECTION_APPROVED,
+                'processingrequired' => 1,
+                'added_origin' => $origin,
+                'added' => $at,
+            ]);
+
+            DB::table('logs')->insert([
+                'timestamp' => $at,
+                'type' => 'Group',
+                'subtype' => 'Joined',
+                'user' => $userId,
+                // A chosen group is the member's own join, as the partner add logs it. A group
+                // they did not choose was the system's doing, as a ripple join is.
+                'byuser' => $chosen ? $userId : null,
+                'groupid' => $groupId,
+                'text' => $chosen ? self::JOIN_LOG_CHOSEN : self::JOIN_LOG_UNADDRESSED,
+            ]);
+
+            return true;
+        }, 'TN membership, history row and join log must exist together');
+
+        if ($written) {
+            // Digests skip TN users and reach mail only considers members with mail on, so it
+            // sends nothing today; queued anyway so TN joins match every other join path.
+            // The membership is already committed, so a failure here is reported and not thrown.
+            try {
+                ReachMemberQueueService::enqueue($userId, ReachMemberQueueService::REASON_JOINED);
+            } catch (\Throwable $e) {
+                self::reportFailure('TN membership written but reach mail queueing failed', $e, [
+                    'user_id'  => $userId,
+                    'group_id' => $groupId,
+                ]);
+            }
+        }
+
+        return $written;
     }
 
     private function createMessage(

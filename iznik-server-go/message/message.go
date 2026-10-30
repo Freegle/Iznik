@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
@@ -2911,8 +2912,9 @@ func modOfAnyMessageGroup(db *gorm.DB, myid uint64, groups []MessageGroup) bool 
 
 // PosterMessagingGroups is HomeGroups plus every community the post rippled into where its
 // poster is an ordinary member: one they joined, moved into, or dealt with, rather than
-// one rippling joined them to (memberships.rippled = 0). Those communities may write to
-// the poster about the post, as the home community may (Discourse 10239).
+// one rippling joined them to (memberships.rippled = 0) or TrashNothing placed them on
+// (implicit = 0). Those communities may write to the poster about the post, as the home
+// community may (Discourse 10239).
 //
 // Use it only for whether the poster is written to. Whether an action is a receiving
 // community turning the post away - which stops it rippling back - still goes by
@@ -2928,7 +2930,7 @@ func PosterMessagingGroups(db *gorm.DB, msgid uint64) map[uint64]bool {
 		Select("mg.groupid").
 		Joins("JOIN messages m ON m.id = mg.msgid").
 		Joins("JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "+
-			"AND mem.rippled = 0 AND mem.collection = ?", utils.COLLECTION_APPROVED).
+			"AND mem.rippled = 0 AND mem.implicit = 0 AND mem.collection = ?", utils.COLLECTION_APPROVED).
 		Where("mg.msgid = ? AND mg.rippled_in = 1", msgid).
 		Scan(&ordinary)
 
@@ -4076,10 +4078,11 @@ func JoinAndPostAs(c *fiber.Ctx, caller uint64, author uint64, req PostMessageRe
 
 	// Join group if not already a member.
 	result := db.Table("memberships").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
-		"userid":     myid,
-		"groupid":    groupid,
-		"role":       utils.ROLE_MEMBER,
-		"collection": utils.COLLECTION_APPROVED,
+		"userid":       myid,
+		"groupid":      groupid,
+		"role":         utils.ROLE_MEMBER,
+		"collection":   utils.COLLECTION_APPROVED,
+		"added_origin": addedorigin.ForInsert("message.JoinAndPostAs", myid, groupid, addedorigin.Posted),
 	})
 
 	// Log the join event when a new membership row was created.

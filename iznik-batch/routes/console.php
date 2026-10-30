@@ -814,6 +814,16 @@ Schedule::command('tn:verify-email-coverage')
     ->appendOutputTo(cronLog('tn:verify-email-coverage'))
     ->runInBackground();
 
+// Give a recent TN API post's poster the membership ingestion failed to write. Each repair is
+// reported to Sentry, since it means a write failed. Only TN API posts are read, so it is gated
+// on the same switch as the API path.
+Schedule::command('tn:reconcile-memberships')
+    ->hourly()
+    ->withoutOverlapping(60)
+    ->when(fn () => (bool) config('freegle.trashnothing.ingest_posts_via_api', false))
+    ->appendOutputTo(cronLog('tn:reconcile-memberships'))
+    ->runInBackground();
+
 // =============================================================================
 // UNIFIED DIGEST (daily "What's New" + immediate notifications)
 // =============================================================================

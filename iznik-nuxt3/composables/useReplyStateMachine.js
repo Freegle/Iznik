@@ -1139,7 +1139,7 @@ export function useReplyStateMachine(messageId, options = {}) {
 
       if (!isMember && groupToJoin) {
         log('Joining group:', groupToJoin)
-        await authStore.joinGroup(myid.value, groupToJoin, false)
+        await authStore.joinGroup(myid.value, groupToJoin, 'replied')
         log('Group joined successfully')
       }
 

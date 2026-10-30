@@ -472,6 +472,37 @@ func TestCreateChatMessage_RippleJoinedMemberIsNotHome(t *testing.T) {
 	}
 }
 
+// TrashNothing places a poster on the group whose area holds their post, whether or not they
+// chose it (implicit = 1, rippled = 0, added_origin tn_unaddressed). That is no more an
+// established local membership than a ripple join is, and rippling did not make it either, so a
+// reply from such a member is neither home nor ripple_join.
+func TestCreateChatMessage_TnPlacedMemberIsNotHome(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("tnplaced")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: TN placement attribution test item", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
+
+	placedID := CreateTestUser(t, prefix+"_placed", "User")
+	CreateTestMembership(t, placedID, groupID, "Member")
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 0, "+
+		"implicit = 1, added_origin = 'tn_unaddressed' WHERE userid = ? AND groupid = ?", placedID, groupID)
+
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, placedID, posterID, msgID, ""))
+	row, ok := fetchAttribution(t, msgID, placedID)
+	assert.True(t, ok, "attribution row recorded for the placed member's reply")
+	assert.Equal(t, 0, row.WasHomeMember, "a TrashNothing placement is not established local membership")
+	if assert.NotNil(t, row.WasRippleJoin) {
+		assert.Equal(t, 0, *row.WasRippleJoin, "rippling did not make this membership")
+	}
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "unknown", *row.Attribution)
+	}
+}
+
 // TestCreateChatMessage_ReachUndecidedReplyPassesThrough is the outage case: the
 // post has a reach row, but the routing server cannot say whether the replier is
 // inside it.

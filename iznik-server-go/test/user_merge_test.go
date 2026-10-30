@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/stretchr/testify/assert"
 )
@@ -137,6 +138,131 @@ func TestMergeMembershipConflictTakesOlderDate(t *testing.T) {
 	var added string
 	db.Raw("SELECT DATE_FORMAT(added, '%Y-%m-%d') FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).Scan(&added)
 	assert.Equal(t, "2013-01-01", added, "merged user should have the older joined date")
+}
+
+// added_origin says how the row was created, so it follows the row whose added date is kept.
+// The merged membership is implicit only if both were: either account having chosen the group
+// is enough.
+func TestMergeMembershipConflictTakesTheOlderOriginAndTheLowerImplicit(t *testing.T) {
+	prefix := uniquePrefix("merge_origin")
+	db := database.DBConn
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	id1 := CreateTestUser(t, prefix+"_u1", "User")
+	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
+		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'manual', 0, 0)", id1, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
+		"VALUES (?, ?, 'Member', NOW(), 'rippled', 1, 1)", id2, groupID)
+
+	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
+
+	var origin string
+	var implicit, rippled int
+	db.Raw("SELECT added_origin, implicit, rippled FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).
+		Row().Scan(&origin, &implicit, &rippled)
+	assert.Equal(t, "manual", origin, "the older row's origin goes with its added date")
+	assert.Equal(t, 0, implicit)
+	assert.Equal(t, 0, rippled)
+	assert.Equal(t, int64(1), becameOrdinaryLogs(t, id2, groupID, "rippled"), "the ripple join became ordinary")
+}
+
+// A TrashNothing placement merged with a newer membership the member chose keeps its origin, as
+// the older row, and becomes ordinary. The log says so, as every other clear does, and says it
+// was a TrashNothing placement.
+func TestMergeMembershipConflictLogsAPlacementMadeOrdinary(t *testing.T) {
+	prefix := uniquePrefix("merge_origin_log")
+	db := database.DBConn
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	id1 := CreateTestUser(t, prefix+"_u1", "User")
+	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
+		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'tn_unaddressed', 1, 0)", id1, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
+		"VALUES (?, ?, 'Member', NOW(), 'manual', 0, 0)", id2, groupID)
+
+	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
+
+	var origin string
+	var implicit int
+	db.Raw("SELECT added_origin, implicit FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).
+		Row().Scan(&origin, &implicit)
+	assert.Equal(t, "tn_unaddressed", origin)
+	assert.Equal(t, 0, implicit)
+	assert.Equal(t, int64(1), becameOrdinaryLogs(t, id2, groupID, "tn_unaddressed"),
+		"the log says it was a TrashNothing placement")
+}
+
+// becameOrdinaryLogs counts the merge's "became ordinary" rows for a placement made with origin.
+func becameOrdinaryLogs(t *testing.T, userid, groupid uint64, origin string) int64 {
+	t.Helper()
+	var n int64
+	database.DBConn.Table("logs").
+		Where("user = ? AND groupid = ? AND type = 'Group' AND subtype = 'Joined' AND text = ?",
+			userid, groupid, rippling.BecameOrdinaryText(origin, rippling.ReasonMerged)).
+		Count(&n)
+	return n
+}
+
+// An older ripple join and a newer TN placement merge to a TN placement: a state ingestion
+// writes. The older row's origin with the lower rippled would be a ripple-origin row with
+// rippled = 0, which no writer makes and which ripple clean-up would delete.
+func TestMergeMembershipConflictOfARippleJoinAndATNPlacementIsATNPlacement(t *testing.T) {
+	prefix := uniquePrefix("merge_origin_keep")
+	db := database.DBConn
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	id1 := CreateTestUser(t, prefix+"_u1", "User")
+	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
+		"VALUES (?, ?, 'Member', NOW(), 'tn_unaddressed', 1, 0)", id1, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
+		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'rippled', 1, 1)", id2, groupID)
+
+	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
+
+	var origin string
+	var implicit, rippled int
+	db.Raw("SELECT added_origin, implicit, rippled FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).
+		Row().Scan(&origin, &implicit, &rippled)
+	assert.Equal(t, "tn_unaddressed", origin)
+	assert.Equal(t, 1, implicit, "both were implicit, so the merged row still is")
+	assert.Equal(t, 0, rippled)
+}
+
+// Two ripple joins stay a ripple join.
+func TestMergeMembershipConflictOfTwoRippleJoinsIsARippleJoin(t *testing.T) {
+	prefix := uniquePrefix("merge_origin_ripples")
+	db := database.DBConn
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	id1 := CreateTestUser(t, prefix+"_u1", "User")
+	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
+		"VALUES (?, ?, 'Member', NOW(), 'rippled', 1, 1)", id1, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
+		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'rippled', 1, 1)", id2, groupID)
+
+	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
+
+	var origin string
+	var implicit, rippled int
+	db.Raw("SELECT added_origin, implicit, rippled FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).
+		Row().Scan(&origin, &implicit, &rippled)
+	assert.Equal(t, "rippled", origin)
+	assert.Equal(t, 1, implicit)
+	assert.Equal(t, 1, rippled)
+	assert.Equal(t, int64(0), becameOrdinaryLogs(t, id2, groupID, "rippled"), "nothing became ordinary")
+	assert.Equal(t, int64(0), becameOrdinaryLogs(t, id2, groupID, "tn_unaddressed"))
 }
 
 // ── Section B: messages, history, chat rooms, sessions, logins ───────────────

@@ -277,7 +277,8 @@ class CommunityNewsEmailService
      *
      * "Deliverable" is User::scopeReceivingOurMails — the same gate the Stories
      * newsletter and the events/volunteering roundups use, and the SQL form of
-     * V1's User::sendOurMails().
+     * V1's User::sendOurMails(). TrashNothing members are left out
+     * (User::scopeNotTrashNothing).
      */
     public function eligibleMembers(array $groupIds)
     {
@@ -285,11 +286,11 @@ class CommunityNewsEmailService
 
         $memberPoint = "ST_SRID(POINT(" .
             "CASE WHEN JSON_EXTRACT(users.settings, '$.mylocation.lat') IS NOT NULL" .
-            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL AND users.tnuserid IS NULL" .
+            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL" .
             "     THEN CAST(JSON_EXTRACT(users.settings, '$.mylocation.lng') AS DECIMAL(10,6))" .
             "     ELSE lastloc.lng END, " .
             "CASE WHEN JSON_EXTRACT(users.settings, '$.mylocation.lat') IS NOT NULL" .
-            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL AND users.tnuserid IS NULL" .
+            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL" .
             "     THEN CAST(JSON_EXTRACT(users.settings, '$.mylocation.lat') AS DECIMAL(10,6))" .
             "     ELSE lastloc.lat END" .
             "), {$srid})";
@@ -316,6 +317,8 @@ class CommunityNewsEmailService
             // replaces also let through members who have never logged in at
             // all, are on holiday, or have asked for no mail whatsoever.
             ->receivingOurMails()
+            // Not for TrashNothing members, whatever memberships they hold.
+            ->notTrashNothing()
             // The ModTools "Send newsletters to members?" group toggle
             // (settings.newsletter). For Community News this defaults OFF —
             // stricter than StoriesNewsletterService's default-on — so a group

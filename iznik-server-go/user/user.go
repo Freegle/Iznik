@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/emailhygiene"
@@ -157,8 +158,13 @@ type MembershipTable struct {
 	Eventsallowed       int       `json:"eventsallowed"`
 	Volunteeringallowed int       `json:"volunteeringallowed"`
 	Role                string    `json:"role"`
-	Rippled             int       `json:"rippled"` // 1 = rippling auto-joined the poster; nobody chose this membership
-	OurPostingStatus    *string   `json:"ourpostingstatus,omitempty" gorm:"column:ourPostingStatus"`
+	Rippled             int       `json:"rippled"`  // 1 = rippling auto-joined the poster; nobody chose this membership
+	Implicit            int       `json:"implicit"` // 1 = the member has not knowingly joined; replaces Rippled
+	// How the row was created (memberships.added_origin). The default tag makes an insert that
+	// leaves it unset write unknown. An empty string is not one of the ENUM's values, and
+	// production runs without strict mode, so MySQL would store it as an empty string.
+	AddedOrigin      string  `json:"added_origin" gorm:"column:added_origin;default:unknown"`
+	OurPostingStatus *string `json:"ourpostingstatus,omitempty" gorm:"column:ourPostingStatus"`
 }
 
 // This is the membership we return to the client.  It includes some information not stored in the DB.
@@ -195,6 +201,8 @@ type MembershipHistory struct {
 	Added              time.Time `json:"added"`
 	Collection         string    `json:"collection"`
 	Processingrequired bool      `json:"processingrequired"`
+	// How the membership was created; the same value as memberships.added_origin.
+	AddedOrigin string `json:"added_origin" gorm:"column:added_origin;default:unknown"`
 }
 
 type Search struct {
@@ -444,7 +452,7 @@ func GetMemberships(id uint64) []Membership {
 
 	var memberships []Membership
 	db.Table("memberships").
-		Select("memberships.id, added, role, groupid, emailfrequency, eventsallowed, volunteeringallowed, ourPostingStatus, memberships.rippled, microvolunteering AS microvolunteeringallowed, nameshort, namefull, groups.type, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
+		Select("memberships.id, added, role, groupid, emailfrequency, eventsallowed, volunteeringallowed, ourPostingStatus, memberships.rippled, memberships.implicit, memberships.added_origin, microvolunteering AS microvolunteeringallowed, nameshort, namefull, groups.type, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
 		Joins("INNER JOIN `groups` ON groups.id = memberships.groupid").
 		Where("userid = ? AND collection = ?", id, "Approved").
 		Scan(&memberships)
@@ -1529,11 +1537,13 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 			// mh.rippled = 0: exclude memberships created by rippling auto-join (Rippling Out,
 			// ExpandService::addPosterMembershipToRippledGroups). Those follow a post's reach, not
 			// a choice by the member, so counting them flags/bans innocent freeglers for spread they
-			// never caused (Discourse 10064/1).
+			// never caused (Discourse 10064/1). The same goes for a TrashNothing post placed on a
+			// group the poster did not pick (added_origin tn_unaddressed).
 			db.Table("memberships_history mh").
 				Select("DISTINCT g.lat, g.lng").
 				Joins("INNER JOIN `groups` g ON mh.groupid = g.id").
-				Where("mh.userid = ? AND mh.rippled = 0 AND DATEDIFF(NOW(), mh.added) <= 31 AND g.publish = 1 AND g.onmap = 1 AND g.lat != 0 AND g.lng != 0", id).
+				Where("mh.userid = ? AND mh.rippled = 0 AND mh.added_origin <> ? AND DATEDIFF(NOW(), mh.added) <= 31 AND g.publish = 1 AND g.onmap = 1 AND g.lat != 0 AND g.lng != 0",
+					id, addedorigin.TNUnaddressed).
 				Scan(&locs)
 			if len(locs) >= 2 {
 				var swlat, swlng, nelat, nelng float64
@@ -1730,7 +1740,9 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 	}
 }
 
-func AddMembership(userid uint64, groupid uint64, role string, collection string, emailfrequency int, eventsallowed int, volunteeringallowed int, reason string) bool {
+// AddMembership joins userid to groupid unless they are banned there. reason is the join log's
+// text and origin the new row's added_origin.
+func AddMembership(userid uint64, groupid uint64, role string, collection string, emailfrequency int, eventsallowed int, volunteeringallowed int, reason string, origin string) bool {
 	db := database.DBConn
 
 	ret := false
@@ -1773,6 +1785,7 @@ func AddMembership(userid uint64, groupid uint64, role string, collection string
 			membership.Emailfrequency = emailfrequency
 			membership.Eventsallowed = eventsallowed
 			membership.Volunteeringallowed = volunteeringallowed
+			membership.AddedOrigin = addedorigin.ForInsert("user.AddMembership", userid, groupid, origin)
 
 			// Two concurrent joins (double-click, retry) both pass the
 			// membership check above and race the insert; the loser used to
@@ -1798,6 +1811,7 @@ func AddMembership(userid uint64, groupid uint64, role string, collection string
 					history.Groupid = groupid
 					history.Added = membership.Added
 					history.Collection = collection
+					history.AddedOrigin = membership.AddedOrigin
 
 					// Set processingrequired for background processing (welcome email, spam check, etc).
 					history.Processingrequired = true
@@ -2154,6 +2168,9 @@ type UserPutRequest struct {
 	Lastname    string `json:"lastname"`
 	Displayname string `json:"displayname"`
 	GroupID     uint64 `json:"groupid"`
+	// Why the new account joins GroupID (memberships.added_origin): normally signup. The same
+	// values as PUT /memberships' origin; without one the membership is unknown and reported.
+	Origin string `json:"origin"`
 }
 
 // UserPatchRequest is the body for PATCH /user (profile update).
@@ -2195,6 +2212,10 @@ func PutUser(c *fiber.Ctx) error {
 
 	if req.Email == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "email is required")
+	}
+
+	if req.Origin != "" && !addedorigin.FromClient(req.Origin) {
+		return fiber.NewError(fiber.StatusBadRequest, addedorigin.ClientValuesMessage())
 	}
 
 	email := strings.TrimSpace(req.Email)
@@ -2317,11 +2338,13 @@ func PutUser(c *fiber.Ctx) error {
 
 	// If groupid provided, add membership.
 	if req.GroupID > 0 {
+		origin := addedorigin.ForInsert("user.PutUser", newUserID, req.GroupID, req.Origin)
 		result := db.Table("memberships").Create(map[string]interface{}{
-			"userid":     newUserID,
-			"groupid":    req.GroupID,
-			"role":       utils.ROLE_MEMBER,
-			"collection": utils.COLLECTION_APPROVED,
+			"userid":       newUserID,
+			"groupid":      req.GroupID,
+			"role":         utils.ROLE_MEMBER,
+			"collection":   utils.COLLECTION_APPROVED,
+			"added_origin": origin,
 		})
 		if result.RowsAffected > 0 {
 			reachqueue.QueueMember(db, newUserID, reachqueue.ReasonJoined)
@@ -2346,6 +2369,7 @@ func PutUser(c *fiber.Ctx) error {
 				"collection":         utils.COLLECTION_APPROVED,
 				"processingrequired": gorm.Expr("1"),
 				"added":              gorm.Expr("NOW()"),
+				"added_origin":       origin,
 			})
 		}
 	}
@@ -3312,6 +3336,35 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 				newRole = m1.Role
 			}
 			tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).Update("role", newRole)
+			// implicit, rippled and added_origin are read from both rows before the added date
+			// below changes, and merged by MergedMembershipFlags.
+			var flags []MembershipFlags
+			tx.Table("memberships").Select("implicit, rippled, added_origin, added").
+				Where("groupid = ? AND userid IN (?, ?)", m1.Groupid, id2, id1).Scan(&flags)
+			if len(flags) == 2 {
+				merged := MergedMembershipFlags(flags[0], flags[1])
+				tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).
+					Updates(map[string]interface{}{"implicit": merged.Implicit, "rippled": merged.Rippled, "added_origin": merged.AddedOrigin})
+				// One account was placed on the group (by rippling or TrashNothing) and the other
+				// chose it, so the merged membership has become ordinary: log it as every other
+				// clear does, or the kept added_origin reads as a placement with its flag lost.
+				placed0 := flags[0].Implicit == 1 || flags[0].Rippled == 1
+				if placed0 != (flags[1].Implicit == 1 || flags[1].Rippled == 1) {
+					placedOrigin := flags[1].AddedOrigin
+					if placed0 {
+						placedOrigin = flags[0].AddedOrigin
+					}
+					tx.Table("logs").Create(map[string]interface{}{
+						"timestamp": gorm.Expr("NOW()"),
+						"type":      log2.LOG_TYPE_GROUP,
+						"subtype":   log2.LOG_SUBTYPE_JOINED,
+						"groupid":   m1.Groupid,
+						"user":      id2,
+						"byuser":    byuser,
+						"text":      rippling.BecameOrdinaryText(placedOrigin, rippling.ReasonMerged),
+					})
+				}
+			}
 			// Take older added date (SQL JOIN to avoid Go datetime string formatting).
 			// Genuine multi-table UPDATE...JOIN: Table()-verbatim JOIN text +
 			// explicit clause.Set, same mechanism as merge.go's
@@ -3952,6 +4005,40 @@ func GetUserLogins(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(logins)
+}
+
+// MembershipFlags are the columns that say why a membership exists.
+type MembershipFlags struct {
+	Implicit    int
+	Rippled     int
+	AddedOrigin string
+	Added       time.Time
+}
+
+// MergedMembershipFlags merges two memberships of one group when their accounts merge, into a
+// state the writers themselves make:
+//   - an ordinary membership on either side means the member chose the group: ordinary, with the
+//     older row's origin;
+//   - both implicit, and either a TrashNothing placement: a placement (implicit, not rippled).
+//     A placement is never removed automatically, so it must not become a ripple join that is;
+//   - two ripple joins: the older row's origin and rippled flag, together.
+//
+// Laravel's User::mergedMembershipFlags is the same rule.
+func MergedMembershipFlags(a, b MembershipFlags) MembershipFlags {
+	older := a
+	if b.Added.Before(a.Added) {
+		older = b
+	}
+
+	if a.Implicit == 0 || b.Implicit == 0 {
+		return MembershipFlags{Implicit: 0, Rippled: 0, AddedOrigin: older.AddedOrigin, Added: older.Added}
+	}
+
+	if a.AddedOrigin == addedorigin.TNUnaddressed || b.AddedOrigin == addedorigin.TNUnaddressed {
+		return MembershipFlags{Implicit: 1, Rippled: 0, AddedOrigin: addedorigin.TNUnaddressed, Added: older.Added}
+	}
+
+	return MembershipFlags{Implicit: 1, Rippled: older.Rippled, AddedOrigin: older.AddedOrigin, Added: older.Added}
 }
 
 // TrashNothingSQL is a SQL condition that is true when the users row aliased as alias is a

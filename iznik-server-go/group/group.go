@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
@@ -1018,10 +1019,11 @@ func CreateGroup(c *fiber.Ctx) error {
 
 	// Creator becomes Owner.
 	db.Table("memberships").Create(map[string]interface{}{
-		"userid":     myid,
-		"groupid":    newID,
-		"role":       utils.ROLE_OWNER,
-		"collection": utils.COLLECTION_APPROVED,
+		"userid":       myid,
+		"groupid":      newID,
+		"role":         utils.ROLE_OWNER,
+		"collection":   utils.COLLECTION_APPROVED,
+		"added_origin": addedorigin.ForInsert("group.CreateGroup", myid, newID, addedorigin.Moderator),
 	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})

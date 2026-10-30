@@ -82,6 +82,8 @@ func TestEstablishedOriginMemberExists(t *testing.T) {
 
 	assert.Contains(t, sql, "mem.rippled = 0",
 		"ripple-created auto-joins must never count as pre-existing membership")
+	assert.Contains(t, sql, "mem.implicit = 0",
+		"nor may a TrashNothing placement on a group the member never chose")
 	assert.Contains(t, sql, "og.rippled_in = 0",
 		"only ORIGIN groups count - a rippled-in copy's group is not the member's home")
 	assert.Contains(t, sql, "og.deleted = 0")
