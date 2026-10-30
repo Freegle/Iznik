@@ -467,8 +467,9 @@ type GetMembershipsMember struct {
 	// (Discourse 10102).
 	Rippled bool `json:"rippled" gorm:"column:rippled"`
 	// True while the member has not knowingly joined this community: their post rippled
-	// here, or TrashNothing placed it here. Cleared when they join, move into the area or
-	// deal with the community. Replaces Rippled.
+	// here, or TrashNothing placed it here. Cleared when they join or deal with the
+	// community; moving into the area clears it only for a ripple join, and a TrashNothing
+	// placement only through TrashNothing. Replaces Rippled.
 	Implicit bool `json:"implicit" gorm:"column:implicit"`
 	// How the membership row was created (memberships.added_origin). Never changes after
 	// insert; 'unknown' for rows from before it was recorded.
@@ -1405,13 +1406,15 @@ func PutMemberships(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
 	}
 
-	if req.Origin != "" && !addedorigin.FromClient(req.Origin) {
-		return fiber.NewError(fiber.StatusBadRequest, addedorigin.ClientValuesMessage())
-	}
-
 	userid := req.Userid
 	if userid == 0 {
 		userid = myid
+	}
+
+	// A member says why they are joining. A moderator adding someone else is a moderator add
+	// whatever the request says (joinOrigin), so their origin is ignored rather than checked.
+	if userid == myid && req.Origin != "" && !addedorigin.FromClient(req.Origin) {
+		return fiber.NewError(fiber.StatusBadRequest, addedorigin.ClientValuesMessage())
 	}
 
 	// Non-self joins require moderator permissions on the target group.

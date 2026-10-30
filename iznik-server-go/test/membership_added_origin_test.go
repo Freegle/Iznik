@@ -220,6 +220,13 @@ func TestModeratorAddingSomeoneIsAModeratorAddWhateverTheRequestSays(t *testing.
 
 	assert.Equal(t, "moderator", addedOriginOf(t, "memberships", member, group))
 	assert.Equal(t, "moderator", addedOriginOf(t, "memberships_history", member, group))
+
+	// An origin a member could not send is ignored for a moderator add, not refused.
+	other := CreateTestUser(t, prefix+"_other", "User")
+	assert.Equal(t, 200, joinGroup(t, modToken, map[string]interface{}{
+		"userid": other, "groupid": group, "origin": "moderator",
+	}))
+	assert.Equal(t, "moderator", addedOriginOf(t, "memberships", other, group))
 }
 
 func TestPartnerJoinIsPartner(t *testing.T) {

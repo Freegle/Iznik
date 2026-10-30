@@ -6,8 +6,9 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * memberships.implicit: 1 while the member has not knowingly joined the community - their post
- * rippled there, or TrashNothing placed it there. It changes over time: it clears when they join,
- * move into the area or deal with the community.
+ * rippled there, or TrashNothing placed it there. It changes over time: it clears when they join
+ * or deal with the community. Moving into the area clears it only for a ripple join, and a
+ * TrashNothing placement only through TrashNothing.
  *
  * memberships.rippled does that job today alongside recording how the row was created; implicit
  * takes over the changing half, so that TrashNothing placements can carry it too. Additive:

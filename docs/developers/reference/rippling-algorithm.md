@@ -1508,9 +1508,12 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   `addedorigin.ForInsert` in Go and `Membership::addedOriginForInsert` in the batch. A new row
   that would be `unknown` is still created, and reported to Sentry as an error naming the
   insert, so a new join path that forgot its origin shows up. `PUT /memberships` and `PUT /user`
-  take an `origin` (`manual`, `posted`, `replied` or `signup`; anything else is a 400). A
-  moderator adding someone else is always `moderator`, and a client that sends only the old
-  `manual` flag gets `manual` for true and `replied` for false.
+  take an `origin` (`manual`, `posted`, `replied` or `signup`; anything else is a 400 on a
+  member's own join). A moderator adding someone else is always `moderator`, whatever origin the
+  request carries, and a client that sends only the old `manual` flag gets `manual` for true and
+  `replied` for false. An email sign-up on a community's join page (`/explore/join/<id>`, where
+  every logged-out Join lands) sends that `groupid` with `signup`, so the account is created on
+  the community.
 - A community a post rippled into may write to the poster about it once the poster is an
   ordinary member there (`PosterMessagingGroups`: an Approved membership with `rippled = 0`
   and `implicit = 0`, so neither a ripple join nor a TrashNothing placement counts). Whether an action turns the post away,
