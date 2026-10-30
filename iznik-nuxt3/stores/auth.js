@@ -2,6 +2,10 @@ import { defineStore } from 'pinia'
 import { SocialLogin } from '@capgo/capacitor-social-login'
 import { LoginError, SignUpError } from '~/api/APIErrors'
 import { isBannedFailure } from '~/api/bannedFailure'
+
+// Why a member joins a group, as PUT /memberships accepts it from the member themselves
+// (addedorigin.fromClient in iznik-server-go).
+export const JOIN_ORIGINS = ['manual', 'posted', 'replied', 'signup']
 import { asLockdownError, runLockdownAware } from '~/api/lockdownConflict'
 import {
   abortAllPendingRequests,
@@ -681,9 +685,17 @@ export const useAuthStore = defineStore('auth', {
       await this.fetchUser()
       return this.user
     },
-    // origin says why they are joining: 'manual' (a Join button) or 'replied'. manual is still
-    // sent for an API from before origin, which reads true as manual and false as replied.
+    // origin says why they are joining: one of JOIN_ORIGINS, the values the server accepts
+    // from a member. Anything else is a caller's mistake, refused here rather than stored as a
+    // wrong reason. manual is still sent for an API from before origin, which reads true as
+    // manual and false as replied.
     async joinGroup(userid, groupid, origin) {
+      if (!JOIN_ORIGINS.includes(origin)) {
+        throw new Error(
+          `joinGroup: origin must be one of ${JOIN_ORIGINS.join(', ')}, not ${origin}`
+        )
+      }
+
       try {
         await this.$api.memberships.joinGroup({
           userid,

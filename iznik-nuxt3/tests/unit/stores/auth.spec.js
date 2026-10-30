@@ -1108,6 +1108,16 @@ describe('auth store', () => {
       })
     })
 
+    it.each([undefined, '', 'moderator', 'tn_unaddressed', true, false])(
+      'joinGroup refuses an origin a member cannot give (%s) without calling the API',
+      async (origin) => {
+        await expect(store.joinGroup(9, 20, origin)).rejects.toThrow(
+          /origin/
+        )
+        expect(mockJoinGroup).not.toHaveBeenCalled()
+      }
+    )
+
     it('joinGroup swallows a banned-member 403 and returns the current user silently', async () => {
       store.user = { id: 9 }
       const err = new Error('Failed - banned')
