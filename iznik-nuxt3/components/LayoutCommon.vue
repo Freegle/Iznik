@@ -232,7 +232,7 @@ function monitorTabVisibility() {
     document.addEventListener('visibilitychange', async () => {
       miscStore.visible = !document.hidden
 
-      if (me && !document.hidden) {
+      if (me.value && !document.hidden) {
         try {
           // We have become visible. Refetch our notification count and chat count, which are the two key things which
           // produce red badges people should click on.

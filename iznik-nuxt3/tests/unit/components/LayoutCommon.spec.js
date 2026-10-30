@@ -393,6 +393,7 @@ describe('LayoutCommon', () => {
     })
 
     it('refetches notifications and chats when the tab becomes visible', async () => {
+      mockMe.value = { id: 3 }
       createWrapper()
       await flushPromises()
       setHidden(false)
@@ -404,6 +405,7 @@ describe('LayoutCommon', () => {
 
     it('re-checks login by fetching the user when the chat refetch fails', async () => {
       mockChatStore.fetchChats.mockRejectedValueOnce(new Error('logged out'))
+      mockMe.value = { id: 3 }
       createWrapper()
       await flushPromises()
       setHidden(false)
@@ -421,12 +423,9 @@ describe('LayoutCommon', () => {
       expect(mockNotificationStore.fetchCount).not.toHaveBeenCalled()
     })
 
-    // TODO: latent bug — monitorTabVisibility checks `if (me && !document.hidden)`
-    // where `me` is the ref object itself (always truthy), not `me.value`. So it
-    // refetches notifications/chats on every visibility change even when logged
-    // out. This looks unintended but is left untouched per the coverage-only
-    // scope of this change.
-    it.skip('does not refetch when logged out (currently always refetches - latent bug)', async () => {
+    // The handler checked the me ref itself, which always exists, so a signed-out visitor
+    // refetched notifications and chats on every visibility change.
+    it('does not refetch when logged out', async () => {
       mockMe.value = null
       createWrapper()
       await flushPromises()

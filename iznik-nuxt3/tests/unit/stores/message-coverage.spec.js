@@ -126,13 +126,9 @@ describe('message store - fetch()', () => {
     expect(mockFetch).not.toHaveBeenCalled()
   })
 
-  // TODO: latent bug - processMessageBatch() correctly flags an expired
-  // (addedToCache > 600s old) entry for refetch, but fetchMultiple() re-filters
-  // with `(force || !this.list[id])`, ignoring expiry entirely. Since the stale
-  // entry still exists and the batch wasn't force-requested, the id gets
-  // dropped and the API is never called - the 10-minute cache refresh
-  // described in fetch()'s comment does not actually happen via this path.
-  it.skip('refetches when the cached copy is older than 10 minutes', async () => {
+  // fetchMultiple() re-filters the batch by expiry too, so a stale copy is refetched rather than
+  // dropped because one exists.
+  it('refetches when the cached copy is older than 10 minutes', async () => {
     const store = freshStore()
     const staleTime = Math.round(Date.now() / 1000) - 601
     store.list[56] = { id: 56, addedToCache: staleTime }
