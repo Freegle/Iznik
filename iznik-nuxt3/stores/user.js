@@ -287,6 +287,13 @@ export const useUserStore = defineStore('user', {
       const ret = await api(this.config).user.unrated()
       return Array.isArray(ret) ? ret : []
     },
+    async fetchHostingAd() {
+      const ret = await api(this.config).user.hostingAd()
+      return ret?.show === true
+    },
+    async hostingAdEvent(event) {
+      await api(this.config).user.hostingAdEvent(event)
+    },
     async engaged(engageid) {
       await api(this.config).user.engaged(engageid)
     },

@@ -47,6 +47,7 @@ import (
 	"github.com/freegle/iznik-server-go/emailtracking"
 	"github.com/freegle/iznik-server-go/export"
 	"github.com/freegle/iznik-server-go/group"
+	"github.com/freegle/iznik-server-go/hostingad"
 	"github.com/freegle/iznik-server-go/housekeeper"
 	"github.com/freegle/iznik-server-go/image"
 	"github.com/freegle/iznik-server-go/isochrone"
@@ -1091,6 +1092,25 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 401 {object} fiber.Error "Not logged in"
 		// @Router /user/unrated [get]
 		rg.Get("/user/unrated", user.GetUnrated)
+		// @Summary Whether to show the Krystal hosting ad
+		// @Description Decides once, for the logged-in member, whether the Krystal hosting ad modal is shown: their email domain must host a WordPress site not on Krystal (domain_hosting), and the server experiment krystal-hosting-ad gives the arm. Both arms are recorded as an exposure. Registered before /user/:id? so "hostingad" is not treated as a user id.
+		// @Tags users
+		// @Produce json
+		// @Success 200 {object} hostingad.Response
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		// @Router /user/hostingad [get]
+		rg.Get("/user/hostingad", hostingad.Get)
+		// @Summary Record what the member did with the hosting ad
+		// @Description Writes the time of the member's first click through to Krystal ("click") or first dismissal ("dismiss") on their krystal-hosting-ad exposure row.
+		// @Tags users
+		// @Accept json
+		// @Produce json
+		// @Param body body hostingad.EventRequest true "event: click or dismiss"
+		// @Success 200 {object} hostingad.EventResponse
+		// @Failure 400 {object} fiber.Error "Unknown event"
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		// @Router /user/hostingad [post]
+		rg.Post("/user/hostingad", hostingad.Post)
 		rg.Get("/user/:id?", user.GetUser)
 
 		// User Actions (POST)

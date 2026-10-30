@@ -359,6 +359,14 @@ Schedule::command('items:backfill-popularity')
     ->appendOutputTo(cronLog('items:backfill-popularity'))
     ->runInBackground();
 
+// Look at the web domains in active members' email addresses for the Krystal hosting ad. A few
+// hundred a night, one page fetch each, outside the backup drain window.
+Schedule::command('hosting:scan-domains --limit=300')
+    ->dailyAt('02:20')
+    ->withoutOverlapping(180)
+    ->appendOutputTo(cronLog('hosting:scan-domains'))
+    ->runInBackground();
+
 // Link accounts that gave the same mobile number or street address in chat, so they show up
 // in ModTools Related Members. Daily rather than hourly: nothing here is urgent, and a
 // duplicate account that has sat unnoticed for years does not need spotting within the hour.

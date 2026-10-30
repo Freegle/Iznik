@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-26
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxExperimentService.php
@@ -117,6 +117,24 @@ covers:
   - iznik-nuxt3/composables/useInterested.js
   - iznik-nuxt3/modtools/components/ModSysAdminUxInterestedDetail.vue
   - iznik-nuxt3/tests/e2e/test-interested-button.spec.js
+  - iznik-server-go/hostingad/hostingad.go
+  - iznik-server-go/test/user_hostingad_test.go
+  - iznik-batch/app/Services/Ux/Sources/HostingAdClickSource.php
+  - iznik-batch/tests/Feature/Ux/HostingAdClickSourceTest.php
+  - iznik-batch/app/Services/Hosting/DomainHostingService.php
+  - iznik-batch/app/Services/Hosting/DnsResolver.php
+  - iznik-batch/app/Console/Commands/Hosting/ScanDomainsCommand.php
+  - iznik-batch/app/Models/DomainHosting.php
+  - iznik-batch/tests/Feature/Hosting/DomainHostingServiceTest.php
+  - iznik-batch/tests/Feature/Hosting/ScanDomainsCommandTest.php
+  - iznik-batch/database/migrations/2026_10_30_000001_create_domain_hosting_table.php
+  - iznik-batch/database/migrations/2026_10_30_000001_create_domain_hosting_table_migration.sql
+  - iznik-nuxt3/composables/useHostingAd.js
+  - iznik-nuxt3/components/HostingAd.vue
+  - iznik-nuxt3/components/HostingAdModal.vue
+  - iznik-nuxt3/tests/unit/composables/useHostingAd.spec.js
+  - iznik-nuxt3/tests/unit/components/HostingAd.spec.js
+  - iznik-nuxt3/tests/unit/components/HostingAdModal.spec.js
 ---
 
 # UX experiments
@@ -1121,7 +1139,7 @@ all three agree. What changes is the counting. A flow event in Loki cannot be sp
 the counts come from the database.
 
 Nothing here changes until the config row `ux_server_arms` is `1` and someone starts an experiment. The batch
-switch list holds `familiar-poster` ([familiar-posts-email.md](familiar-posts-email.md)); the Go list holds `confirm-reply` and `interested-button`, described below.
+switch list holds `familiar-poster` ([familiar-posts-email.md](familiar-posts-email.md)); the Go list holds `confirm-reply`, `interested-button` and `krystal-hosting-ad`, described below.
 
 **No experiment code in the app build.** An app release takes days to weeks, so a switch shipped in the app cannot be turned on or off quickly. Behaviour in the app that the server decides is fine: a push title, a push's timing or an email chosen on the server per member can be an experiment (`push-posts-title` was stopped on 2026-10-19 because this was misread as "no experiments that reach app members"). See `.claude/rules/conventions.md`.
 
@@ -1190,6 +1208,7 @@ wrote the row, and `UxArm::retract` deletes the row of a member and subject, for
 | `promise` | `messages_promises.id` |
 | `view` | `messages.id` |
 | `post` | `messages.id`: a new post the member was, or in control would have been, told about |
+| `hosting_ad` | `domain_hosting.id`: the member's email domain, when the hosting ad was, or in control would have been, shown |
 
 `detail` holds ids and numbers only. No text, address or copy is ever stored, and a value longer than its
 column is skipped and logged, not cut. Rows are kept 90 days: the hourly tick deletes older ones an
@@ -1215,6 +1234,7 @@ are. Five ship.
 | `active_after` | the member has a `users_active` row in the hour of the exposure or inside the window. The site or app writes one when it loads the member's notifications, which it does when they have something unread or when they open the bell, so a member who visits with nothing unread is not counted, in either arm | turning the daily posts push off, for a push only, margin 0.3 points |
 | `confirm_reply` | the replier is promised the item, or a `messages_by` row names them, within the window of their reply (`primary` `handover`), or also the replier said no, so the reply never reached the poster (`primary` `no_wasted_reply`, the default; a question nobody answered and a post that went while the reply waited do not count) | `never_delivered`, repliers whose reply the question dropped, margin 50 points (`handover`); `fewer_handovers`, the share not handed the item, margin 2 points (`no_wasted_reply`) |
 | `familiar_reply` | the member replied to the post the exposure names (`familiar-poster`) | unsubscribing from any of our mail in the window, margin 0.3 points, because control is sent none of these |
+| `hosting_ad_click` | the member pressed the hosting ad's button within the window (`detail.clicked` on the exposure, written by `POST /user/hostingad`) | `not_back`, the share of members whose last access is not at least an hour after the exposure, margin 2 points |
 
 Opens are never used: they are folded in nightly, and image proxies open mail for people who never looked
 at it. A tap on a push is not used because the app records none. The sources write the numbers in their own
@@ -1405,6 +1425,81 @@ reply. It is decided in Go, like `confirm-reply`, so the app build carries no sw
   younger than 7 days, then go too.
 
 Production SQL, before deploying: `iznik-batch/database/migrations/2026_10_23_000001_create_messages_interested_table_migration.sql`.
+
+### A hosting ad for members with a WordPress site
+
+`krystal-hosting-ad` tests whether members who run a WordPress site of their own will look at Krystal, which
+hosts Freegle and pays an affiliate commission on a new customer, when asked once in a modal. It is decided in
+Go, so the app build carries no switch, and the ad never shows in the app.
+
+- **Who.** A signed-in member on the website whose email domain is a WordPress site that is not already on
+  Krystal. The batch finds that out: `hosting:scan-domains` (`DomainHostingService`, nightly at 02:20, 300
+  domains a run) takes the domains of the preferred emails of members active in the last 90 days that at most
+  five active members share (more is a provider or an employer, not somebody's site), leaves out known
+  providers and the public-sector suffixes, and looks at each once, and again after 90 days: one NS lookup and
+  one GET of the home page with a user agent that says who is asking. It keeps two flags (a WordPress
+  fingerprint in the page; a nameserver or a response header naming Krystal), the first nameserver, the Server
+  header and the status, in `domain_hosting`, one row per domain. Nothing there names a member, and the page
+  is never stored.
+- **The decision.** `GET /user/hostingad` (`iznik-server-go/hostingad/hostingad.go`) joins the member's email
+  domain to `domain_hosting`, and when it is WordPress and not Krystal looks the arm up with
+  `ux.ExperimentArm` and writes a `hosting_ad` exposure (subject the domain row) for both arms, in the same
+  transaction as the key `hostingad` in `users.settings`, the unix time of the decision. That key is why a
+  member is asked once, on any device: a member who has it is answered no without a look. When the experiment
+  is off nothing is decided or written, so the member is still eligible when it starts. It answers `show` only;
+  the arm stays on the server.
+- **What it shows.** In the arm `ad`, `HostingAdModal.vue`: "A greener home for your website", three short
+  lines (it looks like you have a WordPress site; Krystal hosts Freegle for free, is a UK company on green
+  energy and moves sites over; if you switch through this link Freegle gets a small payment and it costs you
+  nothing extra), **Take a look** and **No thanks**. Take a look opens `/shortlink/krystalhosting` in a new tab:
+  the shortlink counts the click and sends the member to the Awin affiliate link for Krystal's WordPress hosting
+  page, with `clickref=hostingad` so the Awin dashboard can tell these clicks from the footer's. `HostingAd.vue`,
+  mounted in `LayoutCommon`, asks the server once per page view on arrival (`composables/useHostingAd.js`):
+  signed in, on the web, not in ModTools, not on one of the interstitial's excluded pages, not asked in the last
+  day on this browser (`freegle_hosting_ad_asked`) and no other modal open. If another modal opens during the
+  call (the rating nudge, say) it waits up to a minute for it to close rather than stacking, because the server
+  has already counted the member.
+- **Telemetry.** `hosting_ad_shown`, `hosting_ad_click` and `hosting_ad_dismissed` (`how`: `not_now` or
+  `hidden`) in the client log, and `POST /user/hostingad` writes the unix time of the first click
+  (`detail.clicked`) and the first dismissal (`detail.dismissed`) on the exposure row.
+- **Counted.** `hosting_ad_click`: each member once, on their exposure, once it is a window old. Converted: a
+  click within the window. Control has no button, so its rate is the floor and the ad arm's rate is the click
+  rate of the modal. The guardrail is `not_back`: the share of members whose last access is not at least an
+  hour after the exposure, margin 2 points, because an interrupt that sends people away is not worth its clicks.
+  The tab does not read Awin: whether a click became a customer, and the commission, are in the Awin dashboard
+  only, and a sale validates 60 days after it.
+- **Sizing.** On 30 October 2026 about 2,700 active members were on a domain shared by at most three active
+  members; of 40 sampled, 5 ran WordPress and 2 were already on Krystal, so the pool is a few hundred members,
+  reached as they visit. That is too small for the usual read within a day, so the intake is a week.
+- **Starting it.** After the SQL below, the Go API and the batch are deployed, `hosting:scan-domains` has run
+  at least once (or `php artisan hosting:scan-domains --limit=3000` by hand), the shortlink row exists and
+  `ux_server_arms` is `1`:
+
+  ```bash
+  php artisan ux:experiment create --flow=login --name=krystal-hosting-ad \
+    --title="Krystal hosting ad for members with a WordPress site" \
+    --hypothesis="Members who run their own WordPress site are a good fit for Krystal, which hosts Freegle and pays a commission on a new customer; asked once, some of them will look." \
+    --change="For half of signed-in members on the website whose email domain is a WordPress site not on Krystal, a modal on arrival, once, with a button to Krystal's WordPress hosting page through Freegle's affiliate link." \
+    --expected="A few percent of members shown the modal click through, and members shown it come back as often as members not shown it." \
+    --design='{"channel":"server","source":"hosting_ad_click","window_hours":168,"intake_hours":168,"max_hours":336,"slot":"server:krystal-hosting-ad","expected_points":2}' \
+    --pr=<this PR>
+  php artisan ux:experiment start krystal-hosting-ad
+  ```
+
+  The flow `login` is only where the tab lists it: the modal is on arrival, not in a funnel.
+- **Cleanup.** Adopted: the arm call goes from `hostingad.go` (every eligible member is asked once), the
+  `ux.ServerSwitches` entry and `HostingAdClickSource` go; the scanner, the table, the routes and the modal
+  stay. Reverted, inconclusive or stopped: the modal, `HostingAd.vue`, `useHostingAd.js`, the `LayoutCommon`
+  line, the routes, the source and the switch entry go, and the scanner and its schedule go with them unless
+  something else has found a use for `domain_hosting`.
+
+Production SQL, before deploying: `iznik-batch/database/migrations/2026_10_30_000001_create_domain_hosting_table_migration.sql`,
+and the shortlink row:
+
+```sql
+INSERT INTO shortlinks (name, type, url) VALUES ('krystalhosting', 'Other',
+  'https://www.awin1.com/cread.php?awinmid=117205&awinaffid=2209193&clickref=hostingad&ued=https%3A%2F%2Fkrystal.io%2Fhosting%2Fwordpress');
+```
 
 ### Deploying experiments decided on the server
 
