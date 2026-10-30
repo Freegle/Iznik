@@ -42,6 +42,18 @@ func recordOriginReports(t *testing.T, needle string) *[]string {
 	return &got
 }
 
+// Production runs without strict mode, so a value ForInsert accepts but the ENUM lacks is stored
+// as an empty string with no error. Both tables' ENUMs must list exactly addedorigin's values, in order.
+func TestAddedOriginEnumMatchesTheGoList(t *testing.T) {
+	want := "enum('" + strings.Join(addedorigin.All(), "','") + "')"
+	for _, table := range []string{"memberships", "memberships_history"} {
+		var colType string
+		database.DBConn.Raw("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() "+
+			"AND TABLE_NAME = ? AND COLUMN_NAME = 'added_origin'", table).Scan(&colType)
+		assert.Equal(t, want, colType, table)
+	}
+}
+
 // joinGroup sends PUT /memberships as the holder of token.
 func joinGroup(t *testing.T, token string, body map[string]interface{}) int {
 	t.Helper()
@@ -69,8 +81,9 @@ func TestAddMembershipRecordsTheOriginOnBothTables(t *testing.T) {
 	assert.Empty(t, *reports)
 }
 
-// An empty string is not one of the ENUM's values: production's strict mode would refuse the
-// join. A caller that gives no origin still joins, as unknown, and is reported.
+// An empty string is not one of the ENUM's values. Production runs without strict mode, so MySQL
+// would store it as an empty string rather than refuse it. A caller that gives no origin still joins, as
+// unknown, and is reported.
 func TestAddMembershipWithNoOriginIsUnknownAndReported(t *testing.T) {
 	prefix := uniquePrefix("memorigin_addnone")
 	group := CreateTestGroup(t, prefix)

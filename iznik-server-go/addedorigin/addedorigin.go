@@ -29,6 +29,11 @@ const (
 
 var all = []string{Manual, Posted, Replied, Subscribed, Rippled, Moderator, Partner, TNUnaddressed, Signup, Unknown}
 
+// All returns every value, in the ENUM's order.
+func All() []string {
+	return append([]string(nil), all...)
+}
+
 // fromClient are the values a member's own request may name. The rest are decided by the server:
 // rippled, tn_unaddressed and partner by the paths that create them, moderator by who is acting,
 // subscribed by the mail path, and unknown is never a reason anyone gives.
