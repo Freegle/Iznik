@@ -233,6 +233,10 @@ describe('formatLogText', () => {
         'Joined (added - TrashNothing post placed in this group, not chosen)',
       ],
       ['via partner', 'Joined (through a partner site such as TrashNothing)'],
+      [
+        'Subscribed',
+        "Joined (by emailing the group's subscribe address)",
+      ],
       ['SomeOtherReason', 'Joined (auto-joined when posting/replying)'],
       ['', 'Joined'],
       [undefined, 'Joined'],

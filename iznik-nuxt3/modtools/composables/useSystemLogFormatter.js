@@ -271,6 +271,8 @@ const LOG_FORMATTERS = {
             ' (added - TrashNothing post placed in this group, not chosen)'
         } else if (log.text === 'via partner') {
           text += ' (through a partner site such as TrashNothing)'
+        } else if (log.text === 'Subscribed') {
+          text += " (by emailing the group's subscribe address)"
         } else if (log.text) {
           text += ' (auto-joined when posting/replying)'
         }
