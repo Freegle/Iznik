@@ -122,6 +122,9 @@ class User extends Model implements Auditable
     protected $guarded = ['id'];
     public $timestamps = FALSE;
 
+    // The domain of a TrashNothing member's address.
+    public const TN_EMAIL_SUFFIX = '@user.trashnothing.com';
+
     // Group membership roles.
     public const ROLE_NONMEMBER = 'Non-member';
     public const ROLE_MEMBER = 'Member';
@@ -435,7 +438,7 @@ class User extends Model implements Auditable
     public function isTN(): bool
     {
         $email = $this->email_preferred;
-        return $email && str_ends_with($email, '@user.trashnothing.com');
+        return $email && str_ends_with($email, self::TN_EMAIL_SUFFIX);
     }
 
     /**
@@ -822,6 +825,35 @@ class User extends Model implements Auditable
         }
 
         return $query;
+    }
+
+    /**
+     * Leave out TrashNothing members: stamped with a tnuserid, or with a TrashNothing address
+     * as their preferred email. Same definition as isTrashNothingAccount() and Go's
+     * user.TrashNothingSQL. Freegle's own mailings (the Stories newsletter, the engage mails,
+     * Community News) are not for them, whatever memberships they hold. Requires `users` in
+     * the query under that name.
+     */
+    public function scopeNotTrashNothing(Builder $query): Builder
+    {
+        return $query
+            ->whereNull('users.tnuserid')
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('users_emails as tne')
+                    ->whereColumn('tne.userid', 'users.id')
+                    ->where('tne.preferred', 1)
+                    ->where('tne.email', 'LIKE', '%' . self::TN_EMAIL_SUFFIX);
+            });
+    }
+
+    /**
+     * A TrashNothing member, by the same definition as scopeNotTrashNothing(). Unlike isTN(),
+     * a tnuserid stamp counts even when the preferred email is not a TrashNothing address.
+     */
+    public function isTrashNothingAccount(): bool
+    {
+        return $this->tnuserid !== NULL || $this->isTN();
     }
 
     /**

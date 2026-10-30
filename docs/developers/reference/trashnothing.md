@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-28
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -321,7 +321,11 @@ Both write a `memberships_history` row with the same origin, in one transaction 
 membership and the log. `memberships:process` sends no per-group welcome for a
 `tn_unaddressed` row and leaves those joins out of the "seen on many groups" check, as it does
 for a ripple join; birthday appeals, the re-engagement sign-off and the story feeds leave out
-`implicit = 1` memberships. An existing membership keeps its `added_origin`. A post that **is**
+`implicit = 1` memberships. Freegle's own mailings, the Stories newsletter, the engage mails
+and Community News, leave out TrashNothing members altogether, whatever memberships they hold
+(`User::scopeNotTrashNothing`, `User::isTrashNothingAccount`). A moderator cannot add a
+TrashNothing member through `PUT /memberships`: they join through TrashNothing, and the add would
+turn a placement into a membership they never chose. An existing membership keeps its `added_origin`. A post that **is**
 addressed clears an implicit or ripple membership through `RippleEngagementService::clear`,
 logging `Ripple-created membership became ordinary: consented through TrashNothing`; consent
 only goes one way, so a later unaddressed post leaves an ordinary membership alone. A banned
@@ -512,7 +516,7 @@ account was linked to TN, so every reader ignores it when `tnuserid` is set:
   `ResolveOnBehalfPosting` and the visualise map. The session's own location is left
   alone, as TN members do not log in.
 - Batch: `User::chosenLatLng()` for code holding a user, and `AND <alias>.tnuserid IS NULL`
-  in the SQL "mylocation else lastlocation" expressions (digests, Community News,
+  in the SQL "mylocation else lastlocation" expressions (digests,
   first-reply match mail, the approximate-location map).
 
 The sync also removes the setting when TN sends a location, so the stale data goes as
