@@ -3,6 +3,7 @@
 namespace App\Services\Mail;
 
 use App\Models\Membership;
+use App\Models\User;
 use App\Services\UnifiedDigestService;
 use Carbon\Carbon;
 use Illuminate\Database\Query\Builder;
@@ -13,12 +14,17 @@ use Illuminate\Support\Facades\DB;
  * mail:digest:daily-lag-check.
  *
  * A member counts only if the digest would mail them: the same gate as
- * UnifiedDigestService::getUsersForDigest (not deleted, no tnuserid, not bouncing), plus an
- * Approved membership set to a daily digest, which is the only kind a daily run builds from.
- * Without those the figure counted users_digests rows nobody would ever clear. On 2026-10-30
- * that was 6,891 "lagging" members, of whom 3,377 were TrashNothing accounts (mailed by
- * TrashNothing, never by us) and 2,745 had no daily membership left; 769 were owed a digest.
- * A row stays behind when someone moves every community off daily, so the stale part only grew.
+ * UnifiedDigestService::getUsersForDigest (not deleted, no tnuserid, not bouncing, mail not
+ * turned off with simplemail None, and an Approved membership on any periodic cadence, which
+ * a daily run folds into one roll-up). Without those the figure counted users_digests rows
+ * nobody would ever clear. On 2026-10-30 that was 6,891 "lagging" members, of whom 3,377 were
+ * TrashNothing accounts (mailed by TrashNothing, never by us), 2,745 had no daily membership
+ * left, and 399 of those over a week behind had turned mail off. A row stays behind when
+ * someone stops daily mail, so the stale part only grew.
+ *
+ * A member whose communities have had nothing new is not stamped (updateDigestTracker stamps
+ * lastsent only when posts were examined), so they still count here while there is nothing to
+ * send them. That part is small: 33 of the 40 left over a week behind on 2026-10-30.
  *
  * Dormancy is excluded by whether the member has used the site in the last 30 days, not by how
  * long ago we last mailed them, so a member who has fallen far behind still counts. Members
@@ -62,11 +68,17 @@ class DailyDigestLagService
             ->whereNull('users.tnuserid')
             ->where('users.bouncing', 0)
             ->where('users.lastaccess', '>=', $dayStart->copy()->subDays(self::ACTIVE_DAYS)->toDateTimeString())
+            ->where(function ($q) {
+                $q->whereJsonDoesntContainKey('users.settings->simplemail')
+                    ->orWhere('users.settings->simplemail', '!=', User::SIMPLE_MAIL_NONE);
+            })
             ->whereExists(function ($q) {
+                // Any positive cadence: a daily run folds hourly to daily into one roll-up
+                // (UnifiedDigestService::applyDigestFrequency).
                 $q->from('memberships')
                     ->whereColumn('memberships.userid', 'users.id')
                     ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-                    ->where('memberships.emailfrequency', Membership::EMAIL_FREQUENCY_DAILY);
+                    ->where('memberships.emailfrequency', '>', Membership::EMAIL_FREQUENCY_NEVER);
             });
     }
 

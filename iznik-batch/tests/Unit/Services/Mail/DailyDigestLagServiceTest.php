@@ -78,6 +78,22 @@ class DailyDigestLagServiceTest extends TestCase
         $this->assertSame([$owed->id], $this->lagging([$tn, $bouncing, $noDaily, $pending, $dormant, $owed]));
     }
 
+    public function test_leaves_out_a_member_who_turned_mail_off(): void
+    {
+        $off = $this->member(40, ['settings' => ['simplemail' => User::SIMPLE_MAIL_NONE]]);
+        $full = $this->member(40, ['settings' => ['simplemail' => User::SIMPLE_MAIL_FULL]]);
+
+        $this->assertSame([$full->id], $this->lagging([$off, $full]));
+    }
+
+    public function test_counts_any_periodic_cadence_as_daily(): void
+    {
+        // A daily run folds hourly to daily into one roll-up, so a 4-hourly member is owed one.
+        $fourHourly = $this->member(3, [], ['emailfrequency' => 4]);
+
+        $this->assertSame([$fourHourly->id], $this->lagging([$fourHourly]));
+    }
+
     public function test_one_daily_membership_among_others_is_enough(): void
     {
         $owed = $this->member(3, [], ['emailfrequency' => Membership::EMAIL_FREQUENCY_NEVER]);
