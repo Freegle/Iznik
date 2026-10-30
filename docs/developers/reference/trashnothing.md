@@ -360,10 +360,13 @@ earlier addressed post to the group does not stop it: consent lives on the membe
 poster with none has left since, so being placed back makes a new implicit row, as ingestion
 does. It skips a banned or deleted poster, a poster with no `tnuserid` (the first API posts,
 before posters were resolved through it, went to whichever account had TN's id or to a stub
-made with it). An addressed post to the group since a membership was added is consent, as
-for ingestion: an implicit membership (TN or ripple) is cleared with the "became ordinary"
-log. Any other membership is left alone: an ordinary membership is never made implicit, a
-`tn_unaddressed` row without `implicit` included (it was cleared, or merged with a membership
+made with it). An addressed TrashNothing post to the group since a membership was added is
+consent, as for ingestion: an API post that named the group, or one that came by email, since
+TrashNothing emails a post only to groups the poster joined there. An implicit membership (TN
+or ripple) is then cleared with the "became ordinary" log. An ordinary Freegle post is not
+consent to a placement, because nothing live clears one for it; a ripple membership is cleared
+for one by the engagement pass instead. Any other membership is left alone: an ordinary
+membership is never made implicit, a `tn_unaddressed` row without `implicit` included (it was cleared, or merged with a membership
 the member chose). It lists every pair with its contact
 today (the mixed-poster rule below, which one addressed post on any group opens) and per group
 (an ordinary membership of that group after the run), and counts the pairs that lose and gain

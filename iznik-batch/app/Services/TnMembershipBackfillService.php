@@ -18,15 +18,16 @@ use Illuminate\Support\Facades\DB;
  *
  * - no membership: write one as ingestion does (GroupPostIngestionService::writeMembership),
  *   dated from their earliest unaddressed post there, whatever they posted to the group before.
- *   If they have addressed a post there since, clear it straight away, as ingestion would have
- *   when that post came in, so that a second run finds it ordinary.
+ *   If they have addressed a TN post there since, clear it straight away, as ingestion would
+ *   have when that post came in, so that a second run finds it ordinary.
  *   Consent lives on the membership, and a poster with none has left since: leaving and being
  *   placed back is what makes a new implicit row. Not for a banned or deleted poster, nor one
  *   with no tnuserid: the first API posts were given to the wrong account.
- * - an addressed post of theirs to the group since the membership was added is consent, as it
+ * - an addressed TN post of theirs to the group since the membership was added is consent, as it
  *   is to ingestion: an implicit membership (TN or ripple) is cleared, with the "became
  *   ordinary" log. A post from before the membership was added does not count: they have left
- *   since, and were placed back.
+ *   since, and were placed back. An ordinary Freegle post does not count either; for a ripple
+ *   membership RippleEngagementService clears it on one.
  * - any other membership: leave it. An ordinary membership is never made implicit, whatever its
  *   origin: a tn_unaddressed one that is not implicit was cleared, or merged with one the
  *   member chose.
@@ -160,13 +161,17 @@ class TnMembershipBackfillService
     }
 
     /**
-     * Consent to this membership: an addressed post of theirs to the group (own row, TN or not)
-     * that arrived once the membership was there. The email path leaves the column at its
-     * default of 1 and takes a post only from a member; a rippled-in copy chose nothing.
+     * Consent to this membership: an addressed TN post of theirs to the group (own row) that
+     * arrived once the membership was there. An API post is addressed when the poster chose the
+     * group, as ingestion reads it. A TN post by email keeps the column's default of 1, and TN
+     * emails a post only to groups the poster joined there; TN's join clears a placement too
+     * (PUT /memberships?partner=). An ordinary Freegle post is not consent to a placement: no
+     * live code clears one for it. A rippled-in copy chose nothing.
      */
     private function addressedPostSince(int $userId, int $groupId, string $added): bool
     {
         return $this->addressedPosts($userId)
+            ->whereNotNull('m.tnpostid')
             ->where('mg.groupid', $groupId)
             ->where('m.arrival', '>=', $added)
             ->exists();

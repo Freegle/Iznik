@@ -158,9 +158,9 @@ class BackfillTnCommandTest extends TestCase
     public function test_a_poster_who_consented_once_and_has_no_membership_now_gets_an_implicit_one(): void
     {
         [$user, $group] = $this->unaddressedPoster();
-        // A TN post by email keeps the column default, and the email path only takes a post to
-        // a group the poster has joined. With no membership now, they have left since, and
-        // leaving and being placed back makes a new implicit row.
+        // A TN post by email keeps the column default, and TN emails a post only to groups the
+        // poster joined there. With no membership now, they have left since, and leaving and
+        // being placed back makes a new implicit row.
         $this->tnPost($user, $group, true, now()->subYear());
 
         $pair = $this->pairFor($this->backfill(), $user, $group);
@@ -248,6 +248,35 @@ class BackfillTnCommandTest extends TestCase
         $this->assertSame(1, (int) $this->membership($user, $group)->implicit);
         $this->assertTrue($pair['contact_today']);
         $this->assertFalse($pair['contact_after']);
+    }
+
+    public function test_an_ordinary_freegle_post_since_it_was_added_does_not_clear_an_implicit_membership(): void
+    {
+        // Consent to a placement comes only through TN, as it does for ingestion. The post still
+        // makes them a mixed poster, which is today's contact rule.
+        [$user, $group] = $this->unaddressedPoster();
+        $this->createTestMessage($user, $group, ['arrival' => now()->subWeek()]);
+        $this->createMembership($user, $group, [
+            'implicit' => 1, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now()->subMonth(),
+        ]);
+
+        $pair = $this->pairFor($this->backfill(), $user, $group);
+
+        $this->assertSame(Backfill::ACTION_ALREADY_IMPLICIT, $pair['action']);
+        $this->assertSame(1, (int) $this->membership($user, $group)->implicit);
+        $this->assertTrue($pair['contact_today']);
+        $this->assertFalse($pair['contact_after']);
+    }
+
+    public function test_an_ordinary_freegle_post_with_no_membership_leaves_the_new_one_implicit(): void
+    {
+        [$user, $group] = $this->unaddressedPoster();
+        $this->createTestMessage($user, $group, ['arrival' => now()->subWeek()]);
+
+        $pair = $this->pairFor($this->backfill(), $user, $group);
+
+        $this->assertSame(Backfill::ACTION_CREATE, $pair['action']);
+        $this->assertSame(1, (int) $this->membership($user, $group)->implicit);
     }
 
     public function test_an_addressed_post_since_it_was_added_clears_a_ripple_membership(): void
