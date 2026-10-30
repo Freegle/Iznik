@@ -800,6 +800,30 @@ class SendAdminCommandTest extends TestCase
     }
 
     /**
+     * Test: an ADMIN with volunteercredits off goes out without the local volunteers, for a
+     * message from someone else rather than from the community's volunteers.
+     */
+    public function test_volunteer_credits_off_sends_no_volunteers(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $this->createMembership($user, $group);
+
+        $mod = $this->createTestUser(['lastaccess' => now(), 'fullname' => 'Jane Smith']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $adminId = $this->createAdmin($group, ['volunteercredits' => 0]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, fn (AdminMail $mail) => $mail->volunteers === []);
+    }
+
+    /**
      * Test: Very old admin (>7 days) is not picked up.
      */
     public function test_old_admin_not_processed(): void

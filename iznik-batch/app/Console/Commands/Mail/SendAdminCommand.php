@@ -300,8 +300,8 @@ class SendAdminCommand extends Command
             ->pluck('userid')
             ->flip();
 
-        // Get local volunteers for the group footer.
-        $volunteers = self::getLocalVolunteers($admin->groupid);
+        // Get local volunteers for the group footer, unless the ADMIN is sent for someone else.
+        $volunteers = ($admin->volunteercredits ?? 1) ? self::getLocalVolunteers($admin->groupid) : [];
 
         // Query members with relevantallowed from users table.
         // Note: V1 queries all memberships regardless of collection. We intentionally

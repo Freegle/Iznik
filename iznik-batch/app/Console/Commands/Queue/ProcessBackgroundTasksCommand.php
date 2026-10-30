@@ -462,7 +462,7 @@ class ProcessBackgroundTasksCommand extends Command
             $groupName = $group->namefull ?: $group->nameshort;
             $modsEmail = $group->nameshort ? "{$group->nameshort}-volunteers@groups.ilovefreegle.org" : null;
             $groupShort = $group->nameshort;
-            $volunteers = SendAdminCommand::getLocalVolunteers($group->id);
+            $volunteers = ($data['volunteercredits'] ?? TRUE) ? SendAdminCommand::getLocalVolunteers($group->id) : [];
         }
 
         $admin = SendAdminCommand::personalise([
