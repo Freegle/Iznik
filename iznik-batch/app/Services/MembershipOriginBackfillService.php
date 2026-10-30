@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Membership;
 use App\Services\Ripple\RippleEngagementService;
+use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Collection;
@@ -32,9 +33,13 @@ use Illuminate\Support\Facades\Schema;
  * counts it in the summary instead.
  *
  * The latest join per (user, group) is gathered first into a temporary table, from one pass
- * over the Group/Joined logs through the (type, subtype) index. Looking each membership up
+ * over the Group/Joined logs through the (type, subtype) index, keeping the text, actor and
+ * time the classification needs so no log is read a second time. Looking each membership up
  * through logs.user instead reads every log the member has, which on production took hours
  * for 180,000 rows.
+ *
+ * Whether a post of theirs reached the group around a join is asked once per chunk of rows, in
+ * one query for the chunk's users, and not once per row.
  */
 class MembershipOriginBackfillService
 {
@@ -61,10 +66,15 @@ class MembershipOriginBackfillService
 
     private const SAMPLE_SIZE = 10;
 
+    // Group/Joined log texts that need more than a lookup.
+    public const JOIN_TEXT_RIPPLED = 'Rippled';
+    public const JOIN_TEXT_MANUAL = 'Manual';
+    public const JOIN_TEXT_AUTO = 'Auto';
+
     // Join log texts that say how the row was made, whoever wrote them.
     private const TEXT_ORIGINS = [
-        'Rippled' => Membership::ADDED_ORIGIN_RIPPLED,
-        'via partner' => Membership::ADDED_ORIGIN_PARTNER,
+        self::JOIN_TEXT_RIPPLED => Membership::ADDED_ORIGIN_RIPPLED,
+        GroupPostIngestionService::JOIN_LOG_CHOSEN => Membership::ADDED_ORIGIN_PARTNER,
         'Subscribed' => Membership::ADDED_ORIGIN_SUBSCRIBED,
         'Joined to reply to a post' => Membership::ADDED_ORIGIN_REPLIED,
         'LoveJunk user joining to reply' => Membership::ADDED_ORIGIN_REPLIED,
@@ -117,7 +127,7 @@ class MembershipOriginBackfillService
     }
 
     /**
-     * The latest Group/Joined log id for each (user, group), into a temporary table. Plain reads
+     * The latest Group/Joined log for each (user, group), into a temporary table. Plain reads
      * of logs take no locks, so this doesn't hold up the live log writes the way an
      * INSERT ... SELECT from logs would.
      */
@@ -130,6 +140,9 @@ class MembershipOriginBackfillService
             $table->unsignedBigInteger('userid');
             $table->unsignedBigInteger('groupid');
             $table->unsignedBigInteger('logid');
+            $table->mediumText('text')->nullable();
+            $table->unsignedBigInteger('byuser')->nullable();
+            $table->timestamp('timestamp')->nullable();
             $table->primary(['userid', 'groupid']);
         });
 
@@ -146,17 +159,18 @@ class MembershipOriginBackfillService
                 ->where('id', '>', $after)
                 ->orderBy('id')
                 ->limit(self::LOG_SCAN_CHUNK)
-                ->get(['id', 'user', 'groupid']);
+                ->get(['id', 'user', 'groupid', 'text', 'byuser', 'timestamp']);
 
             // Ascending ids, so the last log seen for a pair is its latest.
             $latest = [];
             foreach ($logs as $log) {
                 $latest[$log->user.':'.$log->groupid] = [
                     'userid' => $log->user, 'groupid' => $log->groupid, 'logid' => $log->id,
+                    'text' => $log->text, 'byuser' => $log->byuser, 'timestamp' => $log->timestamp,
                 ];
             }
             if ($latest) {
-                DB::table(self::LATEST_JOINS)->upsert(array_values($latest), ['userid', 'groupid'], ['logid']);
+                DB::table(self::LATEST_JOINS)->upsert(array_values($latest), ['userid', 'groupid'], ['logid', 'text', 'byuser', 'timestamp']);
             }
 
             $after = $logs->last()->id ?? $after;
@@ -176,7 +190,6 @@ class MembershipOriginBackfillService
                 ->leftJoin(self::LATEST_JOINS.' as j', function ($join) {
                     $join->on('j.userid', '=', 'm.userid')->on('j.groupid', '=', 'm.groupid');
                 })
-                ->leftJoin('logs as l', 'l.id', '=', 'j.logid')
                 ->where('m.added_origin', Membership::ADDED_ORIGIN_UNKNOWN)
                 ->where('m.id', '>', $after)
                 ->when($userId !== null, fn ($q) => $q->where('m.userid', $userId))
@@ -185,10 +198,17 @@ class MembershipOriginBackfillService
                 ->useWritePdo()
                 ->get([
                     'm.id', 'm.userid', 'm.groupid', 'm.rippled', 'm.added',
-                    'l.id as logid', 'l.text', 'l.byuser', 'l.timestamp',
+                    'j.logid', 'j.text', 'j.byuser', 'j.timestamp',
                 ]);
 
             $historyRippled = $this->historyRippled($rows);
+            $joins = [];
+            foreach ($rows as $row) {
+                if (!$row->rippled && $row->logid !== null) {
+                    $joins[$row->id] = $row;
+                }
+            }
+            $posted = $this->postedNearJoins($rows, $joins);
             $ids = [];
             foreach ($rows as $row) {
                 $this->checkMembership($row,
@@ -199,7 +219,7 @@ class MembershipOriginBackfillService
                 } elseif ($row->logid === null) {
                     [$origin, $reason] = [Membership::ADDED_ORIGIN_UNKNOWN, self::UNKNOWN_NO_JOIN_LOG];
                 } else {
-                    [$origin, $reason] = $this->originFromJoin($row->text, $row->byuser, $row->userid, $row->groupid, $row->timestamp);
+                    [$origin, $reason] = $this->originFromJoin($row->text, $row->byuser, $row->userid, isset($posted[$row->id]));
                 }
 
                 $this->count('memberships', $origin, $reason);
@@ -223,7 +243,7 @@ class MembershipOriginBackfillService
      */
     private function checkMembership(object $row, array $history): void
     {
-        $joinIsRippled = $row->logid !== null && $row->text === 'Rippled';
+        $joinIsRippled = $row->logid !== null && $row->text === self::JOIN_TEXT_RIPPLED;
 
         if ($row->rippled && !$joinIsRippled) {
             $this->check(self::CHECK_FLAG_WITHOUT_LOG, $row->id);
@@ -254,14 +274,23 @@ class MembershipOriginBackfillService
                 ->get(['id', 'userid', 'groupid', 'rippled', 'added']);
 
             $logsByPair = $this->joinLogsAround($rows);
+            $joins = [];
+            foreach ($rows as $row) {
+                if (!$row->rippled
+                    && $log = $this->nearestLog($logsByPair[$row->userid.':'.$row->groupid] ?? [], $row->added)) {
+                    $joins[$row->id] = $log;
+                }
+            }
+            $posted = $this->postedNearJoins($rows, $joins);
             $ids = [];
             foreach ($rows as $row) {
                 if ($row->rippled) {
                     [$origin, $reason] = [Membership::ADDED_ORIGIN_RIPPLED, null];
-                } elseif (!$log = $this->nearestLog($logsByPair[$row->userid.':'.$row->groupid] ?? [], $row->added)) {
+                } elseif (!isset($joins[$row->id])) {
                     [$origin, $reason] = [Membership::ADDED_ORIGIN_UNKNOWN, self::UNKNOWN_NO_JOIN_LOG];
                 } else {
-                    [$origin, $reason] = $this->originFromJoin($log->text, $log->byuser, $row->userid, $row->groupid, $log->timestamp);
+                    $log = $joins[$row->id];
+                    [$origin, $reason] = $this->originFromJoin($log->text, $log->byuser, $row->userid, isset($posted[$row->id]));
                 }
 
                 $this->count('history', $origin, $reason);
@@ -281,9 +310,11 @@ class MembershipOriginBackfillService
     /**
      * The origin a join log records, and why when that is unknown.
      *
+     * @param  bool  $posted  whether a post of theirs reached the group around the join; only
+     *                        read when needsPostCheck() is true
      * @return array{0:string,1:?string}
      */
-    private function originFromJoin(?string $text, ?int $byuser, int $userid, int $groupid, string $joinedAt): array
+    private function originFromJoin(?string $text, ?int $byuser, int $userid, bool $posted): array
     {
         if ($text !== null && isset(self::TEXT_ORIGINS[$text])) {
             return [self::TEXT_ORIGINS[$text], null];
@@ -299,18 +330,18 @@ class MembershipOriginBackfillService
             return [Membership::ADDED_ORIGIN_MODERATOR, null];
         }
 
-        if ($text === 'Manual') {
+        if ($text === self::JOIN_TEXT_MANUAL) {
             return [Membership::ADDED_ORIGIN_MANUAL, null];
         }
 
         // Auto was sent by the join to reply and by the old join to post; NULL text is the post
         // joins, website signup and, before 2023-07-26, every join.
-        if ($text === 'Auto' || $text === null || $text === '') {
-            if ($this->postedNearJoin($userid, $groupid, $joinedAt)) {
+        if ($this->needsPostCheck($text, $byuser, $userid)) {
+            if ($posted) {
                 return [Membership::ADDED_ORIGIN_POSTED, null];
             }
 
-            return $text === 'Auto'
+            return $text === self::JOIN_TEXT_AUTO
                 ? [Membership::ADDED_ORIGIN_REPLIED, null]
                 : [Membership::ADDED_ORIGIN_UNKNOWN, self::UNKNOWN_NO_POST];
         }
@@ -322,21 +353,68 @@ class MembershipOriginBackfillService
         return [Membership::ADDED_ORIGIN_UNKNOWN, self::UNKNOWN_TEXT];
     }
 
-    private function postedNearJoin(int $userid, int $groupid, string $joinedAt): bool
+    /**
+     * Whether originFromJoin() reaches the question of a post near the join: their own join, with
+     * no text that says how it was made, or Auto.
+     */
+    private function needsPostCheck(?string $text, ?int $byuser, int $userid): bool
     {
-        $at = Carbon::parse($joinedAt);
+        return $byuser && $byuser === $userid
+            && ($text === self::JOIN_TEXT_AUTO || $text === null || $text === '');
+    }
 
-        return DB::table('messages as p')
+    /**
+     * Which of $rows had a post of theirs reach the group around their join, as a set of row ids.
+     * One query for the chunk: every post by the chunk's users on the chunk's groups within the
+     * span of join times, matched to each row in memory.
+     *
+     * @param  Collection  $rows
+     * @param  array<int,object>  $joins  row id => the join log (text, byuser, timestamp) it takes
+     * @return array<int,true>
+     */
+    private function postedNearJoins(Collection $rows, array $joins): array
+    {
+        $probes = [];
+        foreach ($rows as $row) {
+            $join = $joins[$row->id] ?? null;
+            if ($join && $this->needsPostCheck($join->text, $join->byuser, $row->userid)) {
+                $probes[$row->id] = [$row->userid, $row->groupid, Carbon::parse($join->timestamp)->getTimestamp()];
+            }
+        }
+        if (!$probes) {
+            return [];
+        }
+
+        $before = self::POST_BEFORE_JOIN_MINUTES * 60;
+        $after = self::POST_AFTER_JOIN_MINUTES * 60;
+        $times = array_column($probes, 2);
+        $arrivals = [];
+        $posts = DB::table('messages as p')
             ->join('messages_groups as pg', function ($join) {
                 $join->on('pg.msgid', '=', 'p.id')->where('pg.rippled_in', 0);
             })
-            ->where('p.fromuser', $userid)
-            ->where('pg.groupid', $groupid)
+            ->whereIn('p.fromuser', array_unique(array_column($probes, 0)))
+            ->whereIn('pg.groupid', array_unique(array_column($probes, 1)))
             ->whereBetween('p.arrival', [
-                $at->copy()->subMinutes(self::POST_BEFORE_JOIN_MINUTES),
-                $at->copy()->addMinutes(self::POST_AFTER_JOIN_MINUTES),
+                Carbon::createFromTimestamp(min($times) - $before),
+                Carbon::createFromTimestamp(max($times) + $after),
             ])
-            ->exists();
+            ->get(['p.fromuser', 'pg.groupid', 'p.arrival']);
+        foreach ($posts as $post) {
+            $arrivals[$post->fromuser.':'.$post->groupid][] = Carbon::parse($post->arrival)->getTimestamp();
+        }
+
+        $posted = [];
+        foreach ($probes as $id => [$userid, $groupid, $at]) {
+            foreach ($arrivals[$userid.':'.$groupid] ?? [] as $arrival) {
+                if ($arrival >= $at - $before && $arrival <= $at + $after) {
+                    $posted[$id] = true;
+                    break;
+                }
+            }
+        }
+
+        return $posted;
     }
 
     /**
