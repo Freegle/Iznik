@@ -76,7 +76,10 @@ runners are cloud VMs without nested virtualisation). The tests are split across
 parallel machines, each with its own stack, to fit CircleCI's one-hour job limit. The
 Freegle app is not promoted or submitted if they fail; the ModTools iOS submission does
 not wait for them, because they do not exercise ModTools. The same job runs alone, on
-any branch, with the `run_app_emulator_test` pipeline parameter. Detail is in
+any branch, with the `run_app_emulator_test` pipeline parameter. A daily schedule runs
+`check-apple-agreements` with the `run_apple_agreement_check` parameter: it fails when Apple
+is waiting for the Account Holder to accept an agreement, which otherwise stops the iOS
+build. Detail is in
 [./reference/circleci.md](./reference/circleci.md) and [../developers/reference/mobile-app.md](../developers/reference/mobile-app.md).
 
 ## CI runner
