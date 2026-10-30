@@ -1417,6 +1417,12 @@ func PutMemberships(c *fiber.Ctx) error {
 		if !isModOfGroup(myid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
 		}
+
+		// A TrashNothing member joins communities through TrashNothing. An add here would also
+		// turn a TrashNothing placement into an ordinary membership they never chose.
+		if isTrashNothingAccount(userid) {
+			return fiber.NewError(fiber.StatusForbidden, "Failed - TrashNothing member")
+		}
 	}
 
 	return addMemberToGroup(c, db, userid, req.Groupid, myid, req.Manual, joinOrigin(userid, myid, req.Origin, req.Manual))

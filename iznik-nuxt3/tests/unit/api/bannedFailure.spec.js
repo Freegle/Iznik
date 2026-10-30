@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { notABannedFailure, isBannedFailure } from '~/api/bannedFailure'
+import {
+  notABannedFailure,
+  isBannedFailure,
+  isTrashNothingFailure,
+} from '~/api/bannedFailure'
 
 // A banned join/add is refused with 403 "Failed - banned". notABannedFailure keeps it
 // out of Sentry; isBannedFailure lets callers react (self-join swallows it, mod-add
@@ -14,6 +18,12 @@ describe('bannedFailure', () => {
 
     it('suppresses (false) a banned message string', () => {
       expect(notABannedFailure('Failed - banned')).toBe(false)
+    })
+
+    it('suppresses (false) the TrashNothing member refusal', () => {
+      expect(
+        notABannedFailure({ error: 403, message: 'Failed - TrashNothing member' })
+      ).toBe(false)
     })
 
     it('logs (true) other failures and empty data', () => {
@@ -51,6 +61,35 @@ describe('bannedFailure', () => {
     it('is false for a malformed/absent error', () => {
       expect(isBannedFailure(undefined)).toBe(false)
       expect(isBannedFailure({})).toBe(false)
+    })
+  })
+
+  describe('isTrashNothingFailure', () => {
+    it('is true for the 403 TrashNothing member refusal', () => {
+      expect(
+        isTrashNothingFailure({
+          response: {
+            status: 403,
+            data: { message: 'Failed - TrashNothing member' },
+          },
+        })
+      ).toBe(true)
+    })
+
+    it('is false for a banned refusal or a non-403', () => {
+      expect(
+        isTrashNothingFailure({
+          response: { status: 403, data: { message: 'Failed - banned' } },
+        })
+      ).toBe(false)
+      expect(
+        isTrashNothingFailure({
+          response: {
+            status: 500,
+            data: { message: 'Failed - TrashNothing member' },
+          },
+        })
+      ).toBe(false)
     })
   })
 })

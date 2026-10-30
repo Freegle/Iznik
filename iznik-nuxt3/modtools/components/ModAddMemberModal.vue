@@ -18,6 +18,10 @@
           That person is banned from this community, so they can't be added. If
           you want to let them back in, unban them first, then add them.
         </NoticeMessage>
+        <NoticeMessage v-else-if="trashNothing" variant="warning">
+          That person is a TrashNothing member, so they can't be added here.
+          They join communities through TrashNothing.
+        </NoticeMessage>
         <div v-else>
           <NoticeMessage variant="info">
             This will add someone as a member of your community. Please be
@@ -55,7 +59,10 @@ import { ref, computed } from 'vue'
 import { useMemberStore } from '~/stores/member'
 import { useUserStore } from '~/stores/user'
 import { useOurModal } from '~/composables/useOurModal'
-import { isBannedFailure } from '~/api/bannedFailure'
+import {
+  isBannedFailure,
+  isTrashNothingFailure,
+} from '~/api/bannedFailure'
 
 const props = defineProps({
   groupid: {
@@ -71,6 +78,7 @@ const { modal, show, hide } = useOurModal()
 const email = ref(null)
 const addedId = ref(null)
 const banned = ref(false)
+const trashNothing = ref(false)
 
 const validEmail = computed(() => {
   return email.value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value)
@@ -78,6 +86,7 @@ const validEmail = computed(() => {
 
 async function add() {
   banned.value = false
+  trashNothing.value = false
   addedId.value = await userStore.add({
     email: email.value,
   })
@@ -94,6 +103,13 @@ async function add() {
       // or an ugly error. Anything else is a real failure and must propagate.
       if (isBannedFailure(e)) {
         banned.value = true
+        addedId.value = null
+        return
+      }
+      // A TrashNothing member is refused (403 "Failed - TrashNothing member"): they
+      // join through TrashNothing.
+      if (isTrashNothingFailure(e)) {
+        trashNothing.value = true
         addedId.value = null
         return
       }
