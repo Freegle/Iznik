@@ -70,6 +70,10 @@ class RippleMembershipBackfillService
                         ->where('lc.subtype', 'Joined')
                         ->whereColumn('lc.id', '>', 'l.id');
                 })
+                // A known origin other than rippled means the row was made some other way since,
+                // by a path that writes no join log (a moderator command, a group move). Only a
+                // row that is rippled or not yet known is the ripple join.
+                ->whereIn('m.added_origin', [Membership::ADDED_ORIGIN_RIPPLED, Membership::ADDED_ORIGIN_UNKNOWN])
                 ->select('m.id', 'm.emailfrequency', 'm.rippled', 'm.implicit')
                 ->distinct()
                 ->get();

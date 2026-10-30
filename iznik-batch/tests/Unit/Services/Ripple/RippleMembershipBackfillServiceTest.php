@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Models\Membership;
 use App\Services\Ripple\RippleMembershipBackfillService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -159,6 +160,40 @@ class RippleMembershipBackfillServiceTest extends TestCase
         $this->service()->backfill($userId, 0, send: true);
 
         $this->assertSame('rippled', DB::table('memberships')
+            ->where('userid', $userId)->where('groupid', $groupId)->value('added_origin'));
+    }
+
+    /**
+     * A row whose origin is known and is not rippled was made some other way since the Rippled
+     * log, by a path that writes no join log (a moderator command, a group move). Its origin
+     * is kept, and it is not flagged.
+     */
+    public function test_a_membership_with_a_known_other_origin_is_left_alone(): void
+    {
+        foreach ([Membership::ADDED_ORIGIN_MODERATOR, Membership::ADDED_ORIGIN_MANUAL] as $origin) {
+            [$userId, $groupId] = $this->seedPreMitigationRippledMember();
+            DB::table('memberships')->where('userid', $userId)->where('groupid', $groupId)
+                ->update(['added_origin' => $origin]);
+
+            $stats = $this->service()->backfill($userId, 0, send: true);
+
+            $this->assertSame(0, $stats['flagged'], $origin);
+            $m = DB::table('memberships')->where('userid', $userId)->where('groupid', $groupId)->first();
+            $this->assertSame($origin, $m->added_origin);
+            $this->assertSame([0, 0, -1], [(int) $m->rippled, (int) $m->implicit, (int) $m->emailfrequency], $origin);
+        }
+    }
+
+    public function test_an_unknown_origin_is_still_flagged(): void
+    {
+        [$userId, $groupId] = $this->seedPreMitigationRippledMember();
+        DB::table('memberships')->where('userid', $userId)->where('groupid', $groupId)
+            ->update(['added_origin' => Membership::ADDED_ORIGIN_UNKNOWN]);
+
+        $stats = $this->service()->backfill($userId, 0, send: true);
+
+        $this->assertSame(1, $stats['flagged']);
+        $this->assertSame(Membership::ADDED_ORIGIN_RIPPLED, DB::table('memberships')
             ->where('userid', $userId)->where('groupid', $groupId)->value('added_origin'));
     }
 
