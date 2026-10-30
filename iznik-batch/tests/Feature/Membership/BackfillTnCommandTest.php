@@ -146,7 +146,7 @@ class BackfillTnCommandTest extends TestCase
         $this->assertSame($arrival->toDateTimeString(), Carbon::parse($m->added)->toDateTimeString());
         $this->assertTrue($pair['contact_after']);
         $this->assertSame(1, DB::table('logs')->where('user', $user->id)->where('groupid', $group->id)
-            ->where('text', RippleEngagementService::LOG_PREFIX.GroupPostIngestionService::REASON_CONSENTED)->count());
+            ->where('text', RippleEngagementService::LOG_PREFIX_TN.GroupPostIngestionService::REASON_CONSENTED)->count());
 
         $logs = DB::table('logs')->where('user', $user->id)->count();
         $pair = $this->pairFor($this->backfill(), $user, $group);
@@ -225,7 +225,7 @@ class BackfillTnCommandTest extends TestCase
         $this->assertSame(0, (int) $this->membership($user, $group)->implicit);
         $this->assertTrue($pair['contact_after']);
         $this->assertSame(1, DB::table('logs')->where('user', $user->id)->where('groupid', $group->id)
-            ->where('text', RippleEngagementService::LOG_PREFIX.GroupPostIngestionService::REASON_CONSENTED)->count());
+            ->where('text', RippleEngagementService::LOG_PREFIX_TN.GroupPostIngestionService::REASON_CONSENTED)->count());
 
         // Cleared once: a second run finds it ordinary and leaves it.
         $pair = $this->pairFor($this->backfill(), $user, $group);

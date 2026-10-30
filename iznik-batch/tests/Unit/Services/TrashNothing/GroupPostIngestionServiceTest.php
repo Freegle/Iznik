@@ -1436,13 +1436,15 @@ class GroupPostIngestionServiceTest extends TestCase
     {
         $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
         $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT', 'implicit' => 1]);
+        $this->createMembership($user, $group, [
+            'ourPostingStatus' => 'DEFAULT', 'implicit' => 1, 'added_origin' => 'tn_unaddressed',
+        ]);
 
         $this->ingestFor($user, $group, true);
 
         $this->assertSame(0, (int) $this->membershipOf($user, $group)->implicit);
         $this->assertSame(
-            'Ripple-created membership became ordinary: consented through TrashNothing',
+            'TrashNothing-placed membership became ordinary: consented through TrashNothing',
             DB::table('logs')->where('user', $user->id)->where('groupid', $group->id)
                 ->where('type', 'Group')->where('subtype', 'Joined')->value('text')
         );

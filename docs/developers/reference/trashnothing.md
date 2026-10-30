@@ -332,7 +332,8 @@ and Community News, leave out TrashNothing members altogether, whatever membersh
 TrashNothing member through `PUT /memberships`: they join through TrashNothing, and the add would
 turn a placement into a membership they never chose. An existing membership keeps its `added_origin`. A post that **is**
 addressed clears an implicit or ripple membership through `RippleEngagementService::clear`,
-logging `Ripple-created membership became ordinary: consented through TrashNothing`; consent
+logging `TrashNothing-placed membership became ordinary: consented through TrashNothing` for a
+`tn_unaddressed` row (a ripple membership gets the `Ripple-created ...` wording); consent
 only goes one way, so a later unaddressed post leaves an ordinary membership alone. The membership is also what lets the post auto-approve: `AutoApproveService::shouldApproveOnGroup` releases a
 Pending post only for a poster whose membership of the group was added more than 48 hours ago
 (`MEMBERSHIP_HOURS`), and it used to hold a TN poster's post for good because there was no

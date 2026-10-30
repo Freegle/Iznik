@@ -2,6 +2,7 @@
 
 namespace App\Services\Ripple;
 
+use App\Models\Membership;
 use App\Support\TransactionPolicy;
 use Illuminate\Support\Facades\DB;
 
@@ -41,7 +42,19 @@ class RippleEngagementService
     /** Prefix of the log text every clear writes, here and in iznik-server-go. */
     public const LOG_PREFIX = 'Ripple-created membership became ordinary: ';
 
+    /** The same, for a TrashNothing poster placed on a group they never chose (tn_unaddressed). */
+    public const LOG_PREFIX_TN = 'TrashNothing-placed membership became ordinary: ';
+
     private const CHAT_CHUNK = 5000;
+
+    /**
+     * The "became ordinary" log prefix for a membership created with $origin, as
+     * rippling.BecameOrdinaryText chooses it in iznik-server-go.
+     */
+    public static function logPrefix(?string $origin): string
+    {
+        return $origin === Membership::ADDED_ORIGIN_TN_UNADDRESSED ? self::LOG_PREFIX_TN : self::LOG_PREFIX;
+    }
 
     /**
      * Posts are found by their arrival, which approval sets to the time of approval. Each
@@ -98,13 +111,22 @@ class RippleEngagementService
      * memberships.implicit is cleared alongside rippled, as rippling.ClearRippledMembership
      * does in iznik-server-go. A row with implicit = 1 alone is a TrashNothing poster placed on
      * a group they never chose; GroupPostIngestionService clears it here once they consent.
-     * Every pass in this class picks its rows on rippled = 1, so none of them reaches one.
+     * Every pass in this class picks its rows on rippled = 1, so none of them reaches one. The
+     * log is worded from the row's added_origin (logPrefix), so that clear says it was a
+     * TrashNothing placement.
      */
     public function clear(int $userid, int $groupid, string $reason): bool
     {
         // The flag and its "became ordinary" log go together or not at all, and a deadlock is
         // retried. A retry re-runs the update on rows the failed attempt rolled back.
         return TransactionPolicy::atomic(function () use ($userid, $groupid, $reason) {
+            // For the log text. From the write node, as a row made moments ago may not be on a reader.
+            $origin = DB::table('memberships')
+                ->useWritePdo()
+                ->where('userid', $userid)
+                ->where('groupid', $groupid)
+                ->value('added_origin');
+
             $changed = DB::table('memberships')
                 ->where('userid', $userid)
                 ->where('groupid', $groupid)
@@ -122,7 +144,7 @@ class RippleEngagementService
                 'groupid' => $groupid,
                 'user' => $userid,
                 'byuser' => $userid,
-                'text' => self::LOG_PREFIX.$reason,
+                'text' => self::logPrefix($origin).$reason,
             ]);
 
             return true;

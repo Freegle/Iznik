@@ -83,8 +83,8 @@ func TestUserMembershipsCarryImplicit(t *testing.T) {
 }
 
 // A TrashNothing poster placed on a group they never chose has implicit = 1 with rippled = 0.
-// TN adding them to that group is their consent, so the partner join clears it, with the
-// same "became ordinary" log a ripple membership gets.
+// TN adding them to that group is their consent, so the partner join clears it, with a
+// "became ordinary" log that says it was a TrashNothing placement.
 func TestPartnerJoinClearsATrashNothingImplicitMembership(t *testing.T) {
 	prefix := uniquePrefix("memimplicit_partner")
 	db := database.DBConn
@@ -92,7 +92,7 @@ func TestPartnerJoinClearsATrashNothingImplicitMembership(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	membershipID := CreateTestMembership(t, userID, groupID, "Member")
-	db.Exec("UPDATE memberships SET rippled = 0, implicit = 1 WHERE id = ?", membershipID)
+	db.Exec("UPDATE memberships SET rippled = 0, implicit = 1, added_origin = 'tn_unaddressed' WHERE id = ?", membershipID)
 
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 12346)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 12346, userID)
@@ -109,6 +109,6 @@ func TestPartnerJoinClearsATrashNothingImplicitMembership(t *testing.T) {
 
 	var logs int64
 	db.Raw("SELECT COUNT(*) FROM logs WHERE user = ? AND groupid = ? AND type = 'Group' AND subtype = 'Joined' "+
-		"AND text = 'Ripple-created membership became ordinary: joined'", userID, groupID).Scan(&logs)
+		"AND text = 'TrashNothing-placed membership became ordinary: joined'", userID, groupID).Scan(&logs)
 	assert.Equal(t, int64(1), logs)
 }

@@ -1461,8 +1461,10 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
 - `memberships.rippled = 1` - marks a membership rippling created, when the member's own post
   rippled into that group and we auto-joined them (§5). Every statistic that asks "were they
   already a member?" must exclude these - see §10a. The flag is cleared, and a Group/Joined
-  log row written with the text `Ripple-created membership became ordinary: <reason>`, once
-  the member has something to do with the community: they join it or move into its area
+  log row written with the text `Ripple-created membership became ordinary: <reason>`
+  (`TrashNothing-placed membership became ordinary: <reason>` when the row's `added_origin` is
+  `tn_unaddressed`), once the member has something to do with the community: they join it or
+  move into its area
   (`rippling.ClearRippledMembership` in iznik-server-go), or they post on it, reply to a post
   posted on it, or write back to one of its ordinary members about their rippled post
   (`ripple:clear-engaged`, `RippleEngagementService`, every five minutes). Its first run looks back

@@ -428,7 +428,9 @@ class MembershipOriginBackfillService
             ->whereNotNull('user')
             ->whereNotNull('groupid')
             ->where(function ($q) {
-                $q->whereNull('text')->orWhere('text', 'not like', RippleEngagementService::LOG_PREFIX.'%');
+                $q->whereNull('text')->orWhere(fn ($q) => $q
+                    ->where('text', 'not like', RippleEngagementService::LOG_PREFIX.'%')
+                    ->where('text', 'not like', RippleEngagementService::LOG_PREFIX_TN.'%'));
             });
     }
 

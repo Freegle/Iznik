@@ -4,6 +4,7 @@ namespace Tests\Feature\Membership;
 
 use App\Models\Membership;
 use App\Services\MembershipOriginBackfillService;
+use App\Services\Ripple\RippleEngagementService;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -189,6 +190,19 @@ class BackfillOriginCommandTest extends TestCase
         $this->joinLog($user->id, $group->id, MembershipOriginBackfillService::JOIN_TEXT_RIPPLED, null, now()->subDays(10));
         $this->joinLog($user->id, $group->id, 'Ripple-created membership became ordinary: joined', $user->id, now()->subDay());
         // The flag has been cleared, so only the log says it was rippled.
+        $id = $this->member($user->id, $group->id, ['rippled' => 0]);
+
+        $this->service()->backfill($user->id, 1000, send: true);
+
+        $this->assertSame(Membership::ADDED_ORIGIN_RIPPLED, $this->origin($id));
+    }
+
+    public function test_a_trashnothing_became_ordinary_row_is_not_a_join_either(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->joinLog($user->id, $group->id, MembershipOriginBackfillService::JOIN_TEXT_RIPPLED, null, now()->subDays(10));
+        $this->joinLog($user->id, $group->id, RippleEngagementService::LOG_PREFIX_TN.'joined', $user->id, now()->subDay());
         $id = $this->member($user->id, $group->id, ['rippled' => 0]);
 
         $this->service()->backfill($user->id, 1000, send: true);

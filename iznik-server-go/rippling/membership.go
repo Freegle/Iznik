@@ -3,10 +3,23 @@ package rippling
 import (
 	"log"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
+	"gorm.io/plugin/dbresolver"
 )
+
+// BecameOrdinaryText is the text of the Group/Joined log row written when a membership the
+// member did not choose becomes an ordinary one. origin is the membership's added_origin, so a
+// TrashNothing placement says so rather than reading as one rippling made. The batch writes the
+// same texts (RippleEngagementService::logPrefix).
+func BecameOrdinaryText(origin, reason string) string {
+	if origin == addedorigin.TNUnaddressed {
+		return "TrashNothing-placed membership became ordinary: " + reason
+	}
+	return "Ripple-created membership became ordinary: " + reason
+}
 
 // ClearRippledMembership turns a ripple-created membership into an ordinary one.
 //
@@ -32,6 +45,11 @@ import (
 // reason is recorded in the log so the provenance is not simply lost. Best-effort: never
 // fails the caller's own action.
 func ClearRippledMembership(db *gorm.DB, userid uint64, groupid uint64, reason string) {
+	// For the log text. From the primary, as a row made moments ago may not be on a replica.
+	var origin string
+	db.Clauses(dbresolver.Write).Table("memberships").Select("added_origin").
+		Where("userid = ? AND groupid = ?", userid, groupid).Scan(&origin)
+
 	result := db.Table("memberships").
 		Where("userid = ? AND groupid = ? AND (rippled = 1 OR implicit = 1)", userid, groupid).
 		Updates(map[string]interface{}{"rippled": 0, "implicit": 0})
@@ -53,7 +71,7 @@ func ClearRippledMembership(db *gorm.DB, userid uint64, groupid uint64, reason s
 	// that group. Rejoin suppression (ExpandService) keys on the most recent Group/Joined
 	// being a ripple-join, so from here on the group counts as one they joined ordinarily -
 	// which is exactly what has happened.
-	text := "Ripple-created membership became ordinary: " + reason
+	text := BecameOrdinaryText(origin, reason)
 	flog.Log(flog.LogEntry{
 		Type:    flog.LOG_TYPE_GROUP,
 		Subtype: flog.LOG_SUBTYPE_JOINED,
