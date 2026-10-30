@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-19
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/settings/**
@@ -200,7 +200,10 @@ chat and moderate them as normal.
   who joined through TrashNothing appears as an ordinary member and posts and replies just
   like anyone else. A few of their settings (some email and notification preferences) are
   managed by TrashNothing rather than Freegle, so those options may be hidden on their
-  member panel.
+  member panel. You cannot add a TrashNothing member to your community yourself, and they
+  are not sent the Stories newsletter, engagement emails or Community News. A member whose
+  post TrashNothing placed on your community without them choosing it is flagged on the members
+  page, as described in [managing members](managing-members.md).
 - **LoveJunk** is a reuse marketplace that Freegle shares OFFERs with, to help more items
   get taken. By default your community's OFFERs are also shown on LoveJunk, and LoveJunk
   users can reply through the normal chat. Those members show a "LoveJunk user" note on

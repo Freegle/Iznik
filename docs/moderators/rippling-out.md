@@ -69,7 +69,9 @@ What this means in practice:
   below).
 - Your community's member count may include rippled members.
 - The join is recorded as **'Rippled'** in the membership log, so you can distinguish it
-  from a manual or organic join if you need to.
+  from a manual or organic join if you need to. A TrashNothing poster placed on your
+  community is logged **'TrashNothing unaddressed'** instead, and is treated the same way
+  until they do something with it.
 - The membership becomes an ordinary one once they have something to do with your
   community. That is when they:
   - join it themselves, or move house into your area;

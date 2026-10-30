@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-26
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -38,7 +38,8 @@ From here you can:
 - **Order** the list **Newest first** (the default) or **Oldest first**, by when each person
   joined. The order works with any filter and with a search. A member who left and joined
   again keeps their place from when they first joined.
-- **Add** a member by email (this sends the standard welcome).
+- **Add** a member by email (this sends the standard welcome). A TrashNothing member cannot be
+  added this way: you are told so, and nothing happens. They join communities through TrashNothing.
 - **Ban** a member by id, with a reason.
 - **Merge** two accounts that are the same person (irreversible; you choose which email
   survives).
@@ -251,6 +252,11 @@ matched them to a community from where they are - they never chose your communit
 members carry a warning on their member row saying so, and the **Chat**, **Mail** and
 standard-message buttons are not offered, because there is no relationship to use and no
 way for them to reply to you. You can still remove or ban them.
+
+Their membership log shows **TrashNothing unaddressed** ("added when their TrashNothing post was
+placed in this group; they did not choose it"). A TrashNothing member who joined a community
+through TrashNothing shows **via partner** instead and is an ordinary member. Members of either
+kind are left out of the Stories newsletter, Freegle's engagement emails and Community News.
 
 If the same person also posts to a community they've chosen, the warning disappears on its own and
 they become an ordinary member you can contact as usual.

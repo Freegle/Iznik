@@ -14,6 +14,11 @@ covers:
   - iznik-batch/app/Services/TnMembershipBackfillService.php
   - iznik-batch/app/Console/Commands/Membership/BackfillTnCommand.php
   - iznik-server-go/modmessaging/**
+  - iznik-server-go/membership/membership.go
+  - iznik-server-go/story/story.go
+  - iznik-batch/app/Services/MembershipsProcessingService.php
+  - iznik-batch/app/Services/BirthdayService.php
+  - iznik-batch/app/Services/ReengageContentService.php
   - iznik-nuxt3/modtools/components/ModMessageTnNotice.vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-server-go/test/modmessaging_test.go
@@ -328,7 +333,12 @@ TrashNothing member through `PUT /memberships`: they join through TrashNothing, 
 turn a placement into a membership they never chose. An existing membership keeps its `added_origin`. A post that **is**
 addressed clears an implicit or ripple membership through `RippleEngagementService::clear`,
 logging `Ripple-created membership became ordinary: consented through TrashNothing`; consent
-only goes one way, so a later unaddressed post leaves an ordinary membership alone. A banned
+only goes one way, so a later unaddressed post leaves an ordinary membership alone. The membership is also what lets the post auto-approve: `AutoApproveService::shouldApproveOnGroup` releases a
+Pending post only for a poster whose membership of the group was added more than 48 hours ago
+(`MEMBERSHIP_HOURS`), and it used to hold a TN poster's post for good because there was no
+membership to read. So a TN API post flagged by the content check, unaddressed ones included,
+now goes live about 49 hours after the placement, like an ordinary member's. That is deliberate.
+A moderator can still approve or delete it first. A banned
 poster gets no row. The trace tag is `TN-SYNC-TRACE [MEMBERSHIP]`, which the parity comparison
 ignores.
 
