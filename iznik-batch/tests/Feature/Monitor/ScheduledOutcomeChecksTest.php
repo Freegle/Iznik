@@ -9,6 +9,7 @@ use App\Monitoring\Checks\ProducedSinceCheck;
 use App\Monitoring\OutcomeResult;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use App\Models\Membership;
 use Tests\TestCase;
 
 /**
@@ -491,6 +492,34 @@ class ScheduledOutcomeChecksTest extends TestCase
         // Once answered it is the processor's job again, and a day-old one is a real backlog.
         DB::table('chat_prompts')->where('chatmsgid', $question->id)->update(['answered_at' => $now]);
         $this->assertTrue($check->evaluate($now)->isBreach());
+    }
+
+    /**
+     * A backfill writes history rows dated from the join they record, months ago, for
+     * memberships:process to pick up within the minute. Their join date is not how long they
+     * have waited, so they are not a backlog; a row that joined within the last day and is still
+     * waiting is.
+     */
+    public function test_membership_backlog_ignores_backfilled_rows_dated_from_an_old_join(): void
+    {
+        $now = Carbon::now();
+        DB::table('memberships_history')->where('processingrequired', 1)->update(['processingrequired' => 0]);
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        DB::table('memberships_history')->insert([
+            'userid' => $user->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED,
+            'processingrequired' => 1, 'added' => $now->copy()->subMonths(3),
+        ]);
+
+        $check = $this->registeredCheck('memberships:process');
+        $this->assertTrue($check->evaluate($now)->isOk(), 'a backfilled row is not a backlog');
+
+        DB::table('memberships_history')->insert([
+            'userid' => $user->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED,
+            'processingrequired' => 1, 'added' => $now->copy()->subHours(2),
+        ]);
+        $this->assertTrue($check->evaluate($now)->isBreach(), 'a recent join still waiting is');
     }
 
     private function seedDailySend(string $sentAtUtc): void
