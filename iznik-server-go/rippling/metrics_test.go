@@ -75,6 +75,8 @@ func TestReplySourceSplitSQL_RippleJoinRefinesTheFrozenHomeBit(t *testing.T) {
 		"ripple_join needs a ripple-created origin membership")
 	assert.Contains(t, sql, "memo.rippled = 0",
 		"...and no ordinary origin membership, else it is genuinely home")
+	assert.Contains(t, sql, "memo.implicit = 0",
+		"...and a TrashNothing placement is not an ordinary origin membership either")
 
 	// The home rung is guarded by the negation of that same test, so a row whose only surviving
 	// origin membership is a ripple-join can never fall through to home.

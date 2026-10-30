@@ -2,8 +2,10 @@
 
 namespace Tests\Unit\Models;
 
+use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
+use App\Services\Ripple\RippleEngagementService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -88,6 +90,146 @@ class UserMergeTest extends TestCase
             ->value('added');
 
         $this->assertEquals(self::OLDER_DATE, $added);
+    }
+
+    public function test_merge_takes_the_older_rows_origin_and_the_lower_implicit(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        // The survivor's row is a newer ripple join; the merged account chose the group earlier.
+        $this->createMembership($user1, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_MANUAL,
+            'implicit' => 0, 'rippled' => 0,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_MANUAL, $m->added_origin, 'the origin goes with the older added date');
+        $this->assertSame(0, (int) $m->implicit, 'either account having chosen the group is enough');
+        $this->assertSame(0, (int) $m->rippled);
+        $this->assertSame(1, $this->becameOrdinaryLogs($user1, $group, RippleEngagementService::LOG_PREFIX),
+            'the ripple join became ordinary');
+    }
+
+    public function test_merge_keeps_the_survivors_origin_and_implicit_when_its_row_is_older_and_both_are_implicit(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($user1, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+            'implicit' => 1, 'rippled' => 0,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $m->added_origin);
+        $this->assertSame(1, (int) $m->implicit, 'both were implicit, so the merged row still is');
+        $this->assertSame(0, (int) $m->rippled);
+        $this->assertSame(0, $this->becameOrdinaryLogs($user1, $group, RippleEngagementService::LOG_PREFIX), 'nothing became ordinary');
+        $this->assertSame(0, $this->becameOrdinaryLogs($user1, $group, RippleEngagementService::LOG_PREFIX_TN));
+    }
+
+    /**
+     * A TrashNothing placement merged with a newer membership the member chose keeps its origin,
+     * as the older row, and becomes ordinary. The log says so, as every other clear does, and
+     * says it was a TrashNothing placement.
+     */
+    public function test_merge_logs_a_placement_made_ordinary_by_the_other_account(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($user1, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_MANUAL,
+            'implicit' => 0, 'rippled' => 0,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+            'implicit' => 1, 'rippled' => 0,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $m->added_origin);
+        $this->assertSame(0, (int) $m->implicit);
+        $this->assertSame(1, $this->becameOrdinaryLogs($user1, $group, RippleEngagementService::LOG_PREFIX_TN),
+            'the log says it was a TrashNothing placement');
+    }
+
+    private function becameOrdinaryLogs(User $user, Group $group, string $prefix): int
+    {
+        return DB::table('logs')->where('user', $user->id)->where('groupid', $group->id)
+            ->where('type', 'Group')->where('subtype', 'Joined')
+            ->where('text', $prefix.RippleEngagementService::REASON_MERGED)
+            ->count();
+    }
+
+    /**
+     * An older ripple join and a newer TN placement: the merged row is a TN placement, a state
+     * ingestion writes, not a ripple-origin row with rippled = 0 that no writer makes and that
+     * ripple clean-up would delete.
+     */
+    public function test_merge_of_an_older_ripple_join_and_a_tn_placement_is_a_tn_placement(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($user1, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+            'implicit' => 1, 'rippled' => 0,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $m->added_origin);
+        $this->assertSame(1, (int) $m->implicit);
+        $this->assertSame(0, (int) $m->rippled);
+        $this->assertEquals(self::OLDER_DATE, $m->added);
+    }
+
+    /** Two ripple joins stay a ripple join, with the older row's flags. */
+    public function test_merge_of_two_ripple_joins_is_a_ripple_join(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($user1, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_RIPPLED, $m->added_origin);
+        $this->assertSame([1, 1], [(int) $m->implicit, (int) $m->rippled]);
     }
 
     public function test_merge_transfers_unique_memberships(): void

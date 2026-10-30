@@ -356,13 +356,17 @@ class ScheduledOutcomeRegistry
 
             // memberships:process (every minute) clears processingrequired on
             // every history row it visits. A row still flagged past $backlogMin
-            // = welcome-mail / review processing is stuck.
+            // = welcome-mail / review processing is stuck. added is the join
+            // date, and a backfill writes rows dated from joins months ago, so
+            // only rows that joined within the last day count: a stuck worker
+            // still leaves those behind.
             (new BacklogCheck(
                 'memberships:process',
                 'memberships_history',
                 'added',
                 $backlogMin,
-                fn ($q) => $q->where('processingrequired', 1),
+                fn ($q) => $q->where('processingrequired', 1)
+                    ->where('added', '>=', now()->subDay()),
             ))
                 ->describedAs('Membership-history processing queue not backing up')
                 ->inCategory('cursor-staleness'),

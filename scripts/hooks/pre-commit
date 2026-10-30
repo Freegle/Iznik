@@ -2,12 +2,13 @@
 #
 # Optional pre-commit hook: lint, docs and dependency licences.
 #
-# Steps 1 to 3 are cheap, local and advisory - they never block your commit (CI is
-# where the freshness and licence gates are enforced hard):
+# Steps 1 to 3 are cheap, local and advisory - they never block your commit. No CI job runs
+# the freshness gate, so this hook and a manual run are the only places it is checked; the
+# licence gate does run in CI (check-licences):
 #
 #   1. Runs the documentation freshness gate on your STAGED changes, so if you
 #      staged a change to code a doc covers without updating the doc, you get a
-#      heads-up now instead of in CI.
+#      heads-up now. Nothing checks it later.
 #   2. If you staged UI changes, reminds you to regenerate the doc screenshots.
 #      It does NOT run Playwright here - screenshot regen needs the app running
 #      and is far too slow for a commit hook. See docs/screenshots/README.md.

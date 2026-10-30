@@ -1,11 +1,20 @@
 ---
-last_reviewed: 2026-10-11
+last_reviewed: 2026-10-30
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/tests/Unit/Services/Ripple/ResumedReachTest.php
   - iznik-batch/app/Console/Commands/Ripple/**
   - iznik-batch/app/Console/Commands/Browse/**
+  - iznik-batch/app/Services/MembershipOriginBackfillService.php
+  - iznik-batch/app/Console/Commands/Membership/BackfillOriginCommand.php
   - iznik-server-go/rippling/**
+  - iznik-server-go/addedorigin/**
+  - iznik-server-go/membership/membership.go
+  - iznik-server-go/story/story.go
+  - iznik-batch/app/Models/Membership.php
+  - iznik-batch/app/Services/MembershipsProcessingService.php
+  - iznik-batch/app/Services/BirthdayService.php
+  - iznik-batch/app/Services/ReengageContentService.php
   - iznik-nuxt3/composables/rippleStatus.js
   - iznik-server-go/density/**
   - iznik-spatial-go/cellset/**
@@ -1452,17 +1461,66 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
 - `memberships.rippled = 1` - marks a membership rippling created, when the member's own post
   rippled into that group and we auto-joined them (§5). Every statistic that asks "were they
   already a member?" must exclude these - see §10a. The flag is cleared, and a Group/Joined
-  log row written with the text `Ripple-created membership became ordinary: <reason>`, once
-  the member has something to do with the community: they join it or move into its area
+  log row written with the text `Ripple-created membership became ordinary: <reason>`
+  (`TrashNothing-placed membership became ordinary: <reason>` when the row's `added_origin` is
+  `tn_unaddressed`), once the member has something to do with the community: they join it or
+  move into its area
   (`rippling.ClearRippledMembership` in iznik-server-go), or they post on it, reply to a post
   posted on it, or write back to one of its ordinary members about their rippled post
   (`ripple:clear-engaged`, `RippleEngagementService`, every five minutes). Its first run looks back
   30 days; `ripple:clear-engaged --since=2026-06-23`, run once, checks every membership rippling
   has made without moving the scheduled run's saved positions. The clear counts
   towards the "Seen on many groups" spam check like any join. `memberships_history` keeps
-  its flag, and `ripple:backfill-memberships` leaves a cleared membership alone.
+  its flag. An account merge that keeps a membership one account was placed on and the other
+  chose writes the same log, with the reason `merged with an account that chose this
+  community`. `ripple:backfill-memberships` flags a membership only when the `Rippled` log is the
+  latest Group/Joined row for it, so it leaves alone a cleared membership and one the member
+  left and joined again themselves.
+- `memberships.implicit` is taking over the changing half of `rippled`: 1 while the member has
+  not knowingly joined, copied from `rippled` when the column was added. Every write of
+  `rippled` writes `implicit` with it: a ripple join sets both, and both clears (`ClearRippledMembership`
+  and `RippleEngagementService::clear`) set both to 0. The clears also take a row with
+  `implicit = 1` alone, which is a TrashNothing poster placed on a group they never chose (see
+  the TrashNothing reference). A TrashNothing implicit membership starts with mail off, not
+  with the ripple-join settings below: that poster is never told. The readers that ask "is this
+  an ordinary member?" now read `rippled = 0 AND implicit = 0`, so a TrashNothing placement is
+  not one: the established-member test (`rippling/attribution.go`, `metrics.go`, `analytics.go`,
+  `ReplyAttributionBackfillService`), `PosterMessagingGroups`, the chat reach check in
+  `chat/chatmessage.go`, the story feeds, the birthday appeal, the re-engagement sign-off and the
+  "seen on many groups" check. `rippled` itself is still written alongside `implicit` until it is retired.
+- `memberships.added_origin` (also on `memberships_history`) takes over the fixed half: how the
+  row was created (`rippled` for a ripple join, `tn_unaddressed` for a TrashNothing placement,
+  `partner` for a TrashNothing add, and so on; the list is in `iznik-server-go/addedorigin` and
+  `Membership::ADDED_ORIGINS`), set once at insert. Mostly nothing decides on it, the readers use
+  `implicit`. The exceptions are the per-group welcome and the "seen on many groups" check in
+  `MembershipsProcessingService`, which skip a `tn_unaddressed` join, and the spread check in
+  `iznik-server-go/user/user.go`, which ignores history rows with that origin. The member-list API
+  reports it, and the join log text follows it.
+- Rows older than the column read `unknown` until `memberships:backfill-origin` fills them from
+  the join logs (`MembershipOriginBackfillService`; dry run unless `--send`, and it only reads
+  and writes rows still `unknown`, so it can be stopped and run again). A membership takes its
+  latest Group/Joined log, ignoring the "became ordinary" rows, and `rippled = 1` is `rippled`
+  whatever the logs say. A history row takes the join log for its user and group nearest its
+  `added`, within a minute. A join by someone other than the member is `moderator`; one by the
+  system with no reason, or by the legacy placeholder user 0, stays `unknown`; the member's own
+  join with no reason (and `Auto`) is `posted` when a post of theirs reached the group from 5
+  minutes before to 30 after, otherwise `Auto` is `replied` and no reason stays `unknown`. It
+  prints counts by origin and by reason for `unknown`, and reports, without acting on them,
+  memberships whose flag, latest join and history disagree about rippling, and those whose latest
+  join was logged over a day after the row was added (usually carried over by a merge).
+- Every insert into either table sets `added_origin` through one helper per codebase,
+  `addedorigin.ForInsert` in Go and `Membership::addedOriginForInsert` in the batch. A new row
+  that would be `unknown` is still created, and reported to Sentry as an error naming the
+  insert, so a new join path that forgot its origin shows up. `PUT /memberships` and `PUT /user`
+  take an `origin` (`manual`, `posted`, `replied` or `signup`; anything else is a 400 on a
+  member's own join). A moderator adding someone else is always `moderator`, whatever origin the
+  request carries, and a client that sends only the old `manual` flag gets `manual` for true and
+  `replied` for false. An email sign-up on a community's join page (`/explore/join/<id>`, where
+  every logged-out Join lands) sends that `groupid` with `signup`, so the account is created on
+  the community.
 - A community a post rippled into may write to the poster about it once the poster is an
-  ordinary member there (`PosterMessagingGroups`). Whether an action turns the post away,
+  ordinary member there (`PosterMessagingGroups`: an Approved membership with `rippled = 0`
+  and `implicit = 0`, so neither a ripple join nor a TrashNothing placement counts). Whether an action turns the post away,
   which stops it rippling back, still goes by `HomeGroups`.
 
 ### 9a. Shared geometry (`rippling_reach_geom`) - RETIRED
@@ -1988,7 +2046,7 @@ The test has three qualifiers, all load-bearing, and it lives in one place -
   into* is not being local to it,
 - **joined before the post arrived** - the reply flow joins people to groups in order to reply, so
   a join made seconds ago is not evidence of anything,
-- **not a ripple-created join** (`memberships.rippled = 0`) - rippling auto-joins a poster to every
+- **not a ripple-created join or a TrashNothing placement** (`memberships.rippled = 0 AND implicit = 0`) - rippling auto-joins a poster to every
   group their post rippled into (§5), so a frequent poster accumulates memberships of distant
   groups purely as a side-effect of rippling. When one of those groups later hosts a post of its
   own, that member is only there to see it *because* of an earlier ripple.

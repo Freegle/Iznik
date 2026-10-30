@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\Group;
+use App\Models\Membership;
 use App\Services\BirthdayService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -37,6 +39,40 @@ class BirthdayServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid' => $rippled->id, 'groupid' => $group->id,
             'role' => 'Member', 'collection' => 'Approved', 'rippled' => 1, 'added' => now(),
+        ]);
+
+        $count = $service->sendBirthdayEmails(null, [$group->id], dryRun: true);
+
+        $this->assertSame(1, $count, 'only the genuine member receives the birthday appeal');
+    }
+
+    /**
+     * A TrashNothing poster placed on a group they did not choose (implicit = 1, rippled = 0)
+     * never knowingly joined it either.
+     */
+    public function test_trashnothing_implicit_members_are_excluded_from_birthday_appeals(): void
+    {
+        $service = new BirthdayService();
+
+        $group = $this->createTestGroup();
+        DB::table('groups')->where('id', $group->id)->update([
+            'type' => Group::TYPE_FREEGLE,
+            'publish' => 1,
+            'onmap' => 1,
+            'founded' => now()->subYear()->format('Y-m-d H:i:s'),
+        ]);
+
+        $genuine = $this->makeBirthdayRecipient();
+        $placed = $this->makeBirthdayRecipient();
+
+        DB::table('memberships')->insert([
+            'userid' => $genuine->id, 'groupid' => $group->id,
+            'role' => Membership::ROLE_MEMBER, 'collection' => Membership::COLLECTION_APPROVED, 'added' => now(),
+        ]);
+        DB::table('memberships')->insert([
+            'userid' => $placed->id, 'groupid' => $group->id,
+            'role' => Membership::ROLE_MEMBER, 'collection' => Membership::COLLECTION_APPROVED, 'rippled' => 0, 'implicit' => 1,
+            'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now(),
         ]);
 
         $count = $service->sendBirthdayEmails(null, [$group->id], dryRun: true);

@@ -224,6 +224,7 @@ func TestCreateGroupCreatorBecomesOwner(t *testing.T) {
 	var role string
 	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?", modID, newID).Scan(&role)
 	assert.Equal(t, "Owner", role, "creator should have Owner role in the new group")
+	assert.Equal(t, "moderator", addedOriginOf(t, "memberships", modID, newID))
 
 	db.Exec("DELETE FROM memberships WHERE groupid = ?", newID)
 	db.Exec("DELETE FROM `groups` WHERE id = ?", newID)

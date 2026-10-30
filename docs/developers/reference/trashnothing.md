@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-24
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -11,7 +11,14 @@ covers:
   - iznik-batch/app/Services/UnifiedDigestService.php
   - iznik-batch/app/Services/TrashNothing/Ingestion/**
   - iznik-batch/app/Services/TrashNothing/Sync/**
+  - iznik-batch/app/Services/TnMembershipBackfillService.php
+  - iznik-batch/app/Console/Commands/Membership/BackfillTnCommand.php
   - iznik-server-go/modmessaging/**
+  - iznik-server-go/membership/membership.go
+  - iznik-server-go/story/story.go
+  - iznik-batch/app/Services/MembershipsProcessingService.php
+  - iznik-batch/app/Services/BirthdayService.php
+  - iznik-batch/app/Services/ReengageContentService.php
   - iznik-nuxt3/modtools/components/ModMessageTnNotice.vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-server-go/test/modmessaging_test.go
@@ -241,9 +248,10 @@ within a minute if clean, or holds it for a moderator if a concern keyword or
 content rule matches. `GroupPostIngestionService` deliberately does not notify mods
 or add such a post to the spatial index — both belong to the content check, so a
 clean post makes no mod work and a flagged one is never live in the meantime.
-Because these posts often have no membership row, `ContentCheckService::isUserModerated()`
-applies the same `DEFAULT` fallback for a post with a `tnpostid`; without that they
-would sit in the mod queue with nothing able to promote them.
+Ingestion now gives the poster a membership with `ourPostingStatus` `DEFAULT` (below), but a
+post from before that, or from a poster banned from the group, has no membership row, so
+`ContentCheckService::isUserModerated()` applies the same `DEFAULT` fallback for a post with a
+`tnpostid`; without that they would sit in the mod queue with nothing able to promote them.
 
 **A stale spatial-index location costs the post its location, not the post.** The
 spatial server keeps its own R-tree, rebuilt from MySQL on its own schedule, so its
@@ -287,7 +295,8 @@ account for the whole email side.
 
 Because the API path picks the group from the post's coordinates, a TN poster
 frequently ends up on a Freegle community they never asked for. TN's out-of-spec
-`freegle_group_ids` field says which Freegle groups that poster *did* choose, and
+`freegle_group_ids` field lists the Freegle groups chosen for **this post** that the poster
+has consented to posting to (per post, not a list of their memberships), and
 `PostSyncer::processPost()` compares the resolved group against it, storing the answer
 as `messages_groups.mod_messaging_allowed` (default-deny for TN posts, table default 1
 for everything else). A post with 0 there is **unaddressed**: nobody on Freegle has any
@@ -297,6 +306,76 @@ Freegle at all.
 The rule is read off the **origin** row (`rippled_in = 0`). The rippling engine inserts
 its copies without the column, so they take the table default and would otherwise make
 every rippled copy of an unaddressed post read as addressed.
+
+**The poster's membership is moving to carry the same answer.** After routing,
+`GroupPostIngestionService::recordMembership()` makes sure every TN post has a membership
+behind it. A poster with no membership of the group gets one either way, Member, Approved, with
+`ourPostingStatus` `DEFAULT`, not blank, because `isUserModerated()` reads a blank status as
+moderated and would hold the poster's posts:
+
+- **Unaddressed:** an **implicit** membership (`implicit = 1`, `added_origin =
+  'tn_unaddressed'`) with mail off (`emailfrequency`, `eventsallowed` and `volunteeringallowed`
+  all 0). A ripple join copies the poster's settings from their home group instead, but a ripple
+  poster is told by the intro mail and a TN poster is told nothing; digests already skip TN
+  users, and the events and volunteering roundups would otherwise mail them from a group they
+  never chose. The join log is `TrashNothing unaddressed`, made by nobody.
+- **Addressed:** an ordinary one (`added_origin = 'partner'`) with the column's mail defaults,
+  the same as TN's own partner add, logged `via partner` by the member.
+
+Both write a `memberships_history` row with the same origin, in one transaction with the
+membership and the log. `memberships:process` sends no per-group welcome for a
+`tn_unaddressed` row and leaves those joins out of the "seen on many groups" check, as it does
+for a ripple join; birthday appeals, the re-engagement sign-off and the story feeds leave out
+`implicit = 1` memberships. Freegle's own mailings, the Stories newsletter, the engage mails
+and Community News, leave out TrashNothing members altogether, whatever memberships they hold
+(`User::scopeNotTrashNothing`, `User::isTrashNothingAccount`). A moderator cannot add a
+TrashNothing member through `PUT /memberships`: they join through TrashNothing, and the add would
+turn a placement into a membership they never chose. An existing membership keeps its `added_origin`. A post that **is**
+addressed clears an implicit or ripple membership through `RippleEngagementService::clear`,
+logging `TrashNothing-placed membership became ordinary: consented through TrashNothing` for a
+`tn_unaddressed` row (a ripple membership gets the `Ripple-created ...` wording); consent
+only goes one way, so a later unaddressed post leaves an ordinary membership alone. The membership is also what lets the post auto-approve: `AutoApproveService::shouldApproveOnGroup` releases a
+Pending post only for a poster whose membership of the group was added more than 48 hours ago
+(`MEMBERSHIP_HOURS`), and it used to hold a TN poster's post for good because there was no
+membership to read. So a TN API post flagged by the content check, unaddressed ones included,
+now goes live about 49 hours after the placement, like an ordinary member's. That is deliberate.
+A moderator can still approve or delete it first. A banned
+poster gets no row. The trace tag is `TN-SYNC-TRACE [MEMBERSHIP]`, which the parity comparison
+ignores.
+
+The membership is written after the post, so a failure there keeps the post and leaves the
+poster with no membership. The write is retried on a deadlock, and a failure goes to Sentry.
+`tn:reconcile-memberships` (`TnMembershipReconcileService`, hourly while the API path is on)
+then writes it for any TN API post from the last seven days whose poster has no membership of
+the group, unless they are banned or have left it since; each repair is reported to Sentry
+too. A post that fails to ingest at all is reported, and `tn:verify-email-coverage` fetches it
+again from the email archive.
+
+Posts that arrived unaddressed before ingestion made memberships have the flag and no
+membership. `memberships:backfill-tn` (`TnMembershipBackfillService`; dry run unless `--send`,
+safe to run again) reads only their own rows (`rippled_in = 0`, `mod_messaging_allowed = 0`,
+live or not) and, for each poster and group, writes the membership ingestion would through
+`GroupPostIngestionService::writeMembership`, dated from their earliest such post there. An
+earlier addressed post to the group does not stop it: consent lives on the membership, and a
+poster with none has left since, so being placed back makes a new implicit row, as ingestion
+does. It skips a banned or deleted poster, a poster with no `tnuserid` (the first API posts,
+before posters were resolved through it, went to whichever account had TN's id or to a stub
+made with it). An addressed TrashNothing post to the group since a membership was added is
+consent, as for ingestion: an API post that named the group, or one that came by email, since
+TrashNothing emails a post only to groups the poster joined there. An implicit membership (TN
+or ripple) is then cleared with the "became ordinary" log. An ordinary Freegle post is not
+consent to a placement, because nothing live clears one for it; a ripple membership is cleared
+for one by the engagement pass instead. Any other membership is left alone: an ordinary
+membership is never made implicit, a `tn_unaddressed` row without `implicit` included (it was cleared, or merged with a membership
+the member chose). It lists every pair with its contact
+today (the mixed-poster rule below, which one addressed post on any group opens) and per group
+(an ordinary membership of that group after the run), and counts the pairs that lose and gain
+contact when contact is decided per group.
+
+A post with no `freegle_group_ids` field at all is read as unaddressed, but `PostSyncer`
+reports it to Sentry once a run: TN enables the field per API key, and a key without it would
+make every poster implicit. An empty list is the poster's choice and is not reported. The
+checks below still read `mod_messaging_allowed`.
 
 `iznik-server-go/modmessaging` is the one place that decides this, and everything else
 asks it:
@@ -459,7 +538,7 @@ account was linked to TN, so every reader ignores it when `tnuserid` is set:
   `ResolveOnBehalfPosting` and the visualise map. The session's own location is left
   alone, as TN members do not log in.
 - Batch: `User::chosenLatLng()` for code holding a user, and `AND <alias>.tnuserid IS NULL`
-  in the SQL "mylocation else lastlocation" expressions (digests, Community News,
+  in the SQL "mylocation else lastlocation" expressions (digests,
   first-reply match mail, the approximate-location map).
 
 The sync also removes the setting when TN sends a location, so the stale data goes as

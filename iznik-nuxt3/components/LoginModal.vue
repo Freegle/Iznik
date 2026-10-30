@@ -595,6 +595,17 @@ function loginNative(e) {
         details.displayname = fullname.value
       }
 
+      // Signing up on a community's join page, where every logged-out Join lands: the account
+      // is created on that community, so the membership records it as a signup.
+      const joinGroupid = route.path.startsWith('/explore/join/')
+        ? parseInt(route.params.id)
+        : null
+
+      if (joinGroupid) {
+        details.groupid = joinGroupid
+        details.origin = 'signup'
+      }
+
       authStore
         .signUp(details)
         .then(async () => {

@@ -50,6 +50,7 @@ func TestJoinAndPostSetsMembershipMsgtype(t *testing.T) {
 	db.Raw("SELECT msgtype FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Row().Scan(&msgtype)
 	require.NotNil(t, msgtype, "the membership created at submit must record the type, not leave it NULL")
 	assert.Equal(t, "Wanted", *msgtype)
+	assert.Equal(t, "posted", addedOriginOf(t, "memberships", userID, groupID), "JoinAndPost joined them in order to post")
 }
 
 // A post submitted straight to a group the member already belongs to skips the

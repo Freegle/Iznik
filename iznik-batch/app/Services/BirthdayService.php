@@ -49,9 +49,11 @@ class BirthdayService
                 ->join('memberships', 'users.id', '=', 'memberships.userid')
                 ->where('memberships.groupid', $group->id)
                 ->where('memberships.collection', 'Approved')
-                // Exclude Rippling Out auto-joins: a birthday appeal must never appear to come
-                // "from" a community the member never knowingly joined.
+                // Exclude Rippling Out auto-joins and TrashNothing posters placed on a group they did
+                // not pick: a birthday appeal must never appear to come "from" a community the
+                // member never knowingly joined. rippled goes when Phase 5 moves this to implicit.
                 ->where('memberships.rippled', 0)
+                ->where('memberships.implicit', 0)
                 ->whereNull('users.deleted')
                 ->where('users.marketingconsent', 1)
                 ->select('users.id', 'users.settings')

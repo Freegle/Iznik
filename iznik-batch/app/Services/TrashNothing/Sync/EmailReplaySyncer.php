@@ -396,6 +396,10 @@ class EmailReplaySyncer
             'collection'       => Membership::COLLECTION_APPROVED,
             'emailfrequency'   => Membership::EMAIL_FREQUENCY_IMMEDIATE,
             'ourPostingStatus' => 'DEFAULT',
+            // Stands in for TN's partner add.
+            'added_origin'     => Membership::addedOriginForInsert(
+                Membership::ADDED_ORIGIN_PARTNER, 'EmailReplaySyncer', (int) $userId, (int) $group->id,
+            ),
             'added'            => now(),
         ]);
     }
