@@ -90,6 +90,11 @@ test, both invisible in CI.
 - **Adding a dispatch arm to `ChatMessage.vue` without a matching stub in `ChatMessage.spec.js`
   fails the whole vitest run**, as an unhandled rejection blamed on an unrelated file. If the
   suite breaks somewhere strange after a chat change, look here first.
+- **Playwright's browser says it is Chrome on Windows.** `playwright.config.js` spreads
+  `devices['Desktop Chrome']`, whose User-Agent has no `HeadlessChrome`, so app code that spots
+  "not a real user" by User-Agent never fires under test. Sentry's HeadlessChrome check missed it
+  and CI's ModTools runs sent 1,689 Google sign-in errors a week to the live project as
+  `production`. Test for automation with `navigator.webdriver`.
 - **Seeding rows with identical timestamps gives non-deterministic order.** Newsfeed replies are
   ordered by `timestamp`, not `added`, so a test can appear to prove an ordering it does not.
 
