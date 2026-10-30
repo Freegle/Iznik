@@ -16,9 +16,10 @@ use Illuminate\Support\Facades\Schema;
  * Added after an existing column with a default, so INSTANT on Percona 8.0. No index: every read
  * is already narrowed by user or group, as rippled's are.
  *
- * The copy is safe to run again, and should be run again just before the code that writes both
- * columns goes live: until then ripple joins and clears change rippled alone. It brings implicit
- * into line with rippled in both directions, in id ranges so no statement holds many rows, except
+ * The copy is safe to run again, and must be run again once the batch and the Go API that write
+ * both columns are live: until then the old code's ripple joins and clears change rippled alone,
+ * and a cleared row left implicit = 1 reads as a ripple join. It brings implicit into line with
+ * rippled in both directions, 10,000 rows at a time so no statement holds many rows, except
  * on TrashNothing placements (added_origin tn_unaddressed): those are implicit with rippled = 0 by
  * design, so it leaves them alone and is safe to run after memberships:backfill-tn too.
  */

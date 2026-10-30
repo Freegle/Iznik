@@ -8,9 +8,11 @@
 -- The ADD COLUMN goes after an existing column with a default, so it is INSTANT on Percona 8.0;
 -- ALGORITHM=INSTANT makes it refuse rather than rebuild the table if that ever stops being true.
 --
--- The copy at the end is safe to re-run, and should be re-run just before the code that writes
--- implicit alongside rippled goes live, because until then ripple joins and clears change rippled
--- alone. It brings implicit into line with rippled in both directions, 10,000 rows at a time,
+-- The copy at the end is safe to re-run, and must be re-run once the batch and the Go API that
+-- write implicit alongside rippled are both live: until then the old code's ripple joins and
+-- clears change rippled alone, and a cleared row left implicit = 1 reads as a ripple join. A run
+-- before that point is not enough. It brings implicit into line with rippled in both directions,
+-- 10,000 rows at a time,
 -- except on TrashNothing placements (added_origin tn_unaddressed): those are implicit with
 -- rippled = 0 by design, so it leaves them alone and is safe to run after memberships:backfill-tn.
 SET SESSION lock_wait_timeout = 5;
