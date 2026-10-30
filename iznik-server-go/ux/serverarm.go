@@ -115,6 +115,15 @@ var ServerSwitches = map[string]ServerSwitch{
 		Arms:    []string{"control", "button"},
 		Metric:  ServerSwitchMetric{Source: "interested_reply", WindowHours: 168},
 	},
+	"krystal-hosting-ad": {
+		Name:    "krystal-hosting-ad",
+		Opened:  "2026-10-30",
+		Channel: "server",
+		Type:    "hosting_ad",
+		Varies:  "step",
+		Arms:    []string{"control", "ad"},
+		Metric:  ServerSwitchMetric{Source: "hosting_ad_click", WindowHours: 168},
+	},
 }
 
 var serverSwitchMu sync.RWMutex

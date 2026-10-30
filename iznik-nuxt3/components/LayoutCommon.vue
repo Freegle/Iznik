@@ -110,6 +110,7 @@
           :userid="interestedInOthersUserId"
         />
         <RatingNudge />
+        <HostingAd />
         <AskNameModal v-if="askNameOpen" />
         <!-- Height detection divs -->
         <div ref="mobileTallDetector" class="mobile-tall-detector" />
@@ -166,6 +167,9 @@ const InterestedInOthersModal = defineAsyncComponent(
 )
 const RatingNudge = defineAsyncComponent(
   () => import('~/components/RatingNudge.vue')
+)
+const HostingAd = defineAsyncComponent(
+  () => import('~/components/HostingAd.vue')
 )
 const DeletedRestore = defineAsyncComponent(
   () => import('~/components/DeletedRestore.vue')
