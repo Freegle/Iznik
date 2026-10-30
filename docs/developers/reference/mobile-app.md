@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-12
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/capacitor.config.ts
@@ -8,7 +8,6 @@ covers:
   - iznik-nuxt3/android/app/build.gradle
   - iznik-nuxt3/tests/e2e/app
   - scripts/app-e2e
-  - freegle-app
 ---
 
 # Mobile apps
@@ -17,13 +16,8 @@ New to this and taking it on? Start with
 [../../getting-started/mobile-track.md](../../getting-started/mobile-track.md), which is
 the day 1, week 1, month 1 version of this page.
 
-There are **two** strands of mobile work in this repository, and only one of them ships.
-Getting this wrong wastes days, so it is the first thing on the page.
-
-| | Ships to members | Where |
-|---|---|---|
-| **Capacitor build of the Nuxt site** | **Yes** - this is the Freegle app | `iznik-nuxt3/` (`capacitor.config.ts`, `android/`, `ios/`, `fastlane/`) |
-| Kotlin Multiplatform native app | No - an experiment | `freegle-app/` |
+The Freegle app is the **Capacitor build of the Nuxt site**: `iznik-nuxt3/`
+(`capacitor.config.ts`, `android/`, `ios/`, `fastlane/`). There is no separate native app.
 
 There is also a `freegle-mobile/` directory on some machines. It is **not in git** and is
 local scratch. Ignore it.
@@ -109,43 +103,6 @@ not on every push. The scripts, the run's anatomy and its traps are in
 [`scripts/app-e2e/README.md`](../../../scripts/app-e2e/README.md); the specs are in
 `iznik-nuxt3/tests/e2e/app/`. There is no iOS equivalent: the simulator needs a macOS
 host, where the Docker stack cannot run.
-
-## The Kotlin Multiplatform experiment
-
-`freegle-app/` is a native app built with Kotlin Multiplatform (shared Kotlin logic,
-Jetpack Compose UI on Android; the iOS side was never implemented). It was written to test
-a different, more app-like experience: a "Daily 5" of curated items, a swipeable discovery
-deck, streaks, and automatic device-based accounts with no sign-in step.
-
-It is **not released and not on a path to release**. Treat it as a prototype and confirm
-the current direction with the team before spending time on it. The design work, including
-the competitor research behind it, is in `plans/active/freegle-mobile-app.md`.
-
-To build and run it:
-
-```bash
-cd freegle-app
-export ANDROID_HOME=/path/to/android-sdk   # needs Java 17+, platform 35
-./gradlew assembleDebug
-# APK at androidApp/build/outputs/apk/debug/androidApp-debug.apk
-```
-
-It talks to the same v2 Go API as everything else, configured in
-`androidApp/build.gradle.kts`. Running it on a headless emulator:
-
-```bash
-ANDROID_HOME=~/android-sdk
-$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "emulator" "system-images;android-35;google_apis;x86_64"
-sudo gpasswd -a $USER kvm            # hardware acceleration
-echo "no" | $ANDROID_HOME/cmdline-tools/latest/bin/avdmanager create avd \
-  -n freegle_test -k "system-images;android-35;google_apis;x86_64" -d pixel_6 --force
-sg kvm -c "$ANDROID_HOME/emulator/emulator -avd freegle_test -no-window -no-audio -gpu swiftshader_indirect"
-$ANDROID_HOME/platform-tools/adb install androidApp/build/outputs/apk/debug/androidApp-debug.apk
-$ANDROID_HOME/platform-tools/adb shell am start -n org.freegle.app/.android.MainActivity
-$ANDROID_HOME/platform-tools/adb exec-out screencap -p > screenshot.png
-```
-
-The seeded local database already has test data (FreeglePlayground, around Edinburgh).
 
 ## Tracked email links opened in the app
 
