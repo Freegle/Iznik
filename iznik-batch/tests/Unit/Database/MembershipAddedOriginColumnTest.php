@@ -28,6 +28,24 @@ class MembershipAddedOriginColumnTest extends TestCase
         }
     }
 
+    /**
+     * Production can only run the hand-written .sql, which spells the ENUM out twice, once per
+     * table. Each must list exactly the model's values, in order, or production's column would
+     * differ from the one the tests run against.
+     */
+    public function test_the_production_sql_lists_exactly_the_model_values(): void
+    {
+        $sql = file_get_contents(database_path('migrations/2026_10_28_000002_add_added_origin_to_memberships_migration.sql'));
+        $expected = "ENUM(''" . implode("'',''", Membership::ADDED_ORIGINS) . "'')";
+
+        preg_match_all("/ADD COLUMN added_origin (ENUM\\([^)]*\\))/", $sql, $matches);
+
+        $this->assertCount(2, $matches[1], 'one ENUM per table');
+        foreach ($matches[1] as $enum) {
+            $this->assertSame($expected, $enum);
+        }
+    }
+
     public function test_a_membership_inserted_without_an_origin_gets_unknown(): void
     {
         $membership = $this->createMembership($this->createTestUser(), $this->createTestGroup());
