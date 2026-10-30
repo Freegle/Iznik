@@ -126,6 +126,35 @@ class BackfillTnCommandTest extends TestCase
         $this->assertSame(1, DB::table('logs')->where('user', $user->id)->count());
     }
 
+    /**
+     * Unaddressed, then addressed later, with no membership: ingestion would have placed them
+     * and then cleared the placement. The first run does both, so a second run finds an
+     * ordinary membership and changes nothing.
+     */
+    public function test_a_later_addressed_post_with_no_membership_gives_an_ordinary_one_on_the_first_run(): void
+    {
+        $arrival = now()->subMonth()->startOfSecond();
+        [$user, $group] = $this->unaddressedPoster($arrival);
+        $this->tnPost($user, $group, true, now()->subWeek());
+
+        $pair = $this->pairFor($this->backfill(), $user, $group);
+
+        $this->assertSame(Backfill::ACTION_CREATE_AND_CLEAR, $pair['action']);
+        $m = $this->membership($user, $group);
+        $this->assertSame(0, (int) $m->implicit);
+        $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $m->added_origin);
+        $this->assertSame($arrival->toDateTimeString(), Carbon::parse($m->added)->toDateTimeString());
+        $this->assertTrue($pair['contact_after']);
+        $this->assertSame(1, DB::table('logs')->where('user', $user->id)->where('groupid', $group->id)
+            ->where('text', RippleEngagementService::LOG_PREFIX.GroupPostIngestionService::REASON_CONSENTED)->count());
+
+        $logs = DB::table('logs')->where('user', $user->id)->count();
+        $pair = $this->pairFor($this->backfill(), $user, $group);
+        $this->assertSame(Backfill::ACTION_EXISTING, $pair['action']);
+        $this->assertSame(0, (int) $this->membership($user, $group)->implicit);
+        $this->assertSame($logs, DB::table('logs')->where('user', $user->id)->count());
+    }
+
     public function test_a_poster_who_consented_once_and_has_no_membership_now_gets_an_implicit_one(): void
     {
         [$user, $group] = $this->unaddressedPoster();

@@ -18,6 +18,8 @@ use Illuminate\Support\Facades\DB;
  *
  * - no membership: write one as ingestion does (GroupPostIngestionService::writeMembership),
  *   dated from their earliest unaddressed post there, whatever they posted to the group before.
+ *   If they have addressed a post there since, clear it straight away, as ingestion would have
+ *   when that post came in, so that a second run finds it ordinary.
  *   Consent lives on the membership, and a poster with none has left since: leaving and being
  *   placed back is what makes a new implicit row. Not for a banned or deleted poster, nor one
  *   with no tnuserid: the first API posts were given to the wrong account.
@@ -42,6 +44,7 @@ class TnMembershipBackfillService
 {
     public const ACTION_CREATE = 'create implicit membership';
     public const ACTION_CLEAR = 'clear implicit: addressed a post here since it was added';
+    public const ACTION_CREATE_AND_CLEAR = 'create implicit membership, then clear it: addressed a post here since';
     public const ACTION_ALREADY_IMPLICIT = 'skip: tn_unaddressed membership already implicit';
     public const ACTION_EXISTING = 'leave existing membership';
     public const ACTION_BANNED = 'skip: banned from the group';
@@ -175,8 +178,12 @@ class TnMembershipBackfillService
             }
 
             // A banned poster's row was deleted by the ban; never put it back.
-            return DB::table('users_banned')->where('userid', $pair['userid'])->where('groupid', $pair['groupid'])->exists()
-                ? self::ACTION_BANNED
+            if (DB::table('users_banned')->where('userid', $pair['userid'])->where('groupid', $pair['groupid'])->exists()) {
+                return self::ACTION_BANNED;
+            }
+
+            return $this->addressedPostSince($pair['userid'], $pair['groupid'], $pair['arrival'])
+                ? self::ACTION_CREATE_AND_CLEAR
                 : self::ACTION_CREATE;
         }
 
@@ -197,10 +204,12 @@ class TnMembershipBackfillService
 
     private function apply(array $pair): void
     {
-        if ($pair['action'] === self::ACTION_CREATE) {
+        if ($pair['action'] === self::ACTION_CREATE || $pair['action'] === self::ACTION_CREATE_AND_CLEAR) {
             GroupPostIngestionService::writeMembership($pair['userid'], $pair['groupid'], false,
                 new \DateTimeImmutable($pair['arrival']));
-        } elseif ($pair['action'] === self::ACTION_CLEAR) {
+        }
+
+        if ($pair['action'] === self::ACTION_CLEAR || $pair['action'] === self::ACTION_CREATE_AND_CLEAR) {
             app(RippleEngagementService::class)->clear($pair['userid'], $pair['groupid'],
                 GroupPostIngestionService::REASON_CONSENTED);
         }
@@ -213,6 +222,10 @@ class TnMembershipBackfillService
      */
     private function ordinaryAfter(array $pair): bool
     {
+        if ($pair['action'] === self::ACTION_CREATE_AND_CLEAR) {
+            return true;
+        }
+
         $membership = $pair['membership'];
         if ($membership === null) {
             return false;
