@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import NewsLoveComment from '~/components/NewsLoveComment.vue'
+import { APIError } from '~/api/APIErrors'
 
 const { mockMyId } = vi.hoisted(() => {
   const { ref } = require('vue')
@@ -285,6 +286,104 @@ describe('NewsLoveComment', () => {
       })
       const showlove = wrapper.find('.showlove')
       expect(showlove.attributes('aria-label')).toContain('5 loves')
+    })
+  })
+
+  describe('SpinButton callback', () => {
+    // The SpinButton passes its finish callback to @handle; if a refused
+    // store call skips it, the button spins its full 20 seconds and reports
+    // a forgotten callback (.claude/rules/frontend-traps.md: callback on
+    // every exit path). finishSpinner(false) means the action failed, no
+    // argument means success. The refusal itself goes on to the global error
+    // handler, which shows the generic notice.
+    let errorHandler
+
+    const refusal = () =>
+      new APIError({ request: {}, response: { status: 401 } }, 'refused')
+
+    function mountWithSpy(finishSpy, { loved = false } = {}) {
+      return mount(NewsLoveComment, {
+        props: {
+          newsfeed: {
+            id: 123,
+            threadhead: 100,
+            userid: 2,
+            loved,
+            loves: loved ? 3 : 0,
+            closed: false,
+          },
+        },
+        global: {
+          stubs: {
+            SpinButton: {
+              template:
+                '<button class="spin-button" @click="$emit(\'handle\', finishSpy)"><slot /></button>',
+              props: ['variant', 'size', 'iconName', 'doneIcon', 'iconClass'],
+              emits: ['handle'],
+              computed: {
+                finishSpy: () => finishSpy,
+              },
+            },
+            'b-button': {
+              template:
+                '<button class="b-button" @click="$emit(\'click\')"><slot /></button>',
+              props: ['variant', 'size'],
+              emits: ['click'],
+            },
+            'v-icon': {
+              template: '<span class="v-icon" :data-icon="icon" />',
+              props: ['icon'],
+            },
+            NewsLovesModal: {
+              template: '<div class="loves-modal" />',
+              props: ['id'],
+              emits: ['hidden'],
+            },
+          },
+          config: { errorHandler },
+        },
+      })
+    }
+
+    beforeEach(() => {
+      errorHandler = vi.fn()
+    })
+
+    it('reports success after a love', async () => {
+      const finishSpy = vi.fn()
+      const wrapper = mountWithSpy(finishSpy)
+      await wrapper.find('button.spin-button').trigger('click')
+      await flushPromises()
+      expect(finishSpy).toHaveBeenCalledTimes(1)
+      expect(finishSpy).toHaveBeenCalledWith()
+    })
+
+    it('stops the SpinButton as failed and passes a refused love on', async () => {
+      const finishSpy = vi.fn()
+      const wrapper = mountWithSpy(finishSpy)
+      const err = refusal()
+      mockNewsfeedStore.love.mockRejectedValueOnce(err)
+      await wrapper.find('button.spin-button').trigger('click')
+      await flushPromises()
+      expect(mockNewsfeedStore.love).toHaveBeenCalledWith(123, 100)
+      expect(finishSpy).toHaveBeenCalledTimes(1)
+      expect(finishSpy).toHaveBeenCalledWith(false)
+      expect(errorHandler).toHaveBeenCalledTimes(1)
+      expect(errorHandler.mock.calls[0][0]).toBe(err)
+    })
+
+    it('stops the SpinButton as failed and passes a refused unlove on', async () => {
+      const finishSpy = vi.fn()
+      const wrapper = mountWithSpy(finishSpy, { loved: true })
+      const err = refusal()
+      mockNewsfeedStore.unlove.mockRejectedValueOnce(err)
+      await wrapper.find('button.spin-button').trigger('click')
+      await flushPromises()
+      expect(mockNewsfeedStore.unlove).toHaveBeenCalledWith(123, 100)
+      expect(finishSpy).toHaveBeenCalledTimes(1)
+      expect(finishSpy).toHaveBeenCalledWith(false)
+      expect(errorHandler).toHaveBeenCalledTimes(1)
+      expect(errorHandler.mock.calls[0][0]).toBe(err)
     })
   })
 })

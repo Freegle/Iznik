@@ -386,6 +386,7 @@ import { useTypewriter } from '~/composables/useTypewriter'
 import { isIOS } from '~/composables/useIsIOS'
 import { isSendShortcut } from '~/composables/chatSendShortcut'
 import { createAttachmentSender } from '~/composables/chatAttachmentSender'
+import { APIError } from '~/api/APIErrors'
 import JumpingDots from '~/components/JumpingDots.vue'
 import ChatNotice from '~/components/ChatNotice.vue'
 
@@ -655,19 +656,47 @@ const applySuggestedAddress = async () => {
   }
 }
 
+// The server can refuse any chat call (a dead session in a long-open tab, a
+// post removed since). Uncaught, a refusal gets the generic notice from
+// plugins/something-went-wrong.client.js. The calls below catch it because
+// they can do better: keep the SpinButton callback, show a notice next to
+// what failed, or stay quiet for a background call. BaseAPI has already
+// reported the refusal (all but 401s), so only an APIError is caught here.
+// Anything else is a bug and is rethrown so that it reaches Sentry.
+const tryChatCall = async (call) => {
+  try {
+    await call()
+    return true
+  } catch (e) {
+    if (!(e instanceof APIError)) {
+      throw e
+    }
+    console.error(e)
+    return false
+  }
+}
+
 const _updateAfterSend = async () => {
   sending.value = false
 
-  // Fetch the messages again to pick up the new one.
-  await fetchMessages()
-  emit('scrollbottom')
+  // By the time this runs the action itself has already succeeded, so a
+  // failed refresh must not escape: send() would skip the SpinButton callback
+  // (20 s spin plus a forgotten-callback report). The two refreshes are
+  // independent, so one failing doesn't hold back the other, and the chat
+  // catches up on the next fetch.
+  if (await tryChatCall(fetchMessages)) {
+    // Fetched the messages again to pick up the new one.
+    emit('scrollbottom')
+  }
 
   // We also want to trigger an update in the chat list.
-  await chatStore.fetchChat(props.id)
+  await tryChatCall(() => chatStore.fetchChat(props.id))
 }
 
 const markRead = async () => {
-  await chatStore.markRead(props.id)
+  // Every chat focus runs this. A refusal is only logged; the read flag is
+  // retried on the next focus.
+  await tryChatCall(() => chatStore.markRead(props.id))
   _updateAfterSend()
 }
 
@@ -681,7 +710,14 @@ const onBlur = () => {
 }
 
 const doNudge = async () => {
-  await chatStore.nudge(props.id)
+  // A refused nudge is shown inline, same notice and wording shape as a
+  // failed send. Clear any earlier notice first, as send() does.
+  sendError.value = null
+  if (!(await tryChatCall(() => chatStore.nudge(props.id)))) {
+    sendError.value =
+      "Sorry, your nudge couldn't be sent just now. Please try again."
+    return
+  }
   _updateAfterSend()
 }
 
@@ -883,7 +919,12 @@ const fetchMessages = async () => {
 }
 
 const sendAddress = async (id) => {
-  await chatStore.send(props.id, null, id)
+  sendError.value = null
+  if (!(await tryChatCall(() => chatStore.send(props.id, null, id)))) {
+    sendError.value =
+      "Sorry, your address couldn't be sent just now. Please try again."
+    return
+  }
   await _updateAfterSend()
 
   // If we've sent an address to someone who has recently replied to an offer, then it's quite likely that we
@@ -896,7 +937,8 @@ const typing = async () => {
 
   if (!lastTyping.value || now - lastTyping.value > TYPING_TIME_INVERVAL) {
     // Let the server know that we are typing, no more frequently than every 10 seconds.
-    await chatStore.typing(props.id)
+    // A refused ping is only logged, and still counts for the throttle.
+    await tryChatCall(() => chatStore.typing(props.id))
     lastTyping.value = now
   }
 }
@@ -987,15 +1029,23 @@ watch(
     const sends = sendNewAttachments(newVal)
     if (sends.length) {
       sending.value = true
+      sendError.value = null
 
       console.log('Upload photos', JSON.stringify(newVal))
 
-      await Promise.all(sends)
+      const sent = await Promise.all(sends.map((s) => tryChatCall(() => s)))
 
       await _updateAfterSend()
       sending.value = false
       uploading.value = false
       currentAtts.value = []
+
+      if (sent.includes(false)) {
+        // The photos that did go through show up after the refresh above, so
+        // the user can see which one to add again.
+        sendError.value =
+          "Sorry, a photo couldn't be sent just now. Please try adding it again."
+      }
     }
   },
   { deep: true }
