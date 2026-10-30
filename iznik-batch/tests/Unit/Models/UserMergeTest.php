@@ -2,8 +2,10 @@
 
 namespace Tests\Unit\Models;
 
+use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
+use App\Services\Ripple\RippleEngagementService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -112,6 +114,8 @@ class UserMergeTest extends TestCase
         $this->assertSame(Membership::ADDED_ORIGIN_MANUAL, $m->added_origin, 'the origin goes with the older added date');
         $this->assertSame(0, (int) $m->implicit, 'either account having chosen the group is enough');
         $this->assertSame(0, (int) $m->rippled);
+        $this->assertSame(1, $this->becameOrdinaryLogs($user1, $group, RippleEngagementService::LOG_PREFIX),
+            'the ripple join became ordinary');
     }
 
     public function test_merge_keeps_the_survivors_origin_and_implicit_when_its_row_is_older_and_both_are_implicit(): void
@@ -135,6 +139,45 @@ class UserMergeTest extends TestCase
         $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $m->added_origin);
         $this->assertSame(1, (int) $m->implicit, 'both were implicit, so the merged row still is');
         $this->assertSame(0, (int) $m->rippled);
+        $this->assertSame(0, $this->becameOrdinaryLogs($user1, $group, RippleEngagementService::LOG_PREFIX), 'nothing became ordinary');
+        $this->assertSame(0, $this->becameOrdinaryLogs($user1, $group, RippleEngagementService::LOG_PREFIX_TN));
+    }
+
+    /**
+     * A TrashNothing placement merged with a newer membership the member chose keeps its origin,
+     * as the older row, and becomes ordinary. The log says so, as every other clear does, and
+     * says it was a TrashNothing placement.
+     */
+    public function test_merge_logs_a_placement_made_ordinary_by_the_other_account(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($user1, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_MANUAL,
+            'implicit' => 0, 'rippled' => 0,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+            'implicit' => 1, 'rippled' => 0,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $m->added_origin);
+        $this->assertSame(0, (int) $m->implicit);
+        $this->assertSame(1, $this->becameOrdinaryLogs($user1, $group, RippleEngagementService::LOG_PREFIX_TN),
+            'the log says it was a TrashNothing placement');
+    }
+
+    private function becameOrdinaryLogs(User $user, Group $group, string $prefix): int
+    {
+        return DB::table('logs')->where('user', $user->id)->where('groupid', $group->id)
+            ->where('type', 'Group')->where('subtype', 'Joined')
+            ->where('text', $prefix.RippleEngagementService::REASON_MERGED)
+            ->count();
     }
 
     /**

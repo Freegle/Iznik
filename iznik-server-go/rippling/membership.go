@@ -10,6 +10,10 @@ import (
 	"gorm.io/plugin/dbresolver"
 )
 
+// ReasonMerged is why an account merge makes a membership ordinary: one of the two accounts had
+// chosen a group the other was placed on.
+const ReasonMerged = "merged with an account that chose this community"
+
 // BecameOrdinaryText is the text of the Group/Joined log row written when a membership the
 // member did not choose becomes an ordinary one. origin is the membership's added_origin, so a
 // TrashNothing placement says so rather than reading as one rippling made. The batch writes the

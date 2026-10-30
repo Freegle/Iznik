@@ -39,7 +39,10 @@ Everything runs in one transaction. In order:
    ordinary, since either account having chosen the community is enough. If both rows are
    implicit and either is a TrashNothing placement, the result is a placement (`implicit = 1`,
    `rippled = 0`, `tn_unaddressed`), never a ripple join, because a ripple join is later cleared
-   and a placement is not. Two ripple joins keep the older row's flags together.
+   and a placement is not. Two ripple joins keep the older row's flags together. When one row
+   was placed (by rippling or TrashNothing) and the other chosen, the merge writes the "became
+   ordinary" Group/Joined log for the kept account, worded from the placed row's `added_origin`,
+   with the reason `merged with an account that chose this community`.
 3. **Posts, post history and membership history** move.
 4. **Existing log rows** about or by the discarded account are re-pointed at the kept one.
 5. **Chat rooms.** `mergeChatRooms` in `iznik-server-go/user/merge.go`. A room between the two

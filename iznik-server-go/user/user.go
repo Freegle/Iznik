@@ -3345,6 +3345,25 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 				merged := MergedMembershipFlags(flags[0], flags[1])
 				tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).
 					Updates(map[string]interface{}{"implicit": merged.Implicit, "rippled": merged.Rippled, "added_origin": merged.AddedOrigin})
+				// One account was placed on the group (by rippling or TrashNothing) and the other
+				// chose it, so the merged membership has become ordinary: log it as every other
+				// clear does, or the kept added_origin reads as a placement with its flag lost.
+				placed0 := flags[0].Implicit == 1 || flags[0].Rippled == 1
+				if placed0 != (flags[1].Implicit == 1 || flags[1].Rippled == 1) {
+					placedOrigin := flags[1].AddedOrigin
+					if placed0 {
+						placedOrigin = flags[0].AddedOrigin
+					}
+					tx.Table("logs").Create(map[string]interface{}{
+						"timestamp": gorm.Expr("NOW()"),
+						"type":      log2.LOG_TYPE_GROUP,
+						"subtype":   log2.LOG_SUBTYPE_JOINED,
+						"groupid":   m1.Groupid,
+						"user":      id2,
+						"byuser":    byuser,
+						"text":      rippling.BecameOrdinaryText(placedOrigin, rippling.ReasonMerged),
+					})
+				}
 			}
 			// Take older added date (SQL JOIN to avoid Go datetime string formatting).
 			// Genuine multi-table UPDATE...JOIN: Table()-verbatim JOIN text +

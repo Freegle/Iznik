@@ -1471,7 +1471,9 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   30 days; `ripple:clear-engaged --since=2026-06-23`, run once, checks every membership rippling
   has made without moving the scheduled run's saved positions. The clear counts
   towards the "Seen on many groups" spam check like any join. `memberships_history` keeps
-  its flag. `ripple:backfill-memberships` flags a membership only when the `Rippled` log is the
+  its flag. An account merge that keeps a membership one account was placed on and the other
+  chose writes the same log, with the reason `merged with an account that chose this
+  community`. `ripple:backfill-memberships` flags a membership only when the `Rippled` log is the
   latest Group/Joined row for it, so it leaves alone a cleared membership and one the member
   left and joined again themselves.
 - `memberships.implicit` is taking over the changing half of `rippled`: 1 while the member has

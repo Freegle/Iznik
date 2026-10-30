@@ -39,6 +39,10 @@ class RippleEngagementService
 
     public const REASON_WROTE_BACK = 'wrote back to a member about their post';
 
+    // An account merge (User::merge) where one account had chosen a group the other was placed
+    // on. Matches rippling.ReasonMerged in iznik-server-go.
+    public const REASON_MERGED = 'merged with an account that chose this community';
+
     /** Prefix of the log text every clear writes, here and in iznik-server-go. */
     public const LOG_PREFIX = 'Ripple-created membership became ordinary: ';
 

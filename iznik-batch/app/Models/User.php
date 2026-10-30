@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\Ripple\RippleEngagementService;
 use App\Support\EloquentUtils;
 use App\Support\NameSanitiser;
 use Illuminate\Database\Eloquent\Builder;
@@ -1345,6 +1346,13 @@ class User extends Model implements Auditable
                         Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set=role={$role}");
                     }
 
+                    // Whether one account was placed on the group (by rippling or TrashNothing)
+                    // and the other chose it, and how the placed one was made, before either row
+                    // changes below.
+                    $placed1 = (int) $id1Memb->implicit || (int) $id1Memb->rippled;
+                    $becameOrdinary = $placed1 !== ((int) $id2Memb->implicit || (int) $id2Memb->rippled);
+                    $placedOrigin = $placed1 ? $id1Memb->added_origin : $id2Memb->added_origin;
+
                     foreach (self::mergedMembershipFlags($id1Memb, $id2Memb) as $key => $value) {
                         if ($value !== ($key === 'added_origin' ? $id1Memb->$key : (int) $id1Memb->$key)) {
                             $id1Memb->$key = $value;
@@ -1367,6 +1375,24 @@ class User extends Model implements Auditable
 
                     if (!$dryRun) {
                         $id1Memb->save();
+                    }
+
+                    // The merged membership has become ordinary: log it as every other clear
+                    // does, or the kept added_origin reads as a placement with its flag lost.
+                    if ($becameOrdinary) {
+                        $text = RippleEngagementService::logPrefix($placedOrigin).RippleEngagementService::REASON_MERGED;
+                        $log = new Log();
+                        $log->timestamp = now();
+                        $log->type = 'Group';
+                        $log->subtype = 'Joined';
+                        $log->groupid = $id2Memb->groupid;
+                        $log->user = $id1;
+                        $log->byuser = $byUserId;
+                        $log->text = $text;
+                        Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Group,subtype=Joined,user={$id1},groupid={$id2Memb->groupid},text={$text}");
+                        if (!$dryRun) {
+                            $log->save();
+                        }
                     }
 
                     // id2's row for this group is now redundant — delete it after commit.
