@@ -53,15 +53,20 @@ appears in email is described in
 flowchart LR
     A[Member donates<br/>Stripe or PayPal] --> B[IPN/webhook<br/>Go API]
     B --> C[(users_donations)]
-    C --> D[donations:update-ads-target<br/>turns ads off for the day]
-    C --> E[donations:thank<br/>thank-you mail]
-    C --> F[Gift Aid matching]
+    P[donations:paypal-download<br/>every 4h, IPN misses] --> C
+    X[Bank, cheque, PPGF<br/>recorded in ModTools or bulk upload] --> C
+    C --> D[donations:update-ads-target<br/>ads off once the day's target is met]
+    C --> E[donations:thank<br/>thank-you mail, daily]
+    C --> E2[donations:thank-prep<br/>one card per gift needing a personal reply]
+    C --> E3[donations:summary<br/>hourly running total]
+    C --> F[donations:update-giftaid<br/>every 10 min: match, chase]
     F --> G[(giftaid)]
     G --> H[donations:giftaid-claim<br/>CSV for HMRC]
 ```
 
-There is also a drawn overview of the donor journey:
-[freegle-donor-process.svg](../../freegle-donor-process.svg).
+There is also a drawn overview of the donor journey, including the people's steps and the
+bank flow agreed with the finance team in May 2026 that is not yet built:
+[freegle-donor-process.html](../../freegle-donor-process.html).
 
 ## Gift Aid
 

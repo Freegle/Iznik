@@ -49,4 +49,4 @@ One attribution rule, honestly applied: each unit of delivery is claimed once. W
 - NT29's strict definition is *staff* volunteering during paid hours; as a VCSE self-reporting (per the Taskforce's own VCSE guide) we apply it to our volunteer moderators and say so. The 1-minute-per-action basis is deliberately conservative — a strength, mention it.
 - The Jobs theme (NT1–13) is out of scope for Freegle (counts direct FTE hires). Keep the "reuse supports 8–20 jobs per 1,000 tonnes vs 0.1 for landfill" (WRAP/Green Alliance) as narrative, not a TOMs line.
 - Partner claims don't need our tier at all: paid-member councils/contractors have NT31/NT88 in their own accounts — we supply evidenced quantities per council area, they claim.
-- Companion research: `plans/2026-07-20-toms-social-value-mapping.md` (full measure list, licensing verdict, free-tier findings, sources).
+- Companion research: folded into `.claude/skills/freegle-impact-report/measurement-framework.md` (section 4c) on 2026-10-28; the full measure list is in git history at `3e65b6af25`.

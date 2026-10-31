@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-20
+last_reviewed: 2026-10-28
 owner: Freegle dev team
 covers:
   - docker-compose.yml
@@ -103,6 +103,37 @@ docker exec claude-broker node -e 'fetch("http://127.0.0.1:3399/api/export",
 
 To add or replace accounts, export them from another broker with a passphrase and send the file
 to `POST /api/import` the same way. The broker's own README describes both routes.
+
+## The burn pool for cloud builders
+
+When Freegle has a large token allowance for a short period, builds run on cloud VMs
+(`docs/developers/reference/cloud-builders.md`) rather than on anyone's machine. Those VMs
+spend a separate set of accounts, the **burn pool**, never the shared Freegle accounts above.
+Normal CI is not involved and is unchanged.
+
+- **Pool.** A credential with `"pools": ["burn"]` leaves the shared pool and is spent only by
+  requests to `/api/gateway/p/burn`. `BROKER_BURN_ORDER_POOLS=burn` in `/opt/claude-broker/.env`
+  (set 2026-10-28) makes the broker spend that pool one week at a time, in order of whose week
+  ends soonest, which is right for accounts held for this purpose. The shared pool is not named
+  there and keeps its even spread.
+- **Putting accounts in.** From a machine with root ssh to the docker host,
+  `scripts/katapult/broker-pool.sh list` shows every credential and its pools;
+  `broker-pool.sh add <id>` moves one into `burn`, `remove <id>` takes it out. Import new accounts
+  as the previous section says, then `add` them. A pool with no account answers 404.
+- **Reaching it.** The broker now also listens on the docker host's loopback,
+  `127.0.0.1:3399` (a `ports` line in its compose file, added 2026-10-28). It is published on no
+  other address, and the public port is closed. Builders reach it through an ssh tunnel as the
+  user `brokertunnel`, whose only key is pinned to Katapult's address ranges
+  (`from="185.44.252.0/22,10.220.0.0/22"`) and may forward only to `127.0.0.1:3399`
+  (`scripts/katapult/broker-host-setup.sh prepare`). On the builder, `autossh` keeps the tunnel up
+  and Claude Code gets `ANTHROPIC_BASE_URL=http://127.0.0.1:3399/api/gateway/p/burn` with the
+  gateway password as `CLAUDE_CODE_OAUTH_TOKEN`, exactly as the production services do.
+- **Checking.** `broker-pool.sh check` asks the gateway for the pool from the host: 401 means
+  up and password required, 404 means up but the pool is empty. `ss -ltnp | grep 3399` on the
+  host must show `127.0.0.1` only.
+- **Undoing.** `userdel -r brokertunnel`, remove the `ports` lines and the
+  `BROKER_BURN_ORDER_POOLS` line, `docker compose up -d` in `/opt/claude-broker`, and
+  `broker-pool.sh remove` each account.
 
 ## Going back to a single token
 
