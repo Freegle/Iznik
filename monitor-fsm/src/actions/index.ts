@@ -1288,7 +1288,7 @@ export function extractJsonArrayMarker(combined: string, marker: string): unknow
 // (2026-09-14): every such reply carries one, so a moderator reading the thread can go
 // and see what was actually done rather than taking "fix applied" on trust.
 export function retestReplyBody(opts: { affectsApp: boolean; link?: string | null }): string {
-  let body = 'AI Edward: possible fix applied, please retest and report back'
+  let body = 'AIdward: possible fix applied, please retest and report back'
   if (opts.affectsApp) body += ' (but app releases may take up to one week)'
   if (opts.link) body += `\n\nTechnical details: ${opts.link}`
   return body
@@ -1854,7 +1854,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates, 'fe
 
   {
     name: 'queue_deployed_reply_drafts',
-    description: 'Called automatically during LOAD_STATE. For every bug in fix-queued or fixed state whose PR is MERGED and deploy_state is pending_deploy, checks via check_pr_deployed whether the fix is LIVE (per-area: Go build commit, Laravel checked-out commit, and Netlify published deploy). Once confirmed live, AUTO-POSTS the verbatim "AI Edward: possible fix applied, please retest and report back" reply to the specific reporting Discourse post (no human review), appending the app-release caveat when the fix touches iznik-nuxt3/. A tooling-only PR (touches no frontend/Go/PHP files — e.g. monitor-fsm, docs, CI) is marked deployed WITHOUT a reply: there is nothing the reporter could retest. Records each posted reply (dedup: one per reporting post). Updates pr.deploy_state to "deployed" or "pending_deploy"; a FAILED post resets deploy_state to pending_deploy so the reply is retried next iteration. Returns {posted, pendingDeploy, alreadyPosted, skippedToolingOnly, postFailed}.',
+    description: 'Called automatically during LOAD_STATE. For every bug in fix-queued or fixed state whose PR is MERGED and deploy_state is pending_deploy, checks via check_pr_deployed whether the fix is LIVE (per-area: Go build commit, Laravel checked-out commit, and Netlify published deploy). Once confirmed live, AUTO-POSTS the verbatim "AIdward: possible fix applied, please retest and report back" reply to the specific reporting Discourse post (no human review), appending the app-release caveat when the fix touches iznik-nuxt3/. A tooling-only PR (touches no frontend/Go/PHP files — e.g. monitor-fsm, docs, CI) is marked deployed WITHOUT a reply: there is nothing the reporter could retest. Records each posted reply (dedup: one per reporting post). Updates pr.deploy_state to "deployed" or "pending_deploy"; a FAILED post resets deploy_state to pending_deploy so the reply is retried next iteration. Returns {posted, pendingDeploy, alreadyPosted, skippedToolingOnly, postFailed}.',
     handler: async () => {
       const db = getDb()
 
@@ -2045,7 +2045,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates, 'fe
 
   {
     name: 'reconcile_direct_master_fixes',
-    description: 'Called automatically during LOAD_STATE. Closes the blind spot where a fix pushed DIRECT TO MASTER (no PR — CI fixes, small fixes) never marks its Discourse bug fixed, so no "please retest" reply is ever sent (sync_pr_states + queue_deployed_reply_drafts only handle bugs with a pr_number). Scans recent origin/master commits for an EXPLICIT Discourse reference — `topic/post` (or `topic` alone when the topic has exactly one unfixed bug) — i.e. a deliberate human-written link in the commit message, NOT keyword overlap (the bag-of-words checkGitAlreadyFixed heuristic was disabled at ~75% false positive). For each matched open/deferred/investigating bug with NO pr_number whose fixing commit is confirmed LIVE (same per-area deploy gate as PRs), marks it fixed and auto-posts the hedged "AI Edward: possible fix applied, please retest" reply (quoted, deduped, app caveat when frontend-touched). A tooling-only commit (no frontend/Go/PHP files) is marked fixed WITHOUT a reply — nothing for the reporter to retest. A failed post leaves the bug unfixed so it is re-matched and retried next iteration. Returns {reconciled, posted, pendingDeploy, skipped}.',
+    description: 'Called automatically during LOAD_STATE. Closes the blind spot where a fix pushed DIRECT TO MASTER (no PR — CI fixes, small fixes) never marks its Discourse bug fixed, so no "please retest" reply is ever sent (sync_pr_states + queue_deployed_reply_drafts only handle bugs with a pr_number). Scans recent origin/master commits for an EXPLICIT Discourse reference — `topic/post` (or `topic` alone when the topic has exactly one unfixed bug) — i.e. a deliberate human-written link in the commit message, NOT keyword overlap (the bag-of-words checkGitAlreadyFixed heuristic was disabled at ~75% false positive). For each matched open/deferred/investigating bug with NO pr_number whose fixing commit is confirmed LIVE (same per-area deploy gate as PRs), marks it fixed and auto-posts the hedged "AIdward: possible fix applied, please retest" reply (quoted, deduped, app caveat when frontend-touched). A tooling-only commit (no frontend/Go/PHP files) is marked fixed WITHOUT a reply — nothing for the reporter to retest. A failed post leaves the bug unfixed so it is re-matched and retried next iteration. Returns {reconciled, posted, pendingDeploy, skipped}.',
     handler: async () => {
       const db = getDb()
       // Only PR-LESS unfixed bugs: PR-tracked ones flow through sync_pr_states /
@@ -2218,12 +2218,12 @@ for i, tid in enumerate(sorted(topic_ids)):
         pn = post.get('post_number', 0)
         if pn <= effective_cursor:
             continue
-        # Skip the monitor's OWN account (AI_Edward). Its posts are our diagnostic /
+        # Skip the monitor's OWN account (AIdward, formerly AI_Edward). Its posts are our diagnostic /
         # "possible fix, please retest" replies, not member bug reports; classifying them
         # re-opens bugs we just fixed and dispatches duplicate fix delegates (the feedback
         # loop that produced duplicate PRs #1165/#1166 for topic 9954). The cursor still
         # advances past them (latestPostNumber above), so they are marked seen.
-        if post.get('username', '') == 'AI_Edward':
+        if post.get('username', '') in ('AIdward', 'AI_Edward'):
             continue
         cooked = post.get('cooked', '')
         text = re.sub(r'<[^>]+>', '', cooked)
