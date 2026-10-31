@@ -732,7 +732,10 @@ describe('ModAdmin', () => {
   describe('who it goes to', () => {
     it.each([
       [{ national: true }, 'Goes to everyone in the UK'],
-      [{ national: false, lat: 51.5, reachmiles: 14.6 }, 'Goes to members within about 15 miles'],
+      [
+        { national: false, lat: 51.5, reachmiles: 14.6 },
+        'Goes to members within about 15 miles',
+      ],
       [{ national: false, lat: null }, 'Goes to nobody yet'],
     ])('says who %o goes to', async (audience, text) => {
       const wrapper = mountComponent({ open: true }, audience)

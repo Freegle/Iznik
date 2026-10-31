@@ -266,7 +266,9 @@
             </b-form-group>
             <b-form-group label="Who should see it?" :state="true">
               <b-form-checkbox v-model="volunteering.online" class="mb-2">
-                <span class="fw-normal">People can do this online, from anywhere</span>
+                <span class="fw-normal"
+                  >People can do this online, from anywhere</span
+                >
               </b-form-checkbox>
               <ReachPicker v-model="reach" :online="volunteering.online" />
             </b-form-group>

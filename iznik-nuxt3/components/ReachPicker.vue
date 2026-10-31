@@ -29,12 +29,7 @@
           label="Postcode where it's happening"
           @selected="choosePlace"
         />
-        <b-button
-          variant="link"
-          size="sm"
-          class="p-0"
-          @click="useMyLocation"
-        >
+        <b-button variant="link" size="sm" class="p-0" @click="useMyLocation">
           Use my location instead
         </b-button>
       </div>

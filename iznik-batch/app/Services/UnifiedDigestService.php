@@ -1817,6 +1817,7 @@ class UnifiedDigestService
                     ->whereColumn('messages_outcomes.msgid', 'messages.id');
             })
             ->whereNotNull('messages.lat')
+            // keep-raw: great-circle distance is a trigonometric expression; the builder has no form for it.
             ->whereRaw(\App\Support\GreatCircle::milesSql('messages').' <= ?',
                 [$latlng[0], $latlng[1], $latlng[0], (float) config('freegle.local_reach.fallback_miles')])
             ->orderBy('messages.arrival', 'desc')
