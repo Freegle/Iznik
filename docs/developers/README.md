@@ -96,6 +96,7 @@ Read these directly; the pages above link into them rather than copy them:
 | Google housekeeping (Search Console and Ads weekly checks) | [./reference/google-housekeeping.md](./reference/google-housekeeping.md) |
 | Chat prompts (Freegle's tappable questions) | [./reference/chat-prompts.md](./reference/chat-prompts.md) |
 | Google Play technical quality (DEX, memory, zero-tap) | [./reference/play-technical-quality.md](./reference/play-technical-quality.md) |
+| Cloud builders for a token window (Katapult VMs, broker burn pool) | [./reference/cloud-builders.md](./reference/cloud-builders.md) |
 | Improving Freegle from what people do and what they care about (the overview of idea farming and experiments) | [./ux-idea-farming-and-experiments.md](./ux-idea-farming-and-experiments.md) |
 | Improving Freegle from what people do and what they care about (the overview of idea farming and experiments) | [./ux-idea-farming-and-experiments.md](./ux-idea-farming-and-experiments.md) |
 | UX telemetry (the event and rollup contract) | [./reference/ux-telemetry.md](./reference/ux-telemetry.md) |

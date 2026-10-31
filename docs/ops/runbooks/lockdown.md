@@ -15,7 +15,7 @@ Freegle stays up. Use it when a spam or phishing wave is going out faster than m
 can remove it. It lasts hours, not days, and nothing lifts on its own.
 
 The design and its reasoning are in
-[`plans/active/2026-09-27-lockdown-switch.md`](../../../plans/active/2026-09-27-lockdown-switch.md)
+the lockdown switch plan (shipped, removed from `plans/` on 2026-10-28; git history at `3e65b6af25`)
 section 10, with the build details in section 11.
 
 ## What it does

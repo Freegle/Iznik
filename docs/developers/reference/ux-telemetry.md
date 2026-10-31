@@ -26,7 +26,7 @@ covers:
 
 How we find where members get stuck, go back, change their minds, give up, or never find a
 feature. The rationale and the alternatives considered are in
-`plans/2026-10-11-ux-pain-point-instrumentation.md`; this page is the contract the code is held to.
+a plan removed on 2026-10-28 once phases 0 to 5 shipped (git history at `3e65b6af25`, `plans/2026-10-11-ux-pain-point-instrumentation.md`); this page is the contract the code is held to.
 
 ```mermaid
 flowchart LR

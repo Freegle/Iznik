@@ -330,3 +330,9 @@ Steps 1-4 work with existing data (page views + interactions). Step 5 needs the 
 ## Access Control
 
 The flow explorer shows aggregate analytics, not individual user data. Restricted to Support and Admin roles (same as system logs). Lives within the existing Support Tools section of mod tools — accessed via `/support` navigation, not a top-level sidebar item. This keeps it alongside the other diagnostic tools (system logs, user lookup) that support/admin users already use.
+
+---
+
+## Status (2026-10-28)
+
+Deferred. The UX telemetry (phases 0 to 5, `docs/developers/reference/ux-telemetry.md`) and the strip view over the rollup were built first; the tree view and D3 layout described here come only if the strip is not enough. The instrumentation plan this grew out of was removed on 2026-10-28 (git history at `3e65b6af25`, `plans/2026-10-11-ux-pain-point-instrumentation.md`).
