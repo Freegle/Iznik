@@ -113,6 +113,17 @@ written. A reply threaded under that "post" goes to the wrong place or is refuse
 original post can be fetched to quote, and notes the rest as unchaseable. Do the same before posting
 under any stored report.
 
+## A report linked to a PR is told it was fixed
+
+`persist_classifications` links a report to another report's open PR in the same topic, and
+`queue_deployed_reply_drafts` posts "possible fix applied, please retest" under every report
+linked to a PR once it merges. A wrong link therefore tells a member a fix shipped when nothing
+touched their problem. Long topics such as 9808 carry many unrelated reports, so sharing a topic
+proves nothing: a link needs shared symptom tags or the same code area. Twice a report with no
+tags was linked by default (9982/12, then 9808, where an Android sign-in report and a Member
+Review count were "fixed" by a rippling PR). Any new way of setting `pr_number` needs the same
+evidence.
+
 ## See also
 
 - `.claude/rules/dev-containers.md` - the worktree isolation this keeps escaping.
