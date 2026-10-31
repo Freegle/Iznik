@@ -298,3 +298,9 @@ The nightly restore must also:
 - **API endpoints**: Integration tests with signed requests, signature rejection, rate limiting
 - **Queue logic**: Unit tests for combining, cancellation, current-backup optimization
 - **End-to-end**: Test the full flow from lookup to dump file generation (restore to live tested separately)
+
+---
+
+## Status (2026-10-28)
+
+Not built: there is no `user:index-snapshot` command in iznik-batch. The 1,906-line task breakdown that went with this design was removed on 2026-10-28 (git history at `3e65b6af25`, `plans/2026-03-30-user-backup-index.md`); regenerate it from this design when the work starts.

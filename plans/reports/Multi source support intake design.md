@@ -286,3 +286,7 @@ We haven't been missing a ticket system. Reports arrive incomplete, from two ver
 - Keep people in charge of anything sensitive or that can't be undone, and let everything else run on timers.
 
 Nothing on sale does this for a Discourse forum and a member database only our code can read. So we should build it: one shared set of cases in the main database, fed by both systems we already have. Start with the test against old reports, so we know whether each step actually helps.
+
+## Note carried over (2026-10-28)
+
+From the retired `plans/future/help-for-support.md` (git history at `3e65b6af25`): the one idea worth keeping is to capture a Sentry replay id with each member report, so the AI helper can fetch the replay instead of asking the member what happened. Nothing else from that plan survives; it assumed a human support desk.

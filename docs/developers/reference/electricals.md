@@ -28,8 +28,69 @@ The figures come from an AI classification pipeline that runs hourly on the batc
 The definition is Material Focus's: **anything with a plug, a battery or a cable**,
 plus the short list of products the Environment Agency names as exceptions (a gas
 cooker whose only electrics are a clock and igniter is not EEE; a petrol mower is
-not, whatever its spark plug looks like). The decision record is
-`plans/2026-08-25-eee-definition-decision.md`.
+not, whatever its spark plug looks like). The decision record follows; it was moved here
+from a plan on 2026-10-28.
+
+### Why this definition
+
+Three positions were compared:
+
+| | Position A: primary function | Position B: fundamental feature vs novelty | Position C: Material Focus |
+|---|---|---|---|
+| Test | electricity must power the item's basic function | electricity must deliver a substantive function, novelty does not count | anything with a plug, battery or cable |
+| Fish tank with pump | NOT EEE | EEE | EEE |
+| Baby bouncer with music | NOT EEE | undetermined | EEE |
+| Gas cooker | NOT EEE | NOT EEE | EEE |
+| In the legislation? | no | no | no |
+| In the guidance as a stated rule? | yes, as one sentence | no, synthesised from example lists | no |
+| Agrees with named products? | **no, contradicts fish tanks and spa baths** | yes | mostly, contradicts gas cookers |
+| Currently implemented | yes | no | partly, in the delivered dataset |
+
+---
+
+**Use the Material Focus line, with the named government exceptions hard-coded.**
+
+Reasoning, in order:
+
+1. There is no clear and definitive government position on unlisted products. The guidance's stated
+   rule and its worked examples disagree with each other, and the
+   [WEEE Forum](https://weee-forum.org/wp-content/uploads/2019/06/open_scope_issue_paper_final-1.pdf)
+   confirms this is a live grey area rather than a settled question we simply failed to look up:
+   "some products stay in the so called 'grey areas' and may be subject to different interpretations
+   by the competent authorities of member states", and "products such as furniture and clothes with
+   electronic components may now become EEE, depending on how strict the interpretation is."
+2. Where there is no definitive government position, the customer's definition wins. Material Focus
+   is the recipient of this data.
+3. It is what we already shipped, so adopting it formally makes the delivered numbers and the stated
+   method agree, rather than introducing a third variant.
+4. Position A is positively wrong on named products, so it cannot stand regardless.
+5. Position B is a defensible reading but rests on an inference the sources do not license, and it
+   cannot be applied consistently without a per-item human call.
+
+Where the guidance names a product, follow the guidance. That is a short list and it is the only part
+of the government material that is actually definitive:
+
+- **Named EEE**: fish tanks with a light, heater or pump; spa and hydrotherapy baths; loft ladders
+  with electronic controls; roller screens with electronic winders; riser chairs and hospital beds
+  with movement controls; gym equipment; games consoles; furniture with an integral fridge.
+- **Named not EEE**: gas cookers whose electrics are only a clock or igniter; petrol lawn mowers and
+  gas stoves needing only a spark.
+
+Everything else: plug, battery or cable.
+
+#### The two worked examples, decided
+
+- **Fish tank with a built-in pump: EEE.** Named in the guidance, and the Material Focus line agrees.
+  No judgement required. The current classifier gets this wrong.
+- **Baby bouncer with a built-in music player: EEE.** Not named, so the Material Focus line applies,
+  and it has a battery. Also already YES under the shipped prompt's "toys (unless battery/electric)".
+
+#### Caveat to record in anything published
+
+Two different definitions are in play and they give materially different totals. The strict producer
+placed-on-market scope is narrower than the Material Focus campaign line. Any figure we publish
+should say which one it uses. This should be confirmed with Material Focus before the next re-run,
+because it changes the headline.
 
 The model is never asked "is this electrical?" - that was measured as unreliable on
 exactly the boundary cases that matter. Instead it is asked to **observe components**

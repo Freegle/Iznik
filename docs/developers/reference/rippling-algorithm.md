@@ -1531,7 +1531,7 @@ This section stays as the design record for the interim it served.
 
 `polygon` was byte-for-byte a function of (origin, tick), so posts from the same origin stored
 identical multi-hundred-KB blobs - measured 42% redundant across the table, which is the
-estate's binding disk constraint (design: `plans/2026-08-23-rippling-reach-polygon-dedup.md`).
+estate's binding disk constraint (design: `plans/2026-08-23-rippling-reach-polygon-dedup.md`, shipped in PR #1402 and removed from `plans/` on 2026-10-28; git history at `3e65b6af25`).
 Each distinct geometry is therefore stored once in `rippling_reach_geom`, keyed by the MD5 of
 its WKB, and reach rows point at it via nullable `polygon_hash` / `max_polygon_hash` columns
 (FK RESTRICT, so deleting a still-referenced geometry physically fails).
@@ -1567,7 +1567,7 @@ rather than a GEOMETRY.
 
 Sharing identical polygons (§9a) is one order of magnitude; the next is to stop storing a
 *vector tracing* of the reach at all and store the *membership grid* directly instead
-(plans/2026-08-24-rippling-reach-raster-storage.md). `polygon`/`max_polygon` are ~11k-vertex
+(the raster storage plan, shipped in PR #1406 and removed from `plans/` on 2026-10-28; git history at `3e65b6af25`). `polygon`/`max_polygon` are ~11k-vertex
 boundary tracings of an area the routing server itself computes as a grid fill and discards
 immediately after tracing (`iznik-routing-go`'s `buildIsochroneGrid`/`traceBoundary`); this
 stores that grid, RLE-compressed, on a fixed 0.0003-degree lattice (the same one the
