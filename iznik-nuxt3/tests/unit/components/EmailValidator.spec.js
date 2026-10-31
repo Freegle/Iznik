@@ -219,7 +219,9 @@ describe('EmailValidator', () => {
 
   describe('domain lookup status', () => {
     const lookup = (Status) =>
-      global.fetch.mockResolvedValue({ json: () => Promise.resolve({ Status }) })
+      global.fetch.mockResolvedValue({
+        json: () => Promise.resolve({ Status }),
+      })
 
     it('rejects a domain that does not exist (NXDOMAIN)', async () => {
       lookup(3)
