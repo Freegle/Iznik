@@ -163,9 +163,9 @@ describe('persist_classifications action', () => {
   })
 
   it('links follow-up post in same topic to existing active PR instead of opening a new bug', async () => {
-    upsertDiscourseBug(db, { topic: 133, post: 11, state: 'open', prNumber: 100 })
+    upsertDiscourseBug(db, { topic: 133, post: 11, state: 'open', prNumber: 100, symptomTags: ['chat', 'loading'] })
     const result = await persistClassificationsHandler({}, {
-      classifications: [{ topic: 133, post: 12, type: 'bug', user: 'jack', summary: 'Same problem', originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
+      classifications: [{ topic: 133, post: 12, type: 'bug', user: 'jack', summary: 'Same problem', symptom_tags: ['chat', 'loading'], originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
     })
     expect(result.upserted).toBe(1)
     const newBug = getDiscourseBug(db, 133, 12)
@@ -230,9 +230,9 @@ describe('persist_classifications action', () => {
   })
 
   it('links to fix-queued PR in same topic', async () => {
-    upsertDiscourseBug(db, { topic: 140, post: 20, state: 'fix-queued', prNumber: 200 })
+    upsertDiscourseBug(db, { topic: 140, post: 20, state: 'fix-queued', prNumber: 200, codeArea: 'nuxt:Chat' })
     await persistClassificationsHandler({}, {
-      classifications: [{ topic: 140, post: 21, type: 'bug', user: 'quinn', originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
+      classifications: [{ topic: 140, post: 21, type: 'bug', user: 'quinn', code_area: 'nuxt:Chat', originalPostText: 'Chat messages stopped loading for me this morning on the website.' }],
     })
     const newBug = getDiscourseBug(db, 140, 21)
     expect(newBug?.state).toBe('fix-queued')
@@ -261,6 +261,57 @@ describe('persist_classifications action', () => {
     const newBug = getDiscourseBug(db, 998, 12)
     expect(newBug?.state).toBe('open')
     expect(newBug?.pr_number).toBeNull()
+  })
+})
+
+describe('same-topic linking needs evidence', () => {
+  // 9808: a long topic with a rippling PR in flight. Reports with no symptom tags (an
+  // Android sign-in failure, a Member Review count) were linked to it, marked fixed when it
+  // merged, and told "possible fix applied, please retest".
+  it('does not link a report with no symptom tags or code area to a same-topic PR', async () => {
+    upsertDiscourseBug(db, {
+      topic: 9808, post: 856, state: 'fix-queued', prNumber: 1804,
+      symptomTags: ['ripple', 'duplicate'], codeArea: 'go-api:Rippling',
+    })
+    await persistClassificationsHandler({}, {
+      classifications: [{
+        topic: 9808, post: 900, type: 'bug', user: 'Carol1',
+        summary: 'Member cannot sign in on the Android app',
+        originalPostText: 'A long-standing member cannot sign in on the Android app; it says the password is wrong.',
+      }],
+    })
+    const bug = getDiscourseBug(db, 9808, 900)
+    expect(bug?.pr_number).toBeNull()
+    expect(bug?.state).not.toBe('fix-queued')
+  })
+
+  it('does not link a report whose code area differs and which has no tags', async () => {
+    upsertDiscourseBug(db, {
+      topic: 9809, post: 1, state: 'fix-queued', prNumber: 1805,
+      symptomTags: ['ripple'], codeArea: 'go-api:Rippling',
+    })
+    await persistClassificationsHandler({}, {
+      classifications: [{
+        topic: 9809, post: 2, type: 'bug', user: 'Ray',
+        code_area: 'iznik-nuxt3/modtools member review count',
+        originalPostText: 'A spurious count of 2 shows next to Member Review and has for several days.',
+      }],
+    })
+    expect(getDiscourseBug(db, 9809, 2)?.pr_number).toBeNull()
+  })
+
+  it('links to the matching PR when a topic has several', async () => {
+    upsertDiscourseBug(db, { topic: 9810, post: 1, state: 'fix-queued', prNumber: 1806, symptomTags: ['ripple'] })
+    upsertDiscourseBug(db, { topic: 9810, post: 2, state: 'fix-queued', prNumber: 1807, symptomTags: ['login', 'android'] })
+    await persistClassificationsHandler({}, {
+      classifications: [{
+        topic: 9810, post: 3, type: 'bug', user: 'Sam', symptom_tags: ['android', 'password'],
+        originalPostText: 'The Android app keeps saying my password is wrong after a reset.',
+      }],
+    })
+    const bug = getDiscourseBug(db, 9810, 3)
+    expect(bug?.state).toBe('fix-queued')
+    expect(bug?.pr_number).toBe(1807)
   })
 })
 
@@ -466,7 +517,7 @@ describe('cross-topic tag dedup in persist_classifications', () => {
 
   it('same topic dedup takes precedence over tag dedup', async () => {
     // Same-topic PR linking should fire before tag matching
-    upsertDiscourseBug(db, { topic: 207, post: 1, state: 'open', prNumber: 77 })
+    upsertDiscourseBug(db, { topic: 207, post: 1, state: 'open', prNumber: 77, symptomTags: ['delete', 'stdmsg'] })
     await persistClassificationsHandler({}, {
       classifications: [{
         topic: 207, post: 2, type: 'bug', user: 'eve',
