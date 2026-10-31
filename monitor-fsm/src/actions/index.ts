@@ -4227,26 +4227,30 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           : []
         const codeArea: string | null = typeof c.code_area === 'string' ? c.code_area : null
 
-        // Dedup level 1: same Discourse topic already has an active PR → link, don't open new.
-        // Only when the two reports aren't PROVABLY different bugs: if both have symptom_tags
-        // and share ZERO overlap, this is an independent bug that happens to share a topic, not
-        // a follow-up — linking it would make queue_deployed_reply_drafts auto-post a "possible
-        // fix applied, please retest" reply threaded under THIS post once the (unrelated) PR
-        // deploys, i.e. a reply that looks attached to the wrong post (9982/12). Mirrors the
-        // isIndependentBug check below for the already-fixed regression case. With no tag data
-        // on either side we can't tell them apart, so — as before — default to linking.
-        const topicPrRow = db.prepare(
-          `SELECT pr_number, symptom_tags FROM discourse_bug
+        // Dedup level 1: a report in a topic that already has an active PR is linked to that PR
+        // only when there is evidence it is the same problem: shared symptom tags, or the same
+        // code area. A linked report is marked fixed when the PR merges, and
+        // queue_deployed_reply_drafts then posts "possible fix applied, please retest" under it,
+        // so a wrong link tells a reporter their problem was fixed when it was not. Long topics
+        // carry many unrelated reports (9808 linked an Android sign-in failure and a Member
+        // Review count to a rippling PR; 9982/12 a photo upload to a login PR), so sharing a
+        // topic is not evidence, and a report with no tags is not linked.
+        const topicPrRows = db.prepare(
+          `SELECT pr_number, symptom_tags, code_area FROM discourse_bug
            WHERE topic = ? AND post != ? AND pr_number IS NOT NULL
            AND state IN ('open', 'investigating', 'fix-queued')
-           ORDER BY first_seen_at ASC LIMIT 1`
-        ).get(c.topic, c.post) as { pr_number: number; symptom_tags: string | null } | undefined
-        if (topicPrRow) {
-          const topicPrTags: string[] = (() => {
-            try { return JSON.parse(topicPrRow.symptom_tags ?? '[]') } catch { return [] }
-          })()
-          const isIndependentBug = symptomTags.length > 0 && topicPrTags.length > 0 && tagJaccard(symptomTags, topicPrTags) === 0
-          if (!isIndependentBug) {
+           ORDER BY first_seen_at ASC`
+        ).all(c.topic, c.post) as Array<{ pr_number: number; symptom_tags: string | null; code_area: string | null }>
+        if (topicPrRows.length > 0) {
+          const topicPrRow = topicPrRows.find((row) => {
+            const rowTags: string[] = (() => {
+              try { return JSON.parse(row.symptom_tags ?? '[]') } catch { return [] }
+            })()
+            const sharesTags = symptomTags.length > 0 && rowTags.length > 0 && tagJaccard(symptomTags, rowTags) > 0
+            const sameCodeArea = !!codeArea && row.code_area === codeArea
+            return sharesTags || sameCodeArea
+          })
+          if (topicPrRow) {
             upsertDiscourseBug(db, {
               topic: Number(c.topic), post: Number(c.post),
               topicTitle: c.topicTitle ?? null, reporter: c.user ?? null,
@@ -4258,7 +4262,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
             upserted++
             continue
           }
-          out(`persist_classifications: topic ${c.topic}/${c.post} shares zero symptom tags with same-topic PR #${topicPrRow.pr_number} — treating as an independent bug, not linking`)
+          out(`persist_classifications: topic ${c.topic}/${c.post} shares no symptom tags or code area with the same-topic PR(s) ${topicPrRows.map((r) => `#${r.pr_number}`).join(', ')}, so not linking`)
         }
 
         // Dedup level 2: cross-topic tag similarity — if an open bug in a DIFFERENT topic
