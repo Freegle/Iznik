@@ -9,7 +9,7 @@
         size="sm"
       />
     </div>
-    <div class="chatMessage forcebreak chatMessage__owner pt-2">
+    <div class="chatMessage forcebreak chatMessage__owner typingDots">
       <div class="d-flex">
         <JumpingDots size="lg" />
       </div>
@@ -112,8 +112,15 @@ onBeforeUnmount(() => {
   }
 }
 
+/* The dots rest on the avatar's bottom edge. */
 .chatMessageWrapper {
   display: flex;
+  align-items: flex-end;
   padding-right: 10px;
+}
+
+/* The avatar sits 1px above the row's bottom: its 4px bottom margin, less the 3px it is moved down. */
+.typingDots {
+  margin-bottom: 1px;
 }
 </style>
