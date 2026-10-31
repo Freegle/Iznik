@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { sortBrowseMessages } from '~/composables/useMessageSort.js'
 
-const ids = (list, sort, rm) => sortBrowseMessages(list, sort, rm).map((m) => m.id)
+const ids = (list, sort, rm) =>
+  sortBrowseMessages(list, sort, rm).map((m) => m.id)
 const iso = (s) => `2026-01-0${s}T00:00:00Z`
 
 // Table-driven cases: each row is [name, messages, sort, roadMiles, expected ids].
@@ -18,14 +19,21 @@ const CASES = [
   // Plain recency.
   [
     'Newest: newest first',
-    [{ id: 1, posted: iso(1) }, { id: 2, posted: iso(3) }, { id: 3, posted: iso(2) }],
+    [
+      { id: 1, posted: iso(1) },
+      { id: 2, posted: iso(3) },
+      { id: 3, posted: iso(2) },
+    ],
     'Newest',
     null,
     [2, 3, 1],
   ],
   [
     'unknown sort name behaves as Newest',
-    [{ id: 1, posted: iso(1) }, { id: 2, posted: iso(3) }],
+    [
+      { id: 1, posted: iso(1) },
+      { id: 2, posted: iso(3) },
+    ],
     'Whatever',
     null,
     [2, 1],
@@ -54,7 +62,10 @@ const CASES = [
   ],
   [
     'arrival used when visibleSince and posted absent',
-    [{ id: 1, arrival: iso(1) }, { id: 2, arrival: iso(2) }],
+    [
+      { id: 1, arrival: iso(1) },
+      { id: 2, arrival: iso(2) },
+    ],
     'Newest',
     null,
     [2, 1],
@@ -117,21 +128,30 @@ const CASES = [
   // Pinned / mine / successful precedence.
   [
     'pinned leads Newest',
-    [{ id: 1, posted: iso(9) }, { id: 2, posted: iso(1), pinned: true }],
+    [
+      { id: 1, posted: iso(9) },
+      { id: 2, posted: iso(1), pinned: true },
+    ],
     'Newest',
     null,
     [2, 1],
   ],
   [
     'pinned leads Nearby despite a nearer post',
-    [{ id: 1, distance: 1 }, { id: 2, distance: 50, pinned: true }],
+    [
+      { id: 1, distance: 1 },
+      { id: 2, distance: 50, pinned: true },
+    ],
     'Nearby',
     null,
     [2, 1],
   ],
   [
     'pinned leads Unseen despite higher score',
-    [{ id: 1, unseen: true, score: 99 }, { id: 2, unseen: false, pinned: true }],
+    [
+      { id: 1, unseen: true, score: 99 },
+      { id: 2, unseen: false, pinned: true },
+    ],
     'Unseen',
     null,
     [2, 1],
@@ -200,7 +220,10 @@ const CASES = [
   ],
   [
     'successful post that is not mine is not pinned either',
-    [{ id: 1, successful: true, posted: iso(1) }, { id: 2, posted: iso(2) }],
+    [
+      { id: 1, successful: true, posted: iso(1) },
+      { id: 2, posted: iso(2) },
+    ],
     'Newest',
     null,
     [2, 1],
@@ -293,7 +316,11 @@ const CASES = [
   // Nearby sort.
   [
     'Nearby: nearest first by m.distance',
-    [{ id: 1, distance: 5 }, { id: 2, distance: 1 }, { id: 3, distance: 3 }],
+    [
+      { id: 1, distance: 5 },
+      { id: 2, distance: 1 },
+      { id: 3, distance: 3 },
+    ],
     'Nearby',
     null,
     [2, 3, 1],
@@ -307,14 +334,20 @@ const CASES = [
   ],
   [
     'Nearby: non-finite distance (NaN) sorts last',
-    [{ id: 1, distance: NaN }, { id: 2, distance: 4 }],
+    [
+      { id: 1, distance: NaN },
+      { id: 2, distance: 4 },
+    ],
     'Nearby',
     null,
     [2, 1],
   ],
   [
     'Nearby: zero distance is real and sorts first',
-    [{ id: 1, distance: 3 }, { id: 2, distance: 0 }],
+    [
+      { id: 1, distance: 3 },
+      { id: 2, distance: 0 },
+    ],
     'Nearby',
     null,
     [2, 1],
@@ -332,42 +365,61 @@ const CASES = [
   ],
   [
     'Nearby: both missing distance falls back to recency',
-    [{ id: 1, posted: iso(1) }, { id: 2, posted: iso(2) }],
+    [
+      { id: 1, posted: iso(1) },
+      { id: 2, posted: iso(2) },
+    ],
     'Nearby',
     null,
     [2, 1],
   ],
   [
     'Nearby: roadMiles overrides distance when finite',
-    [{ id: 1, distance: 1 }, { id: 2, distance: 2 }],
+    [
+      { id: 1, distance: 1 },
+      { id: 2, distance: 2 },
+    ],
     'Nearby',
     roadByLookup({ 1: 10, 2: 3 }),
     [2, 1],
   ],
   [
     'Nearby: roadMiles of 0 is finite and wins',
-    [{ id: 1, distance: 1 }, { id: 2, distance: 2 }],
+    [
+      { id: 1, distance: 1 },
+      { id: 2, distance: 2 },
+    ],
     'Nearby',
     roadByLookup({ 1: 5, 2: 0 }),
     [2, 1],
   ],
   [
     'Nearby: roadMiles null falls back to distance',
-    [{ id: 1, distance: 9 }, { id: 2, distance: 2 }],
+    [
+      { id: 1, distance: 9 },
+      { id: 2, distance: 2 },
+    ],
     'Nearby',
     () => null,
     [2, 1],
   ],
   [
     'Nearby: roadMiles NaN falls back to distance',
-    [{ id: 1, distance: 9 }, { id: 2, distance: 2 }],
+    [
+      { id: 1, distance: 9 },
+      { id: 2, distance: 2 },
+    ],
     'Nearby',
     () => NaN,
     [2, 1],
   ],
   [
     'Nearby: roadMiles answering for only some posts mixes road and crow',
-    [{ id: 1, distance: 1 }, { id: 2, distance: 8 }, { id: 3, distance: 9 }],
+    [
+      { id: 1, distance: 1 },
+      { id: 2, distance: 8 },
+      { id: 3, distance: 9 },
+    ],
     'Nearby',
     roadByLookup({ 3: 2 }),
     [1, 3, 2],
@@ -381,7 +433,10 @@ const CASES = [
   ],
   [
     'roadMiles is ignored outside Nearby',
-    [{ id: 1, posted: iso(1), distance: 1 }, { id: 2, posted: iso(2), distance: 9 }],
+    [
+      { id: 1, posted: iso(1), distance: 1 },
+      { id: 2, posted: iso(2), distance: 9 },
+    ],
     'Newest',
     roadByLookup({ 1: 0, 2: 100 }),
     [2, 1],
@@ -447,7 +502,10 @@ describe('sortBrowseMessages', () => {
 
     it('calls roadMiles once per message (Schwartzian: key computed once)', () => {
       let calls = 0
-      const list = Array.from({ length: 20 }, (_, i) => ({ id: i, distance: 20 - i }))
+      const list = Array.from({ length: 20 }, (_, i) => ({
+        id: i,
+        distance: 20 - i,
+      }))
       sortBrowseMessages(list, 'Nearby', () => {
         calls++
         return null
@@ -457,7 +515,10 @@ describe('sortBrowseMessages', () => {
   })
 
   it('is stable for equal keys across a larger list', () => {
-    const list = Array.from({ length: 30 }, (_, i) => ({ id: i, posted: iso(1) }))
+    const list = Array.from({ length: 30 }, (_, i) => ({
+      id: i,
+      posted: iso(1),
+    }))
     expect(ids(list, 'Newest')).toEqual(list.map((m) => m.id))
   })
 })
