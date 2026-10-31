@@ -2,6 +2,7 @@ package image
 
 import (
 	"encoding/json"
+	"fmt"
 	stdlog "log"
 	"os"
 	"strconv"
@@ -344,6 +345,34 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 	})
 }
 
+// ParentOf returns the id of the entity an image row belongs to, and whether the row exists.
+// The parent is 0 while a photo is not yet linked: a post photo uploaded during the give flow
+// has a NULL msgid until the draft is submitted. Scanning that NULL straight into a uint64
+// fails ("converting NULL to uint64 is unsupported"), so the column is read through COALESCE.
+func ParentOf(imgType string, id uint64) (uint64, bool, error) {
+	cfg, ok := typeConfigs[imgType]
+	if !ok {
+		return 0, false, fmt.Errorf("invalid imgtype %q", imgType)
+	}
+
+	var rows []struct{ Parent uint64 }
+	// cfg.IDColumn/
+	// cfg.Table come from typeConfigs, which has exactly 10 entries, all
+	// reachable here - one rendered form per entry, proven by the retired
+	// ormharness (shapes.json / TestTier3Shapes_6f9c3996f035, removed in
+	// d22ba1d6c).
+	err := database.DBConn.Table("`"+cfg.Table+"`").
+		Select("COALESCE(`"+cfg.IDColumn+"`, 0) AS parent").
+		Where("id = ?", id).
+		Limit(1).
+		Scan(&rows).Error
+	if err != nil || len(rows) == 0 {
+		return 0, false, err
+	}
+
+	return rows[0].Parent, true, nil
+}
+
 func doRotate(c *fiber.Ctx, req *PostRequest) error {
 	imgType := req.resolveType()
 
@@ -362,16 +391,12 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 	// Refusing it lost every rotation made while posting.
 	myid := auth.WhoAmI(c)
 	db := database.DBConn
-	var rotateParentID uint64
-	// cfg.IDColumn/
-	// cfg.Table come from typeConfigs, which has exactly 10 entries, all
-	// reachable here - one rendered form per entry, proven by the retired
-	// ormharness (shapes.json / TestTier3Shapes_6f9c3996f035, removed in
-	// d22ba1d6c).
-	db.Table("`"+cfg.Table+"`").Select("`"+cfg.IDColumn+"`").Where("id = ?", req.ID).Scan(&rotateParentID)
-	var exists int64
-	db.Table("`"+cfg.Table+"`").Where("id = ?", req.ID).Count(&exists)
-	if exists == 0 {
+	rotateParentID, exists, err := ParentOf(imgType, req.ID)
+	if err != nil {
+		stdlog.Printf("image doRotate: parent lookup %s id %d failed: %v", cfg.Table, req.ID, err)
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to rotate image")
+	}
+	if !exists {
 		return fiber.NewError(fiber.StatusNotFound, "Image not found")
 	}
 	unattached := rotateParentID == 0 && imgType != "User"

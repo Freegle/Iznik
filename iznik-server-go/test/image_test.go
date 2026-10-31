@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/image"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
@@ -395,6 +396,50 @@ func TestRotateUnattachedImageWhilePosting(t *testing.T) {
 	var mods string
 	database.DBConn.Raw("SELECT externalmods FROM messages_attachments WHERE id = ?", imageID).Scan(&mods)
 	assert.JSONEq(t, `{"rotate":90}`, mods)
+}
+
+func TestImageParentOfUnattachedPhoto(t *testing.T) {
+	// An unattached post photo has a NULL msgid. Reading it must give parent 0 and no error:
+	// scanning the NULL into a uint64 failed on every rotation made while posting, and each
+	// failure went to Sentry (GO-89), although the rotation itself still worked.
+	prefix := uniquePrefix("ParentOfUnattached")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+	imageID := createUnattachedImage(t, token, "freegletusd-parentof-unattached-"+prefix)
+
+	parent, exists, err := image.ParentOf("Message", imageID)
+	assert.NoError(t, err)
+	assert.True(t, exists)
+	assert.Equal(t, uint64(0), parent)
+}
+
+func TestImageParentOfAttachedPhotoAndMissingRow(t *testing.T) {
+	prefix := uniquePrefix("ParentOfAttached")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	msgID := CreateTestMessage(t, userID, groupID, "ParentOf test "+prefix, 55.9533, -3.1883)
+	_, token := CreateTestSession(t, userID)
+
+	req := httptest.NewRequest("POST", "/api/image?jwt="+token, strings.NewReader(
+		fmt.Sprintf(`{"externaluid":"freegletusd-parentof-attached-%s","imgtype":"Message","msgid":%d}`, prefix, msgID)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	imageID := uint64(result["id"].(float64))
+
+	parent, exists, err := image.ParentOf("Message", imageID)
+	assert.NoError(t, err)
+	assert.True(t, exists)
+	assert.Equal(t, msgID, parent)
+
+	_, exists, err = image.ParentOf("Message", imageID+1000000000)
+	assert.NoError(t, err)
+	assert.False(t, exists)
+
+	_, _, err = image.ParentOf("NoSuchType", imageID)
+	assert.Error(t, err)
 }
 
 func TestRotateUnattachedImageBeforeSignup(t *testing.T) {
