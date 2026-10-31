@@ -244,7 +244,10 @@ async function checkValidDomain(value) {
 
     const { Status: status } = await request
 
-    isValidDomain = status === 0
+    // Only NXDOMAIN (3) says the domain does not exist. Google answers
+    // SERVFAIL (2) or REFUSED (5) when it is busy or rate-limiting, which
+    // says nothing about the domain, so treat it like a failed lookup.
+    isValidDomain = status !== 3
   } catch (_) {
     // if something doesn't work with google domain check we ignore this check
   }
