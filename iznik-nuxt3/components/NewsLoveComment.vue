@@ -79,12 +79,26 @@ const getShowLovesLabel = computed(() => {
 })
 
 async function love(callback) {
-  await newsfeedStore.love(props.newsfeed.id, props.newsfeed.threadhead)
+  // A refused love (dead session, post since removed) must still stop the
+  // SpinButton (see .claude/rules/frontend-traps.md), as a failure so it never
+  // shows a success tick. The error then carries on to the global handler,
+  // which shows the generic notice and reports it.
+  try {
+    await newsfeedStore.love(props.newsfeed.id, props.newsfeed.threadhead)
+  } catch (e) {
+    callback(false)
+    throw e
+  }
   callback()
 }
 
 async function unlove(callback) {
-  await newsfeedStore.unlove(props.newsfeed.id, props.newsfeed.threadhead)
+  try {
+    await newsfeedStore.unlove(props.newsfeed.id, props.newsfeed.threadhead)
+  } catch (e) {
+    callback(false)
+    throw e
+  }
   callback()
 }
 

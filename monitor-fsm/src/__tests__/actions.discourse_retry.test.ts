@@ -44,7 +44,7 @@ const RATE_LIMIT_BODY = JSON.stringify({
 // postDiscourseReply now refuses any raw without quoted text (the invariant), so the
 // retry-behaviour tests must pass a properly-quoted reply to reach the network path.
 const QUOTED_RAW =
-  '[quote="Jos, post:8, topic:9692"]\nthe reported problem\n[/quote]\n\nAI Edward: possible fix applied, please retest'
+  '[quote="Jos, post:8, topic:9692"]\nthe reported problem\n[/quote]\n\nAIdward: possible fix applied, please retest'
 
 describe('parseRetryAfter', () => {
   it('prefers the Retry-After header', () => {
@@ -153,7 +153,7 @@ describe('postDiscourseReply quote invariant', () => {
   })
 
   it('refuses a reply with no quote block, without hitting the network', async () => {
-    const result = await postDiscourseReply(9692, 'AI Edward: possible fix applied, please retest', 8)
+    const result = await postDiscourseReply(9692, 'AIdward: possible fix applied, please retest', 8)
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/quoted text/i)
     expect(fetchMock).not.toHaveBeenCalled()
