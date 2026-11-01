@@ -814,3 +814,86 @@ func TestGetDashboardModeratorsActiveOnePerModeratorMostRecentFirst(t *testing.T
 		assert.Greater(t, first, second, "the time shown is the most recent across their communities")
 	}
 }
+
+// popularPostsSystemwide asks for the network-wide Popular Posts from startDaysAgo to today. Each
+// test passes a different start so it is not served another test's cached answer.
+func popularPostsSystemwide(t *testing.T, token string, startDaysAgo int) map[uint64]int {
+	start := time.Now().AddDate(0, 0, -startDaysAgo).Format("2006-01-02")
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=PopularPosts&systemwide=true&start=%s&end=today&jwt=%s", start, token), nil)
+	resp, _ := getApp().Test(req, 60000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	pp, ok := result["components"].(map[string]interface{})["PopularPosts"].([]interface{})
+	assert.True(t, ok, "PopularPosts should be an array")
+
+	views := map[uint64]int{}
+	for _, row := range pp {
+		post := row.(map[string]interface{})
+		views[uint64(post["id"].(float64))] = int(post["views"].(float64))
+	}
+	return views
+}
+
+func storeViewCount(t *testing.T, msgID uint64, arrivalDaysAgo int, views int, countedDaysAgo int) {
+	db := database.DBConn
+	db.Table("messages_viewcounts").Create(map[string]interface{}{
+		"msgid":      msgID,
+		"arrival":    time.Now().AddDate(0, 0, -arrivalDaysAgo),
+		"views":      views,
+		"counted_at": time.Now().AddDate(0, 0, -countedDaysAgo),
+	})
+	t.Cleanup(func() { db.Table("messages_viewcounts").Where("msgid = ?", msgID).Delete(nil) })
+}
+
+func setArrival(msgID uint64, daysAgo int) {
+	database.DBConn.Table("messages").Where("id = ?", msgID).Update("arrival", time.Now().AddDate(0, 0, -daysAgo))
+}
+
+// The network-wide list reads the counts messages:count-views stored, rather than counting
+// tens of millions of messages_likes rows live (Sentry 7821578277), and drops a stored post that
+// has since been deleted.
+func TestGetDashboardPopularPostsSystemwideReadsStoredCounts(t *testing.T) {
+	prefix := uniquePrefix("DashPPStored")
+	groupID, modID, token := createModDashboardFixtures(t, prefix)
+
+	stored := CreateTestMessage(t, modID, groupID, prefix+" OFFER: counted overnight", 52.5, -1.8)
+	setArrival(stored, 5)
+	storeViewCount(t, stored, 5, 2000000000, 0)
+
+	deleted := CreateTestMessage(t, modID, groupID, prefix+" OFFER: deleted since", 52.5, -1.8)
+	setArrival(deleted, 5)
+	storeViewCount(t, deleted, 5, 2100000000, 0)
+	database.DBConn.Table("messages").Where("id = ?", deleted).Update("deleted", time.Now())
+
+	views := popularPostsSystemwide(t, token, 20)
+	assert.Equal(t, 2000000000, views[stored], "the stored count is used for a post counted overnight")
+	assert.NotContains(t, views, deleted, "a post deleted since it was counted is not listed")
+}
+
+// Posts that arrived on or after the day the batch last ran are counted live, so a stored count
+// for one of them is not used.
+func TestGetDashboardPopularPostsSystemwideCountsSinceTheLastRunLive(t *testing.T) {
+	prefix := uniquePrefix("DashPPTail")
+	groupID, modID, token := createModDashboardFixtures(t, prefix)
+	db := database.DBConn
+
+	// The batch last ran two days ago and covered up to then.
+	older := CreateTestMessage(t, modID, groupID, prefix+" OFFER: older", 52.5, -1.8)
+	setArrival(older, 6)
+	storeViewCount(t, older, 6, 1, 2)
+
+	// A post from yesterday with three real views and a stale stored count that must be ignored.
+	recent := CreateTestMessage(t, modID, groupID, prefix+" OFFER: since the run", 52.5, -1.8)
+	setArrival(recent, 1)
+	storeViewCount(t, recent, 1, 2000000000, 2)
+	for i := 0; i < 3; i++ {
+		viewer := CreateTestUser(t, fmt.Sprintf("%s_v%d", prefix, i), "User")
+		db.Table("messages_likes").Create(map[string]interface{}{"msgid": recent, "userid": viewer, "type": "View"})
+	}
+	t.Cleanup(func() { db.Table("messages_likes").Where("msgid = ?", recent).Delete(nil) })
+
+	views := popularPostsSystemwide(t, token, 21)
+	assert.Equal(t, 3, views[recent], "a post since the last run is counted live, not read from the stored row")
+}
