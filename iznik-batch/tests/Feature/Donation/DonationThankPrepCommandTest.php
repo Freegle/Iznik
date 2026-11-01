@@ -660,8 +660,12 @@ class DonationThankPrepCommandTest extends TestCase
      *
      * @return array<string, mixed> The donor's card.
      */
-    private function cardForDonorWithEarlierDonation(?string $chaseUp, ?string $giftAidPeriod = null): array
-    {
+    private function cardForDonorWithEarlierDonation(
+        ?string $chaseUp,
+        ?string $giftAidPeriod = null,
+        array $moreAsks = [],
+        bool $recordedByVolunteer = false
+    ): array {
         Mail::fake();
 
         $userId = $this->insertUser(['firstname' => 'Asked', 'lastname' => 'Donor', 'fullname' => 'Asked Donor']);
@@ -673,7 +677,13 @@ class DonationThankPrepCommandTest extends TestCase
                 'fullname'    => 'Asked Donor',
                 'homeaddress' => '',
                 'reviewed'    => now()->subDay(),
+                'recordedby'  => $recordedByVolunteer ? $this->insertUser(['fullname' => 'Volunteer']) : null,
             ]);
+        }
+
+        // The chase-up mail records an ask alongside giftaidchaseup; a volunteer's later asks are more rows.
+        foreach (array_merge($chaseUp !== null ? [$chaseUp] : [], $moreAsks) as $askedAt) {
+            DB::table('giftaid_asks')->insert(['userid' => $userId, 'askedby' => null, 'timestamp' => $askedAt]);
         }
 
         $oldId = $this->insertDonation([
@@ -744,6 +754,34 @@ class DonationThankPrepCommandTest extends TestCase
 
         $this->assertStringContainsString('Asked on 12 Oct 2026, no reply', $html);
         $this->assertStringNotContainsString('Never asked', $html);
+    }
+
+    public function test_card_counts_every_time_we_asked(): void
+    {
+        $card = $this->cardForDonorWithEarlierDonation('2026-08-01 09:30:00', null, ['2026-10-20 14:00:00', '2026-09-15 10:00:00']);
+
+        $this->assertSame(3, $card['giftaidAsks']);
+        $this->assertSame('2026-10-20', $card['giftaidAskedOn']->toDateString());
+
+        $html = $this->renderCard($card);
+        $this->assertStringContainsString('Asked 3 times, last on 20 Oct 2026, no reply', $html);
+    }
+
+    public function test_rendered_card_says_a_volunteer_recorded_the_decline(): void
+    {
+        $card = $this->cardForDonorWithEarlierDonation(null, 'Declined', [], true);
+        $this->assertTrue($card['giftaid']['recordedByVolunteer']);
+
+        $html = $this->renderCard($card);
+        $this->assertStringContainsString('On file: Declined (recorded by a volunteer)', $html);
+    }
+
+    public function test_rendered_card_says_the_donor_declined_on_the_form(): void
+    {
+        $html = $this->renderCard($this->cardForDonorWithEarlierDonation(null, 'Declined'));
+
+        $this->assertStringContainsString('On file: Declined', $html);
+        $this->assertStringNotContainsString('recorded by a volunteer', $html);
     }
 
     public function test_rendered_card_says_never_asked_when_not_chased_up(): void

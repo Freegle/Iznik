@@ -1417,6 +1417,24 @@ type giftAidResponse struct {
 //	200: successResponse
 //	401: errorResponse
 
+// swagger:route POST /giftaid/record donations recordGiftAid
+// Record a donor's Gift Aid answer (admin)
+//
+// A Gift Aid volunteer records, for the donor, that they declined (outcome Declined) or that we asked again and heard nothing (outcome NoResponse).
+// Body: { userid: <int>, outcome: "Declined" | "NoResponse" }
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+//	409: errorResponse
+
 // ============================================================================
 // Email Tracking
 // ============================================================================

@@ -36,7 +36,28 @@
               result.userid
             }}
             -&nbsp;
-            <span v-if="result.period === 'Declined'"> Gift Aid declined </span>
+            <span
+              v-if="result.period === 'Declined'"
+              class="badge bg-danger me-1 align-self-center"
+            >
+              Consent declined
+            </span>
+            <span
+              v-else-if="result.deleted"
+              class="badge bg-secondary me-1 align-self-center"
+            >
+              Given up in review
+            </span>
+            <span v-else class="badge bg-success me-1 align-self-center">
+              Consent given
+            </span>
+            <span v-if="result.period === 'Declined'">
+              on {{ dateonly(result.timestamp) }}
+              <span v-if="result.recordedby">
+                (recorded by volunteer #{{ result.recordedby }})
+              </span>
+              <span v-else>(by the donor)</span>
+            </span>
             <span v-if="result.period === 'Since'">
               Gift Aid consent for all since {{ dateonly(result.timestamp) }}
             </span>
@@ -75,6 +96,8 @@
         </div>
       </b-card-body>
     </b-card>
+
+    <ModGiftAidNoResponse />
 
     <b-card no-body class="mb-2">
       <b-card-body>
