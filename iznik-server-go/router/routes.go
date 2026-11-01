@@ -1892,7 +1892,7 @@ func SetupRoutes(app *fiber.App) {
 		// Gift Aid
 		// @Router /giftaid [get]
 		// @Summary Get Gift Aid declaration
-		// @Description Returns user's Gift Aid declaration. With all=true returns admin review list. With search=xxx searches records.
+		// @Description Returns user's Gift Aid declaration. With all=true returns admin review list. With search=xxx searches records. With noresponse=true lists donors asked who have not answered.
 		// @Tags donations
 		// @Produce json
 		// @Security BearerAuth
@@ -1927,6 +1927,16 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} map[string]interface{}
 		rg.Delete("/giftaid", donations.DeleteGiftAid)
+
+		// @Router /giftaid/record [post]
+		// @Summary Record a donor's Gift Aid answer (admin)
+		// @Description A Gift Aid volunteer records, for the donor, that they declined (outcome Declined) or that we asked again and heard nothing (outcome NoResponse)
+		// @Tags donations
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		rg.Post("/giftaid/record", donations.RecordGiftAid)
 
 		// Housekeeper — receives task results from Chrome extension
 		// @Router /housekeeper/notify [post]

@@ -90,6 +90,9 @@ describe('GiftAid Page', () => {
             props: ['variant'],
           },
           ModHelpGiftAid: { template: '<div class="help-giftaid"></div>' },
+          ModGiftAidNoResponse: {
+            template: '<div class="mod-giftaid-noresponse"></div>',
+          },
           ModGiftAid: {
             template: '<div class="mod-giftaid" :data-id="giftaidid"></div>',
             props: ['giftaidid'],
@@ -116,6 +119,11 @@ describe('GiftAid Page', () => {
     it('renders ModHelpGiftAid component', () => {
       const wrapper = mountComponent()
       expect(wrapper.find('.help-giftaid').exists()).toBe(true)
+    })
+
+    it("renders the section for recording a donor's answer", () => {
+      const wrapper = mountComponent()
+      expect(wrapper.find('.mod-giftaid-noresponse').exists()).toBe(true)
     })
 
     it('renders search section', () => {
@@ -193,6 +201,44 @@ describe('GiftAid Page', () => {
 
       expect(wrapper.vm.results).toHaveLength(1)
       expect(wrapper.vm.results[0].fullname).toBe('Test User')
+    })
+
+    it.each([
+      [{ period: 'Future' }, 'Consent given', 'Consent declined'],
+      [{ period: 'Declined' }, 'Consent declined', 'Consent given'],
+      [
+        { period: 'Future', deleted: '2026-01-01' },
+        'Given up in review',
+        'Consent given',
+      ],
+    ])('shows the state of %o', async (fields, shown, hidden) => {
+      mockApi.giftaid.search.mockResolvedValue([
+        { id: 1, fullname: 'Test User', timestamp: '2026-10-01', ...fields },
+      ])
+      const wrapper = mountComponent()
+      await wrapper.vm.doSearch(() => {})
+      await flushPromises()
+
+      expect(wrapper.text()).toContain(shown)
+      expect(wrapper.text()).not.toContain(hidden)
+    })
+
+    it('says who recorded a decline', async () => {
+      mockApi.giftaid.search.mockResolvedValue([
+        { id: 1, period: 'Declined', recordedby: 42, timestamp: '2026-10-01' },
+        {
+          id: 2,
+          period: 'Declined',
+          recordedby: null,
+          timestamp: '2026-10-01',
+        },
+      ])
+      const wrapper = mountComponent()
+      await wrapper.vm.doSearch(() => {})
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('recorded by volunteer #42')
+      expect(wrapper.text()).toContain('(by the donor)')
     })
 
     it('triggers search on Enter key via keyup event', async () => {

@@ -29,6 +29,10 @@ type GiftAid struct {
 	Housenameornumber *string    `json:"housenameornumber" gorm:"column:housenameornumber"`
 }
 
+// giftAidColumns is what a donor sees of their own declaration. It leaves out recordedby, the
+// volunteer who recorded an answer for them, which only Gift Aid volunteers see.
+const giftAidColumns = "id, userid, timestamp, period, fullname, firstname, lastname, homeaddress, deleted, reviewed, updated, postcode, housenameornumber"
+
 // GetGiftAid returns the logged-in user's Gift Aid declaration, or dispatches
 // to ListGiftAid/SearchGiftAid for admin operations.
 // @Summary Get user's Gift Aid declaration
@@ -50,6 +54,9 @@ func GetGiftAid(c *fiber.Ctx) error {
 	if c.Query("search") != "" {
 		return SearchGiftAid(c)
 	}
+	if c.Query("noresponse") == "true" {
+		return ListGiftAidNoResponse(c)
+	}
 
 	db := database.DBConn
 
@@ -68,7 +75,7 @@ func GetGiftAid(c *fiber.Ctx) error {
 	// Query for user's gift aid record (exclude deleted records)
 	var giftaid GiftAid
 	result := db.Table("giftaid").
-		Select("id, userid, timestamp, period, fullname, firstname, lastname, homeaddress, deleted, reviewed, updated, postcode, housenameornumber").
+		Select(giftAidColumns).
 		Where("userid = ? AND deleted IS NULL", userID).
 		Limit(1).
 		Scan(&giftaid)
@@ -97,8 +104,38 @@ func GetGiftAid(c *fiber.Ctx) error {
 // GiftAidListItem represents a gift aid record in the admin review list
 type GiftAidListItem struct {
 	GiftAid
-	Email     *string `json:"email" gorm:"-"`
-	Donations float64 `json:"donations" gorm:"column:donations"`
+	// RecordedBy is the volunteer who recorded this answer for the donor; nil when the donor
+	// filled in the form themselves.
+	RecordedBy *uint64 `json:"recordedby" gorm:"column:recordedby"`
+	Email      *string `json:"email" gorm:"-"`
+	Donations  float64 `json:"donations" gorm:"column:donations"`
+}
+
+// GiftAidNoResponse is a donor we have asked for a Gift Aid declaration who has not answered:
+// no declaration on file (a declaration given up in review does not count as an answer) and at
+// least one row in giftaid_asks.
+type GiftAidNoResponse struct {
+	UserID    uint64    `json:"userid" gorm:"column:userid"`
+	Fullname  *string   `json:"fullname" gorm:"column:fullname"`
+	Email     *string   `json:"email" gorm:"-"`
+	Donations float64   `json:"donations" gorm:"column:donations"`
+	Asks      int64     `json:"asks" gorm:"column:asks"`
+	LastAsked time.Time `json:"lastasked" gorm:"column:lastasked"`
+	// AskedBy is the volunteer who asked most recently; nil when it was the chase-up mail.
+	AskedBy *uint64 `json:"askedby" gorm:"column:askedby"`
+}
+
+// RecordGiftAidRequest is the body of POST /giftaid/record.
+type RecordGiftAidRequest struct {
+	UserID  uint64 `json:"userid"`
+	Outcome string `json:"outcome"`
+}
+
+// answeredGiftAidSQL is true when the donor in users_donations-style column `col` has answered:
+// a live declaration of either kind, or a decline (which the donor's own withdrawal leaves
+// deleted). A declaration given up in review is deleted and not Declined, so it is not an answer.
+func answeredGiftAidSQL(col string) string {
+	return "EXISTS (SELECT 1 FROM giftaid WHERE giftaid.userid = " + col + " AND (giftaid.deleted IS NULL OR giftaid.period = 'Declined'))"
 }
 
 // SetGiftAidRequest is the request body for creating/updating a gift aid declaration.
@@ -295,6 +332,8 @@ func SetGiftAid(c *fiber.Ctx) error {
 			{Column: clause.Column{Name: "deleted"}, Value: gorm.Expr("NULL")},
 			{Column: clause.Column{Name: "timestamp"}, Value: gorm.Expr("NOW()")},
 			{Column: clause.Column{Name: "reviewed"}, Value: gorm.Expr("NULL")},
+			// The donor answered for themselves, so no volunteer recorded it.
+			{Column: clause.Column{Name: "recordedby"}, Value: gorm.Expr("NULL")},
 		},
 	}).Create(map[string]interface{}{
 		"userid": myid, "period": req.Period, "fullname": req.Fullname,
@@ -402,8 +441,9 @@ func DeleteGiftAid(c *fiber.Ctx) error {
 	// INSERT or update existing record to mark as Declined.
 	db.Table("giftaid").Clauses(clause.OnConflict{
 		DoUpdates: clause.Assignments(map[string]interface{}{
-			"period":  gorm.Expr("'Declined'"),
-			"deleted": gorm.Expr("NOW()"),
+			"period":     gorm.Expr("'Declined'"),
+			"deleted":    gorm.Expr("NOW()"),
+			"recordedby": gorm.Expr("NULL"),
 		}),
 	}).Create(map[string]interface{}{
 		"userid":      myid,
@@ -411,6 +451,145 @@ func DeleteGiftAid(c *fiber.Ctx) error {
 		"fullname":    fullname,
 		"homeaddress": gorm.Expr("''"),
 	})
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// ListGiftAidNoResponse lists donors we have asked for a Gift Aid declaration who have not
+// answered (admin only). Called when GET /giftaid has noresponse=true.
+func ListGiftAidNoResponse(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	if !isGiftAidAdmin(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Not authorized")
+	}
+
+	db := database.DBConn
+
+	donors := make([]GiftAidNoResponse, 0)
+	res := db.Raw(`
+		SELECT asks.userid, users.fullname, asks.asks, asks.lastasked,
+			(SELECT a2.askedby FROM giftaid_asks a2 WHERE a2.userid = asks.userid ORDER BY a2.timestamp DESC, a2.id DESC LIMIT 1) AS askedby,
+			COALESCE((SELECT SUM(GrossAmount) FROM users_donations WHERE users_donations.userid = asks.userid), 0) AS donations
+		FROM (SELECT userid, COUNT(*) AS asks, MAX(timestamp) AS lastasked FROM giftaid_asks GROUP BY userid) asks
+		INNER JOIN users ON users.id = asks.userid
+		WHERE NOT ` + answeredGiftAidSQL("asks.userid") + `
+		ORDER BY asks.lastasked DESC`).Scan(&donors)
+
+	if res.Error != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to list donors")
+	}
+
+	for i := range donors {
+		var email *string
+		db.Table("users_emails").Select("email").Where("userid = ?", donors[i].UserID).Order("preferred DESC").Limit(1).Scan(&email)
+		donors[i].Email = email
+	}
+
+	return c.JSON(fiber.Map{"donors": donors})
+}
+
+// RecordGiftAid records a donor's Gift Aid answer on their behalf (admin only), so a volunteer
+// never has to sign in as the donor to do it.
+//
+//   - Declined: the donor told us, some other way than the form, that we cannot claim. Their
+//     declaration becomes Declined, dated now and marked with the volunteer who recorded it. It
+//     replaces a consent they gave earlier, because a donor can withdraw by any means.
+//   - NoResponse: we asked again and heard nothing. One more row in giftaid_asks; this can happen
+//     any number of times. It is refused once the donor has answered, because then it is not true.
+//
+// @Summary Record a donor's Gift Aid answer (admin)
+// @Tags donations
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]interface{} "Success"
+// @Failure 400 {object} map[string]string "Bad parameters"
+// @Failure 403 {object} map[string]string "Not authorized"
+// @Failure 404 {object} map[string]string "No such user"
+// @Failure 409 {object} map[string]string "The donor has already answered"
+// @Router /giftaid/record [post]
+func RecordGiftAid(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	if !isGiftAidAdmin(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Not authorized")
+	}
+
+	var req RecordGiftAidRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	if req.UserID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "userid is required")
+	}
+
+	if req.Outcome != "Declined" && req.Outcome != "NoResponse" {
+		return fiber.NewError(fiber.StatusBadRequest, "outcome must be Declined or NoResponse")
+	}
+
+	db := database.DBConn
+
+	var fullname *string
+	var found int64
+	if err := db.Raw("SELECT COUNT(*), MAX(fullname) FROM users WHERE id = ? AND deleted IS NULL", req.UserID).
+		Row().Scan(&found, &fullname); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to find user")
+	}
+
+	if found == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "No such user")
+	}
+
+	if req.Outcome == "NoResponse" {
+		var answered bool
+		if err := db.Raw("SELECT "+answeredGiftAidSQL("?"), req.UserID).Row().Scan(&answered); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to check Gift Aid")
+		}
+
+		if answered {
+			return fiber.NewError(fiber.StatusConflict, "This donor has already answered about Gift Aid")
+		}
+
+		if err := db.Exec("INSERT INTO giftaid_asks (userid, askedby) VALUES (?, ?)", req.UserID, myid).Error; err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to record the ask")
+		}
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+	}
+
+	name := ""
+	if fullname != nil {
+		name = *fullname
+	}
+
+	// giftaid has UNIQUE KEY (userid). An existing row keeps its name and address, which belong to
+	// the donor, and takes the decline; timestamp is refreshed because it is the date of the answer.
+	tx := db.Table("giftaid").Clauses(clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "period"}, Value: gorm.Expr("'Declined'")},
+			{Column: clause.Column{Name: "timestamp"}, Value: gorm.Expr("NOW()")},
+			{Column: clause.Column{Name: "deleted"}, Value: gorm.Expr("NULL")},
+			{Column: clause.Column{Name: "reviewed"}, Value: gorm.Expr("NULL")},
+			{Column: clause.Column{Name: "recordedby"}, Value: gorm.Expr("?", myid)},
+		},
+	}).Create(map[string]interface{}{
+		"userid":      req.UserID,
+		"period":      gorm.Expr("'Declined'"),
+		"fullname":    name,
+		"homeaddress": gorm.Expr("''"),
+		"recordedby":  myid,
+	})
+
+	if tx.Error != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to record the decline")
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
