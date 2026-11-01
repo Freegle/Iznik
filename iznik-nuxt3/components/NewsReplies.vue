@@ -801,11 +801,44 @@ function expandCombined(combinedIds) {
   }
 }
 
+/* Past depth 2 the containers stop indenting, but every nested .reply-thread
+   still carries its own bottom padding. Under the last reply of a deep chain
+   those paddings stacked into a tall empty band (a 17-deep thread left ~8rem
+   of blank space). Only the outermost box keeps its bottom padding. */
+.replies-container .replies-container > .reply-thread:last-child {
+  padding-bottom: 0;
+}
+
 .reply-thread--new {
   background: rgba($color-success-bg, 0.35);
   border-radius: 4px;
   padding-left: 0.25rem;
   margin-left: -0.25rem;
+
+  /* The reply menu sits at right: -1rem, out in the card padding. Inside the
+     tint that put the dots half on the green and half off; pull it in. */
+  .reply .reply-menu {
+    right: 0;
+  }
+}
+
+/* A tinted box keeps its own bottom padding, so its last line is not flush
+   against the edge of the green... */
+.replies-container > .reply-thread.reply-thread--new:last-child {
+  padding-bottom: 0.5rem;
+}
+
+/* ...but a new reply nested in a new reply adds neither padding nor another
+   layer of tint. Stacked translucent layers darkened with each level and
+   left pale bands at the bottom where their padding showed. */
+.reply-thread--new .replies-container > .reply-thread:last-child {
+  padding-bottom: 0;
+}
+
+.reply-thread--new .reply-thread--new {
+  background: none;
+  padding-left: 0;
+  margin-left: 0;
 }
 
 /* A deep-linked reply that is also new would otherwise stack two greens: the
