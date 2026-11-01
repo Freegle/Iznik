@@ -280,19 +280,13 @@ function goToMessage() {
 .status-overlay-image {
   position: absolute;
   z-index: 10;
-  transform: rotate(15deg);
+  transform: translate(-50%, -50%) rotate(15deg);
   top: 50%;
   left: 50%;
-  width: 50%;
-  max-width: 80px;
-  margin-left: -25%;
-  margin-top: -15%;
+  width: 60%;
+  max-width: 220px;
   pointer-events: none;
   height: auto;
-
-  @include media-breakpoint-up(lg) {
-    max-width: 100px;
-  }
 }
 
 .title-overlay {
