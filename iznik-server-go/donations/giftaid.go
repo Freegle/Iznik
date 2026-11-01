@@ -131,7 +131,7 @@ type RecordGiftAidRequest struct {
 	Outcome string `json:"outcome"`
 }
 
-// answeredGiftAidSQL is true when the donor in users_donations-style column `col` has answered:
+// answeredGiftAidSQL is true when the donor whose id is in `col` has answered:
 // a live declaration of either kind, or a decline (which the donor's own withdrawal leaves
 // deleted). A declaration given up in review is deleted and not Declined, so it is not an answer.
 func answeredGiftAidSQL(col string) string {
