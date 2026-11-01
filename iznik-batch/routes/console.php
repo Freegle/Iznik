@@ -601,6 +601,15 @@ Schedule::command('ux:rollup-daily')
     ->appendOutputTo(cronLog('ux:rollup-daily'))
     ->runInBackground();
 
+// Views per post for the ModTools dashboard's Popular Posts (messages_viewcounts). Early in the
+// UTC day because the dashboard counts live from the start of the day this last ran: the earlier
+// it runs, the less it counts live. Reads the replica, about a minute of index reads.
+Schedule::command('messages:count-views')
+    ->dailyAt('01:10')
+    ->withoutOverlapping(120)
+    ->appendOutputTo(cronLog('messages:count-views'))
+    ->runInBackground();
+
 // Digest click-through by post position: roll the last 14 days (clicks keep arriving after a digest
 // goes out) into email_digest_positions_daily, which the ModTools SysAdmin chart sums. 05:35 UTC is
 // after the backup drain window (03:50 for 45 minutes) and after the morning digests have gone.
