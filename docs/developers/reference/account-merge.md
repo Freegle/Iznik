@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-01
 owner: Freegle dev team
 covers:
   - iznik-server-go/user/merge.go
@@ -62,7 +62,8 @@ Everything runs in one transaction. In order:
    Both the bans on the discarded account and the bans it made as a moderator keep their
    original dates; `users_banned.date` updates itself on any change, so the merge sets it
    explicitly.
-10. **Gift Aid.** The most generous declaration is kept.
+10. **Gift Aid.** The most generous declaration is kept. Every row in `giftaid_asks` (each time
+    the donor was asked and did not answer) moves to the kept account.
 11. **Two log rows** are written, type `User`, subtype `Merged`, text `Merged <discarded> into
     <kept>`, one against each account, with `byuser` set to whoever started the merge.
 

@@ -335,6 +335,7 @@ class DonationThankPrepService
             'donationHistory' => [],
             'giftaid'         => null,
             'giftaidAskedOn'  => null,
+            'giftaidAsks'     => 0,
             'memberships'     => [],
             'modNotes'        => [],
             'modChats'        => [],
@@ -421,13 +422,15 @@ class DonationThankPrepService
                 'housenameornumber' => (string) ($giftaid->housenameornumber ?? ''),
                 'homeaddress'       => (string) ($giftaid->homeaddress ?? ''),
                 'updated'           => $giftaid->updated ? Carbon::parse($giftaid->updated) : null,
+                // A volunteer recorded this answer for the donor, rather than the donor filling in the form.
+                'recordedByVolunteer' => !empty($giftaid->recordedby),
             ];
         } else {
-            // No declaration. A recorded chase-up means we asked and got no reply.
-            $asked = DB::table('users_donations')
-                ->where('userid', $userId)
-                ->whereNotNull('giftaidchaseup')
-                ->max('giftaidchaseup');
+            // No declaration. Each row in giftaid_asks is a time we asked (the chase-up mail, or a
+            // volunteer) and got no reply.
+            $asks = DB::table('giftaid_asks')->where('userid', $userId);
+            $card['giftaidAsks'] = (clone $asks)->count();
+            $asked = $asks->max('timestamp');
             $card['giftaidAskedOn'] = $asked ? Carbon::parse($asked) : null;
         }
 

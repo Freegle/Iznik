@@ -188,6 +188,7 @@ const TABLES = {
     [
       ['list', [], '$getv2', ['/giftaid', { all: true }]],
       ['search', ['bob'], '$getv2', ['/giftaid', { search: 'bob' }]],
+      ['noResponse', [], '$getv2', ['/giftaid', { noresponse: true }]],
       [
         'save',
         [
@@ -451,6 +452,23 @@ describe('return value handling', () => {
     api = make(Cls, { [verb]: { id: 99, other: 1 } })
     expect(await api[m](...args)).toBe(99)
     expect(api[verb]).toHaveBeenCalledTimes(1)
+  })
+
+  it('GiftAidAPI.noResponse unwraps the donors', async () => {
+    api = make(GiftAidAPI, { $getv2: { donors: [{ userid: 3 }], junk: 1 } })
+    expect(await api.noResponse()).toEqual([{ userid: 3 }])
+  })
+
+  it('GiftAidAPI.record posts the outcome and does not report expected refusals', async () => {
+    api = make(GiftAidAPI, { $postv2: {} })
+    await api.record(7, 'Declined')
+    const call = api.$postv2.mock.calls[0]
+    expect(call[0]).toBe('/giftaid/record')
+    expect(call[1]).toEqual({ userid: 7, outcome: 'Declined' })
+    expect(call[2]({ error: 404 })).toBe(false)
+    expect(call[2]({ error: 409 })).toBe(false)
+    expect(call[2]({ error: 500 })).toBe(true)
+    expect(call[2](undefined)).toBe(true)
   })
 
   it('GroupAPI.add posts to /group', async () => {

@@ -62,7 +62,9 @@
 
         if ($ga) {
           if ($ga['declined']) {
-            $gaLabel = 'On file: Declined';
+            $gaLabel = !empty($ga['recordedByVolunteer'])
+              ? 'On file: Declined (recorded by a volunteer)'
+              : 'On file: Declined';
             $gaClass = 'flag-pill-warn';
           } elseif ($ga['reviewed']) {
             $gaLabel = 'Active — ' . $ga['period'];
@@ -72,7 +74,10 @@
             $gaClass = '';
           }
         } elseif (!empty($card['giftaidAskedOn'])) {
-          $gaLabel = 'Asked on ' . $card['giftaidAskedOn']->format('j M Y') . ', no reply';
+          $gaAsks = $card['giftaidAsks'] ?? 1;
+          $gaLabel = $gaAsks > 1
+            ? 'Asked ' . $gaAsks . ' times, last on ' . $card['giftaidAskedOn']->format('j M Y') . ', no reply'
+            : 'Asked on ' . $card['giftaidAskedOn']->format('j M Y') . ', no reply';
           $gaClass = 'flag-pill-warn';
         } else {
           $gaLabel = 'Never asked / not on file';

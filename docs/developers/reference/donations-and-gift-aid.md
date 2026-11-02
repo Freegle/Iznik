@@ -1,9 +1,12 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-01
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useMe.js
   - iznik-nuxt3/modtools/components/ModSupportUser.vue
+  - iznik-nuxt3/modtools/pages/giftaid.vue
+  - iznik-nuxt3/modtools/components/ModGiftAidNoResponse.vue
+  - iznik-nuxt3/api/GiftAidAPI.js
   - iznik-server-go/donations/**
   - iznik-server-go/user/user.go
   - iznik-batch/app/Services/DonationService.php
@@ -95,10 +98,37 @@ Claims are submitted to HMRC by a person, not by this code. Who does that is in
 `users_donations` stops anyone being thanked twice. A separate daily summary
 (`donations:summary`) reports the day's takings to the people who need to see it.
 
-The Gift Aid status on each thank-prep card has four states: Active, Just declared, On file: Declined,
-and no declaration. With no declaration the card reads "Asked on <date>, no reply" when any of the
-donor's donations has `giftaidchaseup` set, otherwise "Never asked / not on file". The ModTools Gift Aid
-page searches declarations only, so it never lists a donor who was asked and did not reply.
+## Three answers: given, declined, no response
+
+A donor's Gift Aid answer is one of three things, and the records keep them apart:
+
+| Answer | Where it is recorded |
+|---|---|
+| Consent given | a `giftaid` row with a period other than `Declined` |
+| Consent declined | a `giftaid` row with period `Declined` |
+| Asked, no response | no answer in `giftaid`, and one or more rows in `giftaid_asks` |
+
+A `giftaid` row that was given up in review (deleted, and not `Declined`) is not an answer.
+
+- **`giftaid_asks`** has one row per time we asked and heard nothing, so a donor can have many.
+  `askedby` is the volunteer who asked, or NULL for the chase-up mail, which writes a row each
+  time it sends (`sendGiftAidChaseUps`). The migration backfilled each donor's first
+  `users_donations.giftaidchaseup` as one row.
+- **`giftaid.recordedby`** is the volunteer who recorded an answer for the donor. It is NULL when
+  the donor filled in the form themselves, and the donor's own declaration or withdrawal clears it.
+  A donor's own `GET /giftaid` leaves it out.
+- **`POST /giftaid/record`** (Gift Aid permission) takes `{userid, outcome}`. `Declined` writes or
+  replaces the declaration as Declined, dated now and keeping any name and address already there.
+  `NoResponse` adds an ask, and answers 409 once the donor has answered. Volunteers used to sign in
+  as the donor to decline; this replaces that.
+- **`GET /giftaid?noresponse=true`** lists donors with asks and no answer, with the number of asks,
+  the latest, who made it, and what they have given. The ModTools page shows it
+  (`ModGiftAidNoResponse.vue`), with the buttons that call `POST /giftaid/record`.
+
+The Gift Aid status on each thank-prep card follows the same three answers: Active, Just declared,
+On file: Declined (with "recorded by a volunteer" when `recordedby` is set), and, with no
+declaration, "Asked on <date>, no reply" or "Asked 3 times, last on <date>, no reply" from
+`giftaid_asks`, otherwise "Never asked / not on file".
 
 ## Donors who ask not to be asked
 

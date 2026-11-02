@@ -602,6 +602,30 @@ class GiftAidClaimServiceTest extends TestCase
         $this->assertNotNull($chaseup);
     }
 
+    public function test_chaseup_records_an_ask_by_the_mail_not_a_volunteer(): void
+    {
+        $user = $this->createTestUser();
+        $this->insertDonation($user->id);
+
+        \Illuminate\Support\Facades\Mail::fake();
+        $this->service->sendGiftAidChaseUps();
+
+        $asks = DB::table('giftaid_asks')->where('userid', $user->id)->get();
+        $this->assertCount(1, $asks);
+        $this->assertNull($asks[0]->askedby);
+    }
+
+    public function test_chaseup_dry_run_records_no_ask(): void
+    {
+        $user = $this->createTestUser();
+        $this->insertDonation($user->id);
+
+        \Illuminate\Support\Facades\Mail::fake();
+        $this->service->sendGiftAidChaseUps(true);
+
+        $this->assertSame(0, DB::table('giftaid_asks')->where('userid', $user->id)->count());
+    }
+
     public function test_chaseup_skips_donor_already_chased(): void
     {
         $user = $this->createTestUser();
