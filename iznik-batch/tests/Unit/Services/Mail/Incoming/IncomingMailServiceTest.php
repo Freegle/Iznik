@@ -285,7 +285,7 @@ class IncomingMailServiceTest extends TestCase
         ]);
         $this->createMembership($member, $group, [
             'implicit' => 1,
-            'added_origin' => 'tn_unaddressed',
+            'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
             'emailfrequency' => 0,
         ]);
 
@@ -303,7 +303,7 @@ class IncomingMailServiceTest extends TestCase
 
         $row = DB::table('memberships')->where('userid', $member->id)->where('groupid', $group->id)->first();
         $this->assertSame(1, (int) $row->implicit, 'a re-subscribe does not make a placement ordinary');
-        $this->assertSame('tn_unaddressed', $row->added_origin);
+        $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $row->added_origin);
         $this->assertSame(0, (int) $row->emailfrequency, 'nor does it start mailing them');
         $this->assertFalse(
             DB::table('logs')->where('user', $member->id)->where('groupid', $group->id)

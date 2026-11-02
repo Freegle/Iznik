@@ -936,6 +936,12 @@ class User extends Model implements Auditable
         return $this->tnuserid !== NULL || $this->isTN();
     }
 
+    /** Support and Admin, who act for Freegle as a whole rather than for one community. */
+    public function isSupportOrAdmin(): bool
+    {
+        return in_array($this->systemrole, [self::SYSTEMROLE_SUPPORT, self::SYSTEMROLE_ADMIN], TRUE);
+    }
+
     /**
      * Whether the moderators of $groupId may write to this user: a chat, mail or a standard
      * message. Anyone who is not a TrashNothing member can be written to. A TrashNothing

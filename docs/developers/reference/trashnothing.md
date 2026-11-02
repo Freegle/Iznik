@@ -519,9 +519,12 @@ moderators, who are the ones with no relationship to the poster.
 
 ### Contacting a TrashNothing member
 
-`ModsMayContact` gates every way a moderator writes to someone: opening a User2Mod chat
-(`PutChatRoom`), writing in one (`CreateChatMessage`), Mail and the member standard messages
-(`PostMemberships` `Leave (Approved) Member`), and a reply about a post (`prepareModReply`).
+`MayContact` (`ModsMayContact` for one person acting) gates every way a moderator writes to
+someone: starting a User2Mod chat (`PutChatRoom`), writing in one (`CreateChatMessage`), Mail and
+the member standard messages (`PostMemberships` `Leave (Approved) Member`), and a reply about a
+post (`prepareModReply`). Support and Admin act for Freegle as a whole, so the rule does not bind
+them: `MayContact` passes them, the members list and the post's `canmessageposter` show them the
+buttons, and `ProcessBackgroundTasksCommand` sends a task whose `byuser` is Support or Admin.
 `ProcessBackgroundTasksCommand` checks again before it sends a standard message, so a task
 queued before the member left sends nothing. `Reject` and `Delete Approved Member` remove the
 membership first, so the table can no longer answer by the time the task runs. `PostMemberships`
@@ -529,11 +532,20 @@ decides before it deletes and puts the answer in the task as `modsmaycontact`, w
 uses in place of the lookup. A task without the key (every other action, and tasks queued before
 it existed) still asks the table.
 
-- **A chat closes when they leave.** The check runs before `PutChatRoom` hands back an
-  existing room, and `CreateChatMessage` refuses a moderator writing in one, so an old chat
-  can't get round it. The member can still write; that is how someone banned appeals. The
-  chat payload carries `modsclosed` for the moderators, and `ModChatFooter` shows a notice
-  in place of the reply box.
+- **A chat closes when they leave.** `PutChatRoom` still hands back an existing room, so the
+  moderators can read it, but `CreateChatMessage` refuses their messages in it, so an old chat
+  can't get round the rule; only a new chat is refused outright. The member can still write;
+  that is how someone banned appeals. The chat payload carries `modsclosed` for the moderators,
+  and `ModChatFooter` shows a notice in place of the reply box. A refused new chat comes back as
+  a 403 that `stores/chat.js` treats as expected rather than an error, and `ChatButton` says
+  why instead of opening anything.
+- **Notes in chat review follow the same rule.** A moderator writing into a chat between two
+  members (`CreateChatMessage` on a User2User room they are not in) speaks for no one
+  community, so `MayContactThroughAnyGroup` needs each TrashNothing member in it to have
+  chosen a community the moderator moderates.
+- **The post says whether its poster can be written to.** `canmessageposter` on each of the
+  post's groups folds the rule in, so ModTools stops offering Blank Reply and the standard
+  messages once a TrashNothing poster has left.
 - **The members list follows the row.** `mod_messaging_allowed` on each member is
   `MembershipAllowsContact` for that membership, with the TrashNothing check batched for
   the page.
@@ -549,10 +561,12 @@ it existed) still asks the table.
   `RippleEngagementService` does not make a ripple join ordinary for their reply or
   write-back. A reply from TrashNothing itself arrives by email and never joined anyone.
 - **A ban takes their posts down.** Banning deletes the membership, so a placed post would
-  stay up with nobody able to talk to its poster about it. The Go `Ban` action withdraws the
-  member's open OFFER and WANTED posts whose home is the community, as V1's
-  `removeMembership($ban)` did, for every member, not only TrashNothing ones; a post still only
-  pending is deleted instead.
+  stay up with nobody able to talk to its poster about it. Both ban paths (`DELETE /memberships`
+  with `ban`, which ModTools uses, and the `Ban` action on `POST /memberships`) call
+  `message.WithdrawPostsOnBan`. It withdraws the member's open OFFER and WANTED posts whose
+  home is the community, as V1's `removeMembership($ban)` did, for every member, not only
+  TrashNothing ones, and retires any copy still pending on a neighbour. A post still only
+  pending is deleted instead. A post that rippled in from a neighbour is left to it.
 
 ### Verifying nothing is dropped after the cutover
 

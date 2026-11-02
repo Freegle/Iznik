@@ -14,6 +14,8 @@ use App\Mail\Session\MergeOfferMail;
 use App\Mail\Session\UnsubscribeConfirmMail;
 use App\Mail\Session\VerifyEmailMail;
 use App\Mail\Message\ModStdMessageMail;
+use App\Models\Membership;
+use App\Models\User;
 use App\Services\BlockedKeywordBackfillService;
 use App\Services\ContentCheckService;
 use App\Services\PushNotificationService;
@@ -3380,7 +3382,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
 
         $placed = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
         $this->createTestUserEmail($placed, ['preferred' => 1]);
-        $this->createMembership($placed, $group, ['implicit' => 1, 'added_origin' => 'tn_unaddressed']);
+        $this->createMembership($placed, $group, ['implicit' => 1, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED]);
 
         $left = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
         $this->createTestUserEmail($left, ['preferred' => 1]);
@@ -3529,6 +3531,45 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             return TRUE;
         });
         $this->assertSame([$chose->id], $recipients);
+    }
+
+    /**
+     * Support and Admin act for Freegle as a whole, so the TrashNothing contact rule does not
+     * stop their mail.
+     */
+    public function test_mod_stdmsg_from_support_reaches_a_tn_member_who_did_not_choose_the_group(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $support = $this->createTestUser(['fullname' => 'Support Volunteer', 'systemrole' => User::SYSTEMROLE_SUPPORT]);
+        $placed = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createTestUserEmail($placed, ['preferred' => 1]);
+        $this->createMembership($placed, $group, ['implicit' => 1, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $placed->id,
+                'byuser' => $support->id,
+                'groupid' => $group->id,
+                'subject' => 'A note from Support',
+                'body' => 'Hello, this is Freegle Support.',
+                'action' => 'Leave Approved Member',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ModStdMessageMail::class, fn (ModStdMessageMail $mail) => $mail->recipientUserId === $placed->id);
     }
 
     /**

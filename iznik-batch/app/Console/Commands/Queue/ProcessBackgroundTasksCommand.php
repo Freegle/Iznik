@@ -621,11 +621,17 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
-     * Whether the group's moderators may write to this user (User::modsMayContact). A user
-     * we can't find is not refused here; the sender finds no address for them anyway.
+     * Whether the group's moderators may write to this user (User::modsMayContact). Support
+     * and Admin act for Freegle as a whole, so the rule does not bind them, as in
+     * modmessaging.MayContact in iznik-server-go. A user we can't find is not refused here;
+     * the sender finds no address for them anyway.
      */
-    protected function modsMayContact(int $userId, int $groupId): bool
+    protected function modsMayContact(int $userId, int $groupId, int $byUser = 0): bool
     {
+        if ($byUser > 0 && User::find($byUser)?->isSupportOrAdmin()) {
+            return TRUE;
+        }
+
         $user = $userId > 0 ? User::find($userId) : null;
 
         return $user === null || $user->modsMayContact($groupId);
@@ -728,7 +734,7 @@ class ProcessBackgroundTasksCommand extends Command
 
         // A TrashNothing poster who did not choose this group, or has left it, is not
         // written to either (User::modsMayContact). The action and its log still stand.
-        if ($groupId > 0 && !$this->modsMayContact($posterId, $groupId)) {
+        if ($groupId > 0 && !$this->modsMayContact($posterId, $groupId, $byUser)) {
             Log::info("Mod action {$taskType} for a TrashNothing poster who is not a member of the group, sending nothing to the poster", [
                 'msgid' => $msgId,
                 'groupid' => $groupId,
@@ -895,7 +901,7 @@ class ProcessBackgroundTasksCommand extends Command
         // every action that keeps the membership, and tasks queued before the key existed.
         $mayContact = isset($data['modsmaycontact'])
             ? filter_var($data['modsmaycontact'], FILTER_VALIDATE_BOOLEAN)
-            : $this->modsMayContact($userId, $groupId);
+            : $this->modsMayContact($userId, $groupId, $byUser);
 
         if (!$mayContact) {
             Log::info('Mod stdmsg for a TrashNothing member who did not choose this group, sending nothing', [
