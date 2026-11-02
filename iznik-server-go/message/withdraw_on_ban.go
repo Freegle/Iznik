@@ -24,12 +24,12 @@ const BanWithdrawnText = "Marked as withdrawn by ban"
 // member's own withdrawal of a pending post is. Nobody who replied is told, as in V1.
 func WithdrawPostsOnBan(db *gorm.DB, userid uint64, groupid uint64, byuser uint64) {
 	var msgids []uint64
-	if err := db.Raw("SELECT DISTINCT m.id FROM messages m "+
-		"INNER JOIN messages_groups mg ON mg.msgid = m.id "+
-		"WHERE m.fromuser = ? AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0 "+
-		"AND m.deleted IS NULL AND m.type IN (?, ?) "+
-		"AND NOT EXISTS (SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = m.id)",
-		userid, groupid, utils.OFFER, utils.WANTED).Scan(&msgids).Error; err != nil {
+	if err := db.Table("messages m").Distinct().
+		Joins("INNER JOIN messages_groups mg ON mg.msgid = m.id").
+		Where("m.fromuser = ? AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0", userid, groupid).
+		Where("m.deleted IS NULL AND m.type IN ?", []string{utils.OFFER, utils.WANTED}).
+		Where("NOT EXISTS (SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = m.id)").
+		Pluck("m.id", &msgids).Error; err != nil {
 		log.Printf("Failed to find posts to withdraw for user %d banned from group %d: %v", userid, groupid, err)
 		return
 	}

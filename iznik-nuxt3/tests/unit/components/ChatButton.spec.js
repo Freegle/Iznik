@@ -204,9 +204,7 @@ describe('ChatButton', () => {
 
         expect(mockChatStore.openChatToMods).toHaveBeenCalledWith(7, 2)
         expect(mockPush).not.toHaveBeenCalled()
-        expect(wrapper.find('[data-test="chat-refused"]').exists()).toBe(
-          true
-        )
+        expect(wrapper.find('[data-test="chat-refused"]').exists()).toBe(true)
       } finally {
         mockChatStore.openChatToMods.mockResolvedValue(123)
       }

@@ -133,7 +133,8 @@ func TrashNothingMembers(db *gorm.DB, userids []uint64) map[uint64]bool {
 	}
 
 	var ids []uint64
-	if err := db.Raw("SELECT u.id FROM users u WHERE u.id IN (?) AND "+user.TrashNothingSQL("u"), userids).Scan(&ids).Error; err != nil {
+	if err := db.Table("users u").Where("u.id IN ?", userids).Where(user.TrashNothingSQL("u")).
+		Pluck("u.id", &ids).Error; err != nil {
 		stdlog.Printf("Failed to read which of %d users are TrashNothing members: %v", len(userids), err)
 	}
 	for _, id := range ids {

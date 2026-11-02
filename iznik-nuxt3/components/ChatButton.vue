@@ -24,11 +24,7 @@
         </span>
       </b-button>
     </slot>
-    <span
-      v-if="refused"
-      class="small text-muted ms-1"
-      data-test="chat-refused"
-    >
+    <span v-if="refused" class="small text-muted ms-1" data-test="chat-refused">
       This TrashNothing member isn't in your community, so you can't chat to
       them.
     </span>

@@ -564,7 +564,9 @@ describe('ModChatFooter', () => {
 
     it('an open chat keeps its reply box', async () => {
       const wrapper = await mountComponent()
-      expect(wrapper.find('[data-test="chat-mods-closed"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="chat-mods-closed"]').exists()).toBe(
+        false
+      )
       expect(wrapper.find('textarea').exists()).toBe(true)
       expect(wrapper.find('.spin-button').exists()).toBe(true)
     })
