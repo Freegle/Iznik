@@ -470,14 +470,17 @@ func ListGiftAidNoResponse(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	donors := make([]GiftAidNoResponse, 0)
-	res := db.Raw(`
-		SELECT asks.userid, users.fullname, asks.asks, asks.lastasked,
-			(SELECT a2.askedby FROM giftaid_asks a2 WHERE a2.userid = asks.userid ORDER BY a2.timestamp DESC, a2.id DESC LIMIT 1) AS askedby,
-			COALESCE((SELECT SUM(GrossAmount) FROM users_donations WHERE users_donations.userid = asks.userid), 0) AS donations
-		FROM (SELECT userid, COUNT(*) AS asks, MAX(timestamp) AS lastasked FROM giftaid_asks GROUP BY userid) asks
-		INNER JOIN users ON users.id = asks.userid
-		WHERE NOT ` + answeredGiftAidSQL("asks.userid") + `
-		ORDER BY asks.lastasked DESC`).Scan(&donors)
+	askCounts := db.Table("giftaid_asks").
+		Select("userid, COUNT(*) AS asks, MAX(timestamp) AS lastasked").
+		Group("userid")
+	res := db.Table("(?) AS asks", askCounts).
+		Select("asks.userid, users.fullname, asks.asks, asks.lastasked, " +
+			"(SELECT a2.askedby FROM giftaid_asks a2 WHERE a2.userid = asks.userid ORDER BY a2.timestamp DESC, a2.id DESC LIMIT 1) AS askedby, " +
+			"COALESCE((SELECT SUM(GrossAmount) FROM users_donations WHERE users_donations.userid = asks.userid), 0) AS donations").
+		Joins("INNER JOIN users ON users.id = asks.userid").
+		Where("NOT " + answeredGiftAidSQL("asks.userid")).
+		Order("asks.lastasked DESC").
+		Scan(&donors)
 
 	if res.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to list donors")
@@ -538,8 +541,8 @@ func RecordGiftAid(c *fiber.Ctx) error {
 
 	var fullname *string
 	var found int64
-	if err := db.Raw("SELECT COUNT(*), MAX(fullname) FROM users WHERE id = ? AND deleted IS NULL", req.UserID).
-		Row().Scan(&found, &fullname); err != nil {
+	if err := db.Table("users").Select("COUNT(*), MAX(fullname)").
+		Where("id = ? AND deleted IS NULL", req.UserID).Row().Scan(&found, &fullname); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to find user")
 	}
 
@@ -549,7 +552,8 @@ func RecordGiftAid(c *fiber.Ctx) error {
 
 	if req.Outcome == "NoResponse" {
 		var answered bool
-		if err := db.Raw("SELECT "+answeredGiftAidSQL("?"), req.UserID).Row().Scan(&answered); err != nil {
+		if err := db.Table("users").Select(answeredGiftAidSQL("users.id")).
+			Where("users.id = ?", req.UserID).Row().Scan(&answered); err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to check Gift Aid")
 		}
 
@@ -557,7 +561,7 @@ func RecordGiftAid(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusConflict, "This donor has already answered about Gift Aid")
 		}
 
-		if err := db.Exec("INSERT INTO giftaid_asks (userid, askedby) VALUES (?, ?)", req.UserID, myid).Error; err != nil {
+		if err := db.Table("giftaid_asks").Create(map[string]interface{}{"userid": req.UserID, "askedby": myid}).Error; err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to record the ask")
 		}
 
