@@ -339,3 +339,10 @@ func TestGetSnippetReportWithEmptyCommentFallsThrough(t *testing.T) {
 	assert.Equal(t, 100, len(snippet))
 	assert.Equal(t, chatmsg[:100], snippet)
 }
+
+func TestGetSnippetCompletedWordingFollowsPostType(t *testing.T) {
+	// A WANTED that is completed is not "taken": the poster no longer needs it.
+	assert.Equal(t, "Item is no longer available", getSnippet(utils.CHAT_MESSAGE_COMPLETED, "", utils.OFFER))
+	assert.Equal(t, "No longer looking for this", getSnippet(utils.CHAT_MESSAGE_COMPLETED, "", utils.WANTED))
+	assert.Equal(t, "Thanks", getSnippet(utils.CHAT_MESSAGE_COMPLETED, "Thanks", utils.WANTED))
+}
