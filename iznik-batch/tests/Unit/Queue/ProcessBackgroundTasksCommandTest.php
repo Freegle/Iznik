@@ -1618,6 +1618,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $group = $this->createTestGroup();
         $tnEmail = 'user' . uniqid() . '@user.trashnothing.com';
         $member = $this->createTestUser(['email_preferred' => $tnEmail]);
+        // A TrashNothing member of the group: mods may write to them (User::modsMayContact).
+        $this->createMembership($member, $group);
         $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
 
         DB::table('background_tasks')->insert([
@@ -1679,6 +1681,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $group = $this->createTestGroup();
         $tnEmail = 'user' . uniqid() . '@user.trashnothing.com';
         $member = $this->createTestUser(['email_preferred' => $tnEmail]);
+        // A TrashNothing member of the group: mods may write to them (User::modsMayContact).
+        $this->createMembership($member, $group);
         $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
 
         DB::table('background_tasks')->insert([
@@ -1745,6 +1749,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $group = $this->createTestGroup();
         $tnEmail = 'user' . uniqid() . '@user.trashnothing.com';
         $member = $this->createTestUser(['email_preferred' => $tnEmail]);
+        // A TrashNothing member of the group: mods may write to them (User::modsMayContact).
+        $this->createMembership($member, $group);
         $mod = $this->createTestUser(['fullname' => 'Sending Mod']);
         $otherMod = $this->createTestUser(['fullname' => 'Other Mod']);
 

@@ -239,3 +239,53 @@ func TestCreateChatMessage_ReplyJoinsNearestGroup(t *testing.T) {
 	assert.Equal(t, 1, inNear, "the replier is joined to the group nearest them")
 	assert.Equal(t, 0, inFar, "not the lower-numbered group on the other side of the country")
 }
+
+// A TrashNothing member joins communities through TrashNothing, so a reply must not join
+// them, through the chat endpoint or the reply flow's own PUT /memberships, and must not
+// make a TrashNothing placement ordinary. An ordinary member replying is joined as before.
+func TestReplyDoesNotJoinATrashNothingMember(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("replytn")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reply-tn test item", 51.5, -0.1)
+
+	memberships := func(userid uint64) int {
+		var n int
+		db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", userid, groupID).Scan(&n)
+		return n
+	}
+
+	// A TN member with no membership: the chat reply joins nobody.
+	tn := CreateTestUser(t, prefix+"_tn", "User")
+	makeTrashNothing(tn)
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, tn, posterID, msgID, ""), "the reply is accepted")
+	assert.Equal(t, 0, memberships(tn), "a TN member is not joined by replying")
+
+	// Nor does the reply flow's join call, which still answers success so the reply goes on.
+	_, tnToken := CreateTestSession(t, tn)
+	assert.Equal(t, 200, joinGroup(t, tnToken, map[string]interface{}{"groupid": groupID, "origin": "replied"}))
+	assert.Equal(t, 0, memberships(tn))
+	assert.Equal(t, 200, joinGroup(t, tnToken, map[string]interface{}{"groupid": groupID, "manual": false}),
+		"an old client's reply-flow join is the same")
+	assert.Equal(t, 0, memberships(tn))
+
+	// A TN placement stays a placement.
+	placed := CreateTestUser(t, prefix+"_placed", "User")
+	makeTrashNothing(placed)
+	CreateTestMembership(t, placed, groupID, "Member")
+	makePlacement(placed, groupID)
+	_, placedToken := CreateTestSession(t, placed)
+	assert.Equal(t, 200, joinGroup(t, placedToken, map[string]interface{}{"groupid": groupID, "origin": "replied"}))
+	var implicit int
+	db.Raw("SELECT implicit FROM memberships WHERE userid = ? AND groupid = ?", placed, groupID).Scan(&implicit)
+	assert.Equal(t, 1, implicit, "a reply does not make a TN placement ordinary")
+
+	// Someone who is not a TN member is joined as before.
+	ordinary := CreateTestUser(t, prefix+"_ordinary", "User")
+	_, ordToken := CreateTestSession(t, ordinary)
+	assert.Equal(t, 200, joinGroup(t, ordToken, map[string]interface{}{"groupid": groupID, "origin": "replied"}))
+	assert.Equal(t, 1, memberships(ordinary))
+}

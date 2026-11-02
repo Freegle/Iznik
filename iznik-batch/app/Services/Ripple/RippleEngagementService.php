@@ -3,6 +3,7 @@
 namespace App\Services\Ripple;
 
 use App\Models\Membership;
+use App\Models\User;
 use App\Support\TransactionPolicy;
 use Illuminate\Support\Facades\DB;
 
@@ -26,6 +27,9 @@ use Illuminate\Support\Facades\DB;
  *
  * One pass covers every route a reply or a post arrives by - the API, email and
  * TrashNothing - because it reads what was stored rather than hooking each route.
+ *
+ * A TrashNothing member's reply or write-back clears nothing. They join communities through
+ * TrashNothing, and their moderators deal with them through TrashNothing too.
  */
 class RippleEngagementService
 {
@@ -241,10 +245,28 @@ class RippleEngagementService
         $this->save(self::LAST_CHAT_MESSAGE_KEY, (string) $done);
     }
 
+    /**
+     * Leave out chat messages written by a TrashNothing member, by the definition in
+     * User::isTrashNothingAccount().
+     */
+    private function notByTrashNothing(\Illuminate\Database\Query\Builder $query): \Illuminate\Database\Query\Builder
+    {
+        return $query
+            ->join('users as author', 'author.id', '=', 'cm.userid')
+            ->whereNull('author.tnuserid')
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('users_emails as tne')
+                    ->whereColumn('tne.userid', 'author.id')
+                    ->where('tne.preferred', 1)
+                    ->where('tne.email', 'LIKE', '%' . User::TN_EMAIL_SUFFIX);
+            });
+    }
+
     /** Replied to a post whose home copy is on the community. */
     private function clearForReplies(int $start, int $end, array &$stats): void
     {
-        $pairs = DB::table('chat_messages as cm')
+        $pairs = $this->notByTrashNothing(DB::table('chat_messages as cm'))
             ->join('messages_groups as mg', function ($j) {
                 $j->on('mg.msgid', '=', 'cm.refmsgid')->where('mg.rippled_in', 0);
             })
@@ -276,7 +298,7 @@ class RippleEngagementService
      */
     private function clearForWriteBacks(int $start, int $end, array &$stats): void
     {
-        $pairs = DB::table('chat_messages as cm')
+        $pairs = $this->notByTrashNothing(DB::table('chat_messages as cm'))
             ->join('chat_messages as r', function ($j) {
                 $j->on('r.chatid', '=', 'cm.chatid')
                     ->on('r.userid', '!=', 'cm.userid')

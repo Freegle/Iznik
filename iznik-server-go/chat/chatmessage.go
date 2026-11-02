@@ -950,7 +950,12 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// too, since UX experiments are not run in the app, but a child car seat is asked about there as well: that
 	// question is policy, not an experiment (replyconfirm.go).
 	var confirm *replyConfirmPlan
-	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
+	//
+	// Not for a TrashNothing member. They join communities through TrashNothing, and a
+	// join here would make them a member of a community they never chose, open to its
+	// moderators. A reply from them is dealt with through TrashNothing instead.
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply &&
+		!modmessaging.IsTrashNothingMember(db, myid) {
 		confirm = planReplyConfirm(db, id, *payload.Refmsgid, myid, utils.RequestFromApp(c))
 	}
 

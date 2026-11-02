@@ -62,8 +62,7 @@ func ModsMayContact(db *gorm.DB, userid uint64, groupid uint64) bool {
 		return true
 	}
 
-	tn := TrashNothingMembers(db, []uint64{userid})
-	if !tn[userid] {
+	if !IsTrashNothingMember(db, userid) {
 		return true
 	}
 
@@ -80,6 +79,11 @@ func ModsMayContact(db *gorm.DB, userid uint64, groupid uint64) bool {
 // members list.
 func MembershipAllowsContact(trashNothing bool, collection string, implicit bool, rippled bool) bool {
 	return !trashNothing || (collection == utils.COLLECTION_APPROVED && !implicit && !rippled)
+}
+
+// IsTrashNothingMember is TrashNothingMembers for one user.
+func IsTrashNothingMember(db *gorm.DB, userid uint64) bool {
+	return userid > 0 && TrashNothingMembers(db, []uint64{userid})[userid]
 }
 
 // TrashNothingMembers says which of userids are TrashNothing members, in one query, by

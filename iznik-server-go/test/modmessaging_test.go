@@ -412,15 +412,6 @@ func putUser2ModChat(t *testing.T, token string, groupid uint64, userid uint64) 
 	return resp.StatusCode, out.ID
 }
 
-func postChatMessageAs(t *testing.T, token string, chatid uint64, text string) int {
-	body, _ := json.Marshal(map[string]interface{}{"message": text})
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatid, token), bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := getApp().Test(req, -1)
-	assert.NoError(t, err)
-	return resp.StatusCode
-}
-
 func TestModeratorCannotOpenAChatToATrashNothingPlacement(t *testing.T) {
 	prefix := uniquePrefix("mmachat")
 	group := CreateTestGroup(t, prefix)
