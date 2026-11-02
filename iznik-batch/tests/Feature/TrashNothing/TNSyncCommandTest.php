@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\LokiService;
 use App\Services\TrashNothing\Sync\PostSyncer;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -40,6 +41,8 @@ class TNSyncCommandTest extends TestCase
     private const DATE_SYNC = '2026-03-20T10:00:00+00:00';
     private const DATE_LATER = '2026-03-20T12:00:00+00:00';
     private const DATE_OLD = '2026-01-01 00:00:00';
+    private const FEED_HOLD_STORED = '2026-03-20T10:00:00Z';
+    private const FEED_HOLD_LATER = '2026-03-20T15:00:00Z';
 
 
     private string $dateFile;
@@ -1547,6 +1550,126 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync')->assertExitCode(0);
         $this->assertSame('2026-03-20T15:00:00Z', trim(file_get_contents($this->dateFile)));
+    }
+
+    /** True while TN will not serve the ratings feed. See feedHoldFake(). */
+    private bool $ratingsFeedDown = false;
+
+    /**
+     * One fake for a whole test, because fakes merge and the first registered stub wins: the
+     * ratings feed is down while $ratingsFeedDown is set, and the user changes feed always
+     * serves one change with a later date than the stored one.
+     */
+    private function feedHoldFake(): void
+    {
+        Http::fake(function (Request $request) {
+            if (str_contains($request->url(), '/ratings')) {
+                return $this->ratingsFeedDown
+                    ? Http::response(null, 500)
+                    : Http::response(['ratings' => []], 200);
+            }
+
+            return Http::response(['changes' => [['fd_user_id' => null, 'date' => self::FEED_HOLD_LATER]]], 200);
+        });
+    }
+
+    /** Binds a recorder as 'sentry' and returns it. */
+    private function recordSentry(): object
+    {
+        $sentry = new class
+        {
+            public array $calls = [];
+
+            public function captureMessage($message, $severity = null): void
+            {
+                $this->calls[] = (string) $message;
+            }
+        };
+        $this->app->instance('sentry', $sentry);
+
+        return $sentry;
+    }
+
+    /**
+     * A feed that fails for good must not hold the date, and so grow the window each run reads,
+     * for ever. The date is held for FEED_HOLD_MAX_RUNS runs, Sentry hears once the hold has
+     * lasted FEED_HOLD_ALERT_RUNS, and the next run gives up and moves on, with a report.
+     */
+    public function test_a_feed_that_keeps_failing_is_held_then_alerted_then_given_up_on(): void
+    {
+        $sentry = $this->recordSentry();
+        file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
+        $this->ratingsFeedDown = true;
+        $this->feedHoldFake();
+
+        for ($run = 1; $run <= TNSyncCommand::FEED_HOLD_MAX_RUNS; $run++) {
+            $this->artisan('tn:sync')->assertExitCode(0);
+
+            $this->assertSame(self::FEED_HOLD_STORED, trim(file_get_contents($this->dateFile)), "run {$run} holds the date");
+            $this->assertCount(
+                $run >= TNSyncCommand::FEED_HOLD_ALERT_RUNS ? 1 : 0,
+                $sentry->calls,
+                "run {$run}: Sentry hears once, when the hold has lasted"
+            );
+        }
+
+        $this->assertStringContainsString('ratings feed', $sentry->calls[0]);
+        $this->assertStringContainsString('moves on after ' . TNSyncCommand::FEED_HOLD_MAX_RUNS, $sentry->calls[0]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame(self::FEED_HOLD_LATER, trim(file_get_contents($this->dateFile)), 'the date moves on to what the other feed saw');
+        $this->assertCount(2, $sentry->calls, 'and Sentry hears of the give-up');
+        $this->assertStringContainsString('gave up on the ratings feed', $sentry->calls[1]);
+    }
+
+    /**
+     * With nothing from the other feeds to say how far to go, giving up moves the date to the
+     * end of the window the run read, so the window stops growing.
+     */
+    public function test_giving_up_on_a_feed_with_nothing_else_seen_moves_the_date_to_the_end_of_the_window(): void
+    {
+        $this->recordSentry();
+        file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
+        Http::fake([
+            '*/ratings*' => Http::response(null, 500),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $before = time();
+        for ($run = 0; $run <= TNSyncCommand::FEED_HOLD_MAX_RUNS; $run++) {
+            $this->artisan('tn:sync')->assertExitCode(0);
+        }
+
+        $stored = strtotime(trim(file_get_contents($this->dateFile)));
+        $this->assertGreaterThanOrEqual($before, $stored);
+    }
+
+    /**
+     * The count is of runs in a row. A run that reads every feed starts it again, so a feed
+     * that fails now and then is never given up on.
+     */
+    public function test_a_run_that_reads_every_feed_restarts_the_count(): void
+    {
+        $sentry = $this->recordSentry();
+        file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
+        $this->feedHoldFake();
+
+        $failRuns = TNSyncCommand::FEED_HOLD_ALERT_RUNS - 1;
+        for ($round = 1; $round <= 2; $round++) {
+            $this->ratingsFeedDown = true;
+            for ($run = 1; $run <= $failRuns; $run++) {
+                $this->artisan('tn:sync')->assertExitCode(0);
+            }
+
+            // Reads everything, so the date moves and the count starts again.
+            $this->ratingsFeedDown = false;
+            $this->artisan('tn:sync')->assertExitCode(0);
+            $this->assertSame(self::FEED_HOLD_LATER, trim(file_get_contents($this->dateFile)));
+            file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
+        }
+
+        $this->assertSame([], $sentry->calls, 'two short failures are not one long one');
     }
 
     public function test_reads_stored_date(): void
