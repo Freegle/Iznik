@@ -14,6 +14,9 @@ The public stats page (`/stats`, or `/stats/<community>`) and the council pages
 pounds, and tonnes of CO2 saved. The maths is in `composables/useReuseBenefit.js`; the
 figures are drawn by `components/StatsImpact.vue`.
 
+The stats page totals cover the 12 complete months before the current one, or the financial
+year asked for with `?financialYear=FY2024`, from the first day to the last.
+
 ## Tonnes and CO2
 
 Tonnes come from the `Weight` dashboard series, which estimates the weight of each item

@@ -167,6 +167,7 @@ import {
 import {
   DASHBOARD_CHART_HEADER,
   hasChartDataRows,
+  sumCountsInRange,
 } from '~/composables/useAuthoritySearch'
 
 const GroupHeader = defineAsyncComponent(
@@ -309,30 +310,19 @@ const dateRangeDescription = computed(() => {
   return 'the last 12 complete months'
 })
 
-// Sum a daily series over the last 365 days. The page asks for a little more
-// than a year, so this trims the weights and the gifts to the same period.
-function lastYearTotal(rows) {
-  let total = 0
-  const now = dayjs()
-
-  if (Array.isArray(rows)) {
-    for (const row of rows) {
-      if (now.diff(dayjs(row.date), 'days') <= 365) {
-        total += row.count
-      }
-    }
-  }
-
-  return total
+// Sum a daily series over the period the page shows, first day to last.
+function periodTotal(rows) {
+  if (!start.value || !end.value) return 0
+  return sumCountsInRange(rows, start.value, end.value)
 }
 
 const totalWeight = computed(() => {
-  return lastYearTotal(statsStore?.Weight) / 1000
+  return periodTotal(statsStore?.Weight) / 1000
 })
 
 // Items given away: offers taken and wanteds received.
 const totalGifts = computed(() => {
-  return lastYearTotal(statsStore?.Outcomes)
+  return periodTotal(statsStore?.Outcomes)
 })
 
 const totalFlyTipSaving = computed(() => {
@@ -632,12 +622,8 @@ onMounted(async () => {
     start.value = fyDates.start
     end.value = fyDates.end
   } else {
-    // Default behavior - last 12 months minus current month
-    start.value = dayjs()
-      .subtract(1, 'year')
-      .subtract(1, 'month')
-      .startOf('month')
-
+    // Default: the last 12 complete months, leaving out the current month.
+    start.value = dayjs().subtract(12, 'month').startOf('month')
     end.value = dayjs().subtract(1, 'month').endOf('month')
   }
 
