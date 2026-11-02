@@ -550,6 +550,31 @@ class ChatNotificationTest extends TestCase
         $this->assertStringContainsString('no longer looking', $html['wanted']);
     }
 
+    public function test_chat_notification_completed_plain_text_wording_differs_for_wanted(): void
+    {
+        $poster = $this->createTestUser(['fullname' => 'Alice']);
+        $group = $this->createTestGroup();
+        $wanted = $this->createTestMessage($poster, $group, ['type' => Message::TYPE_WANTED, 'subject' => 'WANTED: Test Item (TestLocation)']);
+        $offer = $this->createTestMessage($poster, $group, ['type' => Message::TYPE_OFFER]);
+
+        $text = [];
+        foreach (['wanted' => $wanted, 'offer' => $offer] as $key => $ref) {
+            ['mail' => $mail] = $this->createUser2UserChatSetup([
+                'user1_attrs' => ['fullname' => 'Alice'],
+                'user2_attrs' => ['fullname' => 'Bob'],
+                'message_text' => '',
+                'message_type' => ChatMessage::TYPE_COMPLETED,
+                'message_attrs' => ['refmsgid' => $ref->id],
+            ]);
+            $mail->build();
+            $text[$key] = view($mail->textView, $mail->buildViewData())->render();
+        }
+
+        $this->assertStringContainsString('no longer available', $text['offer']);
+        $this->assertStringNotContainsString('no longer available', $text['wanted']);
+        $this->assertStringContainsString('no longer looking', $text['wanted']);
+    }
+
     public function test_chat_notification_reply_to_format(): void
     {
         ['user2' => $user2, 'room' => $room, 'mail' => $mail] = $this->createUser2UserChatSetup();
