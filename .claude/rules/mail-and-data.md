@@ -266,6 +266,25 @@ Aligning them is not a rename: donation matching and social auth both look up on
 changing the general Go function changes who those match. Fix it at the specific site and say
 which semantics you mean.
 
+## A TN canon strips only `-g<digits>`, and old rows keep the old canon
+
+`User::canonMail` (and `IncomingMailService::canonicalizeEmail`, which now delegates to it)
+used to strip everything after the LAST hyphen of a `@user.trashnothing.com` local part. A bare
+`mary-jane@` then canonicalised to `mary@usertrashnothingcom`, the canon of an unrelated
+member's `mary-g5@`, and `mary-jane-g12@` did not match `mary-jane@`. `findUserByEmail`'s canon
+fallback handed one member's mail to the other. Nothing errors: the wrong account just answers.
+
+The rule is now `/^(.+)-g\d+(@user\.trashnothing\.com)$/i`, the group suffix and nothing else, so
+a bare address and every alias of one username share a canon and hyphenated usernames survive.
+`UserEmailTest::tnCanonTable` runs the same rows through both functions. Two traps remain:
+
+- Rows written under the old rule keep the old canon until `users:backfill-email-canon --apply`
+  rewrites them. Only bare addresses with a hyphenated username change, but dry-run it on
+  production before deploying. Until then a canon match is a candidate and not an answer:
+  `TnUserProvisioner` also compares `User::tnUsernameFromEmail` before it treats one as the same member.
+- Go's `CanonicalizePartnerEmail` recognises an alias only. A BARE address Go writes falls to the
+  general `CanonicalizeEmail`, which keeps the domain dots, so a PHP canon lookup cannot find it.
+
 ## See also
 
 - `docs/developers/reference/unsubscribe.md` - the intended unsubscribe behaviour.

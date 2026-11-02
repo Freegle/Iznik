@@ -65,10 +65,19 @@ When processing TN messages, the system:
 
 ### Email Canonicalization
 
-To prevent duplicate user accounts when the same TN user joins multiple groups:
-1. Strip `-g{groupid}` suffix: `john-g123@user.trashnothing.com` → `john@user.trashnothing.com`
+To prevent duplicate user accounts when the same TN user joins multiple groups,
+`User::canonMail()` reduces an address to the canon that `users_emails.canon` holds and
+the email path's `findUserByEmail` falls back to:
+1. Strip a per-group `-g{digits}` suffix, and only that: `john-g123@user.trashnothing.com` → `john@user.trashnothing.com`. A bare `john@user.trashnothing.com` and every alias of it share one canon, and a hyphenated username keeps its hyphen (`mary-jane@` is not `mary-g12@`).
 2. Strip plus addressing
 3. Remove dots (Gmail-style normalization)
+
+`IncomingMailService::canonicalizeEmail()` delegates to `canonMail()`, so the canon looked up
+cannot differ from the canon written, and Go's `CanonicalizePartnerEmail` strips the same
+suffix from an alias. The rule used to strip everything after the last hyphen; rows written
+then keep their old canon until `users:backfill-email-canon` rewrites them, which is why a
+canon match alone is never taken as "same member" (see below). See
+[.claude/rules/mail-and-data.md](../../../.claude/rules/mail-and-data.md).
 
 ### Identifying the member behind an address
 
@@ -85,6 +94,23 @@ username, so `bibiana-g%` also matches `bibiana-gomes-g4840@...`, a different me
 Both passes decide on an exact username from `tnUsernameFromAddress()`. Merging two
 members into one account deletes one of them and re-points their mail, so the exact test
 is what stands between a longer username and being absorbed by its own prefix.
+`tnUsernameFromAddress()` strips only a `-g{digits}` suffix, so a bare `username@` address is
+its own group key and is not yet grouped with the aliases of the same username. The
+provisioner and the canon fallback in `findUserByEmail` keep the bare and alias forms on one
+account at creation time, so this only matters for twins that already exist.
+
+**A shared username is not a shared identity.** TN does not promise usernames are unique, and
+a released one can be retaken, so two accounts on one username may be two people. If the
+accounts in a group carry more than one distinct `tnuserid`, `mergeDuplicateTNUsers` leaves
+the group alone (`TN-SYNC-TRACE [MERGE-SKIP] reason=tnuserid-conflict`, Loki
+`tn-sync`/`user-merge-skip`): the merge keeps one id and deletes the other, after which that
+member's TN posts resolve to nobody. `User::merge` refuses the same merge itself and reports
+a `TnUserIdMergeConflict` to Sentry; passing `$forceMerge` proceeds but still reports it. A
+pair where only one account holds a `tnuserid` is the ordinary duplicate and is merged, keeping it.
+
+The three helpers for reading an address are `User::tnUsernameFromEmail()` (bare or alias,
+lowercased, `NULL` for a non-TN address), `User::tnEmailForUsername()` and
+`User::tnDisplayName()` (`tricia.hayes` becomes `Tricia Hayes`, as Go's `CreatePartnerUser` makes it).
 
 ### Finding the addresses: not via the backwards column
 
@@ -137,6 +163,7 @@ so duplicates created from now on are still merged and the reviewed backlog wait
 - `User::findByTNId($id)` - Look up user by TN ID
 - `User::removeTNGroup($name)` - Remove `-gxxx` suffix from display names
 - `User::canonMail($email)` - Normalize TN email addresses
+- `User::tnUsernameFromEmail($email)` - The TN username behind a bare or per-group address
 
 ## Integration Mechanisms
 
@@ -193,11 +220,10 @@ when reading any coverage report:
 
 - **The poster is resolved through `users.tnuserid`.** The API's `user_id` is TN's own
   id, never a Freegle id, and `users.tnuserid` (unique, written by the partner
-  membership-add flow) is the only mapping. A TN user Freegle has never met is skipped
-  (`post-skip-unknown-user`): the API gives no name and no address for them, so nothing
-  could deliver a reply, and nothing is invented for them - no stub account, no
-  synthetic address. Treating the number as a Freegle id would hand the post to whichever
-  unrelated account holds it.
+  membership-add flow) is the only mapping. Treating the number as a Freegle id would hand
+  the post to whichever unrelated account holds it. A TN user Freegle has never met is not
+  skipped, unlike the email path, which drops the post as `Post from unknown user`:
+  `TnUserProvisioner` asks TN who they are and creates them (below).
 - **Group placement is by coordinates**, via `Location::groupsNear()` on the
   post's own lat/lng — never TN's `group_id`, which is TN's internal ID and
   drifts from Freegle's boundaries.
@@ -291,6 +317,45 @@ every post vanishes and Layers 3-5 compare zero pairs — a PASS that checked
 nothing. `ParityComparer::parseUnknownGroupDrops()` counts those drops per
 group, the report lists them, and `tn:parity-check` fails outright when they
 account for the whole email side.
+
+### Posters Freegle has never met
+
+`TnUserProvisioner`, called from `GroupPostIngestionService::ingest()`, turns a TN `user_id`
+into a Freegle user:
+
+1. A user with that `users.tnuserid` is used, with no call to TN.
+2. Otherwise it asks TN's public API, `GET /users/{id}`, with the developer key as `?api_key=`
+   (a header gets 401), paced by the rate limiter the posts sync shares. TN's errors are
+   `text/html`, so the status is read before the body is decoded.
+3. The username gives `username@user.trashnothing.com`, which TN confirm is deliverable, so a
+   reply to the post reaches the member.
+4. A live account already holding that address, or a per-group alias of the same username,
+   is linked rather than twinned: it gets the `tnuserid`, the bare address is attached as a
+   non-preferred one, and its preferred address stays. The username must match exactly,
+   compared lowercased. A canon match alone is not enough, because rows written under the old
+   canon rule can share a canon with a different member.
+5. Otherwise a user is created: display name from the username, TN's first and last names,
+   `about_me` and `reply_time` when given, the bare address as preferred, and no
+   `lastlocation`, so the first post goes Pending as an unmapped user.
+
+It writes user data only. The one membership the post needs is written by ingestion, as for
+any poster. When no user can be had the post is skipped with a `routing_reason`:
+
+| `routing_reason` | Cause |
+|---|---|
+| `Post from unknown user` | TN has no such user (404), or no usable username for them |
+| `tn-user-lookup-failed` | TN could not be asked (5xx, 429, timeout, Cloudflare challenge); the next window asks again |
+| `tn-username-clash` | An account with a different `tnuserid` holds the address: usernames are not unique, so these are two people |
+| `tn-address-held-by-deleted-user` | A deleted account still holds the bare address, which is unique and not the provisioner's to take back |
+
+Nothing is remembered about a miss. `tn:sync` and the hourly `tn:verify-email-coverage`
+backfill can provision the same poster at once; the loser of the `tnuserid` unique index takes
+the winner's user. In dry-run nothing is written and each would-be write is a
+`TN-SYNC-TRACE [WRITE]` line. With `--local-testing` the answer comes from
+`tests/fixtures/tn_sync/users/{id}.json`.
+
+Expect API-side Pending against email-side Dropped for the same post when the poster is new.
+That is a deliberate difference, like the others above.
 
 ### Posts nobody chose: unaddressed TN posts
 
@@ -570,7 +635,10 @@ https://trashnothing.com/fd/api/user-changes?key={TNKEY}&page={page}&per_page=10
 Syncs:
 - Reply time statistics
 - About me text
-- Username changes
+- Username changes: the old username is read from the member's preferred TN address, not
+  from `fullname`, which is a display name. Every address of the old username, bare and
+  per-group alias, moves to the new one with its suffix and preferred flag kept. If another
+  member already holds one of the new addresses nothing changes and a Sentry message is sent.
 - Location updates
 - Account removal notifications
 
