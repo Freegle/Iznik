@@ -396,6 +396,52 @@ class User extends Model implements Auditable
     }
 
     /**
+     * Display name for a TN username: dots and underscores become spaces, then
+     * title case ("tricia.hayes" -> "Tricia Hayes").
+     *
+     * Capitalises after any non-alphanumeric, not just whitespace ("mary-jane" ->
+     * "Mary-Jane"), as Go's strings.Title does in CreatePartnerUser, so ucwords()
+     * would give a different name for the same username.
+     */
+    public static function tnDisplayName(string $username): string
+    {
+        $name = str_replace(['.', '_'], ' ', $username);
+
+        return preg_replace_callback(
+            '/(?<![\p{L}\p{N}_])\p{Ll}/u',
+            fn ($m) => mb_strtoupper($m[0]),
+            $name
+        );
+    }
+
+    /**
+     * The bare TN address for a username. TN confirm it is deliverable.
+     */
+    public static function tnEmailForUsername(string $username): string
+    {
+        return $username . self::TN_EMAIL_SUFFIX;
+    }
+
+    /**
+     * The TN username behind a TN address, bare or per-group alias:
+     * "tricia.hayes-g298@user.trashnothing.com" and
+     * "tricia.hayes@user.trashnothing.com" both give "tricia.hayes".
+     *
+     * Only a -g<digits> immediately before the domain is stripped, because
+     * usernames can contain hyphens ("bibiana-gomes-g4840" is "bibiana-gomes").
+     * Lowercased, as usernames are compared without regard to case. Returns NULL
+     * for anything that is not a TN address.
+     */
+    public static function tnUsernameFromEmail(string $email): ?string
+    {
+        if (!preg_match('/^(.+?)(?:-g\d+)?@user\.trashnothing\.com$/i', trim($email), $m)) {
+            return NULL;
+        }
+
+        return strtolower($m[1]);
+    }
+
+    /**
      * Check if user is a moderator of any group.
      */
     public function isModerator(): bool
@@ -476,9 +522,12 @@ class User extends Model implements Auditable
         $email = str_replace('@googlemail.', '@gmail.', $email);
         $email = str_replace('@googlemail.co.uk', '@gmail.co.uk', $email);
 
-        # Canonicalise TN addresses.
-        if (preg_match('/(.*)\-(.*)(@user.trashnothing.com)/', $email, $matches)) {
-            $email = $matches[1] . $matches[3];
+        # Canonicalise TN addresses: strip a per-group -g<digits> suffix, and only that.
+        # Usernames can contain hyphens and a bare username@ address has no suffix, so
+        # stripping after the last hyphen would give "mary-jane@" the canon of another
+        # member's "mary-g12@". Go's CanonicalizePartnerEmail strips the same suffix.
+        if (preg_match('/^(.+)-g\d+(@user\.trashnothing\.com)$/i', $email, $matches)) {
+            $email = $matches[1] . $matches[2];
         }
 
         # Remove plus addressing, which is sometimes used by spammers as a trick, except for Facebook where it
