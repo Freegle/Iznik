@@ -7,7 +7,9 @@ use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
+use App\Services\TrashNothing\Ingestion\TnUserProvisioner;
 use App\Services\TrashNothing\Sync\PostSyncer;
+use App\Services\TrashNothing\Sync\TrashNothingRateLimiter;
 use OpenAPI\Client\Model\GetAllPosts200Response;
 use OpenAPI\Client\ObjectSerializer;
 use Tests\TestCase;
@@ -54,7 +56,7 @@ class PostSyncerTest extends TestCase
     private function injectIngestionSpy(PostSyncer $syncer): GroupPostIngestionService
     {
         $spy = $this->getMockBuilder(GroupPostIngestionService::class)
-            ->setConstructorArgs([true, app(LokiService::class), app(ItemService::class)])
+            ->setConstructorArgs([true, app(LokiService::class), app(ItemService::class), new TnUserProvisioner(true, false, 'test-key', app(LokiService::class))])
             ->onlyMethods(['ingest'])
             ->getMock();
 
@@ -411,6 +413,37 @@ class PostSyncerTest extends TestCase
         $message = '[500] Server error: `GET https://trashnothing.com/api/v1.4/posts/all?page=1` resulted in a `500` response';
 
         $this->assertSame($message, PostSyncer::redactApiKey($message));
+    }
+
+    /**
+     * The provisioner asks TN's users endpoint with the same developer key and the same
+     * rate limiter as the posts sync, because TN limits per key, and writes only when the
+     * syncer does.
+     */
+    public function test_the_user_provisioner_shares_the_syncers_key_limiter_and_dry_run(): void
+    {
+        $limiter = new TrashNothingRateLimiter(0);
+
+        foreach ([true, false] as $dryRun) {
+            $syncer = new PostSyncer(
+                dryRun: $dryRun,
+                localTesting: true,
+                apiKey: 'developer-key',
+                apiBaseUrl: 'https://example.invalid',
+                loki: app(LokiService::class),
+                rateLimiter: $limiter,
+            );
+
+            $ingestion = (new \ReflectionProperty(PostSyncer::class, 'ingestionService'))->getValue($syncer);
+            $provisioner = (new \ReflectionProperty(GroupPostIngestionService::class, 'userProvisioner'))->getValue($ingestion);
+
+            $read = fn (string $name) => (new \ReflectionProperty(TnUserProvisioner::class, $name))->getValue($provisioner);
+
+            $this->assertSame('developer-key', $read('publicApiKey'));
+            $this->assertSame($limiter, $read('rateLimiter'));
+            $this->assertSame($dryRun, $read('dryRun'));
+            $this->assertTrue($read('localTesting'));
+        }
     }
 
     /**
