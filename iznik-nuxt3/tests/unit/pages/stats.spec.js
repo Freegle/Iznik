@@ -6,12 +6,13 @@ import dayjs from 'dayjs'
 import { DASHBOARD_CHART_HEADER } from '~/composables/useAuthoritySearch'
 
 import StatsPage from '~/pages/stats/[[groupname]].vue'
+import StatsImpact from '~/components/StatsImpact.vue'
 
 // ── Stubs ─────────────────────────────────────────────────────────────────
 vi.mock('~/components/StatsImpact.vue', () => ({
   default: {
     template: '<div class="stats-impact" />',
-    props: ['range', 'totalBenefit', 'totalCO2', 'totalWeight'],
+    props: ['range', 'totalBenefit', 'benefitNote', 'totalCO2', 'totalWeight'],
   },
 }))
 vi.mock('~/components/ActivityGraph.vue', () => ({
@@ -72,6 +73,8 @@ vi.mock('~/composables/useBuildHead', () => ({
 vi.mock('~/composables/useReuseBenefit', () => ({
   getBenefitPerTonne: vi.fn(() => 1000),
   CO2_PER_TONNE: 0.5,
+  calculateFlyTipSaving: vi.fn((items) => items * 2),
+  describeFlyTipSaving: vi.fn((saving) => `fly-tipping note for £${saving}`),
 }))
 
 // ── #imports shim ─────────────────────────────────────────────────────────
@@ -268,6 +271,60 @@ describe('pages/stats/[[groupname]].vue', () => {
       await flushPromises()
 
       expect(wrapper.text()).not.toContain('the last 12 months')
+    })
+  })
+
+  describe('benefit includes the fly-tipping saving', () => {
+    const daysAgo = (n) => dayjs().subtract(n, 'day').format('YYYY-MM-DD')
+
+    it('adds the saving for the gifts made to the reuse benefit', async () => {
+      storeData = {
+        Weight: [{ date: daysAgo(10), count: 3000 }],
+        Outcomes: [
+          { date: daysAgo(10) + 'T00:00:00Z', count: 100 },
+          { date: daysAgo(40) + 'T00:00:00Z', count: 50 },
+        ],
+        MessageBreakdown: { Offer: 1, Wanted: 1 },
+      }
+      const wrapper = mountPage()
+      await flushPromises()
+
+      const impact = wrapper.findComponent(StatsImpact)
+      // 3 tonnes at £1,000 a tonne, plus 150 gifts at £2 each.
+      expect(impact.props('totalBenefit')).toBe(3300)
+      expect(impact.props('benefitNote')).toBe('fly-tipping note for £300')
+    })
+
+    it('counts gifts over the same last year as the weights', async () => {
+      storeData = {
+        Weight: [
+          { date: daysAgo(10), count: 1000 },
+          { date: daysAgo(380), count: 9000 },
+        ],
+        Outcomes: [
+          { date: daysAgo(10) + 'T00:00:00Z', count: 20 },
+          { date: daysAgo(380) + 'T00:00:00Z', count: 900 },
+        ],
+        MessageBreakdown: { Offer: 1, Wanted: 1 },
+      }
+      const wrapper = mountPage()
+      await flushPromises()
+
+      const impact = wrapper.findComponent(StatsImpact)
+      expect(impact.props('totalBenefit')).toBe(1040)
+    })
+
+    it('adds nothing when there are no outcomes', async () => {
+      storeData = {
+        Weight: [{ date: daysAgo(10), count: 1000 }],
+        MessageBreakdown: { Offer: 1, Wanted: 1 },
+      }
+      const wrapper = mountPage()
+      await flushPromises()
+
+      expect(wrapper.findComponent(StatsImpact).props('totalBenefit')).toBe(
+        1000
+      )
     })
   })
 })

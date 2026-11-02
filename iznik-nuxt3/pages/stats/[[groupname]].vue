@@ -48,6 +48,7 @@
         <StatsImpact
           :range="dateRangeDescription"
           :total-benefit="totalBenefit"
+          :benefit-note="flyTipNote"
           :total-c-o2="totalCO2"
           :total-weight="totalWeight"
           class="mt-2"
@@ -102,9 +103,10 @@
               <ExternalLink
                 href="https://www.wrap.ngo/resources/tool/environmental-and-economic-benefits-re-use"
                 >tool from WRAP</ExternalLink
-              >, adjusted for inflation using the UK Consumer Price Index. CO2
-              impact is based on WRAP figures. Figures are only available since
-              September 2016 and may change as we improve our estimates.
+              >, plus the fly-tipping clear-up costs explained above, adjusted
+              for inflation using the UK Consumer Price Index. CO2 impact is
+              based on WRAP figures. Figures are only available since September
+              2016 and may change as we improve our estimates.
             </p>
             <GChart
               type="ColumnChart"
@@ -159,6 +161,8 @@ import { useStatsStore } from '~/stores/stats'
 import {
   getBenefitPerTonne,
   CO2_PER_TONNE,
+  calculateFlyTipSaving,
+  describeFlyTipSaving,
 } from '~/composables/useReuseBenefit'
 import {
   DASHBOARD_CHART_HEADER,
@@ -305,27 +309,46 @@ const dateRangeDescription = computed(() => {
   return 'the last 12 complete months'
 })
 
-const totalWeight = computed(() => {
-  const weights = statsStore?.Weight
+// Sum a daily series over the last 365 days. The page asks for a little more
+// than a year, so this trims the weights and the gifts to the same period.
+function lastYearTotal(rows) {
   let total = 0
   const now = dayjs()
 
-  if (weights) {
-    for (const w of weights) {
-      if (now.diff(dayjs(w.date), 'days') <= 365) {
-        total += w.count
+  if (Array.isArray(rows)) {
+    for (const row of rows) {
+      if (now.diff(dayjs(row.date), 'days') <= 365) {
+        total += row.count
       }
     }
   }
 
-  return total / 1000
+  return total
+}
+
+const totalWeight = computed(() => {
+  return lastYearTotal(statsStore?.Weight) / 1000
+})
+
+// Items given away: offers taken and wanteds received.
+const totalGifts = computed(() => {
+  return lastYearTotal(statsStore?.Outcomes)
+})
+
+const totalFlyTipSaving = computed(() => {
+  return calculateFlyTipSaving(totalGifts.value)
 })
 
 // Benefit of reuse per tonne and CO2 impact based on WRAP figures.
 // https://wrap.org.uk/resources/tool/benefits-reuse-tool
-// The benefit value is inflation-adjusted to current year prices.
+// The benefit adds the fly-tipping clear-up costs avoided for the gifts made.
+// Both are inflation-adjusted to current year prices.
 const totalBenefit = computed(() => {
-  return totalWeight.value * getBenefitPerTonne()
+  return totalWeight.value * getBenefitPerTonne() + totalFlyTipSaving.value
+})
+
+const flyTipNote = computed(() => {
+  return describeFlyTipSaving(totalFlyTipSaving.value)
 })
 
 const totalCO2 = computed(() => {

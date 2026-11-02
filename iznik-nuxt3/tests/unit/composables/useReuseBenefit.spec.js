@@ -9,6 +9,13 @@ import {
   calculateBenefit,
   calculateCO2,
   getLatestCPIYear,
+  FLYTIP_SHARE,
+  FLYTIP_COST,
+  FLYTIP_COST_YEARS,
+  getFlyTipCost,
+  getFlyTipSavingPerItem,
+  calculateFlyTipSaving,
+  describeFlyTipSaving,
   useReuseBenefit,
 } from '~/composables/useReuseBenefit'
 
@@ -28,9 +35,18 @@ describe('useReuseBenefit', () => {
       expect(getCPI(2022)).toBe(121.7)
     })
 
-    it('clamps to earliest year for pre-2011 requests', () => {
-      expect(getCPI(2000)).toBe(getCPI(2011))
-      expect(getCPI(1980)).toBe(93.4)
+    it('holds the years the fly-tipping costs were measured in', () => {
+      // The Defra clearance costs are from 2003-2006, so the series has to
+      // reach back that far to uprate them.
+      expect(getCPI(2003)).toBe(75.5)
+      expect(getCPI(2004)).toBe(76.5)
+      expect(getCPI(2005)).toBe(78.1)
+      expect(getCPI(2006)).toBe(79.9)
+    })
+
+    it('clamps to the earliest year (2003) for earlier requests', () => {
+      expect(getCPI(2000)).toBe(getCPI(2003))
+      expect(getCPI(1980)).toBe(75.5)
     })
 
     it('clamps to latest year for future requests', () => {
@@ -43,7 +59,8 @@ describe('useReuseBenefit', () => {
 
   describe('getLatestCPIYear', () => {
     it('returns the max known year', () => {
-      expect(getLatestCPIYear()).toBe(2024)
+      expect(getLatestCPIYear()).toBe(2025)
+      expect(getCPI(2025)).toBe(138.4)
     })
   })
 
@@ -84,8 +101,14 @@ describe('useReuseBenefit', () => {
       expect(getBenefitPerTonne(2024)).toBeGreaterThan(getBenefitPerTonne(2015))
     })
 
-    it('uses 2024 value for future years', () => {
-      expect(getBenefitPerTonne(3000)).toBe(getBenefitPerTonne(2024))
+    it('uses the latest year value for future years', () => {
+      expect(getBenefitPerTonne(3000)).toBe(
+        getBenefitPerTonne(getLatestCPIYear())
+      )
+    })
+
+    it('is not moved by the CPI years before the WRAP base year', () => {
+      expect(getBenefitPerTonne(2025)).toBe(Math.round((711 * 138.4) / 93.4))
     })
   })
 
@@ -113,6 +136,69 @@ describe('useReuseBenefit', () => {
     })
   })
 
+  describe('fly-tipping saving', () => {
+    it('uses the figures from the 2020 analysis of Freegle data', () => {
+      // Keep Britain Tidy survey of 1,000 Londoners: 26, 21, 16 and 15 people
+      // had fly-tipped a TV, oven, mattress or sofa. The mean, 19.5 in 1,000,
+      // is the share of people who fly-tip.
+      expect(FLYTIP_SHARE).toBe(0.0195)
+      // Defra's standard clearance cost for "other single item" and "car boot
+      // load or less", both £29, from council data for 2003 to 2006.
+      expect(FLYTIP_COST).toBe(29)
+      expect(FLYTIP_COST_YEARS).toEqual([2003, 2004, 2005, 2006])
+    })
+
+    it('reproduces the 2019 result in its own prices', () => {
+      // The analysis ran over the 289,944 items offered in 2019 and reported a
+      // mean of £162,697 (range £112,444 to £234,571) from random samples.
+      const saving = FLYTIP_SHARE * FLYTIP_COST * 289944
+      expect(saving).toBeGreaterThan(112444)
+      expect(saving).toBeLessThan(234571)
+      expect(Math.round(saving)).toBe(163963)
+    })
+
+    it('uprates the clearance cost from the 2003-06 average price level', () => {
+      const base = (75.5 + 76.5 + 78.1 + 79.9) / 4
+      expect(getFlyTipCost(2025)).toBeCloseTo((29 * 138.4) / base, 6)
+      expect(getFlyTipCost(2004)).toBeCloseTo((29 * 76.5) / base, 6)
+      expect(Math.round(getFlyTipCost(2025))).toBe(52)
+    })
+
+    it('defaults to the latest prices we have', () => {
+      expect(getFlyTipCost()).toBe(getFlyTipCost(getLatestCPIYear()))
+      expect(getFlyTipCost(3000)).toBe(getFlyTipCost(getLatestCPIYear()))
+    })
+
+    it('saves about a pound per item given away at 2025 prices', () => {
+      expect(getFlyTipSavingPerItem(2025)).toBeCloseTo(
+        0.0195 * getFlyTipCost(2025),
+        9
+      )
+      expect(getFlyTipSavingPerItem(2025)).toBeCloseTo(1.01, 2)
+    })
+
+    it('scales with the number of items', () => {
+      const per = getFlyTipSavingPerItem(2025)
+      expect(calculateFlyTipSaving(1000, 2025)).toBeCloseTo(1000 * per, 6)
+      expect(calculateFlyTipSaving(0, 2025)).toBe(0)
+    })
+
+    it('treats a missing count as no items', () => {
+      expect(calculateFlyTipSaving(null)).toBe(0)
+      expect(calculateFlyTipSaving(undefined)).toBe(0)
+      expect(calculateFlyTipSaving(NaN)).toBe(0)
+    })
+
+    it('describes the saving in a short note', () => {
+      const note = describeFlyTipSaving(8034.4)
+      expect(note).toContain('£8,034')
+      expect(note).toContain('fly-tipping')
+      expect(note).toContain('2 in every 100 items')
+      expect(note).toContain('£29 at 2003-06 prices')
+      expect(note).toContain('£' + Math.round(getFlyTipCost()).toLocaleString())
+    })
+  })
+
   describe('useReuseBenefit composable', () => {
     it('exposes all helpers and constants', () => {
       const api = useReuseBenefit()
@@ -125,6 +211,8 @@ describe('useReuseBenefit', () => {
       expect(typeof api.calculateBenefit).toBe('function')
       expect(typeof api.calculateCO2).toBe('function')
       expect(typeof api.getLatestCPIYear).toBe('function')
+      expect(typeof api.calculateFlyTipSaving).toBe('function')
+      expect(typeof api.describeFlyTipSaving).toBe('function')
     })
 
     it('helpers returned from composable behave identically to direct exports', () => {
