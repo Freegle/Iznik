@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\TrashNothing;
 
+use App\Services\TrashNothing\Ingestion\DeliberateSkips;
+use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Cache;
@@ -318,5 +320,47 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
         $this->runForPostsArchived(9)->assertExitCode(0);
 
         $this->assertSame([], $recorder->ingested);
+    }
+
+    /**
+     * Ingestion skipped these posts on purpose (a banned poster, a poster TN does not know).
+     * They are shown, with the reason, and are not misses: nothing is backfilled, a repeat is
+     * not escalated, and more of them than the cap allows is not "a broken sync".
+     */
+    public function test_posts_skipped_on_purpose_are_reported_and_never_a_miss(): void
+    {
+        config(['freegle.trashnothing.verify_coverage.auto_ingest_max' => 1]);
+
+        foreach (['tn-skip-1', 'tn-skip-2', 'tn-skip-3'] as $postId) {
+            $this->archivePost($postId, CarbonImmutable::now('UTC')->subHours(9)->toIso8601String());
+        }
+        DeliberateSkips::record('tn-skip-1', GroupPostIngestionService::REASON_BANNED);
+        DeliberateSkips::record('tn-skip-2', GroupPostIngestionService::REASON_BANNED);
+        DeliberateSkips::record('tn-skip-3', GroupPostIngestionService::REASON_UNKNOWN_USER);
+        // A post that is backfilled and skipped again would otherwise come back as a repeat.
+        Cache::put('tn-verify:backfilled:tn-skip-1', true, now()->addDay());
+
+        $recorder = $this->bindSyncer();
+
+        $this->runForPostsArchived(9)
+            ->expectsOutputToContain('skipped on purpose  3')
+            ->expectsOutputToContain('GENUINE MISSES      0')
+            ->assertExitCode(0);
+
+        $this->assertSame([], $recorder->ingested);
+    }
+
+    public function test_a_post_skipped_on_purpose_does_not_hide_a_real_miss_beside_it(): void
+    {
+        $this->archivePost('tn-skip-4', CarbonImmutable::now('UTC')->subHours(9)->toIso8601String());
+        $this->archivePost('tn-real-miss', CarbonImmutable::now('UTC')->subHours(9)->toIso8601String());
+        DeliberateSkips::record('tn-skip-4', GroupPostIngestionService::REASON_BANNED);
+        $recorder = $this->bindSyncer();
+
+        $this->runForPostsArchived(9)
+            ->expectsOutputToContain('GENUINE MISSES      1')
+            ->assertExitCode(0);
+
+        $this->assertSame(['tn-real-miss'], $recorder->ingested);
     }
 }

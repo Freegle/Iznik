@@ -104,6 +104,21 @@ class GroupPostIngestionService
      */
     public const REASON_BANNED = 'banned';
 
+    /**
+     * The reasons a post is skipped for want of a user that are final, so they are decided and
+     * not merely failed: recorded in DeliberateSkips for tn:verify-email-coverage. Leaves out
+     * REASON_TN_USER_LOOKUP_FAILED (nothing decided) and REASON_TN_USER_LOOKUP_GAVE_UP (the
+     * post is still wanted, and the verifier is the second chance it gets).
+     */
+    private const DELIBERATE_USER_SKIPS = [
+        self::REASON_UNKNOWN_USER,
+        self::REASON_NO_USER_ID,
+        self::REASON_TN_USER_LOOKUP_REFUSED,
+        self::REASON_TN_USERNAME_CLASH,
+        self::REASON_TN_ADDRESS_HELD_BY_DELETED_USER,
+        self::REASON_TN_ACCOUNT_DELETED,
+    ];
+
     /** Why a post's consent made the poster's implicit membership ordinary, for the log. */
     public const REASON_CONSENTED = 'consented through TrashNothing';
 
@@ -302,6 +317,9 @@ class GroupPostIngestionService
                 'tn_user_id' => $tnUserId,
                 'reason'     => $traceReason,
             ]);
+            if (in_array($reason, self::DELIBERATE_USER_SKIPS, true)) {
+                $this->rememberDeliberateSkip((string) $postId, $reason);
+            }
             // Mirrors email-path case 2, which sets routing_reason and NOTHING
             // else — no group_id/group_name, even though the email path has
             // resolved the group by this point. dropped() REPLACES the context
@@ -319,6 +337,8 @@ class GroupPostIngestionService
                 'user_id'    => $user->id,
                 'group_id'   => $group->id,
             ]);
+
+            $this->rememberDeliberateSkip((string) $postId, self::REASON_BANNED);
 
             return $this->dropped(self::REASON_BANNED, result: 'skipped');
         }
@@ -888,6 +908,17 @@ class GroupPostIngestionService
             ]);
 
             return null;
+        }
+    }
+
+    /**
+     * Leave a note that this post was skipped on purpose, for tn:verify-email-coverage. Not in
+     * a dry run, which must leave nothing behind for the next real run.
+     */
+    private function rememberDeliberateSkip(string $tnPostId, string $reason): void
+    {
+        if (!$this->dryRun) {
+            DeliberateSkips::record($tnPostId, $reason);
         }
     }
 

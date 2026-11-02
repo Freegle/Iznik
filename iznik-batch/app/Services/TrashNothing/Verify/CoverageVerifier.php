@@ -4,6 +4,7 @@ namespace App\Services\TrashNothing\Verify;
 
 use App\Models\Location;
 use App\Models\Message;
+use App\Services\TrashNothing\Ingestion\DeliberateSkips;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use Carbon\CarbonImmutable;
 
@@ -35,6 +36,11 @@ use Carbon\CarbonImmutable;
  *    headerPlacesNowhere().
  *  - DELETED / RESOLVED / BUMPED. Handled exactly as tn:parity-check's Layer 1
  *    reclassification handles them.
+ *  - DELIBERATE_SKIP. Ingestion decided about the post and the decision is final: a
+ *    banned poster, a poster TN does not know, a username clash, a deleted account. No
+ *    message is made on purpose. Ingestion leaves a note of it (DeliberateSkips) and the
+ *    verifier reads that, before asking TN anything, so such a post is counted and shown
+ *    but is not a miss. A failure to look the poster up is not a decision and leaves no note.
  *
  * Anything left over is a genuine coverage gap: TN emailed us a placeable
  * source post that is still live, and it is not in the database.
@@ -58,6 +64,8 @@ class CoverageVerifier
 
     public const LOOKUP_ERROR = 'lookup_error';
 
+    public const DELIBERATE_SKIP = 'deliberate_skip';
+
     public const GENUINE = 'genuine';
 
     /**
@@ -73,6 +81,7 @@ class CoverageVerifier
      *     resolved: string[],
      *     bumped: string[],
      *     lookup_error: string[],
+     *     deliberate_skip: array<string, string>,
      *     genuine: array<string, array{post_id: string, subject: string|null, timestamp: string, date: string|null, envelope_to: string, post: mixed}>,
      *     api_lookups: int
      * }
@@ -93,6 +102,7 @@ class CoverageVerifier
             self::LOOKUP_ERROR => [],
         ];
         $genuine    = [];
+        $deliberate = [];
         $apiLookups = 0;
 
         $covered = $this->coveredPostIds(array_keys($inventory));
@@ -100,6 +110,14 @@ class CoverageVerifier
         foreach ($inventory as $postId => $entry) {
             if (isset($covered[$postId])) {
                 $buckets[self::COVERED][] = $postId;
+                continue;
+            }
+
+            // Ingestion's own note that it skipped this post on purpose. Free, and it answers
+            // what TN cannot: why a post that is live and placeable has no message.
+            $skipReason = DeliberateSkips::reasonFor((string) $postId);
+            if ($skipReason !== null) {
+                $deliberate[$postId] = $skipReason;
                 continue;
             }
 
@@ -139,12 +157,14 @@ class CoverageVerifier
         }
 
         $counts = array_map('count', $buckets);
-        $counts[self::GENUINE] = count($genuine);
+        $counts[self::GENUINE]         = count($genuine);
+        $counts[self::DELIBERATE_SKIP] = count($deliberate);
 
         return array_merge($buckets, [
-            'counts'      => $counts,
-            self::GENUINE => $genuine,
-            'api_lookups' => $apiLookups,
+            'counts'              => $counts,
+            self::DELIBERATE_SKIP => $deliberate,
+            self::GENUINE         => $genuine,
+            'api_lookups'         => $apiLookups,
         ]);
     }
 

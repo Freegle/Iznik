@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\TrashNothing;
 
+use App\Services\TrashNothing\Ingestion\DeliberateSkips;
+use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use App\Services\TrashNothing\Verify\CoverageVerifier;
 use Carbon\CarbonImmutable;
@@ -317,5 +319,89 @@ class CoverageVerifierTest extends TestCase
         $this->assertSame(1, $result['counts'][CoverageVerifier::GENUINE]);
         // Only the two placeable, uncovered posts cost a request.
         $this->assertSame(2, $result['api_lookups']);
+    }
+
+    // -------------------------------------------------------------------------
+    // Posts ingestion skipped on purpose.
+    // -------------------------------------------------------------------------
+
+    /** A syncer that fails the test if the verifier asks TN anything. */
+    private function syncerThatMustNotBeAsked(): PostSyncer
+    {
+        $syncer = $this->getMockBuilder(PostSyncer::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['lookupPostById'])
+            ->getMock();
+        $syncer->expects($this->never())->method('lookupPostById');
+
+        return $syncer;
+    }
+
+    public function test_a_post_ingestion_skipped_on_purpose_is_counted_and_is_not_a_miss(): void
+    {
+        $this->createTestGroup(['lat' => self::PLACEABLE_LAT, 'lng' => self::PLACEABLE_LNG]);
+        DeliberateSkips::record('tn-banned-1', GroupPostIngestionService::REASON_BANNED);
+
+        // Live, placeable, no message: a genuine miss to anyone who does not know why.
+        // Ingestion's own note answers it, so no request is spent on it either.
+        $result = $this->verify(
+            ['tn-banned-1' => $this->inventoryEntry('tn-banned-1')],
+            $this->syncerThatMustNotBeAsked(),
+        );
+
+        $this->assertSame(
+            ['tn-banned-1' => GroupPostIngestionService::REASON_BANNED],
+            $result[CoverageVerifier::DELIBERATE_SKIP],
+        );
+        $this->assertSame(1, $result['counts'][CoverageVerifier::DELIBERATE_SKIP]);
+        $this->assertSame([], $result[CoverageVerifier::GENUINE]);
+        $this->assertSame(0, $result['counts'][CoverageVerifier::GENUINE]);
+        $this->assertSame(0, $result['api_lookups']);
+    }
+
+    public function test_a_post_with_a_message_is_covered_even_if_a_skip_was_noted_for_it(): void
+    {
+        // A post skipped once (a ban since lifted, a username TN has since given) and ingested
+        // later has a message: that is the truth, whatever the note says.
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createTestMessage($user, $group, ['tnpostid' => 'tn-later-ingested']);
+        DeliberateSkips::record('tn-later-ingested', GroupPostIngestionService::REASON_UNKNOWN_USER);
+
+        $result = $this->verify(
+            ['tn-later-ingested' => $this->inventoryEntry('tn-later-ingested')],
+            $this->syncerThatMustNotBeAsked(),
+        );
+
+        $this->assertSame(['tn-later-ingested'], $result[CoverageVerifier::COVERED]);
+        $this->assertSame([], $result[CoverageVerifier::DELIBERATE_SKIP]);
+    }
+
+    public function test_a_post_with_no_note_is_still_a_miss_beside_one_with_a_note(): void
+    {
+        $this->createTestGroup(['lat' => self::PLACEABLE_LAT, 'lng' => self::PLACEABLE_LNG]);
+        DeliberateSkips::record('tn-noted', GroupPostIngestionService::REASON_TN_USERNAME_CLASH);
+
+        $result = $this->verify([
+            'tn-noted'    => $this->inventoryEntry('tn-noted'),
+            'tn-unnoted'  => $this->inventoryEntry('tn-unnoted'),
+        ], $this->syncerReturning(['tn-unnoted' => $this->lookup()]));
+
+        $this->assertSame(['tn-noted'], array_keys($result[CoverageVerifier::DELIBERATE_SKIP]));
+        $this->assertSame(['tn-unnoted'], array_keys($result[CoverageVerifier::GENUINE]));
+        $this->assertSame(1, $result['api_lookups']);
+    }
+
+    public function test_a_note_does_not_outlast_the_archive_the_verifier_reads(): void
+    {
+        // The verifier cannot look back further than the archive is kept, 48 hours.
+        $this->assertGreaterThan(2, DeliberateSkips::TTL_DAYS);
+
+        DeliberateSkips::record('tn-old-note', GroupPostIngestionService::REASON_BANNED);
+        $this->assertNotNull(DeliberateSkips::reasonFor('tn-old-note'));
+
+        $this->travel(DeliberateSkips::TTL_DAYS * 24 + 1)->hours();
+        $this->assertNull(DeliberateSkips::reasonFor('tn-old-note'), 'forgotten after its days');
+        $this->travelBack();
     }
 }

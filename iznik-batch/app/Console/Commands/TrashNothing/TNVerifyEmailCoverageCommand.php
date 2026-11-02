@@ -324,6 +324,7 @@ class TNVerifyEmailCoverageCommand extends Command
         $this->line(sprintf('  deleted on TN       %d  (expected)', $counts[CoverageVerifier::DELETED]));
         $this->line(sprintf('  resolved outcome    %d  (expected)', $counts[CoverageVerifier::RESOLVED]));
         $this->line(sprintf('  date bumped         %d  (expected)', $counts[CoverageVerifier::BUMPED]));
+        $this->line(sprintf('  skipped on purpose  %d  (expected - %s)', $counts[CoverageVerifier::DELIBERATE_SKIP], $this->describeDeliberateSkips($result[CoverageVerifier::DELIBERATE_SKIP])));
         $this->line(sprintf('  TN lookup failed    %d  (undetermined)', $counts[CoverageVerifier::LOOKUP_ERROR]));
         $this->line(sprintf('  GENUINE MISSES      %d', $counts[CoverageVerifier::GENUINE]));
         $this->line(sprintf('  (%d single-post API lookup(s))', $result['api_lookups']));
@@ -347,6 +348,23 @@ class TNVerifyEmailCoverageCommand extends Command
         if ($backfill['repeats'] !== []) {
             $this->error(sprintf('  STILL MISSING AFTER AN EARLIER BACKFILL: %s', implode(', ', $backfill['repeats'])));
         }
+    }
+
+    /**
+     * The reasons ingestion skipped posts on purpose, with how many each, for the report line.
+     *
+     * @param  array<string, string>  $skips  post id => reason
+     */
+    private function describeDeliberateSkips(array $skips): string
+    {
+        if ($skips === []) {
+            return 'banned poster, unknown user and the like';
+        }
+
+        $byReason = array_count_values($skips);
+        ksort($byReason);
+
+        return implode(', ', array_map(fn ($reason, $count) => "{$reason}: {$count}", array_keys($byReason), $byReason));
     }
 
     private function logRun(
@@ -375,6 +393,7 @@ class TNVerifyEmailCoverageCommand extends Command
                 'deleted'      => $result['counts'][CoverageVerifier::DELETED],
                 'resolved'     => $result['counts'][CoverageVerifier::RESOLVED],
                 'bumped'       => $result['counts'][CoverageVerifier::BUMPED],
+                'deliberate_skip' => $result['counts'][CoverageVerifier::DELIBERATE_SKIP],
                 'lookup_error' => $result['counts'][CoverageVerifier::LOOKUP_ERROR],
                 'genuine'      => $result['counts'][CoverageVerifier::GENUINE],
                 'api_lookups'  => $result['api_lookups'],

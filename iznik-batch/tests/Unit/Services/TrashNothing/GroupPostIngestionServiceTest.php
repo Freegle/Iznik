@@ -11,6 +11,7 @@ use App\Services\ContentCheckService;
 use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
+use App\Services\TrashNothing\Ingestion\DeliberateSkips;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use App\Services\TrashNothing\Ingestion\TnUserProvisioner;
 use App\Services\TrashNothing\Sync\TrashNothingRateLimiter;
@@ -1887,5 +1888,121 @@ class GroupPostIngestionServiceTest extends TestCase
             'TN-SYNC-TRACE [MEMBERSHIP] op=clear-implicit user_id=' . $user->id . ' group_id=' . $implicitOn->id,
             'TN-SYNC-TRACE [MEMBERSHIP] op=insert-ordinary user_id=' . $user->id . ' group_id=' . $chosen->id . ' added_origin=partner',
         ], $lines, 'a dry run still says what it would have done');
+    }
+
+    // -------------------------------------------------------------------------
+    // Posts skipped on purpose are noted for tn:verify-email-coverage.
+    // -------------------------------------------------------------------------
+
+    public function test_a_post_skipped_for_a_poster_tn_does_not_know_is_noted_as_deliberate(): void
+    {
+        $tnId   = random_int(900000000, 999999999);
+        $group  = $this->createTestGroup();
+        $postId = 'tn-deliberate-unknown-' . uniqid();
+
+        $this->makeService(dryRun: false)->ingest($this->makePost(['post_id' => $postId, 'user_id' => $tnId]), $group);
+
+        $this->assertSame(GroupPostIngestionService::REASON_UNKNOWN_USER, DeliberateSkips::reasonFor($postId));
+    }
+
+    public function test_a_post_with_no_tn_user_id_is_noted_as_deliberate(): void
+    {
+        $group  = $this->createTestGroup();
+        $postId = 'tn-deliberate-no-user-' . uniqid();
+
+        $this->makeService(dryRun: false)->ingest($this->makePost(['post_id' => $postId, 'user_id' => null]), $group);
+
+        $this->assertSame(GroupPostIngestionService::REASON_NO_USER_ID, DeliberateSkips::reasonFor($postId));
+    }
+
+    public function test_every_final_reason_for_an_unresolved_poster_is_noted_as_deliberate(): void
+    {
+        $group = $this->createTestGroup();
+
+        // [reason, how the poster comes to be unresolvable]
+        $refused = random_int(900000000, 999999999);
+        $this->tnUsers[$refused] = [410, 'Gone'];
+
+        [$clashId, $clashName] = $this->tnKnowsPoster();
+        $this->createTnUser(['email_preferred' => "{$clashName}@user.trashnothing.com"]);
+
+        [$heldId, $heldName] = $this->tnKnowsPoster();
+        $this->createTestUser(['email_preferred' => "{$heldName}@user.trashnothing.com", 'deleted' => now()]);
+
+        $deletedId = random_int(900000000, 999999999);
+        $this->createTestUser(['tnuserid' => $deletedId, 'deleted' => now()]);
+
+        $cases = [
+            GroupPostIngestionService::REASON_TN_USER_LOOKUP_REFUSED            => $refused,
+            GroupPostIngestionService::REASON_TN_USERNAME_CLASH                 => $clashId,
+            GroupPostIngestionService::REASON_TN_ADDRESS_HELD_BY_DELETED_USER   => $heldId,
+            GroupPostIngestionService::REASON_TN_ACCOUNT_DELETED                => $deletedId,
+        ];
+
+        foreach ($cases as $reason => $tnId) {
+            $postId = 'tn-deliberate-' . uniqid();
+            $this->makeService(dryRun: false)->ingest($this->makePost(['post_id' => $postId, 'user_id' => $tnId]), $group);
+
+            $this->assertSame($reason, DeliberateSkips::reasonFor($postId), $reason);
+        }
+    }
+
+    public function test_a_banned_posters_post_is_noted_as_deliberate(): void
+    {
+        $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $group = $this->createTestGroup();
+        DB::table('users_banned')->insert(['userid' => $user->id, 'groupid' => $group->id]);
+        $postId = 'tn-deliberate-banned-' . uniqid();
+
+        $this->makeService(dryRun: false)->ingest($this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]), $group);
+
+        $this->assertSame(GroupPostIngestionService::REASON_BANNED, DeliberateSkips::reasonFor($postId));
+    }
+
+    /**
+     * Nothing was decided when TN could not be asked, and a given-up post is still wanted: both
+     * stay misses for the verifier, which is its second chance at them.
+     */
+    public function test_a_failed_or_given_up_lookup_is_not_noted_as_deliberate(): void
+    {
+        $tnId = random_int(900000000, 999999999);
+        $this->tnUsers[$tnId] = [503, 'Service Unavailable'];
+        $group  = $this->createTestGroup();
+        $postId = 'tn-not-deliberate-' . uniqid();
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $tnId]);
+
+        for ($run = 1; $run <= TnUserProvisioner::LOOKUP_GIVE_UP_AT; $run++) {
+            $service = $this->makeService(dryRun: false);
+            $service->ingest($post, $group);
+
+            $this->assertNull(DeliberateSkips::reasonFor($postId), "run {$run}");
+        }
+
+        $this->assertSame(
+            GroupPostIngestionService::REASON_TN_USER_LOOKUP_GAVE_UP,
+            $service->getLastRoutingContext()['routing_reason'],
+        );
+    }
+
+    public function test_a_dry_run_notes_nothing(): void
+    {
+        $tnId   = random_int(900000000, 999999999);
+        $group  = $this->createTestGroup();
+        $postId = 'tn-deliberate-dry-' . uniqid();
+
+        $this->makeService(dryRun: true)->ingest($this->makePost(['post_id' => $postId, 'user_id' => $tnId]), $group);
+
+        $this->assertNull(DeliberateSkips::reasonFor($postId));
+    }
+
+    public function test_a_post_that_is_ingested_is_not_noted(): void
+    {
+        $user   = $this->createTnUser();
+        $group  = $this->createTestGroup();
+        $postId = 'tn-deliberate-ingested-' . uniqid();
+
+        $this->makeService(dryRun: false)->ingest($this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]), $group);
+
+        $this->assertNull(DeliberateSkips::reasonFor($postId));
     }
 }
