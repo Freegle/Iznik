@@ -3428,6 +3428,110 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     }
 
     /**
+     * Reject and Delete Approved Member delete the membership and then queue the note that
+     * explains it, so by the time this runs the member has no membership and the check
+     * would refuse every one. The API decides before it deletes and says so in the task:
+     * `modsmaycontact` is the answer then, whatever the table says now.
+     */
+    public function test_mod_stdmsg_for_a_removed_tn_member_follows_the_decision_the_api_recorded(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+
+        $contactable = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createTestUserEmail($contactable, ['preferred' => 1]);
+
+        $notContactable = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createTestUserEmail($notContactable, ['preferred' => 1]);
+
+        // Neither has a membership: the action removed it.
+        foreach ([[$contactable, true], [$notContactable, false]] as [$target, $mayContact]) {
+            DB::table('background_tasks')->insert([
+                'task_type' => 'email_mod_stdmsg',
+                'data' => json_encode([
+                    'userid' => $target->id,
+                    'byuser' => $mod->id,
+                    'groupid' => $group->id,
+                    'subject' => 'Your membership',
+                    'body' => 'We have removed you from the community.',
+                    'action' => 'Delete Approved Member',
+                    'stdmsgid' => 0,
+                    'notifyposter' => 1,
+                    'modsmaycontact' => $mayContact,
+                ]),
+                'created_at' => now(),
+            ]);
+        }
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 2,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        $recipients = [];
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use (&$recipients) {
+            $recipients[] = $mail->recipientUserId;
+            return TRUE;
+        });
+        $this->assertSame([$contactable->id], $recipients);
+    }
+
+    /**
+     * A task queued before the API recorded its decision has no `modsmaycontact`, and so
+     * does every action that leaves the membership in place. Those still ask the table.
+     */
+    public function test_mod_stdmsg_without_a_recorded_decision_still_asks_the_membership(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+
+        $left = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createTestUserEmail($left, ['preferred' => 1]);
+
+        $chose = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createTestUserEmail($chose, ['preferred' => 1]);
+        $this->createMembership($chose, $group);
+
+        foreach ([$left, $chose] as $target) {
+            DB::table('background_tasks')->insert([
+                'task_type' => 'email_mod_stdmsg',
+                'data' => json_encode([
+                    'userid' => $target->id,
+                    'byuser' => $mod->id,
+                    'groupid' => $group->id,
+                    'subject' => 'Your membership',
+                    'body' => 'A note from your volunteers.',
+                    'action' => 'Delete Approved Member',
+                    'stdmsgid' => 0,
+                ]),
+                'created_at' => now(),
+            ]);
+        }
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 2,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        $recipients = [];
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use (&$recipients) {
+            $recipients[] = $mail->recipientUserId;
+            return TRUE;
+        });
+        $this->assertSame([$chose->id], $recipients);
+    }
+
+    /**
      * A standard message about a post goes to its poster, so a TrashNothing poster who has
      * left the group gets none, though the action and its log still stand.
      */

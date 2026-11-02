@@ -888,7 +888,16 @@ class ProcessBackgroundTasksCommand extends Command
         // it by TrashNothing, or since left. ModTools offers nothing that would write to
         // them and the Go API refuses it, so a task reaching here came from a stale client
         // or was queued before they left.
-        if (!$this->modsMayContact($userId, $groupId)) {
+        //
+        // Reject and Delete Approved Member delete the membership before they queue this
+        // task, so the table can no longer answer. The API decides first and records it as
+        // `modsmaycontact`, which stands in for the lookup. Absent means ask the table:
+        // every action that keeps the membership, and tasks queued before the key existed.
+        $mayContact = isset($data['modsmaycontact'])
+            ? filter_var($data['modsmaycontact'], FILTER_VALIDATE_BOOLEAN)
+            : $this->modsMayContact($userId, $groupId);
+
+        if (!$mayContact) {
             Log::info('Mod stdmsg for a TrashNothing member who did not choose this group, sending nothing', [
                 'userid' => $userId,
                 'byuser' => $byUser,
