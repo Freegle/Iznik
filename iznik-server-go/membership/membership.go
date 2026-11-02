@@ -14,6 +14,7 @@ import (
 	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/modmessaging"
+	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
@@ -324,6 +325,7 @@ func PostMemberships(c *fiber.Ctx) error {
 		})
 		// V1 parity: removeMembership($ban=true) logs type=Group/subtype=Left/text="via ban"
 		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, req.Userid, myid, "via ban")
+		withdrawPostsOnBan(db, req.Userid, req.Groupid, myid)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Unban":
@@ -2065,4 +2067,62 @@ func PatchMemberships(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// banWithdrawnText is the outcome comment on a post withdrawn by a ban, as V1's
+// User::removeMembership($ban) wrote it.
+const banWithdrawnText = "Marked as withdrawn by ban"
+
+// withdrawPostsOnBan takes a banned member's open OFFER and WANTED posts on the community
+// down, as V1's User::removeMembership($ban) did: a ban stops someone posting on the
+// community, and that includes the posts already there. Only posts whose home is this
+// community (rippled_in = 0); a post that rippled in from a neighbour is that neighbour's.
+//
+// A post with an Approved copy gets a Withdrawn outcome, as V1 recorded. A post that is
+// only Pending is deleted instead, as a member's own withdrawal of a pending post is
+// (message.handleOutcome): a Pending row with an outcome would otherwise be auto-approved
+// later. Nobody who replied is told, as in V1.
+func withdrawPostsOnBan(db *gorm.DB, userid uint64, groupid uint64, byuser uint64) {
+	var msgids []uint64
+	db.Raw("SELECT DISTINCT m.id FROM messages m "+
+		"INNER JOIN messages_groups mg ON mg.msgid = m.id "+
+		"WHERE m.fromuser = ? AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0 "+
+		"AND m.deleted IS NULL AND m.type IN (?, ?) "+
+		"AND NOT EXISTS (SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = m.id)",
+		userid, groupid, utils.OFFER, utils.WANTED).Scan(&msgids)
+
+	for _, msgid := range msgids {
+		id := msgid
+
+		var approved int64
+		db.Table("messages_groups").
+			Where("msgid = ? AND collection = ? AND deleted = 0", id, utils.COLLECTION_APPROVED).
+			Count(&approved)
+
+		if approved == 0 {
+			var groups []uint64
+			db.Table("messages_groups").Select("groupid").Where("msgid = ? AND deleted = 0", id).Scan(&groups)
+			db.Table("messages_groups").Where("msgid = ?", id).Update("deleted", gorm.Expr("1"))
+			db.Table("messages").Where("id = ?", id).
+				Updates(map[string]interface{}{"deleted": gorm.Expr("NOW()"), "messageid": gorm.Expr("NULL")})
+			for _, gid := range groups {
+				g := gid
+				text := banWithdrawnText
+				log.Log(log.LogEntry{Type: log.LOG_TYPE_MESSAGE, Subtype: log.LOG_SUBTYPE_DELETED,
+					Groupid: &g, User: &userid, Byuser: &byuser, Msgid: &id, Text: &text})
+			}
+		} else {
+			db.Table("messages_outcomes_intended").Where("msgid = ?", id).Delete(nil)
+			db.Table("messages_outcomes").Create(map[string]interface{}{
+				"msgid": id, "outcome": utils.OUTCOME_WITHDRAWN, "comments": banWithdrawnText,
+			})
+			text := "Withdrawn: " + banWithdrawnText
+			log.Log(log.LogEntry{Type: log.LOG_TYPE_MESSAGE, Subtype: log.LOG_SUBTYPE_OUTCOME,
+				User: &userid, Byuser: &byuser, Msgid: &id, Text: &text})
+		}
+
+		if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{"msgid": id}); err != nil {
+			stdlog.Printf("Failed to queue freebie alerts remove for message %d withdrawn by ban: %v", id, err)
+		}
+	}
 }

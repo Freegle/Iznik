@@ -202,6 +202,48 @@ class IncomingMailServiceTest extends TestCase
     }
 
     /**
+     * TrashNothing re-sends a Subscribe mail for every group its member is on, including one
+     * TrashNothing API ingestion placed them on (an implicit membership). That mail is not
+     * the member choosing the group, so it must leave the placement as it is.
+     */
+    public function test_a_tn_resubscribe_leaves_a_trashnothing_placement_implicit(): void
+    {
+        $group = $this->createTestGroup();
+        $alias = 'tnresub'.str_replace('.', '', uniqid('', true)).'-g303@user.trashnothing.com';
+        $member = $this->createTestUser([
+            'email_preferred' => $alias,
+            'tnuserid' => random_int(900000000, 999999999),
+        ]);
+        $this->createMembership($member, $group, [
+            'implicit' => 1,
+            'added_origin' => 'tn_unaddressed',
+            'emailfrequency' => 0,
+        ]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $alias,
+            'To' => $group->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $this->service->route($this->parser->parse(
+            $email,
+            $alias,
+            $group->nameshort.'-subscribe@groups.ilovefreegle.org'
+        )));
+
+        $row = DB::table('memberships')->where('userid', $member->id)->where('groupid', $group->id)->first();
+        $this->assertSame(1, (int) $row->implicit, 'a re-subscribe does not make a placement ordinary');
+        $this->assertSame('tn_unaddressed', $row->added_origin);
+        $this->assertSame(0, (int) $row->emailfrequency, 'nor does it start mailing them');
+        $this->assertFalse(
+            DB::table('logs')->where('user', $member->id)->where('groupid', $group->id)
+                ->where('type', 'Group')->where('subtype', 'Joined')->exists(),
+            'and writes no join',
+        );
+    }
+
+    /**
      * A users_emails row whose user is gone is a broken state, not a new member.
      * users_emails.email is UNIQUE, so taking the create branch would collide on it
      * and throw where this drops cleanly.
