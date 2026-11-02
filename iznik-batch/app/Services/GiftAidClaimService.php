@@ -512,6 +512,14 @@ class GiftAidClaimService
                     DB::table('users_donations')
                         ->where('userid', $donation->userid)
                         ->update(['giftaidchaseup' => now()]);
+
+                    // One ask in the donor's Gift Aid history; askedby NULL is this mail, not a
+                    // volunteer. ModTools lists donors asked who have not answered from these rows.
+                    DB::table('giftaid_asks')->insert([
+                        'userid'    => $donation->userid,
+                        'askedby'   => null,
+                        'timestamp' => now(),
+                    ]);
                 }
 
                 $sent++;

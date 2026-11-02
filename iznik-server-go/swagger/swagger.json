@@ -2250,6 +2250,41 @@
     ]
    }
   },
+  "/giftaid/record": {
+   "post": {
+    "description": "A Gift Aid volunteer records, for the donor, that they declined (outcome Declined) or that we asked again and heard nothing (outcome NoResponse).\nBody: { userid: \u003cint\u003e, outcome: \"Declined\" | \"NoResponse\" }",
+    "tags": [
+     "donations"
+    ],
+    "summary": "Record a donor's Gift Aid answer (admin)",
+    "operationId": "recordGiftAid",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "403": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "404": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "409": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   }
+  },
   "/group": {
    "get": {
     "description": "Returns all groups",

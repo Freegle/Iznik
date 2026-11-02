@@ -3519,6 +3519,7 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	tx.Table("users_comments").Where("userid = ?", id1).Update("userid", id2)
 	tx.Table("users_comments").Where("byuserid = ?", id1).Update("byuserid", id2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_donations").Where("userid = ?", id1).Update("userid", id2)
+	tx.Table("giftaid_asks").Where("userid = ?", id1).Update("userid", id2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_images").Where("userid = ?", id1).Update("userid", id2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_invitations").Where("userid = ?", id1).Update("userid", id2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_nearby").Where("userid = ?", id1).Update("userid", id2)
