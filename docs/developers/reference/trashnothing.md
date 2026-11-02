@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-02
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -20,6 +20,7 @@ covers:
   - iznik-batch/app/Services/BirthdayService.php
   - iznik-batch/app/Services/ReengageContentService.php
   - iznik-nuxt3/modtools/components/ModMessageTnNotice.vue
+  - iznik-batch/app/Support/TrashNothingSignOff.php
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-server-go/test/modmessaging_test.go
   - iznik-server-go/user/partner.go
@@ -339,8 +340,12 @@ Pending post only for a poster whose membership of the group was added more than
 (`MEMBERSHIP_HOURS`), and it used to hold a TN poster's post for good because there was no
 membership to read. So a TN API post flagged by the content check, unaddressed ones included,
 now goes live about 49 hours after the placement, like an ordinary member's. That is deliberate.
-A moderator can still approve or delete it first. A banned
-poster gets no row. The trace tag is `TN-SYNC-TRACE [MEMBERSHIP]`, which the parity comparison
+A moderator can still approve or delete it first.
+
+**A banned poster's post is not placed.** A Freegle member banned from a group can't post to
+it, and nor can a TrashNothing one. Ingestion checks `users_banned` before it writes anything
+and skips the group with `REASON_BANNED` (`post-skip-banned` in Loki): no message, no
+membership. Each post goes to one group, so a post skipped here is not ingested at all. The trace tag is `TN-SYNC-TRACE [MEMBERSHIP]`, which the parity comparison
 ignores.
 
 The membership is written after the post, so a failure there keeps the post and leaves the
@@ -368,7 +373,7 @@ consent to a placement, because nothing live clears one for it; a ripple members
 for one by the engagement pass instead. Any other membership is left alone: an ordinary
 membership is never made implicit, a `tn_unaddressed` row without `implicit` included (it was cleared, or merged with a membership
 the member chose). It lists every pair with its contact
-today (the mixed-poster rule below, which one addressed post on any group opens) and per group
+under the old mixed-poster rule (one addressed post on any group opened every group) and per group
 (an ordinary membership of that group after the run), and counts the pairs that lose and gain
 contact when contact is decided per group.
 
@@ -383,12 +388,17 @@ asks it:
 | Question | Function |
 |---|---|
 | Is this post unaddressed? | `PostIsUnaddressed` |
-| Is every post this person has made unaddressed? | `UserIsUnaddressedOnly` / `UsersUnaddressedOnly` |
+| May this community's moderators contact this person? | `ModsMayContact` (`MembershipAllowsContact` for a row in hand) |
+| Which of these people are TrashNothing members? | `TrashNothingMembers` / `IsTrashNothingMember` |
 | Take an unaddressed post off the platform | `RemoveUnaddressedPost` |
 
-A **mixed** poster - one unaddressed post plus any ordinary Freegle post - is a real
-member and is not restricted at all. That is the case `UserIsUnaddressedOnly` exists to
-get right.
+Contact is decided **per community, from the membership**. Anyone who is not a TrashNothing
+member can be contacted. A TrashNothing member can be contacted by a community's moderators
+only through a membership of that community they chose: Approved, `implicit = 0` and
+`rippled = 0`. A placement, a ripple join, or no membership because they have left all
+refuse. Their posts and memberships elsewhere count for nothing; the old "mixed poster" rule,
+where one addressed post on any group opened every group's moderators to them, is gone. The
+batch has the same rule as `User::modsMayContact()`.
 
 What changes as a result:
 
@@ -423,6 +433,38 @@ What changes as a result:
 Members are **not** restricted: an ordinary freegler can still reply to one of these
 posts, and the reply relays back to TN as it always has. The restriction is about
 moderators, who are the ones with no relationship to the poster.
+
+### Contacting a TrashNothing member
+
+`ModsMayContact` gates every way a moderator writes to someone: opening a User2Mod chat
+(`PutChatRoom`), writing in one (`CreateChatMessage`), Mail and the member standard messages
+(`PostMemberships` `Leave (Approved) Member`), and a reply about a post (`prepareModReply`).
+`ProcessBackgroundTasksCommand` checks again before it sends a standard message, so a task
+queued before the member left sends nothing.
+
+- **A chat closes when they leave.** The check runs before `PutChatRoom` hands back an
+  existing room, and `CreateChatMessage` refuses a moderator writing in one, so an old chat
+  can't get round it. The member can still write; that is how someone banned appeals. The
+  chat payload carries `modsclosed` for the moderators, and `ModChatFooter` shows a notice
+  in place of the reply box.
+- **The members list follows the row.** `mod_messaging_allowed` on each member is
+  `MembershipAllowsContact` for that membership, with the TrashNothing check batched for
+  the page.
+- **Moderators' messages are signed.** TrashNothing shows our mail to its members as coming
+  from a Freegle user, so the "{Group} Volunteers" or moderator sender name is lost.
+  `TrashNothingSignOff` adds "From the volunteers who run {group}" to the body of a
+  moderator's chat message (`ChatNotification`) and of a standard message or reply about a
+  post (`ModStdMessageMail`) to a TrashNothing member.
+- **Replying joins them to nothing.** A TrashNothing member joins communities through
+  TrashNothing. The reply join in `CreateChatMessage` and a `replied` join through
+  `PUT /memberships` skip them (the latter answers success, so the reply flow goes on), and
+  `RippleEngagementService` does not make a ripple join ordinary for their reply or
+  write-back. A reply from TrashNothing itself arrives by email and never joined anyone.
+- **A ban takes their posts down.** Banning deletes the membership, so a placed post would
+  stay up with nobody able to talk to its poster about it. The Go `Ban` action withdraws the
+  member's open OFFER and WANTED posts whose home is the community, as V1's
+  `removeMembership($ban)` did, for every member, not only TrashNothing ones; a post still only
+  pending is deleted instead.
 
 ### Verifying nothing is dropped after the cutover
 
@@ -489,6 +531,9 @@ Two things gate and record that join:
 - **A ban blocks it.** A row in `users_banned` for that (user, group) means the subscribe
   mail is dropped. TN re-sends these mails routinely, so without the gate a member a
   moderator had banned would simply reappear on the group at the next TN sync.
+- **A placement stays a placement.** TN re-sends a subscribe mail for every group its member is
+  on, including one ingestion placed them on. An existing membership is left exactly as it is,
+  so the mail never makes an implicit membership ordinary.
 - **The join is logged.** A `Group`/`Joined` row with text `Subscribed` goes into `logs`,
   so the join shows in the modlog as "Joined by emailing the group's subscribe address"
   and counts toward the "seen on many groups" check in `MembershipsProcessingService`.

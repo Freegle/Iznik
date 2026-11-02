@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -260,8 +260,20 @@ placed in this group; they did not choose it"). A TrashNothing member who joined
 through TrashNothing shows **via partner** instead and is an ordinary member. Members of either
 kind are left out of the Stories newsletter, Freegle's engagement emails and Community News.
 
-If the same person also posts to a community they've chosen, the warning disappears on its own and
-they become an ordinary member you can contact as usual.
+The warning is about your community only. If they choose your community on Trash Nothing, it
+goes and they are an ordinary member you can contact as usual. Choosing a different community
+doesn't change anything on yours.
+
+### Contacting Trash Nothing members
+
+- **Only while they're a member.** Once a Trash Nothing member leaves your community, you can't
+  contact them any more, even in a chat you had with them before. ModTools shows that chat as
+  closed. They can still write to you.
+- **Your messages are signed.** Trash Nothing shows them your message as if it came from a
+  Freegle member, so a chat message, a standard message or a reply about a post from your team
+  ends with "From the volunteers who run" and your community's name.
+- **Replying doesn't make them a member.** A Trash Nothing member who replies to a post on your
+  community isn't added to it. They join communities through Trash Nothing.
 
 ## Banning and removing
 
@@ -277,10 +289,14 @@ or ask another owner to.
 
 Removing or banning is a last resort. A friendly word usually solves the problem.
 
-A ban stops someone posting on your community and replying to posts there. It does **not**
+A ban stops someone posting on your community and replying to posts there. It also withdraws
+their open OFFERs and WANTEDs on your community; one still waiting for approval is deleted. It
+does **not**
 stop them writing to your volunteers, by email or with the Contact button on your community
 page, and that is deliberate: it is how someone appeals a ban. Their message arrives in
-their chat with your volunteers, which every moderator on the community can see.
+their chat with your volunteers, which every moderator on the community can see. A Trash
+Nothing member you have banned is no longer a member, so you can read what they send but
+can't reply in that chat.
 
 The **spammer list** is the stronger measure. Someone on it is banned everywhere, and
 nothing they send reaches us at all: their email is dropped, the volunteers address
