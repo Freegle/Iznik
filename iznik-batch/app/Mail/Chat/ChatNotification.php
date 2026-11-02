@@ -15,6 +15,7 @@ use App\Models\Message;
 use App\Models\User;
 use App\Models\UserAddress;
 use App\Support\AmpEmailSupport;
+use App\Support\TrashNothingSignOff;
 use App\Support\EmojiUtils;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
@@ -799,6 +800,12 @@ class ChatNotification extends MjmlMailable implements RetryableMailable, Descri
         $shouldHideModIdentity = $this->chatType === ChatRoom::TYPE_USER2MOD
             && !$this->isModerator  // Recipient is a member
             && $isFromMod;          // Message is from a mod
+
+        // TrashNothing loses the "{Group} Volunteers" sender name, so its members are told
+        // in the message itself who it is from.
+        if ($shouldHideModIdentity && $displayText !== '' && $this->recipient->isTrashNothingAccount()) {
+            $displayText = TrashNothingSignOff::append($displayText, $this->groupDisplayName);
+        }
 
         // Get profile image URL.
         // For mod messages to members, use group profile instead of individual mod profile.

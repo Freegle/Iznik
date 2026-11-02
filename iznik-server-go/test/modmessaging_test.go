@@ -412,6 +412,18 @@ func putUser2ModChat(t *testing.T, token string, groupid uint64, userid uint64) 
 	return resp.StatusCode, out.ID
 }
 
+func chatModsClosed(t *testing.T, token string, chatid uint64) bool {
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chat/%d?jwt=%s", chatid, token), nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	var out struct {
+		Modsclosed bool `json:"modsclosed"`
+	}
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	return out.Modsclosed
+}
+
 func TestModeratorCannotOpenAChatToATrashNothingPlacement(t *testing.T) {
 	prefix := uniquePrefix("mmachat")
 	group := CreateTestGroup(t, prefix)
@@ -455,7 +467,12 @@ func TestAChatClosesToModeratorsWhenATrashNothingMemberLeaves(t *testing.T) {
 	assert.NotZero(t, chatid)
 	assert.Equal(t, 200, postChatMessageAs(t, modToken, chatid, "Hello from your volunteers "+prefix))
 
+	assert.False(t, chatModsClosed(t, modToken, chatid), "open while they are a member")
+
 	leaveGroup(poster, group)
+
+	assert.True(t, chatModsClosed(t, modToken, chatid), "ModTools is told the chat is closed")
+	assert.False(t, chatModsClosed(t, posterToken, chatid), "the member is not")
 
 	status, _ = putUser2ModChat(t, modToken, group, poster)
 	assert.Equal(t, 403, status, "the existing chat is not handed back once they have left")

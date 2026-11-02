@@ -950,12 +950,7 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// too, since UX experiments are not run in the app, but a child car seat is asked about there as well: that
 	// question is policy, not an experiment (replyconfirm.go).
 	var confirm *replyConfirmPlan
-	//
-	// Not for a TrashNothing member. They join communities through TrashNothing, and a
-	// join here would make them a member of a community they never chose, open to its
-	// moderators. A reply from them is dealt with through TrashNothing instead.
-	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply &&
-		!modmessaging.IsTrashNothingMember(db, myid) {
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
 		confirm = planReplyConfirm(db, id, *payload.Refmsgid, myid, utils.RequestFromApp(c))
 	}
 
@@ -1068,7 +1063,12 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// welcome email + spam check. Params mirror a normal web join's DB defaults (emailfrequency
 	// 24=daily, events + volunteering allowed), NOT the LoveJunk FREQUENCY_NEVER. Best-effort: a join
 	// hiccup must never fail the reply.
-	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
+	//
+	// Not for a TrashNothing member. They join communities through TrashNothing, and a
+	// join here would make them a member of a community they never chose, open to its
+	// moderators.
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply &&
+		!modmessaging.IsTrashNothingMember(db, myid) {
 		// Already in one of the post's groups? Then nothing needs joining: they can
 		// see it and reply to it where they are. Without this check the join below
 		// picks the post's LOWEST GROUP ID, which is arbitrary — and once a post
