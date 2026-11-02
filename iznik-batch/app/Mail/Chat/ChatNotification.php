@@ -942,6 +942,10 @@ class ChatNotification extends MjmlMailable implements RetryableMailable, Descri
                 return "{$otherName} cancelled their promise for:";
 
             case ChatMessage::TYPE_COMPLETED:
+                // A WANTED is not "taken": the poster no longer needs it.
+                if ($message->refMessage?->type === Message::TYPE_WANTED) {
+                    return "They are no longer looking for this:";
+                }
                 return "This item is no longer available:";
 
             case ChatMessage::TYPE_ADDRESS:
