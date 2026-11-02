@@ -67,6 +67,13 @@ class GroupPostIngestionService
 
     public const REASON_MESSAGE_CREATE_FAILED = 'message-create-failed';
 
+    /**
+     * The poster is banned from the group the post was placed on. A banned Freegle member
+     * cannot post to the group, and neither can a TN one: placing the post anyway would
+     * hand it to the moderators who banned them.
+     */
+    public const REASON_BANNED = 'banned';
+
     /** Why a post's consent made the poster's implicit membership ordinary, for the log. */
     public const REASON_CONSENTED = 'consented through TrashNothing';
 
@@ -263,6 +270,20 @@ class GroupPostIngestionService
                 $tnUserId ? self::REASON_UNKNOWN_USER : self::REASON_NO_USER_ID,
                 result: 'skipped',
             );
+        }
+
+        // Checked before anything is written, so a banned poster's post leaves no trace on
+        // the group: no message, no membership. One group per post, so a post skipped here
+        // is not ingested at all.
+        if (DB::table('users_banned')->where('userid', $user->id)->where('groupid', $group->id)->exists()) {
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=banned tnpostid=' . $postId . ' user_id=' . $user->id . ' group_id=' . $group->id);
+            $this->loki->logEvent('tn-sync', 'post-skip-banned', [
+                'tn_post_id' => $postId,
+                'user_id'    => $user->id,
+                'group_id'   => $group->id,
+            ]);
+
+            return $this->dropped(self::REASON_BANNED, result: 'skipped');
         }
 
         // Update user's last access.
@@ -490,7 +511,8 @@ class GroupPostIngestionService
                 return;
             }
 
-            // A banned poster's row was deleted by the ban; never put it back.
+            // A banned poster's row was deleted by the ban; never put it back. ingest() has
+            // already skipped the post, so this only guards a future caller.
             if (DB::table('users_banned')->where('userid', $user->id)->where('groupid', $group->id)->exists()) {
                 return;
             }

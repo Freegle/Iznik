@@ -3786,6 +3786,14 @@ func prepareModReply(db *gorm.DB, myid uint64, msgid uint64, reqGid uint64) (*Me
 			"Only the community this was posted on can message the freegler about it")
 	}
 
+	// A TrashNothing poster can be messaged only by a community they chose and still
+	// belong to (modmessaging.ModsMayContact). An unaddressed post is refused above; this
+	// is the poster who has since left.
+	if !modmessaging.ModsMayContact(db, ctx.Fromuser, ctx.Groupid) {
+		return nil, fiber.NewError(fiber.StatusForbidden,
+			"This freegler isn't a member of this community any more, so they can't be messaged")
+	}
+
 	return ctx, nil
 }
 

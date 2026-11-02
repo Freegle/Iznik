@@ -400,12 +400,11 @@ func PutChatRoom(c *fiber.Ctx) error {
 		chatUserID := myid
 		modOpeningMembersChat := req.Userid > 0 && req.Userid != myid && auth.IsModOfGroup(myid, req.Groupid)
 		if modOpeningMembersChat {
-			// A member who only exists here because TN posts of theirs were placed on a
-			// Freegle group they never chose has agreed to nothing with this community's
-			// moderators, so they cannot be opened a chat to. ModTools hides the Chat
-			// button for them; this is what makes that hold. Someone who has ALSO posted
-			// normally is a real member and is unaffected.
-			if modmessaging.UserIsUnaddressedOnly(db, req.Userid) {
+			// A TrashNothing member can be contacted only through a membership of this
+			// community they chose (see modmessaging.ModsMayContact). ModTools hides the
+			// Chat button for the rest; this is what makes that hold. It runs before the
+			// existing-room lookup below, so a chat from before they left stays closed too.
+			if !modmessaging.ModsMayContact(db, req.Userid, req.Groupid) {
 				return fiber.NewError(fiber.StatusForbidden, "This member didn't choose this community, so they can't be contacted")
 			}
 

@@ -205,11 +205,10 @@ func PostMemberships(c *fiber.Ctx) error {
 			return nil
 		}
 		//
-		// Except to someone whose only presence here is TN posts placed on a community
-		// they never chose: they have agreed to nothing with these moderators, so there is
-		// no modmail relationship to use. ModTools hides Mail and the standard messages for
-		// them (with a notice saying why); this is the guard behind that.
-		if modmessaging.UserIsUnaddressedOnly(db, req.Userid) {
+		// Except to a TrashNothing member without a membership of this community they
+		// chose (see modmessaging.ModsMayContact). ModTools hides Mail and the standard
+		// messages for them, with a notice saying why; this is the guard behind that.
+		if !modmessaging.ModsMayContact(db, req.Userid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "This member didn't choose this community, so they can't be contacted")
 		}
 
@@ -483,11 +482,10 @@ type GetMembershipsMember struct {
 	MailDelayedSince    *string `json:"maildelayedsince" gorm:"column:maildelayedsince"`
 	MailDelayedProvider *string `json:"maildelayedprovider" gorm:"column:maildelayedprovider"`
 	MailDelayedCount    *int    `json:"maildelayedcount" gorm:"column:maildelayedcount"`
-	// False when every post this person has made is a TN post placed on a Freegle
-	// community they never chose - they have not joined Freegle in any sense a moderator
-	// can act on, so ModTools shows a notice instead of the Chat / Mail / standard-message
-	// buttons. True for everyone else, including a TN poster who has ALSO posted normally.
-	// Derived, not stored: see modmessaging.UsersUnaddressedOnly.
+	// False for a TrashNothing member whose membership here is not one they chose
+	// (implicit, rippled, or not Approved). ModTools then shows a notice instead of the
+	// Chat / Mail / standard-message buttons. True for everyone else. Derived, not
+	// stored: see modmessaging.ModsMayContact.
 	ModMessagingAllowed bool `json:"mod_messaging_allowed" gorm:"-"`
 }
 
@@ -837,19 +835,20 @@ const (
 
 // enrichMembers computes displayname from name fields, resolves posting status, and parses settings JSON.
 func enrichMembers(members []GetMembershipsMember) {
-	// Whether each member can be contacted at all, answered for the whole page in one
-	// query rather than per row - the members list is the one screen that asks this about
-	// a hundred people at a time.
+	// Whether each member can be contacted through this membership. Which of them are
+	// TrashNothing members is answered for the whole page in one query rather than per
+	// row - the members list is the one screen that asks this about a hundred people at a
+	// time.
 	userids := make([]uint64, 0, len(members))
 	for i := range members {
 		userids = append(userids, members[i].Userid)
 	}
-	unaddressedOnly := modmessaging.UsersUnaddressedOnly(database.DBConn, userids)
+	trashNothing := modmessaging.TrashNothingMembers(database.DBConn, userids)
 
 	for i := range members {
 		m := &members[i]
 
-		m.ModMessagingAllowed = !unaddressedOnly[m.Userid]
+		m.ModMessagingAllowed = modmessaging.MembershipAllowsContact(trashNothing[m.Userid], m.Collection, m.Implicit, m.Rippled)
 
 		// Compute displayname from fullname/firstname/lastname.
 		if m.Fullname != nil && *m.Fullname != "" {

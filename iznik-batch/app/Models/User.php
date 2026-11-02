@@ -887,6 +887,28 @@ class User extends Model implements Auditable
     }
 
     /**
+     * Whether the moderators of $groupId may write to this user: a chat, mail or a standard
+     * message. Anyone who is not a TrashNothing member can be written to. A TrashNothing
+     * member only through a membership of the group they chose: Approved, not implicit and
+     * not rippled. So a TrashNothing placement can't be, and nor can a member who has left.
+     * Mirrors modmessaging.ModsMayContact in iznik-server-go.
+     */
+    public function modsMayContact(int $groupId): bool
+    {
+        if (!$this->isTrashNothingAccount()) {
+            return TRUE;
+        }
+
+        return DB::table('memberships')
+            ->where('userid', $this->id)
+            ->where('groupid', $groupId)
+            ->where('collection', Membership::COLLECTION_APPROVED)
+            ->where('implicit', 0)
+            ->where('rippled', 0)
+            ->exists();
+    }
+
+    /**
      * Determine if user wants digest emails based on their simplemail setting.
      * Falls back to checking per-group emailfrequency if simplemail is not set.
      *

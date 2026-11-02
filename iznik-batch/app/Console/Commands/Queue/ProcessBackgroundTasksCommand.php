@@ -621,32 +621,14 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
-     * Whether every post this person has made is a TN post matched to a Freegle community
-     * they never chose - so they have not opted in to Freegle and cannot be written to.
-     *
-     * A "mixed" poster (one such post AND an ordinary one) is a real member and is not
-     * restricted. Mirrors modmessaging.UserIsUnaddressedOnly in iznik-server-go.
+     * Whether the group's moderators may write to this user (User::modsMayContact). A user
+     * we can't find is not refused here; the sender finds no address for them anyway.
      */
-    protected function userIsUnaddressedOnly(int $userId): bool
+    protected function modsMayContact(int $userId, int $groupId): bool
     {
-        if ($userId <= 0) {
-            return false;
-        }
+        $user = $userId > 0 ? User::find($userId) : null;
 
-        // Two questions, not one aggregate: has this person any post of that kind, and
-        // have they any post that is NOT of that kind. Someone who has never posted at all
-        // answers no to the first and is unrestricted, which is what we want.
-        $originRows = fn () => DB::table('messages as m')
-            ->join('messages_groups as mg', function ($join) {
-                $join->on('mg.msgid', '=', 'm.id')->where('mg.rippled_in', 0);
-            })
-            ->where('m.fromuser', $userId);
-
-        if (!$originRows()->where('mg.mod_messaging_allowed', 0)->exists()) {
-            return false;
-        }
-
-        return !$originRows()->where('mg.mod_messaging_allowed', 1)->exists();
+        return $user === null || $user->modsMayContact($groupId);
     }
 
     /**
@@ -739,6 +721,17 @@ class ProcessBackgroundTasksCommand extends Command
         if ($this->postIsUnaddressed($msgId)) {
             Log::info("Mod action {$taskType} on an unaddressed TN post, sending nothing to the poster", [
                 'msgid' => $msgId,
+                'byuser' => $byUser,
+            ]);
+            return;
+        }
+
+        // A TrashNothing poster who did not choose this group, or has left it, is not
+        // written to either (User::modsMayContact). The action and its log still stand.
+        if ($groupId > 0 && !$this->modsMayContact($posterId, $groupId)) {
+            Log::info("Mod action {$taskType} for a TrashNothing poster who is not a member of the group, sending nothing to the poster", [
+                'msgid' => $msgId,
+                'groupid' => $groupId,
                 'byuser' => $byUser,
             ]);
             return;
@@ -891,12 +884,12 @@ class ProcessBackgroundTasksCommand extends Command
             return;
         }
 
-        // Someone whose only presence on Freegle is TN posts matched to communities they
-        // never chose has not opted in, and their volunteers have no standing to write to
-        // them. ModTools offers nothing that would and the Go API refuses it, so a task
-        // reaching here came from a stale client.
-        if ($this->userIsUnaddressedOnly($userId)) {
-            Log::info('Mod stdmsg for a member who has not opted in to Freegle, sending nothing', [
+        // A TrashNothing member without a membership of this group they chose: placed on
+        // it by TrashNothing, or since left. ModTools offers nothing that would write to
+        // them and the Go API refuses it, so a task reaching here came from a stale client
+        // or was queued before they left.
+        if (!$this->modsMayContact($userId, $groupId)) {
+            Log::info('Mod stdmsg for a TrashNothing member who did not choose this group, sending nothing', [
                 'userid' => $userId,
                 'byuser' => $byUser,
             ]);

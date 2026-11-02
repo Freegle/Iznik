@@ -1535,6 +1535,48 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertNull($this->membershipOf($user, $group));
     }
 
+    public function test_a_banned_poster_gets_no_post_on_that_group(): void
+    {
+        $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $group = $this->createTestGroup();
+        DB::table('users_banned')->insert(['userid' => $user->id, 'groupid' => $group->id]);
+        $post    = $this->makePost(['user_id' => $user->tnuserid]);
+        $service = $this->makeService(dryRun: false);
+
+        $this->assertSame('skipped', $service->ingest($post, $group, modMessagingAllowed: true));
+        $this->assertSame(
+            ['routing_reason' => GroupPostIngestionService::REASON_BANNED],
+            $service->getLastRoutingContext(),
+        );
+        $this->assertFalse(
+            DB::table('messages')->where('tnpostid', $post['post_id'])->exists(),
+            'a post from a banned poster is not placed on the group, so its moderators never own it',
+        );
+        $this->assertNull($this->membershipOf($user, $group));
+    }
+
+    public function test_a_poster_banned_from_one_of_two_groups_gets_the_post_on_the_other_only(): void
+    {
+        $user    = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $banned  = $this->createTestGroup();
+        $allowed = $this->createTestGroup();
+        DB::table('users_banned')->insert(['userid' => $user->id, 'groupid' => $banned->id]);
+        $post    = $this->makePost(['user_id' => $user->tnuserid]);
+        $service = $this->makeService(dryRun: false);
+
+        $this->assertSame('skipped', $service->ingest($post, $banned, modMessagingAllowed: true));
+        $this->assertSame('pending', $service->ingest($post, $allowed, modMessagingAllowed: true));
+
+        $groups = DB::table('messages_groups')
+            ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
+            ->where('messages.tnpostid', $post['post_id'])
+            ->pluck('messages_groups.groupid')
+            ->all();
+        $this->assertSame([$allowed->id], array_map('intval', $groups));
+        $this->assertNull($this->membershipOf($user, $banned));
+        $this->assertNotNull($this->membershipOf($user, $allowed));
+    }
+
     public function test_a_dry_run_writes_no_membership_and_clears_nothing(): void
     {
         $user    = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);

@@ -739,6 +739,21 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	// A User2Mod chat closes to the community's moderators once its member is a
+	// TrashNothing member without a membership here they chose (modmessaging.ModsMayContact),
+	// typically because they have left. The member can still write; the moderators can't.
+	var modRoom struct {
+		User1    uint64
+		Groupid  uint64
+		Chattype string
+	}
+	db.Table("chat_rooms").Select("COALESCE(user1, 0) AS user1, COALESCE(groupid, 0) AS groupid, chattype").
+		Where("id = ?", id).Scan(&modRoom)
+	if modRoom.Chattype == utils.CHAT_TYPE_USER2MOD && modRoom.User1 != myid &&
+		!modmessaging.ModsMayContact(db, modRoom.User1, modRoom.Groupid) {
+		return fiber.NewError(fiber.StatusForbidden, "This member isn't in this community any more, so the chat is closed")
+	}
+
 	// Guard a reply whose referenced post no longer exists. chat_messages.refmsgid has a FK to
 	// messages.id, and prod purges deleted/rejected/expired posts quickly. If the client replies
 	// to a post that has since been purged, the INSERT below would violate the FK and fail with a
