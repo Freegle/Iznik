@@ -893,6 +893,112 @@ class TNSyncCommandTest extends TestCase
     }
 
     /**
+     * A shared username with two different tnuserids is two TN accounts - a username
+     * released and retaken, or a member who re-registered. Merging would delete one
+     * account and its tnuserid, after which that TN user's posts resolve to nobody.
+     */
+    public function test_merge_skips_users_with_different_tnuserids(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $user1 = $this->createTestUser(['fullname' => 'Carol', 'tnuserid' => 99020101]);
+        $user2 = $this->createTestUser(['fullname' => 'Carol', 'tnuserid' => 99020102]);
+
+        $tnBase = 'carol_' . str_replace('.', '', uniqid('', true));
+        $this->insertTnAddress($user1->id, "{$tnBase}-g101@user.trashnothing.com");
+        $this->insertTnAddress($user2->id, "{$tnBase}-g202@user.trashnothing.com");
+
+        $loki = $this->mock(LokiService::class);
+        $loki->shouldIgnoreMissing();
+        $loki->shouldReceive('logEvent')
+            ->once()
+            ->with('tn-sync', 'user-merge-skip', \Mockery::on(fn ($ctx) =>
+                $ctx['reason'] === 'tnuserid-conflict'
+                && $ctx['user_ids'] === [$user1->id, $user2->id]
+                && $ctx['tn_user_ids'] === [99020101, 99020102]
+            ));
+        $loki->shouldNotReceive('logEvent')->with('tn-sync', 'user-merge', \Mockery::any());
+
+        $this->artisan('tn:sync', ['--full-duplicate-scan' => true])->assertExitCode(0);
+
+        $this->assertNotNull(User::find($user1->id), 'the first TN account must survive');
+        $this->assertNotNull(User::find($user2->id), 'the second TN account must survive');
+        $this->assertEquals(99020101, User::find($user1->id)->tnuserid);
+        $this->assertEquals(99020102, User::find($user2->id)->tnuserid);
+    }
+
+    /**
+     * Only one side holding a tnuserid is the ordinary duplicate - an email-path
+     * account and its partner twin - and is still merged, keeping the tnuserid.
+     */
+    public function test_merge_keeps_the_only_tnuserid(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $user1 = $this->createTestUser(['fullname' => 'Dave']);
+        $user2 = $this->createTestUser(['fullname' => 'Dave', 'tnuserid' => 99020103]);
+
+        $tnBase = 'dave_' . str_replace('.', '', uniqid('', true));
+        $this->insertTnAddress($user1->id, "{$tnBase}-g101@user.trashnothing.com");
+        $this->insertTnAddress($user2->id, "{$tnBase}-g202@user.trashnothing.com");
+
+        $this->artisan('tn:sync', ['--full-duplicate-scan' => true])->assertExitCode(0);
+
+        $this->assertNotNull(User::find($user1->id), 'the first account seen is the one kept');
+        $this->assertNull(User::find($user2->id), 'the twin is merged in');
+        $this->assertEquals(99020103, User::find($user1->id)->tnuserid);
+    }
+
+    /**
+     * A skipped group does not stop the others: the check carries on to the next
+     * username and merges that pair.
+     */
+    public function test_a_skipped_group_does_not_stop_other_groups_merging(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $conflict1 = $this->createTestUser(['fullname' => 'Eve', 'tnuserid' => 99020104]);
+        $conflict2 = $this->createTestUser(['fullname' => 'Eve', 'tnuserid' => 99020105]);
+        $twin1 = $this->createTestUser(['fullname' => 'Fay']);
+        $twin2 = $this->createTestUser(['fullname' => 'Fay']);
+
+        $eve = 'eve_' . str_replace('.', '', uniqid('', true));
+        $fay = 'fay_' . str_replace('.', '', uniqid('', true));
+        $this->insertTnAddress($conflict1->id, "{$eve}-g1@user.trashnothing.com");
+        $this->insertTnAddress($conflict2->id, "{$eve}-g2@user.trashnothing.com");
+        $this->insertTnAddress($twin1->id, "{$fay}-g1@user.trashnothing.com");
+        $this->insertTnAddress($twin2->id, "{$fay}-g2@user.trashnothing.com");
+
+        $this->artisan('tn:sync', ['--full-duplicate-scan' => true])->assertExitCode(0);
+
+        $this->assertNotNull(User::find($conflict1->id));
+        $this->assertNotNull(User::find($conflict2->id));
+        $this->assertTrue(
+            (User::find($twin1->id) !== null) xor (User::find($twin2->id) !== null),
+            'the unconflicted pair is still merged'
+        );
+    }
+
+    private function insertTnAddress(int $userid, string $email): void
+    {
+        DB::table('users_emails')->insert([
+            'userid' => $userid,
+            'email' => $email,
+            'backwards' => strrev($email),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+    }
+
+    private function fakeEmptyTnFeeds(): void
+    {
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+    }
+
+    /**
      * The per-tick duplicate check now reads only addresses added since last time,
      * instead of streaming all ~400,000 Trash Nothing addresses every minute. A pair
      * created after the last run must still be caught.
