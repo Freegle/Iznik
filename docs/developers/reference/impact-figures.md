@@ -5,6 +5,11 @@ covers:
   - iznik-nuxt3/components/StatsImpact.vue
   - iznik-nuxt3/pages/stats/[[groupname]].vue
   - iznik-nuxt3/pages/stats/authority/[[id]].vue
+  - iznik-nuxt3/modtools/components/ModImpact.vue
+  - iznik-nuxt3/modtools/components/ModDashboardImpact.vue
+  - iznik-batch/app/Support/ReuseBenefit.php
+  - iznik-batch/app/Services/CPIService.php
+  - iznik-batch/app/Console/Commands/Authority/AuthorityStatsCommand.php
 ---
 
 # Impact figures on the stats pages
@@ -13,6 +18,13 @@ The public stats page (`/stats`, or `/stats/<community>`) and the council pages
 (`/stats/authority/<id>`) show three headline figures: tonnes reused, the benefit in
 pounds, and tonnes of CO2 saved. The maths is in `composables/useReuseBenefit.js`; the
 figures are drawn by `components/StatsImpact.vue`.
+
+Two other places show the same benefit, worked out the same way:
+
+- The ModTools dashboard impact card (`modtools/components/ModDashboardImpact.vue`, drawn by
+  `ModImpact.vue`).
+- The quarterly council spreadsheet (`php artisan authority:stats`), whose maths is in
+  `iznik-batch/app/Support/ReuseBenefit.php`. Its footnote is in cell A14.
 
 The stats page totals cover the 12 complete months before the current one, or the financial
 year asked for with `?financialYear=FY2024`, from the first day to the last.
@@ -62,12 +74,14 @@ Two choices here differ from the 2019 analysis:
 
 ## Inflation
 
-`CPI_DATA` holds the ONS CPI annual averages (series D7BT, 2015=100) from 2003 to 2025.
-Any later year is priced at the latest year we hold. Add each new year when ONS publishes
-it in January.
+The prices use the ONS CPI annual averages (series D7BT, 2015=100) from 2003. Any later year
+is priced at the latest year held, and the WRAP value is never priced below its 2011 level.
 
-The Go item impact endpoint reads the series from the `cpi_annual_data` config row, which
-`data:update-cpi` refreshes monthly. The batch's council spreadsheet uses the copy in
-`iznik-batch/app/Support/ReuseBenefit.php`, and the Go code falls back to the copy in
-`iznik-server-go/item/reusebenefit.go`. Both copies run from 2011 to 2024 and leave out
-fly-tipping.
+- `data:update-cpi` (`CPIService`) refreshes the `cpi_annual_data` config row monthly, keeping
+  2003 onwards. The council spreadsheet and the Go item impact endpoint read that row.
+- When the row is missing, PHP falls back to `ReuseBenefit::FALLBACK_CPI_DATA` (2003 to 2025).
+  If the row lacks the 2003-06 years, the fly-tipping base comes from that table.
+- The web pages use their own copy, `CPI_DATA` in `useReuseBenefit.js` (2003 to 2025). Add each
+  new year to it, and to the PHP table, when ONS publishes it in January.
+- The Go fallback, `iznik-server-go/item/reusebenefit.go`, runs from 2011 to 2024. The Go code
+  does not use fly-tipping.
