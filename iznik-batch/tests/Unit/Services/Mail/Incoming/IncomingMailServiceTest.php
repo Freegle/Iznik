@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services\Mail\Incoming;
 
 use App\Models\ChatMessage;
+use App\Models\ChatRoom;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
@@ -1689,6 +1690,130 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertStringContainsString('The test reply message content', $lastMessage->message);
+    }
+
+    // ========================================
+    // Replies into a User2Mod chat that is closed to moderators
+    // ========================================
+
+    /**
+     * A User2Mod chat on a new group, its member and one moderator on the roster.
+     *
+     * @return array{User, User, ChatRoom} [member, moderator, chat]
+     */
+    private function user2ModChat(bool $memberIsTrashNothing): array
+    {
+        $group = $this->createTestGroup();
+        $member = $this->createTestUser(array_merge(
+            ['email_preferred' => $this->uniqueEmail('member')],
+            $memberIsTrashNothing ? ['tnuserid' => random_int(900_000_000, 999_999_999)] : [],
+        ));
+        $moderator = $this->createTestUser(['email_preferred' => $this->uniqueEmail('mod')]);
+        $this->createMembership($moderator, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        return [$member, $moderator, ChatRoom::getOrCreateUser2Mod($member->id, $group->id)];
+    }
+
+    /** Parse an email reply to $chat's notification for $replier and route it. */
+    private function replyByEmail(User $replier, ChatRoom $chat): RoutingResult
+    {
+        $from = $replier->emails->first()->email;
+        $to = "notify-{$chat->id}-{$replier->id}@users.ilovefreegle.org";
+        $email = $this->createMinimalEmail([
+            'From' => $from,
+            'To' => $to,
+            'Subject' => 'Re: Your chat',
+        ], 'A reply by email');
+
+        return $this->service->route($this->parser->parse($email, $from, $to));
+    }
+
+    private function chatMessageCount(ChatRoom $chat): int
+    {
+        return DB::table('chat_messages')->where('chatid', $chat->id)->count();
+    }
+
+    public function test_a_moderators_email_reply_into_a_closed_chat_creates_no_message(): void
+    {
+        Mail::fake();
+        [$member, $moderator, $chat] = $this->user2ModChat(memberIsTrashNothing: true);
+        $this->assertFalse($member->modsMayContact($chat->groupid), 'the member has no membership of the group');
+
+        $result = $this->replyByEmail($moderator, $chat);
+
+        $this->assertSame(RoutingResult::DROPPED, $result);
+        $this->assertSame('Moderator reply to a chat closed to moderators', $this->service->getLastRoutingContext()['routing_reason']);
+        $this->assertSame(0, $this->chatMessageCount($chat));
+        Mail::assertNothingSent();
+        Mail::assertNothingQueued();
+    }
+
+    public function test_a_moderators_email_reply_is_dropped_when_the_members_only_membership_is_not_theirs_to_choose(): void
+    {
+        // Implicit and rippled memberships are placements, not a community the member chose.
+        foreach ([['implicit' => 1], ['rippled' => 1]] as $placement) {
+            [$member, $moderator, $chat] = $this->user2ModChat(memberIsTrashNothing: true);
+            $this->createMembership($member, Group::find($chat->groupid), $placement);
+
+            $this->assertSame(RoutingResult::DROPPED, $this->replyByEmail($moderator, $chat), json_encode($placement));
+            $this->assertSame(0, $this->chatMessageCount($chat));
+        }
+    }
+
+    public function test_support_can_reply_by_email_into_a_closed_chat(): void
+    {
+        [$member, , $chat] = $this->user2ModChat(memberIsTrashNothing: true);
+        $support = $this->createTestUser([
+            'email_preferred' => $this->uniqueEmail('support'),
+            'systemrole' => User::SYSTEMROLE_SUPPORT,
+        ]);
+        DB::table('chat_roster')->insertOrIgnore(['chatid' => $chat->id, 'userid' => $support->id]);
+
+        $result = $this->replyByEmail($support, $chat);
+
+        $this->assertSame(RoutingResult::TO_USER, $result);
+        $this->assertSame(1, $this->chatMessageCount($chat));
+    }
+
+    public function test_an_admin_can_reply_by_email_into_a_closed_chat(): void
+    {
+        [, , $chat] = $this->user2ModChat(memberIsTrashNothing: true);
+        $admin = $this->createTestUser([
+            'email_preferred' => $this->uniqueEmail('admin'),
+            'systemrole' => User::SYSTEMROLE_ADMIN,
+        ]);
+        DB::table('chat_roster')->insertOrIgnore(['chatid' => $chat->id, 'userid' => $admin->id]);
+
+        $this->assertSame(RoutingResult::TO_USER, $this->replyByEmail($admin, $chat));
+        $this->assertSame(1, $this->chatMessageCount($chat));
+    }
+
+    public function test_the_member_can_still_reply_by_email_into_their_closed_chat(): void
+    {
+        [$member, , $chat] = $this->user2ModChat(memberIsTrashNothing: true);
+
+        $result = $this->replyByEmail($member, $chat);
+
+        $this->assertSame(RoutingResult::TO_USER, $result);
+        $this->assertSame(1, $this->chatMessageCount($chat));
+    }
+
+    public function test_a_moderator_can_reply_by_email_to_a_trashnothing_member_who_chose_the_group(): void
+    {
+        [$member, $moderator, $chat] = $this->user2ModChat(memberIsTrashNothing: true);
+        $this->createMembership($member, Group::find($chat->groupid));
+
+        $this->assertSame(RoutingResult::TO_USER, $this->replyByEmail($moderator, $chat));
+        $this->assertSame(1, $this->chatMessageCount($chat));
+    }
+
+    public function test_a_moderators_email_reply_to_an_ordinary_members_chat_is_unaffected(): void
+    {
+        [$member, $moderator, $chat] = $this->user2ModChat(memberIsTrashNothing: false);
+        $this->assertFalse(DB::table('memberships')->where('userid', $member->id)->exists());
+
+        $this->assertSame(RoutingResult::TO_USER, $this->replyByEmail($moderator, $chat));
+        $this->assertSame(1, $this->chatMessageCount($chat));
     }
 
     // ========================================

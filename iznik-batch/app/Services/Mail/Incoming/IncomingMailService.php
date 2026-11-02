@@ -1978,6 +1978,20 @@ class IncomingMailService
             return $this->dropped("User not part of chat");
         }
 
+        // The roster says the sender is in the chat, not that they may write to its member.
+        // Dropped before anything is written, and nothing is mailed to the member.
+        if ($this->chatIsClosedToModerator($chat, $userId)) {
+            Log::info('Dropping moderator reply to a chat closed to moderators', [
+                'chat_id' => $chat->id,
+                'user_id' => $userId,
+            ]);
+
+            return $this->dropped('Moderator reply to a chat closed to moderators', [
+                'user_id' => $userId,
+                'chat_id' => $chat->id,
+            ]);
+        }
+
         // Update user's last access
         DB::table('users')
             ->where('id', $userId)
@@ -1999,6 +2013,28 @@ class IncomingMailService
         ];
 
         return RoutingResult::TO_USER;
+    }
+
+    /**
+     * Whether $writerId may not write into this chat because it is a User2Mod chat closed to
+     * the community's moderators: its member is a TrashNothing member with no membership of
+     * the community that they chose (User::modsMayContact), typically because they left.
+     * The member can still write, and Support and Admin act for Freegle as a whole, so
+     * neither is held back. The Go API refuses the same write from a moderator
+     * (modmessaging.MayContact in chat/chatmessage.go).
+     */
+    private function chatIsClosedToModerator(ChatRoom $chat, int $writerId): bool
+    {
+        if ($chat->chattype !== ChatRoom::TYPE_USER2MOD || $chat->user1 === null || (int) $chat->user1 === $writerId) {
+            return false;
+        }
+
+        $member = User::find($chat->user1);
+        if ($member === null || $member->modsMayContact((int) $chat->groupid)) {
+            return false;
+        }
+
+        return !User::find($writerId)?->isSupportOrAdmin();
     }
 
     /**

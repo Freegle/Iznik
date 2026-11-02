@@ -554,7 +554,11 @@ it existed) still asks the table.
   that is how someone banned appeals. The chat payload carries `modsclosed` for the moderators,
   and `ModChatFooter` shows a notice in place of the reply box. A refused new chat comes back as
   a 403 that `stores/chat.js` treats as expected rather than an error, and `ChatButton` says
-  why instead of opening anything.
+  why instead of opening anything. A moderator's reply by email to a chat notification is held
+  to the same rule: `IncomingMailService::handleChatNotificationReply` drops it before writing
+  anything, with the routing reason `Moderator reply to a chat closed to moderators`, so no
+  chat message exists and nothing is mailed to the member. The member's own reply, and Support
+  or Admin, still go through.
 - **Notes in chat review follow the same rule.** A moderator writing into a chat between two
   members (`CreateChatMessage` on a User2User room they are not in) speaks for no one
   community, so `MayContactThroughAnyGroup` needs each TrashNothing member in it to have
