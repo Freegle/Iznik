@@ -1013,7 +1013,7 @@ describe('ModMember', () => {
 
       expect(warning.exists()).toBe(true)
       expect(warning.text()).toContain('Trash Nothing')
-      expect(warning.text()).toContain('not chosen by them')
+      expect(warning.text()).toContain("hasn't chosen this")
       expect(warning.text()).not.toContain('opted in')
       expect(warning.text()).toContain("can't be contacted")
     })
