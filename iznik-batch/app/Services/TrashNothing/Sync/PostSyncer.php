@@ -337,6 +337,19 @@ class PostSyncer
             $result = $this->ingestionService->ingest($post, $group, $moderatorMessagingAllowed);
             Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=' . $result);
 
+            $context = $this->ingestionService->getLastRoutingContext();
+
+            if (($context['routing_reason'] ?? null) === GroupPostIngestionService::REASON_TN_USER_LOOKUP_FAILED) {
+                // Held for a retry, not decided: the cursor must not move to this post's date
+                // and the next run reaches the post again. The routed stream carries one entry
+                // per post, so it gets its entry when the post is finally ingested or skipped
+                // (a post whose lookups keep failing is skipped, see TnUserProvisioner), and a
+                // wedge does not write one every minute.
+                $this->posterLookupFailed = true;
+
+                return $previousMax;
+            }
+
             // THE emission point for an ingested post, mirroring
             // IncomingMailController::receive(): the router returns an outcome
             // plus its accumulated context, and the caller turns that into
@@ -344,7 +357,6 @@ class PostSyncer
             // ingest() returns, a post can never produce two entries — if
             // ingest() throws, nothing was emitted and the catch below emits
             // once instead.
-            $context = $this->ingestionService->getLastRoutingContext();
             $this->logRoutedPost(
                 $postId,
                 $subject,
@@ -352,13 +364,6 @@ class PostSyncer
                 GroupPostIngestionService::outcomeFor($result),
                 $context,
             );
-
-            if (($context['routing_reason'] ?? null) === GroupPostIngestionService::REASON_TN_USER_LOOKUP_FAILED) {
-                // Not seen yet: the cursor must not move to this post's date.
-                $this->posterLookupFailed = true;
-
-                return $previousMax;
-            }
         } catch (\Throwable $e) {
             // Reported, not just logged: the sync moves past this post, and only
             // tn:verify-email-coverage, hours later, fetches it again.

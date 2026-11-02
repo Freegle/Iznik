@@ -349,22 +349,38 @@ any poster. When no user can be had the post is skipped with a `routing_reason`:
 | `routing_reason` | Cause |
 |---|---|
 | `Post from unknown user` | TN has no such user (404), or no usable username for them. TN answered, so this is final |
-| `tn-user-lookup-failed` | TN could not be asked (network error, timeout, 5xx, 429, Cloudflare challenge, a rejected key). Transient: the sync stops here and the next run asks again, below |
+| `tn-user-lookup-failed` | TN could not be asked (network error, timeout, 408, 429, 5xx, Cloudflare challenge, a rejected key). Transient: the sync stops here and the next run asks again, below. Written to Loki only if the post is finally skipped, as one of the next two reasons |
+| `tn-user-lookup-refused` | TN answered with a client error other than 404 (400, 410, 422, 451 and the like). It is about this poster and a retry gets it again, so it is final like a 404 |
+| `tn-user-lookup-gave-up` | The lookup for this post failed 30 runs in a row. The post is skipped so that one poster cannot hold up every post behind it |
 | `tn-username-clash` | An account with a different `tnuserid` holds the address: usernames are not unique, so these are two people |
 | `tn-address-held-by-deleted-user` | A deleted account still holds the bare address, which is unique and not the provisioner's to take back |
 
-**A failed lookup stops the sync; an answered one does not.** A post whose poster TN would not
-answer for cannot be judged, and passing over it would put it behind the stored cursor for good.
-So `PostSyncer::sync()` stops at the first one (`stalledAt()`), and `tn:sync` holds the stored
-date back to the start of the day window it stopped in, even when ratings or user changes saw
-later dates. Nothing is lost by re-reading: ingestion skips a post it already has, and ratings
-and changes are idempotent. The same goes for `tn:verify-email-coverage`: a backfill whose
-poster lookup failed is neither remembered as backfilled (it would come back as a repeat miss
-and fail the run) nor counted as a failure, and is tried again next run. Because one post holds
-up the window, a lookup that keeps failing is reported to Sentry rather than left in the log:
-a rejected key (401/403) once per run, and three runs in a row that could not ask TN once per
-streak. A 404 or an empty username is an answer: it does not count toward a streak, and it
-ends one.
+**A failed lookup stops the sync, for a while; an answered one does not.** A post whose poster
+TN would not answer for cannot be judged, and passing over it would put it behind the stored
+cursor for good. So `PostSyncer::sync()` stops at the first one (`stalledAt()`), and `tn:sync`
+holds the stored date back to the start of the day window it stopped in, even when ratings or
+user changes saw later dates. Nothing is lost by re-reading: ingestion skips a post it already
+has, and ratings and changes are idempotent. The same goes for `tn:verify-email-coverage`: a
+backfill whose poster lookup failed is neither remembered as backfilled (it would come back as a
+repeat miss and fail the run) nor counted as a failure, and is tried again next run.
+
+Only a failure to ask is retried: a network error or timeout, 408, 429, 5xx, a Cloudflare
+challenge, a 200 that is not JSON, and a rejected key (401/403). Any other 4xx is TN's answer
+about that poster, so it is `tn-user-lookup-refused` and the sync moves on. It is logged each
+time, and Sentry hears of each status once a day.
+
+The wait is bounded, because `tn:sync` runs every minute and, with API ingestion on, the email
+path no longer routes TN posts, so one poster that always fails would otherwise stop every post
+behind it for ever. `TnUserProvisioner` counts the failed lookups of each TN post id in the cache
+(24 hours, from the first failure; a lost race with no winner counts too). At 5 Sentry hears of
+the post, so a wedge is seen early. At 30, about half an hour, the post is skipped as
+`tn-user-lookup-gave-up`, Sentry hears again, and the window moves on. An answer, whatever it is,
+is not a failure and does not count, so a 404 poster ahead of a failing one cannot hide it. A
+dry run counts nothing. A given-up post is still looked up if it is read again later, and
+ingested if TN answers by then. A rejected key is reported at most once an hour, not once a run.
+
+A post held for a retry writes no routed Loki entry. The stream carries one entry per post, so
+the entry is written when the post is ingested or skipped, whichever reason it ends with.
 
 Nothing is remembered about a miss. `tn:sync` and the hourly `tn:verify-email-coverage`
 backfill can provision the same poster at once; the loser of the `tnuserid` unique index takes

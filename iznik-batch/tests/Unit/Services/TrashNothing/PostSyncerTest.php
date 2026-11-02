@@ -10,6 +10,8 @@ use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use App\Services\TrashNothing\Ingestion\TnUserProvisioner;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use App\Services\TrashNothing\Sync\TrashNothingRateLimiter;
+use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Http;
 use OpenAPI\Client\Model\GetAllPosts200Response;
 use OpenAPI\Client\ObjectSerializer;
 use Tests\TestCase;
@@ -525,6 +527,222 @@ class PostSyncerTest extends TestCase
         $this->assertFalse($syncer->ingestFetchedPost($posts[0]), 'try again later');
         $this->assertTrue($syncer->ingestFetchedPost($posts[1]));
         $this->assertSame(['p1', 'p2'], $seen->ingested);
+    }
+
+    // -------------------------------------------------------------------------
+    // The same stall with the real provisioner, so TN's answers decide what happens.
+    // -------------------------------------------------------------------------
+
+    /** @var array<int, int> The HTTP status TN answers a user lookup with, by TN user id. */
+    private array $tnStatuses = [];
+
+    private const WINDOW_START = '2026-07-07T00:00:00Z';
+
+    private const WINDOW_END = '2026-07-07T23:00:00Z';
+
+    /**
+     * A fixture feed of three posts, p1 to p3, each by the TN user given, and the fake TN
+     * that answers their lookups from $this->tnStatuses. ONE Http::fake reads the property,
+     * because fakes merge and the first registered stub wins.
+     *
+     * @param  int[]  $tnUserIds
+     */
+    private function feedWithPosters(array $tnUserIds): string
+    {
+        $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
+
+        $dir = 'storage/framework/testing/tn-posts-' . uniqid('', true);
+        mkdir(base_path($dir), 0755, true);
+        $this->fixtureDirs[] = base_path($dir);
+        $dates = ['2026-07-07T12:00:00Z', '2026-07-07T13:15:00Z', '2026-07-07T14:30:00Z'];
+        $posts = [];
+        foreach (array_values($tnUserIds) as $i => $tnUserId) {
+            $posts[] = $this->makePost([
+                'post_id'           => 'p' . ($i + 1),
+                'date'              => $dates[$i],
+                'latitude'          => 10.0,
+                'longitude'         => 10.0,
+                'user_id'           => (string) $tnUserId,
+                'freegle_group_ids' => [],
+            ]);
+        }
+        file_put_contents(base_path($dir . '/posts_page_1.json'), json_encode(['num_pages' => 1, 'posts' => $posts]));
+
+        Http::fake(function (Request $request) {
+            if (!preg_match('#/users/(\d+)\?#', $request->url(), $m)) {
+                return Http::response('not found', 404);
+            }
+
+            return Http::response('TN says no', $this->tnStatuses[(int) $m[1]] ?? 404, ['Content-Type' => 'text/html']);
+        });
+
+        return $dir;
+    }
+
+    /**
+     * A syncer for one run over the feed: its own provisioner, as every tn:sync run has, so
+     * only the cache carries anything from run to run.
+     */
+    private function syncerForRun(string $fixtureDir): PostSyncer
+    {
+        $loki        = app(LokiService::class);
+        $rateLimiter = new TrashNothingRateLimiter(0);
+
+        $syncer = new PostSyncer(
+            dryRun: false,
+            localTesting: true,
+            apiKey: 'test-key',
+            apiBaseUrl: 'https://example.invalid',
+            loki: $loki,
+            fixtureDir: $fixtureDir,
+            rateLimiter: $rateLimiter,
+        );
+
+        // The feed is local but TN's user lookups are the real provisioner over faked HTTP.
+        $ingestion = new GroupPostIngestionService(
+            false,
+            $loki,
+            app(ItemService::class),
+            new TnUserProvisioner(false, false, 'test-key', $loki, $rateLimiter),
+        );
+        (new \ReflectionProperty(PostSyncer::class, 'ingestionService'))->setValue($syncer, $ingestion);
+
+        return $syncer;
+    }
+
+    private function tnUserId(): int
+    {
+        return random_int(900_000_000, 999_999_999);
+    }
+
+    /** @return array<int, array<string, mixed>> The routed Loki entries written for one post. */
+    private function routedFor(string $postId): array
+    {
+        return array_values(array_filter(
+            $this->routedEntries(),
+            fn (array $entry) => ($entry['message']['tn_post_id'] ?? null) === $postId,
+        ));
+    }
+
+    public function test_a_404_poster_ahead_of_a_failing_poster_does_not_hide_the_failure(): void
+    {
+        // p1's poster is answered with a 404 every run. That used to end the failing streak
+        // before it fired, so a wedge behind it was never reported.
+        $sentry = $this->recordSentry();
+        [$gone, $down, $other] = [$this->tnUserId(), $this->tnUserId(), $this->tnUserId()];
+        $this->tnStatuses = [$gone => 404, $down => 500, $other => 404];
+        $dir = $this->feedWithPosters([$gone, $down, $other]);
+
+        for ($run = 1; $run <= TnUserProvisioner::LOOKUP_WARN_AT; $run++) {
+            $syncer = $this->syncerForRun($dir);
+            [$count, $maxDate] = $syncer->sync(self::WINDOW_START, self::WINDOW_END);
+
+            $this->assertSame(2, $count, "run {$run} stops at p2 and does not reach p3");
+            $this->assertSame(self::WINDOW_START, $syncer->stalledAt());
+            $this->assertSame(self::WINDOW_START, $maxDate);
+            $this->assertCount($run < TnUserProvisioner::LOOKUP_WARN_AT ? 0 : 1, $sentry->calls, json_encode($sentry->calls));
+        }
+
+        $this->assertStringContainsString('p2', $sentry->calls[0][0]);
+        $this->assertStringContainsString((string) $down, $sentry->calls[0][0]);
+    }
+
+    public function test_a_stalled_post_leaves_no_routed_entry_until_it_is_decided(): void
+    {
+        // One entry per post, however many runs it was held for.
+        [$gone, $down, $other] = [$this->tnUserId(), $this->tnUserId(), $this->tnUserId()];
+        $this->tnStatuses = [$gone => 404, $down => 503, $other => 404];
+        $dir = $this->feedWithPosters([$gone, $down, $other]);
+
+        for ($run = 1; $run < TnUserProvisioner::LOOKUP_GIVE_UP_AT; $run++) {
+            $this->syncerForRun($dir)->sync(self::WINDOW_START, self::WINDOW_END);
+            $this->assertSame([], $this->routedFor('p2'), "run {$run} held p2 without saying it was routed");
+        }
+
+        $syncer = $this->syncerForRun($dir);
+        [$count, $maxDate] = $syncer->sync(self::WINDOW_START, self::WINDOW_END);
+
+        $this->assertNull($syncer->stalledAt(), 'the post was given up, so the window got through');
+        $this->assertSame(3, $count);
+        $this->assertSame('2026-07-07T14:30:00Z', $maxDate);
+
+        $entries = $this->routedFor('p2');
+        $this->assertCount(1, $entries);
+        $this->assertSame(RoutingResult::DROPPED->value, $entries[0]['labels']['subtype']);
+        $this->assertSame('tn-user-lookup-gave-up', $entries[0]['message']['routing_reason']);
+    }
+
+    public function test_a_poster_failing_past_the_limit_is_skipped_and_reported_and_the_window_advances(): void
+    {
+        $sentry = $this->recordSentry();
+        [$down, $gone, $other] = [$this->tnUserId(), $this->tnUserId(), $this->tnUserId()];
+        $this->tnStatuses = [$down => 502, $gone => 404, $other => 404];
+        $dir = $this->feedWithPosters([$down, $gone, $other]);
+
+        // p1 is the failing one, so until it is given up nothing behind it is reached.
+        for ($run = 1; $run < TnUserProvisioner::LOOKUP_GIVE_UP_AT; $run++) {
+            $syncer = $this->syncerForRun($dir);
+            [$count] = $syncer->sync(self::WINDOW_START, self::WINDOW_END);
+            $this->assertSame(1, $count, "run {$run}");
+            $this->assertNotNull($syncer->stalledAt());
+        }
+        $this->assertCount(1, $sentry->calls, 'the warning count was reached on the way');
+
+        $syncer = $this->syncerForRun($dir);
+        [$count, $maxDate] = $syncer->sync(self::WINDOW_START, self::WINDOW_END);
+
+        $this->assertSame(3, $count, 'the posts behind the failing poster are reached');
+        $this->assertNull($syncer->stalledAt());
+        $this->assertSame('2026-07-07T14:30:00Z', $maxDate);
+        $this->assertCount(2, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString('skipped', $sentry->calls[1][0]);
+        $this->assertStringContainsString('p1', $sentry->calls[1][0]);
+
+        $this->assertCount(1, $this->routedFor('p1'));
+        $this->assertCount(1, $this->routedFor('p2'));
+        $this->assertCount(1, $this->routedFor('p3'));
+    }
+
+    public function test_a_server_error_below_the_limit_stalls_the_window(): void
+    {
+        $sentry = $this->recordSentry();
+        [$ok, $down, $other] = [$this->tnUserId(), $this->tnUserId(), $this->tnUserId()];
+        $this->tnStatuses = [$ok => 404, $down => 500, $other => 404];
+        $dir = $this->feedWithPosters([$ok, $down, $other]);
+
+        $syncer = $this->syncerForRun($dir);
+        [$count, $maxDate] = $syncer->sync(self::WINDOW_START, self::WINDOW_END);
+
+        $this->assertSame(2, $count, 'p3 is left for the run that can look p2 up');
+        $this->assertSame(self::WINDOW_START, $syncer->stalledAt());
+        $this->assertSame(self::WINDOW_START, $maxDate);
+        $this->assertSame([], $sentry->calls, 'one failed run is a blip');
+    }
+
+    public function test_a_410_is_a_definite_skip_and_the_window_advances(): void
+    {
+        // TN has told us something about this poster that a retry will not change. The post
+        // is passed over like an unknown user, not held for thirty runs.
+        $sentry = $this->recordSentry();
+        [$gone, $refused, $other] = [$this->tnUserId(), $this->tnUserId(), $this->tnUserId()];
+        $this->tnStatuses = [$gone => 404, $refused => 410, $other => 410];
+        $dir = $this->feedWithPosters([$gone, $refused, $other]);
+
+        $syncer = $this->syncerForRun($dir);
+        [$count, $maxDate] = $syncer->sync(self::WINDOW_START, self::WINDOW_END);
+
+        $this->assertSame(3, $count);
+        $this->assertNull($syncer->stalledAt());
+        $this->assertSame('2026-07-07T14:30:00Z', $maxDate);
+
+        $entry = $this->routedFor('p2');
+        $this->assertCount(1, $entry);
+        $this->assertSame(RoutingResult::DROPPED->value, $entry[0]['labels']['subtype']);
+        $this->assertSame('tn-user-lookup-refused', $entry[0]['message']['routing_reason']);
+        $this->assertSame('tn-user-lookup-refused', $this->routedFor('p3')[0]['message']['routing_reason']);
+
+        $this->assertCount(1, $sentry->calls, 'one report for the status, not one per poster');
+        $this->assertStringContainsString('410', $sentry->calls[0][0]);
     }
 
     /**

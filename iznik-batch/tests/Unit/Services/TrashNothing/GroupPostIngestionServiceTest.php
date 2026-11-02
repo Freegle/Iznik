@@ -291,6 +291,53 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertSame(0, Message::where('tnpostid', $postId)->count());
     }
 
+    public function test_skips_with_a_refused_reason_when_tn_refuses_the_lookup(): void
+    {
+        $tnId = random_int(900000000, 999999999);
+        $this->tnUsers[$tnId] = [410, 'Gone'];
+        $group  = $this->createTestGroup();
+        $postId = 'tn-lookup-refused-' . uniqid();
+
+        $service = $this->makeService(dryRun: false);
+
+        $this->assertSame('skipped', $service->ingest($this->makePost(['post_id' => $postId, 'user_id' => $tnId]), $group));
+        $this->assertSame(
+            ['routing_reason' => GroupPostIngestionService::REASON_TN_USER_LOOKUP_REFUSED],
+            $service->getLastRoutingContext(),
+        );
+        $this->assertSame('tn-user-lookup-refused', GroupPostIngestionService::REASON_TN_USER_LOOKUP_REFUSED);
+        $this->assertSame(0, Message::where('tnpostid', $postId)->count());
+    }
+
+    public function test_skips_with_a_gave_up_reason_once_the_lookups_for_the_post_have_failed_too_often(): void
+    {
+        $tnId = random_int(900000000, 999999999);
+        $this->tnUsers[$tnId] = [503, 'Service Unavailable'];
+        $group  = $this->createTestGroup();
+        $postId = 'tn-lookup-gave-up-' . uniqid();
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $tnId]);
+
+        // Each run is its own service and provisioner; the count lives in the cache.
+        for ($run = 1; $run < TnUserProvisioner::LOOKUP_GIVE_UP_AT; $run++) {
+            $service = $this->makeService(dryRun: false);
+            $service->ingest($post, $group);
+            $this->assertSame(
+                GroupPostIngestionService::REASON_TN_USER_LOOKUP_FAILED,
+                $service->getLastRoutingContext()['routing_reason'],
+                "run {$run}",
+            );
+        }
+
+        $service = $this->makeService(dryRun: false);
+        $this->assertSame('skipped', $service->ingest($post, $group));
+        $this->assertSame(
+            ['routing_reason' => GroupPostIngestionService::REASON_TN_USER_LOOKUP_GAVE_UP],
+            $service->getLastRoutingContext(),
+        );
+        $this->assertSame('tn-user-lookup-gave-up', GroupPostIngestionService::REASON_TN_USER_LOOKUP_GAVE_UP);
+        $this->assertSame(0, Message::where('tnpostid', $postId)->count());
+    }
+
     public function test_skips_with_a_username_clash_reason_when_the_address_belongs_to_another_tn_user(): void
     {
         // TN says usernames are not guaranteed unique: an account already holding

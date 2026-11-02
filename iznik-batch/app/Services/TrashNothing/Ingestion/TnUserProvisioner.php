@@ -12,6 +12,7 @@ use App\Services\TrashNothing\Sync\TrashNothingRateLimiter;
 use App\Support\TransactionPolicy;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -46,11 +47,25 @@ class TnUserProvisioner
     public const REASON_NOT_FOUND = 'tn-user-not-found';
 
     /**
-     * TN could not be asked (network error, timeout, 5xx, 429, a challenge, a rejected
-     * key), so nothing is known about the poster. This is transient: the post sync
-     * stops at it and the next run asks again (PostSyncer::sync()).
+     * TN could not be asked (network error, timeout, 408, 429, 5xx, a challenge, a rejected
+     * key), so nothing is known about the poster. This is transient: the post sync stops
+     * at the post and the next run asks again (PostSyncer::sync()), until
+     * LOOKUP_GIVE_UP_AT runs have failed and the reason becomes REASON_LOOKUP_GAVE_UP.
      */
     public const REASON_LOOKUP_FAILED = 'tn-user-lookup-failed';
+
+    /**
+     * TN answered with a client error other than 404 that no retry will change (400, 410,
+     * 422, 451 and the like). It is about this poster, so it is final like a 404: the post
+     * is skipped and the sync moves on. Reported to Sentry once a day for each status.
+     */
+    public const REASON_LOOKUP_REFUSED = 'tn-user-lookup-refused';
+
+    /**
+     * The lookups for this post's poster failed LOOKUP_GIVE_UP_AT times, run after run.
+     * Final: the post is skipped so that one poster cannot hold up every post behind it.
+     */
+    public const REASON_LOOKUP_GAVE_UP = 'tn-user-lookup-gave-up';
 
     /**
      * The username's address belongs to a Freegle user holding a DIFFERENT
@@ -75,20 +90,38 @@ class TnUserProvisioner
 
     private const LOOKUP_CONNECT_TIMEOUT_SECONDS = 5;
 
-    // Consecutive runs that failed to ask TN before Sentry hears of it. A run stops at its
-    // first failure, so a streak counts runs. A blip or two is not worth a report.
-    private const FAILURE_STREAK_REPORT_AT = 3;
+    /**
+     * Failed lookups of one post's poster, counted across runs, at which Sentry first hears
+     * of it. A run stops at the first post it cannot look up, so this is runs: a blip or
+     * two is not worth a report.
+     */
+    public const LOOKUP_WARN_AT = 5;
 
-    private const FAILURE_STREAK_CACHE_KEY = 'tn-user-lookup:failure-streak';
+    /**
+     * Failed lookups of one post's poster after which the post is skipped for good
+     * (REASON_LOOKUP_GAVE_UP). tn:sync runs every minute, so this is about half an hour.
+     */
+    public const LOOKUP_GIVE_UP_AT = 30;
 
-    private const FAILURE_STREAK_TTL_HOURS = 24;
+    private const ATTEMPTS_KEY_PREFIX = 'tn-user-lookup:failed-attempts:';
+
+    // The count outlives the half hour it takes to reach the limit, so a post read again
+    // after it gave up is not given a fresh thirty runs straight away.
+    private const ATTEMPTS_TTL_HOURS = 24;
+
+    private const REJECTED_KEY_REPORTED_KEY = 'tn-user-lookup:rejected-key-reported';
+
+    private const REFUSED_REPORTED_KEY_PREFIX = 'tn-user-lookup:refused-reported:';
+
+    // Client errors that say nothing about the poster: 401/403 are the key (or a block),
+    // 408 and 429 are TN being slow or busy. Every other 4xx is about this poster.
+    private const TRANSIENT_CLIENT_ERRORS = [401, 403, 408, 429];
 
     private ?string $lastFailureReason = null;
 
-    // Each reported at most once per instance, which is once per run.
-    private bool $rejectedKeyReported = false;
-
-    private bool $failureCountedThisRun = false;
+    // The TN post being resolved, so a failed lookup is counted against it. Null when the
+    // caller has no post (nothing is counted then).
+    private ?string $tnPostId = null;
 
     public function __construct(
         private readonly bool $dryRun,
@@ -109,9 +142,15 @@ class TnUserProvisioner
         return $this->lastFailureReason;
     }
 
-    public function resolveOrCreate(int $tnUserId): ?User
+    /**
+     * @param  string|null  $tnPostId  The TN post this poster is wanted for. A failed lookup is
+     *                                 counted against it, across runs, so that a poster TN keeps
+     *                                 failing for stops holding up the sync (LOOKUP_GIVE_UP_AT).
+     */
+    public function resolveOrCreate(int $tnUserId, ?string $tnPostId = null): ?User
     {
         $this->lastFailureReason = null;
+        $this->tnPostId = $tnPostId === '' ? null : $tnPostId;
 
         $user = $this->findByTnUserId($tnUserId);
         if ($user !== null) {
@@ -196,7 +235,7 @@ class TnUserProvisioner
                 'tn_user_id' => $tnUserId,
                 'error'      => $e->getMessage(),
             ]);
-            return $this->fail(self::REASON_LOOKUP_FAILED);
+            return $this->lookupFailed($tnUserId);
         }
 
         $this->trace($tnUserId, 'lost-race user_id=' . $user->id);
@@ -229,10 +268,12 @@ class TnUserProvisioner
     /**
      * TN's record for the user, or null with the reason set.
      *
-     * A 404 is REASON_NOT_FOUND: TN answered, and the answer is no. Anything else that is
-     * not a 200 with a JSON body is REASON_LOOKUP_FAILED, because it says nothing about
-     * the user. A key TN rejects (401/403) is reported, since every lookup will fail
-     * until it is fixed.
+     * TN answering is final. A 404 is REASON_NOT_FOUND, and a client error that no retry
+     * would change (400, 410, 422, 451...) is REASON_LOOKUP_REFUSED. Anything that says
+     * nothing about the poster is REASON_LOOKUP_FAILED and is retried: a network error or
+     * timeout, 408, 429, 5xx, a Cloudflare challenge, a 200 that is not JSON, and the
+     * key being rejected (401/403), which is also reported since every lookup fails until
+     * it is fixed.
      */
     private function fetchTnUser(int $tnUserId): ?array
     {
@@ -244,7 +285,7 @@ class TnUserProvisioner
             }
 
             $payload = json_decode(file_get_contents($file), true);
-            return is_array($payload) ? $payload : $this->fail(self::REASON_LOOKUP_FAILED);
+            return is_array($payload) ? $payload : $this->lookupFailed($tnUserId);
         }
 
         ($this->rateLimiter ?? app(TrashNothingRateLimiter::class))->await();
@@ -262,17 +303,21 @@ class TnUserProvisioner
                 'tn_user_id' => $tnUserId,
                 'error'      => PostSyncer::redactApiKey($e->getMessage()),
             ]);
-            return $this->lookupFailed();
+            return $this->lookupFailed($tnUserId);
         }
 
         // TN's errors are text/html, not JSON, so check the status before
         // decoding. A Cloudflare challenge is a block, not an answer.
         $challenged = (bool) $response->header('cf-mitigated');
+        $status     = $response->status();
 
-        if ($response->status() === 404 && !$challenged) {
-            $this->lookupAnswered();
+        if ($status === 404 && !$challenged) {
             $this->trace($tnUserId, 'not-found');
             return $this->fail(self::REASON_NOT_FOUND);
+        }
+
+        if (!$challenged && $status >= 400 && $status < 500 && !in_array($status, self::TRANSIENT_CLIENT_ERRORS, true)) {
+            return $this->lookupRefused($tnUserId, $response);
         }
 
         $payload = $response->successful() && !$challenged
@@ -282,61 +327,108 @@ class TnUserProvisioner
         if (!is_array($payload)) {
             Log::warning('TN user provisioning: lookup failed', [
                 'tn_user_id'  => $tnUserId,
-                'status'      => $response->status(),
+                'status'      => $status,
                 'retry_after' => $response->header('Retry-After') ?: null,
                 'body'        => PostSyncer::redactApiKey(mb_substr($response->body(), 0, 200)),
             ]);
 
-            if (in_array($response->status(), [401, 403], true) && !$challenged) {
-                $this->reportRejectedKey($response->status());
+            if (in_array($status, [401, 403], true) && !$challenged) {
+                $this->reportRejectedKey($status);
             }
 
-            return $this->lookupFailed();
+            return $this->lookupFailed($tnUserId);
         }
-
-        $this->lookupAnswered();
 
         return $payload;
     }
 
     /**
-     * TN could not be asked. Counts toward the failing streak, once per run.
+     * TN answered with a client error about this poster that a retry would not change. Logged
+     * every time; Sentry hears of each status once a day, enough to learn that TN says it
+     * without a burst of reports when a run meets several.
      */
-    private function lookupFailed(): null
+    private function lookupRefused(int $tnUserId, Response $response): null
     {
-        if (!$this->failureCountedThisRun) {
-            $this->failureCountedThisRun = true;
+        $status = $response->status();
 
-            Cache::add(self::FAILURE_STREAK_CACHE_KEY, 0, now()->addHours(self::FAILURE_STREAK_TTL_HOURS));
-            $streak = Cache::increment(self::FAILURE_STREAK_CACHE_KEY);
+        Log::warning('TN user provisioning: lookup refused', [
+            'tn_user_id' => $tnUserId,
+            'status'     => $status,
+            'body'       => PostSyncer::redactApiKey(mb_substr($response->body(), 0, 200)),
+        ]);
+        $this->trace($tnUserId, 'refused status=' . $status);
 
-            if ($streak === self::FAILURE_STREAK_REPORT_AT) {
-                $this->report('TrashNothing user lookup has failed in ' . self::FAILURE_STREAK_REPORT_AT
-                    . ' consecutive runs: the post sync stops at the first poster it cannot look up, so'
-                    . ' posts from members Freegle has not met are waiting');
+        if (Cache::add(self::REFUSED_REPORTED_KEY_PREFIX . $status, true, now()->addDay())) {
+            $this->report("TrashNothing refused the lookup of a poster with HTTP {$status} (TN user {$tnUserId}):"
+                . ' that is final for the poster, so their posts are skipped. Reported once a day for each status');
+        }
+
+        return $this->fail(self::REASON_LOOKUP_REFUSED);
+    }
+
+    /**
+     * TN could not be asked about this poster. Counted against the post across runs, because
+     * the post sync stops at it and asks again next run, and a poster that always fails
+     * would otherwise hold up every post behind it for ever.
+     *
+     * Sentry hears of it when the count reaches LOOKUP_WARN_AT, so a wedge is seen while it
+     * is still short. At LOOKUP_GIVE_UP_AT the post is given up (REASON_LOOKUP_GAVE_UP):
+     * skipped, and Sentry hears of that too. After that every further failure is a give-up
+     * with no new report, and a lookup that works still ingests the post.
+     *
+     * Nothing is counted without a post, or in a dry run, which must not change the next
+     * real run's count.
+     */
+    private function lookupFailed(int $tnUserId): null
+    {
+        $attempts = $this->countFailedLookup();
+
+        if ($attempts >= self::LOOKUP_GIVE_UP_AT) {
+            if ($attempts === self::LOOKUP_GIVE_UP_AT) {
+                $this->report("TrashNothing post {$this->tnPostId} was skipped after its poster (TN user {$tnUserId})"
+                    . ' could not be looked up in ' . self::LOOKUP_GIVE_UP_AT . ' runs: the sync moves on without it');
             }
+
+            return $this->fail(self::REASON_LOOKUP_GAVE_UP);
+        }
+
+        if ($attempts === self::LOOKUP_WARN_AT) {
+            $this->report("TrashNothing post {$this->tnPostId} has been held up for " . self::LOOKUP_WARN_AT
+                . " runs because its poster (TN user {$tnUserId}) cannot be looked up: the post sync stops at the"
+                . ' post, so later posts are waiting. It is skipped after ' . self::LOOKUP_GIVE_UP_AT . ' runs');
         }
 
         return $this->fail(self::REASON_LOOKUP_FAILED);
     }
 
     /**
-     * TN answered, whatever the answer was, so it is not failing.
+     * This failure added to the post's count, or 0 when nothing is counted.
      */
-    private function lookupAnswered(): void
+    private function countFailedLookup(): int
     {
-        Cache::forget(self::FAILURE_STREAK_CACHE_KEY);
+        if ($this->tnPostId === null || $this->dryRun) {
+            return 0;
+        }
+
+        $key = self::ATTEMPTS_KEY_PREFIX . $this->tnPostId;
+        Cache::add($key, 0, now()->addHours(self::ATTEMPTS_TTL_HOURS));
+        $attempts = Cache::increment($key);
+
+        // False when the entry expired between the add and the increment.
+        return is_int($attempts) ? $attempts : 1;
     }
 
+    /**
+     * At most once an hour: the sync runs every minute and a rejected key fails every run.
+     */
     private function reportRejectedKey(int $status): void
     {
-        if ($this->rejectedKeyReported) {
+        if (!Cache::add(self::REJECTED_KEY_REPORTED_KEY, true, now()->addHour())) {
             return;
         }
-        $this->rejectedKeyReported = true;
 
         $this->report("TrashNothing user lookup was rejected with HTTP {$status}: every poster Freegle has not"
-            . ' met is waiting until the public API key is accepted');
+            . ' met is waiting until the public API key is accepted. Reported at most once an hour');
     }
 
     private function report(string $message): void

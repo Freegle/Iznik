@@ -53,17 +53,26 @@ class GroupPostIngestionService
 
     /**
      * The poster could not be resolved because TN could not be asked who they are (5xx,
-     * 429, timeout, challenge), because their username's address belongs to a Freegle
-     * user with a different tnuserid, or because a deleted account still holds it. See
-     * TnUserProvisioner.
+     * 429, timeout, challenge), because TN refused the lookup (a client error other than
+     * 404), because the lookup failed so many runs running that the post was given up,
+     * because their username's address belongs to a Freegle user with a different
+     * tnuserid, or because a deleted account still holds it. See TnUserProvisioner.
      *
-     * All three exist only because this path CREATES a Freegle user for a TN poster
+     * Only the first is transient: the post sync stops at it and asks again next run, so it
+     * leaves no routed entry until the post is finally ingested or skipped (PostSyncer).
+     * The rest are final.
+     *
+     * All of them exist only because this path CREATES a Freegle user for a TN poster
      * Freegle has never met - a deliberate divergence from email-path case 2, which still
      * drops such a post as REASON_UNKNOWN_USER. Expect API-side Pending (a new user is
      * unmapped) against email-side Dropped/unknown-user for the same post; that is the
      * feature working, not a parity gap.
      */
     public const REASON_TN_USER_LOOKUP_FAILED = TnUserProvisioner::REASON_LOOKUP_FAILED;
+
+    public const REASON_TN_USER_LOOKUP_REFUSED = TnUserProvisioner::REASON_LOOKUP_REFUSED;
+
+    public const REASON_TN_USER_LOOKUP_GAVE_UP = TnUserProvisioner::REASON_LOOKUP_GAVE_UP;
 
     public const REASON_TN_USERNAME_CLASH = TnUserProvisioner::REASON_USERNAME_CLASH;
 
@@ -277,7 +286,7 @@ class GroupPostIngestionService
         // TN poster Freegle has never met is looked up on TN and created, deliberately
         // unlike email-path case 2 - see TnUserProvisioner. The post is skipped only when
         // that fails.
-        $user = $tnUserId ? $this->userProvisioner->resolveOrCreate((int) $tnUserId) : null;
+        $user = $tnUserId ? $this->userProvisioner->resolveOrCreate((int) $tnUserId, (string) $postId) : null;
         if ($user === null) {
             $reason = $tnUserId ? $this->unresolvedUserReason() : self::REASON_NO_USER_ID;
             $traceReason = match ($reason) {
@@ -889,6 +898,8 @@ class GroupPostIngestionService
     {
         return match ($this->userProvisioner->lastFailureReason()) {
             TnUserProvisioner::REASON_LOOKUP_FAILED => self::REASON_TN_USER_LOOKUP_FAILED,
+            TnUserProvisioner::REASON_LOOKUP_REFUSED => self::REASON_TN_USER_LOOKUP_REFUSED,
+            TnUserProvisioner::REASON_LOOKUP_GAVE_UP => self::REASON_TN_USER_LOOKUP_GAVE_UP,
             TnUserProvisioner::REASON_USERNAME_CLASH => self::REASON_TN_USERNAME_CLASH,
             TnUserProvisioner::REASON_ADDRESS_HELD_BY_DELETED_USER => self::REASON_TN_ADDRESS_HELD_BY_DELETED_USER,
             default => self::REASON_UNKNOWN_USER,
