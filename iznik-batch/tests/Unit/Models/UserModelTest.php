@@ -227,6 +227,84 @@ class UserModelTest extends TestCase
         $this->assertNull(User::tnUsernameFromEmail('@user.trashnothing.com'));
     }
 
+    public function test_mods_may_contact_anyone_who_is_not_a_trashnothing_member(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser();
+
+        $this->assertFalse($user->isTrashNothingAccount());
+        $this->assertTrue($user->modsMayContact($group->id), 'a Freegle member needs no membership to be contacted');
+    }
+
+    public function test_mods_may_contact_a_trashnothing_member_through_a_membership_they_chose(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createMembership($user, $group);
+
+        $this->assertTrue($user->modsMayContact($group->id));
+    }
+
+    public function test_mods_may_not_contact_a_trashnothing_member_without_a_membership(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+
+        $this->assertFalse($user->modsMayContact($group->id));
+    }
+
+    public function test_mods_may_not_contact_a_trashnothing_member_placed_on_the_group(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createMembership($user, $group, ['implicit' => 1]);
+
+        $this->assertFalse($user->modsMayContact($group->id));
+    }
+
+    public function test_mods_may_not_contact_a_trashnothing_member_through_a_ripple_join(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createMembership($user, $group, ['rippled' => 1, 'implicit' => 0]);
+
+        $this->assertFalse($user->modsMayContact($group->id));
+    }
+
+    public function test_mods_may_not_contact_a_trashnothing_member_whose_membership_is_pending(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createMembership($user, $group, ['collection' => Membership::COLLECTION_PENDING]);
+
+        $this->assertFalse($user->modsMayContact($group->id));
+    }
+
+    public function test_mods_may_not_contact_a_trashnothing_member_through_a_membership_of_another_group(): void
+    {
+        $group = $this->createTestGroup();
+        $other = $this->createTestGroup();
+        $user = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createMembership($user, $other);
+
+        $this->assertFalse($user->modsMayContact($group->id), 'a membership elsewhere says nothing about this group');
+        $this->assertTrue($user->modsMayContact($other->id));
+    }
+
+    public function test_a_member_known_only_by_a_trashnothing_address_is_held_to_the_same_rule(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => 'someone' . random_int(100000, 999999) . '@user.trashnothing.com']);
+
+        $this->assertNull($user->tnuserid);
+        $this->assertTrue($user->isTrashNothingAccount(), 'the preferred address is enough');
+        $this->assertFalse($user->modsMayContact($group->id));
+
+        $this->createMembership($user, $group);
+
+        $this->assertTrue($user->modsMayContact($group->id));
+    }
+
     public function test_remove_tn_group_preserves_name_without_suffix(): void
     {
         $this->assertEquals('Alice', User::removeTNGroup('Alice'));
