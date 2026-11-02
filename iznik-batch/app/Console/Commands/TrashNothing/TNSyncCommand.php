@@ -132,9 +132,18 @@ class TNSyncCommand extends Command
 
                 // Sync posts (API-based path, off by default — flip FREEGLE_TN_INGEST_POSTS_VIA_API=true to enable).
                 $postsProcessed = 0;
+                $postsStalledAt = null;
                 if (config('freegle.trashnothing.ingest_posts_via_api') || $this->localTesting) {
-                    $postSyncer = new PostSyncer($this->dryRun, $this->localTesting, $this->publicApiKey, $this->apiBaseUrl, $this->loki);
+                    // makeWith() rather than new, so a test can bind a double.
+                    $postSyncer = app()->makeWith(PostSyncer::class, [
+                        'dryRun' => $this->dryRun,
+                        'localTesting' => $this->localTesting,
+                        'apiKey' => $this->publicApiKey,
+                        'apiBaseUrl' => $this->apiBaseUrl,
+                        'loki' => $this->loki,
+                    ]);
                     [$postsProcessed, $postsMaxDate] = $postSyncer->sync($from, $to);
+                    $postsStalledAt = $postSyncer->stalledAt();
                     if ($postsMaxDate && (!$maxChangeDate || $postsMaxDate > $maxChangeDate)) {
                         $maxChangeDate = $postsMaxDate;
                     }
@@ -142,8 +151,21 @@ class TNSyncCommand extends Command
                     Log::info('TN-SYNC-TRACE [POSTS-SKIP] reason=feature-flag-off');
                 }
 
-                // Store the max change date for next sync.
-                if ($maxChangeDate) {
+                // The post sync stopped at a poster TN could not be asked about. Ratings and
+                // user changes may have dates later than that window, but one date is stored
+                // for all three, and the next run has to fetch that window again. The
+                // ratings and changes it fetches again are skipped as already processed.
+                if ($postsStalledAt !== null && $maxChangeDate && strtotime($maxChangeDate) > strtotime($postsStalledAt)) {
+                    Log::warning("TN-SYNC-TRACE [POSTS-STALLED] stored date held back from {$maxChangeDate} to {$postsStalledAt}");
+                    $maxChangeDate = $postsStalledAt;
+                }
+
+                // Store the max change date for next sync. A stalled run has nothing to
+                // store unless it got past where this run began: the window start it
+                // reports can be this run's own start, less than the stored date.
+                if ($postsStalledAt !== null && $maxChangeDate && strtotime($maxChangeDate) <= strtotime($from)) {
+                    Log::info("No change date to store - the post sync stalled at {$postsStalledAt}");
+                } elseif ($maxChangeDate) {
                     $this->storeSyncDate($maxChangeDate);
                 } else {
                     Log::info('No change date to store - no data processed');

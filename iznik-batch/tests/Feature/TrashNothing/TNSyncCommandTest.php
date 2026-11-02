@@ -6,6 +6,7 @@ use App\Console\Commands\TrashNothing\TNSyncCommand;
 use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\LokiService;
+use App\Services\TrashNothing\Sync\PostSyncer;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -1377,6 +1378,106 @@ class TNSyncCommandTest extends TestCase
         $this->assertFileExists($this->dateFile);
         $storedDate = trim(file_get_contents($this->dateFile));
         $this->assertEquals('2026-03-20T15:00:00+00:00', $storedDate);
+    }
+
+    /**
+     * A bound PostSyncer double: the command resolves one with makeWith(), and a closure
+     * binding is honoured where an instance is not.
+     */
+    private function bindPostSyncer(?string $postsMaxDate, ?string $stalledAt): void
+    {
+        $this->app->bind(PostSyncer::class, fn () => new class($postsMaxDate, $stalledAt) extends PostSyncer {
+            public function __construct(private ?string $max, private ?string $stalled) {}
+
+            public function sync(string $from, string $to): array
+            {
+                return [1, $this->max];
+            }
+
+            public function stalledAt(): ?string
+            {
+                return $this->stalled;
+            }
+        });
+    }
+
+    /**
+     * A poster TN could not be asked about stops the post sync. Ratings and user changes
+     * that came in after the window it stopped in must not carry the stored date past the
+     * post, or the next run starts after it and the post is never fetched again.
+     */
+    public function test_the_stored_date_stays_before_a_post_the_sync_stopped_at(): void
+    {
+        config(['freegle.trashnothing.ingest_posts_via_api' => true]);
+        file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
+        $user = $this->createTestUser();
+
+        Http::fake([
+            '*/ratings*' => Http::response([
+                'ratings' => [[
+                    'rating_id' => 'tn_r_stall_' . uniqid(),
+                    'ratee_fd_user_id' => $user->id,
+                    'rating' => 'Up',
+                    'date' => '2026-03-20T15:00:00Z',
+                ]],
+            ], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+        // The posts window began at the stored date less the overlap and stopped there.
+        $this->bindPostSyncer('2026-03-20T09:59:50Z', '2026-03-20T09:59:50Z');
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame('2026-03-20T10:00:00Z', trim(file_get_contents($this->dateFile)), 'no progress to record');
+    }
+
+    public function test_the_stored_date_advances_to_the_window_a_stop_happened_in(): void
+    {
+        config(['freegle.trashnothing.ingest_posts_via_api' => true]);
+        file_put_contents($this->dateFile, '2026-03-17T10:00:00Z');
+        $user = $this->createTestUser();
+
+        Http::fake([
+            '*/ratings*' => Http::response([
+                'ratings' => [[
+                    'rating_id' => 'tn_r_stall2_' . uniqid(),
+                    'ratee_fd_user_id' => $user->id,
+                    'rating' => 'Up',
+                    'date' => '2026-03-20T15:00:00Z',
+                ]],
+            ], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+        // Two days were done and the third stopped at its start.
+        $this->bindPostSyncer('2026-03-19T20:00:00Z', '2026-03-19T09:59:50Z');
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame('2026-03-19T09:59:50Z', trim(file_get_contents($this->dateFile)));
+    }
+
+    public function test_the_stored_date_is_unaffected_when_the_post_sync_got_through(): void
+    {
+        config(['freegle.trashnothing.ingest_posts_via_api' => true]);
+        file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
+        $user = $this->createTestUser();
+
+        Http::fake([
+            '*/ratings*' => Http::response([
+                'ratings' => [[
+                    'rating_id' => 'tn_r_nostall_' . uniqid(),
+                    'ratee_fd_user_id' => $user->id,
+                    'rating' => 'Up',
+                    'date' => '2026-03-20T15:00:00Z',
+                ]],
+            ], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+        $this->bindPostSyncer('2026-03-20T11:00:00Z', null);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame('2026-03-20T15:00:00Z', trim(file_get_contents($this->dateFile)));
     }
 
     public function test_reads_stored_date(): void

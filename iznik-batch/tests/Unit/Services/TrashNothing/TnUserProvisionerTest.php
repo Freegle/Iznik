@@ -15,10 +15,13 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Mockery;
 use OpenAPI\Client\Configuration;
+use Tests\Support\LagsTheReadNode;
 use Tests\TestCase;
 
 class TnUserProvisionerTest extends TestCase
 {
+    use LagsTheReadNode;
+
     private const API_KEY = 'secret-public-key-1234';
 
     /**
@@ -33,6 +36,9 @@ class TnUserProvisionerTest extends TestCase
     /** @var array<int, MessageLogged> */
     private array $logged = [];
 
+    /** @var array<int, array> Guzzle options of each request TN was sent, in order. */
+    private array $requestOptions = [];
+
     private LokiService $loki;
 
     private string $baseUrl;
@@ -45,7 +51,9 @@ class TnUserProvisionerTest extends TestCase
 
         $this->loki = Mockery::mock(LokiService::class)->shouldIgnoreMissing();
 
-        Http::fake(function (Request $request) {
+        Http::fake(function (Request $request, array $options) {
+            $this->requestOptions[] = $options;
+
             if (!preg_match('#^' . preg_quote($this->baseUrl, '#') . '/users/(\d+)\?#', $request->url(), $m)) {
                 return Http::response('not found', 404);
             }
@@ -478,6 +486,214 @@ class TnUserProvisionerTest extends TestCase
         $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason());
         $this->assertNull($provisioner->resolveOrCreate($challenged));
         $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason());
+    }
+
+    public function test_the_lookup_gives_up_quickly(): void
+    {
+        $tnId = $this->tnId();
+        $this->tnUsers[$tnId] = [404, 'User does not exist.'];
+
+        $this->provisioner()->resolveOrCreate($tnId);
+
+        $this->assertCount(1, $this->requestOptions);
+        $this->assertLessThanOrEqual(10, $this->requestOptions[0]['timeout']);
+        $this->assertLessThanOrEqual(5, $this->requestOptions[0]['connect_timeout']);
+    }
+
+    /**
+     * A 404 and a user with no username are TN's answer, and nothing a retry would change.
+     * Anything that stopped TN answering is a failure the next run must ask about again.
+     * The post sync decides whether to stop from this reason, so the two must not blur.
+     */
+    public function test_an_answer_is_definite_and_a_failure_to_get_one_is_not(): void
+    {
+        $notFound   = $this->tnId();
+        $noUsername = $this->tnId();
+        $serverDown = $this->tnId();
+        $timedOut   = $this->tnId();
+        $this->tnUsers[$notFound]   = [404, 'User does not exist.'];
+        $this->tnUsers[$noUsername] = [200, $this->tnUser('', ['username' => null])];
+        $this->tnUsers[$serverDown] = [503, 'Service Unavailable'];
+        $this->tnUsers[$timedOut]   = fn () => throw new ConnectionException('cURL error 28: timed out');
+
+        $reasons = [];
+        foreach ([$notFound, $noUsername, $serverDown, $timedOut] as $id) {
+            $provisioner = $this->provisioner();
+            $this->assertNull($provisioner->resolveOrCreate($id));
+            $reasons[] = $provisioner->lastFailureReason();
+        }
+
+        $this->assertSame([
+            TnUserProvisioner::REASON_NOT_FOUND,
+            TnUserProvisioner::REASON_NOT_FOUND,
+            TnUserProvisioner::REASON_LOOKUP_FAILED,
+            TnUserProvisioner::REASON_LOOKUP_FAILED,
+        ], $reasons);
+    }
+
+    /** Binds a recorder as 'sentry' and returns it. */
+    private function recordSentry(): object
+    {
+        $sentry = new class
+        {
+            public array $calls = [];
+
+            public function captureMessage($message, $severity = null): void
+            {
+                $this->calls[] = [(string) $message, (string) $severity];
+            }
+        };
+        $this->app->instance('sentry', $sentry);
+
+        return $sentry;
+    }
+
+    public function test_a_rejected_key_is_reported_to_sentry_once_a_run(): void
+    {
+        $sentry = $this->recordSentry();
+        $first  = $this->tnId();
+        $second = $this->tnId();
+        $this->tnUsers[$first]  = [401, 'Unauthorized'];
+        $this->tnUsers[$second] = [403, 'Forbidden'];
+
+        $provisioner = $this->provisioner();
+        $this->assertNull($provisioner->resolveOrCreate($first));
+        $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason());
+        $this->assertNull($provisioner->resolveOrCreate($second));
+
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString('rejected', $sentry->calls[0][0]);
+        $this->assertStringNotContainsString(self::API_KEY, $sentry->calls[0][0]);
+        $this->assertSame((string) \Sentry\Severity::error(), $sentry->calls[0][1]);
+
+        $nextRun = $this->provisioner();
+        $this->assertNull($nextRun->resolveOrCreate($first));
+        $this->assertCount(2, $sentry->calls, 'a new run reports again');
+    }
+
+    public function test_a_cloudflare_block_is_not_a_rejected_key(): void
+    {
+        $sentry  = $this->recordSentry();
+        $blocked = $this->tnId();
+        $this->tnUsers[$blocked] = fn () => Http::response('<html>blocked</html>', 403, ['cf-mitigated' => 'challenge']);
+
+        $this->assertNull($this->provisioner()->resolveOrCreate($blocked));
+
+        $this->assertSame([], $sentry->calls);
+    }
+
+    public function test_a_failing_streak_is_reported_once_it_reaches_three_runs(): void
+    {
+        $sentry = $this->recordSentry();
+        $tnId   = $this->tnId();
+        $this->tnUsers[$tnId] = [500, 'Internal Server Error'];
+
+        // One failed lookup in each of three runs. A run stops at its first failure, so
+        // a run can add at most one to the streak.
+        $this->assertNull($this->provisioner()->resolveOrCreate($tnId));
+        $this->assertNull($this->provisioner()->resolveOrCreate($tnId));
+        $this->assertSame([], $sentry->calls, 'two failures are a blip');
+
+        $this->assertNull($this->provisioner()->resolveOrCreate($tnId));
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString('3 consecutive runs', $sentry->calls[0][0]);
+        $this->assertStringNotContainsString(self::API_KEY, $sentry->calls[0][0]);
+
+        $this->assertNull($this->provisioner()->resolveOrCreate($tnId));
+        $this->assertCount(1, $sentry->calls, 'one report for the streak, not one for every run in it');
+    }
+
+    public function test_a_lookup_that_gets_an_answer_ends_the_streak(): void
+    {
+        $sentry = $this->recordSentry();
+        $down   = $this->tnId();
+        $gone   = $this->tnId();
+        $this->tnUsers[$down] = [500, 'Internal Server Error'];
+        $this->tnUsers[$gone] = [404, 'User does not exist.'];
+
+        $this->provisioner()->resolveOrCreate($down);
+        $this->provisioner()->resolveOrCreate($down);
+        $this->provisioner()->resolveOrCreate($gone);
+        $this->provisioner()->resolveOrCreate($down);
+        $this->provisioner()->resolveOrCreate($down);
+
+        $this->assertSame([], $sentry->calls, 'a 404 is an answer, so the earlier failures no longer count');
+    }
+
+    public function test_many_failures_in_one_run_count_once_toward_the_streak(): void
+    {
+        $sentry = $this->recordSentry();
+        $ids    = [$this->tnId(), $this->tnId(), $this->tnId(), $this->tnId()];
+        foreach ($ids as $id) {
+            $this->tnUsers[$id] = [502, 'Bad Gateway'];
+        }
+
+        $provisioner = $this->provisioner();
+        foreach ($ids as $id) {
+            $provisioner->resolveOrCreate($id);
+        }
+
+        $this->assertSame([], $sentry->calls);
+    }
+
+    /**
+     * A poster created a moment ago is on the primary and possibly not yet on the replica.
+     * Reading the replica would ask TN again, try to create them, hit the unique tnuserid
+     * index and fail the post.
+     */
+    public function test_a_poster_created_a_moment_ago_is_found_when_the_replica_is_behind(): void
+    {
+        $tnId = $this->tnId();
+
+        $this->withLaggingReadNode(['users'], function (string $lag) use ($tnId) {
+            $id = DB::connection($lag)->table('users')->insertGetId(['fullname' => 'Just Created', 'added' => now(), 'tnuserid' => $tnId]);
+            DB::setDefaultConnection($lag);
+
+            try {
+                $this->assertNull(User::where('tnuserid', $tnId)->first(), 'the read node has not got the row yet');
+
+                $user = $this->provisioner()->resolveOrCreate($tnId);
+            } finally {
+                DB::setDefaultConnection('mysql');
+                DB::connection($lag)->table('users')->where('id', $id)->delete();
+            }
+
+            $this->assertNotNull($user);
+            $this->assertSame($id, $user->id);
+        });
+
+        Http::assertNothingSent();
+    }
+
+    public function test_a_lost_race_takes_the_winner_from_the_primary_when_the_replica_is_behind(): void
+    {
+        $tnId     = $this->tnId();
+        $username = $this->uniqueUsername('lagrace');
+        $winnerId = null;
+
+        $this->withLaggingReadNode(['users', 'users_emails'], function (string $lag) use ($tnId, $username, &$winnerId) {
+            $this->tnUsers[$tnId] = function () use (&$winnerId, $lag, $tnId, $username) {
+                $winnerId = DB::connection($lag)->table('users')->insertGetId(['fullname' => 'Winner', 'added' => now(), 'tnuserid' => $tnId]);
+
+                return Http::response(json_encode($this->tnUser($username)), 200, ['Content-Type' => 'application/json']);
+            };
+            DB::setDefaultConnection($lag);
+
+            try {
+                $provisioner = $this->provisioner();
+                $user = $provisioner->resolveOrCreate($tnId);
+            } finally {
+                DB::setDefaultConnection('mysql');
+                if ($winnerId !== null) {
+                    DB::connection($lag)->table('users')->where('id', $winnerId)->delete();
+                }
+            }
+
+            $this->assertNotNull($winnerId);
+            $this->assertNotNull($user, 'the winner is on the primary');
+            $this->assertSame($winnerId, $user->id);
+            $this->assertNull($provisioner->lastFailureReason());
+        });
     }
 
     public function test_dry_run_writes_nothing(): void

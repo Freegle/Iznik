@@ -32,12 +32,6 @@ class PostSyncerTest extends TestCase
         $this->enableLokiCapture();
     }
 
-    protected function tearDown(): void
-    {
-        $this->tearDownLokiCapture();
-        parent::tearDown();
-    }
-
     private function makeSyncer(): PostSyncer
     {
         return new PostSyncer(
@@ -390,6 +384,147 @@ class PostSyncerTest extends TestCase
         ])])[0]);
 
         $this->assertSame([], $sentry->calls);
+    }
+
+    // -------------------------------------------------------------------------
+    // A poster TN could not be asked about stops the window. The cursor is stored from
+    // what a run reached, so a post skipped and passed over is never fetched again.
+    // -------------------------------------------------------------------------
+
+    /** @var string[] */
+    private array $fixtureDirs = [];
+
+    /**
+     * A syncer reading three posts from a fixture feed, with an ingestion double whose
+     * answer for the Nth call is $outcomes[N] ('ok', 'unknown-user' or 'lookup-failed').
+     *
+     * @param  string[]  $outcomes
+     * @return array{PostSyncer, object}
+     */
+    private function syncerOverThreePosts(array $outcomes): array
+    {
+        $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
+
+        $dir = 'storage/framework/testing/tn-posts-' . uniqid('', true);
+        mkdir(base_path($dir), 0755, true);
+        $this->fixtureDirs[] = base_path($dir);
+        $posts = [];
+        foreach ([['p1', '2026-07-07T12:00:00Z'], ['p2', '2026-07-07T13:15:00Z'], ['p3', '2026-07-07T14:30:00Z']] as [$id, $date]) {
+            $posts[] = $this->makePost(['post_id' => $id, 'date' => $date, 'latitude' => 10.0, 'longitude' => 10.0]);
+        }
+        file_put_contents(base_path($dir . '/posts_page_1.json'), json_encode(['num_pages' => 1, 'posts' => $posts]));
+
+        $syncer = new PostSyncer(
+            dryRun: true,
+            localTesting: true,
+            apiKey: 'test-key',
+            apiBaseUrl: 'https://example.invalid',
+            loki: app(LokiService::class),
+            fixtureDir: $dir,
+            rateLimiter: new TrashNothingRateLimiter(0),
+        );
+
+        $seen = new class
+        {
+            public array $ingested = [];
+        };
+        $reason = null;
+        $spy = $this->getMockBuilder(GroupPostIngestionService::class)
+            ->setConstructorArgs([true, app(LokiService::class), app(ItemService::class), new TnUserProvisioner(true, true, 'test-key', app(LokiService::class))])
+            ->onlyMethods(['ingest', 'getLastRoutingContext'])
+            ->getMock();
+        $spy->method('ingest')->willReturnCallback(function ($post) use ($outcomes, $seen, &$reason) {
+            $seen->ingested[] = $post['post_id'];
+            $outcome = $outcomes[count($seen->ingested) - 1] ?? 'ok';
+            $reason = match ($outcome) {
+                'unknown-user'  => GroupPostIngestionService::REASON_UNKNOWN_USER,
+                'lookup-failed' => GroupPostIngestionService::REASON_TN_USER_LOOKUP_FAILED,
+                default         => null,
+            };
+
+            return $outcome === 'ok' ? 'approved' : 'skipped';
+        });
+        $spy->method('getLastRoutingContext')->willReturnCallback(function () use (&$reason) {
+            return $reason === null ? [] : ['routing_reason' => $reason];
+        });
+
+        (new \ReflectionProperty(PostSyncer::class, 'ingestionService'))->setValue($syncer, $spy);
+
+        return [$syncer, $seen];
+    }
+
+    protected function tearDown(): void
+    {
+        foreach ($this->fixtureDirs as $dir) {
+            foreach (glob($dir . '/*') ?: [] as $file) {
+                @unlink($file);
+            }
+            @rmdir($dir);
+        }
+        $this->tearDownLokiCapture();
+        parent::tearDown();
+    }
+
+    public function test_a_poster_lookup_failure_stops_the_window_at_that_post(): void
+    {
+        [$syncer, $seen] = $this->syncerOverThreePosts(['ok', 'lookup-failed']);
+
+        [$count, $maxDate] = $syncer->sync('2026-07-07T00:00:00Z', '2026-07-07T23:00:00Z');
+
+        $this->assertSame(['p1', 'p2'], $seen->ingested, 'p3 is left for the run that can look the poster up');
+        $this->assertSame(2, $count);
+        // The feed's order is TN's, so anything in this window may be unseen: the cursor
+        // may not pass the start of the window the failure was in.
+        $this->assertSame('2026-07-07T00:00:00Z', $syncer->stalledAt());
+        $this->assertSame('2026-07-07T00:00:00Z', $maxDate);
+    }
+
+    public function test_a_failure_in_a_later_window_lets_the_cursor_reach_that_window(): void
+    {
+        // Two day windows over a feed that serves the same page for each. The second
+        // window's second post (the fifth call) cannot be looked up.
+        [$syncer, $seen] = $this->syncerOverThreePosts(['ok', 'ok', 'ok', 'ok', 'lookup-failed']);
+
+        [, $maxDate] = $syncer->sync('2026-07-07T00:00:00Z', '2026-07-09T00:00:00Z');
+
+        $this->assertSame(['p1', 'p2', 'p3', 'p1', 'p2'], $seen->ingested);
+        $this->assertSame('2026-07-08T00:00:00Z', $syncer->stalledAt());
+        $this->assertSame('2026-07-07T14:30:00Z', $maxDate, 'what the first window finished');
+    }
+
+    public function test_a_definite_skip_does_not_stop_the_window(): void
+    {
+        // TN answered "no such user": retrying would get the same answer, so the post is
+        // passed over and the cursor moves on.
+        [$syncer, $seen] = $this->syncerOverThreePosts(['ok', 'unknown-user', 'ok']);
+
+        [$count, $maxDate] = $syncer->sync('2026-07-07T00:00:00Z', '2026-07-07T23:00:00Z');
+
+        $this->assertSame(['p1', 'p2', 'p3'], $seen->ingested);
+        $this->assertSame(3, $count);
+        $this->assertNull($syncer->stalledAt());
+        $this->assertSame('2026-07-07T14:30:00Z', $maxDate);
+    }
+
+    public function test_a_later_run_is_not_held_by_an_earlier_stall(): void
+    {
+        [$syncer] = $this->syncerOverThreePosts(['lookup-failed']);
+        $syncer->sync('2026-07-07T00:00:00Z', '2026-07-07T23:00:00Z');
+        $this->assertNotNull($syncer->stalledAt());
+
+        $syncer->sync('2026-07-07T00:00:00Z', '2026-07-07T23:00:00Z');
+
+        $this->assertNull($syncer->stalledAt(), 'the second run got through every post');
+    }
+
+    public function test_a_backfilled_post_whose_poster_could_not_be_looked_up_says_so(): void
+    {
+        [$syncer, $seen] = $this->syncerOverThreePosts(['lookup-failed', 'ok']);
+        $posts = json_decode(file_get_contents($this->fixtureDirs[0] . '/posts_page_1.json'), true)['posts'];
+
+        $this->assertFalse($syncer->ingestFetchedPost($posts[0]), 'try again later');
+        $this->assertTrue($syncer->ingestFetchedPost($posts[1]));
+        $this->assertSame(['p1', 'p2'], $seen->ingested);
     }
 
     /**

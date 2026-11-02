@@ -97,7 +97,7 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
      *
      * @return object{ingested: string[]}
      */
-    private function bindSyncer(?string $date = null): object
+    private function bindSyncer(?string $date = null, bool $posterLookupFails = false): object
     {
         $recorder = new class
         {
@@ -123,8 +123,14 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
             'post'     => ['post_id' => $postId],
         ]);
 
-        $syncer->method('ingestFetchedPost')->willReturnCallback(function (mixed $post) use ($recorder) {
+        $syncer->method('ingestFetchedPost')->willReturnCallback(function (mixed $post) use ($recorder, $posterLookupFails) {
+            if ($posterLookupFails) {
+                return false;
+            }
+
             $recorder->ingested[] = $post['post_id'];
+
+            return true;
         });
 
         $this->bindSyncerInstance($syncer);
@@ -211,6 +217,27 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
         $this->runForPostsArchived(9)->assertExitCode(0);
 
         $this->assertSame(['tn-miss-1'], $recorder->ingested);
+    }
+
+    /**
+     * TN could not be asked who the poster is, so nothing was ingested. That is not a
+     * backfill to remember (it would then count as a repeat miss and fail the run for a
+     * week) and not a failure either: the post is still there to try on the next run.
+     */
+    public function test_a_post_whose_poster_could_not_be_looked_up_is_tried_again_next_run(): void
+    {
+        $this->archivePost('tn-poster-lookup', CarbonImmutable::now('UTC')->subHours(9)->toIso8601String());
+        $this->bindSyncer(posterLookupFails: true);
+
+        $this->runForPostsArchived(9)->assertExitCode(0);
+
+        $this->assertFalse(Cache::has('tn-verify:backfilled:tn-poster-lookup'));
+
+        $recorder = $this->bindSyncer();
+
+        $this->runForPostsArchived(9)->assertExitCode(0);
+
+        $this->assertSame(['tn-poster-lookup'], $recorder->ingested);
     }
 
     public function test_report_only_never_writes(): void

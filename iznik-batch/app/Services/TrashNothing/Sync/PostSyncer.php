@@ -59,6 +59,14 @@ class PostSyncer
     // without the field reports once a run rather than once a post.
     private bool $missingConsentFieldReported = false;
 
+    // Set by processPost() when TN could not be asked who a post's poster is. sync() stops
+    // there; ingestFetchedPost() answers false.
+    private bool $posterLookupFailed = false;
+
+    // Where the last sync() stopped for a poster it could not look up: the start of the
+    // day window the post was in. Null when the run got through every post.
+    private ?string $stalledAt = null;
+
     public function __construct(
         private bool $dryRun,
         private bool $localTesting,
@@ -96,6 +104,7 @@ class PostSyncer
         $api     = $this->buildApiClient();
 
         $this->missingConsentFieldReported = false;
+        $this->stalledAt = null;
 
         // /posts/all requires date_max within 1 day of date_min, so walk day-by-day.
         $cursor = new \DateTime($from, new \DateTimeZone('UTC'));
@@ -117,12 +126,30 @@ class PostSyncer
                 foreach ($posts as $post) {
                     $count++;
                     $maxDate = $this->processPost($post, $maxDate);
+
+                    // TN could not say who posted this, so Freegle cannot tell whether it
+                    // is theirs to ingest. Passing over it would put it behind the stored
+                    // cursor for good, so the window stops here and the next run asks again.
+                    // Like a failed page above, but the failure is in a post, not the feed.
+                    if ($this->posterLookupFailed) {
+                        $this->stalledAt = $cursor->format(self::ISO_UTC);
+                        break 3;
+                    }
                 }
 
                 $page++;
             } while ($hasMore);
 
             $cursor = $windowEnd;
+        }
+
+        // The feed's order is TN's, so any post in the window that stopped may not have been
+        // reached: the cursor must not pass the start of that window.
+        if ($this->stalledAt !== null) {
+            if ($maxDate !== null && strtotime($maxDate) > strtotime($this->stalledAt)) {
+                $maxDate = $this->stalledAt;
+            }
+            Log::warning('TN-SYNC-TRACE [POSTS-STALLED] a poster could not be looked up; the next run resumes from ' . $this->stalledAt);
         }
 
         Log::info('TN-SYNC-TRACE [POSTS-DONE] total=' . $count . ' max_date=' . ($maxDate ?? 'null'));
@@ -136,9 +163,20 @@ class PostSyncer
             'from'     => $from,
             'to'       => $to,
             'dry_run'  => $this->dryRun,
+            'stalled_at' => $this->stalledAt,
         ]);
 
         return [$count, $maxDate];
+    }
+
+    /**
+     * Where the last sync() stopped because TN could not be asked about a poster, or null
+     * if it got through every post. The stored sync date must not go past it, whatever
+     * the other syncers saw: a later run has to fetch that window again.
+     */
+    public function stalledAt(): ?string
+    {
+        return $this->stalledAt;
     }
 
     /**
@@ -207,6 +245,9 @@ class PostSyncer
 
     private function processPost(mixed $post, ?string $maxDate): ?string
     {
+        $this->posterLookupFailed = false;
+        $previousMax = $maxDate;
+
         $date      = is_array($post) ? ($post['date'] ?? null) : $post->getDate()?->format(self::ISO_UTC);
         $postId    = is_array($post) ? ($post['post_id'] ?? '') : $post->getPostId();
         $type      = is_array($post) ? ($post['type'] ?? '') : $post->getType();
@@ -303,13 +344,21 @@ class PostSyncer
             // ingest() returns, a post can never produce two entries — if
             // ingest() throws, nothing was emitted and the catch below emits
             // once instead.
+            $context = $this->ingestionService->getLastRoutingContext();
             $this->logRoutedPost(
                 $postId,
                 $subject,
                 $group,
                 GroupPostIngestionService::outcomeFor($result),
-                $this->ingestionService->getLastRoutingContext(),
+                $context,
             );
+
+            if (($context['routing_reason'] ?? null) === GroupPostIngestionService::REASON_TN_USER_LOOKUP_FAILED) {
+                // Not seen yet: the cursor must not move to this post's date.
+                $this->posterLookupFailed = true;
+
+                return $previousMax;
+            }
         } catch (\Throwable $e) {
             // Reported, not just logged: the sync moves past this post, and only
             // tn:verify-email-coverage, hours later, fetches it again.
@@ -488,13 +537,19 @@ class PostSyncer
      * deliberately does not re-litigate whether the post *should* be ingested,
      * because the decision needs context (the email inventory) that PostSyncer
      * does not have.
+     *
+     * @return bool false when TN could not be asked who the poster is, so nothing was
+     *              decided and the caller should try the post again later; true otherwise
+     *              (including a post ingestion deliberately skipped)
      */
-    public function ingestFetchedPost(mixed $post): void
+    public function ingestFetchedPost(mixed $post): bool
     {
         $this->backfill = true;
 
         try {
             $this->processPost($post, null);
+
+            return !$this->posterLookupFailed;
         } finally {
             $this->backfill = false;
         }

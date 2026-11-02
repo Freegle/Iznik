@@ -209,7 +209,7 @@ class TNVerifyEmailCoverageCommand extends Command
      * Apply the section S.5 rails and, if anything survives them, ingest.
      *
      * @param  array<string, array{post_id: string, subject: string|null, timestamp: string, date: string|null, envelope_to: string, post: mixed}>  $genuine
-     * @return array{enabled: bool, ingested: string[], failed: string[], skipped_stale: string[], repeats: string[], capped: bool, cap: int}
+     * @return array{enabled: bool, ingested: string[], failed: string[], deferred: string[], skipped_stale: string[], repeats: string[], capped: bool, cap: int}
      */
     private function backfill(array $genuine, PostSyncer $syncer): array
     {
@@ -220,6 +220,7 @@ class TNVerifyEmailCoverageCommand extends Command
             'enabled'       => $this->autoIngestEnabled(),
             'ingested'      => [],
             'failed'        => [],
+            'deferred'      => [],
             'skipped_stale' => [],
             'repeats'       => [],
             'capped'        => false,
@@ -266,7 +267,14 @@ class TNVerifyEmailCoverageCommand extends Command
             }
 
             try {
-                $syncer->ingestFetchedPost($entry['post']);
+                // False means TN could not be asked who the poster is, so nothing was decided.
+                // Not remembered as backfilled (it would then be a repeat miss, and fail the
+                // run) and not a failure: it is still a miss, and the next run tries again.
+                if ($syncer->ingestFetchedPost($entry['post']) === false) {
+                    $out['deferred'][] = $postId;
+                    continue;
+                }
+
                 Cache::put(self::BACKFILL_CACHE_PREFIX . $postId, true, now()->addDays(self::BACKFILL_CACHE_TTL_DAYS));
                 $out['ingested'][] = $postId;
             } catch (\Throwable $e) {
@@ -333,6 +341,7 @@ class TNVerifyEmailCoverageCommand extends Command
 
         $this->line(sprintf('  ingested            %d', count($backfill['ingested'])));
         $this->line(sprintf('  failed              %d', count($backfill['failed'])));
+        $this->line(sprintf('  deferred (TN user lookup failed, tried again next run)  %d', count($backfill['deferred'])));
         $this->line(sprintf('  skipped (too old)   %d', count($backfill['skipped_stale'])));
 
         if ($backfill['repeats'] !== []) {
@@ -378,6 +387,7 @@ class TNVerifyEmailCoverageCommand extends Command
                 'backfill_enabled' => $backfill['enabled'],
                 'backfilled'       => count($backfill['ingested']),
                 'backfill_failed'  => count($backfill['failed']),
+                'backfill_deferred' => count($backfill['deferred']),
                 'backfill_stale'   => count($backfill['skipped_stale']),
                 'backfill_capped'  => $backfill['capped'],
                 'repeat_misses'    => count($backfill['repeats']),
