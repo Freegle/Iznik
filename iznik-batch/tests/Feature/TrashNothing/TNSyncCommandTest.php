@@ -1480,6 +1480,75 @@ class TNSyncCommandTest extends TestCase
         $this->assertSame('2026-03-20T15:00:00Z', trim(file_get_contents($this->dateFile)));
     }
 
+    /**
+     * One date is stored for ratings, user changes and posts. A feed TN would not serve has
+     * changes this run never saw, and the other feeds' dates say nothing about where they are,
+     * so the date stays and the next run reads the window again.
+     */
+    public function test_the_stored_date_stays_when_the_user_changes_feed_could_not_be_read(): void
+    {
+        file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
+        $user     = $this->createTestUser();
+        $ratingId = 'tn_r_feedfail_' . uniqid();
+
+        Http::fake([
+            '*/ratings*' => Http::response([
+                'ratings' => [[
+                    'rating_id' => $ratingId,
+                    'ratee_fd_user_id' => $user->id,
+                    'rating' => 'Up',
+                    'date' => '2026-03-20T15:00:00Z',
+                ]],
+            ], 200),
+            '*/user-changes*' => Http::response(null, 500),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame('2026-03-20T10:00:00Z', trim(file_get_contents($this->dateFile)));
+        $this->assertTrue(
+            DB::table('ratings')->where('tn_rating_id', $ratingId)->exists(),
+            'what the run did read was still applied'
+        );
+    }
+
+    public function test_the_stored_date_stays_when_the_ratings_feed_could_not_be_read(): void
+    {
+        file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
+
+        Http::fake([
+            '*/ratings*' => Http::response(null, 500),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => null,
+                    'date' => '2026-03-20T15:00:00Z',
+                ]],
+            ], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame('2026-03-20T10:00:00Z', trim(file_get_contents($this->dateFile)));
+    }
+
+    public function test_the_stored_date_moves_again_once_the_feed_can_be_read(): void
+    {
+        file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::sequence()
+                ->push(null, 500)
+                ->push(['changes' => [['fd_user_id' => null, 'date' => '2026-03-20T15:00:00Z']]], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->assertSame('2026-03-20T10:00:00Z', trim(file_get_contents($this->dateFile)));
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->assertSame('2026-03-20T15:00:00Z', trim(file_get_contents($this->dateFile)));
+    }
+
     public function test_reads_stored_date(): void
     {
         $storedDate = '2026-03-15T00:00:00+00:00';

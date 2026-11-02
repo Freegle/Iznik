@@ -4,9 +4,11 @@ namespace Tests\Unit\Services\TrashNothing;
 
 use App\Models\User;
 use App\Models\UserEmail;
+use App\Models\UserReplyTime;
 use App\Services\LokiService;
 use App\Services\TrashNothing\Sync\TrashNothingRateLimiter;
 use App\Services\TrashNothing\Sync\UserChangesSyncer;
+use Illuminate\Http\Client\Request;
 use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -27,6 +29,9 @@ class UserChangesSyncerTest extends TestCase
     /** @var array<int, array> */
     private array $changes = [];
 
+    /** The first page TN fails to serve, or 0 when it serves them all. */
+    private int $failFromPage = 0;
+
     /** @var array<int, array{string, array}> */
     private array $lokiEvents = [];
 
@@ -39,7 +44,14 @@ class UserChangesSyncerTest extends TestCase
     {
         parent::setUp();
 
-        Http::fake(fn () => Http::response(['changes' => $this->changes], 200));
+        // ONE fake, because fakes merge and the first registered stub wins.
+        Http::fake(function (Request $request) {
+            if ($this->failFromPage > 0 && (int) $request['page'] >= $this->failFromPage) {
+                return Http::response('Internal Server Error', 500);
+            }
+
+            return Http::response(['changes' => $this->changes], 200);
+        });
 
         $this->loki = Mockery::mock(LokiService::class);
         $this->loki->shouldReceive('logEvent')->andReturnUsing(function ($source, $event, $ctx = []) {
@@ -318,5 +330,84 @@ class UserChangesSyncerTest extends TestCase
         $this->assertSame([$preferredAlias => 1, $otherAlias => 0], $this->emailsOf($user));
         $this->assertNotEmpty(array_filter($this->logged, fn ($m) => str_contains($m, '[WRITE] table=users_emails op=insert')));
         $this->assertNotEmpty(array_filter($this->logged, fn ($m) => str_contains($m, '[WRITE] table=users_emails op=delete')));
+    }
+
+    // -------------------------------------------------------------------------
+    // A page TN will not serve stops the run, and the run says so.
+    // -------------------------------------------------------------------------
+
+    private function syncer(): UserChangesSyncer
+    {
+        return new UserChangesSyncer(false, false, 'test-key', self::API_BASE, $this->loki, new TrashNothingRateLimiter(0));
+    }
+
+    /**
+     * A full first page (the syncer asks for another when it gets 100), whose one real change
+     * sets a TN member's reply time, so a test can see the page was applied.
+     */
+    private function fullPageWithOneReplyTime(User $user): void
+    {
+        $filler = array_fill(0, 99, ['fd_user_id' => null, 'date' => '2026-10-01T09:30:00']);
+
+        $this->changes = array_merge($filler, [[
+            'fd_user_id' => $user->id,
+            'reply_time' => 3600,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+    }
+
+    public function test_a_first_page_that_cannot_be_fetched_stops_the_run(): void
+    {
+        $this->failFromPage = 1;
+        $this->changes = [['fd_user_id' => $this->createTestUser()->id, 'reply_time' => 60, 'date' => '2026-10-01T10:00:00']];
+        $syncer = $this->syncer();
+
+        [$count, $maxDate] = $syncer->sync('2026-10-01T09:00:00Z', '2026-10-01T11:00:00Z');
+
+        $this->assertTrue($syncer->fetchFailed());
+        $this->assertSame(0, $count);
+        $this->assertNull($maxDate);
+        Http::assertSentCount(1);
+    }
+
+    public function test_a_later_page_that_cannot_be_fetched_stops_the_run_after_the_pages_it_got(): void
+    {
+        $user = $this->tnUser('Pat', [[$this->username('pat') . self::TN_DOMAIN, 1]]);
+        $this->fullPageWithOneReplyTime($user);
+        $this->failFromPage = 2;
+        $syncer = $this->syncer();
+
+        [$count, $maxDate] = $syncer->sync('2026-10-01T09:00:00Z', '2026-10-01T11:00:00Z');
+
+        $this->assertTrue($syncer->fetchFailed(), 'the caller is told the feed is incomplete');
+        $this->assertSame(100, $count, 'page one was applied');
+        $this->assertSame('2026-10-01T10:00:00', $maxDate);
+        $this->assertSame(3600, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
+        Http::assertSentCount(2);
+    }
+
+    public function test_a_run_that_reads_every_page_did_not_fail(): void
+    {
+        $this->failFromPage = 0;
+        $this->changes = [['fd_user_id' => null, 'date' => '2026-10-01T10:00:00']];
+        $syncer = $this->syncer();
+
+        $syncer->sync('2026-10-01T09:00:00Z', '2026-10-01T11:00:00Z');
+
+        $this->assertFalse($syncer->fetchFailed());
+    }
+
+    public function test_a_failure_does_not_carry_over_to_the_next_run(): void
+    {
+        $this->changes = [['fd_user_id' => null, 'date' => '2026-10-01T10:00:00']];
+        $syncer = $this->syncer();
+
+        $this->failFromPage = 1;
+        $syncer->sync('2026-10-01T09:00:00Z', '2026-10-01T11:00:00Z');
+        $this->assertTrue($syncer->fetchFailed());
+
+        $this->failFromPage = 0;
+        $syncer->sync('2026-10-01T09:00:00Z', '2026-10-01T11:00:00Z');
+        $this->assertFalse($syncer->fetchFailed());
     }
 }

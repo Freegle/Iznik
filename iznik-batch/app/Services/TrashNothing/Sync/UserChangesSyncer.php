@@ -17,6 +17,9 @@ class UserChangesSyncer
 {
     private const PAGE_SIZE = 100;
 
+    // Whether the last sync() stopped because TN's user changes feed could not be read.
+    private bool $fetchFailed = false;
+
     public function __construct(
         private readonly bool $dryRun,
         private readonly bool $localTesting,
@@ -30,6 +33,16 @@ class UserChangesSyncer
     ) {}
 
     /**
+     * Whether the last sync() stopped at a page it could not fetch. Some of the user changes after
+     * it were never seen, and the feed's order is TN's, so the page's position is not known:
+     * the caller must not store a sync date this run, or the next run starts after them.
+     */
+    public function fetchFailed(): bool
+    {
+        return $this->fetchFailed;
+    }
+
+    /**
      * @return array{int, string|null} [count, maxDate]
      */
     public function sync(string $from, string $to): array
@@ -38,9 +51,12 @@ class UserChangesSyncer
         $count   = 0;
         $maxDate = null;
 
+        $this->fetchFailed = false;
+
         do {
             $changes = $this->fetchPage($page, $from, $to);
             if ($changes === null) {
+                $this->fetchFailed = true;
                 break;
             }
 

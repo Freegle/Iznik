@@ -113,9 +113,15 @@ class TNSyncCommand extends Command
 
                 $maxChangeDate = null;
 
+                // The feeds that could not be read in full this run.
+                $failedFeeds = [];
+
                 // Sync ratings.
                 $ratingsSyncer = new RatingsSyncer($this->dryRun, $this->localTesting, $this->apiKey, $this->apiBaseUrl, $this->loki);
                 [$ratingsProcessed, $ratingsMaxDate] = $ratingsSyncer->sync($from, $to);
+                if ($ratingsSyncer->fetchFailed()) {
+                    $failedFeeds[] = 'ratings';
+                }
                 if ($ratingsMaxDate && (!$maxChangeDate || $ratingsMaxDate > $maxChangeDate)) {
                     $maxChangeDate = $ratingsMaxDate;
                 }
@@ -123,6 +129,9 @@ class TNSyncCommand extends Command
                 // Sync user changes.
                 $userChangesSyncer = new UserChangesSyncer($this->dryRun, $this->localTesting, $this->apiKey, $this->apiBaseUrl, $this->loki);
                 [$changesProcessed, $changesMaxDate] = $userChangesSyncer->sync($from, $to);
+                if ($userChangesSyncer->fetchFailed()) {
+                    $failedFeeds[] = 'user changes';
+                }
                 if ($changesMaxDate && (!$maxChangeDate || $changesMaxDate > $maxChangeDate)) {
                     $maxChangeDate = $changesMaxDate;
                 }
@@ -160,10 +169,16 @@ class TNSyncCommand extends Command
                     $maxChangeDate = $postsStalledAt;
                 }
 
-                // Store the max change date for next sync. A stalled run has nothing to
-                // store unless it got past where this run began: the window start it
-                // reports can be this run's own start, less than the stored date.
-                if ($postsStalledAt !== null && $maxChangeDate && strtotime($maxChangeDate) <= strtotime($from)) {
+                // Store the max change date for next sync. A feed that could not be read
+                // has changes this run never saw, and the other feeds' dates say nothing
+                // about where they are, so the stored date stays and the next run reads the
+                // window again. What this run did apply is idempotent.
+                if ($failedFeeds !== []) {
+                    Log::warning('TN-SYNC-TRACE [FEED-FAILED] feeds=' . implode(',', $failedFeeds) . ' stored date not moved');
+                } elseif ($postsStalledAt !== null && $maxChangeDate && strtotime($maxChangeDate) <= strtotime($from)) {
+                    // A stalled run has nothing to store unless it got past where this run
+                    // began: the window start it reports can be this run's own start, less
+                    // than the stored date.
                     Log::info("No change date to store - the post sync stalled at {$postsStalledAt}");
                 } elseif ($maxChangeDate) {
                     $this->storeSyncDate($maxChangeDate);
