@@ -36,6 +36,18 @@ class UpdateSpatialDataCommand extends Command
     private const QUINTILE_MAX_PCT = 30;
 
     /**
+     * The Great Britain extract is about 2.2 GB, and Geofabrik serves it at anything from under
+     * 0.5 to about 2 MB/s, so a whole-transfer limit of ten minutes failed most months: on
+     * 2026-11-01 it gave up with 286 MB received, and /data still held June's extract. Bound the
+     * transfer generously and abort a stall instead: under PBF_STALL_BYTES_PER_SEC for
+     * PBF_STALL_SECONDS means the download has stopped, not that it is slow.
+     */
+    public const PBF_DOWNLOAD_TIMEOUT = 3 * 3600;
+    public const PBF_CONNECT_TIMEOUT = 30;
+    public const PBF_STALL_BYTES_PER_SEC = 10 * 1024;
+    public const PBF_STALL_SECONDS = 300;
+
+    /**
      * Execute the console command.
      */
     public function handle(): int
@@ -152,8 +164,15 @@ class UpdateSpatialDataCommand extends Command
         $tempPath = "{$filePath}.tmp";
         $this->line("  Downloading {$url} ...");
         try {
-            $response = Http::timeout(600)
-                ->withOptions(['verify' => false])
+            $response = Http::timeout(self::PBF_DOWNLOAD_TIMEOUT)
+                ->connectTimeout(self::PBF_CONNECT_TIMEOUT)
+                ->withOptions([
+                    'verify' => false,
+                    'curl' => [
+                        CURLOPT_LOW_SPEED_LIMIT => self::PBF_STALL_BYTES_PER_SEC,
+                        CURLOPT_LOW_SPEED_TIME => self::PBF_STALL_SECONDS,
+                    ],
+                ])
                 ->sink($tempPath)
                 ->get($url);
 
