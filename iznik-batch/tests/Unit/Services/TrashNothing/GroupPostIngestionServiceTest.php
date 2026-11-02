@@ -379,6 +379,25 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertSame(0, Message::where('tnpostid', $postId)->count());
     }
 
+    public function test_skips_with_its_own_reason_when_a_deleted_account_holds_the_tnuserid(): void
+    {
+        $tnId    = random_int(900000000, 999999999);
+        $deleted = $this->createTestUser(['tnuserid' => $tnId, 'deleted' => now()]);
+        $group   = $this->createTestGroup();
+        $postId  = 'tn-deleted-tnuserid-' . uniqid();
+
+        $service = $this->makeService(dryRun: false);
+
+        $this->assertSame('skipped', $service->ingest($this->makePost(['post_id' => $postId, 'user_id' => $tnId]), $group));
+        $this->assertSame(
+            ['routing_reason' => GroupPostIngestionService::REASON_TN_ACCOUNT_DELETED],
+            $service->getLastRoutingContext(),
+        );
+        $this->assertSame('tn-account-deleted', GroupPostIngestionService::REASON_TN_ACCOUNT_DELETED);
+        $this->assertSame(0, Message::where('tnpostid', $postId)->count());
+        $this->assertSame(0, Message::where('fromuser', $deleted->id)->count(), 'nothing lands on the deleted account');
+    }
+
     public function test_resolves_the_poster_by_tn_user_id_and_never_by_freegle_id(): void
     {
         // The collision seen on 2026-09-25: a Freegle account whose id happens to equal

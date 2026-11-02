@@ -42,7 +42,8 @@ class TnUserProvisioner
 {
     /**
      * TN has no user with this id (404), or gives no usable username for it. TN
-     * answered, so this is final: the post is skipped and the sync moves on.
+     * answered, so this is final: the post is skipped and the sync moves on. The answer is
+     * remembered for ANSWER_TTL_HOURS, so TN is not asked again for each of the poster's posts.
      */
     public const REASON_NOT_FOUND = 'tn-user-not-found';
 
@@ -57,7 +58,8 @@ class TnUserProvisioner
     /**
      * TN answered with a client error other than 404 that no retry will change (400, 410,
      * 422, 451 and the like). It is about this poster, so it is final like a 404: the post
-     * is skipped and the sync moves on. Reported to Sentry once a day for each status.
+     * is skipped and the sync moves on. Reported to Sentry once a day for each status. Remembered
+     * for ANSWER_TTL_HOURS like a 404.
      */
     public const REASON_LOOKUP_REFUSED = 'tn-user-lookup-refused';
 
@@ -80,6 +82,16 @@ class TnUserProvisioner
      * taking it back from a deleted account is not this class's decision.
      */
     public const REASON_ADDRESS_HELD_BY_DELETED_USER = 'tn-address-held-by-deleted-user';
+
+    /**
+     * A deleted Freegle account still holds this tnuserid. users.tnuserid is unique, so no
+     * live account can be given it, and a post must not go to a deleted one. Deleting is a
+     * decision (the member leaving, or a merge), and it is not this class's to undo by
+     * taking the id back. The id is released when the account is forgotten (User::forget()
+     * and UserManagementService::forgetUser() both clear it), after which the poster's next
+     * post finds or makes a live account.
+     */
+    public const REASON_ACCOUNT_DELETED = 'tn-account-deleted';
 
     // MySQL ER_DUP_ENTRY.
     private const DUPLICATE_KEY = 1062;
@@ -108,6 +120,16 @@ class TnUserProvisioner
     // The count outlives the half hour it takes to reach the limit, so a post read again
     // after it gave up is not given a fresh thirty runs straight away.
     private const ATTEMPTS_TTL_HOURS = 24;
+
+    private const ANSWER_KEY_PREFIX = 'tn-user-lookup:final-answer:';
+
+    // TN's final answer about a poster is remembered this long. It has to cover the posts
+    // of every overlapping sync window that meets the poster, and short enough that a member
+    // who gets a username (or whom TN restores) is picked up the next day.
+    private const ANSWER_TTL_HOURS = 24;
+
+    // The only answers worth remembering: TN replied, and a retry would get the same reply.
+    private const REMEMBERED_REASONS = [self::REASON_NOT_FOUND, self::REASON_LOOKUP_REFUSED];
 
     private const REJECTED_KEY_REPORTED_KEY = 'tn-user-lookup:rejected-key-reported';
 
@@ -157,6 +179,19 @@ class TnUserProvisioner
             return $user;
         }
 
+        // Checked before TN is asked: whatever TN says, this id cannot go to a live account
+        // while a deleted one holds it.
+        if ($this->deletedAccountHolds($tnUserId)) {
+            $this->trace($tnUserId, 'account-deleted');
+            return $this->fail(self::REASON_ACCOUNT_DELETED);
+        }
+
+        $remembered = $this->rememberedAnswer($tnUserId);
+        if ($remembered !== null) {
+            $this->trace($tnUserId, 'remembered result=' . $remembered);
+            return $this->fail($remembered);
+        }
+
         $tnUser = $this->fetchTnUser($tnUserId);
         if ($tnUser === null) {
             // fetchTnUser() set the reason.
@@ -167,7 +202,7 @@ class TnUserProvisioner
         $email    = $username === '' ? '' : User::tnEmailForUsername($username);
         if ($username === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $this->trace($tnUserId, 'no-usable-username');
-            return $this->fail(self::REASON_NOT_FOUND);
+            return $this->failFinal($tnUserId, self::REASON_NOT_FOUND);
         }
 
         try {
@@ -255,7 +290,16 @@ class TnUserProvisioner
      */
     private function findByTnUserId(int $tnUserId): ?User
     {
-        return User::where('tnuserid', $tnUserId)->orderBy('id')->useWritePdo()->first();
+        return User::where('tnuserid', $tnUserId)->whereNull('deleted')->orderBy('id')->useWritePdo()->first();
+    }
+
+    /**
+     * Whether a deleted account holds this tnuserid. Read from the primary, like the live
+     * lookup, so the two always agree about who holds the id.
+     */
+    private function deletedAccountHolds(int $tnUserId): bool
+    {
+        return User::where('tnuserid', $tnUserId)->whereNotNull('deleted')->useWritePdo()->exists();
     }
 
     private function fail(string $reason): null
@@ -263,6 +307,32 @@ class TnUserProvisioner
         $this->lastFailureReason = $reason;
 
         return null;
+    }
+
+    /**
+     * TN's own final answer about this poster (REMEMBERED_REASONS): remembered for
+     * ANSWER_TTL_HOURS so that the same poster is not asked about again for every post they
+     * make, in every sync window that overlaps. Only an answer is remembered, never a
+     * failure to get one, and nothing is written by a dry run or from fixtures.
+     */
+    private function failFinal(int $tnUserId, string $reason): null
+    {
+        if (!$this->dryRun && !$this->localTesting) {
+            Cache::put(self::ANSWER_KEY_PREFIX . $tnUserId, $reason, now()->addHours(self::ANSWER_TTL_HOURS));
+        }
+
+        return $this->fail($reason);
+    }
+
+    private function rememberedAnswer(int $tnUserId): ?string
+    {
+        if ($this->localTesting) {
+            return null;
+        }
+
+        $reason = Cache::get(self::ANSWER_KEY_PREFIX . $tnUserId);
+
+        return in_array($reason, self::REMEMBERED_REASONS, true) ? $reason : null;
     }
 
     /**
@@ -313,7 +383,7 @@ class TnUserProvisioner
 
         if ($status === 404 && !$challenged) {
             $this->trace($tnUserId, 'not-found');
-            return $this->fail(self::REASON_NOT_FOUND);
+            return $this->failFinal($tnUserId, self::REASON_NOT_FOUND);
         }
 
         if (!$challenged && $status >= 400 && $status < 500 && !in_array($status, self::TRANSIENT_CLIENT_ERRORS, true)) {
@@ -363,7 +433,7 @@ class TnUserProvisioner
                 . ' that is final for the poster, so their posts are skipped. Reported once a day for each status');
         }
 
-        return $this->fail(self::REASON_LOOKUP_REFUSED);
+        return $this->failFinal($tnUserId, self::REASON_LOOKUP_REFUSED);
     }
 
     /**

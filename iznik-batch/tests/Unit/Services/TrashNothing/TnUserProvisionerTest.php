@@ -433,10 +433,77 @@ class TnUserProvisionerTest extends TestCase
     }
 
     /**
-     * Nothing is remembered, so a member who had no username when TN was
-     * first asked is created once they have one.
+     * TN's 404 is an answer, and the same answer comes back for every post the poster makes in
+     * every sync window that overlaps, so the first one is remembered and the rest are not
+     * asked. Each run is its own provisioner, so only the cache carries it.
      */
-    public function test_a_miss_is_asked_again(): void
+    public function test_a_not_found_poster_is_remembered_and_not_asked_again(): void
+    {
+        $tnId = $this->tnId();
+        $this->tnUsers[$tnId] = [404, "User {$tnId} does not exist."];
+
+        foreach (range(1, 3) as $run) {
+            $provisioner = $this->provisioner();
+
+            $this->assertNull($provisioner->resolveOrCreate($tnId, "gone-post-{$run}"));
+            $this->assertSame(TnUserProvisioner::REASON_NOT_FOUND, $provisioner->lastFailureReason(), "run {$run}");
+        }
+
+        $this->assertSame(1, $this->lookupsFor($tnId));
+    }
+
+    public function test_a_poster_with_no_username_is_remembered_too(): void
+    {
+        $tnId = $this->tnId();
+        $this->tnUsers[$tnId] = [200, $this->tnUser('', ['username' => null])];
+
+        foreach (range(1, 3) as $run) {
+            $provisioner = $this->provisioner();
+
+            $this->assertNull($provisioner->resolveOrCreate($tnId));
+            $this->assertSame(TnUserProvisioner::REASON_NOT_FOUND, $provisioner->lastFailureReason(), "run {$run}");
+        }
+
+        $this->assertSame(1, $this->lookupsFor($tnId));
+    }
+
+    /** A refusal is TN's answer about the poster too, and keeps its own reason when remembered. */
+    public function test_a_refused_poster_is_remembered_with_its_reason(): void
+    {
+        $this->recordSentry();
+        $tnId = $this->tnId();
+        $this->tnUsers[$tnId] = [410, 'Gone'];
+
+        foreach (range(1, 3) as $run) {
+            $provisioner = $this->provisioner();
+
+            $this->assertNull($provisioner->resolveOrCreate($tnId));
+            $this->assertSame(TnUserProvisioner::REASON_LOOKUP_REFUSED, $provisioner->lastFailureReason(), "run {$run}");
+        }
+
+        $this->assertSame(1, $this->lookupsFor($tnId));
+    }
+
+    public function test_each_poster_is_remembered_on_their_own(): void
+    {
+        $first  = $this->tnId();
+        $second = $this->tnId();
+        $this->tnUsers[$first]  = [404, 'No.'];
+        $this->tnUsers[$second] = [404, 'No.'];
+
+        $this->provisioner()->resolveOrCreate($first);
+        $this->provisioner()->resolveOrCreate($first);
+        $this->provisioner()->resolveOrCreate($second);
+
+        $this->assertSame(1, $this->lookupsFor($first));
+        $this->assertSame(1, $this->lookupsFor($second), 'the other poster was not covered by the first answer');
+    }
+
+    /**
+     * A day, not for ever: a member who had no username when TN was first asked is created once
+     * they have one.
+     */
+    public function test_a_remembered_miss_is_asked_again_after_a_day(): void
     {
         $tnId     = $this->tnId();
         $username = $this->uniqueUsername('later');
@@ -445,11 +512,115 @@ class TnUserProvisionerTest extends TestCase
         $this->assertNull($this->provisioner()->resolveOrCreate($tnId));
 
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
+        $this->travel(23)->hours();
+        $this->assertNull($this->provisioner()->resolveOrCreate($tnId), 'still inside the day');
+        $this->assertSame(1, $this->lookupsFor($tnId));
+
+        $this->travel(2)->hours();
         $user = $this->provisioner()->resolveOrCreate($tnId);
+        $this->travelBack();
 
         $this->assertNotNull($user);
         $this->assertSame($tnId, (int) $user->fresh()->tnuserid);
         $this->assertSame(2, $this->lookupsFor($tnId));
+    }
+
+    /** The remembered answer is only a stand-in for asking TN: an account that holds the id wins. */
+    public function test_a_remembered_miss_does_not_hide_an_account_that_has_since_been_linked(): void
+    {
+        $tnId = $this->tnId();
+        $this->tnUsers[$tnId] = [404, 'No.'];
+        $this->assertNull($this->provisioner()->resolveOrCreate($tnId));
+
+        $linked = $this->createTestUser(['tnuserid' => $tnId]);
+
+        $this->assertSame($linked->id, $this->provisioner()->resolveOrCreate($tnId)->id);
+        $this->assertSame(1, $this->lookupsFor($tnId));
+    }
+
+    /** Only an answer is remembered. Not getting one says nothing about the poster. */
+    public function test_a_failure_to_ask_is_not_remembered(): void
+    {
+        $tnId     = $this->tnId();
+        $username = $this->uniqueUsername('back');
+        $this->tnUsers[$tnId] = [503, 'Service Unavailable'];
+
+        $provisioner = $this->provisioner();
+        $this->assertNull($provisioner->resolveOrCreate($tnId));
+        $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason());
+
+        $this->tnUsers[$tnId] = fn () => throw new ConnectionException('cURL error 28: timed out');
+        $this->assertNull($this->provisioner()->resolveOrCreate($tnId));
+
+        $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
+        $user = $this->provisioner()->resolveOrCreate($tnId);
+
+        $this->assertNotNull($user, 'asked again each time, and answered the third');
+        $this->assertSame($tnId, (int) $user->fresh()->tnuserid);
+    }
+
+    /** A dry run must leave nothing behind for the next real run. */
+    public function test_a_dry_run_remembers_nothing(): void
+    {
+        $tnId = $this->tnId();
+        $this->tnUsers[$tnId] = [404, 'No.'];
+
+        $this->assertNull($this->provisioner(dryRun: true)->resolveOrCreate($tnId));
+        $this->assertNull($this->provisioner(dryRun: true)->resolveOrCreate($tnId));
+        $this->assertSame(2, $this->lookupsFor($tnId), 'a dry run asks every time');
+
+        $this->assertNull($this->provisioner()->resolveOrCreate($tnId));
+        $this->assertSame(3, $this->lookupsFor($tnId), 'and the real run was not answered by it');
+    }
+
+    public function test_a_deleted_account_holding_the_tnuserid_gets_no_post(): void
+    {
+        $tnId    = $this->tnId();
+        $deleted = $this->createTestUser(['tnuserid' => $tnId, 'deleted' => now()]);
+        $this->tnUsers[$tnId] = [200, $this->tnUser($this->uniqueUsername('left'))];
+
+        $provisioner = $this->provisioner();
+
+        $this->assertNull($provisioner->resolveOrCreate($tnId));
+        $this->assertSame(TnUserProvisioner::REASON_ACCOUNT_DELETED, $provisioner->lastFailureReason());
+        $this->assertSame('tn-account-deleted', TnUserProvisioner::REASON_ACCOUNT_DELETED);
+        Http::assertNothingSent();
+        $this->assertSame([$deleted->id], User::where('tnuserid', $tnId)->pluck('id')->all(), 'the id stays where it is');
+    }
+
+    /**
+     * users.tnuserid is unique, so a live account found by address cannot be stamped with an id a
+     * deleted account holds. That used to fail on the index and be counted as a failed lookup.
+     */
+    public function test_a_live_account_on_the_address_is_not_linked_while_a_deleted_account_holds_the_tnuserid(): void
+    {
+        $tnId     = $this->tnId();
+        $username = $this->uniqueUsername('twin');
+        $live     = $this->createTestUser(['email_preferred' => "{$username}-g7@user.trashnothing.com"]);
+        $this->createTestUser(['tnuserid' => $tnId, 'deleted' => now()]);
+        $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
+
+        $provisioner = $this->provisioner();
+
+        $this->assertNull($provisioner->resolveOrCreate($tnId, 'twin-post'));
+        $this->assertSame(TnUserProvisioner::REASON_ACCOUNT_DELETED, $provisioner->lastFailureReason());
+        $this->assertNull($live->fresh()->tnuserid);
+    }
+
+    /** What forgetting the account does (User::forget() clears tnuserid): the poster is new again. */
+    public function test_once_the_deleted_account_lets_go_of_the_tnuserid_the_poster_gets_a_live_account(): void
+    {
+        $tnId     = $this->tnId();
+        $deleted  = $this->createTestUser(['tnuserid' => $tnId, 'deleted' => now()]);
+        $this->tnUsers[$tnId] = [200, $this->tnUser($this->uniqueUsername('back'))];
+        $this->assertNull($this->provisioner()->resolveOrCreate($tnId));
+
+        DB::table('users')->where('id', $deleted->id)->update(['tnuserid' => null]);
+        $user = $this->provisioner()->resolveOrCreate($tnId);
+
+        $this->assertNotNull($user);
+        $this->assertNotSame($deleted->id, $user->id);
+        $this->assertSame($tnId, (int) $user->fresh()->tnuserid);
     }
 
     public function test_username_that_makes_an_invalid_address_is_a_miss(): void
