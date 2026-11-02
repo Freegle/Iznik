@@ -162,6 +162,7 @@ so duplicates created from now on are still merged and the reviewed backlog wait
 - `User::isTN()` - Check if user is from TN
 - `User::findByTNId($id)` - Look up user by TN ID
 - `User::removeTNGroup($name)` - Remove `-gxxx` suffix from display names
+- `users:fix-tn-names` (daily) - Names a member who has no name from the group alias they came in on. It leaves alone any member whose name is already `User::tnDisplayName()` of one of their usernames, and never derives a name from a bare `username@` address, where a hyphen belongs to the username
 - `User::canonMail($email)` - Normalize TN email addresses
 - `User::tnUsernameFromEmail($email)` - The TN username behind a bare or per-group address
 
@@ -326,7 +327,11 @@ into a Freegle user:
 1. A user with that `users.tnuserid` is used, with no call to TN.
 2. Otherwise it asks TN's public API, `GET /users/{id}`, with the developer key as `?api_key=`
    (a header gets 401), paced by the rate limiter the posts sync shares. TN's errors are
-   `text/html`, so the status is read before the body is decoded.
+   `text/html`, so the status is read before the body is decoded. The call gives up after 10
+   seconds (5 to connect), because it holds up the whole sync. The lookups for an existing
+   `tnuserid`, and for the winner of a lost race below, read the primary: a poster created a
+   moment ago may not be on the replica yet, and missing them there fails the post on the
+   unique index.
 3. The username gives `username@user.trashnothing.com`, which TN confirm is deliverable, so a
    reply to the post reaches the member.
 4. A live account already holding that address, or a per-group alias of the same username,
@@ -343,10 +348,23 @@ any poster. When no user can be had the post is skipped with a `routing_reason`:
 
 | `routing_reason` | Cause |
 |---|---|
-| `Post from unknown user` | TN has no such user (404), or no usable username for them |
-| `tn-user-lookup-failed` | TN could not be asked (5xx, 429, timeout, Cloudflare challenge); the next window asks again |
+| `Post from unknown user` | TN has no such user (404), or no usable username for them. TN answered, so this is final |
+| `tn-user-lookup-failed` | TN could not be asked (network error, timeout, 5xx, 429, Cloudflare challenge, a rejected key). Transient: the sync stops here and the next run asks again, below |
 | `tn-username-clash` | An account with a different `tnuserid` holds the address: usernames are not unique, so these are two people |
 | `tn-address-held-by-deleted-user` | A deleted account still holds the bare address, which is unique and not the provisioner's to take back |
+
+**A failed lookup stops the sync; an answered one does not.** A post whose poster TN would not
+answer for cannot be judged, and passing over it would put it behind the stored cursor for good.
+So `PostSyncer::sync()` stops at the first one (`stalledAt()`), and `tn:sync` holds the stored
+date back to the start of the day window it stopped in, even when ratings or user changes saw
+later dates. Nothing is lost by re-reading: ingestion skips a post it already has, and ratings
+and changes are idempotent. The same goes for `tn:verify-email-coverage`: a backfill whose
+poster lookup failed is neither remembered as backfilled (it would come back as a repeat miss
+and fail the run) nor counted as a failure, and is tried again next run. Because one post holds
+up the window, a lookup that keeps failing is reported to Sentry rather than left in the log:
+a rejected key (401/403) once per run, and three runs in a row that could not ask TN once per
+streak. A 404 or an empty username is an answer: it does not count toward a streak, and it
+ends one.
 
 Nothing is remembered about a miss. `tn:sync` and the hourly `tn:verify-email-coverage`
 backfill can provision the same poster at once; the loser of the `tnuserid` unique index takes
@@ -505,7 +523,11 @@ moderators, who are the ones with no relationship to the poster.
 (`PutChatRoom`), writing in one (`CreateChatMessage`), Mail and the member standard messages
 (`PostMemberships` `Leave (Approved) Member`), and a reply about a post (`prepareModReply`).
 `ProcessBackgroundTasksCommand` checks again before it sends a standard message, so a task
-queued before the member left sends nothing.
+queued before the member left sends nothing. `Reject` and `Delete Approved Member` remove the
+membership first, so the table can no longer answer by the time the task runs. `PostMemberships`
+decides before it deletes and puts the answer in the task as `modsmaycontact`, which the batch
+uses in place of the lookup. A task without the key (every other action, and tasks queued before
+it existed) still asks the table.
 
 - **A chat closes when they leave.** The check runs before `PutChatRoom` hands back an
   existing room, and `CreateChatMessage` refuses a moderator writing in one, so an old chat
@@ -519,7 +541,8 @@ queued before the member left sends nothing.
   from a Freegle user, so the "{Group} Volunteers" or moderator sender name is lost.
   `TrashNothingSignOff` adds "From the volunteers who run {group}" to the body of a
   moderator's chat message (`ChatNotification`) and of a standard message or reply about a
-  post (`ModStdMessageMail`) to a TrashNothing member.
+  post (`ModStdMessageMail`) to a TrashNothing member. A chat mail signs only the new message,
+  not the earlier ones it quotes.
 - **Replying joins them to nothing.** A TrashNothing member joins communities through
   TrashNothing. The reply join in `CreateChatMessage` and a `replied` join through
   `PUT /memberships` skip them (the latter answers success, so the reply flow goes on), and
@@ -564,6 +587,15 @@ lookup when it names coordinates that resolve to no group — a post the email p
 would itself have dropped as an unknown group. A header that is missing or
 unparseable establishes nothing and must never be read as "unplaceable": that
 would file a real coverage gap in a bucket the report labels expected.
+
+The verifier knows nothing of why ingestion skipped a post: it only asks whether
+`messages.tnpostid` exists. So a post ingestion skipped on purpose with a reason that is
+final (an unknown user, a banned poster, a `tn-username-clash`, a
+`tn-address-held-by-deleted-user`) is a genuine miss here, as an unknown user always was. With
+auto-ingest on, such a post is "backfilled" (skipped again) and, if it falls in the overlap
+between two runs, comes back as a repeat miss and fails the second. Only the crosspost,
+unplaceable, deleted, resolved and bumped cases are told apart, and they are told apart from
+TN's side, not ingestion's.
 
 Genuine misses can be backfilled automatically (`FREEGLE_TN_VERIFY_AUTO_INGEST`,
 off by default) via `PostSyncer::ingestFetchedPost()`, which reuses the normal
@@ -638,7 +670,9 @@ Syncs:
 - Username changes: the old username is read from the member's preferred TN address, not
   from `fullname`, which is a display name. Every address of the old username, bare and
   per-group alias, moves to the new one with its suffix and preferred flag kept. If another
-  member already holds one of the new addresses nothing changes and a Sentry message is sent.
+  member already holds one of the new addresses, or the new username does not make a valid
+  address, nothing changes. Every later change event for the member repeats the username, so
+  the rename is logged each time and reported to Sentry once per member per day.
 - Location updates
 - Account removal notifications
 
