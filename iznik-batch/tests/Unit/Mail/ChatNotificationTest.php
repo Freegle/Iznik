@@ -2223,6 +2223,41 @@ class ChatNotificationTest extends TestCase
         $this->assertStringContainsString($signOff, $this->renderTextEmail($mail));
     }
 
+    /**
+     * The mail shows the earlier messages of the chat above the new one. Only the new
+     * message is the volunteers writing to the member now; signing each quoted earlier
+     * message as well put the line in the mail once per message.
+     */
+    public function test_only_the_new_moderator_message_is_signed_not_the_quoted_earlier_ones(): void
+    {
+        ['mail' => $unused, 'member' => $member, 'moderator' => $moderator, 'room' => $room, 'group' => $group] = $this->createUser2ModChatSetup([
+            'member_attrs' => ['tnuserid' => random_int(900000000, 999999999)],
+            'moderator_attrs' => [],
+            'sender' => 'moderator',
+            'message_text' => 'Setup message',
+        ]);
+
+        $earlier = collect([
+            $this->createTestChatMessage($room, $moderator, ['message' => 'First earlier volunteer note.', 'date' => now()->subMinutes(20)]),
+            $this->createTestChatMessage($room, $member, ['message' => 'A reply from the member.', 'date' => now()->subMinutes(15)]),
+            $this->createTestChatMessage($room, $moderator, ['message' => 'Second earlier volunteer note.', 'date' => now()->subMinutes(10)]),
+        ]);
+        $latest = $this->createTestChatMessage($room, $moderator, ['message' => 'The new volunteer message.']);
+
+        $mail = new ChatNotification($member, $moderator, $room, $latest, ChatRoom::TYPE_USER2MOD, $earlier);
+        $mail->build();
+        $signOff = \App\Support\TrashNothingSignOff::line($group->namedisplay ?: $group->namefull ?: $group->nameshort);
+
+        $html = $mail->render();
+        $this->assertStringContainsString('First earlier volunteer note.', $html);
+        $this->assertStringContainsString('Second earlier volunteer note.', $html);
+        $this->assertStringContainsString('The new volunteer message.', $html);
+        $this->assertSame(1, substr_count($html, e($signOff)), 'the new message is signed once and the quoted ones not at all');
+
+        $text = $this->renderTextEmail($mail);
+        $this->assertSame(1, substr_count($text, $signOff));
+    }
+
     public function test_a_moderators_message_to_an_ordinary_member_is_not_signed(): void
     {
         ['mail' => $mail] = $this->createUser2ModChatSetup([
