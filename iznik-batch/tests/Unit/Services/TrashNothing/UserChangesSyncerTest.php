@@ -226,6 +226,84 @@ class UserChangesSyncerTest extends TestCase
         $this->assertNotEmpty(array_filter($this->logged, fn ($m) => str_contains($m, '[NAME-CHANGE]') && str_contains($m, 'email-clash')));
     }
 
+    /** Binds a recorder as 'sentry' and returns it. */
+    private function recordSentry(): object
+    {
+        $sentry = new class
+        {
+            public array $calls = [];
+
+            public function captureMessage($message, $severity = null): void
+            {
+                $this->calls[] = (string) $message;
+            }
+        };
+        $this->app->instance('sentry', $sentry);
+
+        return $sentry;
+    }
+
+    /**
+     * TN's change feed repeats a member's username on every change to their account, so a
+     * rename that cannot be applied comes round again and again. It is worth one report,
+     * not one for every event.
+     */
+    public function test_a_blocked_rename_is_reported_once_a_day_however_often_the_event_comes_round(): void
+    {
+        $sentry = $this->recordSentry();
+        $old = $this->username('old.name');
+        $new = $this->username('new.name');
+        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123" . self::TN_DOMAIN, 1]]);
+        $this->tnUser('Someone Else', [["{$new}-g123" . self::TN_DOMAIN, 1]]);
+
+        $this->sync($user->id, $new);
+        $this->sync($user->id, $new);
+        $this->sync($user->id, $new);
+
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString("user {$user->id}", $sentry->calls[0]);
+
+        // Every event is still logged.
+        $this->assertCount(3, array_filter($this->logged, fn ($m) => str_contains($m, '[NAME-CHANGE]') && str_contains($m, 'email-clash')));
+    }
+
+    public function test_a_blocked_rename_for_another_member_is_reported_too(): void
+    {
+        $sentry = $this->recordSentry();
+        $new = $this->username('new.name');
+        $this->tnUser('Holder', [["{$new}-g123" . self::TN_DOMAIN, 1]]);
+
+        foreach ([1, 2] as $i) {
+            $old = $this->username('old.name');
+            $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123" . self::TN_DOMAIN, 1]]);
+            $this->sync($user->id, $new);
+        }
+
+        $this->assertCount(2, $sentry->calls, json_encode($sentry->calls));
+    }
+
+    /**
+     * The username becomes part of an address, and users_emails.email takes whatever it
+     * is given. One that does not make a valid address is not written.
+     */
+    public function test_a_username_that_does_not_make_a_valid_address_changes_nothing(): void
+    {
+        $sentry = $this->recordSentry();
+        $old = $this->username('old.name');
+        $alias = "{$old}-g123" . self::TN_DOMAIN;
+        $user = $this->tnUser(User::tnDisplayName($old), [[$alias, 1]]);
+
+        $this->sync($user->id, 'has a space');
+        $this->sync($user->id, 'has a space');
+
+        $user = $user->fresh();
+        $this->assertSame(User::tnDisplayName($old), $user->fullname);
+        $this->assertSame([$alias => 1], $this->emailsOf($user));
+        $this->assertSame([], $this->renameEvents());
+        $this->assertNotEmpty(array_filter($this->logged, fn ($m) => str_contains($m, '[NAME-CHANGE]') && str_contains($m, 'invalid-address')));
+        $this->assertCount(1, $sentry->calls, 'reported once a day, like a clash');
+    }
+
     public function test_dry_run_rename_writes_nothing(): void
     {
         $old = $this->username('old.name');

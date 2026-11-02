@@ -8,6 +8,7 @@ use App\Models\UserAboutMe;
 use App\Models\UserEmail;
 use App\Models\UserReplyTime;
 use App\Services\LokiService;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -204,16 +205,25 @@ class UserChangesSyncer
             }
         }
 
+        // The username becomes part of an address, so it has to make a valid one, as the
+        // provisioner requires of the same username. Nothing is written otherwise.
+        foreach ($renames as [, $newEmail]) {
+            if (!filter_var($newEmail, FILTER_VALIDATE_EMAIL)) {
+                $this->renameBlocked($user, $oldUsername, $newUsername, 'invalid-address=' . $newEmail,
+                    "TN rename of user {$user->id} to {$newEmail} is not a valid address");
+
+                return;
+            }
+        }
+
         // users_emails.email is UNIQUE, so an address another member holds cannot be
         // added. Change nothing rather than throw: the exception would also stop this
         // change row's location and reply time being applied.
         foreach ($renames as [, $newEmail]) {
             $holder = UserEmail::where('email', $newEmail)->where('userid', '!=', $user->id)->value('userid');
             if ($holder) {
-                Log::info('TN-SYNC-TRACE [NAME-CHANGE] fd_user_id=' . $user->id . ' old=' . $oldUsername . ' new=' . $newUsername . ' email-clash=' . $newEmail . ' held_by=' . $holder);
-                if (function_exists('\Sentry\captureMessage')) {
-                    \Sentry\captureMessage("TN rename of user {$user->id} to {$newEmail} clashes with user {$holder}");
-                }
+                $this->renameBlocked($user, $oldUsername, $newUsername, 'email-clash=' . $newEmail . ' held_by=' . $holder,
+                    "TN rename of user {$user->id} to {$newEmail} clashes with user {$holder}");
 
                 return;
             }
@@ -234,6 +244,20 @@ class UserChangesSyncer
                 'old_email' => $oldEmail,
                 'new_email' => $newEmail,
             ]);
+        }
+    }
+
+    /**
+     * A rename that cannot be applied. Every change event for the member carries their
+     * username, so the same rename is met again on each later event: it is logged each
+     * time and reported to Sentry once per member per day.
+     */
+    private function renameBlocked(User $user, string $oldUsername, string $newUsername, string $why, string $report): void
+    {
+        Log::info('TN-SYNC-TRACE [NAME-CHANGE] fd_user_id=' . $user->id . ' old=' . $oldUsername . ' new=' . $newUsername . ' ' . $why);
+
+        if (Cache::add('tn-sync:rename-blocked:' . $user->id, true, now()->addDay()) && app()->bound('sentry')) {
+            app('sentry')->captureMessage($report);
         }
     }
 
