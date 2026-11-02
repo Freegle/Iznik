@@ -419,6 +419,11 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, minutes uint64, all
 		}
 	}
 
+	// A reported thread (reviewrequired = 1) is held out of the ordinary feed, but
+	// ChitChat moderators are the people it was reported to and must still see it
+	// in the feed, or they only find it via the link in the report email.
+	modSeesReported := auth.IsChitChatMod(myid)
+
 	var newsfeed []NewsfeedSummary
 
 	// Get the top-level threads, i.e. replyto IS NULL.  Put a limit on the number of threads we get - we're
@@ -462,7 +467,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, minutes uint64, all
 		// 4. PINNED alerts (any location), capped at 5. Only pinned alerts - central Freegle
 		//    announcements - are allowed to escape the geographic filter.
 		db.Raw(
-			fmt.Sprintf(
+			feedReviewGate(modSeesReported, fmt.Sprintf(
 				"(SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, "+
 					"(CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,"+
 					"(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, "+
@@ -543,7 +548,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, minutes uint64, all
 					"ORDER BY pinned DESC, timestamp DESC "+
 					"LIMIT 5) "+
 					"ORDER BY pinned DESC, timestamp DESC LIMIT 100;",
-				leafSQL, leafSQL, utils.NEWSFEED_EVENTS_PER_FEED, alertArmIndex, alertArmGeo, alertsPerFeed),
+				leafSQL, leafSQL, utils.NEWSFEED_EVENTS_PER_FEED, alertArmIndex, alertArmGeo, alertsPerFeed)),
 			feedArgs(myid, swlat, swlng, nelat, nelng, userLat, userLng, start, leafArgs, alertArmGeoArgs)...,
 		).Scan(&newsfeed)
 	} else {
@@ -576,7 +581,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, minutes uint64, all
 		}
 
 		db.Raw(
-			fmt.Sprintf(
+			feedReviewGate(modSeesReported, fmt.Sprintf(
 				"(SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, "+
 					"pinned, newsfeed.timestamp, "+
 					"(CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,"+
@@ -632,7 +637,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64, minutes uint64, all
 					"%s"+
 					"ORDER BY pinned DESC, newsfeed.timestamp DESC LIMIT %d "+
 					") ORDER BY pinned DESC, timestamp DESC LIMIT 100;",
-				utils.NEWSFEED_EVENTS_PER_FEED, alertGeo, alertsPerFeed),
+				utils.NEWSFEED_EVENTS_PER_FEED, alertGeo, alertsPerFeed)),
 			append([]interface{}{
 				// UNION 1: regular posts
 				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
@@ -1856,4 +1861,16 @@ func feedArgs(myid uint64, swlat, swlng, nelat, nelng, userLat, userLng float64,
 		utils.NEWSFEED_TYPE_ALERT,
 	)
 	return args
+}
+
+// feedReviewGate lifts the "reviewrequired = 0" condition from the feed SQL for
+// a viewer who moderates ChitChat. Reported threads carry reviewrequired = 1 and
+// are otherwise hidden from everyone, including the moderators they were
+// reported to. Hidden threads are still filtered per viewer afterwards.
+func feedReviewGate(modSees bool, sql string) string {
+	if !modSees {
+		return sql
+	}
+
+	return strings.ReplaceAll(sql, "reviewrequired = 0", "reviewrequired IN (0, 1)")
 }
