@@ -136,7 +136,6 @@ class AuthorityStatsServiceTest extends TestCase
         $cpi = app(CPIService::class)->getCPIData();
         $this->assertSame(ReuseBenefit::getBenefitPerTonne(null, $cpi), $report['benefitPerTonne']);
         $this->assertSame(ReuseBenefit::getFlyTipSavingPerItem(null, $cpi), $report['flyTipPerItem']);
-        $this->assertSame(ReuseBenefit::getFlyTipCost(null, $cpi), $report['flyTipCost']);
 
         // Monthly totals (the trivial group is excluded by the 3 kg cutoff).
         $this->assertSame(['members' => 120, 'weight' => 150.0, 'outcomes' => 14.0], $report['totals'][0]);
@@ -300,8 +299,8 @@ class AuthorityStatsServiceTest extends TestCase
 
         // Every year after 2025 is priced at 2025.
         $this->assertSame(1422.0, $service->getBenefitPerTonne());
+        // A fly-tip costs 29 x 100 / 77.5 (the 2003-06 average), and each gift saves 1.95% of that.
         $base = (75.5 + 76.5 + 78.1 + 79.9) / 4;
-        $this->assertEqualsWithDelta(29 * 100.0 / $base, $service->getFlyTipCost(), 1e-9);
         $this->assertEqualsWithDelta(0.0195 * 29 * 100.0 / $base, $service->getFlyTipSavingPerItem(), 1e-9);
     }
 }

@@ -121,12 +121,6 @@ class AuthorityStatsService
         return ReuseBenefit::getFlyTipSavingPerItem(null, $this->cpiData());
     }
 
-    /** Cost to a council of clearing one fly-tip, in GBP, at current-year prices. */
-    public function getFlyTipCost(): float
-    {
-        return ReuseBenefit::getFlyTipCost(null, $this->cpiData());
-    }
-
     /** tCO2eq saved per tonne reused. */
     public function getCo2PerTonne(): float
     {
@@ -143,7 +137,7 @@ class AuthorityStatsService
      * @return array{
      *   name:string, quarter:int, year:string,
      *   months:array<int, array{start:string,end:string,formatted:string}>,
-     *   benefitPerTonne:float, co2PerTonne:float, flyTipPerItem:float, flyTipCost:float,
+     *   benefitPerTonne:float, co2PerTonne:float, flyTipPerItem:float,
      *   totals:array<int, array{members:int, weight:float, outcomes:float}>,
      *   groups:array<int, array{namedisplay:string, members:array<int,int>, weight:array<int,float>, outcomes:array<int,float>}>,
      *   shortlinks:array<int, array{id:int, name:string, clicks:array<int,int>}>,
@@ -263,7 +257,6 @@ class AuthorityStatsService
             'benefitPerTonne' => $this->getBenefitPerTonne(),
             'co2PerTonne' => $this->getCo2PerTonne(),
             'flyTipPerItem' => $this->getFlyTipSavingPerItem(),
-            'flyTipCost' => $this->getFlyTipCost(),
             'totals' => $totals,
             'groups' => $groups,
             'shortlinks' => $links,

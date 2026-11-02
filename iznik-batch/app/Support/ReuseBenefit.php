@@ -156,16 +156,12 @@ class ReuseBenefit
     /**
      * A short note saying how much of a benefit figure is the fly-tipping
      * saving, and where that comes from. The same wording as the web pages.
-     * $costPerFlyTip is the uprated clearance cost; by default, current prices.
      */
-    public static function describeFlyTipSaving(float $saving, ?float $costPerFlyTip = null): string
+    public static function describeFlyTipSaving(float $saving): string
     {
         $amount = number_format(round($saving));
-        $cost = number_format(round($costPerFlyTip ?? self::getFlyTipCost()));
 
-        return "Includes £{$amount} saved on clearing up fly-tipping. "
-            . 'A 2020 study of Freegle data estimated that 2 in every 100 items '
-            . 'given away would otherwise be fly-tipped, and that each clear-up costs '
-            . "a council £29 at 2003-06 prices, which is £{$cost} after inflation.";
+        return "Includes £{$amount} saved on clearing up fly-tipping, based on a 2020 "
+            . 'study of Freegle data by DEFRA volunteers.';
     }
 }

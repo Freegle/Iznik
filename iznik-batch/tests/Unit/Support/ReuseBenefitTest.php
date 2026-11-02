@@ -278,14 +278,8 @@ class ReuseBenefitTest extends TestCase
     public function test_describe_flytip_saving_matches_the_web_wording(): void
     {
         $this->assertSame(
-            'Includes £8,034 saved on clearing up fly-tipping. A 2020 study of Freegle data '
-            . 'estimated that 2 in every 100 items given away would otherwise be fly-tipped, and '
-            . 'that each clear-up costs a council £29 at 2003-06 prices, which is £52 after inflation.',
-            ReuseBenefit::describeFlyTipSaving(8034.4, 51.79)
-        );
-        $this->assertStringContainsString(
-            '£' . number_format(round(ReuseBenefit::getFlyTipCost())) . ' after inflation',
-            ReuseBenefit::describeFlyTipSaving(0)
+            'Includes £8,034 saved on clearing up fly-tipping, based on a 2020 study of Freegle data by DEFRA volunteers.',
+            ReuseBenefit::describeFlyTipSaving(8034.4)
         );
     }
 }

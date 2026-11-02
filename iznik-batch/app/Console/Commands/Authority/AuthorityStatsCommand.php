@@ -155,7 +155,7 @@ class AuthorityStatsCommand extends Command
         $sheet->setCellValue('E12', $benefit($totWeight, $totGifts));
         $sheet->setCellValue(
             'A14',
-            '* ' . ReuseBenefit::describeFlyTipSaving($totGifts * $flyTipPerItem, $report['flyTipCost'])
+            '* ' . ReuseBenefit::describeFlyTipSaving($totGifts * $flyTipPerItem)
         );
 
         // Number of gifts made.

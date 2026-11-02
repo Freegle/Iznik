@@ -117,9 +117,11 @@ class AuthorityStatsCommandTest extends TestCase
         // The quarter: 600 kg and 53 gifts. 853.20 + 53 x 0.7297 = 891.87.
         $this->assertEqualsWithDelta(891.9, (float) $standard->getCell('E12')->getValue(), 0.001);
 
-        $note = (string) $standard->getCell('A14')->getValue();
-        $this->assertStringStartsWith('* Includes £39 saved on clearing up fly-tipping.', $note);
-        $this->assertStringContainsString('which is £37 after inflation.', $note);
+        // 53 gifts at £0.73 each.
+        $this->assertSame(
+            '* Includes £39 saved on clearing up fly-tipping, based on a 2020 study of Freegle data by DEFRA volunteers.',
+            $standard->getCell('A14')->getValue()
+        );
 
         // Postcode AB1 2: 25 kg and 1 gift. 35.55 + 0.73 = 36.28.
         $postcode = $sheet->getSheetByName('Postcode breakdown');
