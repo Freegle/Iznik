@@ -37,6 +37,12 @@ operational facts (from their component READMEs and
 - They rebuild that graph on start, which takes several minutes, so a restart is not
   instant.
 - Rippling, the daily digest and browse depend on them being up.
+- On the database nodes monit starts the routing server as its own systemd unit with 4 GB of
+  memory the kernel may not reclaim or swap, and `system.slice` carries the same 4 GB
+  reservation (`systemctl set-property system.slice MemoryMin=4G`), without which the unit's
+  reservation has no effect. The standby node's router is idle until a failover; unprotected, its
+  graph went to swap within hours, and the first requests after a failover were then slow enough
+  to stop reach checks altogether.
 
 Plan restarts of these services with that warm-up time in mind.
 
