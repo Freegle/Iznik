@@ -193,9 +193,9 @@ describe('useReuseBenefit', () => {
       const note = describeFlyTipSaving(8034.4)
       expect(note).toContain('£8,034')
       expect(note).toContain('fly-tipping')
-      expect(note).toContain('2 in every 100 items')
-      expect(note).toContain('£29 at 2003-06 prices')
-      expect(note).toContain('£' + Math.round(getFlyTipCost()).toLocaleString())
+      expect(note).toContain(
+        'based on a 2020 study of Freegle data by DEFRA volunteers'
+      )
     })
   })
 

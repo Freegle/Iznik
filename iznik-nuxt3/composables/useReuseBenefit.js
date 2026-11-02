@@ -185,12 +185,9 @@ function calculateFlyTipSaving(items, targetYear = null) {
  */
 function describeFlyTipSaving(saving) {
   const amount = Math.round(saving || 0).toLocaleString()
-  const cost = Math.round(getFlyTipCost()).toLocaleString()
   return (
-    `Includes £${amount} saved on clearing up fly-tipping. ` +
-    'A 2020 study of Freegle data estimated that 2 in every 100 items ' +
-    'given away would otherwise be fly-tipped, and that each clear-up costs ' +
-    `a council £29 at 2003-06 prices, which is £${cost} after inflation.`
+    `Includes £${amount} saved on clearing up fly-tipping, based on a 2020 ` +
+    'study of Freegle data by DEFRA volunteers.'
   )
 }
 
