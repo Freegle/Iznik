@@ -111,7 +111,8 @@ function getCPI(year) {
  * Calculate the inflation multiplier from the base year to the target year.
  */
 function getInflationMultiplier(targetYear = null) {
-  const year = targetYear || new Date().getFullYear()
+  // The WRAP value is never priced below its 2011 level.
+  const year = Math.max(targetYear || new Date().getFullYear(), BASE_YEAR)
   const baseCPI = getCPI(BASE_YEAR)
   const targetCPI = getCPI(year)
   return targetCPI / baseCPI

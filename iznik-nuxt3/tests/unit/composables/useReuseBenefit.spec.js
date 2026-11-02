@@ -69,6 +69,12 @@ describe('useReuseBenefit', () => {
       expect(getInflationMultiplier(BASE_YEAR)).toBe(1)
     })
 
+    it('never prices the WRAP value below its 2011 level', () => {
+      // The table holds 2003 onwards for the fly-tipping costs.
+      expect(getInflationMultiplier(2005)).toBe(1)
+      expect(getBenefitPerTonne(2005)).toBe(711)
+    })
+
     it('compounds up through the CPI series', () => {
       const m2015 = getInflationMultiplier(2015)
       const m2024 = getInflationMultiplier(2024)

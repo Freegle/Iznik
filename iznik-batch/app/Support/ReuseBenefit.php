@@ -13,6 +13,10 @@ namespace App\Support;
  * By default the hardcoded FALLBACK_CPI_DATA and the current year are used. A
  * CPI data array may optionally be injected (e.g. from CPIService's config row)
  * for callers that want the latest published figures.
+ *
+ * The benefit shown to councils also includes the fly-tipping clear-up costs
+ * avoided for each item given away. This matches the frontend's
+ * useReuseBenefit.js; see docs/developers/reference/impact-figures.md.
  */
 class ReuseBenefit
 {
@@ -21,9 +25,20 @@ class ReuseBenefit
 
     /**
      * Hardcoded fallback UK CPI Annual Averages (2015=100).
-     * Source: ONS MM23 dataset, series D7BT. Last updated: January 2025.
+     * Source: ONS MM23 dataset, series D7BT. Last updated: November 2026.
+     *
+     * It starts in 2003 because the fly-tipping clearance costs are in 2003-06
+     * prices.
      */
     public const FALLBACK_CPI_DATA = [
+        2003 => 75.5,
+        2004 => 76.5,
+        2005 => 78.1,
+        2006 => 79.9,
+        2007 => 81.8,
+        2008 => 84.7,
+        2009 => 86.6,
+        2010 => 89.4,
         2011 => 93.4,
         2012 => 96.1,
         2013 => 98.5,
@@ -38,6 +53,7 @@ class ReuseBenefit
         2022 => 121.7,
         2023 => 130.5,
         2024 => 133.9,
+        2025 => 138.4,
     ];
 
     /** Base year for the WRAP benefits of reuse value. */
@@ -48,6 +64,23 @@ class ReuseBenefit
 
     /** CO2 impact per tonne (tCO2eq) - not inflation adjusted. */
     public const CO2_PER_TONNE = 0.51;
+
+    /**
+     * Share of people who fly-tip: a Keep Britain Tidy survey of 1,000
+     * Londoners (2018) found 26, 21, 16 and 15 had fly-tipped a TV, oven,
+     * mattress or sofa. The mean is 19.5 in 1,000. From the 2020 analysis of
+     * Freegle's 2019 data.
+     */
+    public const FLYTIP_SHARE = 0.0195;
+
+    /**
+     * Defra's standard clearance cost in GBP for "other single item" and for
+     * "car boot load or less" (ENV24 notes), based on council data for 2003-06.
+     */
+    public const FLYTIP_COST = 29;
+
+    /** The years the clearance cost was measured in. */
+    public const FLYTIP_COST_YEARS = [2003, 2004, 2005, 2006];
 
     /**
      * Get the CPI value for a given year, clamped to the available range.
@@ -75,7 +108,8 @@ class ReuseBenefit
      */
     public static function getInflationMultiplier(?int $targetYear = null, ?array $cpiData = null): float
     {
-        $year = $targetYear ?? (int) date('Y');
+        // The WRAP value is never priced below its 2011 level.
+        $year = max($targetYear ?? (int) date('Y'), self::BASE_YEAR);
         $baseCPI = self::getCPI(self::BASE_YEAR, $cpiData);
         $targetCPI = self::getCPI($year, $cpiData);
         return $targetCPI / $baseCPI;
@@ -89,5 +123,49 @@ class ReuseBenefit
     {
         $multiplier = self::getInflationMultiplier($targetYear, $cpiData);
         return round(self::BASE_BENEFIT_PER_TONNE * $multiplier);
+    }
+
+    /**
+     * The cost to a council of clearing one fly-tip, in GBP, uprated from the
+     * average CPI of 2003-06. By default, adjusts to current year prices.
+     *
+     * Injected CPI data that lacks the early years (the config row has held
+     * 2011 onwards) is filled in from the fallback table.
+     */
+    public static function getFlyTipCost(?int $targetYear = null, ?array $cpiData = null): float
+    {
+        $data = ($cpiData ?: []) + self::FALLBACK_CPI_DATA;
+        ksort($data);
+        $year = $targetYear ?? (int) date('Y');
+
+        $base = 0.0;
+        foreach (self::FLYTIP_COST_YEARS as $y) {
+            $base += self::getCPI($y, $data);
+        }
+        $base /= count(self::FLYTIP_COST_YEARS);
+
+        return self::FLYTIP_COST * self::getCPI($year, $data) / $base;
+    }
+
+    /** The fly-tipping clear-up cost avoided for each item given away, in GBP. */
+    public static function getFlyTipSavingPerItem(?int $targetYear = null, ?array $cpiData = null): float
+    {
+        return self::FLYTIP_SHARE * self::getFlyTipCost($targetYear, $cpiData);
+    }
+
+    /**
+     * A short note saying how much of a benefit figure is the fly-tipping
+     * saving, and where that comes from. The same wording as the web pages.
+     * $costPerFlyTip is the uprated clearance cost; by default, current prices.
+     */
+    public static function describeFlyTipSaving(float $saving, ?float $costPerFlyTip = null): string
+    {
+        $amount = number_format(round($saving));
+        $cost = number_format(round($costPerFlyTip ?? self::getFlyTipCost()));
+
+        return "Includes £{$amount} saved on clearing up fly-tipping. "
+            . 'A 2020 study of Freegle data estimated that 2 in every 100 items '
+            . 'given away would otherwise be fly-tipped, and that each clear-up costs '
+            . "a council £29 at 2003-06 prices, which is £{$cost} after inflation.";
     }
 }

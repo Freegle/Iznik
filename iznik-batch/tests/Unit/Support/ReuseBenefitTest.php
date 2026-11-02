@@ -27,10 +27,15 @@ class ReuseBenefitTest extends TestCase
     {
         $years = array_keys(ReuseBenefit::FALLBACK_CPI_DATA);
 
-        $this->assertSame(2011, min($years));
-        $this->assertSame(2024, max($years));
-        $this->assertCount(14, $years);
-        $this->assertSame(ReuseBenefit::BASE_YEAR, min($years));
+        // From 2003, for the fly-tipping costs in 2003-06 prices, to the latest
+        // full year ONS has published.
+        $this->assertSame(2003, min($years));
+        $this->assertSame(2025, max($years));
+        $this->assertCount(23, $years);
+        $this->assertContains(ReuseBenefit::BASE_YEAR, $years);
+        foreach (ReuseBenefit::FLYTIP_COST_YEARS as $year) {
+            $this->assertContains($year, $years);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -40,14 +45,15 @@ class ReuseBenefitTest extends TestCase
     public static function cpiProvider(): array
     {
         return [
-            'below min clamps to earliest' => [1990, 93.4],
-            'just below min clamps' => [2010, 93.4],
-            'exact min year' => [2011, 93.4],
+            'below min clamps to earliest' => [1990, 75.5],
+            'just below min clamps' => [2002, 75.5],
+            'exact min year' => [2003, 75.5],
+            'WRAP base year' => [2011, 93.4],
             'mid-range year' => [2020, 108.7],
             'repeated value year' => [2015, 100.0],
-            'exact max year' => [2024, 133.9],
-            'just above max clamps to latest' => [2025, 133.9],
-            'far future clamps to latest' => [2100, 133.9],
+            'exact max year' => [2025, 138.4],
+            'just above max clamps to latest' => [2026, 138.4],
+            'far future clamps to latest' => [2100, 138.4],
         ];
     }
 
@@ -115,15 +121,18 @@ class ReuseBenefitTest extends TestCase
     public function test_multiplier_future_year_clamped_to_latest(): void
     {
         $this->assertSame(
-            ReuseBenefit::getInflationMultiplier(2024),
+            ReuseBenefit::getInflationMultiplier(2025),
             ReuseBenefit::getInflationMultiplier(2060)
         );
-        $this->assertEqualsWithDelta(133.9 / 93.4, ReuseBenefit::getInflationMultiplier(2060), 1e-12);
+        $this->assertEqualsWithDelta(138.4 / 93.4, ReuseBenefit::getInflationMultiplier(2060), 1e-12);
     }
 
     public function test_multiplier_year_before_base_is_one(): void
     {
         $this->assertSame(1.0, ReuseBenefit::getInflationMultiplier(1980));
+        // The table holds years before 2011 now, but the WRAP value is still
+        // never priced below its 2011 level.
+        $this->assertSame(1.0, ReuseBenefit::getInflationMultiplier(2005));
     }
 
     public function test_multiplier_with_injected_data(): void
@@ -158,8 +167,9 @@ class ReuseBenefitTest extends TestCase
             'base year' => [2011, 711.0],
             'before base year' => [1999, 711.0],
             '2020' => [2020, 827.0],
-            'latest year' => [2024, 1019.0],
-            'future clamped' => [2035, 1019.0],
+            '2024' => [2024, 1019.0],
+            'latest year' => [2025, 1054.0],
+            'future clamped' => [2035, 1054.0],
         ];
     }
 
@@ -204,5 +214,78 @@ class ReuseBenefitTest extends TestCase
         $this->assertSame(1422.0, ReuseBenefit::getBenefitPerTonne(2020, [2011 => 50.0, 2020 => 100.0]));
         $this->assertSame(1067.0, ReuseBenefit::getBenefitPerTonne(2020, [2011 => 2.0, 2020 => 3.0]));
         $this->assertSame(711.0, ReuseBenefit::getBenefitPerTonne(2011, [2011 => 2.0, 2020 => 3.0]));
+    }
+
+    // -------------------------------------------------------------------------
+    // Fly-tipping
+    // -------------------------------------------------------------------------
+
+    public function test_flytip_constants_are_from_the_2020_analysis(): void
+    {
+        // Keep Britain Tidy survey: 26, 21, 16 and 15 in 1,000. The mean is 19.5.
+        $this->assertSame(0.0195, ReuseBenefit::FLYTIP_SHARE);
+        // Defra standard cost for a single item and for a car boot load.
+        $this->assertSame(29, ReuseBenefit::FLYTIP_COST);
+        $this->assertSame([2003, 2004, 2005, 2006], ReuseBenefit::FLYTIP_COST_YEARS);
+    }
+
+    public function test_flytip_reproduces_the_2019_result_in_its_own_prices(): void
+    {
+        // The analysis ran over 289,944 items offered in 2019. Its random runs
+        // gave a mean of £162,697 and a range of £112,444 to £234,571.
+        $saving = ReuseBenefit::FLYTIP_SHARE * ReuseBenefit::FLYTIP_COST * 289944;
+
+        $this->assertSame(163963.0, round($saving));
+    }
+
+    public function test_flytip_cost_is_uprated_from_the_2003_06_average(): void
+    {
+        $base = (75.5 + 76.5 + 78.1 + 79.9) / 4;
+
+        $this->assertEqualsWithDelta(29 * 138.4 / $base, ReuseBenefit::getFlyTipCost(2025), 1e-9);
+        $this->assertEqualsWithDelta(29 * 76.5 / $base, ReuseBenefit::getFlyTipCost(2004), 1e-9);
+        $this->assertSame(52.0, round(ReuseBenefit::getFlyTipCost(2025)));
+        $this->assertSame(ReuseBenefit::getFlyTipCost(2025), ReuseBenefit::getFlyTipCost(2100));
+    }
+
+    public function test_flytip_cost_fills_early_years_missing_from_injected_data(): void
+    {
+        // The config row has held 2011 onwards only. The base years come from
+        // the fallback table, and the target year from the injected data.
+        $config = [2011 => 93.4, 2020 => 108.7, 2025 => 138.4];
+
+        $this->assertEqualsWithDelta(
+            ReuseBenefit::getFlyTipCost(2025),
+            ReuseBenefit::getFlyTipCost(2025, $config),
+            1e-9
+        );
+
+        // An injected value wins over the fallback for the same year.
+        $base = (75.5 + 76.5 + 78.1 + 79.9) / 4;
+        $this->assertEqualsWithDelta(
+            29 * 150.0 / $base,
+            ReuseBenefit::getFlyTipCost(2026, [2011 => 93.4, 2026 => 150.0]),
+            1e-9
+        );
+    }
+
+    public function test_flytip_saving_per_item_is_about_a_pound_at_2025_prices(): void
+    {
+        $this->assertEqualsWithDelta(0.0195 * ReuseBenefit::getFlyTipCost(2025), ReuseBenefit::getFlyTipSavingPerItem(2025), 1e-12);
+        $this->assertSame(1.01, round(ReuseBenefit::getFlyTipSavingPerItem(2025), 2));
+    }
+
+    public function test_describe_flytip_saving_matches_the_web_wording(): void
+    {
+        $this->assertSame(
+            'Includes £8,034 saved on clearing up fly-tipping. A 2020 study of Freegle data '
+            . 'estimated that 2 in every 100 items given away would otherwise be fly-tipped, and '
+            . 'that each clear-up costs a council £29 at 2003-06 prices, which is £52 after inflation.',
+            ReuseBenefit::describeFlyTipSaving(8034.4, 51.79)
+        );
+        $this->assertStringContainsString(
+            '£' . number_format(round(ReuseBenefit::getFlyTipCost())) . ' after inflation',
+            ReuseBenefit::describeFlyTipSaving(0)
+        );
     }
 }
