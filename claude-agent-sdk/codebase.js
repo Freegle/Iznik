@@ -18,12 +18,17 @@ const path = require('path')
 const CODEBASE_REPO = process.env.CODEBASE_REPO || 'https://github.com/Freegle/Iznik.git'
 
 /**
- * Bring the checkout at `dir` up to date: clone it when it is not there yet, fast-forward it
- * when it is.
+ * Bring the checkout at `dir` up to date: clone it when it is not there yet, move it to the
+ * newest commit when it is.
  *
  * Shallow, because nothing here reads history - the agent greps the working tree. A shallow
- * clone needs `--depth 1` on the pull too, or git fetches the whole history it was cloned
+ * clone needs `--depth 1` on the fetch too, or git fetches the whole history it was cloned
  * without.
+ *
+ * It fetches and resets rather than pulling. A depth-1 fetch brings only the new tip, so git
+ * cannot see that the old tip is its ancestor, and `git pull --ff-only` refused every sync
+ * ("Not possible to fast-forward"): the agent searched code frozen at 2026-10-20 until
+ * 2026-11-02. Nothing writes to this checkout, so resetting to what was fetched loses nothing.
  *
  * @param {object} opts
  * @param {string} opts.dir - the checkout path.
@@ -40,7 +45,7 @@ function syncCodebase({ dir, repo = CODEBASE_REPO, run, exists }) {
 
   try {
     if (cloned) {
-      run(`git pull --ff-only --depth 1 2>&1`, { cwd: dir, timeout: 60000 })
+      run(`git fetch --depth 1 origin HEAD 2>&1 && git reset --hard FETCH_HEAD 2>&1`, { cwd: dir, timeout: 60000 })
 
       return { present: true, action: 'pulled', error: null }
     }
@@ -49,7 +54,7 @@ function syncCodebase({ dir, repo = CODEBASE_REPO, run, exists }) {
 
     return { present: true, action: 'cloned', error: null }
   } catch (e) {
-    // A failed pull leaves the previous checkout in place, which is still worth searching; a
+    // A failed update leaves the previous checkout in place, which is still worth searching; a
     // failed clone leaves nothing. Say which, so /health does not report "no codebase" for a
     // container that has a perfectly good, slightly stale one.
     return { present: cloned, action: cloned ? 'pull-failed' : 'clone-failed', error: e.message }
