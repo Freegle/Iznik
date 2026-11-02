@@ -273,8 +273,10 @@ doesn't change anything on yours.
   a chat.
 - **The same goes for notes in chat review.** You can add a note to a chat between two members
   only if any Trash Nothing member in it has chosen a community you moderate.
-- **Removing them still sends your message.** If you remove a Trash Nothing member with a
-  standard message, it goes, because they were a member when you sent it.
+- **Removing them still sends your message.** If you remove a Trash Nothing member of your
+  community with a standard message, it goes, because they were a member when you sent it. A
+  Trash Nothing request to join that is still waiting for approval isn't a membership yet, so
+  rejecting it sends nothing.
 - **Support and Admin aren't bound by this.** They act for Freegle as a whole, so they can
   contact any Trash Nothing member.
 - **Your messages are signed.** Trash Nothing shows them your message as if it came from a

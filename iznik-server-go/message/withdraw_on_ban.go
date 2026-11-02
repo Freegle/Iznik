@@ -35,15 +35,23 @@ func WithdrawPostsOnBan(db *gorm.DB, userid uint64, groupid uint64, byuser uint6
 	}
 
 	for _, msgid := range msgids {
+		// A failed read must not be taken for "not approved anywhere", which would delete a
+		// live post, so the post is left alone instead.
 		var approved int64
-		db.Table("messages_groups").
+		if err := db.Table("messages_groups").
 			Where("msgid = ? AND collection = ? AND deleted = 0", msgid, utils.COLLECTION_APPROVED).
-			Count(&approved)
+			Count(&approved).Error; err != nil {
+			log.Printf("Failed to read where message %d is approved, not withdrawing it on ban: %v", msgid, err)
+			continue
+		}
 
 		var pendingGroups []uint64
-		db.Table("messages_groups").Select("groupid").
+		if err := db.Table("messages_groups").Select("groupid").
 			Where("msgid = ? AND collection = ? AND deleted = 0", msgid, utils.COLLECTION_PENDING).
-			Scan(&pendingGroups)
+			Scan(&pendingGroups).Error; err != nil {
+			log.Printf("Failed to read where message %d is pending, not withdrawing it on ban: %v", msgid, err)
+			continue
+		}
 
 		if approved == 0 {
 			// Only pending: delete it, as handleOutcome does for a pending withdrawal.
