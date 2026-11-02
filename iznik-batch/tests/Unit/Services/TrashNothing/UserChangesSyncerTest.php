@@ -10,6 +10,7 @@ use App\Services\TrashNothing\Sync\TrashNothingRateLimiter;
 use App\Services\TrashNothing\Sync\UserChangesSyncer;
 use Illuminate\Http\Client\Request;
 use Illuminate\Log\Events\MessageLogged;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Mockery;
@@ -35,6 +36,9 @@ class UserChangesSyncerTest extends TestCase
     /** @var array<int, array{string, array}> */
     private array $lokiEvents = [];
 
+    /** @var array<string, int> latitude => id of the postcode the nearest-postcode lookup gives for it */
+    private array $postcodeIdByLat = [];
+
     /** @var array<int, string> */
     private array $logged = [];
 
@@ -46,6 +50,16 @@ class UserChangesSyncerTest extends TestCase
 
         // ONE fake, because fakes merge and the first registered stub wins.
         Http::fake(function (Request $request) {
+            if (str_contains($request->url(), '/postcodes/knn')) {
+                foreach ($this->postcodeIdByLat as $lat => $id) {
+                    if (abs((float) $request['lat'] - (float) $lat) < 0.0001) {
+                        return Http::response(['results' => [['id' => $id, 'distance' => 0]]], 200);
+                    }
+                }
+
+                return Http::response(['results' => []], 200);
+            }
+
             if ($this->failFromPage > 0 && (int) $request['page'] >= $this->failFromPage) {
                 return Http::response('Internal Server Error', 500);
             }
@@ -65,11 +79,17 @@ class UserChangesSyncerTest extends TestCase
 
     private function sync(int $userId, string $username, bool $dryRun = false): void
     {
-        $this->changes = [[
+        $this->syncChanges([[
             'fd_user_id' => $userId,
             'username'   => $username,
             'date'       => '2026-10-01T10:00:00',
-        ]];
+        ]], $dryRun);
+    }
+
+    /** @param array<int, array> $changes the feed's changes, in the order the feed gives them */
+    private function syncChanges(array $changes, bool $dryRun = false): void
+    {
+        $this->changes = $changes;
 
         (new UserChangesSyncer($dryRun, false, 'test-key', self::API_BASE, $this->loki, new TrashNothingRateLimiter(0)))
             ->sync('2026-10-01T09:00:00Z', '2026-10-01T11:00:00Z');
@@ -314,6 +334,163 @@ class UserChangesSyncerTest extends TestCase
         $this->assertSame([], $this->renameEvents());
         $this->assertNotEmpty(array_filter($this->logged, fn ($m) => str_contains($m, '[NAME-CHANGE]') && str_contains($m, 'invalid-address')));
         $this->assertCount(1, $sentry->calls, 'reported once a day, like a clash');
+    }
+
+    // -------------------------------------------------------------------------
+    // A window read again must not undo a newer change with an older one.
+    // -------------------------------------------------------------------------
+
+    /** @return array<string, int> address => users_emails.id */
+    private function emailIdsOf(User $user): array
+    {
+        $ids = UserEmail::where('userid', $user->id)->pluck('id', 'email')->map(fn ($id) => (int) $id)->all();
+        ksort($ids);
+
+        return $ids;
+    }
+
+    /**
+     * Two renames in one window, read again and again (tn:sync holds its stored date while a
+     * feed is down). Applied in turn each time, the first would give the member the older
+     * username and the second the newer, deleting and creating an address on every pass.
+     */
+    public function test_two_renames_read_again_leave_the_addresses_as_they_were(): void
+    {
+        $old = $this->username('old.name');
+        $first = $this->username('first.name');
+        $second = $this->username('second.name');
+        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123" . self::TN_DOMAIN, 1]]);
+        $changes = [
+            ['fd_user_id' => $user->id, 'username' => $first, 'date' => '2026-10-01T10:00:00'],
+            ['fd_user_id' => $user->id, 'username' => $second, 'date' => '2026-10-01T10:05:00'],
+        ];
+
+        $this->syncChanges($changes);
+
+        $user = $user->fresh();
+        $this->assertSame(["{$second}-g123" . self::TN_DOMAIN => 1], $this->emailsOf($user));
+        $idsAfterFirstRead = $this->emailIdsOf($user);
+        $this->assertCount(2, $this->renameEvents(), 'each rename is made once');
+
+        $this->syncChanges($changes);
+        $this->syncChanges($changes);
+
+        $user = $user->fresh();
+        $this->assertSame(["{$second}-g123" . self::TN_DOMAIN => 1], $this->emailsOf($user));
+        $this->assertSame($idsAfterFirstRead, $this->emailIdsOf($user), 'no address was deleted and made again');
+        $this->assertSame(User::tnDisplayName($second), $user->fullname);
+        $this->assertCount(2, $this->renameEvents(), 'reading the window again renames nothing');
+    }
+
+    /**
+     * Changes are not always seen in the order they were made. The older one, arriving after
+     * the newer was applied, is not the member's username.
+     */
+    public function test_an_older_rename_seen_after_a_newer_one_is_not_applied(): void
+    {
+        $old = $this->username('old.name');
+        $first = $this->username('first.name');
+        $second = $this->username('second.name');
+        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123" . self::TN_DOMAIN, 1]]);
+
+        $this->syncChanges([
+            ['fd_user_id' => $user->id, 'username' => $second, 'date' => '2026-10-01T10:05:00'],
+            ['fd_user_id' => $user->id, 'username' => $first, 'date' => '2026-10-01T10:00:00'],
+        ]);
+
+        $this->assertSame(["{$second}-g123" . self::TN_DOMAIN => 1], $this->emailsOf($user->fresh()));
+        $this->assertCount(1, $this->renameEvents());
+        $this->assertNotEmpty(array_filter($this->logged, fn ($m) => str_contains($m, 'action=superseded field=username')));
+    }
+
+    public function test_a_later_rename_than_the_one_applied_is_applied(): void
+    {
+        $old = $this->username('old.name');
+        $first = $this->username('first.name');
+        $second = $this->username('second.name');
+        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123" . self::TN_DOMAIN, 1]]);
+
+        $this->syncChanges([['fd_user_id' => $user->id, 'username' => $first, 'date' => '2026-10-01T10:00:00']]);
+        $this->syncChanges([['fd_user_id' => $user->id, 'username' => $second, 'date' => '2026-10-01T10:05:00']]);
+
+        $this->assertSame(["{$second}-g123" . self::TN_DOMAIN => 1], $this->emailsOf($user->fresh()));
+        $this->assertCount(2, $this->renameEvents());
+    }
+
+    /** A dry run applies nothing, so it must not make a real run's change look old. */
+    public function test_a_dry_run_does_not_supersede_a_real_rename(): void
+    {
+        $old = $this->username('old.name');
+        $new = $this->username('new.name');
+        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123" . self::TN_DOMAIN, 1]]);
+
+        $this->syncChanges([['fd_user_id' => $user->id, 'username' => $new, 'date' => '2026-10-01T10:05:00']], dryRun: true);
+        $this->syncChanges([['fd_user_id' => $user->id, 'username' => $new, 'date' => '2026-10-01T10:00:00']]);
+
+        $this->assertSame(["{$new}-g123" . self::TN_DOMAIN => 1], $this->emailsOf($user->fresh()));
+    }
+
+    private function postcode(int $id, string $name, float $lat, float $lng): void
+    {
+        DB::table('locations')->updateOrInsert(['id' => $id], [
+            'name'     => $name,
+            'type'     => 'Postcode',
+            'lat'      => $lat,
+            'lng'      => $lng,
+            'geometry' => DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, (int) config('freegle.srid', 3857))),
+        ]);
+        $this->postcodeIdByLat[(string) $lat] = $id;
+    }
+
+    /** @return string[] the postcodes in the member's PostcodeChange log rows, oldest first */
+    private function postcodeChangesOf(User $user): array
+    {
+        return DB::table('logs')
+            ->where('user', $user->id)
+            ->where('type', 'User')
+            ->where('subtype', 'PostcodeChange')
+            ->orderBy('id')
+            ->pluck('text')
+            ->all();
+    }
+
+    /**
+     * Two moves in one window, read again and again. Applied in turn each time, the member
+     * would be moved to the first postcode and then the second on every pass, with a log row
+     * for each. Each move is logged once and the later one stands.
+     */
+    public function test_two_moves_read_again_are_logged_once_each(): void
+    {
+        $user = $this->tnUser('Pat', [[$this->username('pat') . self::TN_DOMAIN, 1]]);
+        $this->postcode(99000301, 'AB1 1AA', 55.9533, -3.1883);
+        $this->postcode(99000302, 'CD2 2BB', 51.5502, 0.1350);
+        $changes = [
+            ['fd_user_id' => $user->id, 'location' => ['latitude' => 55.9533, 'longitude' => -3.1883], 'date' => '2026-10-01T10:00:00'],
+            ['fd_user_id' => $user->id, 'location' => ['latitude' => 51.5502, 'longitude' => 0.1350], 'date' => '2026-10-01T10:05:00'],
+        ];
+
+        $this->syncChanges($changes);
+        $this->syncChanges($changes);
+        $this->syncChanges($changes);
+
+        $this->assertSame(['AB1 1AA', 'CD2 2BB'], $this->postcodeChangesOf($user));
+        $this->assertSame(99000302, (int) $user->fresh()->lastlocation);
+        $this->assertNotEmpty(array_filter($this->logged, fn ($m) => str_contains($m, 'action=superseded field=location')));
+    }
+
+    public function test_an_older_move_seen_after_a_newer_one_is_not_applied(): void
+    {
+        $user = $this->tnUser('Pat', [[$this->username('pat') . self::TN_DOMAIN, 1]]);
+        $this->postcode(99000301, 'AB1 1AA', 55.9533, -3.1883);
+        $this->postcode(99000302, 'CD2 2BB', 51.5502, 0.1350);
+
+        $this->syncChanges([
+            ['fd_user_id' => $user->id, 'location' => ['latitude' => 51.5502, 'longitude' => 0.1350], 'date' => '2026-10-01T10:05:00'],
+            ['fd_user_id' => $user->id, 'location' => ['latitude' => 55.9533, 'longitude' => -3.1883], 'date' => '2026-10-01T10:00:00'],
+        ]);
+
+        $this->assertSame(['CD2 2BB'], $this->postcodeChangesOf($user));
+        $this->assertSame(99000302, (int) $user->fresh()->lastlocation);
     }
 
     public function test_dry_run_rename_writes_nothing(): void

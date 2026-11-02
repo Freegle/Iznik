@@ -17,6 +17,17 @@ class UserChangesSyncer
 {
     private const PAGE_SIZE = 100;
 
+    // The fields of a change that are applied by comparing with what the member has now, so
+    // that applying an older change after a newer one would undo it. The date of the latest
+    // change applied for each is kept per member, and a change older than that is skipped.
+    private const FIELD_USERNAME = 'username';
+    private const FIELD_LOCATION = 'location';
+
+    // tn:sync reads a window more than once: it overlaps the one before, and it holds its stored
+    // date while a feed cannot be read. The kept dates have to last as long as that.
+    private const APPLIED_KEY_PREFIX = 'tn-sync:change-applied:';
+    private const APPLIED_TTL_HOURS = 24;
+
     // Whether the last sync() stopped because TN's user changes feed could not be read.
     private bool $fetchFailed = false;
 
@@ -127,16 +138,28 @@ class UserChangesSyncer
                     }
 
                     if (!empty($change['username'])) {
-                        $this->applyUsername($user, $change['username']);
+                        if ($this->superseded(self::FIELD_USERNAME, $user->id, $change['date'])) {
+                            $this->traceSuperseded($user->id, self::FIELD_USERNAME);
+                        } else {
+                            $this->applyUsername($user, $change['username']);
+                            $this->markApplied(self::FIELD_USERNAME, $user->id, $change['date']);
+                        }
                     }
 
                     $movedTo = NULL;
 
-                    if (!empty($change['location'])) {
+                    $applyLocation = !empty($change['location']);
+                    if ($applyLocation && $this->superseded(self::FIELD_LOCATION, $user->id, $change['date'])) {
+                        $this->traceSuperseded($user->id, self::FIELD_LOCATION);
+                        $applyLocation = false;
+                    }
+
+                    if ($applyLocation) {
                         $lat = $change['location']['latitude'] ?? null;
                         $lng = $change['location']['longitude'] ?? null;
 
                         if ($lat !== null && $lng !== null) {
+                            $this->markApplied(self::FIELD_LOCATION, $user->id, $change['date']);
                             $loc = Location::closestPostcode((float) $lat, (float) $lng);
 
                             if ($loc && $loc->id !== $user->lastlocation) {
@@ -192,6 +215,47 @@ class UserChangesSyncer
         } while ($changes && count($changes) === self::PAGE_SIZE);
 
         return [$count, $maxDate];
+    }
+
+    /**
+     * Whether a change to this field is older than one already applied for the member. Changes
+     * are not always seen in the order they were made, and a window is read more than once, so
+     * a member's two changes to the same field come round together: applying them in turn each
+     * time would write the first, then the second, over and over (a member log row for every
+     * location, an address created and deleted for every username) when only the later one
+     * stands. The same change coming round again is not older than itself, and is applied as
+     * before, when it finds nothing to change.
+     */
+    private function superseded(string $field, int $userId, string $date): bool
+    {
+        $time   = strtotime($date);
+        $latest = Cache::get(self::APPLIED_KEY_PREFIX . $field . ':' . $userId);
+
+        return $time !== false && is_int($latest) && $time < $latest;
+    }
+
+    /**
+     * Keep the date of the latest change applied to this field for the member. A dry run applies
+     * nothing, so it keeps nothing.
+     */
+    private function markApplied(string $field, int $userId, string $date): void
+    {
+        $time = strtotime($date);
+        if ($this->dryRun || $time === false) {
+            return;
+        }
+
+        $key    = self::APPLIED_KEY_PREFIX . $field . ':' . $userId;
+        $latest = Cache::get($key);
+
+        if (!is_int($latest) || $time > $latest) {
+            Cache::put($key, $time, now()->addHours(self::APPLIED_TTL_HOURS));
+        }
+    }
+
+    private function traceSuperseded(int $userId, string $field): void
+    {
+        Log::info('TN-SYNC-TRACE [USER-CHANGE] fd_user_id=' . $userId . ' action=superseded field=' . $field);
     }
 
     /**
