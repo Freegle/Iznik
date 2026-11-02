@@ -73,8 +73,13 @@ the email path's `findUserByEmail` falls back to:
 3. Remove dots (Gmail-style normalization)
 
 `IncomingMailService::canonicalizeEmail()` delegates to `canonMail()`, so the canon looked up
-cannot differ from the canon written, and Go's `CanonicalizePartnerEmail` strips the same
-suffix from an alias. The rule used to strip everything after the last hyphen; rows written
+cannot differ from the canon written. Go's `CanonicalizePartnerEmail` is not a copy of it: it
+treats a per-group alias and a bare `username@user.trashnothing.com` alike as a TN address
+(`user.TNIdentity`), strips the suffix, lowercases and removes the domain's dots, so every
+address of one member gets one canon. It lowercases, which `canonMail` does not, and it does not
+strip a `+` suffix, which `canonMail` does for any address. Nothing in this repository says
+whether a TN username can contain `+`; one that does would get a different canon in the two
+stacks. Any other address falls to Go's general `CanonicalizeEmail`. The rule used to strip everything after the last hyphen; rows written
 then keep their old canon until `users:backfill-email-canon` rewrites them, which is why a
 canon match alone is never taken as "same member" (see below). See
 [.claude/rules/mail-and-data.md](../../../.claude/rules/mail-and-data.md).
@@ -350,9 +355,9 @@ any poster. When no user can be had the post is skipped with a `routing_reason`:
 
 | `routing_reason` | Cause |
 |---|---|
-| `Post from unknown user` | TN has no such user (404), or no usable username for them. TN answered, so this is final, and the answer is remembered for 24 hours |
+| `Post from unknown user` | TN has no such user (404), or no usable username for them. TN answered, so this is final, and the answer is remembered for an hour |
 | `tn-user-lookup-failed` | TN could not be asked (network error, timeout, 408, 429, 5xx, Cloudflare challenge, a rejected key). Transient: the sync stops here and the next run asks again, below. Written to Loki only if the post is finally skipped, as one of the next two reasons |
-| `tn-user-lookup-refused` | TN answered with a client error other than 404 (400, 410, 422, 451 and the like). It is about this poster and a retry gets it again, so it is final like a 404, and remembered for 24 hours like one |
+| `tn-user-lookup-refused` | TN answered with a client error other than 404 (400, 410, 422, 451 and the like). It is about this poster and a retry gets it again, so it is final like a 404, and remembered for an hour like one |
 | `tn-user-lookup-gave-up` | The lookup for this post failed 30 runs in a row. The post is skipped so that one poster cannot hold up every post behind it |
 | `tn-username-clash` | An account with a different `tnuserid` holds the address: usernames are not unique, so these are two people |
 | `tn-address-held-by-deleted-user` | A deleted account still holds the bare address, which is unique and not the provisioner's to take back |
@@ -396,13 +401,15 @@ the entry is written when the post is ingested or skipped, whichever reason it e
 
 TN's final answer about a poster is remembered, so the same poster is not asked about again
 for each of their posts in each overlapping sync window. A 404, a user with no usable username
-and a refusal are each cached for 24 hours per TN user id, with their reason kept
-(`TnUserProvisioner::failFinal()`). Nothing else is: a failure to get an answer is asked again,
+and a refusal are each cached for an hour per TN user id (`ANSWER_TTL_MINUTES`), with their
+reason kept (`TnUserProvisioner::failFinal()`). It is an hour because the answer can be wrong, as
+with a bad base URL, a 404 from an edge, or a member too new to be on TN's replica yet: until it
+expires every post by the poster is skipped, and putting the cause right does not bring them back. Nothing else is: a failure to get an answer is asked again,
 as above, and a username clash or a deleted account holding the address is decided from
 Freegle's data each time, so one that has been put right takes effect at once. An account that
 gets the `tnuserid` meanwhile (the partner flow stamps it) wins over a remembered answer,
 because the account lookup comes first. A dry run reads the remembered answers and writes none,
-and `--local-testing` does neither. A member who is given a username within the day is created
+and `--local-testing` does neither. A member who is given a username within the hour is created
 on the first post after the answer expires.
 
 `tn:sync` and the hourly `tn:verify-email-coverage`
@@ -622,7 +629,7 @@ replaces it, checking coverage only.
 | `TnEmailRoutingGate` | Decides which inbound mail stops being routed. Narrow by design — a wider predicate silently drops mail. It mirrors `IncomingMailService::route()` phase by phase and matches only what would have reached Phase 5, so chat replies, bounces, digest replies, auto-replies and volunteer mail all keep routing. |
 | `ArchiveInventoryService` | Lists the TN posts that arrived in a window — the independent witness. Walks the archive via the shared `IncomingArchiveReader` (also used by `mail:recover-dropped-merged`); only the TN-specific selection and keying live here. |
 | `CoverageVerifier` | Checks each against `messages.tnpostid` and classifies the absences. |
-| `DeliberateSkips` | Ingestion's note of each post it skipped on purpose (TN post id and reason, in the cache). The verifier reads it. |
+| `DeliberateSkips` | Ingestion's note of why it skipped each post for want of a user (TN post id and reason, in the cache), and which reasons are expected and which need a person. The verifier reads it. |
 | `TNVerifyEmailCoverageCommand` | Orchestrates, backfills, reports. |
 
 Both mail entry points archive the raw email *before* routing
@@ -646,22 +653,38 @@ would itself have dropped as an unknown group. A header that is missing or
 unparseable establishes nothing and must never be read as "unplaceable": that
 would file a real coverage gap in a bucket the report labels expected.
 
-A post ingestion skipped on purpose has no message and never will, so asking only whether
+A post ingestion skipped for want of a user has no message, so asking only whether
 `messages.tnpostid` exists would call it a miss on every run. When ingestion makes a final
 decision not to place a post it leaves a note of the post id and the reason (`DeliberateSkips`,
 in the cache, kept three days: longer than the 48 hours the archive lasts, which is as far back
 as the verifier can look). The verifier reads the note after the `messages` check (a post with a
-message is covered whatever a note says) and before it asks TN anything, and reports the post as
-"skipped on purpose", with a count and the reasons, in the command output and the
-`deliberate_skip` field of the Loki run entry. It is not a miss: it is not backfilled, it cannot
-come back as a repeat miss and it does not count towards the mass-miss cap.
+message is covered whatever a note says). What it does next depends on the reason.
 
-The reasons noted are `Post from unknown user`, `no-user-id`, `tn-user-lookup-refused`,
-`tn-username-clash`, `tn-address-held-by-deleted-user`, `tn-account-deleted` and `banned`.
-`tn-user-lookup-failed` and `tn-user-lookup-gave-up` are not. Nothing was decided on the first,
-and a post given up on is still wanted, so both stay misses and the verifier is the second chance
-they get. A dry run writes no note. A flushed cache loses the notes and brings back the old
-behaviour for those posts: a miss, backfilled, skipped again, and noted again.
+Two reasons are skipped on purpose and are not a miss (`DeliberateSkips::EXPECTED_REASONS`): a
+poster banned from the group (`banned`), and a post TN gave no user id for (`no-user-id`). The
+verifier does not ask TN about these. It reports them as "skipped on purpose", with a count and
+the reasons, in the command output and the `deliberate_skip` field of the Loki run entry. They are
+not backfilled, cannot come back as a repeat miss and do not count towards the mass-miss cap.
+
+Every other reason is still a miss. The note is read only to name the reason beside it: the post
+is classified like any other, and if nothing explains its absence it is a genuine miss, with
+`skip_reason` on the entry, `skipped=<reason>` on its line in the output, the count per reason
+after GENUINE MISSES, and `miss_reasons` in the Loki run entry. That keeps these posts where the
+backfill can retry them, and where a repeat fails the run:
+
+- `Post from unknown user` and `tn-user-lookup-refused`: TN's answer may have been wrong, or may
+  change.
+- `tn-username-clash`, `tn-address-held-by-deleted-user` and `tn-account-deleted`
+  (`DeliberateSkips::NEEDS_A_HUMAN_REASONS`): only a person can put these right. The first one of
+  the day for each reason is sent to Sentry from ingestion. For `tn-account-deleted` the member
+  deleted their Freegle account but still posts on TN, and the id is released only when the
+  account is forgotten, up to 15 days later, so those posts are lost unless someone acts.
+
+`tn-user-lookup-failed` and `tn-user-lookup-gave-up` leave no note. Nothing was decided on the
+first, and a post given up on is still wanted, so both stay misses and the verifier is the second
+chance they get. A dry run and a `--local-testing` run write no note, and report nothing to
+Sentry. A flushed cache loses the notes: a banned poster's post is a miss, backfilled, skipped
+again and noted again.
 
 Genuine misses can be backfilled automatically (`FREEGLE_TN_VERIFY_AUTO_INGEST`,
 off by default) via `PostSyncer::ingestFetchedPost()`, which reuses the normal
@@ -742,16 +765,32 @@ Syncs:
 - Location updates
 - Account removal notifications
 
-**A feed that cannot be read holds the stored date.** `tn:sync` stores one date for ratings,
-user changes and posts: the latest any of them saw. When a page of the ratings or the user
-changes feed fails (any answer that is not a 2xx), the syncer stops there and says so
+**A feed that cannot be read holds the stored date, for an hour.** `tn:sync` stores one date for
+ratings, user changes and posts: the latest any of them saw. When a page of the ratings or the
+user changes feed fails (any answer that is not a 2xx), the syncer stops there and says so
 (`fetchFailed()`), and the command leaves the stored date where it was, whatever the other feeds
 saw. The changes behind the failed page were not read, and the order of the feed is TN's, so
 nothing says how far it got. The next run reads the window again, and what the run did apply is
-applied again, which is safe because the writes are idempotent. The run still exits
-successfully and the posts sync still runs, so while a feed is down each run re-reads the posts
-since the old date and logs the ones already ingested as `duplicate`. A request that throws (a
-network error) already ended the run before the date was stored.
+applied again. The run still exits successfully and the posts sync still runs, so while a feed
+is down each run re-reads the posts since the old date and logs the ones already ingested as
+`duplicate`. A request that throws (a network error) already ended the run before the date was
+stored.
+
+The hold is bounded, because a feed that never recovers would otherwise make every run read a
+longer window for ever, with nothing to say so. The runs held are counted in the cache
+(`FEED_HOLD_COUNT_KEY`, reset by a run that reads every feed). Sentry hears when the hold has
+lasted 15 runs (`FEED_HOLD_ALERT_RUNS`). After 60 runs, about an hour (`FEED_HOLD_MAX_RUNS`), the
+hold is given up: the date moves on to what the other feeds saw, or to the end of the window
+when they saw nothing, Sentry hears again, and what the failed feed held back in that time is
+lost. A post sync that has stalled still holds the date, as before.
+
+Reading a window again must not undo a newer change with an older one. The date of the latest
+username and the latest location applied to each member is kept in the cache for a day
+(`UserChangesSyncer`), and a change older than that is skipped, so two renames or two moves in
+one window are applied once each and not again on every read, which would have flipped the
+member between the two, deleting and creating an address, or writing a `PostcodeChange` log row,
+each time. The same change coming round again is applied as before and finds nothing to change. A
+dry run keeps no date.
 
 **TN is the master for a TN member's location.** A change row's `location` sets
 `users.lastlocation` to the nearest postcode. `settings.mylocation` is read before

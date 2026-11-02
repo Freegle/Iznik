@@ -282,8 +282,12 @@ a bare address and every alias of one username share a canon and hyphenated user
   rewrites them. Only bare addresses with a hyphenated username change, but dry-run it on
   production before deploying. Until then a canon match is a candidate and not an answer:
   `TnUserProvisioner` also compares `User::tnUsernameFromEmail` before it treats one as the same member.
-- Go's `CanonicalizePartnerEmail` recognises an alias only. A BARE address Go writes falls to the
-  general `CanonicalizeEmail`, which keeps the domain dots, so a PHP canon lookup cannot find it.
+- Go's `CanonicalizePartnerEmail` is not a copy of `canonMail`. It treats an alias and a BARE
+  `username@user.trashnothing.com` address alike as TN (`user.TNIdentity`), strips the suffix and the
+  domain dots, and so agrees with PHP for both. It lowercases, which `canonMail` does not, and it does
+  not strip a `+` suffix, which `canonMail` does for any address. Nothing in the repository says whether
+  a TN username can contain `+`; one that does gets a different canon in the two stacks. Any other
+  address falls to the general `CanonicalizeEmail`, which keeps the domain dots.
 
 ## See also
 
