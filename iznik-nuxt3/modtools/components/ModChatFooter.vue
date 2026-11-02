@@ -1,17 +1,17 @@
 <template>
   <div class="cont bg-white">
     <div>
-      <notice-message v-if="otheruser?.deleted" variant="info" class="mb-2">
-        This member has deleted their account, so you can't chat to them.
-      </notice-message>
       <notice-message
-        v-else-if="chat?.modsclosed"
+        v-if="chat?.modsclosed && !otheruser?.deleted"
         variant="info"
         class="mb-2"
         data-test="chat-mods-closed"
       >
-        This TrashNothing member isn't in this community any more, so you can't
-        chat to them.
+        This Trash Nothing member isn't in this community any more, so you can
+        read this chat but not reply.
+      </notice-message>
+      <notice-message v-if="otheruser?.deleted" variant="info" class="mb-2">
+        This member has deleted their account, so you can't chat to them.
       </notice-message>
       <div v-else-if="showNotices && noticesToShow" class="d-flex">
         <div class="flex-grow-1">

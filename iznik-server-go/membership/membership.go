@@ -13,8 +13,8 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/modmessaging"
-	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
@@ -209,7 +209,7 @@ func PostMemberships(c *fiber.Ctx) error {
 		// Except to a TrashNothing member without a membership of this community they
 		// chose (see modmessaging.ModsMayContact). ModTools hides Mail and the standard
 		// messages for them, with a notice saying why; this is the guard behind that.
-		if !modmessaging.ModsMayContact(db, req.Userid, req.Groupid) {
+		if !modmessaging.MayContact(db, myid, req.Userid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "This member didn't choose this community, so they can't be contacted")
 		}
 
@@ -270,6 +270,12 @@ func PostMemberships(c *fiber.Ctx) error {
 		if lockdown.GateMod(c, myid) {
 			return nil
 		}
+		// Decided before the membership goes: once it has, a TrashNothing member can no
+		// longer be contacted, and the note explaining the removal would never be sent.
+		contactable := 0
+		if modmessaging.MayContact(db, myid, req.Userid, req.Groupid) {
+			contactable = 1
+		}
 		if result := db.Table("memberships").Where("userid = ? AND groupid = ? AND collection IN (?, ?)",
 			req.Userid, req.Groupid, utils.COLLECTION_PENDING, utils.COLLECTION_APPROVED).Delete(nil); result.Error != nil {
 			stdlog.Printf("Failed to reject membership user %d group %d: %v", req.Userid, req.Groupid, result.Error)
@@ -291,8 +297,8 @@ func PostMemberships(c *fiber.Ctx) error {
 		if subject != "" || body != "" {
 			db.Table("background_tasks").Create(map[string]interface{}{
 				"task_type": "email_mod_stdmsg",
-				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
-					req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action, 1),
+				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?, 'modsmaycontact', ?)",
+					req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action, 1, contactable),
 			})
 		}
 
@@ -325,7 +331,7 @@ func PostMemberships(c *fiber.Ctx) error {
 		})
 		// V1 parity: removeMembership($ban=true) logs type=Group/subtype=Left/text="via ban"
 		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, req.Userid, myid, "via ban")
-		withdrawPostsOnBan(db, req.Userid, req.Groupid, myid)
+		message.WithdrawPostsOnBan(db, req.Userid, req.Groupid, myid)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Unban":
@@ -486,8 +492,8 @@ type GetMembershipsMember struct {
 	MailDelayedCount    *int    `json:"maildelayedcount" gorm:"column:maildelayedcount"`
 	// False for a TrashNothing member whose membership here is not one they chose
 	// (implicit, rippled, or not Approved). ModTools then shows a notice instead of the
-	// Chat / Mail / standard-message buttons. True for everyone else. Derived, not
-	// stored: see modmessaging.ModsMayContact.
+	// Chat / Mail / standard-message buttons. True for everyone else, and always true for
+	// Support and Admin. Derived, not stored: see modmessaging.MayContact.
 	ModMessagingAllowed bool `json:"mod_messaging_allowed" gorm:"-"`
 }
 
@@ -582,7 +588,7 @@ func GetMemberships(c *fiber.Ctx) error {
 		if members == nil {
 			members = make([]GetMembershipsMember, 0)
 		}
-		enrichMembers(members)
+		enrichMembers(members, myid)
 
 		var nextContext interface{}
 		if len(members) == limit {
@@ -620,7 +626,7 @@ func GetMemberships(c *fiber.Ctx) error {
 		if members == nil {
 			members = make([]GetMembershipsMember, 0)
 		}
-		enrichMembers(members)
+		enrichMembers(members, myid)
 		// A plain array, the shape this list has always had, so it carries no order of its own.
 		return c.JSON(members)
 	}
@@ -789,7 +795,7 @@ func GetMemberships(c *fiber.Ctx) error {
 		members = make([]GetMembershipsMember, 0)
 	}
 
-	enrichMembers(members)
+	enrichMembers(members, myid)
 
 	// Return pagination context = last member's ID when a full page was returned (cursor for next page).
 	var nextContext interface{}
@@ -836,7 +842,7 @@ const (
 )
 
 // enrichMembers computes displayname from name fields, resolves posting status, and parses settings JSON.
-func enrichMembers(members []GetMembershipsMember) {
+func enrichMembers(members []GetMembershipsMember, myid uint64) {
 	// Whether each member can be contacted through this membership. Which of them are
 	// TrashNothing members is answered for the whole page in one query rather than per
 	// row - the members list is the one screen that asks this about a hundred people at a
@@ -846,11 +852,12 @@ func enrichMembers(members []GetMembershipsMember) {
 		userids = append(userids, members[i].Userid)
 	}
 	trashNothing := modmessaging.TrashNothingMembers(database.DBConn, userids)
+	centrally := auth.IsAdminOrSupport(myid)
 
 	for i := range members {
 		m := &members[i]
 
-		m.ModMessagingAllowed = modmessaging.MembershipAllowsContact(trashNothing[m.Userid], m.Collection, m.Implicit, m.Rippled)
+		m.ModMessagingAllowed = centrally || modmessaging.MembershipAllowsContact(trashNothing[m.Userid], m.Collection, m.Implicit, m.Rippled)
 
 		// Compute displayname from fullname/firstname/lastname.
 		if m.Fullname != nil && *m.Fullname != "" {
@@ -937,7 +944,7 @@ func getSpamMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error 
 		members = make([]GetMembershipsMember, 0)
 	}
 
-	enrichMembers(members)
+	enrichMembers(members, myid)
 
 	return c.JSON(members)
 }
@@ -1766,6 +1773,7 @@ func DeleteMemberships(c *fiber.Ctx) error {
 			"userid": userid, "groupid": req.Groupid, "byuser": myid,
 		})
 		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, userid, myid, "via ban")
+		message.WithdrawPostsOnBan(db, userid, req.Groupid, myid)
 		// A ban removes this membership; if it was the user's last Owner/Moderator
 		// role, demote a now-stale Moderator systemrole (V1 updateSystemRole parity).
 		user.SyncSystemRole(db, userid)
@@ -2067,62 +2075,4 @@ func PatchMemberships(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
-}
-
-// banWithdrawnText is the outcome comment on a post withdrawn by a ban, as V1's
-// User::removeMembership($ban) wrote it.
-const banWithdrawnText = "Marked as withdrawn by ban"
-
-// withdrawPostsOnBan takes a banned member's open OFFER and WANTED posts on the community
-// down, as V1's User::removeMembership($ban) did: a ban stops someone posting on the
-// community, and that includes the posts already there. Only posts whose home is this
-// community (rippled_in = 0); a post that rippled in from a neighbour is that neighbour's.
-//
-// A post with an Approved copy gets a Withdrawn outcome, as V1 recorded. A post that is
-// only Pending is deleted instead, as a member's own withdrawal of a pending post is
-// (message.handleOutcome): a Pending row with an outcome would otherwise be auto-approved
-// later. Nobody who replied is told, as in V1.
-func withdrawPostsOnBan(db *gorm.DB, userid uint64, groupid uint64, byuser uint64) {
-	var msgids []uint64
-	db.Raw("SELECT DISTINCT m.id FROM messages m "+
-		"INNER JOIN messages_groups mg ON mg.msgid = m.id "+
-		"WHERE m.fromuser = ? AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0 "+
-		"AND m.deleted IS NULL AND m.type IN (?, ?) "+
-		"AND NOT EXISTS (SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = m.id)",
-		userid, groupid, utils.OFFER, utils.WANTED).Scan(&msgids)
-
-	for _, msgid := range msgids {
-		id := msgid
-
-		var approved int64
-		db.Table("messages_groups").
-			Where("msgid = ? AND collection = ? AND deleted = 0", id, utils.COLLECTION_APPROVED).
-			Count(&approved)
-
-		if approved == 0 {
-			var groups []uint64
-			db.Table("messages_groups").Select("groupid").Where("msgid = ? AND deleted = 0", id).Scan(&groups)
-			db.Table("messages_groups").Where("msgid = ?", id).Update("deleted", gorm.Expr("1"))
-			db.Table("messages").Where("id = ?", id).
-				Updates(map[string]interface{}{"deleted": gorm.Expr("NOW()"), "messageid": gorm.Expr("NULL")})
-			for _, gid := range groups {
-				g := gid
-				text := banWithdrawnText
-				log.Log(log.LogEntry{Type: log.LOG_TYPE_MESSAGE, Subtype: log.LOG_SUBTYPE_DELETED,
-					Groupid: &g, User: &userid, Byuser: &byuser, Msgid: &id, Text: &text})
-			}
-		} else {
-			db.Table("messages_outcomes_intended").Where("msgid = ?", id).Delete(nil)
-			db.Table("messages_outcomes").Create(map[string]interface{}{
-				"msgid": id, "outcome": utils.OUTCOME_WITHDRAWN, "comments": banWithdrawnText,
-			})
-			text := "Withdrawn: " + banWithdrawnText
-			log.Log(log.LogEntry{Type: log.LOG_TYPE_MESSAGE, Subtype: log.LOG_SUBTYPE_OUTCOME,
-				User: &userid, Byuser: &byuser, Msgid: &id, Text: &text})
-		}
-
-		if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{"msgid": id}); err != nil {
-			stdlog.Printf("Failed to queue freebie alerts remove for message %d withdrawn by ban: %v", id, err)
-		}
-	}
 }

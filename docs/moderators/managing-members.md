@@ -267,8 +267,16 @@ doesn't change anything on yours.
 ### Contacting Trash Nothing members
 
 - **Only while they're a member.** Once a Trash Nothing member leaves your community, you can't
-  contact them any more, even in a chat you had with them before. ModTools shows that chat as
-  closed. They can still write to you.
+  contact them any more, even in a chat you had with them before. You can still open and read
+  that chat; ModTools says it is closed and doesn't offer a reply box. They can still write to
+  you. A **Chat** button for a Trash Nothing member you can't contact says so instead of opening
+  a chat.
+- **The same goes for notes in chat review.** You can add a note to a chat between two members
+  only if any Trash Nothing member in it has chosen a community you moderate.
+- **Removing them still sends your message.** If you remove a Trash Nothing member with a
+  standard message, it goes, because they were a member when you sent it.
+- **Support and Admin aren't bound by this.** They act for Freegle as a whole, so they can
+  contact any Trash Nothing member.
 - **Your messages are signed.** Trash Nothing shows them your message as if it came from a
   Freegle member, so a chat message, a standard message or a reply about a post from your team
   ends with "From the volunteers who run" and your community's name.
@@ -290,8 +298,10 @@ or ask another owner to.
 Removing or banning is a last resort. A friendly word usually solves the problem.
 
 A ban stops someone posting on your community and replying to posts there. It also withdraws
-their open OFFERs and WANTEDs on your community; one still waiting for approval is deleted. It
-does **not**
+their open OFFERs and WANTEDs that were posted on your community, and takes them out of any
+neighbouring community they had rippled to but which hadn't approved them yet; one still
+waiting for your approval is deleted. A post that rippled in from a neighbour is left to that
+neighbour. It does **not**
 stop them writing to your volunteers, by email or with the Contact button on your community
 page, and that is deliberate: it is how someone appeals a ban. Their message arrives in
 their chat with your volunteers, which every moderator on the community can see. A Trash

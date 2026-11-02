@@ -553,6 +553,15 @@ describe('ModChatFooter', () => {
       expect(wrapper.text()).toContain('Spammer')
     })
 
+    it('still shows the other warnings', async () => {
+      mockChat.value = createChat({ modsclosed: true })
+      mockOtheruser.value = createOtherUser({ spammer: true })
+      mockUserStore.byId.mockReturnValue(createOtherUser({ spammer: true }))
+      const wrapper = await mountComponent()
+      expect(wrapper.find('[data-test="chat-mods-closed"]').exists()).toBe(true)
+      expect(wrapper.text()).toContain('reported as a spammer')
+    })
+
     it('an open chat keeps its reply box', async () => {
       const wrapper = await mountComponent()
       expect(wrapper.find('[data-test="chat-mods-closed"]').exists()).toBe(false)

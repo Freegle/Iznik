@@ -740,18 +740,28 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	}
 
 	// A User2Mod chat closes to the community's moderators once its member is a
-	// TrashNothing member without a membership here they chose (modmessaging.ModsMayContact),
+	// TrashNothing member without a membership here they chose (modmessaging.MayContact),
 	// typically because they have left. The member can still write; the moderators can't.
-	var modRoom struct {
+	//
+	// A moderator writing into a chat between two members (a note from chat review) speaks
+	// for no one community, so each TrashNothing member in it must have chosen one the
+	// moderator moderates.
+	var writeRoom struct {
 		User1    uint64
+		User2    uint64
 		Groupid  uint64
 		Chattype string
 	}
-	db.Table("chat_rooms").Select("COALESCE(user1, 0) AS user1, COALESCE(groupid, 0) AS groupid, chattype").
-		Where("id = ?", id).Scan(&modRoom)
-	if modRoom.Chattype == utils.CHAT_TYPE_USER2MOD && modRoom.User1 != myid &&
-		!modmessaging.ModsMayContact(db, modRoom.User1, modRoom.Groupid) {
+	db.Table("chat_rooms").Select("COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2, COALESCE(groupid, 0) AS groupid, chattype").
+		Where("id = ?", id).Scan(&writeRoom)
+	if writeRoom.Chattype == utils.CHAT_TYPE_USER2MOD && writeRoom.User1 != myid &&
+		!modmessaging.MayContact(db, myid, writeRoom.User1, writeRoom.Groupid) {
 		return fiber.NewError(fiber.StatusForbidden, "This member isn't in this community any more, so the chat is closed")
+	}
+	if writeRoom.Chattype == utils.CHAT_TYPE_USER2USER && writeRoom.User1 != myid && writeRoom.User2 != myid &&
+		(!modmessaging.MayContactThroughAnyGroup(db, myid, writeRoom.User1) ||
+			!modmessaging.MayContactThroughAnyGroup(db, myid, writeRoom.User2)) {
+		return fiber.NewError(fiber.StatusForbidden, "A TrashNothing member in this chat didn't choose a community you moderate, so you can't add a note")
 	}
 
 	// Guard a reply whose referenced post no longer exists. chat_messages.refmsgid has a FK to

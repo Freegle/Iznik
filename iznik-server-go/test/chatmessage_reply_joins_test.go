@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
@@ -249,7 +250,7 @@ func TestReplyDoesNotJoinATrashNothingMember(t *testing.T) {
 
 	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reply-tn test item", 51.5, -0.1)
 
 	memberships := func(userid uint64) int {
@@ -266,7 +267,7 @@ func TestReplyDoesNotJoinATrashNothingMember(t *testing.T) {
 
 	// Nor does the reply flow's join call, which still answers success so the reply goes on.
 	_, tnToken := CreateTestSession(t, tn)
-	assert.Equal(t, 200, joinGroup(t, tnToken, map[string]interface{}{"groupid": groupID, "origin": "replied"}))
+	assert.Equal(t, 200, joinGroup(t, tnToken, map[string]interface{}{"groupid": groupID, "origin": addedorigin.Replied}))
 	assert.Equal(t, 0, memberships(tn))
 	assert.Equal(t, 200, joinGroup(t, tnToken, map[string]interface{}{"groupid": groupID, "manual": false}),
 		"an old client's reply-flow join is the same")
@@ -275,10 +276,10 @@ func TestReplyDoesNotJoinATrashNothingMember(t *testing.T) {
 	// A TN placement stays a placement.
 	placed := CreateTestUser(t, prefix+"_placed", "User")
 	makeTrashNothing(placed)
-	CreateTestMembership(t, placed, groupID, "Member")
+	CreateTestMembership(t, placed, groupID, utils.ROLE_MEMBER)
 	makePlacement(placed, groupID)
 	_, placedToken := CreateTestSession(t, placed)
-	assert.Equal(t, 200, joinGroup(t, placedToken, map[string]interface{}{"groupid": groupID, "origin": "replied"}))
+	assert.Equal(t, 200, joinGroup(t, placedToken, map[string]interface{}{"groupid": groupID, "origin": addedorigin.Replied}))
 	var implicit int
 	db.Raw("SELECT implicit FROM memberships WHERE userid = ? AND groupid = ?", placed, groupID).Scan(&implicit)
 	assert.Equal(t, 1, implicit, "a reply does not make a TN placement ordinary")
@@ -286,6 +287,6 @@ func TestReplyDoesNotJoinATrashNothingMember(t *testing.T) {
 	// Someone who is not a TN member is joined as before.
 	ordinary := CreateTestUser(t, prefix+"_ordinary", "User")
 	_, ordToken := CreateTestSession(t, ordinary)
-	assert.Equal(t, 200, joinGroup(t, ordToken, map[string]interface{}{"groupid": groupID, "origin": "replied"}))
+	assert.Equal(t, 200, joinGroup(t, ordToken, map[string]interface{}{"groupid": groupID, "origin": addedorigin.Replied}))
 	assert.Equal(t, 1, memberships(ordinary))
 }

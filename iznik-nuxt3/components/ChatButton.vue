@@ -24,9 +24,18 @@
         </span>
       </b-button>
     </slot>
+    <span
+      v-if="refused"
+      class="small text-muted ms-1"
+      data-test="chat-refused"
+    >
+      This TrashNothing member isn't in your community, so you can't chat to
+      them.
+    </span>
   </div>
 </template>
 <script setup>
+import { ref } from 'vue'
 import { useChatStore } from '~/stores/chat'
 import { useMessageStore } from '~/stores/message'
 import { useMiscStore } from '~/stores/misc'
@@ -83,6 +92,9 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['click', 'sent'])
+
+// Set when ModTools may not start a chat with this member.
+const refused = ref(false)
 const chatStore = useChatStore()
 const messageStore = useMessageStore()
 const miscStore = useMiscStore()
@@ -122,6 +134,11 @@ const openChat = async (
     // mods; if we're in MT we pass the groupid and userid and it opens from us mods to the user.
     const chatuserid = miscStore.modtools ? props.userid : 0
     const chatid = await chatStore.openChatToMods(props.groupid, chatuserid)
+
+    if (!chatid && miscStore.modtools && chatuserid > 0) {
+      refused.value = true
+      return
+    }
 
     if (openInNewTab && typeof window !== 'undefined' && window.open) {
       window.open(`/chats/${chatid}`, '_blank')

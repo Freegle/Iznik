@@ -649,12 +649,12 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					// enforces.
 					var poster uint64
 					db.Table("messages").Select("fromuser").Where("id = ?", messageGroups[0].Msgid).Scan(&poster)
-					tnPoster := modmessaging.IsTrashNothingMember(db, poster)
+					tnPoster := !auth.IsAdminOrSupport(myid) && modmessaging.IsTrashNothingMember(db, poster)
 
 					for i := range messageGroups {
 						can := NotifyPosterFlag(messaging, messageGroups[i].Groupid) == 1
 						if can && tnPoster {
-							can = modmessaging.ModsMayContact(db, poster, messageGroups[i].Groupid)
+							can = modmessaging.HasChosenMembership(db, poster, messageGroups[i].Groupid)
 						}
 						messageGroups[i].CanMessagePoster = &can
 					}
@@ -3800,7 +3800,7 @@ func prepareModReply(db *gorm.DB, myid uint64, msgid uint64, reqGid uint64) (*Me
 	// A TrashNothing poster can be messaged only by a community they chose and still
 	// belong to (modmessaging.ModsMayContact). An unaddressed post is refused above; this
 	// is the poster who has since left.
-	if !modmessaging.ModsMayContact(db, ctx.Fromuser, ctx.Groupid) {
+	if !modmessaging.MayContact(db, myid, ctx.Fromuser, ctx.Groupid) {
 		return nil, fiber.NewError(fiber.StatusForbidden,
 			"This freegler isn't a member of this community any more, so they can't be messaged")
 	}

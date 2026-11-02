@@ -87,9 +87,13 @@ type ChatRoomListEntry struct {
 }
 
 // markModsClosed sets Modsclosed on the User2Mod chats in which myid writes as one of the
-// community's moderators and may no longer (modmessaging.ModsMayContact). Which members are
+// community's moderators and may no longer (modmessaging.MayContact). Which members are
 // TrashNothing members is one query for the whole list; only those rooms are checked further.
 func markModsClosed(db *gorm.DB, myid uint64, chats []ChatRoomListEntry) {
+	if auth.IsAdminOrSupport(myid) {
+		return
+	}
+
 	members := []uint64{}
 	for _, chat := range chats {
 		if chat.Chattype == utils.CHAT_TYPE_USER2MOD && chat.User1 != myid && chat.User1 > 0 {
@@ -103,7 +107,7 @@ func markModsClosed(db *gorm.DB, myid uint64, chats []ChatRoomListEntry) {
 	trashNothing := modmessaging.TrashNothingMembers(db, members)
 	for ix, chat := range chats {
 		if chat.Chattype == utils.CHAT_TYPE_USER2MOD && chat.User1 != myid && trashNothing[chat.User1] {
-			chats[ix].Modsclosed = !modmessaging.ModsMayContact(db, chat.User1, chat.Groupid)
+			chats[ix].Modsclosed = !modmessaging.HasChosenMembership(db, chat.User1, chat.Groupid)
 		}
 	}
 }
@@ -427,14 +431,6 @@ func PutChatRoom(c *fiber.Ctx) error {
 		chatUserID := myid
 		modOpeningMembersChat := req.Userid > 0 && req.Userid != myid && auth.IsModOfGroup(myid, req.Groupid)
 		if modOpeningMembersChat {
-			// A TrashNothing member can be contacted only through a membership of this
-			// community they chose (see modmessaging.ModsMayContact). ModTools hides the
-			// Chat button for the rest; this is what makes that hold. It runs before the
-			// existing-room lookup below, so a chat from before they left stays closed too.
-			if !modmessaging.ModsMayContact(db, req.Userid, req.Groupid) {
-				return fiber.NewError(fiber.StatusForbidden, "This member didn't choose this community, so they can't be contacted")
-			}
-
 			chatUserID = req.Userid
 		}
 
@@ -444,8 +440,18 @@ func PutChatRoom(c *fiber.Ctx) error {
 			chatUserID, utils.CHAT_TYPE_USER2MOD, req.Groupid).Limit(1).Scan(&existingID)
 
 		if existingID > 0 {
+			// Handed back even when the moderators may no longer write in it, so they can
+			// still read it: the room then carries modsclosed and CreateChatMessage refuses
+			// their messages.
 			ensureRosterRow(db, existingID, chatUserID)
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": existingID})
+		}
+
+		// A TrashNothing member can be contacted only through a membership of this
+		// community they chose (see modmessaging.ModsMayContact), so no new chat is started
+		// with anyone else. ModTools hides the Chat button for them where it can.
+		if modOpeningMembersChat && !modmessaging.MayContact(db, myid, req.Userid, req.Groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "This member didn't choose this community, so they can't be contacted")
 		}
 
 		// Opening a brand new User2Mod room to a member is a moderator starting a

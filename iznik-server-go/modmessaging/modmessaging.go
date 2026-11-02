@@ -17,6 +17,7 @@ package modmessaging
 import (
 	stdlog "log"
 
+	"github.com/freegle/iznik-server-go/auth"
 	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
@@ -66,13 +67,50 @@ func ModsMayContact(db *gorm.DB, userid uint64, groupid uint64) bool {
 		return true
 	}
 
+	return HasChosenMembership(db, userid, groupid)
+}
+
+// MayContact is ModsMayContact for one person acting: Support and Admin act for Freegle as a
+// whole rather than for a community, so the rule does not bind them.
+func MayContact(db *gorm.DB, actor uint64, userid uint64, groupid uint64) bool {
+	return auth.IsAdminOrSupport(actor) || ModsMayContact(db, userid, groupid)
+}
+
+// HasChosenMembership reports whether userid has a membership of groupid they chose:
+// Approved, not implicit and not rippled. A failed read answers no.
+func HasChosenMembership(db *gorm.DB, userid uint64, groupid uint64) bool {
 	var chosen int64
-	db.Table("memberships").
+	if err := db.Table("memberships").
 		Where("userid = ? AND groupid = ? AND collection = ? AND implicit = 0 AND rippled = 0",
 			userid, groupid, utils.COLLECTION_APPROVED).
-		Count(&chosen)
+		Count(&chosen).Error; err != nil {
+		stdlog.Printf("Failed to read membership of user %d in group %d: %v", userid, groupid, err)
+		return false
+	}
 
 	return chosen > 0
+}
+
+// MayContactThroughAnyGroup reports whether actor may contact userid as a moderator of any
+// community: Support or Admin, someone who is not a TrashNothing member, or a TrashNothing
+// member with a membership they chose of a community actor moderates. For a note added
+// to a chat between two members, which speaks for no one community.
+func MayContactThroughAnyGroup(db *gorm.DB, actor uint64, userid uint64) bool {
+	if userid == 0 || auth.IsAdminOrSupport(actor) || !IsTrashNothingMember(db, userid) {
+		return true
+	}
+
+	var shared int64
+	if err := db.Table("memberships mm").
+		Joins("INNER JOIN memberships mp ON mp.groupid = mm.groupid").
+		Where("mm.userid = ? AND mm.role IN (?, ?) AND mp.userid = ? AND mp.collection = ? AND mp.implicit = 0 AND mp.rippled = 0",
+			actor, utils.ROLE_MODERATOR, utils.ROLE_OWNER, userid, utils.COLLECTION_APPROVED).
+		Count(&shared).Error; err != nil {
+		stdlog.Printf("Failed to read shared communities of user %d and moderator %d: %v", userid, actor, err)
+		return false
+	}
+
+	return shared > 0
 }
 
 // MembershipAllowsContact is ModsMayContact for a membership row already in hand, for the
@@ -95,7 +133,9 @@ func TrashNothingMembers(db *gorm.DB, userids []uint64) map[uint64]bool {
 	}
 
 	var ids []uint64
-	db.Raw("SELECT u.id FROM users u WHERE u.id IN (?) AND "+user.TrashNothingSQL("u"), userids).Scan(&ids)
+	if err := db.Raw("SELECT u.id FROM users u WHERE u.id IN (?) AND "+user.TrashNothingSQL("u"), userids).Scan(&ids).Error; err != nil {
+		stdlog.Printf("Failed to read which of %d users are TrashNothing members: %v", len(userids), err)
+	}
 	for _, id := range ids {
 		out[id] = true
 	}
