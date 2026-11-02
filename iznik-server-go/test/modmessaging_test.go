@@ -551,8 +551,26 @@ func TestModeratorCannotReplyAboutAPostToATrashNothingPosterWhoLeft(t *testing.T
 		return status
 	}
 
+	// ModTools reads canmessageposter on the post to decide whether to offer the buttons.
+	canMessage := func() interface{} {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msg, modToken), nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var payload map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&payload)
+		groups, _ := payload["groups"].([]interface{})
+		for _, g := range groups {
+			row := g.(map[string]interface{})
+			if uint64(row["groupid"].(float64)) == group {
+				return row["canmessageposter"]
+			}
+		}
+		return nil
+	}
+
+	assert.Equal(t, true, canMessage())
 	assert.Equal(t, 200, reply(), "a TN member of the community can be replied to")
 	leaveGroup(poster, group)
+	assert.Equal(t, false, canMessage(), "ModTools stops offering the buttons once they have left")
 	assert.Equal(t, 403, reply(), "once they have left, they can't")
 }
 

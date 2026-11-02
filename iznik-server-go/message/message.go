@@ -643,8 +643,19 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// who load it here too, as well as for Support and Admin.
 				if len(messageGroups) > 0 && myid > 0 && (isMod || modOfAnyMessageGroup(db, myid, messageGroups)) {
 					messaging := PosterMessagingGroups(db, messageGroups[0].Msgid)
+
+					// A TrashNothing poster can be written to only by a community they chose
+					// and still belong to (modmessaging.ModsMayContact), as prepareModReply
+					// enforces.
+					var poster uint64
+					db.Table("messages").Select("fromuser").Where("id = ?", messageGroups[0].Msgid).Scan(&poster)
+					tnPoster := modmessaging.IsTrashNothingMember(db, poster)
+
 					for i := range messageGroups {
 						can := NotifyPosterFlag(messaging, messageGroups[i].Groupid) == 1
+						if can && tnPoster {
+							can = modmessaging.ModsMayContact(db, poster, messageGroups[i].Groupid)
+						}
 						messageGroups[i].CanMessagePoster = &can
 					}
 				}
