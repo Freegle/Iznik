@@ -500,10 +500,12 @@ class TnUserProvisionerTest extends TestCase
     }
 
     /**
-     * A day, not for ever: a member who had no username when TN was first asked is created once
+     * An hour, not for ever and not a day: an answer can be wrong (a bad base URL, a 404 from
+     * an edge, a member too new to be on TN's replica), and every post by the poster is skipped
+     * until it expires. A member who had no username when TN was first asked is created once
      * they have one.
      */
-    public function test_a_remembered_miss_is_asked_again_after_a_day(): void
+    public function test_a_remembered_miss_is_asked_again_after_an_hour(): void
     {
         $tnId     = $this->tnId();
         $username = $this->uniqueUsername('later');
@@ -512,17 +514,39 @@ class TnUserProvisionerTest extends TestCase
         $this->assertNull($this->provisioner()->resolveOrCreate($tnId));
 
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
-        $this->travel(23)->hours();
-        $this->assertNull($this->provisioner()->resolveOrCreate($tnId), 'still inside the day');
+        $this->travel(59)->minutes();
+        $this->assertNull($this->provisioner()->resolveOrCreate($tnId), 'still inside the hour');
         $this->assertSame(1, $this->lookupsFor($tnId));
 
-        $this->travel(2)->hours();
+        $this->travel(2)->minutes();
         $user = $this->provisioner()->resolveOrCreate($tnId);
         $this->travelBack();
 
         $this->assertNotNull($user);
         $this->assertSame($tnId, (int) $user->fresh()->tnuserid);
         $this->assertSame(2, $this->lookupsFor($tnId));
+    }
+
+    /**
+     * A wrong 404 (TN's replica not yet holding a brand-new user) is put right by the next
+     * hour's lookup, and the poster's posts are ingested from then on.
+     */
+    public function test_a_wrong_not_found_answer_stops_hiding_the_poster_after_an_hour(): void
+    {
+        $tnId     = $this->tnId();
+        $username = $this->uniqueUsername('newcomer');
+        $this->tnUsers[$tnId] = [404, 'Not replicated yet.'];
+
+        $this->assertNull($this->provisioner()->resolveOrCreate($tnId, 'post-1'));
+
+        $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
+        $this->assertNull($this->provisioner()->resolveOrCreate($tnId, 'post-2'), 'remembered inside the hour');
+
+        $this->travel(61)->minutes();
+        $user = $this->provisioner()->resolveOrCreate($tnId, 'post-3');
+        $this->travelBack();
+
+        $this->assertNotNull($user, 'the poster is provisioned once the answer has expired');
     }
 
     /** The remembered answer is only a stand-in for asking TN: an account that holds the id wins. */

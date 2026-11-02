@@ -43,7 +43,7 @@ class TnUserProvisioner
     /**
      * TN has no user with this id (404), or gives no usable username for it. TN
      * answered, so this is final: the post is skipped and the sync moves on. The answer is
-     * remembered for ANSWER_TTL_HOURS, so TN is not asked again for each of the poster's posts.
+     * remembered for ANSWER_TTL_MINUTES, so TN is not asked again for each of the poster's posts.
      */
     public const REASON_NOT_FOUND = 'tn-user-not-found';
 
@@ -59,7 +59,7 @@ class TnUserProvisioner
      * TN answered with a client error other than 404 that no retry will change (400, 410,
      * 422, 451 and the like). It is about this poster, so it is final like a 404: the post
      * is skipped and the sync moves on. Reported to Sentry once a day for each status. Remembered
-     * for ANSWER_TTL_HOURS like a 404.
+     * for ANSWER_TTL_MINUTES like a 404.
      */
     public const REASON_LOOKUP_REFUSED = 'tn-user-lookup-refused';
 
@@ -123,10 +123,12 @@ class TnUserProvisioner
 
     private const ANSWER_KEY_PREFIX = 'tn-user-lookup:final-answer:';
 
-    // TN's final answer about a poster is remembered this long. It has to cover the posts
-    // of every overlapping sync window that meets the poster, and short enough that a member
-    // who gets a username (or whom TN restores) is picked up the next day.
-    private const ANSWER_TTL_HOURS = 24;
+    // TN's final answer about a poster is remembered this long, so a run that meets several of
+    // their posts asks once. It is short because the answer can be wrong (a bad base URL, a 404
+    // from an edge, a user too new to be on TN's replica): until it expires every post by the
+    // poster is skipped, and fixing the cause does not bring them back. The cost of asking
+    // again is one lookup for each poster an hour, within the rate limit the posts sync shares.
+    private const ANSWER_TTL_MINUTES = 60;
 
     // The only answers worth remembering: TN replied, and a retry would get the same reply.
     private const REMEMBERED_REASONS = [self::REASON_NOT_FOUND, self::REASON_LOOKUP_REFUSED];
@@ -311,14 +313,14 @@ class TnUserProvisioner
 
     /**
      * TN's own final answer about this poster (REMEMBERED_REASONS): remembered for
-     * ANSWER_TTL_HOURS so that the same poster is not asked about again for every post they
+     * ANSWER_TTL_MINUTES so that the same poster is not asked about again for every post they
      * make, in every sync window that overlaps. Only an answer is remembered, never a
      * failure to get one, and nothing is written by a dry run or from fixtures.
      */
     private function failFinal(int $tnUserId, string $reason): null
     {
         if (!$this->dryRun && !$this->localTesting) {
-            Cache::put(self::ANSWER_KEY_PREFIX . $tnUserId, $reason, now()->addHours(self::ANSWER_TTL_HOURS));
+            Cache::put(self::ANSWER_KEY_PREFIX . $tnUserId, $reason, now()->addMinutes(self::ANSWER_TTL_MINUTES));
         }
 
         return $this->fail($reason);
