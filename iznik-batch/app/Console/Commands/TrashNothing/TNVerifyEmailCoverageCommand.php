@@ -326,11 +326,18 @@ class TNVerifyEmailCoverageCommand extends Command
         $this->line(sprintf('  date bumped         %d  (expected)', $counts[CoverageVerifier::BUMPED]));
         $this->line(sprintf('  skipped on purpose  %d  (expected - %s)', $counts[CoverageVerifier::DELIBERATE_SKIP], $this->describeDeliberateSkips($result[CoverageVerifier::DELIBERATE_SKIP])));
         $this->line(sprintf('  TN lookup failed    %d  (undetermined)', $counts[CoverageVerifier::LOOKUP_ERROR]));
-        $this->line(sprintf('  GENUINE MISSES      %d', $counts[CoverageVerifier::GENUINE]));
+        $this->line(sprintf('  GENUINE MISSES      %d%s', $counts[CoverageVerifier::GENUINE], $this->describeMissReasons($result[CoverageVerifier::GENUINE])));
         $this->line(sprintf('  (%d single-post API lookup(s))', $result['api_lookups']));
 
         foreach ($result[CoverageVerifier::GENUINE] as $postId => $entry) {
-            $this->line(sprintf('    miss post_id=%s date=%s to=%s subject=%s', $postId, $entry['date'] ?? '?', $entry['envelope_to'], (string) $entry['subject']));
+            $this->line(sprintf(
+                '    miss post_id=%s date=%s to=%s%s subject=%s',
+                $postId,
+                $entry['date'] ?? '?',
+                $entry['envelope_to'],
+                isset($entry['skip_reason']) ? ' skipped=' . $entry['skip_reason'] : '',
+                (string) $entry['subject']
+            ));
         }
 
         $this->line('');
@@ -358,12 +365,49 @@ class TNVerifyEmailCoverageCommand extends Command
     private function describeDeliberateSkips(array $skips): string
     {
         if ($skips === []) {
-            return 'banned poster, unknown user and the like';
+            return 'a banned poster, or no TN user id';
         }
 
         $byReason = array_count_values($skips);
         ksort($byReason);
 
+        return $this->listReasons($byReason);
+    }
+
+    /**
+     * How many of the misses ingestion skipped, and for which reasons, for the report line. These
+     * are posts it decided not to place for want of a user, so each reason is a cause to fix.
+     *
+     * @param  array<string, array{skip_reason: string|null}>  $misses
+     */
+    private function describeMissReasons(array $misses): string
+    {
+        $byReason = $this->missesByReason($misses);
+
+        if ($byReason === []) {
+            return '';
+        }
+
+        return '  (ingestion skipped ' . array_sum($byReason) . ': ' . $this->listReasons($byReason) . ')';
+    }
+
+    /**
+     * @param  array<string, array{skip_reason: string|null}>  $misses
+     * @return array<string, int>  reason => how many misses, for the misses ingestion skipped
+     */
+    private function missesByReason(array $misses): array
+    {
+        $byReason = array_count_values(array_filter(array_column($misses, 'skip_reason'), fn ($reason) => $reason !== null));
+        ksort($byReason);
+
+        return $byReason;
+    }
+
+    /**
+     * @param  array<string, int>  $byReason
+     */
+    private function listReasons(array $byReason): string
+    {
         return implode(', ', array_map(fn ($reason, $count) => "{$reason}: {$count}", array_keys($byReason), $byReason));
     }
 
@@ -398,6 +442,7 @@ class TNVerifyEmailCoverageCommand extends Command
                 'genuine'      => $result['counts'][CoverageVerifier::GENUINE],
                 'api_lookups'  => $result['api_lookups'],
                 'miss_ids'     => implode(',', array_keys($result[CoverageVerifier::GENUINE])),
+                'miss_reasons' => $this->listReasons($this->missesByReason($result[CoverageVerifier::GENUINE])),
             ]);
         }
 

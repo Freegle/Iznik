@@ -84,6 +84,7 @@ class PostSyncer
             dryRun: $this->dryRun,
             loki: $this->loki,
             itemService: app(ItemService::class),
+            localTesting: $this->localTesting,
             userProvisioner: new TnUserProvisioner(
                 dryRun: $this->dryRun,
                 localTesting: $this->localTesting,

@@ -36,11 +36,17 @@ use Carbon\CarbonImmutable;
  *    headerPlacesNowhere().
  *  - DELETED / RESOLVED / BUMPED. Handled exactly as tn:parity-check's Layer 1
  *    reclassification handles them.
- *  - DELIBERATE_SKIP. Ingestion decided about the post and the decision is final: a
- *    banned poster, a poster TN does not know, a username clash, a deleted account. No
- *    message is made on purpose. Ingestion leaves a note of it (DeliberateSkips) and the
- *    verifier reads that, before asking TN anything, so such a post is counted and shown
- *    but is not a miss. A failure to look the poster up is not a decision and leaves no note.
+ *  - DELIBERATE_SKIP. Ingestion decided about the post and nobody needs to look at the
+ *    decision: a banned poster, or a post TN gave no user id for (DeliberateSkips::EXPECTED_REASONS).
+ *    Ingestion leaves a note of it (DeliberateSkips) and the verifier reads that, before asking
+ *    TN anything, so such a post is counted and shown but is not a miss.
+ *
+ * A post ingestion skipped for any other reason (a poster TN does not know, a lookup TN refused, a
+ * username clash, a deleted account) is not expected. The note is still read, but only to name the
+ * reason beside the miss: the post is classified like any other, and when nothing explains its
+ * absence it is a genuine miss, so it is reported, repeats when it is still missing after a
+ * backfill, and can be ingested once the cause is fixed. A failure to look the poster up leaves no
+ * note.
  *
  * Anything left over is a genuine coverage gap: TN emailed us a placeable
  * source post that is still live, and it is not in the database.
@@ -82,7 +88,7 @@ class CoverageVerifier
      *     bumped: string[],
      *     lookup_error: string[],
      *     deliberate_skip: array<string, string>,
-     *     genuine: array<string, array{post_id: string, subject: string|null, timestamp: string, date: string|null, envelope_to: string, post: mixed}>,
+     *     genuine: array<string, array{post_id: string, subject: string|null, timestamp: string, date: string|null, envelope_to: string, post: mixed, skip_reason: string|null}>,
      *     api_lookups: int
      * }
      */
@@ -113,10 +119,12 @@ class CoverageVerifier
                 continue;
             }
 
-            // Ingestion's own note that it skipped this post on purpose. Free, and it answers
-            // what TN cannot: why a post that is live and placeable has no message.
+            // Ingestion's own note of why it skipped this post. Free, and it answers what TN
+            // cannot: why a post that is live and placeable has no message. Only the reasons
+            // nobody needs to look at end the check; for the rest the reason is kept to show
+            // beside a miss.
             $skipReason = DeliberateSkips::reasonFor((string) $postId);
-            if ($skipReason !== null) {
+            if ($skipReason !== null && DeliberateSkips::isExpected($skipReason)) {
                 $deliberate[$postId] = $skipReason;
                 continue;
             }
@@ -153,6 +161,7 @@ class CoverageVerifier
                 'date'        => $result['date'],
                 'envelope_to' => $entry['envelope_to'],
                 'post'        => $result['post'],
+                'skip_reason' => $skipReason,
             ];
         }
 

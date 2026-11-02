@@ -7,6 +7,7 @@ use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use App\Services\TrashNothing\Verify\CoverageVerifier;
 use Carbon\CarbonImmutable;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -380,7 +381,7 @@ class CoverageVerifierTest extends TestCase
     public function test_a_post_with_no_note_is_still_a_miss_beside_one_with_a_note(): void
     {
         $this->createTestGroup(['lat' => self::PLACEABLE_LAT, 'lng' => self::PLACEABLE_LNG]);
-        DeliberateSkips::record('tn-noted', GroupPostIngestionService::REASON_TN_USERNAME_CLASH);
+        DeliberateSkips::record('tn-noted', GroupPostIngestionService::REASON_BANNED);
 
         $result = $this->verify([
             'tn-noted'    => $this->inventoryEntry('tn-noted'),
@@ -389,7 +390,68 @@ class CoverageVerifierTest extends TestCase
 
         $this->assertSame(['tn-noted'], array_keys($result[CoverageVerifier::DELIBERATE_SKIP]));
         $this->assertSame(['tn-unnoted'], array_keys($result[CoverageVerifier::GENUINE]));
+        $this->assertNull($result[CoverageVerifier::GENUINE]['tn-unnoted']['skip_reason']);
         $this->assertSame(1, $result['api_lookups']);
+    }
+
+    /**
+     * Only a banned poster and a post with no TN user id are skipped on purpose. The rest
+     * (an unknown user, a refusal, a clash, a deleted account) are a cause to fix, and a post
+     * skipped for one of them was lost a day late if the reason, not the miss, were reported.
+     *
+     * @return array<string, array{string}>
+     */
+    public static function reasonsThatAreStillMisses(): array
+    {
+        return [
+            'unknown user'            => [GroupPostIngestionService::REASON_UNKNOWN_USER],
+            'lookup refused'          => [GroupPostIngestionService::REASON_TN_USER_LOOKUP_REFUSED],
+            'username clash'          => [GroupPostIngestionService::REASON_TN_USERNAME_CLASH],
+            'address held by deleted' => [GroupPostIngestionService::REASON_TN_ADDRESS_HELD_BY_DELETED_USER],
+            'account deleted'         => [GroupPostIngestionService::REASON_TN_ACCOUNT_DELETED],
+        ];
+    }
+
+    #[DataProvider('reasonsThatAreStillMisses')]
+    public function test_a_post_skipped_for_a_reason_that_needs_fixing_is_a_miss_that_names_the_reason(string $reason): void
+    {
+        $this->createTestGroup(['lat' => self::PLACEABLE_LAT, 'lng' => self::PLACEABLE_LNG]);
+        DeliberateSkips::record('tn-noted', $reason);
+
+        $result = $this->verify(
+            ['tn-noted' => $this->inventoryEntry('tn-noted')],
+            $this->syncerReturning(['tn-noted' => $this->lookup()]),
+        );
+
+        $this->assertSame([], $result[CoverageVerifier::DELIBERATE_SKIP]);
+        $this->assertSame(['tn-noted'], array_keys($result[CoverageVerifier::GENUINE]));
+        $this->assertSame($reason, $result[CoverageVerifier::GENUINE]['tn-noted']['skip_reason']);
+        $this->assertSame(1, $result['api_lookups'], 'TN is asked, as it was before notes existed');
+    }
+
+    public function test_a_post_skipped_for_a_reason_that_needs_fixing_is_still_explained_by_tn(): void
+    {
+        // Deleted on TN: the live post is gone, so it is expected-absent whatever ingestion said.
+        $this->createTestGroup(['lat' => self::PLACEABLE_LAT, 'lng' => self::PLACEABLE_LNG]);
+        DeliberateSkips::record('tn-gone', GroupPostIngestionService::REASON_TN_ACCOUNT_DELETED);
+
+        $result = $this->verify(
+            ['tn-gone' => $this->inventoryEntry('tn-gone')],
+            $this->syncerReturning(['tn-gone' => $this->lookup(['status' => 'not_found'])]),
+        );
+
+        $this->assertSame(['tn-gone'], $result[CoverageVerifier::DELETED]);
+        $this->assertSame([], $result[CoverageVerifier::GENUINE]);
+    }
+
+    public function test_the_expected_reasons_are_exactly_a_banned_poster_and_no_user_id(): void
+    {
+        $this->assertSame(
+            [GroupPostIngestionService::REASON_BANNED, GroupPostIngestionService::REASON_NO_USER_ID],
+            DeliberateSkips::EXPECTED_REASONS,
+        );
+        $this->assertTrue(DeliberateSkips::isExpected(GroupPostIngestionService::REASON_NO_USER_ID));
+        $this->assertFalse(DeliberateSkips::isExpected(GroupPostIngestionService::REASON_UNKNOWN_USER));
     }
 
     public function test_a_note_does_not_outlast_the_archive_the_verifier_reads(): void

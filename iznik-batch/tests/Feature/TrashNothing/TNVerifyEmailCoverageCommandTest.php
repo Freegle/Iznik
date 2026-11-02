@@ -323,7 +323,7 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
     }
 
     /**
-     * Ingestion skipped these posts on purpose (a banned poster, a poster TN does not know).
+     * Ingestion skipped these posts on purpose (a banned poster, a post TN gave no user id for).
      * They are shown, with the reason, and are not misses: nothing is backfilled, a repeat is
      * not escalated, and more of them than the cap allows is not "a broken sync".
      */
@@ -336,7 +336,7 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
         }
         DeliberateSkips::record('tn-skip-1', GroupPostIngestionService::REASON_BANNED);
         DeliberateSkips::record('tn-skip-2', GroupPostIngestionService::REASON_BANNED);
-        DeliberateSkips::record('tn-skip-3', GroupPostIngestionService::REASON_UNKNOWN_USER);
+        DeliberateSkips::record('tn-skip-3', GroupPostIngestionService::REASON_NO_USER_ID);
         // A post that is backfilled and skipped again would otherwise come back as a repeat.
         Cache::put('tn-verify:backfilled:tn-skip-1', true, now()->addDay());
 
@@ -348,6 +348,30 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
             ->assertExitCode(0);
 
         $this->assertSame([], $recorder->ingested);
+    }
+
+    /**
+     * A post skipped because two members share a TN username, or a deleted account holds the
+     * poster's address or id, waits for a person. It is a miss again, with the reason beside it
+     * and counted per reason, and the backfill gets its chance to ingest it.
+     */
+    public function test_posts_skipped_for_a_reason_that_needs_a_person_are_misses_with_their_reasons(): void
+    {
+        foreach (['tn-clash-1', 'tn-clash-2', 'tn-deleted-1'] as $postId) {
+            $this->archivePost($postId, CarbonImmutable::now('UTC')->subHours(9)->toIso8601String());
+        }
+        DeliberateSkips::record('tn-clash-1', GroupPostIngestionService::REASON_TN_USERNAME_CLASH);
+        DeliberateSkips::record('tn-clash-2', GroupPostIngestionService::REASON_TN_USERNAME_CLASH);
+        DeliberateSkips::record('tn-deleted-1', GroupPostIngestionService::REASON_TN_ACCOUNT_DELETED);
+        $recorder = $this->bindSyncer();
+
+        $this->runForPostsArchived(9)
+            ->expectsOutputToContain('skipped on purpose  0')
+            ->expectsOutputToContain('GENUINE MISSES      3  (ingestion skipped 3: tn-account-deleted: 1, tn-username-clash: 2)')
+            ->expectsOutputToContain('skipped=tn-username-clash')
+            ->assertExitCode(0);
+
+        $this->assertEqualsCanonicalizing(['tn-clash-1', 'tn-clash-2', 'tn-deleted-1'], $recorder->ingested);
     }
 
     public function test_a_post_skipped_on_purpose_does_not_hide_a_real_miss_beside_it(): void

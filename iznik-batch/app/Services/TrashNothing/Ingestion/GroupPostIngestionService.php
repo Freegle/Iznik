@@ -16,6 +16,7 @@ use App\Services\Ripple\RippleEngagementService;
 use App\Services\SpatialQueryService;
 use App\Services\TusService;
 use App\Support\TransactionPolicy;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -106,11 +107,13 @@ class GroupPostIngestionService
 
     /**
      * The reasons a post is skipped for want of a user that are final, so they are decided and
-     * not merely failed: recorded in DeliberateSkips for tn:verify-email-coverage. Leaves out
-     * REASON_TN_USER_LOOKUP_FAILED (nothing decided) and REASON_TN_USER_LOOKUP_GAVE_UP (the
-     * post is still wanted, and the verifier is the second chance it gets).
+     * not merely failed: noted in DeliberateSkips for tn:verify-email-coverage, which shows the
+     * reason beside the miss, or counts the post as skipped on purpose when DeliberateSkips says
+     * the reason is expected. Leaves out REASON_TN_USER_LOOKUP_FAILED (nothing decided) and
+     * REASON_TN_USER_LOOKUP_GAVE_UP (the post is still wanted, and the verifier is the second
+     * chance it gets).
      */
-    private const DELIBERATE_USER_SKIPS = [
+    private const FINAL_USER_SKIPS = [
         self::REASON_UNKNOWN_USER,
         self::REASON_NO_USER_ID,
         self::REASON_TN_USER_LOOKUP_REFUSED,
@@ -118,6 +121,12 @@ class GroupPostIngestionService
         self::REASON_TN_ADDRESS_HELD_BY_DELETED_USER,
         self::REASON_TN_ACCOUNT_DELETED,
     ];
+
+    /**
+     * Sentry hears of a skip that needs a person once a day for each reason. The sync meets the
+     * same poster's posts again and again, and one report says there is a case to look at.
+     */
+    private const NEEDS_A_HUMAN_REPORTED_KEY_PREFIX = 'tn-ingest:needs-a-human-reported:';
 
     /** Why a post's consent made the poster's implicit membership ordinary, for the log. */
     public const REASON_CONSENTED = 'consented through TrashNothing';
@@ -168,6 +177,8 @@ class GroupPostIngestionService
         private readonly LokiService $loki,
         private readonly ItemService $itemService,
         private readonly TnUserProvisioner $userProvisioner,
+        // Reads fixtures and writes no notes, like the provisioner's own flag.
+        private readonly bool $localTesting = false,
     ) {}
 
     /**
@@ -317,8 +328,8 @@ class GroupPostIngestionService
                 'tn_user_id' => $tnUserId,
                 'reason'     => $traceReason,
             ]);
-            if (in_array($reason, self::DELIBERATE_USER_SKIPS, true)) {
-                $this->rememberDeliberateSkip((string) $postId, $reason);
+            if (in_array($reason, self::FINAL_USER_SKIPS, true)) {
+                $this->noteSkip((string) $postId, $reason, $tnUserId);
             }
             // Mirrors email-path case 2, which sets routing_reason and NOTHING
             // else — no group_id/group_name, even though the email path has
@@ -338,7 +349,7 @@ class GroupPostIngestionService
                 'group_id'   => $group->id,
             ]);
 
-            $this->rememberDeliberateSkip((string) $postId, self::REASON_BANNED);
+            $this->noteSkip((string) $postId, self::REASON_BANNED, $tnUserId);
 
             return $this->dropped(self::REASON_BANNED, result: 'skipped');
         }
@@ -912,13 +923,27 @@ class GroupPostIngestionService
     }
 
     /**
-     * Leave a note that this post was skipped on purpose, for tn:verify-email-coverage. Not in
-     * a dry run, which must leave nothing behind for the next real run.
+     * Leave a note of why this post was skipped, for tn:verify-email-coverage, and tell Sentry when
+     * the reason is one a person has to put right. Neither happens in a dry run, which must leave
+     * nothing behind for the next real run, or from fixtures.
      */
-    private function rememberDeliberateSkip(string $tnPostId, string $reason): void
+    private function noteSkip(string $tnPostId, string $reason, mixed $tnUserId): void
     {
-        if (!$this->dryRun) {
-            DeliberateSkips::record($tnPostId, $reason);
+        if ($this->dryRun || $this->localTesting) {
+            return;
+        }
+
+        DeliberateSkips::record($tnPostId, $reason);
+
+        if (DeliberateSkips::needsAHuman($reason)
+            && Cache::add(self::NEEDS_A_HUMAN_REPORTED_KEY_PREFIX . $reason, true, now()->addDay())) {
+            $message = "TrashNothing post {$tnPostId} (TN user {$tnUserId}) was skipped as {$reason}: only a person can put"
+                . ' this right, and until then none of the poster\'s posts are ingested. Reported once a day for each reason';
+            Log::error($message);
+
+            if (app()->bound('sentry')) {
+                app('sentry')->captureMessage($message, \Sentry\Severity::error());
+            }
         }
     }
 
