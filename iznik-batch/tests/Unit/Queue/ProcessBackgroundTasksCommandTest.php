@@ -13,7 +13,12 @@ use App\Mail\Session\LoginLinkMail;
 use App\Mail\Session\MergeOfferMail;
 use App\Mail\Session\UnsubscribeConfirmMail;
 use App\Mail\Session\VerifyEmailMail;
+use App\Mail\Chat\ChatNotification;
 use App\Mail\Message\ModStdMessageMail;
+use App\Models\ChatRoom;
+use App\Models\Membership;
+use App\Models\MessageGroup;
+use App\Services\ChatNotificationService;
 use App\Services\BlockedKeywordBackfillService;
 use App\Services\ContentCheckService;
 use App\Services\PushNotificationService;
@@ -1799,6 +1804,190 @@ class ProcessBackgroundTasksCommandTest extends TestCase
                 'Other mod lastmsgemailed must not be pre-set — daemon must be able to notify them'
             );
         }
+    }
+
+    /**
+     * Approve a post with a standard message, then run the User2Mod chat notifier over the chat
+     * it opened. Returns the poster, the sending mod, a second mod of the community and the chat.
+     *
+     * @return array{0: \App\Models\User, 1: \App\Models\User, 2: \App\Models\User, 3: object}
+     */
+    private function approveWithStdMsgThenNotify(bool $chatsMarkedRead): array
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser(['email_preferred' => 'poster' . uniqid() . '@example.com']);
+        $mod = $this->createTestUser(['fullname' => 'Approving Mod']);
+        $otherMod = $this->createTestUser(['fullname' => 'Other Mod']);
+        $this->createMembership($poster, $group);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($otherMod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $configId = DB::table('mod_configs')->insertGetId([
+            'name' => 'Chatread Test Config',
+            'createdby' => $mod->id,
+            'chatread' => $chatsMarkedRead ? 1 : 0,
+            'network' => 'Freegle',
+        ]);
+        DB::table('memberships')
+            ->where('userid', $mod->id)
+            ->where('groupid', $group->id)
+            ->update(['configid' => $configId]);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Fridge freezer (Somewhere)',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_approved',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Thanks for freegling: OFFER: Fridge freezer (Somewhere)',
+                'body' => 'Just a note to say thanks for freegling.',
+                'stdmsgid' => 0,
+                'action' => 'Approve',
+                'notifyposter' => 1,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class)->shouldReceive('notifyGroupMods')->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $chatRoom = DB::table('chat_rooms')
+            ->where('user1', $poster->id)
+            ->where('groupid', $group->id)
+            ->where('chattype', ChatRoom::TYPE_USER2MOD)
+            ->first();
+        $this->assertNotNull($chatRoom, 'The standard message opens a chat with the poster');
+
+        // The notifier runs on its own schedule; here it runs straight after, with no delay.
+        app(ChatNotificationService::class)->notifyByEmail(ChatRoom::TYPE_USER2MOD, (int) $chatRoom->id, 0);
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        return [$poster, $mod, $otherMod, $chatRoom];
+    }
+
+    private function chatNotificationsTo(\App\Models\User $user): int
+    {
+        return Mail::sent(ChatNotification::class, function (ChatNotification $mail) use ($user) {
+            return collect($mail->to)->pluck('address')->contains($user->email_preferred);
+        })->count();
+    }
+
+    public function test_approve_stdmsg_reaches_the_poster_once(): void
+    {
+        // On 2026-11-03 two posters approved with "Thanks for freegling" each got it twice: the
+        // standard message itself, then the chat notifier's "Your conversation with the ...
+        // Volunteers" carrying the same words 30 seconds later.
+        [$poster, , $otherMod] = $this->approveWithStdMsgThenNotify(chatsMarkedRead: FALSE);
+
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($poster) {
+            return collect($mail->to)->pluck('address')->contains($poster->email_preferred);
+        });
+        $this->assertSame(0, $this->chatNotificationsTo($poster), 'The poster already has the words; no chat notification');
+
+        // The other moderators are still told what a colleague sent.
+        $this->assertSame(1, $this->chatNotificationsTo($otherMod));
+    }
+
+    public function test_approve_stdmsg_counts_as_seen_by_the_mod_who_sent_it(): void
+    {
+        [, $mod, , $chatRoom] = $this->approveWithStdMsgThenNotify(chatsMarkedRead: FALSE);
+
+        $chatMsgId = (int) DB::table('chat_messages')->where('chatid', $chatRoom->id)->where('type', 'ModMail')->value('id');
+        $roster = DB::table('chat_roster')->where('chatid', $chatRoom->id)->where('userid', $mod->id)->first();
+
+        $this->assertNotNull($roster);
+        $this->assertSame($chatMsgId, (int) $roster->lastmsgseen, 'Your own standard message is not unread to you');
+        $this->assertSame(0, $this->chatNotificationsTo($mod));
+    }
+
+    public function test_approve_stdmsg_with_chats_marked_read_sends_other_mods_no_copy(): void
+    {
+        [$poster, , $otherMod, $chatRoom] = $this->approveWithStdMsgThenNotify(chatsMarkedRead: TRUE);
+
+        $chatMsg = DB::table('chat_messages')->where('chatid', $chatRoom->id)->where('type', 'ModMail')->first();
+        $this->assertSame(1, (int) $chatMsg->mailedtoall);
+        $this->assertSame(1, (int) $chatMsg->seenbyall);
+
+        $otherRoster = DB::table('chat_roster')->where('chatid', $chatRoom->id)->where('userid', $otherMod->id)->first();
+        $this->assertNotNull($otherRoster, 'The other moderators are in the chat');
+        $this->assertSame((int) $chatMsg->id, (int) $otherRoster->lastmsgseen, 'Marked read for the other moderators');
+
+        $this->assertSame(0, $this->chatNotificationsTo($otherMod));
+        $this->assertSame(0, $this->chatNotificationsTo($poster));
+    }
+
+    public function test_member_stdmsg_with_chats_marked_read_sends_other_mods_no_copy(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $mod = $this->createTestUser(['fullname' => 'Sending Mod']);
+        $otherMod = $this->createTestUser(['fullname' => 'Other Mod']);
+        $this->createMembership($member, $group);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($otherMod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $configId = DB::table('mod_configs')->insertGetId([
+            'name' => 'Chatread Member Config',
+            'createdby' => $mod->id,
+            'chatread' => 1,
+            'network' => 'Freegle',
+        ]);
+        DB::table('memberships')->where('userid', $mod->id)->where('groupid', $group->id)->update(['configid' => $configId]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Your location',
+                'body' => 'Please update your location.',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class)->shouldReceive('notifyGroupMods')->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $chatRoom = DB::table('chat_rooms')
+            ->where('user1', $member->id)
+            ->where('groupid', $group->id)
+            ->where('chattype', ChatRoom::TYPE_USER2MOD)
+            ->first();
+        $this->assertNotNull($chatRoom);
+
+        app(ChatNotificationService::class)->notifyByEmail(ChatRoom::TYPE_USER2MOD, (int) $chatRoom->id, 0);
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        $chatMsg = DB::table('chat_messages')->where('chatid', $chatRoom->id)->where('type', 'ModMail')->first();
+        $this->assertSame(1, (int) $chatMsg->mailedtoall);
+        $this->assertSame(1, (int) $chatMsg->seenbyall);
+        $this->assertSame(0, $this->chatNotificationsTo($otherMod));
+        $this->assertSame(0, $this->chatNotificationsTo($member));
     }
 
     public function test_mod_stdmsg_for_member_creates_log_and_modmails_record(): void

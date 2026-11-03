@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-03
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -157,6 +157,11 @@ situation (approve, reject, hold, and so on). You configure your sets under Sett
   between "autosend" and "edit first" for a session.
 
 Keep them friendly and personal. A short human note lands far better than a corporate one.
+
+The member gets a standard message once, by email. It also goes into their chat with the
+volunteers, so the other moderators can see what was said. Whether they are emailed a copy
+depends on **Leave chat unread?** in your settings: "Leave as unread" emails them and shows
+it as unread, while "Mark as read" does neither. You are not sent a copy of your own.
 
 On a post that **rippled in** from another community, you only see the actions that do
 something on yours. Anything we say to a poster about their post comes from the community
