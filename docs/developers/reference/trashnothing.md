@@ -356,9 +356,10 @@ any poster. When no user can be had the post is skipped with a `routing_reason`:
 | `routing_reason` | Cause |
 |---|---|
 | `Post from unknown user` | TN has no such user (404), or no usable username for them. TN answered, so this is final, and the answer is remembered for an hour |
-| `tn-user-lookup-failed` | TN could not be asked (network error, timeout, 408, 429, 5xx, Cloudflare challenge, a rejected key). Transient: the sync stops here and the next run asks again, below. Written to Loki only if the post is finally skipped, as one of the next two reasons |
+| `tn-user-lookup-failed` | TN could not be asked (network error, timeout, 408, 429, 5xx, Cloudflare challenge). Transient: the sync stops here and the next run asks again, below. Written to Loki only if the post is finally skipped, as `tn-user-lookup-gave-up` |
 | `tn-user-lookup-refused` | TN answered with a client error other than 404 (400, 410, 422, 451 and the like). It is about this poster and a retry gets it again, so it is final like a 404, and remembered for an hour like one |
 | `tn-user-lookup-gave-up` | The lookup for this post failed 30 runs in a row. The post is skipped so that one poster cannot hold up every post behind it |
+| `tn-user-lookup-key-rejected` | TN rejected the public API key (401 or 403 without a Cloudflare challenge). Every lookup fails until the key is fixed, so the sync does not stop: the post is skipped as a miss and the posters Freegle already knows keep coming in. Sentry hears about the key at most once an hour |
 | `tn-username-clash` | An account with a different `tnuserid` holds the address: usernames are not unique, so these are two people |
 | `tn-address-held-by-deleted-user` | A deleted account still holds the bare address, which is unique and not the provisioner's to take back |
 | `tn-account-deleted` | A deleted account still holds the `tnuserid`. It is unique, so no live account can be given it, and a post is not handed to a deleted account. Deleting is a decision (the member leaving, or a merge) and the provisioner does not take the id back. Forgetting the account clears it (`User::forget()` and `UserManagementService::forgetUser()` both do), after which the poster's next post finds or makes a live account. Checked before TN is asked |
@@ -382,9 +383,14 @@ post would pass them for good. The cost is a `duplicate` routed entry for each p
 ingested, on each retry, and the retries are bounded by the give-up count below.
 
 Only a failure to ask is retried: a network error or timeout, 408, 429, 5xx, a Cloudflare
-challenge, a 200 that is not JSON, and a rejected key (401/403). Any other 4xx is TN's answer
-about that poster, so it is `tn-user-lookup-refused` and the sync moves on. It is logged each
-time, and Sentry hears of each status once a day.
+challenge, and a 200 that is not JSON. Any other 4xx is TN's answer about that poster, so it is
+`tn-user-lookup-refused` and the sync moves on. It is logged each time, and Sentry hears of each
+status once a day. A rejected key (401/403) is neither: it says nothing about the poster and
+fails every lookup until it is fixed, so holding the window for it would only hold up the posts
+behind. The post is skipped as `tn-user-lookup-key-rejected`, a miss that
+`tn:verify-email-coverage` shows and, with auto-ingest on, asks about again on each run until the
+key works or the post is too old. In that backfill a rejected key is "try later", like a failed
+lookup.
 
 The wait is bounded, because `tn:sync` runs every minute and, with API ingestion on, the email
 path no longer routes TN posts, so one poster that always fails would otherwise stop every post
@@ -394,7 +400,7 @@ the post, so a wedge is seen early. At 30, about half an hour, the post is skipp
 `tn-user-lookup-gave-up`, Sentry hears again, and the window moves on. An answer, whatever it is,
 is not a failure and does not count, so a 404 poster ahead of a failing one cannot hide it. A
 dry run counts nothing. A given-up post is still looked up if it is read again later, and
-ingested if TN answers by then. A rejected key is reported at most once an hour, not once a run.
+ingested if TN answers by then. A rejected key is not counted.
 
 A post held for a retry writes no routed Loki entry. The stream carries one entry per post, so
 the entry is written when the post is ingested or skipped, whichever reason it ends with.

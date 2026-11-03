@@ -340,7 +340,13 @@ class PostSyncer
 
             $context = $this->ingestionService->getLastRoutingContext();
 
-            if (($context['routing_reason'] ?? null) === GroupPostIngestionService::REASON_TN_USER_LOOKUP_FAILED) {
+            $reason = $context['routing_reason'] ?? null;
+
+            // A rejected key holds nothing in the sync (TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED):
+            // the post is skipped as a miss below. The coverage check's backfill asks about a missed
+            // post again on its next run, so there it is "try later", like a failed lookup.
+            if ($reason === GroupPostIngestionService::REASON_TN_USER_LOOKUP_FAILED
+                || ($this->backfill && $reason === GroupPostIngestionService::REASON_TN_USER_LOOKUP_KEY_REJECTED)) {
                 // Held for a retry, not decided: the cursor must not move to this post's date
                 // and the next run reaches the post again. The routed stream carries one entry
                 // per post, so it gets its entry when the post is finally ingested or skipped

@@ -719,6 +719,54 @@ class PostSyncerTest extends TestCase
         $this->assertSame([], $sentry->calls, 'one failed run is a blip');
     }
 
+    /**
+     * A rejected key says nothing about the poster and fails every lookup until it is fixed,
+     * so holding the window for it only holds up the posts behind. The post is skipped as a
+     * miss, the posters Freegle already knows keep coming in, and Sentry is told the key is
+     * rejected.
+     */
+    public function test_a_rejected_key_skips_the_post_without_holding_the_window(): void
+    {
+        $sentry = $this->recordSentry();
+        [$gone, $rejected, $other] = [$this->tnUserId(), $this->tnUserId(), $this->tnUserId()];
+        $this->tnStatuses = [$gone => 404, $rejected => 401, $other => 404];
+        $dir = $this->feedWithPosters([$gone, $rejected, $other]);
+
+        $syncer = $this->syncerForRun($dir);
+        [$count, $maxDate] = $syncer->sync(self::WINDOW_START, self::WINDOW_END);
+
+        $this->assertSame(3, $count, 'the posts behind p2 are reached in the same run');
+        $this->assertNull($syncer->stalledAt());
+        $this->assertSame('2026-07-07T14:30:00Z', $maxDate);
+
+        $entry = $this->routedFor('p2');
+        $this->assertCount(1, $entry);
+        $this->assertSame(RoutingResult::DROPPED->value, $entry[0]['labels']['subtype']);
+        $this->assertSame(TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED, $entry[0]['message']['routing_reason']);
+
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString('rejected', $sentry->calls[0][0]);
+    }
+
+    /**
+     * The coverage check's backfill asks about a missed post again on its next run, so a
+     * rejected key there is "try later", with no routed entry until the post is decided.
+     */
+    public function test_a_backfilled_post_whose_key_is_rejected_is_tried_again_later(): void
+    {
+        $this->recordSentry();
+        [$rejected, $gone] = [$this->tnUserId(), $this->tnUserId()];
+        $this->tnStatuses = [$rejected => 403, $gone => 404];
+        $dir = $this->feedWithPosters([$rejected, $gone]);
+        $posts = json_decode(file_get_contents(base_path($dir . '/posts_page_1.json')), true)['posts'];
+
+        $syncer = $this->syncerForRun($dir);
+
+        $this->assertFalse($syncer->ingestFetchedPost($posts[0]), 'try again later');
+        $this->assertSame([], $this->routedFor('p1'));
+        $this->assertTrue($syncer->ingestFetchedPost($posts[1]), 'a definite answer is decided');
+    }
+
     public function test_a_410_is_a_definite_skip_and_the_window_advances(): void
     {
         // TN has told us something about this poster that a retry will not change. The post

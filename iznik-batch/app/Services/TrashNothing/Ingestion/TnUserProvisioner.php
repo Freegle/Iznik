@@ -48,8 +48,8 @@ class TnUserProvisioner
     public const REASON_NOT_FOUND = 'tn-user-not-found';
 
     /**
-     * TN could not be asked (network error, timeout, 408, 429, 5xx, a challenge, a rejected
-     * key), so nothing is known about the poster. This is transient: the post sync stops
+     * TN could not be asked (network error, timeout, 408, 429, 5xx, a challenge), so
+     * nothing is known about the poster. This is transient: the post sync stops
      * at the post and the next run asks again (PostSyncer::sync()), until
      * LOOKUP_GIVE_UP_AT runs have failed and the reason becomes REASON_LOOKUP_GAVE_UP.
      */
@@ -68,6 +68,16 @@ class TnUserProvisioner
      * Final: the post is skipped so that one poster cannot hold up every post behind it.
      */
     public const REASON_LOOKUP_GAVE_UP = 'tn-user-lookup-gave-up';
+
+    /**
+     * TN rejected the public API key (401 or 403 without a Cloudflare challenge). That fails
+     * every lookup until the key is fixed and says nothing about the poster, so holding the
+     * window would only hold up the posts behind. The sync skips the post as a miss, which the
+     * coverage check's backfill asks about again once the key works; the backfill itself
+     * treats it as "try later". Never counted towards LOOKUP_GIVE_UP_AT. Sentry hears about
+     * the key at most once an hour.
+     */
+    public const REASON_LOOKUP_KEY_REJECTED = 'tn-user-lookup-key-rejected';
 
     /**
      * The username's address belongs to a Freegle user holding a DIFFERENT
@@ -343,9 +353,9 @@ class TnUserProvisioner
      * TN answering is final. A 404 is REASON_NOT_FOUND, and a client error that no retry
      * would change (400, 410, 422, 451...) is REASON_LOOKUP_REFUSED. Anything that says
      * nothing about the poster is REASON_LOOKUP_FAILED and is retried: a network error or
-     * timeout, 408, 429, 5xx, a Cloudflare challenge, a 200 that is not JSON, and the
-     * key being rejected (401/403), which is also reported since every lookup fails until
-     * it is fixed.
+     * timeout, 408, 429, 5xx, a Cloudflare challenge, and a 200 that is not JSON. The key
+     * being rejected (401/403) is REASON_LOOKUP_KEY_REJECTED and is reported, since every
+     * lookup fails until it is fixed.
      */
     private function fetchTnUser(int $tnUserId): ?array
     {
@@ -406,6 +416,8 @@ class TnUserProvisioner
 
             if (in_array($status, [401, 403], true) && !$challenged) {
                 $this->reportRejectedKey($status);
+
+                return $this->fail(self::REASON_LOOKUP_KEY_REJECTED);
             }
 
             return $this->lookupFailed($tnUserId);

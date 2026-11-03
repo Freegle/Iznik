@@ -76,6 +76,8 @@ class GroupPostIngestionService
 
     public const REASON_TN_USER_LOOKUP_GAVE_UP = TnUserProvisioner::REASON_LOOKUP_GAVE_UP;
 
+    public const REASON_TN_USER_LOOKUP_KEY_REJECTED = TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED;
+
     public const REASON_TN_USERNAME_CLASH = TnUserProvisioner::REASON_USERNAME_CLASH;
 
     public const REASON_TN_ADDRESS_HELD_BY_DELETED_USER = TnUserProvisioner::REASON_ADDRESS_HELD_BY_DELETED_USER;
@@ -109,9 +111,9 @@ class GroupPostIngestionService
      * The reasons a post is skipped for want of a user that are final, so they are decided and
      * not merely failed: noted in DeliberateSkips for tn:verify-email-coverage, which shows the
      * reason beside the miss, or counts the post as skipped on purpose when DeliberateSkips says
-     * the reason is expected. Leaves out REASON_TN_USER_LOOKUP_FAILED (nothing decided) and
-     * REASON_TN_USER_LOOKUP_GAVE_UP (the post is still wanted, and the verifier is the second
-     * chance it gets).
+     * the reason is expected. Leaves out REASON_TN_USER_LOOKUP_FAILED (nothing decided), and
+     * REASON_TN_USER_LOOKUP_GAVE_UP and REASON_TN_USER_LOOKUP_KEY_REJECTED (the post is still
+     * wanted, and the verifier is the second chance it gets).
      */
     private const FINAL_USER_SKIPS = [
         self::REASON_UNKNOWN_USER,
@@ -959,6 +961,7 @@ class GroupPostIngestionService
             TnUserProvisioner::REASON_LOOKUP_FAILED => self::REASON_TN_USER_LOOKUP_FAILED,
             TnUserProvisioner::REASON_LOOKUP_REFUSED => self::REASON_TN_USER_LOOKUP_REFUSED,
             TnUserProvisioner::REASON_LOOKUP_GAVE_UP => self::REASON_TN_USER_LOOKUP_GAVE_UP,
+            TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED => self::REASON_TN_USER_LOOKUP_KEY_REJECTED,
             TnUserProvisioner::REASON_USERNAME_CLASH => self::REASON_TN_USERNAME_CLASH,
             TnUserProvisioner::REASON_ADDRESS_HELD_BY_DELETED_USER => self::REASON_TN_ADDRESS_HELD_BY_DELETED_USER,
             TnUserProvisioner::REASON_ACCOUNT_DELETED => self::REASON_TN_ACCOUNT_DELETED,

@@ -754,8 +754,9 @@ class TnUserProvisionerTest extends TestCase
 
         $provisioner = $this->provisioner();
         $this->assertNull($provisioner->resolveOrCreate($first));
-        $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason());
+        $this->assertSame(TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED, $provisioner->lastFailureReason());
         $this->assertNull($provisioner->resolveOrCreate($second));
+        $this->assertSame(TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED, $provisioner->lastFailureReason());
 
         $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
         $this->assertStringContainsString('rejected', $sentry->calls[0][0]);
@@ -869,14 +870,12 @@ class TnUserProvisionerTest extends TestCase
             'bad gateway'     => [502],
             'unavailable'     => [503],
             'gateway timeout' => [504],
-            'rejected key'    => [401],
-            'forbidden'       => [403],
         ];
     }
 
     /**
-     * Only a failure to ask is retried. The key being rejected is included: it says nothing
-     * about the poster, and it is reported separately.
+     * Only a failure to ask is retried. A rejected key is not one: see
+     * test_a_rejected_key_is_not_counted_against_the_post.
      */
     #[DataProvider('transientStatuses')]
     public function test_a_failure_to_ask_is_retried(int $status): void
@@ -889,6 +888,42 @@ class TnUserProvisionerTest extends TestCase
 
         $this->assertNull($provisioner->resolveOrCreate($tnId, 'transient-post-' . $status));
         $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason());
+    }
+
+    public static function rejectedKeyStatuses(): array
+    {
+        return [
+            'unauthorised' => [401],
+            'forbidden'    => [403],
+        ];
+    }
+
+    /**
+     * A rejected key fails every lookup until someone fixes it, so it says nothing about the
+     * post. It is its own reason, it is never counted towards giving the post up, and the
+     * only report is the hourly one about the key.
+     */
+    #[DataProvider('rejectedKeyStatuses')]
+    public function test_a_rejected_key_is_not_counted_against_the_post(int $status): void
+    {
+        $sentry = $this->recordSentry();
+        $tnId   = $this->tnId();
+        $this->tnUsers[$tnId] = [$status, 'Unauthorized'];
+
+        for ($run = 1; $run <= TnUserProvisioner::LOOKUP_GIVE_UP_AT + 1; $run++) {
+            $provisioner = $this->provisioner();
+            $this->assertNull($provisioner->resolveOrCreate($tnId, 'keyed-post-' . $status));
+            $this->assertSame(TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED, $provisioner->lastFailureReason(), "run {$run}");
+        }
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString('rejected', $sentry->calls[0][0]);
+
+        // Once the key works, a failure is the post's first.
+        $this->tnUsers[$tnId] = [503, 'Service Unavailable'];
+        $provisioner = $this->provisioner();
+        $this->assertNull($provisioner->resolveOrCreate($tnId, 'keyed-post-' . $status));
+        $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason());
+        $this->assertCount(1, $sentry->calls, 'nothing about the post');
     }
 
     public function test_a_failing_lookup_is_reported_when_its_post_reaches_the_warning_count(): void
