@@ -130,8 +130,8 @@ class ReuseBenefitTest extends TestCase
     public function test_multiplier_year_before_base_is_one(): void
     {
         $this->assertSame(1.0, ReuseBenefit::getInflationMultiplier(1980));
-        // The table holds years before 2011 now, but the WRAP value is still
-        // never priced below its 2011 level.
+        // The table holds years before 2011, but the WRAP value is never
+        // priced below its 2011 level.
         $this->assertSame(1.0, ReuseBenefit::getInflationMultiplier(2005));
     }
 
@@ -250,8 +250,8 @@ class ReuseBenefitTest extends TestCase
 
     public function test_flytip_cost_fills_early_years_missing_from_injected_data(): void
     {
-        // The config row has held 2011 onwards only. The base years come from
-        // the fallback table, and the target year from the injected data.
+        // A config row may start at 2011. The base years come from the
+        // fallback table, and the target year from the injected data.
         $config = [2011 => 93.4, 2020 => 108.7, 2025 => 138.4];
 
         $this->assertEqualsWithDelta(

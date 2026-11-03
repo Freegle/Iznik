@@ -129,8 +129,8 @@ class ReuseBenefit
      * The cost to a council of clearing one fly-tip, in GBP, uprated from the
      * average CPI of 2003-06. By default, adjusts to current year prices.
      *
-     * Injected CPI data that lacks the early years (the config row has held
-     * 2011 onwards) is filled in from the fallback table.
+     * Years missing from injected CPI data (a config row may start at 2011)
+     * come from the fallback table.
      */
     public static function getFlyTipCost(?int $targetYear = null, ?array $cpiData = null): float
     {
