@@ -11,6 +11,7 @@ covers:
   - iznik-batch/app/Services/UnifiedDigestService.php
   - iznik-batch/app/Services/TrashNothing/Ingestion/**
   - iznik-batch/app/Services/TrashNothing/Sync/**
+  - iznik-batch/app/Services/TrashNothing/SharedAccountSplitter.php
   - iznik-batch/app/Services/TnMembershipBackfillService.php
   - iznik-batch/app/Console/Commands/Membership/BackfillTnCommand.php
   - iznik-server-go/modmessaging/**
@@ -170,6 +171,44 @@ so duplicates created from now on are still merged and the reviewed backlog wait
 - `users:fix-tn-names` (daily) - Names a member who has no name from the group alias they came in on. It leaves alone any member whose name is already `User::tnDisplayName()` of one of their usernames, and never derives a name from a bare `username@` address, where a hyphen belongs to the username
 - `User::canonMail($email)` - Normalize TN email addresses
 - `User::tnUsernameFromEmail($email)` - The TN username behind a bare or per-group address
+
+### Splitting an account that holds two members
+
+When one Freegle account turns out to hold two Trash Nothing members (two usernames, and TN's
+API gives the second one a different TN user id), `tn:split-shared-account` moves the second
+member out onto a new account with their TN user id:
+
+```bash
+php artisan tn:split-shared-account <freegle-user-id> <tn-username> <tn-user-id>          # report only
+php artisan tn:split-shared-account <freegle-user-id> <tn-username> <tn-user-id> --commit # write it
+```
+
+Without `--commit` it writes nothing and prints, per table, how many rows would move and on
+what evidence, plus the chats it cannot attribute and why. It prints ids and counts only.
+`SharedAccountSplitter` holds the rules:
+
+- An address moves when it carries the username; a post moves when one of those addresses sent it.
+- A member's alias stands for a Freegle community when its posts went there, or when it first
+  reached us within `SAME_MOMENT_SECONDS` of the account joining that community (TN added both
+  at once). A membership moves when only the moved member's aliases stand for its community, is
+  copied (dated when their alias for it first reached us) when both members' do, and stays
+  otherwise. Membership history moves on the same join-time match.
+- A chat moves when only the moved member could have written in it: the account's own post
+  in it was theirs, and every message the account wrote came after their alias for the post's
+  community first reached us and before the other member had one. A chat both could have
+  written in, or that nothing ties to either, is **undecided** and stays; name it in
+  `--move-chats=` to move it after looking.
+- Promises, collections and reneges about posts in moved chats move with them, and ratings,
+  arrangements and expected replies with people the account now only chats with as the moved
+  member. Logs move when they are about a moved post, or are a community log for a moved or
+  copied membership at the moved alias's time. Other logs stay.
+
+`--commit` does it in one transaction of single-row updates, each re-asserting the current
+owner, so a row that has changed since the report aborts the whole split. Before committing it
+writes the SQL that undoes it (under `storage/app/tn-splits/`, or `--rollback-file=`) and logs
+`User`/`Split` on both accounts. A second run finds nothing to move. It refuses an account that
+does not hold the username, a TN user id another account holds, the account's own TN user id,
+and an account whose only TN username it is.
 
 ## Integration Mechanisms
 
