@@ -1,14 +1,19 @@
 # Candidate: Shrink the routing server's memory
 
-Status: draft
+Status: ready
 Last reviewed: 2026-11-03
 
 ## Goal
 
 The routing server holds the UK road graph and the reach engine in memory on each database
-node. When this is done it uses about 1.8 GB resident instead of about 3.2 GB, with the same
-answers and no slower requests. The other 1.4 GB on each node goes back to the database. This
-is for the database nodes and the members whose requests they serve, not for any one screen.
+node. The aim is to cut db3's busy-hour peak. When this is done the live heap is about 1.2 to
+1.3 GB instead of about 2.6 to 3.4 GB, with the same answers and no slower requests, and the
+memory goes back to the database. This is for the database nodes and the members whose
+requests they serve, not for any one screen.
+
+**Before any of this, db3 needs the same Go settings as db2** (see "What exists today").
+That is a production setting, not part of the build, and it is worth more than every task
+here put together: db3 holds 6.6 GB of heap for about 3.4 GB that is live.
 
 All the figures here are arithmetic from a heap profile of the production router taken on
 2026-11-03 and from the code. They are not benchmarks. "Est." marks anything not measured.
@@ -72,8 +77,20 @@ Where the heap goes, from the profile: 2,788 MB in use, plus 425 MB of Go slack.
   `GOGC`.
 - `reach_cli.go:27`, `:106` - `reach stats`, which already prints junction and absorbed counts.
 - `docker-compose.yml:963-972` - the local `spatial` container (built from `iznik-routing-go`)
-  sets `GOMEMLIMIT` 9GiB and `GOGC` 50. The production unit on the database nodes is not in the
-  repo; its settings are unknown.
+  sets `GOMEMLIMIT` 9GiB and `GOGC` 50, and `REACH_DIR` is empty by default
+  (`docker-compose.yml:981`), so local dev and CI (the Bristol extract,
+  `.circleci/orb/freegle-tests.yml:503`) boot without the reach engine.
+- Production, read on 2026-11-03 from each process's environment and `/debug/memsummary`.
+  Both run the same binary and the same 3 September artifacts:
+  - db2: the `iznik-routing-go` systemd unit, `MemoryMin` 4G, `GOGC` 50, `GOMEMLIMIT` 5GiB.
+    Booted 04:49 that day: 2.57 GB of heap in use, 2.8 GB resident.
+  - db3: no systemd unit, `GOGC` unset (so 100) and no memory limit. Up since 22 October:
+    6.66 GB of heap in use, 7.1 GB resident. Its heap profile shows about 3.36 GB live at the
+    last collection, so the rest is garbage waiting for a collection at twice the live heap.
+    The live heap is above db2's because of request-time caches: leaf subgraphs (362 MB) and
+    region tables (125 MB).
+  - `REACH_DIR_PREV` is set on neither. Binary deploys keep a dated
+    `iznik-routing-go.bak-predeploy-*` copy; how the artifacts were copied is not recorded.
 - Tests that guard the change: `reach_snapshot_test.go`, `grid_test.go`,
   `drive_snapping_test.go`, `ripple_nearestfix_test.go`, `reach_overlay_test.go`,
   `reach_query_test.go`, `ripple_eval_engine_test.go`, and the parity sweep in
@@ -100,48 +117,41 @@ Where the heap goes, from the profile: 2,788 MB in use, plus 425 MB of Go slack.
 - **The compact `EdgeStart` comes with `hasDriveEdge` reading the degree directly.** Without
   that, snapping is 7 to 26% slower (est.).
 - **Sink nodes stay out of the main grid,** so the snap loops need no check per candidate.
-- **No request may get slower and no answer may change,** apart from what question 2 allows.
+- **No request may get slower and no answer may change,** apart from the one blur move below.
   Memory is not worth a slower or different result.
+- **The aim is db3's busy-hour peak.** Edward, 2026-11-03. The db2 standby already fits its 4 GB
+  reservation, so task 2, which mostly helps an idle node, ships as ordinary work rather than
+  being the goal. Acceptance is measured on db3 at its busiest hour.
+- **Every blurred location moves once, and never again because of numbering.** Edward,
+  2026-11-03. The blur lists the road points 200 to 600 m away by road and picks one from a seed,
+  in node-number order. Today that order follows OpenStreetMap ids, so a map refresh only moves
+  points where roads changed. A new node order is what makes task 8 pay (277 MB instead of about
+  50 MB), and it reorders every list. So in the same release the pick is made in order of each
+  point's coordinates instead of its number. The moved point stays in the same ring and is never
+  closer to the true spot. Keeping the old order would cost about 140 MB (est.).
+- **The stored labels are rewritten once, in the release that changes the format.** Edward,
+  2026-11-03. The partition cannot be rebuilt the same, so the labels are translated, not
+  rebuilt. It goes through the `REACH_DIR_PREV` rolling migration so there is no time without
+  labels, rehearsed on a copy of the 7.39 GB table first. `REACH_DIR_PREV` is unused today, so
+  task 7's deploy steps say how to turn it on for the change and off afterwards.
+- **Phase 4 is funded, and the fallback route search goes.** Edward, 2026-11-03, choosing the
+  faster option: chain interiors laid out next to each other, which removes `Graph.Edges`
+  and with it the search used when the reach engine is not loaded. Local dev and CI boot that
+  way today (`REACH_DIR` empty), so task 9 makes them boot with the engine, deriving the
+  artifacts from the extract at first start, before the fallback is removed.
+- **The version 2 snapshot reader is kept for one release,** so a map refresh across the
+  change still loads. Task 7's deploy copies new artifacts to a temporary name and renames
+  them, because a snapshot overwritten while it loads gives a mixed graph.
 
 ## Open questions for Edward
 
-Recommended answer first.
-
-1. Is the aim to keep the db2 standby inside its 4 GB reservation, or to cut db3's busy-hour
-   peak? Recommended: db3's busy-hour peak. The standby already fits (about 3.2 GB against
-   4 GB), and task 2 mostly helps an idle node, so it ships as ordinary work rather than being
-   the goal.
-2. Is a one-off change to every blurred location members see acceptable? Recommended: yes,
-   once, with the blur's sort key changed from node id to the node's coordinates in the same
-   release, so no later renumbering moves it again. A new node order is what makes task 8 pay:
-   without it, packing edges saves about 50 MB, not 277 MB. Keeping the old order would need a
-   4-byte rank per live node, about 140 MB (est.). Someone who saw both the old and new blur of
-   one post could narrow down its location, but both points are within 1.5 times the blur
-   distance by road, so only a little.
-3. Will you accept one rewrite of the stored labels (a 7.39 GB table) for the format change?
-   The partition cannot be rebuilt the same, so the labels must be translated, not rebuilt.
-   Recommended: yes, once, in the same release as the format change, through the existing
-   `REACH_DIR_PREV` rolling migration so there is no window without labels, rehearsed on a
-   copy of the table first.
-4. What are the production router's `GOGC` and `GOMEMLIMIT`? They are not in the repo.
-   Recommended: read them from `/debug/memsummary` on db2 and db3 before the build starts. It
-   prints both. This is also listed under prerequisites.
-5. Is `REACH_DIR_PREV` used in practice, and do artifact deploys copy to a temporary name and
-   rename? Recommended: keep the version 2 reader for one release whatever the answer, so a
-   map refresh across the change still works. If deploys copy in place, change them to copy
-   and rename before task 7, because a snapshot overwritten during a load gives a mixed graph.
-6. Must the fallback route search, used when the reach engine is not loaded, stay?
-   Recommended: yes. It is the only path when `REACH_DIR` is unset (`main.go:39-41`), so if
-   Phase 4 is funded it takes the option that keeps `Graph.Edges`.
-7. Stop after task 8, at about 1.8 GB resident, or fund Phase 4 (task 9)? Recommended: stop
-   after task 8 and measure. Phase 4 is 2 to 6 weeks for about 0.3 to 0.4 GB more. One option
-   makes batches of 1,000 targets 0.5 to 4 ms slower (est.); the other removes the fallback in
-   question 6.
+None.
 
 ## External prerequisites
 
-- [ ] Edward, before the build: `/debug/memsummary`, `GOGC` and `GOMEMLIMIT` from db2 and db3,
-      and a heap profile from db3 at its busiest hour. Decides questions 1 and 4.
+- [ ] Edward, now: run db3's router like db2's, under the `iznik-routing-go` systemd unit with
+      `GOGC` 50 and `GOMEMLIMIT` 5GiB, so it stops holding twice its live heap. Then a heap
+      profile from db3 at its busiest hour becomes the baseline for acceptance.
 - [ ] Edward or a session with production log access, before the build: a day of sampled
       routing requests exported from Loki to a file, so speed can be compared locally.
 - [ ] Edward, before task 7: a copy of the production reach artifacts (`REACH_DIR`) and a
@@ -159,13 +169,14 @@ One PR each. Tasks sharing a letter touch the same files and run in sequence.
 | 4 | Grid as runs of consecutive ids, snappable nodes only, with a dense cell table (180 MB) | 2 | B | `graph.go` |
 | 5 | `EdgeStart` as one degree byte per node plus a base every 16 (192 MB) | 4 | B | `graph.go`, `dijkstra.go` |
 | 6 | Chain tables kept only for chain nodes the drive graph uses (235 MB) | - | D | `reach_overlay.go`, `reach_isochrone.go` |
-| 7 | Snapshot version 3: drop dead nodes and renumber, in the order question 2 settles; carry the old overlay fingerprint; translate `originChain`; keep the version 2 reader (about 295 MB more) | 1, 5, 6 | B | `reach_snapshot.go`, `reach_overlay.go`, `reach_labels.go`, `reach_server.go` |
+| 7 | Snapshot version 3: drop dead nodes and renumber in a spatial order, with the blur picking by coordinates; carry the old overlay fingerprint; translate `originChain`; keep the version 2 reader (about 295 MB more) | 1, 5, 6 | B | `reach_snapshot.go`, `reach_overlay.go`, `reach_labels.go`, `reach_server.go` |
 | 8 | Edges packed into 4 bytes: an 18-bit id step and 14-bit seconds (277 MB) | 1, 7 | B | `graph.go`, `dijkstra.go`, `reach_snapshot.go` |
-| 9 | Phase 4, one option, only if question 7 funds it (about 390 MB, or 260 MB) | 8 | B | `reach_overlay.go`, `reach_isochrone.go`, `graph.go` |
+| 9 | Phase 4: chain interiors laid out next to each other (about 390 MB); local dev and CI boot with the engine first, then `Graph.Edges` and the fallback search go | 8 | B | `reach_overlay.go`, `reach_isochrone.go`, `graph.go`, `main.go`, `docker-compose.yml`, `.circleci` |
 
 Tasks 1, 2, 3 and 6 can start at once. Resident memory after each step, est.: about 2,960 MB
 after task 2, about 2,360 MB after task 6, about 2,060 MB after task 7, about 1,780 MB after
-task 8.
+task 8, about 1,400 MB after task 9. These are for db2's settings; db3 matches them only once
+it runs with the same `GOGC` and `GOMEMLIMIT`.
 
 ## Acceptance
 
@@ -176,7 +187,7 @@ task 8.
   catchments, ripple scheduling and boot time are no slower than master at the median and the
   99th percentile, beyond the spread of two master runs.
 - For the same inputs, snaps to the nearest node, isochrones and reach verdicts are the same
-  as master's. Blurred locations are the same too, unless question 2 allows one change.
+  as master's. Blurred locations are the same too, except for the one move in task 7.
 - Saving, loading and saving a snapshot gives the same bytes. A version 2 snapshot still loads
   while the version 3 one is new.
 - Every stored label in the production sample decodes to the same reach under version 3 as
@@ -186,7 +197,7 @@ task 8.
 
 ## Review burden
 
-- PRs: 8, or 9 with Phase 4. Tasks 2 and 3 are small; tasks 7 and 8 carry the risk.
+- PRs: 9. Tasks 2 and 3 are small; tasks 7, 8 and 9 carry the risk.
 - Each UI PR carries: none. No screen changes, so `PR_NO_SCREENSHOT=1` with that reason.
 - Each migration PR carries: none in the database schema. Task 7's PR carries the deploy
   steps: the order of artifacts and API, the label rewrite and how to roll it back.
