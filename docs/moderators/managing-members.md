@@ -260,9 +260,8 @@ placed in this group; they did not choose it"). A TrashNothing member who joined
 through TrashNothing shows **via partner** instead and is an ordinary member. Members of either
 kind are left out of the Stories newsletter, Freegle's engagement emails and Community News.
 
-The warning is about your community only. If they choose your community on Trash Nothing, it
-goes and they are an ordinary member you can contact as usual. Choosing a different community
-doesn't change anything on yours.
+The warning is about your community only: choosing a different community doesn't change
+anything on yours.
 
 ### Contacting Trash Nothing members
 

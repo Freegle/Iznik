@@ -1013,9 +1013,9 @@ describe('ModMember', () => {
 
       expect(warning.exists()).toBe(true)
       expect(warning.text()).toContain('Trash Nothing')
-      expect(warning.text()).toContain("hasn't chosen this")
+      expect(warning.text()).toContain("didn't choose this")
       expect(warning.text()).not.toContain('opted in')
-      expect(warning.text()).toContain("can't be contacted")
+      expect(warning.text()).toContain("can't contact them")
     })
 
     it('offers no chat button', () => {
