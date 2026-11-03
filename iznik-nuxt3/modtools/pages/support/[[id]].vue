@@ -87,20 +87,12 @@
           <!-- AI Support Helper Tab -->
           <b-tab @click="onAITab">
             <template #title>
-              <h2 class="ms-2 me-2">
-                AI Support Helper
-                <b-badge
-                  variant="danger"
-                  class="ms-1"
-                  style="font-size: 0.4em; vertical-align: super"
-                  >WIP</b-badge
-                >
-              </h2>
+              <h2 class="ms-2 me-2">AI Support Helper</h2>
             </template>
             <NoticeMessage variant="warning" class="mb-2">
-              <b>Work in Progress:</b> This is the AI Support Helper. It can
-              help diagnose problems using screen size, browser, and a detailed
-              trace. Please report bugs or usability issues to
+              This is the AI Support Helper. It can help diagnose problems using
+              screen size, browser, and a detailed trace. Please report bugs or
+              usability issues to
               <ExternalLink href="mailto:geeks@ilovefreegle.org">
                 geeks@ilovefreegle.org</ExternalLink
               >.

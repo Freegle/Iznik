@@ -32,11 +32,11 @@ use Illuminate\Support\Facades\DB;
  *   origin: a tn_unaddressed one that is not implicit was cleared, or merged with one the
  *   member chose.
  *
- * It also reports the effect of deciding moderator contact per group (Phase 5). Today a TN
- * poster is restricted on every group only when all their posts are unaddressed
- * (modmessaging.UsersUnaddressedOnly): one addressed post on any group opens every group's
- * moderators to them, the mixed-poster rule. Phase 5 decides it from the poster's membership of
- * that group alone: contactable only with an ordinary (not implicit) membership there.
+ * It also reports the effect of deciding moderator contact per group. The old rule restricted
+ * a TN poster on every group only when all their posts were unaddressed: one addressed post on
+ * any group opened every group's moderators to them, the mixed-poster rule. Contact is now
+ * decided from the poster's membership of that group alone (modmessaging.MayContact):
+ * contactable only with an ordinary (not implicit) membership there. The report compares the two.
  *
  * A pair that throws is reported to Sentry and marked failed, and the run carries on with the
  * rest; the result counts them in 'failed'. Both writes go through GroupPostIngestionService::
@@ -152,8 +152,8 @@ class TnMembershipBackfillService
     }
 
     /**
-     * Today's rule, as modmessaging.UsersUnaddressedOnly reads it: an addressed post of theirs,
-     * on any group, makes them contactable by every group's moderators.
+     * The old mixed-poster rule, for the report: an addressed post of theirs, on any group,
+     * made them contactable by every group's moderators.
      */
     private function isMixed(int $userId): bool
     {

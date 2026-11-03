@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Services\Ripple\RippleEngagementService;
+use App\Services\TrashNothing\Sync\TnUserIdMergeConflict;
 use App\Support\EloquentUtils;
 use App\Support\NameSanitiser;
 use Illuminate\Database\Eloquent\Builder;
@@ -396,6 +397,52 @@ class User extends Model implements Auditable
     }
 
     /**
+     * Display name for a TN username: dots and underscores become spaces, then
+     * title case ("tricia.hayes" -> "Tricia Hayes").
+     *
+     * Capitalises after any non-alphanumeric, not just whitespace ("mary-jane" ->
+     * "Mary-Jane"), as Go's strings.Title does in CreatePartnerUser, so ucwords()
+     * would give a different name for the same username.
+     */
+    public static function tnDisplayName(string $username): string
+    {
+        $name = str_replace(['.', '_'], ' ', $username);
+
+        return preg_replace_callback(
+            '/(?<![\p{L}\p{N}_])\p{Ll}/u',
+            fn ($m) => mb_strtoupper($m[0]),
+            $name
+        );
+    }
+
+    /**
+     * The bare TN address for a username. TN confirm it is deliverable.
+     */
+    public static function tnEmailForUsername(string $username): string
+    {
+        return $username . self::TN_EMAIL_SUFFIX;
+    }
+
+    /**
+     * The TN username behind a TN address, bare or per-group alias:
+     * "tricia.hayes-g298@user.trashnothing.com" and
+     * "tricia.hayes@user.trashnothing.com" both give "tricia.hayes".
+     *
+     * Only a -g<digits> immediately before the domain is stripped, because
+     * usernames can contain hyphens ("bibiana-gomes-g4840" is "bibiana-gomes").
+     * Lowercased, as usernames are compared without regard to case. Returns NULL
+     * for anything that is not a TN address.
+     */
+    public static function tnUsernameFromEmail(string $email): ?string
+    {
+        if (!preg_match('/^(.+?)(?:-g\d+)?@user\.trashnothing\.com$/i', trim($email), $m)) {
+            return NULL;
+        }
+
+        return strtolower($m[1]);
+    }
+
+    /**
      * Check if user is a moderator of any group.
      */
     public function isModerator(): bool
@@ -476,9 +523,12 @@ class User extends Model implements Auditable
         $email = str_replace('@googlemail.', '@gmail.', $email);
         $email = str_replace('@googlemail.co.uk', '@gmail.co.uk', $email);
 
-        # Canonicalise TN addresses.
-        if (preg_match('/(.*)\-(.*)(@user.trashnothing.com)/', $email, $matches)) {
-            $email = $matches[1] . $matches[3];
+        # Canonicalise TN addresses: strip a per-group -g<digits> suffix, and only that.
+        # Usernames can contain hyphens and a bare username@ address has no suffix, so
+        # stripping after the last hyphen would give "mary-jane@" the canon of another
+        # member's "mary-g12@". Go's CanonicalizePartnerEmail strips the same suffix.
+        if (preg_match('/^(.+)-g\d+(@user\.trashnothing\.com)$/i', $email, $matches)) {
+            $email = $matches[1] . $matches[2];
         }
 
         # Remove plus addressing, which is sometimes used by spammers as a trick, except for Facebook where it
@@ -886,6 +936,34 @@ class User extends Model implements Auditable
         return $this->tnuserid !== NULL || $this->isTN();
     }
 
+    /** Support and Admin, who act for Freegle as a whole rather than for one community. */
+    public function isSupportOrAdmin(): bool
+    {
+        return in_array($this->systemrole, [self::SYSTEMROLE_SUPPORT, self::SYSTEMROLE_ADMIN], TRUE);
+    }
+
+    /**
+     * Whether the moderators of $groupId may write to this user: a chat, mail or a standard
+     * message. Anyone who is not a TrashNothing member can be written to. A TrashNothing
+     * member only through a membership of the group they chose: Approved, not implicit and
+     * not rippled. So a TrashNothing placement can't be, and nor can a member who has left.
+     * Mirrors modmessaging.ModsMayContact in iznik-server-go.
+     */
+    public function modsMayContact(int $groupId): bool
+    {
+        if (!$this->isTrashNothingAccount()) {
+            return TRUE;
+        }
+
+        return DB::table('memberships')
+            ->where('userid', $this->id)
+            ->where('groupid', $groupId)
+            ->where('collection', Membership::COLLECTION_APPROVED)
+            ->where('implicit', 0)
+            ->where('rippled', 0)
+            ->exists();
+    }
+
     /**
      * Determine if user wants digest emails based on their simplemail setting.
      * Falls back to checking per-group emailfrequency if simplemail is not set.
@@ -1274,7 +1352,8 @@ class User extends Model implements Auditable
      * @param int $id1 The user ID to keep (merge target)
      * @param int $id2 The user ID to absorb and delete
      * @param string $reason Human-readable reason for the merge
-     * @param bool $forceMerge If TRUE, bypass canMerge() checks
+     * @param bool $forceMerge If TRUE, bypass canMerge() checks and the different-tnuserid
+     *                         refusal (the latter is still reported)
      * @param int|null $byUserId The user performing the merge (for logging)
      * @return bool TRUE on success, FALSE on failure or if merge is blocked
      */
@@ -1295,6 +1374,23 @@ class User extends Model implements Auditable
 
         if (!$forceMerge && (!$u1->canMerge() || !$u2->canMerge())) {
             return FALSE;
+        }
+
+        // Two different tnuserids are two Trash Nothing accounts. The merge below keeps
+        // id1's and deletes id2 with its own, after which TN posts from the lost id
+        // resolve to nobody, and it cannot be undone. Refuse unless forced, and report to
+        // Sentry either way: a caller asking for this at all means something upstream
+        // decided that two TN accounts are one person.
+        if ($u1->tnuserid && $u2->tnuserid && (int) $u1->tnuserid !== (int) $u2->tnuserid) {
+            $detail = "user {$id2} (tnuserid {$u2->tnuserid}) into user {$id1} (tnuserid {$u1->tnuserid}), reason: {$reason}";
+
+            if (!$forceMerge) {
+                report(new TnUserIdMergeConflict("Refused merge of two Trash Nothing accounts: {$detail}"));
+
+                return FALSE;
+            }
+
+            report(new TnUserIdMergeConflict("Forced merge of two Trash Nothing accounts, tnuserid {$u2->tnuserid} will be lost: {$detail}"));
         }
 
         try {

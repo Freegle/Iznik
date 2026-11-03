@@ -123,9 +123,10 @@ describe('useSupportScreenshots', () => {
       preventDefault,
       clipboardData: { files: [file('p.png', 'image/png')] },
     })
-    await new Promise((r) => setTimeout(r, 20))
     expect(preventDefault).toHaveBeenCalled()
-    expect(screenshots.value).toHaveLength(1)
+    // onPaste does not wait for the picture to be read, so wait for the result
+    // rather than for a fixed time, which a busy machine can overrun.
+    await vi.waitFor(() => expect(screenshots.value).toHaveLength(1))
   })
 
   it('leaves ordinary text pastes alone', () => {
