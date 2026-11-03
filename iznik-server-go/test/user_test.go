@@ -978,7 +978,7 @@ func TestPutUser(t *testing.T) {
 	// Verify backwards column is populated (enables indexed domain-suffix search).
 	var backwards string
 	db.Raw("SELECT backwards FROM users_emails WHERE userid = ? AND email = ?", userID, email).Scan(&backwards)
-	assert.Equal(t, reverseString(email), backwards, "backwards should be REVERSE(email)")
+	assert.Equal(t, reverseString(user.CanonicalizeEmail(email)), backwards, "backwards should be REVERSE(canon)")
 }
 
 // TestPutUserAuthenticatedDoesNotReturnAuthTokens verifies that when an authenticated
