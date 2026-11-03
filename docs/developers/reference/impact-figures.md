@@ -54,8 +54,11 @@ assumptions:
 
 - **Share who fly-tip: 1.95%.** A 2018 Keep Britain Tidy survey of 1,000 Londoners found 26,
   21, 16 and 15 people had fly-tipped a TV, an oven, a mattress or a sofa in the previous two
-  years. The mean is 19.5 in 1,000. The method statement prints the range as "17.55% to
-  21.45%"; that is a slip for 1.755% to 2.145%, and the script uses 1.95%.
+  years. The mean is 19.5 people in 1,000, which is 1.95%.
+
+  The method statement's text says 17.55% to 21.45%. Those figures are ten times too high:
+  they treat 19.5 people in 1,000 as 19.5%. The R script divides by 1,000 and uses 1.95%,
+  so the statement's £167,910 result is right. Only the percentages in its text are wrong.
 - **People who fly-tip would have fly-tipped what they gave away.** The script picked that
   share of the people who offered items in 2019 at random and counted their items.
 - **Each fly-tip costs £29 to clear.** That is Defra's standard cost for both "other single
