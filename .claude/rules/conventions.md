@@ -87,6 +87,27 @@ is a partner's member, not a volunteer. It must not hold Owner or Moderator on a
 When a volunteer has both a Freegle account and a TrashNothing account, do not merge them.
 They stay separate; remove the role from the TrashNothing one instead.
 
+## A TrashNothing member is dealt with through their membership
+
+Every TrashNothing member Freegle deals with has a membership of the community concerned, and
+moderators handle them through it: ban, remove, set to moderated, chat review. Do not plan a
+path that assumes they have none, such as reporting them to TrashNothing instead of banning
+them. That idea has been planned and undone twice: posters with no membership (reversed
+2026-10-13, which gave placed posters an implicit membership), then repliers with no
+membership (reversed 2026-11-03).
+
+- **A placed poster** gets an implicit membership when their post is placed on a community they
+  did not choose.
+- **A replier is already a member.** TrashNothing joins its members to a community before they can
+  reply to its posts by email: of 28,051 TN replies to Freegle posts in the 30 days to
+  2026-11-03, 28,027 came from someone who had joined a community the post was on before
+  replying, 19 from someone who joined just after, and 5 from someone who never joined.
+- **Messages between two TrashNothing members** stay on TrashNothing and never reach Freegle.
+
+What a TrashNothing membership never does is become ordinary because of something the member did
+on Freegle (replying, moving into the area, a moderator adding them): only choosing the
+community through TrashNothing makes it ordinary, and only an ordinary one can be contacted.
+
 ## UX telemetry does not ask members why they gave up
 
 The UX telemetry plan proposed a one-tap "why did you stop?" card shown after a member abandons

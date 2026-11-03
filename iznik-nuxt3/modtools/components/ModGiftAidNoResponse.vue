@@ -41,8 +41,18 @@
       <p v-if="!donors.length" class="text-muted">
         Nobody is waiting for a reply.
       </p>
+      <b-button
+        v-else
+        variant="link"
+        class="p-0"
+        data-test="noresponse-toggle"
+        @click="showList = !showList"
+      >
+        {{ showList ? 'Hide' : 'Show' }} the {{ donors.length }}
+        {{ donors.length === 1 ? 'donor' : 'donors' }} waiting for a reply
+      </b-button>
       <div
-        v-for="donor in donors"
+        v-for="donor in shownDonors"
         :key="'noresponse-' + donor.userid"
         class="noresponse border-top pt-2 mt-2"
       >
@@ -94,7 +104,7 @@
   </b-card>
 </template>
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useNuxtApp } from '#app'
 import { dateonly } from '~/composables/useTimeFormat'
 
@@ -102,6 +112,10 @@ const { $api } = useNuxtApp()
 
 const userid = ref(null)
 const donors = ref([])
+// The list starts folded, so it doesn't push the boxes below it down the page
+// while someone is about to paste into them.
+const showList = ref(false)
+const shownDonors = computed(() => (showList.value ? donors.value : []))
 const error = ref(null)
 const done = ref(null)
 

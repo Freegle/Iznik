@@ -10,7 +10,10 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
@@ -5066,4 +5069,108 @@ func TestGetRelatedMembersLeavesOutPairsAcrossTheTrashNothingLine(t *testing.T) 
 
 	work := getSessionWork(t, modToken)
 	assert.Equal(t, float64(1), work["relatedmembers"].(float64), "only the mergeable pair is counted")
+}
+
+// A ban takes the member's open posts on the community down, as V1's removeMembership($ban)
+// did. That matters most for a TrashNothing placement: the membership goes with the ban, so
+// without this the post would stay up with nobody it could be talked to about.
+func TestBanWithdrawsTheMembersOpenPostsOnTheCommunity(t *testing.T) {
+	prefix := uniquePrefix("mod_ban_posts")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	otherGroup := CreateTestGroup(t, prefix+"_other")
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	_, token := CreateTestSession(t, modID)
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 800000000+targetID, targetID)
+	CreateTestMembership(t, targetID, groupID, utils.ROLE_MEMBER)
+	db.Exec("UPDATE memberships SET implicit = 1, added_origin = ? WHERE userid = ? AND groupid = ?", addedorigin.TNUnaddressed, targetID, groupID)
+
+	live := CreateTestMessage(t, targetID, groupID, "OFFER: ban live "+prefix, 51.5, -0.1)
+	pending := CreateTestMessage(t, targetID, groupID, "OFFER: ban pending "+prefix, 51.5, -0.1)
+	db.Exec("UPDATE messages_groups SET collection = ? WHERE msgid = ?", utils.COLLECTION_PENDING, pending)
+	taken := CreateTestMessage(t, targetID, groupID, "OFFER: ban taken "+prefix, 51.5, -0.1)
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome) VALUES (?, ?)", taken, utils.OUTCOME_TAKEN)
+	elsewhere := CreateTestMessage(t, targetID, otherGroup, "OFFER: ban elsewhere "+prefix, 51.5, -0.1)
+
+	// A post that rippled in from a neighbour belongs to the neighbour.
+	rippledIn := CreateTestMessage(t, targetID, otherGroup, "OFFER: ban rippled "+prefix, 51.5, -0.1)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, rippled_in) VALUES (?, ?, NOW(), ?, 1)", rippledIn, groupID, utils.COLLECTION_APPROVED)
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"userid": targetID, "groupid": groupID, "action": "Ban"})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/memberships?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	outcome := func(msgid uint64) string {
+		var o string
+		db.Raw("SELECT COALESCE(MAX(outcome), '') FROM messages_outcomes WHERE msgid = ?", msgid).Scan(&o)
+		return o
+	}
+	deleted := func(msgid uint64) bool {
+		var n int64
+		db.Raw("SELECT COUNT(*) FROM messages WHERE id = ? AND deleted IS NOT NULL", msgid).Scan(&n)
+		return n > 0
+	}
+
+	assert.Equal(t, utils.OUTCOME_WITHDRAWN, outcome(live), "the live post is withdrawn")
+	var comment string
+	db.Raw("SELECT COALESCE(comments, '') FROM messages_outcomes WHERE msgid = ?", live).Scan(&comment)
+	assert.Equal(t, message.BanWithdrawnText, comment)
+	assert.False(t, deleted(live))
+
+	assert.True(t, deleted(pending), "a post still pending is deleted, so it is never approved later")
+	assert.Equal(t, "", outcome(pending))
+
+	assert.Equal(t, utils.OUTCOME_TAKEN, outcome(taken), "a post with an outcome is left alone")
+	assert.Equal(t, "", outcome(elsewhere), "a post on another community is left alone")
+	assert.False(t, deleted(elsewhere))
+	assert.Equal(t, "", outcome(rippledIn), "a post that rippled in from a neighbour is left alone")
+}
+
+// ModTools bans through DELETE /memberships with ban set, so that path withdraws the posts
+// too. A post that also rippled into a neighbour and is pending there is retired there,
+// so the neighbour never approves it later.
+func TestBanFromModToolsWithdrawsPostsAndRetiresPendingCopies(t *testing.T) {
+	prefix := uniquePrefix("mod_ban_delete")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	neighbour := CreateTestGroup(t, prefix+"_n")
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	_, token := CreateTestSession(t, modID)
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	CreateTestMembership(t, targetID, groupID, utils.ROLE_MEMBER)
+	live := CreateTestMessage(t, targetID, groupID, "OFFER: ban delete "+prefix, 51.5, -0.1)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, rippled_in) VALUES (?, ?, NOW(), ?, 1)", live, neighbour, utils.COLLECTION_PENDING)
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"userid": targetID, "groupid": groupID, "ban": true})
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/memberships?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var banned int64
+	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?", targetID, groupID).Scan(&banned)
+	assert.Equal(t, int64(1), banned)
+
+	var outcome string
+	db.Raw("SELECT COALESCE(MAX(outcome), '') FROM messages_outcomes WHERE msgid = ?", live).Scan(&outcome)
+	assert.Equal(t, utils.OUTCOME_WITHDRAWN, outcome, "the ModTools ban withdraws the open post")
+
+	var pendingLeft int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND deleted = 0", live, neighbour).Scan(&pendingLeft)
+	assert.Equal(t, int64(0), pendingLeft, "the copy pending on the neighbour is retired")
+
+	var logGroup uint64
+	db.Raw("SELECT COALESCE(MAX(groupid), 0) FROM logs WHERE msgid = ? AND type = 'Message' AND subtype = 'Outcome'", live).Scan(&logGroup)
+	assert.Equal(t, groupID, logGroup, "the withdrawal shows in the community's log")
 }

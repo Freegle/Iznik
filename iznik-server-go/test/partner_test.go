@@ -344,3 +344,37 @@ func TestCreatePartnerUserStoresV1CanonAndBackwards(t *testing.T) {
 	// what stops it minting another account.
 	assert.Equal(t, wantCanon, user.CanonicalizePartnerEmail(prefix+"-g1586@user.trashnothing.com"))
 }
+
+// A bare <username>@user.trashnothing.com address is the same TrashNothing member as their
+// per-group aliases: iznik-batch creates new TN posters with one. It finds their alias
+// accounts, they find it, and it canonicalises as PHP's canonMail does, so a canon lookup
+// on either side finds the other's rows.
+func TestBareTrashNothingAddressIsTheSameMember(t *testing.T) {
+	prefix := uniquePrefix("partner_bare")
+	db := database.DBConn
+	domain := "@user.trashnothing.com"
+
+	bare := CreateTestUser(t, prefix+"_bare", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", bare, prefix+domain)
+	alias := CreateTestUser(t, prefix+"_alias", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", alias, prefix+"-g7"+domain)
+	longer := CreateTestUser(t, prefix+"_longer", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", longer, prefix+"x"+domain)
+
+	fromBare := user.FindTNSiblings(db, prefix+domain)
+	assert.Contains(t, fromBare, alias, "the bare address finds the member's alias account")
+	assert.NotContains(t, fromBare, longer, "a different username is a different member")
+	assert.NotContains(t, fromBare, bare)
+
+	fromAlias := user.FindTNSiblings(db, prefix+"-g7"+domain)
+	assert.Contains(t, fromAlias, bare, "an alias finds the member's bare-address account")
+
+	// The same canon as an alias of the same member, and as PHP's canonMail: dots in
+	// the username kept, the domain's dots dropped.
+	assert.Equal(t, prefix+"@usertrashnothingcom", user.CanonicalizePartnerEmail(prefix+domain))
+	assert.Equal(t, "mary.jane@usertrashnothingcom", user.CanonicalizePartnerEmail("mary.jane@user.trashnothing.com"))
+
+	// A bare address on any other domain is an ordinary address.
+	assert.Empty(t, user.FindTNSiblings(db, prefix+"@test.com"))
+	assert.Equal(t, user.CanonicalizeEmail("mary.jane@test.com"), user.CanonicalizePartnerEmail("mary.jane@test.com"))
+}

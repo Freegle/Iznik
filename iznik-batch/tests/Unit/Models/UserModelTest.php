@@ -186,6 +186,125 @@ class UserModelTest extends TestCase
         $this->assertEquals('Bob Smith', User::removeTNGroup('Bob Smith-g12345'));
     }
 
+    public function test_tn_display_name_prettifies_a_username(): void
+    {
+        $this->assertEquals('Tricia Hayes', User::tnDisplayName('tricia.hayes'));
+        $this->assertEquals('Bob Smith', User::tnDisplayName('bob_smith'));
+        $this->assertEquals('Mary-Jane', User::tnDisplayName('mary-jane'));
+        $this->assertEquals("O'Brien", User::tnDisplayName("o'brien"));
+        $this->assertEquals('X2y Z', User::tnDisplayName('x2y.z'));
+        $this->assertEquals('Élise Dupont', User::tnDisplayName('élise.dupont'));
+        $this->assertEquals('ALREADY Up', User::tnDisplayName('ALREADY.up'));
+    }
+
+    public function test_tn_email_for_username(): void
+    {
+        $this->assertEquals('tricia.hayes@user.trashnothing.com', User::tnEmailForUsername('tricia.hayes'));
+    }
+
+    public function test_tn_username_from_email_handles_bare_and_alias(): void
+    {
+        $this->assertEquals('tricia.hayes', User::tnUsernameFromEmail('tricia.hayes@user.trashnothing.com'));
+        $this->assertEquals('tricia.hayes', User::tnUsernameFromEmail('tricia.hayes-g298@user.trashnothing.com'));
+        $this->assertEquals('tricia.hayes', User::tnUsernameFromEmail(' Tricia.Hayes-G298@User.TrashNothing.com '));
+    }
+
+    public function test_tn_username_from_email_keeps_hyphens_in_username(): void
+    {
+        $this->assertEquals('mary-jane', User::tnUsernameFromEmail('mary-jane@user.trashnothing.com'));
+        $this->assertEquals('mary-grace', User::tnUsernameFromEmail('mary-grace@user.trashnothing.com'));
+        $this->assertEquals('bibiana-gomes', User::tnUsernameFromEmail('bibiana-gomes-g4840@user.trashnothing.com'));
+        $this->assertEquals('bibiana', User::tnUsernameFromEmail('bibiana@user.trashnothing.com'));
+        // Only the last -g<digits> is the group suffix.
+        $this->assertEquals('ann-g12', User::tnUsernameFromEmail('ann-g12-g34@user.trashnothing.com'));
+    }
+
+    public function test_tn_username_from_email_rejects_non_tn_addresses(): void
+    {
+        $this->assertNull(User::tnUsernameFromEmail('tricia.hayes@gmail.com'));
+        $this->assertNull(User::tnUsernameFromEmail('tricia@user.trashnothing.com.evil.com'));
+        $this->assertNull(User::tnUsernameFromEmail('tricia@trashnothing.com'));
+        $this->assertNull(User::tnUsernameFromEmail('@user.trashnothing.com'));
+    }
+
+    public function test_mods_may_contact_anyone_who_is_not_a_trashnothing_member(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser();
+
+        $this->assertFalse($user->isTrashNothingAccount());
+        $this->assertTrue($user->modsMayContact($group->id), 'a Freegle member needs no membership to be contacted');
+    }
+
+    public function test_mods_may_contact_a_trashnothing_member_through_a_membership_they_chose(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createMembership($user, $group);
+
+        $this->assertTrue($user->modsMayContact($group->id));
+    }
+
+    public function test_mods_may_not_contact_a_trashnothing_member_without_a_membership(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+
+        $this->assertFalse($user->modsMayContact($group->id));
+    }
+
+    public function test_mods_may_not_contact_a_trashnothing_member_placed_on_the_group(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createMembership($user, $group, ['implicit' => 1]);
+
+        $this->assertFalse($user->modsMayContact($group->id));
+    }
+
+    public function test_mods_may_not_contact_a_trashnothing_member_through_a_ripple_join(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createMembership($user, $group, ['rippled' => 1, 'implicit' => 0]);
+
+        $this->assertFalse($user->modsMayContact($group->id));
+    }
+
+    public function test_mods_may_not_contact_a_trashnothing_member_whose_membership_is_pending(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createMembership($user, $group, ['collection' => Membership::COLLECTION_PENDING]);
+
+        $this->assertFalse($user->modsMayContact($group->id));
+    }
+
+    public function test_mods_may_not_contact_a_trashnothing_member_through_a_membership_of_another_group(): void
+    {
+        $group = $this->createTestGroup();
+        $other = $this->createTestGroup();
+        $user = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createMembership($user, $other);
+
+        $this->assertFalse($user->modsMayContact($group->id), 'a membership elsewhere says nothing about this group');
+        $this->assertTrue($user->modsMayContact($other->id));
+    }
+
+    public function test_a_member_known_only_by_a_trashnothing_address_is_held_to_the_same_rule(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => 'someone' . random_int(100000, 999999) . '@user.trashnothing.com']);
+
+        $this->assertNull($user->tnuserid);
+        $this->assertTrue($user->isTrashNothingAccount(), 'the preferred address is enough');
+        $this->assertFalse($user->modsMayContact($group->id));
+
+        $this->createMembership($user, $group);
+
+        $this->assertTrue($user->modsMayContact($group->id));
+    }
+
     public function test_remove_tn_group_preserves_name_without_suffix(): void
     {
         $this->assertEquals('Alice', User::removeTNGroup('Alice'));

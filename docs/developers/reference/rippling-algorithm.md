@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-02
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/tests/Unit/Services/Ripple/ResumedReachTest.php
@@ -1467,7 +1467,10 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   move into its area
   (`rippling.ClearRippledMembership` in iznik-server-go), or they post on it, reply to a post
   posted on it, or write back to one of its ordinary members about their rippled post
-  (`ripple:clear-engaged`, `RippleEngagementService`, every five minutes). Its first run looks back
+  (`ripple:clear-engaged`, `RippleEngagementService`, every five minutes). A reply or write-back
+  from a TrashNothing member clears nothing: they join communities through TrashNothing, and a
+  `replied` join through `PUT /memberships` or the reply join in `CreateChatMessage` skips them
+  too. Its first run looks back
   30 days; `ripple:clear-engaged --since=2026-06-23`, run once, checks every membership rippling
   has made without moving the scheduled run's saved positions. The clear counts
   towards the "Seen on many groups" spam check like any join. `memberships_history` keeps

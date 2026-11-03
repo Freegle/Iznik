@@ -1,3 +1,5 @@
+import dayjs from 'dayjs'
+
 // Dashboard Outcomes dates arrive as "YYYY-MM" (V1 PHP legacy) or as
 // "YYYY-MM-DDT..." ISO datetimes (V2 Go API). dayjs happily parses both
 // when we normalise to a plain "YYYY-MM-DD" string.
@@ -5,6 +7,23 @@ export function parseOutcomeDate(date) {
   if (!date || typeof date !== 'string') return ''
   if (date.length === 7) return date + '-01'
   return date.slice(0, 10)
+}
+
+// Sum the counts of a dashboard series (rows of { date, count }, one per day
+// or per month) whose date falls between start and end inclusive, scaled by
+// factor (the share of a community inside the area being reported on).
+export function sumCountsInRange(rows, start, end, factor = 1) {
+  if (!Array.isArray(rows)) return 0
+
+  let total = 0
+  for (const row of rows) {
+    const date = dayjs(parseOutcomeDate(row.date))
+    if (!date.isBefore(start, 'day') && !date.isAfter(end, 'day')) {
+      total += row.count * factor
+    }
+  }
+
+  return total
 }
 
 // Header row for Google Charts weight/member series on the authority stats

@@ -97,8 +97,6 @@
       </b-card-body>
     </b-card>
 
-    <ModGiftAidNoResponse />
-
     <b-card no-body class="mb-2">
       <b-card-body>
         <p>
@@ -179,6 +177,8 @@
         <NoticeMessage v-if="csvTrace2" v-html="csvTrace2" />
       </b-card-body>
     </b-card>
+
+    <ModGiftAidNoResponse />
 
     <ModGiftAid
       v-for="giftaid in giftaids"
