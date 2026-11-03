@@ -80,7 +80,7 @@ treats a per-group alias and a bare `username@user.trashnothing.com` alike as a 
 address of one member gets one canon. It lowercases, which `canonMail` does not, and it does not
 strip a `+` suffix, which `canonMail` does for any address. Nothing in this repository says
 whether a TN username can contain `+`; one that does would get a different canon in the two
-stacks. Any other address falls to Go's general `CanonicalizeEmail`. The rule used to strip everything after the last hyphen; rows written
+stacks. Any other address falls to Go's general `CanonicalizeEmail`, which gives `canonMail`'s answer. The rule used to strip everything after the last hyphen; rows written
 then keep their old canon until `users:backfill-email-canon` rewrites them, which is why a
 canon match alone is never taken as "same member" (see below). See
 [.claude/rules/mail-and-data.md](../../../.claude/rules/mail-and-data.md).

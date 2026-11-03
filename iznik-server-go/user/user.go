@@ -2145,20 +2145,44 @@ func handleRemoveEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostReque
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-// CanonicalizeEmail returns a canonical form of the email for deduplication.
+// CanonicalizeEmail returns users_emails.canon for an address: iznik-batch's User::canonMail
+// applied to the lowercased address, which is what users:backfill-email-canon stores. The two
+// must agree, or a row one side writes is invisible to the other's canon lookup.
+//
+// In order: googlemail becomes gmail; a Trash Nothing -gNNN alias suffix is stripped; a "+"
+// suffix is stripped, unless the address starts with "+" (O2 does that) or is a Facebook proxy
+// address; dots are dropped from the username for Gmail only; dots are dropped from the domain.
 func CanonicalizeEmail(email string) string {
 	email = strings.ToLower(strings.TrimSpace(email))
-	parts := strings.SplitN(email, "@", 2)
-	if len(parts) != 2 {
-		return email
+	email = strings.ReplaceAll(email, "@googlemail.", "@gmail.")
+
+	if m := canonTNAlias.FindStringSubmatch(email); m != nil {
+		email = m[1] + m[2]
 	}
-	// Remove dots and plus-addressing from local part for Gmail-style canonicalization.
-	local := strings.ReplaceAll(parts[0], ".", "")
-	if idx := strings.Index(local, "+"); idx >= 0 {
-		local = local[:idx]
+
+	if !strings.HasPrefix(email, "+") && !strings.Contains(email, "@proxymail.facebook.com") {
+		if m := canonPlus.FindStringSubmatch(email); m != nil {
+			email = m[1] + m[3]
+		}
 	}
-	return local + "@" + parts[1]
+
+	if p := strings.Index(email, "@"); p >= 0 {
+		lhs, rhs := email[:p], email[p:]
+		if strings.Contains(rhs, "@gmail") || strings.Contains(rhs, "@googlemail") {
+			lhs = strings.ReplaceAll(lhs, ".", "")
+		}
+		email = lhs + strings.ReplaceAll(rhs, ".", "")
+	}
+
+	return email
 }
+
+// canonMail's two patterns. Go's regexp picks submatches leftmost-first as PCRE does, so the
+// greedy groups split the address at the same "+" and "-g" as PHP.
+var (
+	canonTNAlias = regexp.MustCompile(`^(.+)-g\d+(@user\.trashnothing\.com)$`)
+	canonPlus    = regexp.MustCompile(`(.*)\+(.*)(@.*)`)
+)
 
 // UserPutRequest is the body for PUT /user (signup).
 type UserPutRequest struct {
