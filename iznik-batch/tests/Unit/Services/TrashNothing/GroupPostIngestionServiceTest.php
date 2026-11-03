@@ -637,6 +637,30 @@ class GroupPostIngestionServiceTest extends TestCase
     }
 
     /**
+     * The photos come with the post as attachments, so TN's link to them is not kept in
+     * the text, as on the email path.
+     */
+    public function test_the_tn_link_to_the_photos_is_taken_out_of_the_text(): void
+    {
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $postId = 'tn-pics-' . uniqid();
+        $post   = $this->makePost([
+            'post_id' => $postId,
+            'user_id' => $user->tnuserid,
+            'content' => "Sofas in great condition.\n\nCheck out the pictures at:\nhttps://trashnothing.com/pics/2vwPHsx",
+        ]);
+        $this->makeService(dryRun: false)->ingest($post, $group);
+
+        $message = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($message);
+        $this->assertSame('Sofas in great condition.', $message->textbody);
+    }
+
+    /**
      * TN is the master for a TN member's location and tn:sync keeps lastlocation in
      * step with it. The post's coordinates place the post, not the member.
      */

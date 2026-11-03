@@ -333,7 +333,10 @@ Photos come from the API's own `photos[].images` array rather than being scraped
 out of the post body. TN documents that array as ordered *smallest to largest*
 (`PublicApi/docs/Model/Photo.md`), so `GroupPostIngestionService::bestPhotoUrl()`
 takes the **last** entry — taking the first ingested a thumbnail where the email
-path got the full-size image.
+path got the full-size image. The post's text still ends with TN's "Check out the
+pictures at:" and a `trashnothing.com/pics/` address, sometimes the address alone;
+`App\Support\TrashNothingPicLinks::strip()` takes it out on both paths, since the photos
+are already attachments.
 
 `tn:parity-check` reclassifies two families of TN-side mutation rather than
 failing on them, because nothing on the Freegle side can prevent either: a post

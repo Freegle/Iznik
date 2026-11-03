@@ -16,6 +16,7 @@ use App\Services\Ripple\RippleEngagementService;
 use App\Services\SpatialQueryService;
 use App\Services\TusService;
 use App\Support\TransactionPolicy;
+use App\Support\TrashNothingPicLinks;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -240,7 +241,8 @@ class GroupPostIngestionService
         $postId   = $this->getField($post, 'post_id', 'getPostId');
         $tnUserId = $this->getField($post, 'user_id', 'getUserId');
         $title    = $this->getField($post, 'title', 'getTitle') ?? '';
-        $content  = $this->getField($post, 'content', 'getContent') ?? '';
+        // The photos come with the post as attachments, so TN's link to them goes.
+        $content  = TrashNothingPicLinks::strip($this->getField($post, 'content', 'getContent') ?? '');
         $date     = $this->getField($post, 'date', 'getDate');
         $lat      = $this->getField($post, 'latitude', 'getLatitude');
         $lng      = $this->getField($post, 'longitude', 'getLongitude');
