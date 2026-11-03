@@ -4,7 +4,6 @@ namespace App\Console\Commands\TrashNothing;
 
 use App\Console\Concerns\PreventsOverlapping;
 use App\Models\Rating;
-use App\Models\User;
 use App\Services\LokiService;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use App\Services\TrashNothing\Sync\RatingsSyncer;
@@ -34,7 +33,7 @@ class TNSyncCommand extends Command
                             {--dry-run : Trace DB writes without executing them}
                             {--local-testing : Load API responses from local fixture files instead of hitting the live TN API}
                             {--full-duplicate-scan : Re-scan every Trash Nothing address rather than only those added since the last run}
-                            {--report-duplicates : List duplicate Trash Nothing account candidates and exit, merging nothing}';
+                            {--report-duplicates : List accounts that share a Trash Nothing username, and exit}';
 
     protected $description = 'Sync data from TrashNothing, including user data updates, user ratings, posts/messages, and chat messages.';
 
@@ -89,11 +88,9 @@ class TNSyncCommand extends Command
         $this->localTesting = (bool) $this->option('local-testing');
         $this->reportOnly = (bool) $this->option('report-duplicates');
 
-        // Read-only, so it wants neither the lock nor the API sync. Widening the
-        // address filter exposes a backlog of real member accounts, and User::merge
-        // deletes one of each pair, so the list gets read before anything acts on it.
+        // Read-only, so it wants neither the lock nor the API sync.
         if ($this->reportOnly) {
-            $this->mergeDuplicateTNUsers(true);
+            $this->flagDuplicateTNUsers(true);
 
             return Command::SUCCESS;
         }
@@ -153,8 +150,8 @@ class TNSyncCommand extends Command
                     $maxChangeDate = $changesMaxDate;
                 }
 
-                // Merge duplicate TN users.
-                $duplicatesMerged = $this->mergeDuplicateTNUsers((bool) $this->option('full-duplicate-scan'));
+                // Flag accounts that share a TN username, for a person to look at.
+                $duplicatesFlagged = $this->flagDuplicateTNUsers((bool) $this->option('full-duplicate-scan'));
 
                 // Sync posts (API-based path, off by default — flip FREEGLE_TN_INGEST_POSTS_VIA_API=true to enable).
                 $postsProcessed = 0;
@@ -215,19 +212,19 @@ class TNSyncCommand extends Command
                     Cache::forget(self::FEED_HOLD_COUNT_KEY);
                 }
 
-                if ($ratingsProcessed === 0 && $changesProcessed === 0 && $duplicatesMerged === 0 && $postsProcessed === 0) {
+                if ($ratingsProcessed === 0 && $changesProcessed === 0 && $postsProcessed === 0) {
                     $this->alertIfSyncStale();
                 }
 
-                $this->info("TN sync complete: {$ratingsProcessed} ratings, {$changesProcessed} user changes, {$duplicatesMerged} duplicates merged, {$postsProcessed} posts.");
+                $this->info("TN sync complete: {$ratingsProcessed} ratings, {$changesProcessed} user changes, {$duplicatesFlagged} shared-username groups flagged, {$postsProcessed} posts.");
                 Log::info('TN sync complete', [
                     'ratings_processed' => $ratingsProcessed,
                     'changes_processed' => $changesProcessed,
-                    'duplicates_merged' => $duplicatesMerged,
+                    'duplicates_flagged' => $duplicatesFlagged,
                     'posts_processed' => $postsProcessed,
                 ]);
 
-                Log::info("TN-SYNC-TRACE [END] ratings={$ratingsProcessed} changes={$changesProcessed} merges={$duplicatesMerged} posts={$postsProcessed} max_date=" . ($maxChangeDate ?? 'null'));
+                Log::info("TN-SYNC-TRACE [END] ratings={$ratingsProcessed} changes={$changesProcessed} flagged={$duplicatesFlagged} posts={$postsProcessed} max_date=" . ($maxChangeDate ?? 'null'));
 
                 return Command::SUCCESS;
             });
@@ -525,9 +522,16 @@ class TNSyncCommand extends Command
     }
 
     /**
-     * Merge Trash Nothing accounts that are really the same person.
+     * Find Freegle accounts that share a Trash Nothing username, and leave every such group
+     * for a person to look at. Nothing is merged here.
      *
-     * This ran on every tick, and a tick is every minute. Each run streamed all ~400,000
+     * A shared username is not a shared identity: TN does not promise usernames are unique,
+     * and a released one can be retaken, so merging on it joined two different members on
+     * one account. Only the same TN user id would prove two accounts are one member, and
+     * users.tnuserid is unique, so no two accounts can hold the same one. Each group is
+     * logged with why it was not merged, and `tn:sync --report-duplicates` lists them all.
+     *
+     * The check ran on every tick, and a tick is every minute. Each run streamed all ~400,000
      * Trash Nothing addresses out of users_emails and grouped them in PHP, about five
      * seconds of database time and twenty gigabytes a day off the wire, to find a number
      * of duplicates measured at roughly zero a day.
@@ -540,11 +544,10 @@ class TNSyncCommand extends Command
      * The one thing that escapes it is an UPDATE re-pointing an existing row, which adds
      * no new id. $full is the answer to that: the nightly run does today's whole scan,
      * and it is a permanent fixture rather than a transitional one - it is the only
-     * reason narrowing the per-tick check is safe. Worst case a duplicate is merged a day
-     * late, against an event rate of about zero a day, and User::merge re-checks live
-     * state anyway so a late merge cannot corrupt anything.
+     * reason narrowing the per-tick check is safe. Worst case a group is flagged a day late,
+     * against an event rate of about zero a day.
      */
-    private function mergeDuplicateTNUsers(bool $full = false): int
+    private function flagDuplicateTNUsers(bool $full = false): int
     {
         // See whereTNAddress() for what the address filter matches on and why it is
         // not the backwards column.
@@ -683,17 +686,10 @@ class TNSyncCommand extends Command
             return 0;
         }
 
-        $merged = 0;
+        $flagged = 0;
 
         foreach ($duplicateGroups as $username => $userIds) {
             $uniqueIds = array_values(array_unique($userIds));
-            Log::info('Found ' . count($uniqueIds) . " users for {$username}");
-
-            // A shared username is not a shared identity: TN does not promise usernames
-            // are unique, and a released one can be retaken. Two different tnuserids are
-            // two TN accounts, and User::merge would keep one id and delete the other,
-            // after which posts from the lost id resolve to nobody. Leave the group for a
-            // person - reportDuplicateGroups() flags exactly these for review.
             $tnuserids = DB::table('users')
                 ->whereIn('id', $uniqueIds)
                 ->whereNotNull('tnuserid')
@@ -704,62 +700,33 @@ class TNSyncCommand extends Command
                 ->values()
                 ->all();
 
-            if (count($tnuserids) > 1) {
-                $idList = implode(',', $uniqueIds);
-                $tnList = implode(',', $tnuserids);
-                Log::warning("Not merging TN users for {$username}: users {$idList} hold different tnuserids {$tnList}");
-                Log::info("TN-SYNC-TRACE [MERGE-SKIP] reason=tnuserid-conflict users={$idList} tnuserids={$tnList}");
-                $this->loki->logEvent('tn-sync', 'user-merge-skip', [
-                    'reason' => 'tnuserid-conflict',
-                    'user_ids' => $uniqueIds,
-                    'tn_user_ids' => $tnuserids,
-                ]);
-
-                continue;
-            }
-
-            $mergeTo = $uniqueIds[0];
-
-            foreach (array_slice($uniqueIds, 1) as $userId) {
-                Log::info("Merging {$userId} into {$mergeTo}");
-                Log::info("TN-SYNC-TRACE [MERGE] from={$userId} into={$mergeTo}");
-                User::merge($mergeTo, $userId, "Duplicate TN user created accidentally", dryRun: $this->dryRun);
-                $this->loki->logEvent('tn-sync', 'user-merge', [
-                    'merge_to' => $mergeTo,
-                    'merge_from' => $userId,
-                ]);
-                $merged++;
-            }
+            // Two TN user ids: two TN accounts on one username. Fewer: nothing proves the
+            // accounts are the same member.
+            $reason = count($tnuserids) > 1 ? 'tnuserid-conflict' : 'tnuserid-unproven';
+            $idList = implode(',', $uniqueIds);
+            $tnList = implode(',', $tnuserids);
+            Log::info("Not merging TN users for {$username}: users {$idList}, tnuserids " . ($tnList ?: 'none') . " ({$reason})");
+            Log::info("TN-SYNC-TRACE [MERGE-SKIP] reason={$reason} users={$idList} tnuserids={$tnList}");
+            $this->loki->logEvent('tn-sync', 'user-merge-skip', [
+                'reason' => $reason,
+                'user_ids' => $uniqueIds,
+                'tn_user_ids' => $tnuserids,
+            ]);
+            $flagged++;
         }
 
-        // Only once the merges are done. A crash before this point leaves the watermark
+        // Only once every group is logged. A crash before this point leaves the watermark
         // where it was, so the next run re-reads the same rows rather than stepping over
-        // a duplicate it never got to.
+        // a group it never got to.
         $this->writeDupCursor($highWater, $didFullScan);
 
-        return $merged;
-    }
-
-    /**
-     * Whether to look at the addresses the old filter could not see.
-     *
-     * Default off. What it exposes is ~96 pairs of live member accounts, and merging
-     * a pair deletes one of them and re-points their mail, which cannot be undone.
-     * Reporting always sees them; merging waits until someone has read the report and
-     * set FREEGLE_TN_MERGE_LEGACY_DUPLICATES. Duplicates created from now on are
-     * unaffected either way - those arrive as new rows and the per-tick check has
-     * always seen them.
-     */
-    private function widenDuplicateScan(): bool
-    {
-        return $this->reportOnly
-            || (bool) config('freegle.trashnothing.merge_legacy_duplicates', false);
+        return $flagged;
     }
 
     /**
      * Narrow a users_emails query to Trash Nothing addresses.
      *
-     * Once widened this tests the ADDRESS, because no test on backwards can be
+     * This tests the ADDRESS, because no test on backwards can be
      * complete. That column holds three different things for a TN address:
      * REVERSE(email) (450,846 rows), REVERSE(canon) - canon strips the -gNNNN suffix
      * AND the dots in the domain, giving 'mocgnihtonhsartresu@...' (1,752,575 rows),
@@ -781,16 +748,11 @@ class TNSyncCommand extends Command
      */
     private function whereTNAddress(Builder $query): Builder
     {
-        if (!$this->widenDuplicateScan()) {
-            // Gate closed: exactly the filter that ships today, incompleteness included.
-            return $query->where('backwards', 'LIKE', strrev(self::TN_ADDRESS_SUFFIX) . '%');
-        }
-
         return $query->where('email', 'LIKE', '%' . self::TN_ADDRESS_SUFFIX);
     }
 
     /**
-     * Print the duplicate candidates for review and merge nothing.
+     * Print the accounts that share a TN username, for review.
      *
      * Pairs whose accounts carry two DIFFERENT tnuserids are called out: that is a
      * member who re-registered on Trash Nothing, or a username released and retaken

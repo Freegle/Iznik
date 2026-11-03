@@ -3057,6 +3057,50 @@ class ExpandServiceTest extends TestCase
         );
     }
 
+    /**
+     * A TrashNothing post placed on a community its poster never chose (the origin row's
+     * mod_messaging_allowed = 0) still ripples, but the poster is not joined to the communities
+     * it reaches and is not sent the intro mail: they have not opted in to hearing from Freegle
+     * communities, and a membership is what Freegle's mail goes by.
+     */
+    public function test_unaddressed_tn_post_ripples_without_joining_or_mailing_the_poster(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+
+        DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $originGid)
+            ->update(['mod_messaging_allowed' => 0]);
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $originGid, 'role' => Membership::ROLE_MEMBER,
+            'collection' => Membership::COLLECTION_APPROVED, 'emailfrequency' => 0, 'implicit' => 1,
+            'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now(),
+        ]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'the post itself still ripples into group B'
+        );
+        $this->assertNull(
+            DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first(),
+            'the poster is not joined to a community they never chose'
+        );
+        $this->assertSame(
+            0,
+            (int) DB::table('rippling_reach')->where('msgid', $msgid)->value('ripple_intro_sent'),
+            'no intro mail to a poster who has not opted in'
+        );
+    }
+
     /** The bundled intro email carries each rippled-into community's own welcome text. */
     public function test_intro_email_includes_rippled_group_welcome_text(): void
     {

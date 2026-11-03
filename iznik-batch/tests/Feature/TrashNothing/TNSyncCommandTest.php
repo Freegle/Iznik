@@ -857,8 +857,13 @@ class TNSyncCommandTest extends TestCase
     // Duplicate TN user merging
     // =========================================================================
 
-    public function test_merge_duplicate_tn_users(): void
+    /**
+     * Two accounts sharing a TN username, neither holding a TN user id: nothing proves
+     * they are one member, so they are flagged for a person and both kept.
+     */
+    public function test_a_shared_username_without_tn_ids_is_flagged_not_merged(): void
     {
+        $events = $this->recordSyncEvents();
         $user1 = $this->createTestUser(['fullname' => 'Alice']);
         $user2 = $this->createTestUser(['fullname' => 'Alice']);
 
@@ -887,14 +892,9 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync')->assertExitCode(0);
 
-        // One of the users should have been merged into the other.
-        $user1Exists = User::find($user1->id) !== null;
-        $user2Exists = User::find($user2->id) !== null;
-
-        $this->assertTrue(
-            ($user1Exists && !$user2Exists) || (!$user1Exists && $user2Exists),
-            'Expected exactly one user to be deleted during merge'
-        );
+        $this->assertNotNull(User::find($user1->id));
+        $this->assertNotNull(User::find($user2->id));
+        $this->assertTrue($this->flagged($events, [$user1->id, $user2->id], 'tnuserid-unproven'));
     }
 
     /**
@@ -933,12 +933,14 @@ class TNSyncCommandTest extends TestCase
     }
 
     /**
-     * Only one side holding a tnuserid is the ordinary duplicate - an email-path
-     * account and its partner twin - and is still merged, keeping the tnuserid.
+     * One side holding a TN user id and the other none does not prove one member: the
+     * other account may be someone who took the username later. Both are kept and the
+     * group is flagged.
      */
-    public function test_merge_keeps_the_only_tnuserid(): void
+    public function test_one_tn_id_on_a_shared_username_is_flagged_not_merged(): void
     {
         $this->fakeEmptyTnFeeds();
+        $events = $this->recordSyncEvents();
 
         $user1 = $this->createTestUser(['fullname' => 'Dave']);
         $user2 = $this->createTestUser(['fullname' => 'Dave', 'tnuserid' => 99020103]);
@@ -949,18 +951,19 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync', ['--full-duplicate-scan' => true])->assertExitCode(0);
 
-        $this->assertNotNull(User::find($user1->id), 'the first account seen is the one kept');
-        $this->assertNull(User::find($user2->id), 'the twin is merged in');
-        $this->assertEquals(99020103, User::find($user1->id)->tnuserid);
+        $this->assertNotNull(User::find($user1->id));
+        $this->assertNotNull(User::find($user2->id));
+        $this->assertEquals(99020103, User::find($user2->id)->tnuserid);
+        $this->assertTrue($this->flagged($events, [$user1->id, $user2->id], 'tnuserid-unproven'));
     }
 
     /**
-     * A skipped group does not stop the others: the check carries on to the next
-     * username and merges that pair.
+     * Every group is flagged on its own, with its own reason.
      */
-    public function test_a_skipped_group_does_not_stop_other_groups_merging(): void
+    public function test_each_shared_username_group_is_flagged_with_its_reason(): void
     {
         $this->fakeEmptyTnFeeds();
+        $events = $this->recordSyncEvents();
 
         $conflict1 = $this->createTestUser(['fullname' => 'Eve', 'tnuserid' => 99020104]);
         $conflict2 = $this->createTestUser(['fullname' => 'Eve', 'tnuserid' => 99020105]);
@@ -976,12 +979,45 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync', ['--full-duplicate-scan' => true])->assertExitCode(0);
 
-        $this->assertNotNull(User::find($conflict1->id));
-        $this->assertNotNull(User::find($conflict2->id));
-        $this->assertTrue(
-            (User::find($twin1->id) !== null) xor (User::find($twin2->id) !== null),
-            'the unconflicted pair is still merged'
-        );
+        foreach ([$conflict1, $conflict2, $twin1, $twin2] as $user) {
+            $this->assertNotNull(User::find($user->id));
+        }
+        $this->assertTrue($this->flagged($events, [$conflict1->id, $conflict2->id], 'tnuserid-conflict'));
+        $this->assertTrue($this->flagged($events, [$twin1->id, $twin2->id], 'tnuserid-unproven'));
+    }
+
+    /**
+     * Record the tn-sync Loki events, so a test can see which groups the duplicate
+     * check flagged.
+     */
+    private function recordSyncEvents(): \ArrayObject
+    {
+        $events = new \ArrayObject();
+        $loki = $this->mock(LokiService::class);
+        $loki->shouldIgnoreMissing();
+        $loki->shouldReceive('logEvent')->andReturnUsing(function ($type, $subtype, $context = []) use ($events) {
+            $events[] = [$subtype, $context];
+        });
+
+        return $events;
+    }
+
+    /** Whether the duplicate check flagged exactly these accounts as one group. */
+    private function flagged(\ArrayObject $events, array $userIds, ?string $reason = null): bool
+    {
+        sort($userIds);
+        foreach ($events as [$subtype, $context]) {
+            if ($subtype !== 'user-merge-skip') {
+                continue;
+            }
+            $ids = $context['user_ids'];
+            sort($ids);
+            if ($ids === $userIds && ($reason === null || $context['reason'] === $reason)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function insertTnAddress(int $userid, string $email): void
@@ -1010,6 +1046,7 @@ class TNSyncCommandTest extends TestCase
      */
     public function test_incremental_scan_catches_a_newly_created_duplicate(): void
     {
+        $events = $this->recordSyncEvents();
         // Establish a position first, so the next run is genuinely incremental.
         Http::fake([
             '*/ratings*' => Http::response(['ratings' => []], 200),
@@ -1039,8 +1076,8 @@ class TNSyncCommandTest extends TestCase
         $this->artisan('tn:sync')->assertExitCode(0);
 
         $this->assertTrue(
-            (User::find($user1->id) !== null) xor (User::find($user2->id) !== null),
-            'a duplicate created since the last run must still be merged'
+            $this->flagged($events, [$user1->id, $user2->id]),
+            'a group created since the last run must still be flagged'
         );
     }
 
@@ -1052,6 +1089,7 @@ class TNSyncCommandTest extends TestCase
      */
     public function test_incremental_scan_leaves_a_longer_username_alone(): void
     {
+        $events = $this->recordSyncEvents();
         Http::fake([
             '*/ratings*' => Http::response(['ratings' => []], 200),
             '*/user-changes*' => Http::response(['changes' => []], 200),
@@ -1094,6 +1132,7 @@ class TNSyncCommandTest extends TestCase
             DB::table('users_emails')->where('email', $longEmail)->value('userid'),
             'the longer name keeps its own address'
         );
+        $this->assertFalse($this->flagged($events, [$shortUser->id, $longUser->id]), 'two different names are not one group');
     }
 
     /**
@@ -1103,6 +1142,7 @@ class TNSyncCommandTest extends TestCase
      */
     public function test_a_full_rescan_catches_a_duplicate_the_cursor_missed(): void
     {
+        $events = $this->recordSyncEvents();
         $user1 = $this->createTestUser(['fullname' => 'Carol']);
         $user2 = $this->createTestUser(['fullname' => 'Carol']);
         $tnBase = 'carol_' . uniqid('', true);
@@ -1130,15 +1170,14 @@ class TNSyncCommandTest extends TestCase
             '*/user-changes*' => Http::response(['changes' => []], 200),
         ]);
 
-        // An ordinary tick sees nothing new and leaves them alone.
+        // An ordinary tick sees nothing new.
         $this->artisan('tn:sync')->assertExitCode(0);
-        $this->assertNotNull(User::find($user1->id));
-        $this->assertNotNull(User::find($user2->id));
+        $this->assertFalse($this->flagged($events, [$user1->id, $user2->id]));
 
         // The whole-table pass finds them.
         $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
         $this->assertTrue(
-            (User::find($user1->id) !== null) xor (User::find($user2->id) !== null),
+            $this->flagged($events, [$user1->id, $user2->id]),
             'the full re-scan must catch what the cursor stepped over'
         );
     }
@@ -1164,7 +1203,7 @@ class TNSyncCommandTest extends TestCase
      */
     public function test_full_scan_sees_a_pair_whose_older_row_has_canon_style_backwards(): void
     {
-        config(['freegle.trashnothing.merge_legacy_duplicates' => true]);
+        $events = $this->recordSyncEvents();
 
         [$older, $newer, $tnBase] = $this->createCanonStyleDuplicatePair();
 
@@ -1176,8 +1215,8 @@ class TNSyncCommandTest extends TestCase
         $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
 
         $this->assertTrue(
-            (User::find($older->id) !== null) xor (User::find($newer->id) !== null),
-            "the pair sharing TN username {$tnBase} must be merged even though the "
+            $this->flagged($events, [$older->id, $newer->id]),
+            "the pair sharing TN username {$tnBase} must be found even though the "
             . 'older row holds REVERSE(canon) rather than REVERSE(email)'
         );
     }
@@ -1189,7 +1228,7 @@ class TNSyncCommandTest extends TestCase
      */
     public function test_full_scan_sees_a_pair_whose_older_row_has_no_backwards_at_all(): void
     {
-        config(['freegle.trashnothing.merge_legacy_duplicates' => true]);
+        $events = $this->recordSyncEvents();
 
         $older = $this->createTestUser(['fullname' => 'Nullback']);
         $newer = $this->createTestUser(['fullname' => 'Nullback']);
@@ -1225,16 +1264,14 @@ class TNSyncCommandTest extends TestCase
         $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
 
         $this->assertTrue(
-            (User::find($older->id) !== null) xor (User::find($newer->id) !== null),
-            'a pair with no backwards at all must still be merged'
+            $this->flagged($events, [$older->id, $newer->id]),
+            'a pair with no backwards at all must still be found'
         );
     }
 
     /**
-     * The review gate. Widening the filter suddenly exposes a backlog of real
-     * member accounts, and merging members is not reversible, so the widened
-     * scan merges nothing until someone has looked at the list. Reporting is
-     * always available and always read-only.
+     * Reporting lists every group, including the ones only the address filter can see,
+     * and changes nothing.
      */
     public function test_report_duplicates_lists_the_legacy_pair_without_merging(): void
     {
@@ -1251,27 +1288,6 @@ class TNSyncCommandTest extends TestCase
 
         $this->assertNotNull(User::find($older->id), 'reporting must not merge');
         $this->assertNotNull(User::find($newer->id), 'reporting must not merge');
-    }
-
-    /**
-     * Until the backlog has been reviewed the live sync behaves exactly as it did
-     * before, so enabling the wider filter stays a deliberate act.
-     */
-    public function test_legacy_pair_is_left_alone_while_the_gate_is_closed(): void
-    {
-        config(['freegle.trashnothing.merge_legacy_duplicates' => false]);
-
-        [$older, $newer] = $this->createCanonStyleDuplicatePair();
-
-        Http::fake([
-            '*/ratings*' => Http::response(['ratings' => []], 200),
-            '*/user-changes*' => Http::response(['changes' => []], 200),
-        ]);
-
-        $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
-
-        $this->assertNotNull(User::find($older->id), 'the gate must hold the backlog back');
-        $this->assertNotNull(User::find($newer->id), 'the gate must hold the backlog back');
     }
 
     /**
@@ -2042,7 +2058,7 @@ class TNSyncCommandTest extends TestCase
         $this->artisan('tn:sync')->assertExitCode(0);
     }
 
-    public function test_loki_logs_user_merge(): void
+    public function test_loki_logs_a_flagged_group_and_no_merge(): void
     {
         $user1 = $this->createTestUser(['fullname' => 'MergeTest']);
         $user2 = $this->createTestUser(['fullname' => 'MergeTest']);
@@ -2068,10 +2084,12 @@ class TNSyncCommandTest extends TestCase
         $loki->shouldIgnoreMissing();
         $loki->shouldReceive('logEvent')
             ->once()
-            ->with('tn-sync', 'user-merge', \Mockery::on(fn($ctx) =>
-                ($ctx['merge_to'] === $user1->id && $ctx['merge_from'] === $user2->id) ||
-                ($ctx['merge_to'] === $user2->id && $ctx['merge_from'] === $user1->id)
+            ->with('tn-sync', 'user-merge-skip', \Mockery::on(fn ($ctx) =>
+                $ctx['reason'] === 'tnuserid-unproven'
+                && $ctx['user_ids'] === [$user1->id, $user2->id]
+                && $ctx['tn_user_ids'] === []
             ));
+        $loki->shouldNotReceive('logEvent')->with('tn-sync', 'user-merge', \Mockery::any());
 
         Http::fake([
             '*/ratings*' => Http::response(['ratings' => []], 200),

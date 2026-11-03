@@ -25,6 +25,7 @@ use App\Database\Expressions\StX;
 use App\Database\Expressions\StY;
 use App\Database\Expressions\Value;
 use App\Models\Membership;
+use App\Models\MessageGroup;
 use App\Services\ContentCheckService;
 use App\Services\MessageSpatialService;
 use App\Support\GreatCircle;
@@ -2303,6 +2304,14 @@ class ExpandService
             $msg = DB::table('messages')->where('id', $msgid)->first(['fromuser']);
             $posterId = $msg->fromuser ?? null;
             if (!$posterId) {
+                return;
+            }
+
+            // A TN post placed on a community its poster never chose comes from someone who
+            // has not opted in to hearing from Freegle communities. The post still ripples, but
+            // the poster is not joined anywhere it reaches: a membership is what Freegle's mail
+            // goes by, and this one would also send the intro mail below.
+            if (MessageGroup::postIsUnaddressed($msgid)) {
                 return;
             }
 

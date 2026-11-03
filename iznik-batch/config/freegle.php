@@ -511,11 +511,6 @@ return [
             // problem than a real miss.
             'max_age_hours' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_MAX_AGE_HOURS', 72),
         ],
-
-        // Merge the duplicate TN accounts the old address filter could not see. Off
-        // until the backlog has been reviewed with "tn:sync --report-duplicates": it is
-        // ~96 pairs of live members and merging a pair deletes one of them.
-        'merge_legacy_duplicates' => EnvSetting::env('FREEGLE_TN_MERGE_LEGACY_DUPLICATES', false),
     ],
 
     // Discourse forum REST API (V1 discourse_not_signed_up.php).

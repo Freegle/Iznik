@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-02
+last_reviewed: 2026-11-03
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/tests/Unit/Services/Ripple/ResumedReachTest.php
@@ -772,6 +772,14 @@ set does**: once `php artisan tn:merge-crossposts` has merged it onto one messag
 other live message to match, and the post ripples like any other. So the exclusion is
 self-limiting rather than permanent, but it is only as short-lived as the merge backlog - and
 the merge is run by hand on the batch host, not scheduled.
+
+### 4c. A TrashNothing poster who never chose the community is not joined
+
+A TN post placed on a community its poster never addressed (the origin row's
+`messages_groups.mod_messaging_allowed = 0`, see `MessageGroup::postIsUnaddressed`) ripples
+like any other post, but `addPosterMembershipToRippledGroups` does not join the poster to the
+communities it reaches and sends no intro email. The poster has not opted in to hearing from
+Freegle communities, and a membership is what Freegle's mail goes by.
 
 Because a post sitting out is otherwise invisible, each one is counted as
 `tn_duplicate_sat_out` in the run stats, which `ripple:expand complete` logs. A cutover window

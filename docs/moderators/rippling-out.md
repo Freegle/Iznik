@@ -58,6 +58,10 @@ It is not a relationship with your community, though, and it does not make the p
 yours to write to. They posted somewhere else and may never have heard of you - see
 [Talking to the poster](#talking-to-the-poster) below.
 
+The exception is a Trash Nothing post whose poster didn't choose the community it was placed
+on. That post still ripples, but the poster isn't joined to the communities it reaches and
+isn't sent the intro email.
+
 What this means in practice:
 
 - You moderate their post exactly as you would any other: approve it, or take it off
