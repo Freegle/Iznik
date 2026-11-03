@@ -86,6 +86,27 @@ class MessageGroup extends Model implements Auditable
     ];
 
     /**
+     * Whether a post is a TN post that was never addressed to the Freegle community it
+     * landed on, so its poster has not opted in to hearing from Freegle communities.
+     *
+     * The origin row (rippled_in = 0) carries the answer: the rippling engine inserts its
+     * copies without the column, so they take the table default (allowed) and would mask it.
+     * Mirrors modmessaging.PostIsUnaddressed in iznik-server-go.
+     */
+    public static function postIsUnaddressed(int $msgId): bool
+    {
+        if ($msgId <= 0) {
+            return FALSE;
+        }
+
+        return self::query()
+            ->where('msgid', $msgId)
+            ->where('rippled_in', 0)
+            ->where('mod_messaging_allowed', 0)
+            ->exists();
+    }
+
+    /**
      * Get the message.
      */
     public function message(): BelongsTo
