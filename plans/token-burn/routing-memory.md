@@ -11,9 +11,9 @@ node. The aim is to cut db3's busy-hour peak. When this is done the live heap is
 memory goes back to the database. This is for the database nodes and the members whose
 requests they serve, not for any one screen.
 
-**Before any of this, db3 needs the same Go settings as db2** (see "What exists today").
-That is a production setting, not part of the build, and it is worth more than every task
-here put together: db3 holds 6.6 GB of heap for about 3.4 GB that is live.
+db3 keeps its own Go settings (see "Decisions settled"). It runs with `GOGC` at 100 and no
+memory limit, so its heap grows to about twice what is live before a collection. On db3, each
+MB of live heap this work saves is worth about 2 MB of resident memory.
 
 All the figures here are arithmetic from a heap profile of the production router taken on
 2026-11-03 and from the code. They are not benchmarks. "Est." marks anything not measured.
@@ -119,6 +119,9 @@ Where the heap goes, from the profile: 2,788 MB in use, plus 425 MB of Go slack.
 - **Sink nodes stay out of the main grid,** so the snap loops need no check per candidate.
 - **No request may get slower and no answer may change,** apart from the one blur move below.
   Memory is not worth a slower or different result.
+- **db3's router keeps its current settings.** Edward, 2026-11-03, asked whether to give it
+  db2's `GOGC` 50, `GOMEMLIMIT` 5GiB and systemd unit: no. The build does not change them,
+  and acceptance is measured on db3 as it runs.
 - **The aim is db3's busy-hour peak.** Edward, 2026-11-03. The db2 standby already fits its 4 GB
   reservation, so task 2, which mostly helps an idle node, ships as ordinary work rather than
   being the goal. Acceptance is measured on db3 at its busiest hour.
@@ -149,9 +152,9 @@ None.
 
 ## External prerequisites
 
-- [ ] Edward, now: run db3's router like db2's, under the `iznik-routing-go` systemd unit with
-      `GOGC` 50 and `GOMEMLIMIT` 5GiB, so it stops holding twice its live heap. Then a heap
-      profile from db3 at its busiest hour becomes the baseline for acceptance.
+- [ ] A session with production access, before the build: a heap profile and
+      `/debug/memsummary` from db3 at its busiest hour, as the baseline for acceptance. Read
+      only; db3 was profiled once already on 2026-11-03, outside its busiest hour.
 - [ ] Edward or a session with production log access, before the build: a day of sampled
       routing requests exported from Loki to a file, so speed can be compared locally.
 - [ ] Edward, before task 7: a copy of the production reach artifacts (`REACH_DIR`) and a
@@ -175,8 +178,8 @@ One PR each. Tasks sharing a letter touch the same files and run in sequence.
 
 Tasks 1, 2, 3 and 6 can start at once. Resident memory after each step, est.: about 2,960 MB
 after task 2, about 2,360 MB after task 6, about 2,060 MB after task 7, about 1,780 MB after
-task 8, about 1,400 MB after task 9. These are for db2's settings; db3 matches them only once
-it runs with the same `GOGC` and `GOMEMLIMIT`.
+task 8, about 1,400 MB after task 9. These are for db2's settings. On db3 the saving in
+resident memory is about twice the saving in live heap, because of its `GOGC`.
 
 ## Acceptance
 
