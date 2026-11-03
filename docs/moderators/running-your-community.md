@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-01
+last_reviewed: 2026-11-03
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/settings/**
@@ -179,8 +179,9 @@ service. It is useful for understanding why a post turned up where it did.
   linked donations. Each result says *Consent given* or *Consent declined*. You can also
   record a donor's answer for them, without signing in as them: *They declined* when they
   tell you we can't claim, or *Asked, no reply yet* each time you ask and hear nothing. The
-  *Asked, no reply* list shows every donor still waiting, how many times they were asked,
-  and when.
+  *Asked, no reply* list, below the boxes for recording a donation and pasting from Xero,
+  shows every donor still waiting, how many times they were asked, and when. It starts
+  folded; open it with *Show the donors waiting for a reply*.
 - **Freegle Helper / Clearances** (`/helper-escalated` and the helper flow, Clearance
   permission) - the queue for the AI concierge that manages replies to bulk clearance
   offers, plus a read-only explainer of how it works.
