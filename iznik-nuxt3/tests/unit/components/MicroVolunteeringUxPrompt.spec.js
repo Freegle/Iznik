@@ -79,13 +79,16 @@ const plainAwareness = { ...awareness, id: 22, settings: { decoy: false } }
 const openPrompt = {
   id: 12,
   kind: 'open',
-  question: 'Did you have a problem the last time you used Freegle?',
+  question: 'What could be better about Freegle?',
   options: [
-    { key: 'nothing', label: 'I had no problems' },
+    { key: 'nothing', label: "I can't think of one" },
     { key: 'dont_understand', label: "I don't understand" },
   ],
   images: [],
-  settings: { preset: 'problems', placeholder: 'If yes, what happened?' },
+  settings: {
+    preset: 'problems',
+    placeholder: 'What was hard, slow or confusing?',
+  },
 }
 
 // A kind this card does not know: it is drawn as a plain list of choices.
@@ -749,7 +752,7 @@ describe('MicroVolunteeringUxPrompt', () => {
       expect(w.find('.ux-privacy').text()).toContain(
         'No names, addresses or phone numbers.'
       )
-      expect(find(w, 'escape-nothing').text()).toBe('I had no problems')
+      expect(find(w, 'escape-nothing').text()).toBe("I can't think of one")
       expect(find(w, 'escape-dont_understand').text()).toBe(
         "I don't understand"
       )
@@ -848,7 +851,7 @@ describe('MicroVolunteeringUxPrompt', () => {
     it('takes the hint in the box from the settings', () => {
       const w = mountWith(openPrompt)
       expect(find(w, 'open-text').attributes('placeholder')).toBe(
-        'If yes, what happened?'
+        'What was hard, slow or confusing?'
       )
       const bare = mountWith({ ...openPrompt, settings: {} })
       expect(find(bare, 'open-text').attributes('placeholder')).toBeUndefined()

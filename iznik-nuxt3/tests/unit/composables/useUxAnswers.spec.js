@@ -11,7 +11,22 @@ import {
   kindLabel,
   KIND_LABELS,
   standingText,
+  signed,
+  balanceWord,
+  areaBalances,
+  balanceSummary,
+  MINUS,
 } from '~/modtools/composables/useUxAnswers'
+
+// A tally as the questions route sends it.
+const t = (key, label, most, least, times_shown = 0) => ({
+  key,
+  label,
+  most,
+  least,
+  times_shown,
+  count: 0,
+})
 
 describe('useUxAnswers', () => {
   it('gives a percentage only from 100 answers', () => {
@@ -278,5 +293,193 @@ describe('standingText', () => {
         FALLBACK
       )
     ).toContain('4 did not understand it')
+  })
+})
+
+describe('the balance of the area survey', () => {
+  it('writes a balance with its sign, and a real minus sign', () => {
+    expect(MINUS.charCodeAt(0)).toBe(0x2212)
+    expect(signed(17)).toBe('+17')
+    expect(signed(-5)).toBe(`${MINUS}5`)
+    expect(signed(0)).toBe('0')
+    expect(signed(1234)).toBe('+1,234')
+    expect(signed(undefined)).toBe('0')
+  })
+
+  it('says in words what a balance means, so it never rests on a sign or a colour', () => {
+    expect(balanceWord(18, 1)).toBe('works well')
+    expect(balanceWord(0, 5)).toBe('needs improving')
+    expect(balanceWord(4, 4)).toBe('even')
+    expect(balanceWord(0, 0)).toBe('no picks')
+  })
+
+  const areas = [
+    t('ask', 'Asking for something', 4, 5, 28),
+    t('chat_promise', 'Arranging a collection in chat', 7, 5, 28),
+    t('settings', 'Settings and email choices', 0, 5, 28),
+    t('reply', 'Replying to a post', 6, 4, 28),
+    t('chat_outcome', 'Marking a post taken or received', 7, 4, 28),
+    t('login', 'Signing in or joining', 4, 4, 28),
+    t('give', 'Offering something', 18, 1, 28),
+  ]
+
+  it('puts the lowest balance first, and breaks a tie by the area with more for improving', () => {
+    expect(areaBalances(areas, 52).map((r) => r.key)).toEqual([
+      'settings',
+      'ask',
+      'login',
+      'chat_promise',
+      'reply',
+      'chat_outcome',
+      'give',
+    ])
+  })
+
+  it('is the same whatever order the server sends the areas in', () => {
+    const forwards = areaBalances(areas, 52).map((r) => r.key)
+    const backwards = areaBalances([...areas].reverse(), 52).map((r) => r.key)
+    expect(backwards).toEqual(forwards)
+  })
+
+  it('works each balance out of the times shown, and says what it is out of', () => {
+    const [first] = areaBalances(areas, 52)
+    expect(first).toMatchObject({
+      key: 'settings',
+      best: 0,
+      improve: 5,
+      net: -5,
+      base: 28,
+      shown: 28,
+      word: 'needs improving',
+      tone: 'bad',
+    })
+    expect(areaBalances(areas, 52).at(-1)).toMatchObject({
+      key: 'give',
+      net: 17,
+      word: 'works well',
+      tone: 'good',
+    })
+  })
+
+  it('ranks by the balance as a share of the times shown, so an area shown less is not unfairly low', () => {
+    // 6 of 12 less 2 is +4 of 12 (a third), against +5 of 40 (an eighth): the first is better although the
+    // second has the bigger count.
+    const rows = areaBalances(
+      [t('a', 'Shown often', 8, 3, 40), t('b', 'Shown seldom', 6, 2, 12)],
+      30
+    )
+    expect(rows.map((r) => r.key)).toEqual(['a', 'b'])
+  })
+
+  it('uses the members who answered as the base when the server sends no times shown', () => {
+    const [row] = areaBalances([t('a', 'Area', 6, 2, 0)], 40)
+    expect(row.base).toBe(40)
+    expect(row.shown).toBe(0)
+  })
+
+  it('draws every bar on one scale: the longest side is the whole half, and a pick is never invisible', () => {
+    const rows = areaBalances(
+      [t('a', 'Long', 20, 1, 40), t('b', 'Short', 1, 10, 40)],
+      40
+    )
+    const byKey = Object.fromEntries(rows.map((r) => [r.key, r]))
+    expect(byKey.a.bestWidth).toBe(100)
+    expect(byKey.b.improveWidth).toBe(50)
+    // One pick of 40 is a twentieth of the longest side, but is still drawn.
+    expect(byKey.b.bestWidth).toBe(5)
+    const tiny = areaBalances(
+      [t('a', 'Long', 200, 0, 400), t('b', 'One', 1, 0, 400)],
+      400
+    )
+    expect(tiny.find((r) => r.key === 'b').bestWidth).toBe(3)
+    // Nothing picked is nothing drawn.
+    expect(byKey.a.improveWidth).toBeGreaterThan(0)
+    expect(areaBalances([t('a', 'None', 0, 0, 10)], 10)[0]).toMatchObject({
+      bestWidth: 0,
+      improveWidth: 0,
+      word: 'no picks',
+      tone: 'none',
+    })
+  })
+
+  it('copes with no tallies and with bad figures', () => {
+    expect(areaBalances(undefined, 10)).toEqual([])
+    expect(areaBalances([], 0)).toEqual([])
+    const [row] = areaBalances([{ key: 'a', label: 'A' }], 0)
+    expect(row).toMatchObject({ best: 0, improve: 0, net: 0, base: 0 })
+  })
+
+  describe('the summary', () => {
+    it('names the best and the lowest, each with what it is out of, and gives the base for both picks', () => {
+      expect(balanceSummary(areaBalances(areas, 52))).toBe(
+        'Offering something has the best balance (+17 of 28). Settings and email choices has the lowest (' +
+          MINUS +
+          '5 of 28). 46 picked an area that works best, and 28 of them also picked one that most needs improving.'
+      )
+    })
+
+    it('never adds the balances into one total', () => {
+      const line = balanceSummary(areaBalances(areas, 52))
+      expect(line).not.toMatch(/overall|total/i)
+      expect(line).not.toContain('+18')
+    })
+
+    it('names every area that shares the best or the lowest', () => {
+      const line = balanceSummary(
+        areaBalances(
+          [
+            t('a', 'Alpha', 10, 0, 20),
+            t('b', 'Beta', 10, 0, 20),
+            t('c', 'Gamma', 2, 6, 20),
+            t('d', 'Delta', 2, 6, 20),
+            t('e', 'Epsilon', 2, 6, 20),
+            t('f', 'Zeta', 2, 6, 20),
+          ],
+          40
+        )
+      )
+      expect(line).toContain(
+        'Alpha and Beta have the best balance (+10 of 20).'
+      )
+      expect(line).toContain(
+        'Delta, Epsilon, Gamma and 1 more have the lowest (' +
+          MINUS +
+          '4 of 20).'
+      )
+    })
+
+    it('names three areas without "more", and says the areas are level when they are', () => {
+      const three = balanceSummary(
+        areaBalances(
+          [
+            t('a', 'Alpha', 1, 3, 10),
+            t('b', 'Beta', 1, 3, 10),
+            t('c', 'Gamma', 1, 3, 10),
+            t('d', 'Delta', 5, 0, 10),
+          ],
+          20
+        )
+      )
+      expect(three).toContain('Alpha, Beta and Gamma have the lowest')
+      const level = balanceSummary(
+        areaBalances([t('a', 'Alpha', 3, 3, 10), t('b', 'Beta', 3, 3, 10)], 20)
+      )
+      expect(level.startsWith('The areas are level. ')).toBe(true)
+    })
+
+    it('counts an area nobody picked as the lowest when every area that was picked is good', () => {
+      const line = balanceSummary(
+        areaBalances([t('a', 'Alpha', 6, 1, 10), t('b', 'Beta', 0, 0, 10)], 20)
+      )
+      expect(line).toContain('Beta has the lowest (0 of 10)')
+    })
+
+    it('is empty when nobody has picked anything, or there is nothing to compare', () => {
+      expect(balanceSummary([])).toBe('')
+      expect(balanceSummary(undefined)).toBe('')
+      expect(balanceSummary(areaBalances([t('a', 'A', 0, 0, 10)], 10))).toBe('')
+      // Picks with no base at all (no times shown and nobody answered) have nothing to be out of.
+      expect(balanceSummary(areaBalances([t('a', 'A', 3, 1, 0)], 0))).toBe('')
+    })
   })
 })

@@ -15,6 +15,9 @@ const { loginViaModTools } = require('./utils/user')
 
 const MODTOOLS_URL = environment.modtoolsBaseUrl
 
+// The minus sign of a negative balance (U+2212), spelt out so it is not mistaken for a hyphen here.
+const MINUS = String.fromCharCode(0x2212)
+
 const PHOTOS = 'Photos and posting'
 const LONG = 'Collection and no-shows'
 
@@ -188,6 +191,14 @@ const QUESTIONS = {
           label: 'Offering something',
           most: 20,
           least: 4,
+          times_shown: 0,
+          count: 0,
+        },
+        {
+          key: 'login',
+          label: 'Signing in or joining',
+          most: 2,
+          least: 18,
           times_shown: 0,
           count: 0,
         },
@@ -776,6 +787,67 @@ test.describe('ModTools SysAdmin UX tab: What members say', () => {
     await section(page).locator('.question-row').nth(2).click()
     await expect(section(page).locator('.question-body')).toBeVisible()
     expect(await fit()).toEqual({ past: [], overflow: 0 })
+  })
+
+  // The area survey is drawn as a balance, the lowest first. The words and figures say it all, so the bar
+  // does not rest on colour; the words are dark enough to read; and at 390 wide nothing reaches past the
+  // room the section was given.
+  test('draws the area survey as a balance, lowest first, readable and inside the section at 390 wide', async ({
+    page,
+    testEnv,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await loginViaModTools(page, testEnv.mod.email)
+    await serveSurveys(page)
+    await open(page, 'ux_view=questions&ux_question=9')
+
+    const balance = section(page).locator('[data-testid="balance"]')
+    await expect(balance).toBeVisible({ timeout: timeouts.ui.appearance })
+    await expect(balance.locator('.balance-area')).toHaveText([
+      'Signing in or joining',
+      'Offering something',
+    ])
+    await expect(balance.locator('.balance-net')).toHaveText([
+      `${MINUS}16 needs improving`,
+      '+16 works well',
+    ])
+    await expect(balance.locator('.balance-summary')).toContainText(
+      `Offering something has the best balance (+16 of 40). Signing in or joining has the lowest (${MINUS}16 of 40).`
+    )
+    await expect(
+      balance.locator('[data-testid="balance-give"] .balance-counts')
+    ).toHaveText('Works best 20 of 40. Most needs improving 4 of 40.')
+    // No table, and no percentage below 100 answers.
+    await expect(section(page).locator('.question-body table')).toHaveCount(0)
+    await expect(balance).not.toContainText('%')
+
+    // The words that carry the balance are dark enough on white.
+    for (const [row, tone] of [
+      ['login', 'bad'],
+      ['give', 'good'],
+    ]) {
+      const colour = await balance
+        .locator(`[data-testid="balance-${row}"] .balance-net.tone-${tone}`)
+        .evaluate((el) => getComputedStyle(el).color)
+      expect(
+        contrast(colour, 'rgb(255, 255, 255)'),
+        tone
+      ).toBeGreaterThanOrEqual(4.5)
+    }
+
+    // Nothing in the balance reaches past the section.
+    const past = await section(page).evaluate((el) => {
+      const room = el.getBoundingClientRect()
+      return [...el.querySelectorAll('.balance, .balance *')]
+        .filter((child) => {
+          const b = child.getBoundingClientRect()
+          return (
+            b.width > 0 && (b.right > room.right + 1 || b.left < room.left - 1)
+          )
+        })
+        .map((child) => String(child.className).slice(0, 40))
+    })
+    expect(past).toEqual([])
   })
 
   // The ModTools menu is open when the page loads, at every width, and takes about 217 pixels of the

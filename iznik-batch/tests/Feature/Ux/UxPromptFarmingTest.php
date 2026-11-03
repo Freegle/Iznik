@@ -88,16 +88,16 @@ class UxPromptFarmingTest extends TestCase
         $improve = DB::table('ux_prompts')->find($this->service->openOpen('improve'));
 
         $this->assertSame('open', $problems->kind);
-        $this->assertSame('Did you have a problem the last time you used Freegle?', $problems->question);
+        $this->assertSame('What could be better about Freegle?', $problems->question);
         $this->assertSame('What has worked well for you on Freegle?', $values->question);
         $this->assertSame('What one thing would you change about Freegle?', $improve->question);
         foreach ([$problems, $values, $improve] as $p) {
             $this->assertSame('', $p->body, 'a card has no paragraph under its question');
         }
-        $this->assertSame([['key' => 'nothing', 'label' => 'I had no problems'], ['key' => 'dont_understand', 'label' => "I don't understand"]], json_decode($problems->options, true));
+        $this->assertSame([['key' => 'nothing', 'label' => "I can't think of one"], ['key' => 'dont_understand', 'label' => "I don't understand"]], json_decode($problems->options, true));
         $this->assertSame("I can't think of one", json_decode($values->options, true)[0]['label']);
         $this->assertSame("I can't think of one", json_decode($improve->options, true)[0]['label']);
-        $this->assertEquals(['preset' => 'problems', 'randomise' => false, 'placeholder' => 'If yes, what happened?'], json_decode($problems->settings, true));
+        $this->assertEquals(['preset' => 'problems', 'randomise' => false, 'placeholder' => 'What was hard, slow or confusing?'], json_decode($problems->settings, true));
         $this->assertSame('What made it good?', json_decode($values->settings, true)['placeholder']);
         $this->assertSame('What would that help you do?', json_decode($improve->settings, true)['placeholder']);
         $this->assertSame(300, (int) $problems->max_responses);
@@ -122,6 +122,39 @@ class UxPromptFarmingTest extends TestCase
         $this->assertSame('closed', DB::table('ux_prompts')->find($a)->status);
         $this->assertSame('open', DB::table('ux_prompts')->find($v)->status);
         $this->assertSame('open', DB::table('ux_prompts')->find($b)->status);
+    }
+
+    // The first wording of the problems question was "Did you have a problem the last time you used
+    // Freegle?" with the way out "I had no problems". On production 50 of its 52 answers were that
+    // button and none was written. A yes or no question with a button that says no gets the button.
+    public function test_the_problems_question_is_an_open_one_and_its_way_out_is_not_a_no_to_it(): void
+    {
+        $problems = DB::table('ux_prompts')->find($this->service->openOpen('problems'));
+
+        $this->assertMatchesRegularExpression('/^What /', $problems->question);
+        $this->assertDoesNotMatchRegularExpression('/^(Did|Do|Does|Is|Are|Have|Has|Was|Were|Can|Could) /i', $problems->question, 'a yes or no question');
+        $this->assertDoesNotMatchRegularExpression('/\bproblems?\b/i', $problems->question, 'general about what could be better, not about problems');
+        $escape = json_decode($problems->options, true)[0];
+        $this->assertSame('nothing', $escape['key']);
+        $this->assertDoesNotMatchRegularExpression('/\bno\b/i', $escape['label'], 'a way out that is the "no" of a yes or no question gets chosen instead of writing');
+    }
+
+    public function test_a_reworded_question_is_a_new_row_and_the_old_answers_stay_with_the_old_one(): void
+    {
+        $old = $this->service->openOpen('problems');
+        [$written, $nothing] = $this->answer($old, ['The photo would not upload', ['choice' => 'nothing']]);
+
+        // The words are changed in the row, as a deploy of a new wording followed by ux:prompt open does.
+        DB::table('ux_prompts')->where('id', $old)->update(['question' => 'Did you have a problem the last time you used Freegle?']);
+        $new = $this->service->openOpen('problems');
+
+        $this->assertNotSame($old, $new);
+        $this->assertSame('closed', DB::table('ux_prompts')->find($old)->status);
+        $this->assertSame('Did you have a problem the last time you used Freegle?', DB::table('ux_prompts')->find($old)->question, 'the old wording stays on the old row');
+        $this->assertSame('What could be better about Freegle?', DB::table('ux_prompts')->find($new)->question);
+        $this->assertSame(2, DB::table('ux_prompt_responses')->where('prompt_id', $old)->count());
+        $this->assertSame(0, DB::table('ux_prompt_responses')->where('prompt_id', $new)->count(), 'nothing is carried over to the new wording');
+        $this->assertSame([$written, $nothing], DB::table('ux_prompt_responses')->where('prompt_id', $old)->orderBy('id')->pluck('id')->map(fn ($i) => (int) $i)->all());
     }
 
     public function test_the_standard_survey_carries_its_labels_and_randomises(): void
@@ -458,7 +491,7 @@ class UxPromptFarmingTest extends TestCase
         $this->assertSame(['test-secret'], $request->header('X-Freegle-Internal-Secret'));
         $body = $request->data();
         $this->assertSame('problems', $body['preset']);
-        $this->assertSame('Did you have a problem the last time you used Freegle?', $body['question']);
+        $this->assertSame('What could be better about Freegle?', $body['question']);
         $this->assertSame(UxRollupService::FLOWS, $body['flows']);
         $this->assertSame(UxPromptService::PROBLEM_GROUPS, $body['groups']);
         $this->assertSame([$a, $b, $c], array_column($body['answers'], 'id'));
@@ -1165,7 +1198,7 @@ class UxPromptFarmingTest extends TestCase
         $settings = json_decode(DB::table('ux_prompts')->where('id', $id)->value('settings'), true);
         $this->assertSame(3, $settings['analysed_answers']);
         $this->assertSame('problems', $settings['preset'], 'what was already in the settings is kept');
-        $this->assertSame('If yes, what happened?', $settings['placeholder']);
+        $this->assertSame('What was hard, slow or confusing?', $settings['placeholder']);
     }
 
     public function test_the_tick_weighs_problems_by_how_often_each_was_shown(): void

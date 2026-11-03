@@ -63,12 +63,19 @@ class UxPromptService
      * The three open questions: one topic, neutral words, a true way out. The question is graded
      * (PlainWords) and held to the phone limits by a test; the placeholder is the hint inside the
      * box, and the way out is the first of the two buttons under it.
+     *
+     * The problems question is open and general ("What could be better"), and its way out is the same
+     * neutral one the other two have. It used to ask "Did you have a problem the last time you used
+     * Freegle?" with the way out "I had no problems": 50 of its 52 answers were that button and none
+     * was written, because the question was a yes or no and the button was the "no". A question is
+     * a prompt row (a new wording is a new row, see openOpen()), so changing these words here does
+     * not change a question that is already open.
      */
     public const OPEN_PRESETS = [
         'problems' => [
-            'question' => 'Did you have a problem the last time you used Freegle?',
-            'placeholder' => 'If yes, what happened?',
-            'nothing' => 'I had no problems',
+            'question' => 'What could be better about Freegle?',
+            'placeholder' => 'What was hard, slow or confusing?',
+            'nothing' => "I can't think of one",
         ],
         'values' => [
             'question' => 'What has worked well for you on Freegle?',
@@ -268,6 +275,12 @@ class UxPromptService
      * Open a free-text question: preset is problems, values or improve. Members answer in their
      * own words or pick a way out (nothing, or don't understand). One open prompt per preset at a
      * time, and no more than OPEN_MAX answers.
+     *
+     * This is also how a question is reworded. The words are copied onto the new row and every answer
+     * is kept against the row it was given to (ux_prompt_responses.prompt_id), so the new wording is a
+     * new question in the Questions list with its own counts and the old one stays, closed, with its
+     * own. The two are never added together. A member who answered or skipped the old one has no
+     * response for the new row, so they are asked again, after the usual 7 days.
      */
     public function openOpen(string $preset, int $max = self::OPEN_MAX): int
     {
