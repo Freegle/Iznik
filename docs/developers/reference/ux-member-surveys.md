@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-02
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxPromptService.php
@@ -86,7 +86,7 @@ presets use.
 | Where | Words |
 |---|---|
 | Heading (the frame) | `A question about Freegle` |
-| Open: problems | `Did you have a problem the last time you used Freegle?`, hint `If yes, what happened?`, ways out `I had no problems` and `I don't understand` |
+| Open: problems | `What could be better about Freegle?`, hint `What was hard, slow or confusing?`, ways out `I can't think of one` and `I don't understand` |
 | Open: values | `What has worked well for you on Freegle?`, hint `What made it good?`, ways out `I can't think of one` and `I don't understand` |
 | Open: improve | `What one thing would you change about Freegle?`, hint `What would that help you do?`, ways out `I can't think of one` and `I don't understand` |
 | Under any text box | `No names, addresses or phone numbers.` |
@@ -103,6 +103,21 @@ The words are in `UxPromptService` (the presets, the survey, the follow-up and t
 and in `MicroVolunteeringUxPrompt.vue` (the ways out, the privacy line and the buttons). Words that were
 dropped on purpose, and must not come back: every introduction sentence, the group labels, `Anything
 you'd like to add? (optional)`, the counter, `Smallest problem for me (optional)` and `Skip this one`.
+
+**An open question is not a yes or no, and its way out is not the "no".** The problems question was first
+`Did you have a problem the last time you used Freegle?` with the way out `I had no problems`. In its
+first two weeks 99 members responded: 47 skipped, 50 pressed `I had no problems`, 2 pressed `I don't
+understand`, and nobody wrote anything. The question was answerable by one button, so it was. The words
+are now general (`What could be better about Freegle?`) and the way out is the same neutral one the other two
+questions have. `UxPromptFarmingTest` checks that the question is an open one (it starts `What`, it is not
+a `Did`, `Is` or `Do` question, and it does not say `problem`) and that the way out has no `no` in it.
+
+**A new wording is a new row.** The words are copied from `OPEN_PRESETS` onto a `ux_prompts` row when
+`ux:prompt open` runs, and every answer is stored against that row's id. Changing the constant therefore
+changes nothing that is already open; running `ux:prompt open --preset=problems` closes the old row of that
+preset and opens a new one. The Questions list shows the two as two questions, each with its own counts and
+its own words, and nothing is added across them. A member who answered or skipped the old row has no
+response for the new one, so they are asked again, after the usual 7 days.
 
 A PHP test (`UxPromptFarmingTest`) holds the words to limits, because a phone cannot show more. A preset
 question is at most 14 words and 72 characters and reads at grade 6 or lower by `PlainWords::grade()`. A
@@ -224,6 +239,30 @@ real review work. A skip counts towards the 7-day gap and is in no tally.
 `UxPrompt` is not in the default list of task types: the site always names its types, and an old caller
 must not be handed a card it cannot draw. Settings the card does not need (`followup_of`,
 `analysed_answers` and `decoy`) are removed before the challenge is sent.
+
+**Who is asked, and who never can be.** The card is a microvolunteering task, so a member is asked only
+when all of these hold, and each one narrows the pool:
+
+- The member is not `Declined` or `Excluded`. A member who presses `Don't ask me again` in the footer of
+  any task is `Declined` for every task. On 2 November 2026, 77% of the times the gate ran in a day were for
+  a `Declined` member (18,123 of 23,448), and 139 were for a member who could be asked.
+- The member is on a community with microvolunteering switched on, joined more than 7 days ago, and has not
+  been asked on that device in the last hour (the front end keeps the time; `Ask again tomorrow` and a
+  day with nothing to offer move it to the next morning).
+- The page is one that mounts `MicroVolunteering.vue`: Browse, a post's page, or a chat just after the member
+  sent a message. The separate `/microvolunteering` page lists its own types and does not carry `UxPrompt`.
+- The web build the member has includes `UxPrompt` in its types. **App JavaScript is baked in at build time**
+  (see [mobile-app.md](mobile-app.md)), so the Android app and a web page that is a stale copy never ask,
+  whatever the server holds. In the week to 2 November 2026, 104 members on the Android app were given an
+  image-labelling task and one was shown a question.
+- The server finds a prompt this member has no response row for, and no response of any kind in the last 7
+  days (30 after two skips). With two prompts open a member can be asked at most twice, ever.
+
+Closing the window records nothing. `Ask again tomorrow`, Escape and a click outside the window all leave no
+row, so the same question is offered again the next time the gate opens. Only `Skip` is a record. In the
+week to 2 November 2026, 381 times a question was shown ended with 52 answers, 79 skips and 250 times with no
+record at all; 46 of the 205 members shown a question were shown the same one on more than one day, and one
+member 41 times.
 
 ## 3. From written answers to grouped problems
 
@@ -372,7 +411,14 @@ sum by (prompt_id) (
 ```
 
 This counts times the question was shown. A member who closes the window and comes back is counted again,
-so it is an upper bound on members. The answers are:
+so it is an upper bound on members. Pulling the lines themselves (`query_range`, 6-hour slices, 5,000 a
+call) gives `user_id`, `prompt_id`, `page_route`, `device_class` and `is_app` for each, which can be
+matched to the response rows below to say what each showing led to (an answer, a skip, or nothing). A
+`device_class` missing from a line means an older build, and an app has `is_app` true. The gate itself logs
+`Microvolunteering gate evaluated` with `gate_outcome` (`declined`, `not_allowed`, `too_new`,
+`ask_too_recent`, `show_invite` and `accepted_will_fetch`), which says where members drop out before any
+question is chosen. Group by `gate_outcome` over `24h`: the series limit (500) stops a query grouped by
+`user_id`. The answers are:
 
 ```sql
 SELECT prompt_id,
@@ -470,10 +516,24 @@ funnel. A copied link restores all of it.
   and on the questions lays a row out by the width of the list: below 46rem the counts and the biggest
   problem go under the name. The window width rule beside it is for a browser without container queries.
   The browser test measures it at 800 and at 1280 wide.
-- **A question** (`ModSysAdminUxQuestionResult.vue`) shows how one question did: the table for its kind, the
-  right answer and the yes-saying check for awareness questions, the ways out, the skips, how far the
-  analysis has read for an open question, and the comments behind a toggle. The follow-up has one pick and
-  no column for the smallest problem.
+- **A question** (`ModSysAdminUxQuestionResult.vue`) shows how one question did: the balance list for the area
+  survey or the table for the follow-up, the right answer and the yes-saying check for awareness questions,
+  the ways out, the skips, how far the analysis has read for an open question, and the comments behind a
+  toggle. The follow-up has one pick and no column for the smallest problem.
+- **The balance list** (area survey only; the figures are worked out in `areaBalances` and `balanceSummary`
+  of `useUxAnswers.js`). One row for each area, the lowest balance first, which is the area most worth
+  looking at. A row is the area name, its balance as a signed count with a word (`+17 works well`, `−5
+  needs improving`, `0 even`), a bar and the counts in words (`Works best 18 of 28. Most needs improving 1
+  of 28.`, with `Shown 28 times.` before them when the server sends it). The bar goes left of a centre line
+  for needs improving (hatched) and right for works best (solid), on one scale for the whole list, so the
+  rows can be compared. It is a picture of what the row already says and is hidden from a screen reader; the
+  sign and the word are there so that no row rests on colour. The balance is `works best` less `most needs
+  improving`, and the sort is that as a share of the times the area was shown, so an area shown less is not
+  ranked low for it. A line above the list names the best and the lowest, each with what it is out of, and
+  gives the base for both picks (`46 picked an area that works best, and 28 of them also picked one that
+  most needs improving`). **The balances are never added into one total**: the second pick is optional, so
+  there are always fewer of them than of the first, and the total would come out good whatever members felt.
+  A percentage appears in the counts from 100 answers, and the balance stays a count.
 - **The words behind a toggle** (`ModSysAdminUxSaid.vue`) draws member words, escaped, and says how many it is
   not showing. Its button has the class `said-toggle`, not `toggle`: a style for switches elsewhere in the
   site draws a pill with a border and a fixed width round anything with the class `toggle`. That style is in

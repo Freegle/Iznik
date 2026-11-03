@@ -112,7 +112,7 @@ test('cleanThemesRequest checks the preset, keeps usable answers and bounds them
   const ok = cleanThemesRequest({
     preset: 'problems',
     ...lists,
-    question: '  Did you have a problem the last time you used Freegle?  ',
+    question: '  What could be better about Freegle?  ',
     answers: [
       { id: 5, text: '  It   took\nages  ' },
       { id: '6', text: 'ring 07700 900 123' },
@@ -124,7 +124,7 @@ test('cleanThemesRequest checks the preset, keeps usable answers and bounds them
     extra: 'ignored',
   })
   assert.equal(ok.preset, 'problems')
-  assert.equal(ok.question, 'Did you have a problem the last time you used Freegle?')
+  assert.equal(ok.question, 'What could be better about Freegle?')
   assert.deepEqual(ok.answers.map((a) => a.id), [5, 6, 8])
   assert.equal(ok.answers[0].text, 'It took ages')
   assert.equal(ok.answers[1].text, 'ring [number]', 'scrubbed before it can reach the coder')
@@ -190,9 +190,9 @@ test('the themes schema is built for the request: its funnels and its group name
 })
 
 test('the statements prompt asks for a cut, verbatim copies and tags, with every answer as quoted data', () => {
-  const prompt = buildStatementsPrompt({ question: 'Did you have a problem the last time you used Freegle?', preset: 'problems', answers })
+  const prompt = buildStatementsPrompt({ question: 'What could be better about Freegle?', preset: 'problems', answers })
 
-  assert.match(prompt, /Did you have a problem the last time you used Freegle\?/)
+  assert.match(prompt, /What could be better about Freegle\?/)
   assert.match(prompt, /Copy, never reword/)
   assert.match(prompt, /A suggestion is not a problem/)
   assert.match(prompt, /problem.*value.*suggestion.*other/s)
@@ -208,9 +208,9 @@ test('the themes prompt carries the rules, asks for quotes and an Other theme, a
     { answer_id: 11, tag: 'problem', text: 'photo upload hangs' },
     { answer_id: 12, tag: 'suggestion', text: 'add a skip button' },
   ]
-  const prompt = buildThemesPrompt({ question: 'Did you have a problem the last time you used Freegle?', preset: 'problems', statements, ...lists })
+  const prompt = buildThemesPrompt({ question: 'What could be better about Freegle?', preset: 'problems', statements, ...lists })
 
-  assert.match(prompt, /Did you have a problem the last time you used Freegle\?/)
+  assert.match(prompt, /What could be better about Freegle\?/)
   assert.match(prompt, /Keep the problem apart from the solution/)
   assert.match(prompt, /Never invent/)
   assert.match(prompt, /one theme per idea/i)
@@ -568,7 +568,7 @@ const twoStep = (first, second, calls = []) =>
 test('generateThemes splits then codes, with no tools at all, and returns themes with checked quotes', async () => {
   const calls = []
   const out = await generateThemes({
-    question: 'Did you have a problem the last time you used Freegle?',
+    question: 'What could be better about Freegle?',
     preset: 'problems',
     answers,
     ...lists,
