@@ -192,7 +192,7 @@ These pages are only available to volunteers with the Support or Admin system ro
 - **Sysadmin** (`/sysadmin`) - housekeeping, cron jobs, outgoing and incoming email,
   scrolling and click-through analytics, and rippling analytics.
 - **Support** (`/support`) - look up a user, community or message, the AI Support Helper
-  (work in progress), and spam keyword configuration.
+  and spam keyword configuration.
 - **Images** (`/images`) - review and regenerate AI-generated item images that volunteers
   have flagged.
 
