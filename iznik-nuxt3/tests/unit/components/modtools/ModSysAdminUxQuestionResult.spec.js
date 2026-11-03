@@ -3,6 +3,9 @@ import { mount } from '@vue/test-utils'
 import ModSysAdminUxQuestionResult from '~/modtools/components/ModSysAdminUxQuestionResult.vue'
 import { uxStubs } from './uxStubs'
 
+// The minus sign of a negative balance (U+2212), spelt out so it is not mistaken for a hyphen here.
+const MINUS = String.fromCharCode(0x2212)
+
 // The shapes are the Go responses in iznik-server-go/ux/surveys.go (Survey and SurveyTally): every
 // count is a number, and a question has the fields of every kind with zero in the ones it does not use.
 const base = {
@@ -149,7 +152,7 @@ const columns = (w) =>
 
 describe('ModSysAdminUxQuestionResult', () => {
   describe('the area survey', () => {
-    it('tallies as counts below 100 answers, most needs improving first', () => {
+    it('tallies as counts below 100 answers, the lowest balance first', () => {
       const w = make(area)
       const t = w.text()
       expect(t).toContain('Of the 40 who answered')
@@ -157,9 +160,11 @@ describe('ModSysAdminUxQuestionResult', () => {
       expect(t).toContain('18 of 40')
       expect(t).toContain('20 of 40')
       expect(t).not.toContain('%')
-      expect(t.indexOf('Signing in or joining')).toBeLessThan(
-        t.indexOf('Offering something')
-      )
+      // The line above the list names both, so the order is the order of the rows.
+      expect(w.findAll('.balance-area').map((r) => r.text())).toEqual([
+        'Signing in or joining',
+        'Offering something',
+      ])
     })
 
     it('says counts, not percentages, below 100 answers, and no more from 100', () => {
@@ -191,12 +196,12 @@ describe('ModSysAdminUxQuestionResult', () => {
       expect(w.text()).not.toContain('Below 100')
     })
 
-    it('has two picks, in the words of the card', () => {
-      expect(columns(make(area))).toEqual([
-        'Area',
-        'Works best',
-        'Most needs improving',
-      ])
+    it('has two picks, in the words of the card, and no table', () => {
+      const w = make(area)
+      expect(w.findComponent(uxStubs['b-table']).exists()).toBe(false)
+      const row = w.find('[data-testid="balance-give"]').text()
+      expect(row).toContain('Works best 20 of 40')
+      expect(row).toContain('Most needs improving 4 of 40')
     })
 
     it('gives the ways out and the skips', () => {
@@ -219,14 +224,14 @@ describe('ModSysAdminUxQuestionResult', () => {
         ],
       }
       const w = make(shown)
-      expect(columns(w)).toEqual([
-        'Area',
-        'Times shown',
-        'Works best',
-        'Most needs improving',
-      ])
-      expect(w.text()).toContain('6 of 24')
-      expect(w.text()).toContain('2 of 24')
+      expect(w.find('[data-testid="balance-give"]').text()).toContain(
+        'Shown 24 times. Works best 6 of 24. Most needs improving 2 of 24.'
+      )
+      expect(w.text()).not.toContain('6 of 40')
+    })
+
+    it('says nothing about times shown when the server does not send them', () => {
+      expect(make(area).text()).not.toContain('Shown')
     })
 
     // The server counts none and the older name, dont_care, as two figures, and a survey can hold both.
@@ -249,10 +254,145 @@ describe('ModSysAdminUxQuestionResult', () => {
       )
     })
 
-    it('says nobody has answered yet, and gives no table rows', () => {
+    it('says nobody has answered yet, and gives no summary', () => {
       const w = make({ ...area, responses: 0, comments: [] })
       expect(w.text()).toContain('Nobody has answered yet.')
       expect(w.text()).toContain('0')
+      expect(w.find('[data-testid="balance-summary"]').exists()).toBe(false)
+    })
+  })
+
+  // The balance of an area is the members who picked it as working best, less those who picked it as
+  // most needing improvement. The figures below are the first survey on production (52 answers, each area
+  // shown to 28 members), so the order and the sentence are the ones Edward sees.
+  describe('the balance of the area survey', () => {
+    const survey = {
+      ...base,
+      prompt_id: 2,
+      question: 'Which part of Freegle works best for you?',
+      responses: 52,
+      tallies: [
+        tally('ask', 'Asking for something', {
+          most: 4,
+          least: 5,
+          times_shown: 28,
+        }),
+        tally('chat_promise', 'Arranging a collection in chat', {
+          most: 7,
+          least: 5,
+          times_shown: 28,
+        }),
+        tally('settings', 'Settings and email choices', {
+          most: 0,
+          least: 5,
+          times_shown: 28,
+        }),
+        tally('reply', 'Replying to a post', {
+          most: 6,
+          least: 4,
+          times_shown: 28,
+        }),
+        tally('chat_outcome', 'Marking a post taken or received', {
+          most: 7,
+          least: 4,
+          times_shown: 28,
+        }),
+        tally('login', 'Signing in or joining', {
+          most: 4,
+          least: 4,
+          times_shown: 28,
+        }),
+        tally('give', 'Offering something', {
+          most: 18,
+          least: 1,
+          times_shown: 28,
+        }),
+      ],
+      none: 3,
+      dont_understand: 3,
+      skipped: 114,
+    }
+
+    const order = (w) =>
+      w.findAll('.balance-row').map((r) => r.find('.balance-area').text())
+
+    it('lists the areas with the lowest balance first, a tie going to the one with more for improving', () => {
+      expect(order(make(survey))).toEqual([
+        'Settings and email choices',
+        'Asking for something',
+        'Signing in or joining',
+        'Arranging a collection in chat',
+        'Replying to a post',
+        'Marking a post taken or received',
+        'Offering something',
+      ])
+    })
+
+    it('gives each area its balance as a signed figure and in words', () => {
+      const w = make(survey)
+      const net = (key) =>
+        w.find(`[data-testid="balance-${key}"] .balance-net`).text()
+      expect(net('give')).toBe('+17 works well')
+      expect(net('settings')).toBe(`${MINUS}5 needs improving`)
+      expect(net('ask')).toBe(`${MINUS}1 needs improving`)
+      expect(net('login')).toBe('0 even')
+    })
+
+    it('says in one line which area is best and which is lowest, with what each is out of', () => {
+      expect(make(survey).find('[data-testid="balance-summary"]').text()).toBe(
+        `Offering something has the best balance (+17 of 28). Settings and email choices has the lowest (${MINUS}5 of 28). 46 picked an area that works best, and 28 of them also picked one that most needs improving.`
+      )
+    })
+
+    // The optional second pick means there are always fewer for improving than for working best, so the
+    // totals are given as a base and never added up into one overall balance.
+    it('gives no overall total of the balances', () => {
+      const t = make(survey).text()
+      expect(t).not.toMatch(/overall/i)
+      expect(t).not.toContain('+18')
+    })
+
+    it('has no percentage anywhere below 100 answers', () => {
+      expect(make(survey).text()).not.toContain('%')
+    })
+
+    it('adds the percentage to the counts from 100 answers and leaves the balance a count', () => {
+      const w = make({ ...survey, responses: 120 })
+      const give = w.find('[data-testid="balance-give"]').text()
+      expect(give).toContain('Works best 18 of 28 (64%)')
+      expect(give).toContain('+17 works well')
+      expect(give).not.toContain('+17 of 28 (')
+    })
+
+    it('draws the bar as a picture of the text: hidden from a screen reader, hatched on the improving side', () => {
+      const w = make(survey)
+      const row = w.find('[data-testid="balance-give"]')
+      expect(row.find('.balance-bar').attributes('aria-hidden')).toBe('true')
+      expect(w.find('.balance-axis').attributes('aria-hidden')).toBe('true')
+      expect(row.find('.half.left .fill.improve').exists()).toBe(true)
+      expect(row.find('.half.right .fill.best').exists()).toBe(true)
+      // The list is a list, named, so a screen reader reads the rows in order.
+      expect(w.find('ol.balance-list').attributes('aria-label')).toBe(
+        'Areas by balance'
+      )
+    })
+
+    it('scales both sides of every bar to the longest, so bars can be compared', () => {
+      const w = make(survey)
+      const width = (key, side) =>
+        w.find(`[data-testid="balance-${key}"] .fill.${side}`).element.style
+          .width
+      // 18 of 28 is the longest side in the list, so it is the full half.
+      expect(width('give', 'best')).toBe('100%')
+      expect(width('give', 'improve')).toBe('5.6%')
+      expect(width('settings', 'best')).toBe('0%')
+      expect(width('settings', 'improve')).toBe('27.8%')
+    })
+
+    it('leaves the follow-up a table, because it has one pick and so no balance', () => {
+      const w = make(followup)
+      expect(w.findComponent(uxStubs['b-table']).exists()).toBe(true)
+      expect(w.find('[data-testid="balance"]').exists()).toBe(false)
     })
   })
 

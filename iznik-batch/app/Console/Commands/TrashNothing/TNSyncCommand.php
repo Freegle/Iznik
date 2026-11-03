@@ -13,6 +13,7 @@ use App\Traits\GracefulShutdown;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -38,6 +39,22 @@ class TNSyncCommand extends Command
     protected $description = 'Sync data from TrashNothing, including user data updates, user ratings, posts/messages, and chat messages.';
 
     private const STALENESS_THRESHOLD_HOURS = 12;
+
+    // The feeds whose failure holds the stored date, as the alert names them.
+    private const FEED_RATINGS = 'ratings';
+    private const FEED_USER_CHANGES = 'user changes';
+
+    // A feed that cannot be read holds the stored date, and tn:sync runs every minute, so
+    // these are minutes. Sentry hears when the hold has lasted FEED_HOLD_ALERT_RUNS runs, and
+    // the hold is given up after FEED_HOLD_MAX_RUNS: the date moves on and what the feed held
+    // back is lost, rather than every run reading a longer window for ever.
+    public const FEED_HOLD_ALERT_RUNS = 15;
+    public const FEED_HOLD_MAX_RUNS = 60;
+
+    // How many runs in a row have been held. It lasts longer than the hold does, so a hold
+    // that is interrupted by a few good runs is not mistaken for a fresh one.
+    private const FEED_HOLD_COUNT_KEY = 'tn-sync:feed-hold-runs';
+    private const FEED_HOLD_COUNT_TTL_HOURS = 24;
 
     // Backward overlap applied to the stored sync date when building `date_min`
     // for every TN API request. Handles data written to the current second when
@@ -113,9 +130,15 @@ class TNSyncCommand extends Command
 
                 $maxChangeDate = null;
 
+                // The feeds that could not be read in full this run.
+                $failedFeeds = [];
+
                 // Sync ratings.
                 $ratingsSyncer = new RatingsSyncer($this->dryRun, $this->localTesting, $this->apiKey, $this->apiBaseUrl, $this->loki);
                 [$ratingsProcessed, $ratingsMaxDate] = $ratingsSyncer->sync($from, $to);
+                if ($ratingsSyncer->fetchFailed()) {
+                    $failedFeeds[] = self::FEED_RATINGS;
+                }
                 if ($ratingsMaxDate && (!$maxChangeDate || $ratingsMaxDate > $maxChangeDate)) {
                     $maxChangeDate = $ratingsMaxDate;
                 }
@@ -123,6 +146,9 @@ class TNSyncCommand extends Command
                 // Sync user changes.
                 $userChangesSyncer = new UserChangesSyncer($this->dryRun, $this->localTesting, $this->apiKey, $this->apiBaseUrl, $this->loki);
                 [$changesProcessed, $changesMaxDate] = $userChangesSyncer->sync($from, $to);
+                if ($userChangesSyncer->fetchFailed()) {
+                    $failedFeeds[] = self::FEED_USER_CHANGES;
+                }
                 if ($changesMaxDate && (!$maxChangeDate || $changesMaxDate > $maxChangeDate)) {
                     $maxChangeDate = $changesMaxDate;
                 }
@@ -132,9 +158,18 @@ class TNSyncCommand extends Command
 
                 // Sync posts (API-based path, off by default — flip FREEGLE_TN_INGEST_POSTS_VIA_API=true to enable).
                 $postsProcessed = 0;
+                $postsStalledAt = null;
                 if (config('freegle.trashnothing.ingest_posts_via_api') || $this->localTesting) {
-                    $postSyncer = new PostSyncer($this->dryRun, $this->localTesting, $this->publicApiKey, $this->apiBaseUrl, $this->loki);
+                    // makeWith() rather than new, so a test can bind a double.
+                    $postSyncer = app()->makeWith(PostSyncer::class, [
+                        'dryRun' => $this->dryRun,
+                        'localTesting' => $this->localTesting,
+                        'apiKey' => $this->publicApiKey,
+                        'apiBaseUrl' => $this->apiBaseUrl,
+                        'loki' => $this->loki,
+                    ]);
                     [$postsProcessed, $postsMaxDate] = $postSyncer->sync($from, $to);
+                    $postsStalledAt = $postSyncer->stalledAt();
                     if ($postsMaxDate && (!$maxChangeDate || $postsMaxDate > $maxChangeDate)) {
                         $maxChangeDate = $postsMaxDate;
                     }
@@ -142,11 +177,42 @@ class TNSyncCommand extends Command
                     Log::info('TN-SYNC-TRACE [POSTS-SKIP] reason=feature-flag-off');
                 }
 
-                // Store the max change date for next sync.
-                if ($maxChangeDate) {
+                // The post sync stopped at a poster TN could not be asked about. Ratings and
+                // user changes may have dates later than that window, but one date is stored
+                // for all three, and the next run has to fetch that window again. The
+                // ratings and changes it fetches again are skipped as already processed.
+                if ($postsStalledAt !== null && $maxChangeDate && strtotime($maxChangeDate) > strtotime($postsStalledAt)) {
+                    Log::warning("TN-SYNC-TRACE [POSTS-STALLED] stored date held back from {$maxChangeDate} to {$postsStalledAt}");
+                    $maxChangeDate = $postsStalledAt;
+                }
+
+                // Store the max change date for next sync. A feed that could not be read
+                // has changes this run never saw, and the other feeds' dates say nothing
+                // about where they are, so the stored date stays and the next run reads the
+                // window again. What this run did apply is idempotent. That is only for
+                // FEED_HOLD_MAX_RUNS runs: a feed that stays down is given up on, and the
+                // date moves on to what the other feeds saw, or to the end of this window
+                // when they saw nothing (unless the post sync stalled, which holds it).
+                if ($failedFeeds !== [] && !$this->holdStoredDate($failedFeeds)) {
+                    $failedFeeds = [];
+                    $maxChangeDate ??= $postsStalledAt === null ? $to : null;
+                }
+
+                if ($failedFeeds !== []) {
+                    Log::warning('TN-SYNC-TRACE [FEED-FAILED] feeds=' . implode(',', $failedFeeds) . ' stored date not moved');
+                } elseif ($postsStalledAt !== null && $maxChangeDate && strtotime($maxChangeDate) <= strtotime($from)) {
+                    // A stalled run has nothing to store unless it got past where this run
+                    // began: the window start it reports can be this run's own start, less
+                    // than the stored date.
+                    Log::info("No change date to store - the post sync stalled at {$postsStalledAt}");
+                } elseif ($maxChangeDate) {
                     $this->storeSyncDate($maxChangeDate);
                 } else {
                     Log::info('No change date to store - no data processed');
+                }
+
+                if ($failedFeeds === []) {
+                    Cache::forget(self::FEED_HOLD_COUNT_KEY);
                 }
 
                 if ($ratingsProcessed === 0 && $changesProcessed === 0 && $duplicatesMerged === 0 && $postsProcessed === 0) {
@@ -241,6 +307,54 @@ class TNSyncCommand extends Command
                 'run_id' => $runId,
                 'error' => $e->getMessage(),
             ]);
+        }
+    }
+
+    /**
+     * A feed could not be read, so the stored date is held for the next run to read the window
+     * again. The runs are counted in the cache: Sentry hears when the hold has lasted
+     * FEED_HOLD_ALERT_RUNS, and once more when it is given up after FEED_HOLD_MAX_RUNS.
+     *
+     * @param  string[]  $failedFeeds
+     * @return bool  True to keep holding the date, false when the hold is given up and the date
+     *               should move on.
+     */
+    private function holdStoredDate(array $failedFeeds): bool
+    {
+        $runs  = (int) Cache::get(self::FEED_HOLD_COUNT_KEY, 0) + 1;
+        $feeds = implode(' and ', $failedFeeds);
+
+        if ($runs > self::FEED_HOLD_MAX_RUNS) {
+            Cache::forget(self::FEED_HOLD_COUNT_KEY);
+            $this->report(
+                "TN sync gave up on the {$feeds} feed after " . self::FEED_HOLD_MAX_RUNS . ' runs in which TrashNothing would not serve it:'
+                . ' the stored date moved on, and what the feed held back in that time is lost',
+                \Sentry\Severity::error()
+            );
+
+            return false;
+        }
+
+        Cache::put(self::FEED_HOLD_COUNT_KEY, $runs, now()->addHours(self::FEED_HOLD_COUNT_TTL_HOURS));
+
+        if ($runs === self::FEED_HOLD_ALERT_RUNS) {
+            $this->report(
+                "TN sync cannot read the {$feeds} feed from TrashNothing: the stored date has been held for "
+                . self::FEED_HOLD_ALERT_RUNS . ' runs and each run reads a longer window. It moves on after '
+                . self::FEED_HOLD_MAX_RUNS . ' runs, and what the feed held back is then lost',
+                \Sentry\Severity::warning()
+            );
+        }
+
+        return true;
+    }
+
+    private function report(string $message, \Sentry\Severity $severity): void
+    {
+        Log::error($message);
+
+        if (app()->bound('sentry')) {
+            app('sentry')->captureMessage($message, $severity);
         }
     }
 
@@ -574,6 +688,35 @@ class TNSyncCommand extends Command
         foreach ($duplicateGroups as $username => $userIds) {
             $uniqueIds = array_values(array_unique($userIds));
             Log::info('Found ' . count($uniqueIds) . " users for {$username}");
+
+            // A shared username is not a shared identity: TN does not promise usernames
+            // are unique, and a released one can be retaken. Two different tnuserids are
+            // two TN accounts, and User::merge would keep one id and delete the other,
+            // after which posts from the lost id resolve to nobody. Leave the group for a
+            // person - reportDuplicateGroups() flags exactly these for review.
+            $tnuserids = DB::table('users')
+                ->whereIn('id', $uniqueIds)
+                ->whereNotNull('tnuserid')
+                ->distinct()
+                ->pluck('tnuserid')
+                ->map(fn ($id) => (int) $id)
+                ->sort()
+                ->values()
+                ->all();
+
+            if (count($tnuserids) > 1) {
+                $idList = implode(',', $uniqueIds);
+                $tnList = implode(',', $tnuserids);
+                Log::warning("Not merging TN users for {$username}: users {$idList} hold different tnuserids {$tnList}");
+                Log::info("TN-SYNC-TRACE [MERGE-SKIP] reason=tnuserid-conflict users={$idList} tnuserids={$tnList}");
+                $this->loki->logEvent('tn-sync', 'user-merge-skip', [
+                    'reason' => 'tnuserid-conflict',
+                    'user_ids' => $uniqueIds,
+                    'tn_user_ids' => $tnuserids,
+                ]);
+
+                continue;
+            }
 
             $mergeTo = $uniqueIds[0];
 

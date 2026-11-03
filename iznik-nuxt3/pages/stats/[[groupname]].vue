@@ -48,6 +48,7 @@
         <StatsImpact
           :range="dateRangeDescription"
           :total-benefit="totalBenefit"
+          :benefit-note="flyTipNote"
           :total-c-o2="totalCO2"
           :total-weight="totalWeight"
           class="mt-2"
@@ -102,9 +103,10 @@
               <ExternalLink
                 href="https://www.wrap.ngo/resources/tool/environmental-and-economic-benefits-re-use"
                 >tool from WRAP</ExternalLink
-              >, adjusted for inflation using the UK Consumer Price Index. CO2
-              impact is based on WRAP figures. Figures are only available since
-              September 2016 and may change as we improve our estimates.
+              >, plus the fly-tipping clear-up costs explained above, adjusted
+              for inflation using the UK Consumer Price Index. CO2 impact is
+              based on WRAP figures. Figures are only available since September
+              2016 and may change as we improve our estimates.
             </p>
             <GChart
               type="ColumnChart"
@@ -159,10 +161,13 @@ import { useStatsStore } from '~/stores/stats'
 import {
   getBenefitPerTonne,
   CO2_PER_TONNE,
+  calculateFlyTipSaving,
+  describeFlyTipSaving,
 } from '~/composables/useReuseBenefit'
 import {
   DASHBOARD_CHART_HEADER,
   hasChartDataRows,
+  sumCountsInRange,
 } from '~/composables/useAuthoritySearch'
 
 const GroupHeader = defineAsyncComponent(
@@ -305,27 +310,35 @@ const dateRangeDescription = computed(() => {
   return 'the last 12 complete months'
 })
 
+// Sum a daily series over the period the page shows, first day to last.
+function periodTotal(rows) {
+  if (!start.value || !end.value) return 0
+  return sumCountsInRange(rows, start.value, end.value)
+}
+
 const totalWeight = computed(() => {
-  const weights = statsStore?.Weight
-  let total = 0
-  const now = dayjs()
+  return periodTotal(statsStore?.Weight) / 1000
+})
 
-  if (weights) {
-    for (const w of weights) {
-      if (now.diff(dayjs(w.date), 'days') <= 365) {
-        total += w.count
-      }
-    }
-  }
+// Items given away: offers taken and wanteds received.
+const totalGifts = computed(() => {
+  return periodTotal(statsStore?.Outcomes)
+})
 
-  return total / 1000
+const totalFlyTipSaving = computed(() => {
+  return calculateFlyTipSaving(totalGifts.value)
 })
 
 // Benefit of reuse per tonne and CO2 impact based on WRAP figures.
 // https://wrap.org.uk/resources/tool/benefits-reuse-tool
-// The benefit value is inflation-adjusted to current year prices.
+// The benefit adds the fly-tipping clear-up costs avoided for the gifts made.
+// Both are inflation-adjusted to current year prices.
 const totalBenefit = computed(() => {
-  return totalWeight.value * getBenefitPerTonne()
+  return totalWeight.value * getBenefitPerTonne() + totalFlyTipSaving.value
+})
+
+const flyTipNote = computed(() => {
+  return describeFlyTipSaving(totalFlyTipSaving.value)
 })
 
 const totalCO2 = computed(() => {
@@ -609,12 +622,8 @@ onMounted(async () => {
     start.value = fyDates.start
     end.value = fyDates.end
   } else {
-    // Default behavior - last 12 months minus current month
-    start.value = dayjs()
-      .subtract(1, 'year')
-      .subtract(1, 'month')
-      .startOf('month')
-
+    // Default: the last 12 complete months, leaving out the current month.
+    start.value = dayjs().subtract(12, 'month').startOf('month')
     end.value = dayjs().subtract(1, 'month').endOf('month')
   }
 

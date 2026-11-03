@@ -55,7 +55,12 @@ type ChatRoomListEntry struct {
 	// The client uses it to show a different header: most of what Freegle says is
 	// not a conversation, so rating, blocking or reporting it is nonsense, and
 	// "this is automated" belongs there once instead of on every message.
-	Systemchat     bool            `json:"systemchat,omitempty" gorm:"-"`
+	Systemchat bool `json:"systemchat,omitempty" gorm:"-"`
+	// Modsclosed marks a User2Mod chat the community's moderators can no longer write in:
+	// its member is a TrashNothing member without a membership here they chose, usually
+	// because they have left (modmessaging.ModsMayContact). Set only for the moderators,
+	// so ModTools can say so instead of offering a reply box that will be refused.
+	Modsclosed     bool            `json:"modsclosed,omitempty" gorm:"-"`
 	Snippet        string          `json:"snippet"`
 	Unseen         uint64          `json:"unseen"`
 	Chatmsg        string          `json:"-"`
@@ -79,6 +84,32 @@ type ChatRoomListEntry struct {
 	Status         string          `json:"status"`
 
 	Search bool `json:"search,omitempty" gorm:"column:search"`
+}
+
+// markModsClosed sets Modsclosed on the User2Mod chats in which myid writes as one of the
+// community's moderators and may no longer (modmessaging.MayContact). Which members are
+// TrashNothing members is one query for the whole list; only those rooms are checked further.
+func markModsClosed(db *gorm.DB, myid uint64, chats []ChatRoomListEntry) {
+	if auth.IsAdminOrSupport(myid) {
+		return
+	}
+
+	members := []uint64{}
+	for _, chat := range chats {
+		if chat.Chattype == utils.CHAT_TYPE_USER2MOD && chat.User1 != myid && chat.User1 > 0 {
+			members = append(members, chat.User1)
+		}
+	}
+	if len(members) == 0 {
+		return
+	}
+
+	trashNothing := modmessaging.TrashNothingMembers(db, members)
+	for ix, chat := range chats {
+		if chat.Chattype == utils.CHAT_TYPE_USER2MOD && chat.User1 != myid && trashNothing[chat.User1] {
+			chats[ix].Modsclosed = !modmessaging.HasChosenMembership(db, chat.User1, chat.Groupid)
+		}
+	}
 }
 
 // buildUserIcon builds a profile image URL using the same logic as user.ProfileSetPath,
@@ -400,15 +431,6 @@ func PutChatRoom(c *fiber.Ctx) error {
 		chatUserID := myid
 		modOpeningMembersChat := req.Userid > 0 && req.Userid != myid && auth.IsModOfGroup(myid, req.Groupid)
 		if modOpeningMembersChat {
-			// A member who only exists here because TN posts of theirs were placed on a
-			// Freegle group they never chose has agreed to nothing with this community's
-			// moderators, so they cannot be opened a chat to. ModTools hides the Chat
-			// button for them; this is what makes that hold. Someone who has ALSO posted
-			// normally is a real member and is unaffected.
-			if modmessaging.UserIsUnaddressedOnly(db, req.Userid) {
-				return fiber.NewError(fiber.StatusForbidden, "This member didn't choose this community, so they can't be contacted")
-			}
-
 			chatUserID = req.Userid
 		}
 
@@ -418,8 +440,18 @@ func PutChatRoom(c *fiber.Ctx) error {
 			chatUserID, utils.CHAT_TYPE_USER2MOD, req.Groupid).Limit(1).Scan(&existingID)
 
 		if existingID > 0 {
+			// Handed back even when the moderators may no longer write in it, so they can
+			// still read it: the room then carries modsclosed and CreateChatMessage refuses
+			// their messages.
 			ensureRosterRow(db, existingID, chatUserID)
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": existingID})
+		}
+
+		// A TrashNothing member can be contacted only through a membership of this
+		// community they chose (see modmessaging.ModsMayContact), so no new chat is started
+		// with anyone else. ModTools hides the Chat button for them where it can.
+		if modOpeningMembersChat && !modmessaging.MayContact(db, myid, req.Userid, req.Groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "This member didn't choose this community, so they can't be contacted")
 		}
 
 		// Opening a brand new User2Mod room to a member is a moderator starting a
@@ -1179,6 +1211,8 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 			chats[ix].Systemchat = true
 		}
 	}
+
+	markModsClosed(db, myid, chats)
 
 	// Now we have the basic chat info.  We still need:
 	// - the most recent chat message (if any) for a snippet

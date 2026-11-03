@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-21
+last_reviewed: 2026-11-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/partnerships.vue
@@ -156,6 +156,10 @@ once per reminder, so the daily check does not nag. Hidden deals are chased too.
 The bottom of the page generates the quarterly spreadsheet councils receive - membership,
 weight reused, CO2 and financial benefit, gifts made, a per-community breakdown, shortlink
 clicks, member stories and a postcode breakdown.
+
+The financial benefit is the same figure the council pages show. It includes the cost of
+fly-tipping the council avoids, and a note under the summary table says how much of it that
+is. See [impact figures](../developers/reference/impact-figures.md) for how it is worked out.
 
 For a council we have a deal with, the per-community breakdown is exactly the communities the
 deal covers, as listed on this page. For any other council they are worked out from the

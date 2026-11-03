@@ -20,6 +20,7 @@ use App\Models\BackgroundTask;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\Group;
+use App\Models\Membership;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\BlockedKeywordBackfillService;
@@ -621,32 +622,20 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
-     * Whether every post this person has made is a TN post matched to a Freegle community
-     * they never chose - so they have not opted in to Freegle and cannot be written to.
-     *
-     * A "mixed" poster (one such post AND an ordinary one) is a real member and is not
-     * restricted. Mirrors modmessaging.UserIsUnaddressedOnly in iznik-server-go.
+     * Whether the group's moderators may write to this user (User::modsMayContact). Support
+     * and Admin act for Freegle as a whole, so the rule does not bind them, as in
+     * modmessaging.MayContact in iznik-server-go. A user we can't find is not refused here;
+     * the sender finds no address for them anyway.
      */
-    protected function userIsUnaddressedOnly(int $userId): bool
+    protected function modsMayContact(int $userId, int $groupId, int $byUser = 0): bool
     {
-        if ($userId <= 0) {
-            return false;
+        if ($byUser > 0 && User::find($byUser)?->isSupportOrAdmin()) {
+            return TRUE;
         }
 
-        // Two questions, not one aggregate: has this person any post of that kind, and
-        // have they any post that is NOT of that kind. Someone who has never posted at all
-        // answers no to the first and is unrestricted, which is what we want.
-        $originRows = fn () => DB::table('messages as m')
-            ->join('messages_groups as mg', function ($join) {
-                $join->on('mg.msgid', '=', 'm.id')->where('mg.rippled_in', 0);
-            })
-            ->where('m.fromuser', $userId);
+        $user = $userId > 0 ? User::find($userId) : null;
 
-        if (!$originRows()->where('mg.mod_messaging_allowed', 0)->exists()) {
-            return false;
-        }
-
-        return !$originRows()->where('mg.mod_messaging_allowed', 1)->exists();
+        return $user === null || $user->modsMayContact($groupId);
     }
 
     /**
@@ -744,6 +733,17 @@ class ProcessBackgroundTasksCommand extends Command
             return;
         }
 
+        // A TrashNothing poster who did not choose this group, or has left it, is not
+        // written to either (User::modsMayContact). The action and its log still stand.
+        if ($groupId > 0 && !$this->modsMayContact($posterId, $groupId, $byUser)) {
+            Log::info("Mod action {$taskType} for a TrashNothing poster who is not a member of the group, sending nothing to the poster", [
+                'msgid' => $msgId,
+                'groupid' => $groupId,
+                'byuser' => $byUser,
+            ]);
+            return;
+        }
+
         // The acting group is a group the post RIPPLED INTO. Its moderators administer
         // their own copy; correspondence about the post belongs to the community it was
         // posted on (Discourse 10102). The log entry and moderator push above still
@@ -830,17 +830,7 @@ class ProcessBackgroundTasksCommand extends Command
             $chatRoom = ChatRoom::getOrCreateUser2Mod($posterId, $groupId);
 
             if ($chatRoom) {
-                DB::table('chat_messages')->insert([
-                    'chatid' => $chatRoom->id,
-                    'userid' => $byUser,
-                    'message' => "{$subject}\r\n\r\n{$body}",
-                    'type' => 'ModMail',
-                    'refmsgid' => $msgId,
-                    'date' => now(),
-                    'reviewrequired' => 0,
-                    'processingrequired' => 0,
-                    'processingsuccessful' => 1,
-                ]);
+                $this->recordModMail((int) $chatRoom->id, $posterId, $byUser, $groupId, $subject, $body, $msgId);
 
                 // Reopen any closed rosters so the chat reappears in the acting
                 // mod's (and the member's) chat list, mirroring V2 CreateChatMessage
@@ -891,12 +881,21 @@ class ProcessBackgroundTasksCommand extends Command
             return;
         }
 
-        // Someone whose only presence on Freegle is TN posts matched to communities they
-        // never chose has not opted in, and their volunteers have no standing to write to
-        // them. ModTools offers nothing that would and the Go API refuses it, so a task
-        // reaching here came from a stale client.
-        if ($this->userIsUnaddressedOnly($userId)) {
-            Log::info('Mod stdmsg for a member who has not opted in to Freegle, sending nothing', [
+        // A TrashNothing member without a membership of this group they chose: placed on
+        // it by TrashNothing, or since left. ModTools offers nothing that would write to
+        // them and the Go API refuses it, so a task reaching here came from a stale client
+        // or was queued before they left.
+        //
+        // Reject and Delete Approved Member delete the membership before they queue this
+        // task, so the table can no longer answer. The API decides first and records it as
+        // `modsmaycontact`, which stands in for the lookup. Absent means ask the table:
+        // every action that keeps the membership, and tasks queued before the key existed.
+        $mayContact = isset($data['modsmaycontact'])
+            ? filter_var($data['modsmaycontact'], FILTER_VALIDATE_BOOLEAN)
+            : $this->modsMayContact($userId, $groupId, $byUser);
+
+        if (!$mayContact) {
+            Log::info('Mod stdmsg for a TrashNothing member who did not choose this group, sending nothing', [
                 'userid' => $userId,
                 'byuser' => $byUser,
             ]);
@@ -980,31 +979,7 @@ class ProcessBackgroundTasksCommand extends Command
             $chatRoom = ChatRoom::getOrCreateUser2Mod($userId, $groupId);
 
             if ($chatRoom) {
-                $chatMessageId = DB::table('chat_messages')->insertGetId([
-                    'chatid' => $chatRoom->id,
-                    'userid' => $byUser,
-                    'message' => "{$subject}\r\n\r\n{$body}",
-                    'type' => 'ModMail',
-                    'date' => now(),
-                    'reviewrequired' => 0,
-                    'processingrequired' => 0,
-                    'processingsuccessful' => 1,
-                ]);
-
-                // V1 parity: upToDate() — mark the chat message as already emailed to the member
-                // so the notification daemon (NotifyUser2ModCommand) does not send a duplicate.
-                // V1 calls $r->upToDate($fromuser) after the direct email send, which sets
-                // lastmsgemailed = MAX(chat_messages.id) for the member's roster entry.
-                DB::table('chat_roster')->upsert(
-                    [
-                        'chatid' => $chatRoom->id,
-                        'userid' => $userId,
-                        'lastmsgemailed' => $chatMessageId,
-                        'lastemailed' => now(),
-                    ],
-                    ['chatid', 'userid'],
-                    ['lastmsgemailed', 'lastemailed']
-                );
+                $this->recordModMail((int) $chatRoom->id, $userId, $byUser, $groupId, $subject, $body, null);
 
                 // Reopen any closed rosters so the chat reappears in the acting
                 // mod's (and the member's) chat list — see reopenClosedRosters().
@@ -1609,6 +1584,118 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
+     * The settings (mod_configs row) a moderator uses on a community. V1: ModConfig::getForGroup().
+     *
+     * Their own choice for the community, else another moderator's there, else any they created,
+     * else the default.
+     */
+    private function resolveModConfigId(int $byUser, int $groupId): ?int
+    {
+        $configId = DB::table('memberships')
+            ->where('userid', $byUser)
+            ->where('groupid', $groupId)
+            ->value('configid');
+
+        if (! $configId) {
+            $configId = DB::table('memberships')
+                ->where('groupid', $groupId)
+                ->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
+                ->whereNotNull('configid')
+                ->value('configid');
+        }
+
+        if (! $configId) {
+            $configId = DB::table('mod_configs')
+                ->where('createdby', $byUser)
+                ->value('id');
+        }
+
+        if (! $configId) {
+            $configId = DB::table('mod_configs')
+                ->where('default', 1)
+                ->value('id');
+        }
+
+        return $configId ? (int) $configId : null;
+    }
+
+    /**
+     * Put a standard message that has just been mailed to a member into their chat with the
+     * volunteers, and mark who already has it, so the chat notifier does not mail it again.
+     * V1: Message::mail() and User::mail(), with ChatRoom::upToDate() and updateRoster().
+     *
+     * - The member has been mailed it: their roster is marked as mailed up to it.
+     * - The moderator who sent it has seen it.
+     * - If that moderator's settings mark chats as read (mod_configs.chatread), the message
+     *   counts as seen and mailed for everyone and the other moderators are mailed no copy.
+     *   Otherwise the other moderators are mailed a copy, so they know what a colleague sent.
+     *
+     * One transaction, so the notifier never sees the message without its marks.
+     */
+    private function recordModMail(
+        int $chatId,
+        int $memberId,
+        int $byUser,
+        int $groupId,
+        string $subject,
+        string $body,
+        ?int $refMsgId
+    ): int {
+        $configId = $this->resolveModConfigId($byUser, $groupId);
+        $chatsMarkedRead = $configId
+            && (int) DB::table('mod_configs')->where('id', $configId)->value('chatread') === 1;
+
+        return DB::transaction(function () use ($chatId, $memberId, $byUser, $groupId, $subject, $body, $refMsgId, $chatsMarkedRead) {
+            $now = now();
+
+            $chatMessageId = (int) DB::table('chat_messages')->insertGetId([
+                'chatid' => $chatId,
+                'userid' => $byUser,
+                'message' => "{$subject}\r\n\r\n{$body}",
+                'type' => ChatMessage::TYPE_MODMAIL,
+                'refmsgid' => $refMsgId,
+                'date' => $now,
+                'reviewrequired' => 0,
+                'processingrequired' => 0,
+                'processingsuccessful' => 1,
+                'mailedtoall' => $chatsMarkedRead ? 1 : 0,
+                'seenbyall' => $chatsMarkedRead ? 1 : 0,
+            ]);
+
+            DB::table('chat_roster')->upsert(
+                ['chatid' => $chatId, 'userid' => $memberId, 'lastmsgemailed' => $chatMessageId, 'lastemailed' => $now],
+                ['chatid', 'userid'],
+                ['lastmsgemailed', 'lastemailed']
+            );
+
+            $seenBy = [$byUser];
+            if ($chatsMarkedRead) {
+                $seenBy = array_merge($seenBy, DB::table('memberships')
+                    ->where('groupid', $groupId)
+                    ->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
+                    ->where('userid', '!=', $memberId)
+                    ->pluck('userid')
+                    ->map(fn ($id) => (int) $id)
+                    ->all());
+            }
+
+            DB::table('chat_roster')->upsert(
+                array_map(fn ($userId) => [
+                    'chatid' => $chatId,
+                    'userid' => $userId,
+                    'lastmsgseen' => $chatMessageId,
+                    'lastmsgemailed' => $chatMessageId,
+                    'lastemailed' => $now,
+                ], array_values(array_unique($seenBy))),
+                ['chatid', 'userid'],
+                ['lastmsgseen', 'lastmsgemailed', 'lastemailed']
+            );
+
+            return $chatMessageId;
+        });
+    }
+
+    /**
      * Resolve the BCC address for a mod standard message action.
      *
      * V1 parity: ModConfig::getForGroup() + ModConfig::getBcc() + ModConfig::evalIt().
@@ -1624,34 +1711,8 @@ class ProcessBackgroundTasksCommand extends Command
             return null;
         }
 
-        // Step 1: Find the mod's config for this group (V1: ModConfig::getForGroup).
-        $configId = DB::table('memberships')
-            ->where('userid', $byUser)
-            ->where('groupid', $groupId)
-            ->value('configid');
-
-        if (! $configId) {
-            // Fall back to any other mod's config for this group.
-            $configId = DB::table('memberships')
-                ->where('groupid', $groupId)
-                ->whereIn('role', ['Moderator', 'Owner'])
-                ->whereNotNull('configid')
-                ->value('configid');
-        }
-
-        if (! $configId) {
-            // Fall back to any config created by this mod.
-            $configId = DB::table('mod_configs')
-                ->where('createdby', $byUser)
-                ->value('id');
-        }
-
-        if (! $configId) {
-            // Fall back to a default config.
-            $configId = DB::table('mod_configs')
-                ->where('default', 1)
-                ->value('id');
-        }
+        // Step 1: Find the mod's config for this group.
+        $configId = $this->resolveModConfigId($byUser, $groupId);
 
         if (! $configId) {
             return null;

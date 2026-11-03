@@ -16,6 +16,7 @@ use App\Services\Ripple\RippleEngagementService;
 use App\Services\SpatialQueryService;
 use App\Services\TusService;
 use App\Support\TransactionPolicy;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -51,6 +52,38 @@ class GroupPostIngestionService
      */
     public const REASON_NO_USER_ID = 'no-user-id';
 
+    /**
+     * The poster could not be resolved because TN could not be asked who they are (5xx,
+     * 429, timeout, challenge), because TN refused the lookup (a client error other than
+     * 404), because the lookup failed so many runs running that the post was given up,
+     * because their username's address belongs to a Freegle user with a different
+     * tnuserid, or because a deleted account still holds the address or the tnuserid. See
+     * TnUserProvisioner.
+     *
+     * Only the first is transient: the post sync stops at it and asks again next run, so it
+     * leaves no routed entry until the post is finally ingested or skipped (PostSyncer).
+     * The rest are final.
+     *
+     * All of them exist only because this path CREATES a Freegle user for a TN poster
+     * Freegle has never met - a deliberate divergence from email-path case 2, which still
+     * drops such a post as REASON_UNKNOWN_USER. Expect API-side Pending (a new user is
+     * unmapped) against email-side Dropped/unknown-user for the same post; that is the
+     * feature working, not a parity gap.
+     */
+    public const REASON_TN_USER_LOOKUP_FAILED = TnUserProvisioner::REASON_LOOKUP_FAILED;
+
+    public const REASON_TN_USER_LOOKUP_REFUSED = TnUserProvisioner::REASON_LOOKUP_REFUSED;
+
+    public const REASON_TN_USER_LOOKUP_GAVE_UP = TnUserProvisioner::REASON_LOOKUP_GAVE_UP;
+
+    public const REASON_TN_USER_LOOKUP_KEY_REJECTED = TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED;
+
+    public const REASON_TN_USERNAME_CLASH = TnUserProvisioner::REASON_USERNAME_CLASH;
+
+    public const REASON_TN_ADDRESS_HELD_BY_DELETED_USER = TnUserProvisioner::REASON_ADDRESS_HELD_BY_DELETED_USER;
+
+    public const REASON_TN_ACCOUNT_DELETED = TnUserProvisioner::REASON_ACCOUNT_DELETED;
+
     public const REASON_DUPLICATE = 'duplicate';
 
     /**
@@ -66,6 +99,36 @@ class GroupPostIngestionService
     public const REASON_CROSSPOST = 'crosspost';
 
     public const REASON_MESSAGE_CREATE_FAILED = 'message-create-failed';
+
+    /**
+     * The poster is banned from the group the post was placed on. A banned Freegle member
+     * cannot post to the group, and neither can a TN one: placing the post anyway would
+     * hand it to the moderators who banned them.
+     */
+    public const REASON_BANNED = 'banned';
+
+    /**
+     * The reasons a post is skipped for want of a user that are final, so they are decided and
+     * not merely failed: noted in DeliberateSkips for tn:verify-email-coverage, which shows the
+     * reason beside the miss, or counts the post as skipped on purpose when DeliberateSkips says
+     * the reason is expected. Leaves out REASON_TN_USER_LOOKUP_FAILED (nothing decided), and
+     * REASON_TN_USER_LOOKUP_GAVE_UP and REASON_TN_USER_LOOKUP_KEY_REJECTED (the post is still
+     * wanted, and the verifier is the second chance it gets).
+     */
+    private const FINAL_USER_SKIPS = [
+        self::REASON_UNKNOWN_USER,
+        self::REASON_NO_USER_ID,
+        self::REASON_TN_USER_LOOKUP_REFUSED,
+        self::REASON_TN_USERNAME_CLASH,
+        self::REASON_TN_ADDRESS_HELD_BY_DELETED_USER,
+        self::REASON_TN_ACCOUNT_DELETED,
+    ];
+
+    /**
+     * Sentry hears of a skip that needs a person once a day for each reason. The sync meets the
+     * same poster's posts again and again, and one report says there is a case to look at.
+     */
+    private const NEEDS_A_HUMAN_REPORTED_KEY_PREFIX = 'tn-ingest:needs-a-human-reported:';
 
     /** Why a post's consent made the poster's implicit membership ordinary, for the log. */
     public const REASON_CONSENTED = 'consented through TrashNothing';
@@ -115,6 +178,9 @@ class GroupPostIngestionService
         private readonly bool $dryRun,
         private readonly LokiService $loki,
         private readonly ItemService $itemService,
+        private readonly TnUserProvisioner $userProvisioner,
+        // Reads fixtures and writes no notes, like the provisioner's own flag.
+        private readonly bool $localTesting = false,
     ) {}
 
     /**
@@ -245,24 +311,49 @@ class GroupPostIngestionService
         }
 
         // Resolve the Freegle user from TN's user id. TN's `user_id` is TN's OWN id,
-        // not a Freegle id: the mapping is users.tnuserid (unique, set when TN adds a
-        // member through the partner API). A TN user Freegle does not know is skipped -
-        // there is no address to reach them at, so a reply to their post could never be
-        // delivered, and treating the number as a Freegle id would hand the post to
-        // whichever unrelated account happens to hold it.
-        $user = $tnUserId ? $this->resolveUser((int) $tnUserId) : null;
+        // not a Freegle id: treating it as one would hand the post to whichever
+        // unrelated account happens to hold the number. The mapping is
+        // users.tnuserid (unique, set when TN adds a member through the partner API); a
+        // TN poster Freegle has never met is looked up on TN and created, deliberately
+        // unlike email-path case 2 - see TnUserProvisioner. The post is skipped only when
+        // that fails.
+        $user = $tnUserId ? $this->userProvisioner->resolveOrCreate((int) $tnUserId, (string) $postId) : null;
         if ($user === null) {
-            $reason = $tnUserId ? 'unknown-user' : 'no-user-id';
-            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=' . $reason . ' tnpostid=' . $postId . ' tn_user_id=' . $tnUserId);
-            $this->loki->logEvent('tn-sync', 'post-skip-unknown-user', ['tn_post_id' => $postId, 'tn_user_id' => $tnUserId]);
+            $reason = $tnUserId ? $this->unresolvedUserReason() : self::REASON_NO_USER_ID;
+            $traceReason = match ($reason) {
+                self::REASON_UNKNOWN_USER => 'unknown-user',
+                default                   => $reason,
+            };
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=' . $traceReason . ' tnpostid=' . $postId . ' tn_user_id=' . $tnUserId);
+            $this->loki->logEvent('tn-sync', 'post-skip-unknown-user', [
+                'tn_post_id' => $postId,
+                'tn_user_id' => $tnUserId,
+                'reason'     => $traceReason,
+            ]);
+            if (in_array($reason, self::FINAL_USER_SKIPS, true)) {
+                $this->noteSkip((string) $postId, $reason, $tnUserId);
+            }
             // Mirrors email-path case 2, which sets routing_reason and NOTHING
             // else — no group_id/group_name, even though the email path has
             // resolved the group by this point. dropped() REPLACES the context
             // rather than merging, which is what reproduces that omission here.
-            return $this->dropped(
-                $tnUserId ? self::REASON_UNKNOWN_USER : self::REASON_NO_USER_ID,
-                result: 'skipped',
-            );
+            return $this->dropped($reason, result: 'skipped');
+        }
+
+        // Checked before anything is written, so a banned poster's post leaves no trace on
+        // the group: no message, no membership. One group per post, so a post skipped here
+        // is not ingested at all.
+        if (DB::table('users_banned')->where('userid', $user->id)->where('groupid', $group->id)->exists()) {
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=banned tnpostid=' . $postId . ' user_id=' . $user->id . ' group_id=' . $group->id);
+            $this->loki->logEvent('tn-sync', 'post-skip-banned', [
+                'tn_post_id' => $postId,
+                'user_id'    => $user->id,
+                'group_id'   => $group->id,
+            ]);
+
+            $this->noteSkip((string) $postId, self::REASON_BANNED, $tnUserId);
+
+            return $this->dropped(self::REASON_BANNED, result: 'skipped');
         }
 
         // Update user's last access.
@@ -490,7 +581,8 @@ class GroupPostIngestionService
                 return;
             }
 
-            // A banned poster's row was deleted by the ban; never put it back.
+            // A banned poster's row was deleted by the ban; never put it back. ingest() has
+            // already skipped the post, so this only guards a future caller.
             if (DB::table('users_banned')->where('userid', $user->id)->where('groupid', $group->id)->exists()) {
                 return;
             }
@@ -833,17 +925,48 @@ class GroupPostIngestionService
     }
 
     /**
-     * The Freegle user behind a TN user id, or null if Freegle has never met them.
-     *
-     * users.tnuserid is unique and is written by the partner membership-add flow, which
-     * runs whenever a TN member joins a Freegle community through TN, so nearly every TN
-     * user who has ever touched Freegle resolves here. Nothing is created for the rest:
-     * the public API gives no name and no address for a poster, so a stub could only
-     * carry an invented address that bounces, and a Freegle member's reply would vanish.
+     * Leave a note of why this post was skipped, for tn:verify-email-coverage, and tell Sentry when
+     * the reason is one a person has to put right. Neither happens in a dry run, which must leave
+     * nothing behind for the next real run, or from fixtures.
      */
-    private function resolveUser(int $tnUserId): ?User
+    private function noteSkip(string $tnPostId, string $reason, mixed $tnUserId): void
     {
-        return User::where('tnuserid', $tnUserId)->orderBy('id')->first();
+        if ($this->dryRun || $this->localTesting) {
+            return;
+        }
+
+        DeliberateSkips::record($tnPostId, $reason);
+
+        if (DeliberateSkips::needsAHuman($reason)
+            && Cache::add(self::NEEDS_A_HUMAN_REPORTED_KEY_PREFIX . $reason, true, now()->addDay())) {
+            $message = "TrashNothing post {$tnPostId} (TN user {$tnUserId}) was skipped as {$reason}: only a person can put"
+                . ' this right, and until then none of the poster\'s posts are ingested. Reported once a day for each reason';
+            Log::error($message);
+
+            if (app()->bound('sentry')) {
+                app('sentry')->captureMessage($message, \Sentry\Severity::error());
+            }
+        }
+    }
+
+    /**
+     * The routing_reason for a TN user id the provisioner could not resolve.
+     *
+     * TN having no usable user is the email path's unknown user, so it keeps that path's
+     * wording; the other failures can only happen here.
+     */
+    private function unresolvedUserReason(): string
+    {
+        return match ($this->userProvisioner->lastFailureReason()) {
+            TnUserProvisioner::REASON_LOOKUP_FAILED => self::REASON_TN_USER_LOOKUP_FAILED,
+            TnUserProvisioner::REASON_LOOKUP_REFUSED => self::REASON_TN_USER_LOOKUP_REFUSED,
+            TnUserProvisioner::REASON_LOOKUP_GAVE_UP => self::REASON_TN_USER_LOOKUP_GAVE_UP,
+            TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED => self::REASON_TN_USER_LOOKUP_KEY_REJECTED,
+            TnUserProvisioner::REASON_USERNAME_CLASH => self::REASON_TN_USERNAME_CLASH,
+            TnUserProvisioner::REASON_ADDRESS_HELD_BY_DELETED_USER => self::REASON_TN_ADDRESS_HELD_BY_DELETED_USER,
+            TnUserProvisioner::REASON_ACCOUNT_DELETED => self::REASON_TN_ACCOUNT_DELETED,
+            default => self::REASON_UNKNOWN_USER,
+        };
     }
 
     /**

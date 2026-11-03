@@ -209,7 +209,7 @@ class TNVerifyEmailCoverageCommand extends Command
      * Apply the section S.5 rails and, if anything survives them, ingest.
      *
      * @param  array<string, array{post_id: string, subject: string|null, timestamp: string, date: string|null, envelope_to: string, post: mixed}>  $genuine
-     * @return array{enabled: bool, ingested: string[], failed: string[], skipped_stale: string[], repeats: string[], capped: bool, cap: int}
+     * @return array{enabled: bool, ingested: string[], failed: string[], deferred: string[], skipped_stale: string[], repeats: string[], capped: bool, cap: int}
      */
     private function backfill(array $genuine, PostSyncer $syncer): array
     {
@@ -220,6 +220,7 @@ class TNVerifyEmailCoverageCommand extends Command
             'enabled'       => $this->autoIngestEnabled(),
             'ingested'      => [],
             'failed'        => [],
+            'deferred'      => [],
             'skipped_stale' => [],
             'repeats'       => [],
             'capped'        => false,
@@ -266,7 +267,14 @@ class TNVerifyEmailCoverageCommand extends Command
             }
 
             try {
-                $syncer->ingestFetchedPost($entry['post']);
+                // False means TN could not be asked who the poster is, so nothing was decided.
+                // Not remembered as backfilled (it would then be a repeat miss, and fail the
+                // run) and not a failure: it is still a miss, and the next run tries again.
+                if ($syncer->ingestFetchedPost($entry['post']) === false) {
+                    $out['deferred'][] = $postId;
+                    continue;
+                }
+
                 Cache::put(self::BACKFILL_CACHE_PREFIX . $postId, true, now()->addDays(self::BACKFILL_CACHE_TTL_DAYS));
                 $out['ingested'][] = $postId;
             } catch (\Throwable $e) {
@@ -316,12 +324,20 @@ class TNVerifyEmailCoverageCommand extends Command
         $this->line(sprintf('  deleted on TN       %d  (expected)', $counts[CoverageVerifier::DELETED]));
         $this->line(sprintf('  resolved outcome    %d  (expected)', $counts[CoverageVerifier::RESOLVED]));
         $this->line(sprintf('  date bumped         %d  (expected)', $counts[CoverageVerifier::BUMPED]));
+        $this->line(sprintf('  skipped on purpose  %d  (expected - %s)', $counts[CoverageVerifier::DELIBERATE_SKIP], $this->describeDeliberateSkips($result[CoverageVerifier::DELIBERATE_SKIP])));
         $this->line(sprintf('  TN lookup failed    %d  (undetermined)', $counts[CoverageVerifier::LOOKUP_ERROR]));
-        $this->line(sprintf('  GENUINE MISSES      %d', $counts[CoverageVerifier::GENUINE]));
+        $this->line(sprintf('  GENUINE MISSES      %d%s', $counts[CoverageVerifier::GENUINE], $this->describeMissReasons($result[CoverageVerifier::GENUINE])));
         $this->line(sprintf('  (%d single-post API lookup(s))', $result['api_lookups']));
 
         foreach ($result[CoverageVerifier::GENUINE] as $postId => $entry) {
-            $this->line(sprintf('    miss post_id=%s date=%s to=%s subject=%s', $postId, $entry['date'] ?? '?', $entry['envelope_to'], (string) $entry['subject']));
+            $this->line(sprintf(
+                '    miss post_id=%s date=%s to=%s%s subject=%s',
+                $postId,
+                $entry['date'] ?? '?',
+                $entry['envelope_to'],
+                isset($entry['skip_reason']) ? ' skipped=' . $entry['skip_reason'] : '',
+                (string) $entry['subject']
+            ));
         }
 
         $this->line('');
@@ -333,11 +349,66 @@ class TNVerifyEmailCoverageCommand extends Command
 
         $this->line(sprintf('  ingested            %d', count($backfill['ingested'])));
         $this->line(sprintf('  failed              %d', count($backfill['failed'])));
+        $this->line(sprintf('  deferred (TN user lookup failed, tried again next run)  %d', count($backfill['deferred'])));
         $this->line(sprintf('  skipped (too old)   %d', count($backfill['skipped_stale'])));
 
         if ($backfill['repeats'] !== []) {
             $this->error(sprintf('  STILL MISSING AFTER AN EARLIER BACKFILL: %s', implode(', ', $backfill['repeats'])));
         }
+    }
+
+    /**
+     * The reasons ingestion skipped posts on purpose, with how many each, for the report line.
+     *
+     * @param  array<string, string>  $skips  post id => reason
+     */
+    private function describeDeliberateSkips(array $skips): string
+    {
+        if ($skips === []) {
+            return 'a banned poster, or no TN user id';
+        }
+
+        $byReason = array_count_values($skips);
+        ksort($byReason);
+
+        return $this->listReasons($byReason);
+    }
+
+    /**
+     * How many of the misses ingestion skipped, and for which reasons, for the report line. These
+     * are posts it decided not to place for want of a user, so each reason is a cause to fix.
+     *
+     * @param  array<string, array{skip_reason: string|null}>  $misses
+     */
+    private function describeMissReasons(array $misses): string
+    {
+        $byReason = $this->missesByReason($misses);
+
+        if ($byReason === []) {
+            return '';
+        }
+
+        return '  (ingestion skipped ' . array_sum($byReason) . ': ' . $this->listReasons($byReason) . ')';
+    }
+
+    /**
+     * @param  array<string, array{skip_reason: string|null}>  $misses
+     * @return array<string, int>  reason => how many misses, for the misses ingestion skipped
+     */
+    private function missesByReason(array $misses): array
+    {
+        $byReason = array_count_values(array_filter(array_column($misses, 'skip_reason'), fn ($reason) => $reason !== null));
+        ksort($byReason);
+
+        return $byReason;
+    }
+
+    /**
+     * @param  array<string, int>  $byReason
+     */
+    private function listReasons(array $byReason): string
+    {
+        return implode(', ', array_map(fn ($reason, $count) => "{$reason}: {$count}", array_keys($byReason), $byReason));
     }
 
     private function logRun(
@@ -366,10 +437,12 @@ class TNVerifyEmailCoverageCommand extends Command
                 'deleted'      => $result['counts'][CoverageVerifier::DELETED],
                 'resolved'     => $result['counts'][CoverageVerifier::RESOLVED],
                 'bumped'       => $result['counts'][CoverageVerifier::BUMPED],
+                'deliberate_skip' => $result['counts'][CoverageVerifier::DELIBERATE_SKIP],
                 'lookup_error' => $result['counts'][CoverageVerifier::LOOKUP_ERROR],
                 'genuine'      => $result['counts'][CoverageVerifier::GENUINE],
                 'api_lookups'  => $result['api_lookups'],
                 'miss_ids'     => implode(',', array_keys($result[CoverageVerifier::GENUINE])),
+                'miss_reasons' => $this->listReasons($this->missesByReason($result[CoverageVerifier::GENUINE])),
             ]);
         }
 
@@ -378,6 +451,7 @@ class TNVerifyEmailCoverageCommand extends Command
                 'backfill_enabled' => $backfill['enabled'],
                 'backfilled'       => count($backfill['ingested']),
                 'backfill_failed'  => count($backfill['failed']),
+                'backfill_deferred' => count($backfill['deferred']),
                 'backfill_stale'   => count($backfill['skipped_stale']),
                 'backfill_capped'  => $backfill['capped'],
                 'repeat_misses'    => count($backfill['repeats']),

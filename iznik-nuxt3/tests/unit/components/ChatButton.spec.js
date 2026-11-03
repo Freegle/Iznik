@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import ChatButton from '~/components/ChatButton.vue'
 
@@ -188,6 +188,37 @@ describe('ChatButton', () => {
       const button = wrapper.find('button')
       await button.trigger('click')
       expect(wrapper.emitted('click')).toBeTruthy()
+    })
+  })
+
+  describe('a moderator who may not chat to the member', () => {
+    it('says so in ModTools instead of opening an empty chat', async () => {
+      mockMiscStore.modtools = true
+      // The store answers no id when the server refuses the chat.
+      mockChatStore.openChatToMods.mockResolvedValue(null)
+      try {
+        const wrapper = createWrapper({ userid: 2, groupid: 7 })
+
+        await wrapper.find('button').trigger('click')
+        await flushPromises()
+
+        expect(mockChatStore.openChatToMods).toHaveBeenCalledWith(7, 2)
+        expect(mockPush).not.toHaveBeenCalled()
+        expect(wrapper.find('[data-test="chat-refused"]').exists()).toBe(true)
+      } finally {
+        mockChatStore.openChatToMods.mockResolvedValue(123)
+      }
+    })
+
+    it('opens the chat when it is allowed', async () => {
+      mockMiscStore.modtools = true
+      const wrapper = createWrapper({ userid: 2, groupid: 7 })
+
+      await wrapper.find('button').trigger('click')
+      await flushPromises()
+
+      expect(mockPush).toHaveBeenCalledWith('/chats/123')
+      expect(wrapper.find('[data-test="chat-refused"]').exists()).toBe(false)
     })
   })
 

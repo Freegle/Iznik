@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/database"
 	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/microvolunteering"
@@ -61,56 +62,83 @@ func TestPostIsUnaddressedOnlyForATNPostOnAGroupNobodyChose(t *testing.T) {
 	assert.False(t, modmessaging.PostIsUnaddressed(db, 0), "no message id is not unaddressed")
 }
 
-func TestUserIsUnaddressedOnlyIsFalseForMixedAndForOrdinaryPosters(t *testing.T) {
-	prefix := uniquePrefix("mmauser")
-	db := database.DBConn
-	group := CreateTestGroup(t, prefix)
-
-	// Someone who has only ever arrived here through unaddressed TN posts.
-	tnOnly := CreateTestUser(t, prefix+"_tnonly", "User")
-	msg := CreateTestMessage(t, tnOnly, group, "OFFER: tnonly "+prefix, 51.5, -0.1)
-	makeUnaddressed(msg)
-	assert.True(t, modmessaging.UserIsUnaddressedOnly(db, tnOnly))
-
-	// The mixed case the requirement calls out: one unaddressed post AND an ordinary one.
-	// They are a real member, so nothing is restricted for them.
-	mixed := CreateTestUser(t, prefix+"_mixed", "User")
-	mixedTN := CreateTestMessage(t, mixed, group, "OFFER: mixedtn "+prefix, 51.5, -0.1)
-	makeUnaddressed(mixedTN)
-	CreateTestMessage(t, mixed, group, "OFFER: mixedown "+prefix, 51.5, -0.1)
-	assert.False(t, modmessaging.UserIsUnaddressedOnly(db, mixed),
-		"a poster with an ordinary post as well must NOT be restricted")
-
-	// An ordinary member, and a member who has never posted at all.
-	ordinary := CreateTestUser(t, prefix+"_ordinary", "User")
-	CreateTestMessage(t, ordinary, group, "OFFER: ordinary "+prefix, 51.5, -0.1)
-	assert.False(t, modmessaging.UserIsUnaddressedOnly(db, ordinary))
-
-	silent := CreateTestUser(t, prefix+"_silent", "User")
-	assert.False(t, modmessaging.UserIsUnaddressedOnly(db, silent),
-		"someone with no posts at all must not be restricted")
-
-	// The batch form answers the same question for a whole page in one query.
-	batch := modmessaging.UsersUnaddressedOnly(db, []uint64{tnOnly, mixed, ordinary, silent})
-	assert.True(t, batch[tnOnly])
-	assert.False(t, batch[mixed])
-	assert.False(t, batch[ordinary])
-	assert.False(t, batch[silent])
+// makeTrashNothing stamps a test user as a TrashNothing member.
+func makeTrashNothing(userid uint64) {
+	database.DBConn.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 800000000+userid, userid)
 }
 
-// A removed post stays removed as far as the member restriction is concerned: taking their
-// only post down must not hand a moderator a chat button they did not have a minute ago.
-func TestUserStaysUnaddressedOnlyAfterTheirPostIsRemoved(t *testing.T) {
-	prefix := uniquePrefix("mmagone")
+// makePlacement turns a membership into the implicit one TN API ingestion gives a poster
+// on a community they did not choose.
+func makePlacement(userid uint64, groupid uint64) {
+	database.DBConn.Exec("UPDATE memberships SET implicit = 1, added_origin = ? WHERE userid = ? AND groupid = ?",
+		addedorigin.TNUnaddressed, userid, groupid)
+}
+
+func leaveGroup(userid uint64, groupid uint64) {
+	database.DBConn.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userid, groupid)
+}
+
+// Contact is decided per community, from the membership: a TN member can be contacted
+// only through a membership they chose. Posts and other memberships give nothing.
+func TestModsMayContactATrashNothingMemberOnlyThroughAMembershipTheyChose(t *testing.T) {
+	prefix := uniquePrefix("mmacontact")
 	db := database.DBConn
-	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	msg := CreateTestMessage(t, poster, group, "OFFER: gone "+prefix, 51.5, -0.1)
-	makeUnaddressed(msg)
+	chosen := CreateTestGroup(t, prefix+"_a")
+	placed := CreateTestGroup(t, prefix+"_b")
+	other := CreateTestGroup(t, prefix+"_c")
 
-	modmessaging.RemoveUnaddressedPost(db, msg)
+	// The mixed poster: chose A, placed on B, with an addressed post on A.
+	tn := CreateTestUser(t, prefix+"_tn", "User")
+	makeTrashNothing(tn)
+	CreateTestMembership(t, tn, chosen, utils.ROLE_MEMBER)
+	CreateTestMembership(t, tn, placed, utils.ROLE_MEMBER)
+	makePlacement(tn, placed)
+	CreateTestMessage(t, tn, chosen, "OFFER: chosen "+prefix, 51.5, -0.1)
+	makeUnaddressed(CreateTestMessage(t, tn, placed, "OFFER: placed "+prefix, 51.5, -0.1))
 
-	assert.True(t, modmessaging.UserIsUnaddressedOnly(db, poster))
+	assert.True(t, modmessaging.ModsMayContact(db, tn, chosen), "the community they chose can contact them")
+	assert.False(t, modmessaging.ModsMayContact(db, tn, placed),
+		"a placement gives nothing, even though they chose another community")
+	assert.False(t, modmessaging.ModsMayContact(db, tn, other), "nor does no membership at all")
+
+	// A ripple join is not a choice either.
+	CreateTestMembership(t, tn, other, utils.ROLE_MEMBER)
+	db.Exec("UPDATE memberships SET rippled = 1, implicit = 1, added_origin = ? WHERE userid = ? AND groupid = ?", addedorigin.Rippled, tn, other)
+	assert.False(t, modmessaging.ModsMayContact(db, tn, other))
+
+	// Pending is not Approved.
+	db.Exec("UPDATE memberships SET collection = ? WHERE userid = ? AND groupid = ?", utils.COLLECTION_PENDING, tn, chosen)
+	assert.False(t, modmessaging.ModsMayContact(db, tn, chosen))
+	db.Exec("UPDATE memberships SET collection = ? WHERE userid = ? AND groupid = ?", utils.COLLECTION_APPROVED, tn, chosen)
+
+	// Once they leave, they can't be contacted.
+	leaveGroup(tn, chosen)
+	assert.False(t, modmessaging.ModsMayContact(db, tn, chosen), "a TN member who has left can't be contacted")
+
+	// A TrashNothing address as the preferred email counts as a TN member too.
+	byEmail := CreateTestUser(t, prefix+"_tnemail", "User")
+	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", byEmail)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", byEmail, prefix+"-g1@user.trashnothing.com")
+	assert.False(t, modmessaging.ModsMayContact(db, byEmail, chosen))
+
+	// Anyone else is unaffected, member or not.
+	ordinary := CreateTestUser(t, prefix+"_ordinary", "User")
+	assert.True(t, modmessaging.ModsMayContact(db, ordinary, chosen))
+	assert.True(t, modmessaging.ModsMayContact(db, 0, chosen), "no user id is not restricted")
+
+	batch := modmessaging.TrashNothingMembers(db, []uint64{tn, byEmail, ordinary})
+	assert.True(t, batch[tn])
+	assert.True(t, batch[byEmail])
+	assert.False(t, batch[ordinary])
+	assert.Empty(t, modmessaging.TrashNothingMembers(db, nil))
+}
+
+func TestMembershipAllowsContact(t *testing.T) {
+	assert.True(t, modmessaging.MembershipAllowsContact(false, utils.COLLECTION_PENDING, true, true), "not a TN member")
+	assert.True(t, modmessaging.MembershipAllowsContact(true, utils.COLLECTION_APPROVED, false, false))
+	assert.False(t, modmessaging.MembershipAllowsContact(true, utils.COLLECTION_APPROVED, true, false))
+	assert.False(t, modmessaging.MembershipAllowsContact(true, utils.COLLECTION_APPROVED, false, true))
+	assert.False(t, modmessaging.MembershipAllowsContact(true, utils.COLLECTION_PENDING, false, false))
 }
 
 // --- Removal ---
@@ -172,8 +200,6 @@ func TestRemoveUnaddressedPostIsIdempotentAndIgnoresAMissingId(t *testing.T) {
 		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, msg).Scan(&logs)
 	assert.Equal(t, int64(1), logs)
 
-	assert.False(t, modmessaging.UserIsUnaddressedOnly(db, 0),
-		"no user id cannot be restricted - it says nothing about who they are")
 }
 
 // --- The report quorum ---
@@ -372,62 +398,183 @@ func TestModeratorCannotReplyToOrEditAnUnaddressedPost(t *testing.T) {
 	assert.Equal(t, 200, status, "Approve must still work")
 }
 
-func TestModeratorCannotOpenAChatToAnUnaddressedOnlyMember(t *testing.T) {
-	prefix := uniquePrefix("mmachat")
-	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, poster, group, "Member")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, group, "Moderator")
-	_, modToken := CreateTestSession(t, mod)
-	makeUnaddressed(CreateTestMessage(t, poster, group, "OFFER: chatguard "+prefix, 51.5, -0.1))
-
+func putUser2ModChat(t *testing.T, token string, groupid uint64, userid uint64) (int, uint64) {
 	body, _ := json.Marshal(map[string]interface{}{
-		"chattype": utils.CHAT_TYPE_USER2MOD, "groupid": group, "userid": poster,
+		"chattype": utils.CHAT_TYPE_USER2MOD, "groupid": groupid, "userid": userid,
 	})
-	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/chat/rooms?jwt=%s", modToken), bytes.NewBuffer(body))
+	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/chat/rooms?jwt=%s", token), bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
-	assert.Equal(t, 403, resp.StatusCode)
-
-	// Once they have posted normally too they are a real member, and the chat opens.
-	CreateTestMessage(t, poster, group, "OFFER: normalpost "+prefix, 51.5, -0.1)
-	body2, _ := json.Marshal(map[string]interface{}{
-		"chattype": utils.CHAT_TYPE_USER2MOD, "groupid": group, "userid": poster,
-	})
-	req2 := httptest.NewRequest("PUT", fmt.Sprintf("/api/chat/rooms?jwt=%s", modToken), bytes.NewBuffer(body2))
-	req2.Header.Set("Content-Type", "application/json")
-	resp2, err := getApp().Test(req2, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, resp2.StatusCode, "a mixed poster is a real member and can be chatted to")
+	var out struct {
+		ID uint64 `json:"id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode, out.ID
 }
 
-func TestModeratorCannotMailAnUnaddressedOnlyMember(t *testing.T) {
+func chatModsClosed(t *testing.T, token string, chatid uint64) bool {
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chat/%d?jwt=%s", chatid, token), nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	var out struct {
+		Modsclosed bool `json:"modsclosed"`
+	}
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	return out.Modsclosed
+}
+
+func TestModeratorCannotOpenAChatToATrashNothingPlacement(t *testing.T) {
+	prefix := uniquePrefix("mmachat")
+	group := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	makeTrashNothing(poster)
+	CreateTestMembership(t, poster, group, utils.ROLE_MEMBER)
+	makePlacement(poster, group)
+	mod := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, mod)
+
+	status, _ := putUser2ModChat(t, modToken, group, poster)
+	assert.Equal(t, 403, status)
+
+	// A TN member whose membership here is one they chose is an ordinary member.
+	database.DBConn.Exec("UPDATE memberships SET implicit = 0 WHERE userid = ? AND groupid = ?", poster, group)
+	status, _ = putUser2ModChat(t, modToken, group, poster)
+	assert.Equal(t, 200, status, "a TN member who chose this community can be chatted to")
+
+	// Someone who is not a TN member is unaffected, even with no membership.
+	stranger := CreateTestUser(t, prefix+"_stranger", "User")
+	status, _ = putUser2ModChat(t, modToken, group, stranger)
+	assert.Equal(t, 200, status)
+}
+
+// The chat from before a TN member left closes to the community's moderators: they can
+// still open and read it, but not write in it, so an old chat can't get round the rule.
+// The member can still write in it.
+func TestAChatClosesToModeratorsWhenATrashNothingMemberLeaves(t *testing.T) {
+	prefix := uniquePrefix("mmaclosed")
+	group := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	makeTrashNothing(poster)
+	CreateTestMembership(t, poster, group, utils.ROLE_MEMBER)
+	_, posterToken := CreateTestSession(t, poster)
+	mod := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, mod)
+
+	status, chatid := putUser2ModChat(t, modToken, group, poster)
+	assert.Equal(t, 200, status)
+	assert.NotZero(t, chatid)
+	assert.Equal(t, 200, postChatMessageAs(t, modToken, chatid, "Hello from your volunteers "+prefix))
+
+	assert.False(t, chatModsClosed(t, modToken, chatid), "open while they are a member")
+
+	leaveGroup(poster, group)
+
+	assert.True(t, chatModsClosed(t, modToken, chatid), "ModTools is told the chat is closed")
+	assert.False(t, chatModsClosed(t, posterToken, chatid), "the member is not")
+
+	status, again := putUser2ModChat(t, modToken, group, poster)
+	assert.Equal(t, 200, status, "the existing chat is still handed back, so it can be read")
+	assert.Equal(t, chatid, again)
+	assert.Equal(t, 403, postChatMessageAs(t, modToken, chatid, "Are you still there? "+prefix),
+		"a moderator can't write in the old chat")
+	assert.Equal(t, 200, postChatMessageAs(t, posterToken, chatid, "I left, but here is a question "+prefix),
+		"the member can still write to the volunteers")
+
+	// The same for a non-TN member who leaves: nothing changes for them.
+	ordinary := CreateTestUser(t, prefix+"_ordinary", "User")
+	CreateTestMembership(t, ordinary, group, utils.ROLE_MEMBER)
+	status, ordChat := putUser2ModChat(t, modToken, group, ordinary)
+	assert.Equal(t, 200, status)
+	leaveGroup(ordinary, group)
+	assert.Equal(t, 200, postChatMessageAs(t, modToken, ordChat, "Still reachable "+prefix))
+}
+
+func TestModeratorCannotMailATrashNothingMemberWhoLeft(t *testing.T) {
 	prefix := uniquePrefix("mmamail")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
 	poster := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, poster, group, "Member")
+	makeTrashNothing(poster)
 	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, group, "Moderator")
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
-	makeUnaddressed(CreateTestMessage(t, poster, group, "OFFER: mailguard "+prefix, 51.5, -0.1))
 
-	body, _ := json.Marshal(map[string]interface{}{
-		"userid": poster, "groupid": group, "action": "Leave Approved Member",
-		"subject": "Hello", "body": "A note from your volunteers.",
-	})
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/memberships?jwt=%s", modToken), bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := getApp().Test(req, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 403, resp.StatusCode)
+	mail := func() int {
+		body, _ := json.Marshal(map[string]interface{}{
+			"userid": poster, "groupid": group, "action": "Leave Approved Member",
+			"subject": "Hello", "body": "A note from your volunteers.",
+		})
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/memberships?jwt=%s", modToken), bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req, -1)
+		assert.NoError(t, err)
+		return resp.StatusCode
+	}
+
+	// No membership at all: they have left, or were never here.
+	assert.Equal(t, 403, mail())
+
+	// A placement is refused too.
+	CreateTestMembership(t, poster, group, utils.ROLE_MEMBER)
+	makePlacement(poster, group)
+	assert.Equal(t, 403, mail())
 
 	var tasks int64
 	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_mod_stdmsg' AND data LIKE ?",
 		fmt.Sprintf("%%\"userid\": %d%%", poster)).Scan(&tasks)
 	assert.Equal(t, int64(0), tasks, "no modmail may be queued")
+
+	// A membership they chose: the mail goes.
+	db.Exec("UPDATE memberships SET implicit = 0 WHERE userid = ? AND groupid = ?", poster, group)
+	assert.Equal(t, 200, mail())
+}
+
+// A moderator's message about a post goes to its poster, so a TN poster who has left the
+// community can't be sent one, even though the post itself is still there.
+func TestModeratorCannotReplyAboutAPostToATrashNothingPosterWhoLeft(t *testing.T) {
+	prefix := uniquePrefix("mmareply")
+	group := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	makeTrashNothing(poster)
+	CreateTestMembership(t, poster, group, utils.ROLE_MEMBER)
+	mod := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, mod)
+	msg := CreateTestMessage(t, poster, group, "OFFER: reply "+prefix, 51.5, -0.1)
+
+	reply := func() int {
+		status, _ := postMessageActionResult(t, modToken, map[string]interface{}{
+			"id": msg, "action": "Reply", "groupid": group,
+			"subject": "About your post", "body": "Please add a photo.",
+		})
+		return status
+	}
+
+	// ModTools reads canmessageposter on the post to decide whether to offer the buttons.
+	canMessage := func() interface{} {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msg, modToken), nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var payload map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&payload)
+		groups, _ := payload["groups"].([]interface{})
+		for _, g := range groups {
+			row := g.(map[string]interface{})
+			if uint64(row["groupid"].(float64)) == group {
+				return row["canmessageposter"]
+			}
+		}
+		return nil
+	}
+
+	assert.Equal(t, true, canMessage())
+	assert.Equal(t, 200, reply(), "a TN member of the community can be replied to")
+	leaveGroup(poster, group)
+	assert.Equal(t, false, canMessage(), "ModTools stops offering the buttons once they have left")
+	assert.Equal(t, 403, reply(), "once they have left, they can't")
 }
 
 // --- Payloads the moderation UI reads ---
@@ -436,15 +583,22 @@ func TestMembersListSaysWhoCannotBeContacted(t *testing.T) {
 	prefix := uniquePrefix("mmalist")
 	group := CreateTestGroup(t, prefix)
 	tnOnly := CreateTestUser(t, prefix+"_tnonly", "User")
-	CreateTestMembership(t, tnOnly, group, "Member")
+	makeTrashNothing(tnOnly)
+	CreateTestMembership(t, tnOnly, group, utils.ROLE_MEMBER)
+	makePlacement(tnOnly, group)
 	makeUnaddressed(CreateTestMessage(t, tnOnly, group, "OFFER: listtn "+prefix, 51.5, -0.1))
 
+	// A TN member who chose this community is an ordinary member here, whatever else.
+	tnChose := CreateTestUser(t, prefix+"_tnchose", "User")
+	makeTrashNothing(tnChose)
+	CreateTestMembership(t, tnChose, group, utils.ROLE_MEMBER)
+
 	ordinary := CreateTestUser(t, prefix+"_ordinary", "User")
-	CreateTestMembership(t, ordinary, group, "Member")
+	CreateTestMembership(t, ordinary, group, utils.ROLE_MEMBER)
 	CreateTestMessage(t, ordinary, group, "OFFER: listord "+prefix, 51.5, -0.1)
 
 	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, group, "Moderator")
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 
 	req := httptest.NewRequest("GET",
@@ -466,9 +620,11 @@ func TestMembersListSaysWhoCannotBeContacted(t *testing.T) {
 		seen[m.Userid] = m.ModMessagingAllowed
 	}
 	assert.Contains(t, seen, tnOnly)
-	assert.False(t, seen[tnOnly], "the TN-only member must be flagged as uncontactable")
+	assert.False(t, seen[tnOnly], "a TN placement must be flagged as uncontactable")
 	assert.Contains(t, seen, ordinary)
 	assert.True(t, seen[ordinary], "an ordinary member must be unaffected")
+	assert.Contains(t, seen, tnChose)
+	assert.True(t, seen[tnChose], "a TN member who chose this community can be contacted")
 }
 
 func TestMessagePayloadSaysWhenAPostCannotBeRepliedTo(t *testing.T) {
@@ -552,4 +708,117 @@ func TestMicrovolunteeringRejectQuorumRemovesAnUnaddressedPost(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND msgid = ? AND byuser IS NULL",
 		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, msg).Scan(&logs)
 	assert.Equal(t, int64(1), logs, "the removal must be audited exactly as the report route's is")
+}
+
+// Support and Admin act for Freegle as a whole, not for a community, so the TrashNothing
+// contact rule does not bind them.
+func TestSupportMayContactATrashNothingMemberAnyCommunity(t *testing.T) {
+	prefix := uniquePrefix("mmasupport")
+	db := database.DBConn
+	group := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	makeTrashNothing(poster)
+	CreateTestMembership(t, poster, group, utils.ROLE_MEMBER)
+	makePlacement(poster, group)
+
+	support := CreateTestUser(t, prefix+"_support", "User")
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, support)
+	_, supportToken := CreateTestSession(t, support)
+
+	assert.True(t, modmessaging.MayContact(db, support, poster, group))
+	assert.False(t, modmessaging.MayContact(db, CreateTestUser(t, prefix+"_other", "User"), poster, group))
+
+	status, chatid := putUser2ModChat(t, supportToken, group, poster)
+	assert.Equal(t, 200, status, "Support can start a chat with a placed TN member")
+	assert.Equal(t, 200, postChatMessageAs(t, supportToken, chatid, "From Support "+prefix))
+	assert.False(t, chatModsClosed(t, supportToken, chatid), "and ModTools shows them the reply box")
+}
+
+// A moderator adding a note to a chat between two members speaks for no one community, so
+// it needs a community they moderate that the TrashNothing member chose.
+func TestChatReviewNoteToATrashNothingMemberNeedsACommunityTheyChose(t *testing.T) {
+	prefix := uniquePrefix("mmanote")
+	db := database.DBConn
+	chosen := CreateTestGroup(t, prefix+"_a")
+	placed := CreateTestGroup(t, prefix+"_b")
+
+	tn := CreateTestUser(t, prefix+"_tn", "User")
+	makeTrashNothing(tn)
+	CreateTestMembership(t, tn, chosen, utils.ROLE_MEMBER)
+	CreateTestMembership(t, tn, placed, utils.ROLE_MEMBER)
+	makePlacement(tn, placed)
+	other := CreateTestUser(t, prefix+"_other", "User")
+	CreateTestMembership(t, other, placed, utils.ROLE_MEMBER)
+	chatid := CreateTestChatRoom(t, tn, &other, nil, utils.CHAT_TYPE_USER2USER)
+
+	note := func(token string) int {
+		body, _ := json.Marshal(map[string]interface{}{"message": "A note from volunteers " + prefix, "modnote": true})
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatid, token), bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req, -1)
+		assert.NoError(t, err)
+		return resp.StatusCode
+	}
+
+	placedMod := CreateTestUser(t, prefix+"_bmod", "User")
+	CreateTestMembership(t, placedMod, placed, utils.ROLE_MODERATOR)
+	_, placedToken := CreateTestSession(t, placedMod)
+	assert.Equal(t, 403, note(placedToken), "the placement community's moderators can't")
+
+	chosenMod := CreateTestUser(t, prefix+"_amod", "User")
+	CreateTestMembership(t, chosenMod, chosen, utils.ROLE_MODERATOR)
+	_, chosenToken := CreateTestSession(t, chosenMod)
+	assert.Equal(t, 200, note(chosenToken), "the chosen community's moderators can")
+
+	var notes int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND userid = ?", chatid, placedMod).Scan(&notes)
+	assert.Equal(t, int64(0), notes)
+}
+
+// The note explaining a removal is decided before the membership goes, so a TN member
+// with a membership they chose still gets it.
+func TestRemovingATrashNothingMemberStillSendsTheNote(t *testing.T) {
+	prefix := uniquePrefix("mmaremove")
+	db := database.DBConn
+	group := CreateTestGroup(t, prefix)
+	member := CreateTestUser(t, prefix+"_member", "User")
+	makeTrashNothing(member)
+	CreateTestMembership(t, member, group, utils.ROLE_MEMBER)
+	placed := CreateTestUser(t, prefix+"_placed", "User")
+	makeTrashNothing(placed)
+	CreateTestMembership(t, placed, group, utils.ROLE_MEMBER)
+	makePlacement(placed, group)
+	mod := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, mod)
+
+	remove := func(userid uint64) {
+		body, _ := json.Marshal(map[string]interface{}{
+			"userid": userid, "groupid": group, "action": "Delete Approved Member",
+			"subject": "Removed", "body": "Sorry, you have been removed.",
+		})
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/memberships?jwt=%s", modToken), bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req, -1)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+	flag := func(userid uint64) *bool {
+		var raw string
+		db.Raw("SELECT COALESCE(JSON_EXTRACT(data, '$.modsmaycontact'), '') FROM background_tasks WHERE task_type = 'email_mod_stdmsg' AND JSON_EXTRACT(data, '$.userid') = ? ORDER BY id DESC LIMIT 1", userid).Scan(&raw)
+		if raw == "" {
+			return nil
+		}
+		v := raw == "1"
+		return &v
+	}
+
+	remove(member)
+	if assert.NotNil(t, flag(member)) {
+		assert.True(t, *flag(member), "decided while they were still a member")
+	}
+	remove(placed)
+	if assert.NotNil(t, flag(placed)) {
+		assert.False(t, *flag(placed), "a placement was never contactable")
+	}
 }

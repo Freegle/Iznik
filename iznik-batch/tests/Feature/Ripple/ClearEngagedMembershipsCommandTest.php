@@ -167,6 +167,28 @@ class ClearEngagedMembershipsCommandTest extends TestCase
         $this->assertTrue($this->isRippled($member, $group));
     }
 
+    public function test_a_trashnothing_member_replying_does_not_count(): void
+    {
+        // A TrashNothing member joins communities through TrashNothing, so neither a tnuserid
+        // stamp nor a preferred TrashNothing address may be cleared by a reply.
+        $stamped = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $byEmail = $this->createTestUser(['email_preferred' => 'tn' . uniqid() . '-g1@user.trashnothing.com']);
+        $local = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($local, $group);
+        $post = $this->createTestMessage($local, $group);
+
+        foreach ([$stamped, $byEmail] as $member) {
+            $this->rippleMembership($member, $group);
+            $this->say($this->chat($member, $local), $member, $post->id);
+        }
+
+        $this->run_();
+
+        $this->assertTrue($this->isRippled($stamped, $group));
+        $this->assertTrue($this->isRippled($byEmail, $group));
+    }
+
     // ------------------------------------------- writing back about the member's rippled post
 
     public function test_writing_back_to_a_member_of_the_community_about_a_rippled_post_makes_it_ordinary(): void
@@ -191,6 +213,25 @@ class ClearEngagedMembershipsCommandTest extends TestCase
             DB::table('logs')->where('user', $poster->id)->where('groupid', $group->id)
                 ->where('type', 'Group')->where('subtype', 'Joined')->value('text')
         );
+    }
+
+    public function test_a_trashnothing_poster_writing_back_does_not_count(): void
+    {
+        $poster = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $local = $this->createTestUser();
+        $home = $this->createTestGroup();
+        $group = $this->createTestGroup();
+        $this->rippleMembership($poster, $group);
+        $this->createMembership($local, $group);
+
+        $post = $this->rippledPost($poster, $home, $group);
+        $chat = $this->chat($local, $poster);
+        $this->say($chat, $local, $post);
+        $this->say($chat, $poster);
+
+        $this->run_();
+
+        $this->assertTrue($this->isRippled($poster, $group));
     }
 
     public function test_a_reply_the_poster_never_answered_does_not_count(): void

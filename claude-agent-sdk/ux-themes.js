@@ -2,7 +2,7 @@
 
 /**
  * Coding of members' free-text answers into themes: POST /internal/ux-themes in server.js, asked
- * by the batch's `ux:prompt analyse`. Members answer an open question (did you have a problem, what
+ * by the batch's `ux:prompt analyse`. Members answer an open question (what could be better, what
  * has worked well, what would you change); this turns up to a few hundred answers into problems,
  * the solutions members suggested for them, and the things they value, each tied to the answers
  * that said it. Each problem comes out filed under one group from the list the request carries,
@@ -280,7 +280,7 @@ const SYSTEM_PROMPT = [
 ].join(' ')
 
 const PRESET_NOTES = {
-  problems: 'Members were asked about the last time they used Freegle: did anything cause them a problem? Most answers will describe problems. Some will suggest a fix, and a few will say what they value.',
+  problems: 'Members were asked what could be better about Freegle, with the hint: what was hard, slow or confusing? Most answers will describe problems. Some will suggest a fix, and a few will say what they value.',
   values: 'Members were asked about a time Freegle worked really well for them and what made it good. Most answers will name values. Some will mention a problem or suggest a change.',
   improve: 'Members were asked what one thing they would change about Freegle and what that would help them do. Most answers will contain a suggested change (a suggestion) and often the thing it would help with (a problem). Tag each part separately.',
 }

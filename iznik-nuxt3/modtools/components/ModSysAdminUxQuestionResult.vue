@@ -8,12 +8,58 @@
     </p>
 
     <b-table
-      v-if="kind === 'problems' || kind === 'areas'"
+      v-if="kind === 'problems'"
       :items="rankingRows"
       :fields="rankingFields"
       small
       responsive
     />
+    <div v-else-if="kind === 'areas'" class="balance" data-testid="balance">
+      <p
+        v-if="balanceLine"
+        class="balance-summary small mb-1"
+        data-testid="balance-summary"
+      >
+        {{ balanceLine }}
+      </p>
+      <p class="balance-key small text-muted mb-1">
+        Balance is the members who picked an area as working best, less those
+        who picked it as most needing improvement. The lowest balance is first.
+      </p>
+      <div class="balance-axis" aria-hidden="true">
+        <span>&larr; Needs improving</span>
+        <span>Works best &rarr;</span>
+      </div>
+      <ol class="balance-list list-unstyled mb-1" aria-label="Areas by balance">
+        <li
+          v-for="r in balanceRows"
+          :key="r.key"
+          class="balance-row"
+          :data-testid="`balance-${r.key}`"
+        >
+          <div class="balance-head">
+            <span class="balance-area">{{ r.label }}</span>
+            <span class="balance-net" :class="`tone-${r.tone}`">
+              <span class="balance-figure" data-testid="balance-net">{{
+                r.netText
+              }}</span>
+              {{ r.word }}
+            </span>
+          </div>
+          <div class="balance-bar" aria-hidden="true">
+            <span class="half left"
+              ><span
+                class="fill improve"
+                :style="{ width: r.improveWidth + '%' }"
+            /></span>
+            <span class="half right"
+              ><span class="fill best" :style="{ width: r.bestWidth + '%' }"
+            /></span>
+          </div>
+          <div class="balance-counts small text-muted">{{ r.countsText }}</div>
+        </li>
+      </ol>
+    </div>
     <p v-else-if="kind === 'open'" class="open-counts small mb-1">
       {{ openText }}
     </p>
@@ -58,9 +104,12 @@
 import { computed } from 'vue'
 import {
   PERCENT_MIN_ANSWERS,
+  areaBalances,
+  balanceSummary,
   countOf,
   kindOf,
   ofAnswered,
+  signed,
 } from '~/modtools/composables/useUxAnswers'
 import ModSysAdminUxSaid from '~/modtools/components/ModSysAdminUxSaid.vue'
 
@@ -101,45 +150,51 @@ const hasShown = computed(() =>
   (props.question.tallies || []).some((t) => Number(t.times_shown) > 0)
 )
 
-// The follow-up has one pick, the biggest problem. The area survey has two: which part works best,
-// and which other part most needs improving.
+// A count out of its base: an option is judged against the times it was on screen, where the server
+// says, because each member sees only a few of the options. Below 100 answers it has no percentage.
+const countIn = (n, base) => (base ? ofAnswered(n, base, total.value) : '0')
+
+// The follow-up has one pick, the biggest problem, so it is a table. The area survey has two picks and
+// is drawn as a balance (below).
 const rankingFields = computed(() => {
-  const fields = [
-    { key: 'label', label: kind.value === 'problems' ? 'Problem' : 'Area' },
-  ]
+  const fields = [{ key: 'label', label: 'Problem' }]
   if (hasShown.value) fields.push({ key: 'shown', label: 'Times shown' })
-  if (kind.value === 'problems') {
-    fields.push({ key: 'most', label: 'Picked as the biggest problem' })
-  } else {
-    fields.push(
-      { key: 'most', label: 'Works best' },
-      { key: 'least', label: 'Most needs improving' }
-    )
-  }
+  fields.push({ key: 'most', label: 'Picked as the biggest problem' })
   return fields
 })
 
-// The problem that was picked most comes first. In the area survey the area that most needs
-// improving does.
-const rankingRows = computed(() => {
-  const by = kind.value === 'problems' ? 'most' : 'least'
-  return (props.question.tallies || [])
+// The problem that was picked most comes first.
+const rankingRows = computed(() =>
+  (props.question.tallies || [])
     .slice()
-    .sort((a, b) => (Number(b[by]) || 0) - (Number(a[by]) || 0))
+    .sort((a, b) => (Number(b.most) || 0) - (Number(a.most) || 0))
     .map((t) => {
-      // An option is judged against the times it was on screen, where the server says, because
-      // each member sees only a few of the options.
       const shown = Number(t.times_shown) > 0 ? Number(t.times_shown) : 0
-      const base = shown || total.value
-      const cell = (n) => (base ? ofAnswered(n, base, total.value) : '0')
       return {
         label: t.label,
         shown: shown || '',
-        most: cell(t.most),
-        least: cell(t.least),
+        most: countIn(t.most, shown || total.value),
       }
     })
-})
+)
+
+// ---- the balance of the area survey ----
+
+// One row for each area, the one with the lowest balance first. The text of each row says everything
+// the bar does, so the bar is only a picture of it and is not read out.
+const balances = computed(() =>
+  areaBalances(props.question.tallies, total.value)
+)
+
+const balanceRows = computed(() =>
+  balances.value.map((r) => ({
+    ...r,
+    netText: signed(r.net),
+    countsText: `${r.shown ? `Shown ${r.shown.toLocaleString()} times. ` : ''}Works best ${countIn(r.best, r.base)}. Most needs improving ${countIn(r.improve, r.base)}.`,
+  }))
+)
+
+const balanceLine = computed(() => balanceSummary(balances.value))
 
 // ---- awareness ----
 
@@ -239,3 +294,108 @@ const openText = computed(
     } did not understand the question. ${analysisText.value}`
 )
 </script>
+
+<style scoped lang="scss">
+/* The balance list of the area survey. Each row says its balance in words and figures, and its counts
+   in text, so the bar is a picture of what is already written and does not rest on colour: needs
+   improving is to the left of the line and hatched, works best is to the right and solid. The colours
+   of the words and bars are dark enough for 4.5 to 1 on white (text) and 3 to 1 (bars). */
+.balance-list {
+  max-width: 36rem;
+}
+
+.balance-axis {
+  display: flex;
+  justify-content: space-between;
+  max-width: 36rem;
+  margin-bottom: 0.25rem;
+  font-size: 0.75rem;
+  color: #495057;
+}
+
+.balance-row {
+  padding: 0.375rem 0;
+  border-top: 1px solid #e9ecef;
+
+  &:first-child {
+    border-top: 0;
+  }
+}
+
+.balance-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0 0.75rem;
+}
+
+.balance-area {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.balance-net {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.balance-figure {
+  font-variant-numeric: tabular-nums;
+}
+
+.tone-good {
+  color: #1e5c0e;
+}
+
+.tone-bad {
+  color: #9a3b00;
+}
+
+.tone-even,
+.tone-none {
+  color: #495057;
+}
+
+.balance-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: 0.75rem;
+  margin: 0.25rem 0;
+  background: #f1f3f5;
+}
+
+.half {
+  display: flex;
+  min-width: 0;
+}
+
+.half.left {
+  justify-content: flex-end;
+  border-right: 2px solid #343a40;
+}
+
+.fill {
+  display: block;
+  height: 100%;
+}
+
+.fill.best {
+  background: #2b7a14;
+}
+
+.fill.improve {
+  background: repeating-linear-gradient(
+    135deg,
+    #b84a00 0,
+    #b84a00 4px,
+    #f2a15f 4px,
+    #f2a15f 8px
+  );
+  box-shadow: inset 0 0 0 1px #8f3a00;
+}
+
+.balance-counts {
+  overflow-wrap: anywhere;
+}
+</style>

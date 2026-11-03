@@ -63,6 +63,11 @@ function mountComponent() {
           props: ['href'],
         },
         'v-icon': { template: '<i />' },
+        'b-button': {
+          template:
+            '<button class="b-button" @click="$emit(\'click\')"><slot /></button>',
+          emits: ['click'],
+        },
       },
     },
   })
@@ -72,6 +77,10 @@ function rows(wrapper) {
   return wrapper.findAll('.noresponse')
 }
 
+async function openList(wrapper) {
+  await wrapper.find('[data-test="noresponse-toggle"]').trigger('click')
+}
+
 describe('ModGiftAidNoResponse', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -79,9 +88,23 @@ describe('ModGiftAidNoResponse', () => {
     mockGiftaidApi.record.mockResolvedValue({})
   })
 
+  it('starts with the list folded, so the page below does not jump', async () => {
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    expect(rows(wrapper)).toHaveLength(0)
+    const toggle = wrapper.find('[data-test="noresponse-toggle"]')
+    expect(toggle.text()).toContain('Show the 2 donors waiting for a reply')
+
+    await toggle.trigger('click')
+    expect(rows(wrapper)).toHaveLength(2)
+    expect(toggle.text()).toContain('Hide')
+  })
+
   it('lists donors asked who have not answered', async () => {
     const wrapper = mountComponent()
     await flushPromises()
+    await openList(wrapper)
 
     expect(mockGiftaidApi.noResponse).toHaveBeenCalled()
     expect(rows(wrapper)).toHaveLength(2)
@@ -92,6 +115,7 @@ describe('ModGiftAidNoResponse', () => {
   it('counts repeat asks and says who asked', async () => {
     const wrapper = mountComponent()
     await flushPromises()
+    await openList(wrapper)
 
     const first = rows(wrapper)[0].text()
     expect(first).toContain('Asked 3 times, last on')
@@ -122,6 +146,7 @@ describe('ModGiftAidNoResponse', () => {
   it('records another ask from a row and refreshes the list', async () => {
     const wrapper = mountComponent()
     await flushPromises()
+    await openList(wrapper)
 
     await rows(wrapper)[0].find('[data-label="Asked again"]').trigger('click')
     await flushPromises()
@@ -136,6 +161,7 @@ describe('ModGiftAidNoResponse', () => {
   it('records a decline from a row', async () => {
     const wrapper = mountComponent()
     await flushPromises()
+    await openList(wrapper)
 
     await rows(wrapper)[1].find('[data-label="They declined"]').trigger('click')
     await flushPromises()
@@ -149,6 +175,7 @@ describe('ModGiftAidNoResponse', () => {
   it('records by user ID, and needs one first', async () => {
     const wrapper = mountComponent()
     await flushPromises()
+    await openList(wrapper)
 
     const top = wrapper.findAll('.spin-button').slice(0, 2)
     expect(top[0].attributes('disabled')).toBeDefined()
@@ -168,6 +195,7 @@ describe('ModGiftAidNoResponse', () => {
     })
     const wrapper = mountComponent()
     await flushPromises()
+    await openList(wrapper)
 
     await wrapper.find('.form-input').setValue('77')
     await wrapper.findAll('.spin-button')[1].trigger('click')
@@ -181,6 +209,7 @@ describe('ModGiftAidNoResponse', () => {
     mockGiftaidApi.record.mockRejectedValue(new Error('network'))
     const wrapper = mountComponent()
     await flushPromises()
+    await openList(wrapper)
 
     await rows(wrapper)[0].find('[data-label="Asked again"]').trigger('click')
     await flushPromises()
