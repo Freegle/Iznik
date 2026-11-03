@@ -88,30 +88,31 @@ canon match alone is never taken as "same member" (see below). See
 
 A member's TN identity is the username in their per-group addresses - `bibiana` in
 `bibiana-g288@user.trashnothing.com` - and it is the whole of it, not a prefix of it.
-`tn:sync`'s duplicate check (`TNSyncCommand::mergeDuplicateTNUsers`) merges the accounts
-that share one, keeping the lowest `users_emails.id`.
+`tn:sync`'s duplicate check (`TNSyncCommand::flagDuplicateTNUsers`) finds the accounts that
+share one and flags each group for a person. It merges nothing.
 
 Per tick it reads only addresses added since the last run and probes for siblings of each
 with `LIKE '<username>-g%@user.trashnothing.com'`; one tick a day regroups the whole table
 instead, which is what catches a duplicate made by re-pointing an existing row. That
 `LIKE` is an index narrowing and not the test: its `%` runs on past the end of the
 username, so `bibiana-g%` also matches `bibiana-gomes-g4840@...`, a different member.
-Both passes decide on an exact username from `tnUsernameFromAddress()`. Merging two
-members into one account deletes one of them and re-points their mail, so the exact test
-is what stands between a longer username and being absorbed by its own prefix.
+Both passes decide on an exact username from `tnUsernameFromAddress()`, so a longer username
+is never grouped with its own prefix.
 `tnUsernameFromAddress()` strips only a `-g{digits}` suffix, so a bare `username@` address is
 its own group key and is not yet grouped with the aliases of the same username. The
 provisioner and the canon fallback in `findUserByEmail` keep the bare and alias forms on one
 account at creation time, so this only matters for twins that already exist.
 
 **A shared username is not a shared identity.** TN does not promise usernames are unique, and
-a released one can be retaken, so two accounts on one username may be two people. If the
-accounts in a group carry more than one distinct `tnuserid`, `mergeDuplicateTNUsers` leaves
-the group alone (`TN-SYNC-TRACE [MERGE-SKIP] reason=tnuserid-conflict`, Loki
-`tn-sync`/`user-merge-skip`): the merge keeps one id and deletes the other, after which that
-member's TN posts resolve to nobody. `User::merge` refuses the same merge itself and reports
-a `TnUserIdMergeConflict` to Sentry; passing `$forceMerge` proceeds but still reports it. A
-pair where only one account holds a `tnuserid` is the ordinary duplicate and is merged, keeping it.
+a released one can be retaken, so two accounts on one username may be two people. Merging on
+the username joined two members on one account more than once (the accounts that were split by
+hand in November 2026 were made that way). Only the same TN user id would prove two accounts are
+one member, and `users.tnuserid` is unique, so no two accounts can hold the same one. So every
+group is left alone and logged (`TN-SYNC-TRACE [MERGE-SKIP]`, Loki `tn-sync`/`user-merge-skip`)
+with its reason: `tnuserid-conflict` when the accounts hold different TN user ids, and
+`tnuserid-unproven` when fewer than two do. `User::merge` still refuses a merge of two different
+TN user ids and reports a `TnUserIdMergeConflict` to Sentry; passing `$forceMerge` proceeds but
+still reports it.
 
 The three helpers for reading an address are `User::tnUsernameFromEmail()` (bare or alias,
 lowercased, `NULL` for a non-TN address), `User::tnEmailForUsername()` and
@@ -145,23 +146,16 @@ production over 4.2M rows, `backwards` takes 3.3s and finds 94 of the 96, the ad
 and finds all 96. The per-tick pass pays neither, since its `id >` range narrows on the primary
 key first.
 
-### Reviewing the backlog before merging it
-
-Widening that filter exposes ~96 pairs of live member accounts at once, and `User::merge`
-deletes one of each, so merging them is gated:
+### Listing the groups
 
 ```bash
 php artisan tn:sync --report-duplicates
 ```
 
-is read-only. It always uses the wider filter, lists each candidate pair with its
-`tnuserid` and message count, flags pairs whose accounts carry **two different tnuserids**
-(a member who re-registered on TN, or a username released and retaken by somebody else -
-only a person can tell which), moves no cursor and merges nothing.
-
-The sync itself keeps the old, narrow filter until
-`FREEGLE_TN_MERGE_LEGACY_DUPLICATES=true`. Until then its behaviour is exactly what it was,
-so duplicates created from now on are still merged and the reviewed backlog waits.
+is read-only. It lists each group of accounts sharing a username with each account's
+`tnuserid` and message count, calls out groups whose accounts carry **two different
+tnuserids** (a member who re-registered on TN, or a username released and retaken by somebody
+else - only a person can tell which), and moves no cursor.
 
 **Key functions**:
 - `User::isTN()` - Check if user is from TN
@@ -1182,12 +1176,13 @@ The following one-off maintenance scripts existed in the legacy V1 PHP implement
 
 **Current State**: Creation is handled - `EnsurePartnerIdentifiers` attaches a member's new
 per-group alias to the account they already have, which stopped new duplicates on
-2026-08-11. What remains is the backlog created before that, which merges once
-`FREEGLE_TN_MERGE_LEGACY_DUPLICATES` is set (see "Reviewing the backlog before merging it").
-
-**Improvement**: Retire the flag once the backlog is cleared. The Go partner path meanwhile
-acts as whichever of a member's accounts owns the post rather than refusing the action, so a
+2026-08-11. What remains is the backlog created before that. `tn:sync` flags those groups
+and merges none (see "Identifying the member behind an address"), because nothing we hold
+proves two accounts on one username are one member. The Go partner path meanwhile acts as
+whichever of a member's accounts owns the post rather than refusing the action, so a
 duplicate that slips through is no longer member-visible.
+
+**Improvement**: A TN user id for every account, so a group can be proved one member or two.
 
 ### 8. Error Handling for TN API Failures
 
