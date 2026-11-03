@@ -38,11 +38,9 @@
           class="mb-2"
           data-test="tn-unaddressed-member-warning"
         >
-          This is a <strong>Trash Nothing</strong> user. Everything they've
-          posted here was matched to a community from where they are, not chosen
-          by them, so <strong>they can't be contacted</strong> - there's no
-          chat, no mail and no standard messages. If they post to a community
-          they've chosen, this goes away by itself.
+          This is a <strong>Trash Nothing</strong> member who didn't choose this
+          community, so <strong>you can't contact them</strong> from here:
+          there's no chat, no mail and no standard messages.
         </NoticeMessage>
         <div v-if="heldByUser">
           <NoticeMessage variant="warning" class="mb-2">

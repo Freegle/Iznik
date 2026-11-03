@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
@@ -238,4 +239,75 @@ func TestCreateChatMessage_ReplyJoinsNearestGroup(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", replierID, farGroup).Scan(&inFar)
 	assert.Equal(t, 1, inNear, "the replier is joined to the group nearest them")
 	assert.Equal(t, 0, inFar, "not the lower-numbered group on the other side of the country")
+}
+
+// A TrashNothing member who replies to a post is joined to its community like anyone else,
+// through the chat endpoint or the reply flow's own PUT /memberships, so its moderators can
+// ban them or hold their chat. TrashNothing joins its members to a community before they can
+// reply there, so this only matters for a TN account replying on Freegle itself. A reply never
+// makes a TrashNothing placement ordinary: only choosing the community through TrashNothing does.
+func TestReplyJoinsATrashNothingMemberButLeavesAPlacement(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("replytn")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reply-tn test item", 51.5, -0.1)
+
+	type row struct {
+		Implicit    int
+		AddedOrigin string
+	}
+	membership := func(userid uint64) (int, row) {
+		var rows []row
+		db.Raw("SELECT implicit, added_origin FROM memberships WHERE userid = ? AND groupid = ?", userid, groupID).Scan(&rows)
+		if len(rows) == 0 {
+			return 0, row{}
+		}
+		return len(rows), rows[0]
+	}
+
+	// A TN member with no membership is joined by the chat reply, as anyone is.
+	tn := CreateTestUser(t, prefix+"_tn", "User")
+	makeTrashNothing(tn)
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, tn, posterID, msgID, ""), "the reply is accepted")
+	n, m := membership(tn)
+	assert.Equal(t, 1, n, "a TN member who replies is joined to the post's community")
+	assert.Equal(t, 0, m.Implicit)
+	assert.Equal(t, addedorigin.Replied, m.AddedOrigin)
+
+	// The reply flow's join call joins them too, with either form of the request.
+	for i, body := range []map[string]interface{}{
+		{"groupid": groupID, "origin": addedorigin.Replied},
+		{"groupid": groupID, "manual": false},
+	} {
+		joiner := CreateTestUser(t, fmt.Sprintf("%s_tnjoin%d", prefix, i), "User")
+		makeTrashNothing(joiner)
+		_, token := CreateTestSession(t, joiner)
+		assert.Equal(t, 200, joinGroup(t, token, body))
+		n, m := membership(joiner)
+		assert.Equal(t, 1, n, "the reply flow's join joins a TN member: %v", body)
+		assert.Equal(t, addedorigin.Replied, m.AddedOrigin)
+	}
+
+	// A TN placement stays a placement, whichever way the reply comes.
+	placed := CreateTestUser(t, prefix+"_placed", "User")
+	makeTrashNothing(placed)
+	CreateTestMembership(t, placed, groupID, utils.ROLE_MEMBER)
+	makePlacement(placed, groupID)
+	_, placedToken := CreateTestSession(t, placed)
+	assert.Equal(t, 200, joinGroup(t, placedToken, map[string]interface{}{"groupid": groupID, "origin": addedorigin.Replied}))
+	_, m = membership(placed)
+	assert.Equal(t, 1, m.Implicit, "the reply flow's join does not make a TN placement ordinary")
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, placed, posterID, msgID, ""))
+	_, m = membership(placed)
+	assert.Equal(t, 1, m.Implicit, "a chat reply does not make a TN placement ordinary")
+
+	// Someone who is not a TN member is joined as before.
+	ordinary := CreateTestUser(t, prefix+"_ordinary", "User")
+	_, ordToken := CreateTestSession(t, ordinary)
+	assert.Equal(t, 200, joinGroup(t, ordToken, map[string]interface{}{"groupid": groupID, "origin": addedorigin.Replied}))
+	n, _ = membership(ordinary)
+	assert.Equal(t, 1, n)
 }

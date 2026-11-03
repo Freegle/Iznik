@@ -2,8 +2,10 @@
 
 namespace App\Console\Commands\User;
 
+use App\Models\User;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -56,33 +58,85 @@ class FixTNNamesCommand extends Command
                 ->select('users.id', 'users.fullname', 'users_emails.email')
                 ->get();
 
-            foreach ($rows as $row) {
-                if (preg_match('/^(.*)-[^-]+@/', $row->email, $matches)) {
-                    $name = $matches[1];
+            // A member can be several rows (a bare address and aliases), so the question
+            // "is this name already right" is asked once per member, over all their rows.
+            $rowsByUser = $rows->groupBy('id');
 
-                    Log::debug("FixTNNames: set fullname for user {$row->id} from {$row->email} => {$name}");
-
-                    if (!$dryRun) {
-                        DB::table('users')
-                            ->where('id', $row->id)
-                            ->update(['fullname' => $name]);
-                    }
-
-                    $fixed++;
-                } else {
+            foreach ($rowsByUser as $userRows) {
+                if ($this->alreadyHasDisplayName($userRows)) {
                     $skipped++;
+                    continue;
                 }
+
+                $row  = $userRows->first(fn ($candidate) => $this->nameFromAlias($candidate->email) !== null);
+                $name = $row ? $this->nameFromAlias($row->email) : null;
+
+                if ($name === null) {
+                    $skipped++;
+                    continue;
+                }
+
+                Log::debug("FixTNNames: set fullname for user {$row->id} from {$row->email} => {$name}");
+
+                if (!$dryRun) {
+                    DB::table('users')
+                        ->where('id', $row->id)
+                        ->update(['fullname' => $name]);
+                }
+
+                $fixed++;
             }
 
             $verb = $dryRun ? 'would fix' : 'fixed';
-            $this->info("Processed " . count($rows) . " TN users: {$verb} {$fixed}, skipped {$skipped}.");
+            $this->info("Processed " . count($rowsByUser) . " TN users: {$verb} {$fixed}, skipped {$skipped}.");
             Log::info('TN name fix complete', [
-                'candidates' => count($rows),
+                'candidates' => count($rowsByUser),
                 'fixed'      => $fixed,
                 'skipped'    => $skipped,
             ]);
 
             return Command::SUCCESS;
         });
+    }
+
+    /**
+     * Whether the member's name is already the display name of one of their TN usernames.
+     *
+     * TnUserProvisioner and the user-changes sync name a member with User::tnDisplayName()
+     * ("mary-jane" is "Mary-Jane"), and that name has a hyphen, which is what lets the
+     * query above select it. It is the right name and must be left as it is.
+     */
+    private function alreadyHasDisplayName(Collection $userRows): bool
+    {
+        $fullname = (string) $userRows->first()->fullname;
+        if ($fullname === '') {
+            return false;
+        }
+
+        foreach ($userRows as $row) {
+            $username = User::tnUsernameFromEmail($row->email);
+            if ($username !== null && $fullname === User::tnDisplayName($username)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The name an alias address encodes, or null when the address encodes none.
+     *
+     * An address at user.trashnothing.com is either the bare username or the username
+     * with a per-group -g<digits> suffix, and only the suffix is dropped. A bare address
+     * has nothing to drop: a hyphen in it belongs to the username ("mary-jane" is not
+     * "mary"). Older addresses on the plain trashnothing.com domain end in the group id.
+     */
+    private function nameFromAlias(string $email): ?string
+    {
+        if (User::tnUsernameFromEmail($email) !== null) {
+            return preg_match('/^(.+)-g\d+@/i', $email, $matches) ? $matches[1] : null;
+        }
+
+        return preg_match('/^(.*)-[^-]+@/', $email, $matches) ? $matches[1] : null;
     }
 }

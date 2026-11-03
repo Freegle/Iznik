@@ -2249,4 +2249,89 @@ class ChatNotificationTest extends TestCase
         $this->assertStringContainsString($tracked, $text);
         $this->assertStringNotContainsString('/job/4242', $text);
     }
+
+    // -------------------------------------------------------------------------
+    // TrashNothing shows our mail to its members as coming from a Freegle user, and the
+    // "{Group} Volunteers" sender name is lost, so a moderator's message to a TrashNothing
+    // member carries a sign-off in the body.
+    // -------------------------------------------------------------------------
+
+    public function test_a_moderators_message_to_a_trashnothing_member_is_signed(): void
+    {
+        ['mail' => $mail, 'group' => $group] = $this->createUser2ModChatSetup([
+            'member_attrs' => ['tnuserid' => random_int(900000000, 999999999)],
+            'moderator_attrs' => [],
+            'sender' => 'moderator',
+            'message_text' => 'Please add a postcode to your post.',
+        ]);
+
+        $mail->build();
+        $signOff = \App\Support\TrashNothingSignOff::line($group->namedisplay ?: $group->namefull ?: $group->nameshort);
+        $this->assertStringContainsString('the volunteers who run', $signOff);
+
+        $html = $mail->render();
+        $this->assertStringContainsString('Please add a postcode to your post.', $html);
+        $this->assertStringContainsString(e($signOff), $html);
+        $this->assertStringContainsString($signOff, $this->renderTextEmail($mail));
+    }
+
+    /**
+     * The mail shows the earlier messages of the chat above the new one. Only the new
+     * message is the volunteers writing to the member now; signing each quoted earlier
+     * message as well put the line in the mail once per message.
+     */
+    public function test_only_the_new_moderator_message_is_signed_not_the_quoted_earlier_ones(): void
+    {
+        ['mail' => $unused, 'member' => $member, 'moderator' => $moderator, 'room' => $room, 'group' => $group] = $this->createUser2ModChatSetup([
+            'member_attrs' => ['tnuserid' => random_int(900000000, 999999999)],
+            'moderator_attrs' => [],
+            'sender' => 'moderator',
+            'message_text' => 'Setup message',
+        ]);
+
+        $earlier = collect([
+            $this->createTestChatMessage($room, $moderator, ['message' => 'First earlier volunteer note.', 'date' => now()->subMinutes(20)]),
+            $this->createTestChatMessage($room, $member, ['message' => 'A reply from the member.', 'date' => now()->subMinutes(15)]),
+            $this->createTestChatMessage($room, $moderator, ['message' => 'Second earlier volunteer note.', 'date' => now()->subMinutes(10)]),
+        ]);
+        $latest = $this->createTestChatMessage($room, $moderator, ['message' => 'The new volunteer message.']);
+
+        $mail = new ChatNotification($member, $moderator, $room, $latest, ChatRoom::TYPE_USER2MOD, $earlier);
+        $mail->build();
+        $signOff = \App\Support\TrashNothingSignOff::line($group->namedisplay ?: $group->namefull ?: $group->nameshort);
+
+        $html = $mail->render();
+        $this->assertStringContainsString('First earlier volunteer note.', $html);
+        $this->assertStringContainsString('Second earlier volunteer note.', $html);
+        $this->assertStringContainsString('The new volunteer message.', $html);
+        $this->assertSame(1, substr_count($html, e($signOff)), 'the new message is signed once and the quoted ones not at all');
+
+        $text = $this->renderTextEmail($mail);
+        $this->assertSame(1, substr_count($text, $signOff));
+    }
+
+    public function test_a_moderators_message_to_an_ordinary_member_is_not_signed(): void
+    {
+        ['mail' => $mail] = $this->createUser2ModChatSetup([
+            'moderator_attrs' => [],
+            'sender' => 'moderator',
+            'message_text' => 'Please add a postcode to your post.',
+        ]);
+
+        $mail->build();
+        $this->assertStringNotContainsString('the volunteers who run', $mail->render());
+    }
+
+    public function test_a_trashnothing_members_own_message_to_the_moderators_is_not_signed(): void
+    {
+        ['mail' => $mail] = $this->createUser2ModChatSetup([
+            'member_attrs' => ['tnuserid' => random_int(900000000, 999999999)],
+            'sender' => 'member',
+            'recipient' => 'moderator',
+            'message_text' => 'Is my post OK now?',
+        ]);
+
+        $mail->build();
+        $this->assertStringNotContainsString('the volunteers who run', $mail->render());
+    }
 }

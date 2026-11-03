@@ -739,6 +739,31 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	// A User2Mod chat closes to the community's moderators once its member is a
+	// TrashNothing member without a membership here they chose (modmessaging.MayContact),
+	// typically because they have left. The member can still write; the moderators can't.
+	//
+	// A moderator writing into a chat between two members (a note from chat review) speaks
+	// for no one community, so each TrashNothing member in it must have chosen one the
+	// moderator moderates.
+	var writeRoom struct {
+		User1    uint64
+		User2    uint64
+		Groupid  uint64
+		Chattype string
+	}
+	db.Table("chat_rooms").Select("COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2, COALESCE(groupid, 0) AS groupid, chattype").
+		Where("id = ?", id).Scan(&writeRoom)
+	if writeRoom.Chattype == utils.CHAT_TYPE_USER2MOD && writeRoom.User1 != myid &&
+		!modmessaging.MayContact(db, myid, writeRoom.User1, writeRoom.Groupid) {
+		return fiber.NewError(fiber.StatusForbidden, "This member isn't in this community any more, so the chat is closed")
+	}
+	if writeRoom.Chattype == utils.CHAT_TYPE_USER2USER && writeRoom.User1 != myid && writeRoom.User2 != myid &&
+		(!modmessaging.MayContactThroughAnyGroup(db, myid, writeRoom.User1) ||
+			!modmessaging.MayContactThroughAnyGroup(db, myid, writeRoom.User2)) {
+		return fiber.NewError(fiber.StatusForbidden, "A TrashNothing member in this chat didn't choose a community you moderate, so you can't add a note")
+	}
+
 	// Guard a reply whose referenced post no longer exists. chat_messages.refmsgid has a FK to
 	// messages.id, and prod purges deleted/rejected/expired posts quickly. If the client replies
 	// to a post that has since been purged, the INSERT below would violate the FK and fail with a
@@ -1048,6 +1073,11 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// welcome email + spam check. Params mirror a normal web join's DB defaults (emailfrequency
 	// 24=daily, events + volunteering allowed), NOT the LoveJunk FREQUENCY_NEVER. Best-effort: a join
 	// hiccup must never fail the reply.
+	//
+	// A TrashNothing member is joined like anyone else, so the community's moderators can ban
+	// them or hold their chat. TrashNothing joins its members to a community before they can
+	// reply there, so this is for a TN account replying on Freegle itself. Any existing
+	// membership, a TrashNothing placement included, is left as it is by the check below.
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
 		// Already in one of the post's groups? Then nothing needs joining: they can
 		// see it and reply to it where they are. Without this check the join below

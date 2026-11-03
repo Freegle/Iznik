@@ -14,6 +14,8 @@ use App\Mail\Session\MergeOfferMail;
 use App\Mail\Session\UnsubscribeConfirmMail;
 use App\Mail\Session\VerifyEmailMail;
 use App\Mail\Message\ModStdMessageMail;
+use App\Models\Membership;
+use App\Models\User;
 use App\Services\BlockedKeywordBackfillService;
 use App\Services\ContentCheckService;
 use App\Services\PushNotificationService;
@@ -1618,6 +1620,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $group = $this->createTestGroup();
         $tnEmail = 'user' . uniqid() . '@user.trashnothing.com';
         $member = $this->createTestUser(['email_preferred' => $tnEmail]);
+        // A TrashNothing member of the group: mods may write to them (User::modsMayContact).
+        $this->createMembership($member, $group);
         $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
 
         DB::table('background_tasks')->insert([
@@ -1679,6 +1683,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $group = $this->createTestGroup();
         $tnEmail = 'user' . uniqid() . '@user.trashnothing.com';
         $member = $this->createTestUser(['email_preferred' => $tnEmail]);
+        // A TrashNothing member of the group: mods may write to them (User::modsMayContact).
+        $this->createMembership($member, $group);
         $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
 
         DB::table('background_tasks')->insert([
@@ -1745,6 +1751,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $group = $this->createTestGroup();
         $tnEmail = 'user' . uniqid() . '@user.trashnothing.com';
         $member = $this->createTestUser(['email_preferred' => $tnEmail]);
+        // A TrashNothing member of the group: mods may write to them (User::modsMayContact).
+        $this->createMembership($member, $group);
         $mod = $this->createTestUser(['fullname' => 'Sending Mod']);
         $otherMod = $this->createTestUser(['fullname' => 'Other Mod']);
 
@@ -3361,27 +3369,32 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     }
 
     /**
-     * The member-level half: someone whose every post is unaddressed has not opted in to
-     * Freegle, so a direct mod message must not go out - while a "mixed" poster, who has
-     * also posted normally, is a real member and hears from their volunteers as usual.
+     * The member-level half: a TrashNothing member hears from a group's volunteers only
+     * through a membership of that group they chose. A placement, or no membership because
+     * they left, gets nothing. Anyone who is not a TrashNothing member is unaffected.
      */
-    public function test_mod_stdmsg_for_member_respects_whether_they_opted_in(): void
+    public function test_mod_stdmsg_for_member_needs_a_membership_a_tn_member_chose(): void
     {
         Mail::fake();
 
         $group = $this->createTestGroup();
         $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
 
-        $tnOnly = $this->createTestUser();
-        $this->createTestUserEmail($tnOnly, ['preferred' => 1]);
-        $this->createPostWithModMessaging($tnOnly, $group, 0);
+        $placed = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createTestUserEmail($placed, ['preferred' => 1]);
+        $this->createMembership($placed, $group, ['implicit' => 1, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED]);
 
-        $mixed = $this->createTestUser();
-        $this->createTestUserEmail($mixed, ['preferred' => 1]);
-        $this->createPostWithModMessaging($mixed, $group, 0);
-        $this->createPostWithModMessaging($mixed, $group, 1);
+        $left = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createTestUserEmail($left, ['preferred' => 1]);
 
-        foreach ([$tnOnly, $mixed] as $target) {
+        $chose = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createTestUserEmail($chose, ['preferred' => 1]);
+        $this->createMembership($chose, $group);
+
+        $ordinary = $this->createTestUser();
+        $this->createTestUserEmail($ordinary, ['preferred' => 1]);
+
+        foreach ([$placed, $left, $chose, $ordinary] as $target) {
             DB::table('background_tasks')->insert([
                 'task_type' => 'email_mod_stdmsg',
                 'data' => json_encode([
@@ -3400,39 +3413,228 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->mock(PushNotificationService::class);
 
         $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 4,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        $recipients = [];
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use (&$recipients) {
+            $recipients[] = $mail->recipientUserId;
+            return TRUE;
+        });
+        sort($recipients);
+        $expected = [$chose->id, $ordinary->id];
+        sort($expected);
+        $this->assertSame($expected, $recipients);
+    }
+
+    /**
+     * Reject and Delete Approved Member delete the membership and then queue the note that
+     * explains it, so by the time this runs the member has no membership and the check
+     * would refuse every one. The API decides before it deletes and says so in the task:
+     * `modsmaycontact` is the answer then, whatever the table says now.
+     */
+    public function test_mod_stdmsg_for_a_removed_tn_member_follows_the_decision_the_api_recorded(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+
+        $contactable = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createTestUserEmail($contactable, ['preferred' => 1]);
+
+        $notContactable = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createTestUserEmail($notContactable, ['preferred' => 1]);
+
+        // Neither has a membership: the action removed it.
+        foreach ([[$contactable, true], [$notContactable, false]] as [$target, $mayContact]) {
+            DB::table('background_tasks')->insert([
+                'task_type' => 'email_mod_stdmsg',
+                'data' => json_encode([
+                    'userid' => $target->id,
+                    'byuser' => $mod->id,
+                    'groupid' => $group->id,
+                    'subject' => 'Your membership',
+                    'body' => 'We have removed you from the community.',
+                    'action' => 'Delete Approved Member',
+                    'stdmsgid' => 0,
+                    'notifyposter' => 1,
+                    'modsmaycontact' => $mayContact,
+                ]),
+                'created_at' => now(),
+            ]);
+        }
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
             '--max-iterations' => 2,
             '--sleep' => 0,
         ])->assertSuccessful();
         $this->artisan('mail:spool:process')->assertSuccessful();
 
-        // Exactly one message went out, and it was to the member who has actually posted
-        // to Freegle.
-        Mail::assertSent(ModStdMessageMail::class, 1);
-        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($mixed) {
-            $this->assertEquals($mixed->id, $mail->recipientUserId);
+        $recipients = [];
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use (&$recipients) {
+            $recipients[] = $mail->recipientUserId;
             return TRUE;
         });
+        $this->assertSame([$contactable->id], $recipients);
+    }
+
+    /**
+     * A task queued before the API recorded its decision has no `modsmaycontact`, and so
+     * does every action that leaves the membership in place. Those still ask the table.
+     */
+    public function test_mod_stdmsg_without_a_recorded_decision_still_asks_the_membership(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+
+        $left = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createTestUserEmail($left, ['preferred' => 1]);
+
+        $chose = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createTestUserEmail($chose, ['preferred' => 1]);
+        $this->createMembership($chose, $group);
+
+        foreach ([$left, $chose] as $target) {
+            DB::table('background_tasks')->insert([
+                'task_type' => 'email_mod_stdmsg',
+                'data' => json_encode([
+                    'userid' => $target->id,
+                    'byuser' => $mod->id,
+                    'groupid' => $group->id,
+                    'subject' => 'Your membership',
+                    'body' => 'A note from your volunteers.',
+                    'action' => 'Delete Approved Member',
+                    'stdmsgid' => 0,
+                ]),
+                'created_at' => now(),
+            ]);
+        }
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 2,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        $recipients = [];
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use (&$recipients) {
+            $recipients[] = $mail->recipientUserId;
+            return TRUE;
+        });
+        $this->assertSame([$chose->id], $recipients);
+    }
+
+    /**
+     * Support and Admin act for Freegle as a whole, so the TrashNothing contact rule does not
+     * stop their mail.
+     */
+    public function test_mod_stdmsg_from_support_reaches_a_tn_member_who_did_not_choose_the_group(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $support = $this->createTestUser(['fullname' => 'Support Volunteer', 'systemrole' => User::SYSTEMROLE_SUPPORT]);
+        $placed = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createTestUserEmail($placed, ['preferred' => 1]);
+        $this->createMembership($placed, $group, ['implicit' => 1, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $placed->id,
+                'byuser' => $support->id,
+                'groupid' => $group->id,
+                'subject' => 'A note from Support',
+                'body' => 'Hello, this is Freegle Support.',
+                'action' => 'Leave Approved Member',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ModStdMessageMail::class, fn (ModStdMessageMail $mail) => $mail->recipientUserId === $placed->id);
+    }
+
+    /**
+     * A standard message about a post goes to its poster, so a TrashNothing poster who has
+     * left the group gets none, though the action and its log still stand.
+     */
+    public function test_mod_stdmsg_about_a_post_skips_a_tn_poster_who_left_the_group(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+        $poster = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $msgId = $this->createPostWithModMessaging($poster, $group, 1);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_approved',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'About your post',
+                'body' => 'Please add a photo.',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')->once()->with($group->id)->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertNotSent(ModStdMessageMail::class);
+        $this->assertTrue(
+            DB::table('logs')->where('msgid', $msgId)->where('type', 'Message')->where('subtype', 'Approved')->exists(),
+            'the approval is still logged',
+        );
     }
 
     /**
      * An absent id must read as "not restricted", not as "restricted".
      *
-     * A task whose payload carries no msgid or no userid tells us nothing about whether the
-     * person opted in, and these checks only ever REMOVE a moderator's ability to write to
-     * someone. Answering true on a missing id would silence perfectly ordinary standard
+     * A task whose payload carries no msgid or no userid tells us nothing about the person,
+     * and these checks only ever REMOVE a moderator's ability to write to someone.
+     * Answering otherwise on a missing id would silence perfectly ordinary standard
      * messages whenever a payload was malformed or came from an older client.
      */
     public function test_missing_ids_read_as_unrestricted(): void
     {
         $command = new ProcessBackgroundTasksCommand();
 
-        foreach (['postIsUnaddressed', 'userIsUnaddressedOnly'] as $method) {
-            $check = new \ReflectionMethod(ProcessBackgroundTasksCommand::class, $method);
-            $check->setAccessible(true);
+        $unaddressed = new \ReflectionMethod(ProcessBackgroundTasksCommand::class, 'postIsUnaddressed');
+        $unaddressed->setAccessible(true);
+        $this->assertFalse($unaddressed->invoke($command, 0), 'postIsUnaddressed(0) must not restrict');
+        $this->assertFalse($unaddressed->invoke($command, -1), 'postIsUnaddressed(-1) must not restrict');
 
-            $this->assertFalse($check->invoke($command, 0), "{$method}(0) must not restrict");
-            $this->assertFalse($check->invoke($command, -1), "{$method}(-1) must not restrict");
-        }
+        $contact = new \ReflectionMethod(ProcessBackgroundTasksCommand::class, 'modsMayContact');
+        $contact->setAccessible(true);
+        $this->assertTrue($contact->invoke($command, 0, 1), 'modsMayContact(0) must not restrict');
+        $this->assertTrue($contact->invoke($command, -1, 1), 'modsMayContact(-1) must not restrict');
     }
 
     /**

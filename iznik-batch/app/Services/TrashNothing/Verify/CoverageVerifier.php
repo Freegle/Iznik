@@ -4,6 +4,7 @@ namespace App\Services\TrashNothing\Verify;
 
 use App\Models\Location;
 use App\Models\Message;
+use App\Services\TrashNothing\Ingestion\DeliberateSkips;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use Carbon\CarbonImmutable;
 
@@ -35,6 +36,17 @@ use Carbon\CarbonImmutable;
  *    headerPlacesNowhere().
  *  - DELETED / RESOLVED / BUMPED. Handled exactly as tn:parity-check's Layer 1
  *    reclassification handles them.
+ *  - DELIBERATE_SKIP. Ingestion decided about the post and nobody needs to look at the
+ *    decision: a banned poster, or a post TN gave no user id for (DeliberateSkips::EXPECTED_REASONS).
+ *    Ingestion leaves a note of it (DeliberateSkips) and the verifier reads that, before asking
+ *    TN anything, so such a post is counted and shown but is not a miss.
+ *
+ * A post ingestion skipped for any other reason (a poster TN does not know, a lookup TN refused, a
+ * username clash, a deleted account) is not expected. The note is still read, but only to name the
+ * reason beside the miss: the post is classified like any other, and when nothing explains its
+ * absence it is a genuine miss, so it is reported, repeats when it is still missing after a
+ * backfill, and can be ingested once the cause is fixed. A failure to look the poster up leaves no
+ * note.
  *
  * Anything left over is a genuine coverage gap: TN emailed us a placeable
  * source post that is still live, and it is not in the database.
@@ -58,6 +70,8 @@ class CoverageVerifier
 
     public const LOOKUP_ERROR = 'lookup_error';
 
+    public const DELIBERATE_SKIP = 'deliberate_skip';
+
     public const GENUINE = 'genuine';
 
     /**
@@ -73,7 +87,8 @@ class CoverageVerifier
      *     resolved: string[],
      *     bumped: string[],
      *     lookup_error: string[],
-     *     genuine: array<string, array{post_id: string, subject: string|null, timestamp: string, date: string|null, envelope_to: string, post: mixed}>,
+     *     deliberate_skip: array<string, string>,
+     *     genuine: array<string, array{post_id: string, subject: string|null, timestamp: string, date: string|null, envelope_to: string, post: mixed, skip_reason: string|null}>,
      *     api_lookups: int
      * }
      */
@@ -93,6 +108,7 @@ class CoverageVerifier
             self::LOOKUP_ERROR => [],
         ];
         $genuine    = [];
+        $deliberate = [];
         $apiLookups = 0;
 
         $covered = $this->coveredPostIds(array_keys($inventory));
@@ -100,6 +116,16 @@ class CoverageVerifier
         foreach ($inventory as $postId => $entry) {
             if (isset($covered[$postId])) {
                 $buckets[self::COVERED][] = $postId;
+                continue;
+            }
+
+            // Ingestion's own note of why it skipped this post. Free, and it answers what TN
+            // cannot: why a post that is live and placeable has no message. Only the reasons
+            // nobody needs to look at end the check; for the rest the reason is kept to show
+            // beside a miss.
+            $skipReason = DeliberateSkips::reasonFor((string) $postId);
+            if ($skipReason !== null && DeliberateSkips::isExpected($skipReason)) {
+                $deliberate[$postId] = $skipReason;
                 continue;
             }
 
@@ -135,16 +161,19 @@ class CoverageVerifier
                 'date'        => $result['date'],
                 'envelope_to' => $entry['envelope_to'],
                 'post'        => $result['post'],
+                'skip_reason' => $skipReason,
             ];
         }
 
         $counts = array_map('count', $buckets);
-        $counts[self::GENUINE] = count($genuine);
+        $counts[self::GENUINE]         = count($genuine);
+        $counts[self::DELIBERATE_SKIP] = count($deliberate);
 
         return array_merge($buckets, [
-            'counts'      => $counts,
-            self::GENUINE => $genuine,
-            'api_lookups' => $apiLookups,
+            'counts'              => $counts,
+            self::DELIBERATE_SKIP => $deliberate,
+            self::GENUINE         => $genuine,
+            'api_lookups'         => $apiLookups,
         ]);
     }
 
