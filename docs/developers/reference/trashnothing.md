@@ -287,8 +287,12 @@ when reading any coverage report:
   content difference, and `ParityComparer` canonicalizes it before comparing
   subjects — otherwise every such post fails parity twice (same-group content
   and Loki entry) and buries the real mismatches.
-- **Deletion is final.** The API path's idempotency guard
-  (`GroupPostIngestionService::existingMessageForGroup()`) counts a *deleted*
+- **One TN post is one message.** The API path's idempotency guard
+  (`GroupPostIngestionService::existingMessage()`) matches the TN post id on any
+  group. A post on the line between two groups can resolve to either on different
+  reads, and the sync reads each post more than once, so a check scoped to the
+  resolved group would place it twice.
+- **Deletion is final.** The same guard counts a *deleted*
   message as already ingested, unlike the email path's `findLiveTnMessage()`,
   which skips deleted ones. Deleting is a decision — a moderator, the member, or
   a user purge — and every overlapping sync window re-fetches the post, so
@@ -314,6 +318,8 @@ within a minute if clean, or holds it for a moderator if a concern keyword or
 content rule matches. `GroupPostIngestionService` deliberately does not notify mods
 or add such a post to the spatial index — both belong to the content check, so a
 clean post makes no mod work and a flagged one is never live in the meantime.
+A member whose `ourPostingStatus` is blank is moderated, as on the email path, on the web
+and in the content check: the post waits for a moderator, who is notified when it arrives.
 Ingestion now gives the poster a membership with `ourPostingStatus` `DEFAULT` (below), but a
 post from before that, or from a poster banned from the group, has no membership row, so
 `ContentCheckService::isUserModerated()` applies the same `DEFAULT` fallback for a post with a

@@ -501,6 +501,28 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertSame(1, Message::where('tnpostid', $postId)->count());
     }
 
+    /**
+     * A post on the line between two groups can resolve to either on different reads
+     * of the same window. It is still one post, so the second read must not place it
+     * on the neighbour as well.
+     */
+    public function test_a_post_read_again_on_a_neighbouring_group_is_a_duplicate(): void
+    {
+        $user   = $this->createTnUser();
+        $first  = $this->createTestGroup();
+        $second = $this->createTestGroup();
+        $postId = 'tn-boundary-' . uniqid();
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]);
+        $svc    = $this->makeService(dryRun: false);
+
+        $this->assertNotSame('skipped', $svc->ingest($post, $first));
+        $this->assertSame('duplicate', $svc->ingest($post, $second));
+
+        $this->assertSame(1, Message::where('tnpostid', $postId)->count());
+        $this->assertSame(0, DB::table('messages_groups')->where('groupid', $second->id)
+            ->whereIn('msgid', Message::where('tnpostid', $postId)->pluck('id'))->count());
+    }
+
     public function test_creates_post_for_non_member_of_resolved_group(): void
     {
         // The group here is resolved from the post's own coordinates
@@ -762,6 +784,42 @@ class GroupPostIngestionServiceTest extends TestCase
             DB::table('messages_spatial')->where('msgid', $message->id)->count(),
             'A post awaiting the content check must not be in the spatial index',
         );
+    }
+
+    /**
+     * A member whose posting status is blank is moderated, as on the email path, the web
+     * and in the content check: the post waits for a moderator, who is told now, rather
+     * than being treated as an unmoderated poster waiting for the content check.
+     */
+    public function test_a_member_with_a_blank_posting_status_is_moderated(): void
+    {
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTnUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => null]);
+
+        $notified = false;
+        Log::listen(function ($message) use (&$notified) {
+            if (str_contains((string) $message->message, 'notified group mods')) {
+                $notified = true;
+            }
+        });
+
+        $postId = 'tn-blank-status-' . uniqid();
+        $post   = $this->makePost([
+            'post_id'   => $postId,
+            'user_id'   => $user->tnuserid,
+            'latitude'  => 55.9533,
+            'longitude' => -3.1883,
+        ]);
+
+        $this->assertSame('pending', $this->makeService(dryRun: false)->ingest($post, $group));
+
+        $message = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($message);
+        $mg = MessageGroup::where('msgid', $message->id)->where('groupid', $group->id)->first();
+        $this->assertSame(MessageGroup::COLLECTION_PENDING, $mg->collection);
+        $this->assertTrue($notified, 'Mods are told about a post from a moderated member when it arrives');
     }
 
     public function test_live_creates_pending_message_when_group_is_moderated(): void
@@ -1139,7 +1197,7 @@ class GroupPostIngestionServiceTest extends TestCase
         // A later run whose window still covers the post (every overlap does)
         // must not undo it, so the idempotency guard deliberately does NOT
         // filter on messages.deleted the way the email path's
-        // findLiveTnMessage() does. See existingMessageForGroup().
+        // findLiveTnMessage() does. See existingMessage().
         $locationId = $this->createTestLocation();
         $user  = $this->createTnUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);

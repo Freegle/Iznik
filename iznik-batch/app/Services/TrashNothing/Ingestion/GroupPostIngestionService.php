@@ -289,10 +289,10 @@ class GroupPostIngestionService
             return $this->dropped(self::REASON_CROSSPOST, result: 'crosspost');
         }
 
-        // Idempotency: skip if this post was already ingested for this group,
+        // Idempotency: skip if this post was already ingested, on any group,
         // whether the message we made is still live or has since been deleted —
-        // see existingMessageForGroup() for why deleted still counts.
-        $existing = $this->existingMessageForGroup((string) $postId, $group->id);
+        // see existingMessage() for why both hold.
+        $existing = $this->existingMessage((string) $postId);
         if ($existing !== null) {
             $existingDeleted = $existing->deleted !== null;
             Log::info('TN-SYNC-TRACE [POST-SKIP] reason=duplicate tnpostid=' . $postId . ' groupid=' . $group->id . ' msgid=' . $existing->id . ($existingDeleted ? ' existing_deleted=true' : '') . ($this->dryRun ? ' would_be_duplicate=true' : ''));
@@ -375,9 +375,10 @@ class GroupPostIngestionService
         // posting to a group they belong to, so the poster is frequently not an
         // Approved member of the resolved group — that's expected, not an error.
         // If a membership does exist, its ourPostingStatus still applies (matches
-        // the email path for genuine members); otherwise fall back to the same
-        // 'DEFAULT' a brand-new member gets. The group's own moderation settings
-        // below still apply regardless.
+        // the email path for genuine members), and a blank one is MODERATED as it is
+        // on the email path, on the web and in the content check; otherwise fall back
+        // to the same 'DEFAULT' a brand-new member gets. The group's own moderation
+        // settings below still apply regardless.
         $membership = Membership::where('userid', $user->id)
             ->where('groupid', $group->id)
             ->where('collection', 'Approved')
@@ -398,7 +399,7 @@ class GroupPostIngestionService
         ];
 
         // Determine posting status, applying the same override hierarchy as the email path.
-        $postingStatus = $membership->ourPostingStatus ?? 'DEFAULT';
+        $postingStatus = $membership === null ? 'DEFAULT' : ($membership->ourPostingStatus ?: 'MODERATED');
 
         $overrideModeration = $group->overridemoderation ?? 'None';
         if ($overrideModeration === 'ModerateAll') {
@@ -972,9 +973,15 @@ class GroupPostIngestionService
     }
 
     /**
-     * The message we already hold for this TN post on this group, live or
-     * deleted, or null if we have never ingested it here. Lowest id wins, so
-     * the answer is stable if an older duplicate somehow survives.
+     * The message we already hold for this TN post, on any group, live or
+     * deleted, or null if we have never ingested it. Lowest id wins, so the
+     * answer is stable if an older duplicate somehow survives.
+     *
+     * ANY GROUP, because a source post is one post. Its group comes from its
+     * coordinates (Location::groupsNear()), and a post on the line between two
+     * groups can resolve to either on different reads. The sync's windows
+     * overlap, so it reads a post more than once, and a check scoped to the
+     * group would make a second message on the neighbour.
      *
      * DELETED MESSAGES DELIBERATELY STILL COUNT, which is why this is not the
      * email path's findLiveTnMessage() (IncomingMailService.php:3135) with a
@@ -984,7 +991,7 @@ class GroupPostIngestionService
      *    group off?", so it must skip deleted ones — attaching a messages_groups
      *    row to a deleted message would put the group's copy on something no
      *    member can see.
-     *  - this asks "have we ingested this post for this group before?" — an
+     *  - this asks "have we ingested this post before?" — an
      *    idempotency guard, which a deleted message answers yes to just as
      *    firmly as a live one. Filtering deleted out here would mean the next
      *    run whose window still covers the post RE-CREATES it, resurrecting
@@ -1001,12 +1008,10 @@ class GroupPostIngestionService
      * explicit human action, not a side effect of a window overlap: clear the
      * tnpostid on the deleted row and re-run the sync for that window.
      */
-    private function existingMessageForGroup(string $tnPostId, int $groupId): ?object
+    private function existingMessage(string $tnPostId): ?object
     {
         return DB::table('messages')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
             ->where('messages.tnpostid', $tnPostId)
-            ->where('messages_groups.groupid', $groupId)
             ->orderBy('messages.id')
             ->select('messages.id', 'messages.deleted')
             ->first();
