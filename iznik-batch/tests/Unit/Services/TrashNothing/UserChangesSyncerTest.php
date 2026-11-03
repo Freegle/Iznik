@@ -587,4 +587,136 @@ class UserChangesSyncerTest extends TestCase
         $syncer->sync('2026-10-01T09:00:00Z', '2026-10-01T11:00:00Z');
         $this->assertFalse($syncer->fetchFailed());
     }
+
+    private function tnUserWithId(?int $tnUserId): User
+    {
+        $user = $this->tnUser('Test Member', [[$this->username('m') . '-g1' . self::TN_DOMAIN, 1]]);
+        if ($tnUserId !== null) {
+            $user->tnuserid = $tnUserId;
+            $user->save();
+        }
+
+        return $user->fresh();
+    }
+
+    private function skipEvents(string $reason): array
+    {
+        return array_values(array_filter(
+            $this->lokiEvents,
+            fn ($e) => $e[0] === 'user-change-skip' && ($e[1]['reason'] ?? null) === $reason,
+        ));
+    }
+
+    /**
+     * A member the posts API provisioned was never added by TN, so TN does not know our id
+     * for them and their changes come with only TN's. They must still reach the account.
+     */
+    public function test_a_change_without_our_id_reaches_the_member_holding_its_tn_id(): void
+    {
+        $user = $this->tnUserWithId(99130001);
+
+        $this->syncChanges([[
+            'tn_user_id' => 99130001,
+            'reply_time' => 4321,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame(4321, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
+    }
+
+    public function test_a_removal_without_our_id_forgets_the_member_holding_its_tn_id(): void
+    {
+        $user = $this->tnUserWithId(99130002);
+
+        $this->syncChanges([[
+            'tn_user_id'      => 99130002,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Deleted User #' . $user->id, $user->fresh()->fullname);
+    }
+
+    /**
+     * Two TN members on one Freegle account: TN names the account for both, but a removal or
+     * rename by the one whose TN id is not the account's must not touch the other.
+     */
+    public function test_a_removal_for_another_tn_member_on_the_account_is_skipped(): void
+    {
+        $user = $this->tnUserWithId(99130003);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130004,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Test Member', $user->fresh()->fullname, 'the account is not forgotten');
+        $this->assertCount(1, $this->skipEvents('tn-user-id-mismatch'));
+    }
+
+    public function test_a_rename_for_another_tn_member_on_the_account_is_skipped(): void
+    {
+        $user = $this->tnUserWithId(99130005);
+        $before = $this->emailsOf($user);
+
+        $this->syncChanges([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130006,
+            'username'   => $this->username('other'),
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame($before, $this->emailsOf($user->fresh()), 'the addresses are not renamed');
+        $this->assertCount(1, $this->skipEvents('tn-user-id-mismatch'));
+    }
+
+    /** TN has just said which of its members the account is, so an account with no TN id gets it. */
+    public function test_an_account_without_a_tn_id_is_given_the_changes(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $this->syncChanges([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130007,
+            'reply_time' => 55,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame(99130007, (int) $user->fresh()->tnuserid);
+        $this->assertSame(55, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
+    }
+
+    /** The TN id already belongs to another account: which is right is for a person to say. */
+    public function test_a_change_whose_tn_id_another_account_holds_is_skipped(): void
+    {
+        $named = $this->tnUserWithId(null);
+        $holder = $this->tnUserWithId(99130008);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130008,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Test Member', $named->fresh()->fullname);
+        $this->assertSame('Test Member', $holder->fresh()->fullname);
+        $this->assertNull($named->fresh()->tnuserid);
+        $this->assertCount(1, $this->skipEvents('tn-user-id-held-elsewhere'));
+    }
+
+    public function test_a_dry_run_does_not_give_an_account_a_tn_id(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $this->syncChanges([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130009,
+            'date'       => '2026-10-01T10:00:00',
+        ]], dryRun: true);
+
+        $this->assertNull($user->fresh()->tnuserid);
+    }
 }

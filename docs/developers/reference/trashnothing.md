@@ -809,6 +809,16 @@ Syncs:
 - Location updates
 - Account removal notifications
 
+**Which account a change is about.** Each change carries TN's id for the member (`tn_user_id`)
+and, where TN knows it, ours (`fd_user_id`). TN learns our id only when it adds the member
+through the partner API, so a member the posts API provisioned has changes with no `fd_user_id`;
+those are matched on `users.tnuserid`, or the member's removal and renames would never reach us.
+When the account TN names holds a different TN user id, the change belongs to another TN member
+sharing that account, and is skipped (Loki `tn-sync`/`user-change-skip`, reason
+`tn-user-id-mismatch`) rather than forgetting or renaming the wrong person. An account with no TN
+user id is given the change's, unless another account already holds it, which is skipped as
+`tn-user-id-held-elsewhere` for a person to look at. See `UserChangesSyncer::resolveMember`.
+
 **A feed that cannot be read holds the stored date, for an hour.** `tn:sync` stores one date for
 ratings, user changes and posts: the latest any of them saw. When a page of the ratings or the
 user changes feed fails (any answer that is not a 2xx), the syncer stops there and says so
