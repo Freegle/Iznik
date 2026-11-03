@@ -250,7 +250,7 @@ describe('ModLog', () => {
         text: 'TrashNothing unaddressed',
       })
       expect(wrapperTnUnaddressed.text()).toContain(
-        'Added when their TrashNothing post was placed in this group'
+        'TN post with no Freegle groups chosen by user, group chosen by system'
       )
       expect(wrapperTnUnaddressed.text()).not.toContain('when posting/replying')
 
