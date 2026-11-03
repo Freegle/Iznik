@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-02
+last_reviewed: 2026-11-03
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -281,8 +281,11 @@ anything on yours.
 - **Your messages are signed.** Trash Nothing shows them your message as if it came from a
   Freegle member, so a chat message, a standard message or a reply about a post from your team
   ends with "From the volunteers who run" and your community's name.
-- **Replying doesn't make them a member.** A Trash Nothing member who replies to a post on your
-  community isn't added to it. They join communities through Trash Nothing.
+- **Someone who replies is already a member.** Trash Nothing joins its members to a community
+  before they can reply to its posts, so a Trash Nothing member who replies to a post on your
+  community is in your member list, and you can ban them or hold their chat as for anyone.
+  Replying doesn't change a placement, though: only choosing your community on Trash Nothing
+  does.
 
 ## Banning and removing
 

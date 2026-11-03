@@ -1440,11 +1440,16 @@ func PutMemberships(c *fiber.Ctx) error {
 
 	origin := joinOrigin(userid, myid, req.Origin, req.Manual)
 
-	// The reply flow joins a replier to the post's community. A TrashNothing member joins
-	// communities through TrashNothing, so a reply must not make them a member, or make a
-	// TrashNothing placement ordinary. Answer as if it had worked: the reply goes on.
+	// The reply flow joins a replier to the post's community, a TrashNothing member as anyone.
+	// A join onto an existing membership makes it ordinary, and a reply must not do that to a
+	// TrashNothing placement: only choosing the community through TrashNothing does. So a TN
+	// member who already has a membership here keeps it as it is, and the reply goes on.
 	if origin == addedorigin.Replied && userid == myid && isTrashNothingAccount(userid) {
-		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+		var existing int64
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).Count(&existing)
+		if existing > 0 {
+			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "addedto": utils.COLLECTION_APPROVED})
+		}
 	}
 
 	return addMemberToGroup(c, db, userid, req.Groupid, myid, joinManual(userid, myid, req.Origin, req.Manual), origin)

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-02
+last_reviewed: 2026-11-03
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -605,11 +605,16 @@ it existed) still asks the table.
   moderator's chat message (`ChatNotification`) and of a standard message or reply about a
   post (`ModStdMessageMail`) to a TrashNothing member. A chat mail signs only the new message,
   not the earlier ones it quotes.
-- **Replying joins them to nothing.** A TrashNothing member joins communities through
-  TrashNothing. The reply join in `CreateChatMessage` and a `replied` join through
-  `PUT /memberships` skip them (the latter answers success, so the reply flow goes on), and
-  `RippleEngagementService` does not make a ripple join ordinary for their reply or
-  write-back. A reply from TrashNothing itself arrives by email and never joined anyone.
+- **A replier has a membership.** TrashNothing joins its members to a community before they
+  can reply to its posts by email: of 28,051 TN replies to Freegle posts in the 30 days to
+  2026-11-03, 28,027 came from someone who had joined a community the post was on before
+  replying, 19 from someone who joined just after, and 5 from someone who never joined. So
+  moderators deal with a TN replier through that membership (ban, chat review), and there is no
+  separate report path to TrashNothing. A TN account replying on Freegle itself is joined like
+  anyone (`CreateChatMessage`, and a `replied` join through `PUT /memberships`), but a reply
+  never makes an existing placement ordinary: `PUT /memberships` leaves a TN member's existing
+  membership as it is, and `RippleEngagementService` does not clear a ripple join for their
+  reply or write-back. Only choosing the community through TrashNothing does.
 - **A ban takes their posts down.** Banning deletes the membership, so a placed post would
   stay up with nobody able to talk to its poster about it. Both ban paths (`DELETE /memberships`
   with `ban`, which ModTools uses, and the `Ban` action on `POST /memberships`) call

@@ -1074,11 +1074,11 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// 24=daily, events + volunteering allowed), NOT the LoveJunk FREQUENCY_NEVER. Best-effort: a join
 	// hiccup must never fail the reply.
 	//
-	// Not for a TrashNothing member. They join communities through TrashNothing, and a
-	// join here would make them a member of a community they never chose, open to its
-	// moderators.
-	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply &&
-		!modmessaging.IsTrashNothingMember(db, myid) {
+	// A TrashNothing member is joined like anyone else, so the community's moderators can ban
+	// them or hold their chat. TrashNothing joins its members to a community before they can
+	// reply there, so this is for a TN account replying on Freegle itself. Any existing
+	// membership, a TrashNothing placement included, is left as it is by the check below.
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
 		// Already in one of the post's groups? Then nothing needs joining: they can
 		// see it and reply to it where they are. Without this check the join below
 		// picks the post's LOWEST GROUP ID, which is arbitrary — and once a post

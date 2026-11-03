@@ -28,8 +28,8 @@ use Illuminate\Support\Facades\DB;
  * One pass covers every route a reply or a post arrives by - the API, email and
  * TrashNothing - because it reads what was stored rather than hooking each route.
  *
- * A TrashNothing member's reply or write-back clears nothing. They join communities through
- * TrashNothing, and their moderators deal with them through TrashNothing too.
+ * A TrashNothing member's reply or write-back clears nothing: replying is not choosing the
+ * community, and only choosing it through TrashNothing makes their membership ordinary.
  */
 class RippleEngagementService
 {
