@@ -319,4 +319,30 @@ describe('StatsImpact', () => {
       expect(wrapper.text()).toContain('31 Dec 2025')
     })
   })
+
+  describe('benefitNote prop', () => {
+    const note = 'Includes £1,234 saved on clearing up fly-tipping.'
+
+    it('shows no note by default', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.find('.benefit-note').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('BENEFIT*')
+    })
+
+    it('stars the benefit figure and shows the note under the figures', () => {
+      const wrapper = createWrapper({ benefitNote: note })
+      expect(wrapper.text()).toContain('BENEFIT*')
+      expect(wrapper.find('.benefit-note').text()).toBe('* ' + note)
+    })
+
+    it('shows the note with the full set of stats too', () => {
+      const wrapper = createWrapper({
+        benefitNote: note,
+        totalMembers: 1000,
+        range: 'JAN 25 - DEC 25',
+      })
+      expect(wrapper.text()).toContain('BENEFIT*')
+      expect(wrapper.find('.benefit-note').text()).toBe('* ' + note)
+    })
+  })
 })
