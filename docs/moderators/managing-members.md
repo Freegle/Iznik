@@ -255,8 +255,8 @@ members carry a warning on their member row saying so, and the **Chat**, **Mail*
 standard-message buttons are not offered, because there is no relationship to use and no
 way for them to reply to you. You can still remove or ban them.
 
-Their membership log shows **TrashNothing unaddressed** ("added when their TrashNothing post was
-placed in this group; they did not choose it"). A TrashNothing member who joined a community
+Their membership log shows **TrashNothing unaddressed** ("TN post with no Freegle groups chosen by
+user, group chosen by system"). A TrashNothing member who joined a community
 through TrashNothing shows **via partner** instead and is an ordinary member. Members of either
 kind are left out of the Stories newsletter, Freegle's engagement emails and Community News.
 

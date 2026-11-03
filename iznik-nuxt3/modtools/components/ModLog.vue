@@ -40,8 +40,8 @@
                 Joined by emailing the group's subscribe address
               </span>
               <span v-else-if="log.text === 'TrashNothing unaddressed'">
-                Added when their TrashNothing post was placed in this group;
-                they did not choose it
+                TN post with no Freegle groups chosen by user, group chosen by
+                system
               </span>
               <span v-else-if="log.text === 'via partner'">
                 Joined through a partner site, such as TrashNothing

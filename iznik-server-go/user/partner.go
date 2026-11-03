@@ -403,17 +403,13 @@ func WithTNSiblings(db *gorm.DB, candidates []uint64, email string) []uint64 {
 //
 // A Trash Nothing per-group alias, or a bare username@ address on Trash Nothing's domain, has the
 // -gNNNN suffix stripped and the dots in the domain removed, as iznik-batch's canonMail does, so
-// every address of one member canonicalises to one value and a PHP canon lookup can find the row.
-// Go's general CanonicalizeEmail does neither, so rows it wrote were invisible to that lookup,
+// every address of one member canonicalises to one value and a PHP canon lookup can find the row,
 // which is the backstop that stops a member's second address minting a second account.
 //
-// It is not canonMail copied. It lowercases the address, which canonMail does not, and it does not
-// strip a "+" suffix from the username, which canonMail does for any address. Nothing in this
+// CanonicalizeEmail now does the same for these addresses. The one difference is that this does
+// not strip a "+" suffix from the username, which canonMail does for any address. Nothing in this
 // repository says whether a TN username can contain "+": one that does would get a different canon
 // here and in PHP.
-//
-// Scoped to the TN domain on purpose: donation matching and social auth also look
-// up on canon, so widening the general function would change who those match.
 func CanonicalizePartnerEmail(email string) string {
 	username, domain, ok := TNIdentity(email)
 	if !ok || domain != tnPartnerDomain {

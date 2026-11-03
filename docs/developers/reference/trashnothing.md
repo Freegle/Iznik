@@ -80,7 +80,7 @@ treats a per-group alias and a bare `username@user.trashnothing.com` alike as a 
 address of one member gets one canon. It lowercases, which `canonMail` does not, and it does not
 strip a `+` suffix, which `canonMail` does for any address. Nothing in this repository says
 whether a TN username can contain `+`; one that does would get a different canon in the two
-stacks. Any other address falls to Go's general `CanonicalizeEmail`. The rule used to strip everything after the last hyphen; rows written
+stacks. Any other address falls to Go's general `CanonicalizeEmail`, which gives `canonMail`'s answer. The rule used to strip everything after the last hyphen; rows written
 then keep their old canon until `users:backfill-email-canon` rewrites them, which is why a
 canon match alone is never taken as "same member" (see below). See
 [.claude/rules/mail-and-data.md](../../../.claude/rules/mail-and-data.md).
@@ -333,7 +333,10 @@ Photos come from the API's own `photos[].images` array rather than being scraped
 out of the post body. TN documents that array as ordered *smallest to largest*
 (`PublicApi/docs/Model/Photo.md`), so `GroupPostIngestionService::bestPhotoUrl()`
 takes the **last** entry — taking the first ingested a thumbnail where the email
-path got the full-size image.
+path got the full-size image. The post's text still ends with TN's "Check out the
+pictures at:" and a `trashnothing.com/pics/` address, sometimes the address alone;
+`App\Support\TrashNothingPicLinks::strip()` takes it out on both paths, since the photos
+are already attachments.
 
 `tn:parity-check` reclassifies two families of TN-side mutation rather than
 failing on them, because nothing on the Freegle side can prevent either: a post

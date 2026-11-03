@@ -4249,16 +4249,7 @@ class IncomingMailService
      */
     public function stripTnPicLinks(?string $textBody): ?string
     {
-        if (! $textBody) {
-            return $textBody;
-        }
-
-        // Remove "Check out the pictures..." block with TN URLs
-        return preg_replace(
-            '/Check out the pictures[\s\S]*?https:\/\/trashnothing[\s\S]*?pics\/[a-zA-Z0-9]*/',
-            '',
-            $textBody
-        );
+        return \App\Support\TrashNothingPicLinks::strip($textBody);
     }
 
     /**

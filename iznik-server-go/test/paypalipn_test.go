@@ -352,9 +352,11 @@ func TestPayPalIPN_MatchByCanon(t *testing.T) {
 
 	// Register a canonicalised email; the incoming payer is a dotted variant
 	// that is NOT an exact match but shares the same canon.
-	payerEmail := prefix + ".donor@test.com"
-	canon := user.CanonicalizeEmail(payerEmail)
-	storedEmail := canon // exact-different from payerEmail (no dot), same canon
+	// Gmail ignores dots in the username, so canon matches the two; other domains keep them.
+	payerEmail := prefix + ".donor@gmail.com"
+	storedEmail := prefix + "donor@gmail.com" // exact-different from payerEmail (no dot), same canon
+	canon := user.CanonicalizeEmail(storedEmail)
+	assert.Equal(t, canon, user.CanonicalizeEmail(payerEmail))
 	db.Exec("INSERT INTO users_emails (userid, email, canon) VALUES (?, ?, ?)", userID, storedEmail, canon)
 
 	newTxn := "PAY_" + prefix

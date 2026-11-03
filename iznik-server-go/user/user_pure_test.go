@@ -11,45 +11,52 @@ import (
 // CanonicalizeEmail
 // ---------------------------------------------------------------------------
 
+// Every expected value here is what iznik-batch's User::canonMail returns for the lowercased
+// input, which is what users:backfill-email-canon stores. A difference is a row one side
+// cannot find by canon.
 func TestCanonicalizeEmail(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
 		want  string
 	}{
-		// Basic normalisation
-		{"lowercase", "User@Example.COM", "user@example.com"},
-		{"trims spaces", "  user@example.com  ", "user@example.com"},
-		{"already canonical", "user@example.com", "user@example.com"},
+		// Basic normalisation: lowercased, trimmed, domain dots dropped
+		{"lowercase", "User@Example.COM", "user@examplecom"},
+		{"trims spaces", "  user@example.com  ", "user@examplecom"},
+		{"subdomain dots dropped", "user@mail.example.co.uk", "user@mailexamplecouk"},
 
-		// Dot removal from local part
-		{"dots in local", "u.s.e.r@example.com", "user@example.com"},
-		{"single dot", "first.last@example.com", "firstlast@example.com"},
-		{"multiple dots", "a.b.c.d@example.com", "abcd@example.com"},
-		{"no dots", "user@example.com", "user@example.com"},
-		{"dots and uppercase", "First.Last@Gmail.COM", "firstlast@gmail.com"},
+		// Username dots dropped for Gmail only
+		{"gmail dots", "first.last@gmail.com", "firstlast@gmailcom"},
+		{"gmail dots and uppercase", "First.Last@Gmail.COM", "firstlast@gmailcom"},
+		{"other domain keeps username dots", "first.last@example.com", "first.last@examplecom"},
+		{"hotmail keeps username dots", "a.b.c.d@hotmail.co.uk", "a.b.c.d@hotmailcouk"},
 
-		// Plus-addressing stripped
-		{"plus tag", "user+tag@example.com", "user@example.com"},
-		{"plus with dots", "first.last+tag@example.com", "firstlast@example.com"},
-		{"plus only", "user+@example.com", "user@example.com"},
-		{"multiple plusses strips at first", "user+a+b@example.com", "user@example.com"},
-		{"plus at start of local", "+tag@example.com", "@example.com"},
+		// Googlemail is Gmail
+		{"googlemail", "First.Last@Googlemail.com", "firstlast@gmailcom"},
+		{"googlemail co.uk", "x@googlemail.co.uk", "x@gmailcouk"},
 
-		// No @ — returned unchanged after trim+lower
+		// Plus-addressing stripped, at the last plus as PHP's greedy pattern does
+		{"plus tag", "user+tag@example.com", "user@examplecom"},
+		{"plus with gmail dots", "first.last+tag@gmail.com", "firstlast@gmailcom"},
+		{"plus only", "user+@example.com", "user@examplecom"},
+		{"multiple plusses strips at last", "user+a+b@example.com", "user+a@examplecom"},
+		{"leading plus kept (O2)", "+tag@example.com", "+tag@examplecom"},
+		{"facebook proxy keeps plus", "a+b@proxymail.facebook.com", "a+b@proxymailfacebookcom"},
+
+		// Trash Nothing: only a -gNNN alias suffix is stripped
+		{"tn alias", "mary-g12@user.trashnothing.com", "mary@usertrashnothingcom"},
+		{"tn alias with hyphen in username", "Mary-Jane-g123@User.TrashNothing.com", "mary-jane@usertrashnothingcom"},
+		{"tn bare username with hyphen", "mary-jane@user.trashnothing.com", "mary-jane@usertrashnothingcom"},
+		{"tn username dots kept", "mary.jane@user.trashnothing.com", "mary.jane@usertrashnothingcom"},
+		{"-g suffix elsewhere kept", "mary-g12@example.com", "mary-g12@examplecom"},
+
+		// No @: returned after trim+lower
 		{"no at sign", "notanemail", "notanemail"},
 		{"empty string", "", ""},
 		{"spaces only", "   ", ""},
 
-		// Domain part preserved as-is after lowercasing
-		{"subdomain preserved", "user@mail.example.co.uk", "user@mail.example.co.uk"},
-		{"domain case", "user@Gmail.Com", "user@gmail.com"},
-
-		// Edge: dots in domain are NOT removed (only local part is de-dotted)
-		{"dots in domain stay", "user@exa.mple.com", "user@exa.mple.com"},
-
-		// Multiple @ — SplitN(…,2) keeps only first split; second @ goes to domain
-		{"two at signs", "user@extra@example.com", "user@extra@example.com"},
+		// Multiple @: split at the first, as strpos does
+		{"two at signs", "user@extra@example.com", "user@extra@examplecom"},
 	}
 
 	for _, tt := range tests {
@@ -65,6 +72,8 @@ func TestCanonicalizeEmail_Idempotent(t *testing.T) {
 		"First.Last+tag@Gmail.COM",
 		"user@example.com",
 		"a.b.c+d@sub.domain.org",
+		"Mary-Jane-g123@user.trashnothing.com",
+		"x@googlemail.co.uk",
 	}
 	for _, addr := range addrs {
 		once := CanonicalizeEmail(addr)

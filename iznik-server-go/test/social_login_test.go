@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/user"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/stretchr/testify/assert"
 )
@@ -75,7 +76,7 @@ func TestGoogleLoginNewUser(t *testing.T) {
 	// Verify backwards column is populated (enables indexed domain-suffix search).
 	var backwards string
 	db.Raw("SELECT backwards FROM users_emails WHERE userid = ? AND email = ?", userID, email).Scan(&backwards)
-	assert.Equal(t, reverseString(email), backwards, "backwards should be REVERSE(email)")
+	assert.Equal(t, reverseString(user.CanonicalizeEmail(email)), backwards, "backwards should be REVERSE(canon)")
 
 	// Cleanup.
 	db.Exec("DELETE FROM users_logins WHERE userid = ?", userID)

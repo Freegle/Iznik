@@ -193,12 +193,13 @@ func TestBulkDonations_GmailDotVariant(t *testing.T) {
 	// correct canon so MatchUserByEmailOrPriorDonation can find it.
 	db.Exec("DELETE FROM users_emails WHERE userid = ?", donorID)
 	storedEmail := fmt.Sprintf("fredbloggs%d@gmail.com", donorID)
-	// storedEmail has no dots — canon is identical to the stored email.
+	// The canon as iznik-batch stores it: the domain loses its dots too.
+	storedCanon := fmt.Sprintf("fredbloggs%d@gmailcom", donorID)
 	db.Exec("INSERT INTO users_emails (userid, email, canon) VALUES (?, ?, ?)",
-		donorID, storedEmail, storedEmail)
+		donorID, storedEmail, storedCanon)
 
 	// Upload email: same local part but with a dot inserted ("fred.bloggs<id>@gmail.com").
-	// CanonicalizeEmail strips dots, producing "fredbloggs<id>@gmail.com" which matches canon.
+	// CanonicalizeEmail strips Gmail username dots, producing "fredbloggs<id>@gmailcom" which matches canon.
 	uploadEmail := fmt.Sprintf("fred.bloggs%d@gmail.com", donorID)
 
 	tx1 := uniqueTxID("TX_GMAIL_DOT")

@@ -284,9 +284,11 @@ func TestStripeIPN_MatchByCanon(t *testing.T) {
 	db := database.DBConn
 
 	userID := CreateTestUser(t, prefix+"_donor", "User")
-	billingEmail := prefix + ".donor@test.com"
-	canon := user.CanonicalizeEmail(billingEmail)
-	storedEmail := canon
+	// Gmail ignores dots in the username, so canon matches the two; other domains keep them.
+	billingEmail := prefix + ".donor@gmail.com"
+	storedEmail := prefix + "donor@gmail.com"
+	canon := user.CanonicalizeEmail(storedEmail)
+	assert.Equal(t, canon, user.CanonicalizeEmail(billingEmail))
 	db.Exec("INSERT INTO users_emails (userid, email, canon) VALUES (?, ?, ?)", userID, storedEmail, canon)
 
 	chargeID := "ch_test_" + prefix
