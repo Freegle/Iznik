@@ -22,6 +22,7 @@ use App\Models\ChatRoom;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\Message;
+use App\Models\MessageGroup;
 use App\Models\User;
 use App\Services\BlockedKeywordBackfillService;
 use App\Services\EmailSpoolerService;
@@ -601,24 +602,11 @@ class ProcessBackgroundTasksCommand extends Command
 
     /**
      * Whether a post is a TN post that was never addressed to the Freegle community it
-     * landed on, and so has a poster no moderator here may write to.
-     *
-     * The origin row (rippled_in = 0) is the one that carries the answer: the rippling
-     * engine inserts its copies without the column, so they take the table default
-     * (allowed) and would mask it. Mirrors modmessaging.PostIsUnaddressed in
-     * iznik-server-go, which is where the interactive paths enforce the same rule.
+     * landed on, and so has a poster no moderator here may write to (MessageGroup).
      */
     protected function postIsUnaddressed(int $msgId): bool
     {
-        if ($msgId <= 0) {
-            return false;
-        }
-
-        return DB::table('messages_groups')
-            ->where('msgid', $msgId)
-            ->where('rippled_in', 0)
-            ->where('mod_messaging_allowed', 0)
-            ->exists();
+        return MessageGroup::postIsUnaddressed($msgId);
     }
 
     /**
