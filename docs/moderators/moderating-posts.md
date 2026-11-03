@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-03
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -157,6 +157,11 @@ situation (approve, reject, hold, and so on). You configure your sets under Sett
   between "autosend" and "edit first" for a session.
 
 Keep them friendly and personal. A short human note lands far better than a corporate one.
+
+The member gets a standard message once, by email. It also goes into their chat with the
+volunteers, so the other moderators can see what was said. Whether they are emailed a copy
+depends on **Leave chat unread?** in your settings: "Leave as unread" emails them and shows
+it as unread, while "Mark as read" does neither. You are not sent a copy of your own.
 
 On a post that **rippled in** from another community, you only see the actions that do
 something on yours. Anything we say to a poster about their post comes from the community
@@ -328,8 +333,9 @@ it back.
 
 The same applies to the person on the **members page**: they show a warning saying they are
 a Trash Nothing user who didn't choose the community, and the Chat, Mail and standard-message
-buttons are not offered. If they later post to a community they've chosen, all of this goes
-away by itself and they become an ordinary member.
+buttons are not offered. A Trash Nothing member who has left your community
+can't be written to either, so Blank Reply and the standard messages aren't offered on their
+posts any more. See [contacting Trash Nothing members](managing-members.md#contacting-trash-nothing-members).
 
 Ordinary freeglers are unaffected - they can still reply to the post, and the reply reaches
 the poster on Trash Nothing as usual.

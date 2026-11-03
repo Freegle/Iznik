@@ -283,6 +283,23 @@ func TNAliasIdentity(email string) (string, string, bool) {
 	return m[1], m[2], true
 }
 
+// TNIdentity is TNAliasIdentity plus a bare <username>@user.trashnothing.com address, which
+// TrashNothing also delivers to and which iznik-batch gives a member it creates. A bare
+// address on any other domain is an ordinary address, not a TrashNothing identity.
+func TNIdentity(email string) (string, string, bool) {
+	if username, domain, ok := TNAliasIdentity(email); ok {
+		return username, domain, true
+	}
+
+	e := strings.ToLower(strings.TrimSpace(email))
+	at := strings.LastIndex(e, "@")
+	if at <= 0 || e[at+1:] != tnPartnerDomain {
+		return "", "", false
+	}
+
+	return e[:at], e[at+1:], true
+}
+
 // likeEscape neutralises the LIKE wildcards in a value used as a literal prefix,
 // using MySQL's default backslash escape character.
 func likeEscape(s string) string {
@@ -303,7 +320,7 @@ func likeEscape(s string) string {
 // can miss the account that actually owns the post being acted on - which is how a
 // Promise came back 403 "Not your message" (TN post 47243586, 2026-09-19).
 func FindTNSiblings(db *gorm.DB, email string) []uint64 {
-	username, domain, ok := TNAliasIdentity(email)
+	username, domain, ok := TNIdentity(email)
 	if !ok {
 		return nil
 	}
@@ -319,10 +336,15 @@ func FindTNSiblings(db *gorm.DB, email string) []uint64 {
 		Userid uint64 `gorm:"column:userid"`
 		Email  string `gorm:"column:email"`
 	}
+	// On TrashNothing's own domain the bare username@ address is the same member too.
+	bare := ""
+	if domain == tnPartnerDomain {
+		bare = username + "@" + domain
+	}
 	db.Table("users_emails").
 		Select("users_emails.userid, users_emails.email").
 		Joins("INNER JOIN users ON users.id = users_emails.userid").
-		Where("users_emails.email LIKE ? AND users.deleted IS NULL", like).
+		Where("(users_emails.email LIKE ? OR users_emails.email = ?) AND users.deleted IS NULL", like, bare).
 		Scan(&rows)
 
 	self := uint64(0)
@@ -336,7 +358,7 @@ func FindTNSiblings(db *gorm.DB, email string) []uint64 {
 	var out []uint64
 	seen := map[uint64]bool{}
 	for _, r := range rows {
-		u, d, ok := TNAliasIdentity(r.Email)
+		u, d, ok := TNIdentity(r.Email)
 		if !ok || u != username || d != domain {
 			continue
 		}
@@ -379,17 +401,21 @@ func WithTNSiblings(db *gorm.DB, candidates []uint64, email string) []uint64 {
 
 // CanonicalizePartnerEmail returns the canon to STORE for a partner address.
 //
-// For a Trash Nothing per-group alias it reproduces iznik-batch's
-// canonicalizeEmail exactly - strip the -gNNNN suffix, strip the dots in the
-// domain - so every alias of one member canonicalises to one value and a PHP canon
-// lookup can find the row. Go's general CanonicalizeEmail does neither, so rows it
-// wrote were invisible to that lookup, which is the backstop that stops a member's
-// second address minting a second account.
+// A Trash Nothing per-group alias, or a bare username@ address on Trash Nothing's domain, has the
+// -gNNNN suffix stripped and the dots in the domain removed, as iznik-batch's canonMail does, so
+// every address of one member canonicalises to one value and a PHP canon lookup can find the row.
+// Go's general CanonicalizeEmail does neither, so rows it wrote were invisible to that lookup,
+// which is the backstop that stops a member's second address minting a second account.
+//
+// It is not canonMail copied. It lowercases the address, which canonMail does not, and it does not
+// strip a "+" suffix from the username, which canonMail does for any address. Nothing in this
+// repository says whether a TN username can contain "+": one that does would get a different canon
+// here and in PHP.
 //
 // Scoped to the TN domain on purpose: donation matching and social auth also look
 // up on canon, so widening the general function would change who those match.
 func CanonicalizePartnerEmail(email string) string {
-	username, domain, ok := TNAliasIdentity(email)
+	username, domain, ok := TNIdentity(email)
 	if !ok || domain != tnPartnerDomain {
 		return CanonicalizeEmail(email)
 	}

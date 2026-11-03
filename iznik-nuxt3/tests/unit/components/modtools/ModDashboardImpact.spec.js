@@ -14,18 +14,26 @@ dayjs.extend(isSameOrAfter)
 // Mock the composable
 const mockLoading = ref(false)
 const mockWeight = ref(null)
+const mockOutcomes = ref(null)
+const mockUseModDashboard = vi.fn()
 
 vi.mock('~/modtools/composables/useModDashboard', () => ({
-  useModDashboard: () => ({
-    loading: mockLoading,
-    Weight: mockWeight,
-  }),
+  useModDashboard: (...args) => {
+    mockUseModDashboard(...args)
+    return {
+      loading: mockLoading,
+      Weight: mockWeight,
+      Outcomes: mockOutcomes,
+    }
+  },
 }))
 
 // Mock the reuse benefit composable
 vi.mock('~/composables/useReuseBenefit', () => ({
   getBenefitPerTonne: () => 1000,
   CO2_PER_TONNE: 0.51,
+  calculateFlyTipSaving: (items) => items * 2,
+  describeFlyTipSaving: (saving) => `fly-tipping note for £${saving}`,
 }))
 
 describe('ModDashboardImpact', () => {
@@ -64,8 +72,14 @@ describe('ModDashboardImpact', () => {
           },
           ModImpact: {
             template:
-              '<div class="mod-impact" :data-range="range" :data-benefit="totalBenefit" :data-co2="totalCO2" :data-weight="totalWeight">Impact</div>',
-            props: ['range', 'totalBenefit', 'totalCO2', 'totalWeight'],
+              '<div class="mod-impact" :data-range="range" :data-benefit="totalBenefit" :data-note="benefitNote" :data-co2="totalCO2" :data-weight="totalWeight">Impact</div>',
+            props: [
+              'range',
+              'totalBenefit',
+              'benefitNote',
+              'totalCO2',
+              'totalWeight',
+            ],
           },
         },
       },
@@ -77,6 +91,7 @@ describe('ModDashboardImpact', () => {
     setActivePinia(createPinia())
     mockLoading.value = false
     mockWeight.value = null
+    mockOutcomes.value = null
   })
 
   describe('rendering', () => {
@@ -295,6 +310,39 @@ describe('ModDashboardImpact', () => {
       mockWeight.value = mockWeightData
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.mod-impact').exists()).toBe(true)
+    })
+  })
+
+  describe('fly-tipping saving', () => {
+    it('asks the dashboard for gifts as well as weights', () => {
+      mountComponent()
+      expect(mockUseModDashboard.mock.calls[0][1]).toEqual([
+        'Weight',
+        'Outcomes',
+      ])
+    })
+
+    it('adds the saving for gifts made in the range to the benefit', () => {
+      mockWeight.value = mockWeightData
+      mockOutcomes.value = [
+        { date: '2023-12-31T00:00:00Z', count: 900 }, // Before range
+        { date: '2024-01-01T00:00:00Z', count: 10 },
+        { date: '2024-01-31T00:00:00Z', count: 20 },
+        { date: '2024-02-01T00:00:00Z', count: 900 }, // After range
+      ]
+      const wrapper = mountComponent()
+      const modImpact = wrapper.find('.mod-impact')
+      // 10 tonnes at £1,000, plus 30 gifts at £2 each.
+      expect(modImpact.attributes('data-benefit')).toBe('10060')
+      expect(modImpact.attributes('data-note')).toBe('fly-tipping note for £60')
+    })
+
+    it('adds nothing when there are no gifts', () => {
+      mockWeight.value = mockWeightData
+      const wrapper = mountComponent()
+      expect(wrapper.find('.mod-impact').attributes('data-benefit')).toBe(
+        '10000'
+      )
     })
   })
 })

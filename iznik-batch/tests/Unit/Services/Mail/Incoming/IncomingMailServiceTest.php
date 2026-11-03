@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services\Mail\Incoming;
 
 use App\Models\ChatMessage;
+use App\Models\ChatRoom;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
@@ -198,6 +199,117 @@ class IncomingMailServiceTest extends TestCase
             strrev("{$tnBase}@usertrashnothingcom"),
             $attached->backwards,
             'backwards is REVERSE(canon), the definition V1 writes at both its insert sites'
+        );
+    }
+
+    /**
+     * canonicalizeEmail is the canon the lookup searches for, so it must give the
+     * canon User::canonMail writes, on every TN shape.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProviderExternal(\Tests\Unit\Models\UserEmailTest::class, 'tnCanonTable')]
+    public function test_canonicalize_email_matches_the_tn_canon_table(string $email, string $canon): void
+    {
+        $method = new \ReflectionMethod(IncomingMailService::class, 'canonicalizeEmail');
+        $method->setAccessible(true);
+
+        $this->assertSame($canon, $method->invoke($this->service, strtolower($email)));
+        $this->assertSame(User::canonMail($email), $method->invoke($this->service, $email));
+    }
+
+    private function findUserByEmail(string $email): ?User
+    {
+        $method = new \ReflectionMethod(IncomingMailService::class, 'findUserByEmail');
+        $method->setAccessible(true);
+
+        return $method->invoke($this->service, $email);
+    }
+
+    private function attachTnAddress(User $user, string $email): void
+    {
+        DB::table('users_emails')->insert([
+            'userid' => $user->id,
+            'email' => $email,
+            'canon' => User::canonMail(strtolower($email)),
+            'backwards' => strrev(User::canonMail(strtolower($email))),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+    }
+
+    /**
+     * A member on a bare address and an alias of the same member are one account.
+     */
+    public function test_find_user_by_email_matches_a_bare_address_to_its_alias(): void
+    {
+        $base = 'tnbare'.str_replace('.', '', uniqid('', true));
+        $member = $this->createTestUser();
+        $this->attachTnAddress($member, "{$base}-jane@user.trashnothing.com");
+
+        $this->assertSame($member->id, $this->findUserByEmail("{$base}-jane-g12@user.trashnothing.com")?->id);
+
+        $dotted = $this->createTestUser();
+        $this->attachTnAddress($dotted, "{$base}.hayes-g298@user.trashnothing.com");
+
+        $this->assertSame($dotted->id, $this->findUserByEmail("{$base}.hayes@user.trashnothing.com")?->id);
+    }
+
+    /**
+     * The old canon stripped everything after the last hyphen, so mail from a bare
+     * "mary-jane@" resolved to whoever held "mary-gNNN@".
+     */
+    public function test_find_user_by_email_keeps_prefix_sharing_members_apart(): void
+    {
+        $base = 'tnapart'.str_replace('.', '', uniqid('', true));
+        $mary = $this->createTestUser();
+        $this->attachTnAddress($mary, "{$base}-g12@user.trashnothing.com");
+
+        $this->assertNull($this->findUserByEmail("{$base}-jane@user.trashnothing.com"));
+
+        $bibiana = $this->createTestUser();
+        $this->attachTnAddress($bibiana, "{$base}b@user.trashnothing.com");
+
+        $this->assertNull($this->findUserByEmail("{$base}b-gomes-g4840@user.trashnothing.com"));
+    }
+
+    /**
+     * TrashNothing re-sends a Subscribe mail for every group its member is on, including one
+     * TrashNothing API ingestion placed them on (an implicit membership). That mail is not
+     * the member choosing the group, so it must leave the placement as it is.
+     */
+    public function test_a_tn_resubscribe_leaves_a_trashnothing_placement_implicit(): void
+    {
+        $group = $this->createTestGroup();
+        $alias = 'tnresub'.str_replace('.', '', uniqid('', true)).'-g303@user.trashnothing.com';
+        $member = $this->createTestUser([
+            'email_preferred' => $alias,
+            'tnuserid' => random_int(900000000, 999999999),
+        ]);
+        $this->createMembership($member, $group, [
+            'implicit' => 1,
+            'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+            'emailfrequency' => 0,
+        ]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $alias,
+            'To' => $group->nameshort.'-subscribe@groups.ilovefreegle.org',
+            'Subject' => 'Subscribe',
+        ]);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $this->service->route($this->parser->parse(
+            $email,
+            $alias,
+            $group->nameshort.'-subscribe@groups.ilovefreegle.org'
+        )));
+
+        $row = DB::table('memberships')->where('userid', $member->id)->where('groupid', $group->id)->first();
+        $this->assertSame(1, (int) $row->implicit, 'a re-subscribe does not make a placement ordinary');
+        $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $row->added_origin);
+        $this->assertSame(0, (int) $row->emailfrequency, 'nor does it start mailing them');
+        $this->assertFalse(
+            DB::table('logs')->where('user', $member->id)->where('groupid', $group->id)
+                ->where('type', 'Group')->where('subtype', 'Joined')->exists(),
+            'and writes no join',
         );
     }
 
@@ -1578,6 +1690,130 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertStringContainsString('The test reply message content', $lastMessage->message);
+    }
+
+    // ========================================
+    // Replies into a User2Mod chat that is closed to moderators
+    // ========================================
+
+    /**
+     * A User2Mod chat on a new group, its member and one moderator on the roster.
+     *
+     * @return array{User, User, ChatRoom} [member, moderator, chat]
+     */
+    private function user2ModChat(bool $memberIsTrashNothing): array
+    {
+        $group = $this->createTestGroup();
+        $member = $this->createTestUser(array_merge(
+            ['email_preferred' => $this->uniqueEmail('member')],
+            $memberIsTrashNothing ? ['tnuserid' => random_int(900_000_000, 999_999_999)] : [],
+        ));
+        $moderator = $this->createTestUser(['email_preferred' => $this->uniqueEmail('mod')]);
+        $this->createMembership($moderator, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        return [$member, $moderator, ChatRoom::getOrCreateUser2Mod($member->id, $group->id)];
+    }
+
+    /** Parse an email reply to $chat's notification for $replier and route it. */
+    private function replyByEmail(User $replier, ChatRoom $chat): RoutingResult
+    {
+        $from = $replier->emails->first()->email;
+        $to = "notify-{$chat->id}-{$replier->id}@users.ilovefreegle.org";
+        $email = $this->createMinimalEmail([
+            'From' => $from,
+            'To' => $to,
+            'Subject' => 'Re: Your chat',
+        ], 'A reply by email');
+
+        return $this->service->route($this->parser->parse($email, $from, $to));
+    }
+
+    private function chatMessageCount(ChatRoom $chat): int
+    {
+        return DB::table('chat_messages')->where('chatid', $chat->id)->count();
+    }
+
+    public function test_a_moderators_email_reply_into_a_closed_chat_creates_no_message(): void
+    {
+        Mail::fake();
+        [$member, $moderator, $chat] = $this->user2ModChat(memberIsTrashNothing: true);
+        $this->assertFalse($member->modsMayContact($chat->groupid), 'the member has no membership of the group');
+
+        $result = $this->replyByEmail($moderator, $chat);
+
+        $this->assertSame(RoutingResult::DROPPED, $result);
+        $this->assertSame('Moderator reply to a chat closed to moderators', $this->service->getLastRoutingContext()['routing_reason']);
+        $this->assertSame(0, $this->chatMessageCount($chat));
+        Mail::assertNothingSent();
+        Mail::assertNothingQueued();
+    }
+
+    public function test_a_moderators_email_reply_is_dropped_when_the_members_only_membership_is_not_theirs_to_choose(): void
+    {
+        // Implicit and rippled memberships are placements, not a community the member chose.
+        foreach ([['implicit' => 1], ['rippled' => 1]] as $placement) {
+            [$member, $moderator, $chat] = $this->user2ModChat(memberIsTrashNothing: true);
+            $this->createMembership($member, Group::find($chat->groupid), $placement);
+
+            $this->assertSame(RoutingResult::DROPPED, $this->replyByEmail($moderator, $chat), json_encode($placement));
+            $this->assertSame(0, $this->chatMessageCount($chat));
+        }
+    }
+
+    public function test_support_can_reply_by_email_into_a_closed_chat(): void
+    {
+        [$member, , $chat] = $this->user2ModChat(memberIsTrashNothing: true);
+        $support = $this->createTestUser([
+            'email_preferred' => $this->uniqueEmail('support'),
+            'systemrole' => User::SYSTEMROLE_SUPPORT,
+        ]);
+        DB::table('chat_roster')->insertOrIgnore(['chatid' => $chat->id, 'userid' => $support->id]);
+
+        $result = $this->replyByEmail($support, $chat);
+
+        $this->assertSame(RoutingResult::TO_USER, $result);
+        $this->assertSame(1, $this->chatMessageCount($chat));
+    }
+
+    public function test_an_admin_can_reply_by_email_into_a_closed_chat(): void
+    {
+        [, , $chat] = $this->user2ModChat(memberIsTrashNothing: true);
+        $admin = $this->createTestUser([
+            'email_preferred' => $this->uniqueEmail('admin'),
+            'systemrole' => User::SYSTEMROLE_ADMIN,
+        ]);
+        DB::table('chat_roster')->insertOrIgnore(['chatid' => $chat->id, 'userid' => $admin->id]);
+
+        $this->assertSame(RoutingResult::TO_USER, $this->replyByEmail($admin, $chat));
+        $this->assertSame(1, $this->chatMessageCount($chat));
+    }
+
+    public function test_the_member_can_still_reply_by_email_into_their_closed_chat(): void
+    {
+        [$member, , $chat] = $this->user2ModChat(memberIsTrashNothing: true);
+
+        $result = $this->replyByEmail($member, $chat);
+
+        $this->assertSame(RoutingResult::TO_USER, $result);
+        $this->assertSame(1, $this->chatMessageCount($chat));
+    }
+
+    public function test_a_moderator_can_reply_by_email_to_a_trashnothing_member_who_chose_the_group(): void
+    {
+        [$member, $moderator, $chat] = $this->user2ModChat(memberIsTrashNothing: true);
+        $this->createMembership($member, Group::find($chat->groupid));
+
+        $this->assertSame(RoutingResult::TO_USER, $this->replyByEmail($moderator, $chat));
+        $this->assertSame(1, $this->chatMessageCount($chat));
+    }
+
+    public function test_a_moderators_email_reply_to_an_ordinary_members_chat_is_unaffected(): void
+    {
+        [$member, $moderator, $chat] = $this->user2ModChat(memberIsTrashNothing: false);
+        $this->assertFalse(DB::table('memberships')->where('userid', $member->id)->exists());
+
+        $this->assertSame(RoutingResult::TO_USER, $this->replyByEmail($moderator, $chat));
+        $this->assertSame(1, $this->chatMessageCount($chat));
     }
 
     // ========================================

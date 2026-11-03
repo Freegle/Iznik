@@ -77,6 +77,11 @@ printf 'Prompted by a question from a volunteer.\n\nhttps://discourse.ilovefreeg
 check "URL slug not read as prose" 0 \
   "PR_TEXT_VERIFIED=1 $PRC --base master --head x --title t --body-file $TMP/link.md"
 
+# Fly-tipping is the ordinary word, and Defra's, for dumping rubbish. Not a coinage.
+printf 'Councils pay to clear up fly-tipping. Items that were fly-tipped cost them money.\n' > "$TMP/flytip.md"
+check "fly-tipping is an ordinary word" 0 \
+  "PR_TEXT_VERIFIED=1 $PRC --base master --head x --title t --body-file $TMP/flytip.md"
+
 check "override works" 0 \
   "PR_PLAIN_ENGLISH_OK=1 PR_TEXT_VERIFIED=1 $PRC --base master --head x --title t --body-file $TMP/jargon.md"
 

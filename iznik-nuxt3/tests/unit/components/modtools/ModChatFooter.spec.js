@@ -543,6 +543,35 @@ describe('ModChatFooter', () => {
     })
   })
 
+  describe('a chat closed to the moderators', () => {
+    it('says so and offers no way to write', async () => {
+      mockChat.value = createChat({ modsclosed: true })
+      const wrapper = await mountComponent()
+      expect(wrapper.find('[data-test="chat-mods-closed"]').exists()).toBe(true)
+      expect(wrapper.find('textarea').exists()).toBe(false)
+      expect(wrapper.find('.spin-button').exists()).toBe(false)
+      expect(wrapper.text()).toContain('Spammer')
+    })
+
+    it('still shows the other warnings', async () => {
+      mockChat.value = createChat({ modsclosed: true })
+      mockOtheruser.value = createOtherUser({ spammer: true })
+      mockUserStore.byId.mockReturnValue(createOtherUser({ spammer: true }))
+      const wrapper = await mountComponent()
+      expect(wrapper.find('[data-test="chat-mods-closed"]').exists()).toBe(true)
+      expect(wrapper.text()).toContain('reported as a spammer')
+    })
+
+    it('an open chat keeps its reply box', async () => {
+      const wrapper = await mountComponent()
+      expect(wrapper.find('[data-test="chat-mods-closed"]').exists()).toBe(
+        false
+      )
+      expect(wrapper.find('textarea').exists()).toBe(true)
+      expect(wrapper.find('.spin-button').exists()).toBe(true)
+    })
+  })
+
   describe('component behavior when mounted', () => {
     it('fetches user data when chat has user1', async () => {
       mockChat.value = createChat({ user1: 789 })

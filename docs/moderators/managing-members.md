@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-03
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -260,8 +260,32 @@ placed in this group; they did not choose it"). A TrashNothing member who joined
 through TrashNothing shows **via partner** instead and is an ordinary member. Members of either
 kind are left out of the Stories newsletter, Freegle's engagement emails and Community News.
 
-If the same person also posts to a community they've chosen, the warning disappears on its own and
-they become an ordinary member you can contact as usual.
+The warning is about your community only: choosing a different community doesn't change
+anything on yours.
+
+### Contacting Trash Nothing members
+
+- **Only while they're a member.** Once a Trash Nothing member leaves your community, you can't
+  contact them any more, even in a chat you had with them before. You can still open and read
+  that chat; ModTools says it is closed and doesn't offer a reply box. They can still write to
+  you. A **Chat** button for a Trash Nothing member you can't contact says so instead of opening
+  a chat.
+- **The same goes for notes in chat review.** You can add a note to a chat between two members
+  only if any Trash Nothing member in it has chosen a community you moderate.
+- **Removing them still sends your message.** If you remove a Trash Nothing member of your
+  community with a standard message, it goes, because they were a member when you sent it. A
+  Trash Nothing request to join that is still waiting for approval isn't a membership yet, so
+  rejecting it sends nothing.
+- **Support and Admin aren't bound by this.** They act for Freegle as a whole, so they can
+  contact any Trash Nothing member.
+- **Your messages are signed.** Trash Nothing shows them your message as if it came from a
+  Freegle member, so a chat message, a standard message or a reply about a post from your team
+  ends with "From the volunteers who run" and your community's name.
+- **Someone who replies is already a member.** Trash Nothing joins its members to a community
+  before they can reply to its posts, so a Trash Nothing member who replies to a post on your
+  community is in your member list, and you can ban them or hold their chat as for anyone.
+  Replying doesn't change a placement, though: only choosing your community on Trash Nothing
+  does.
 
 ## Banning and removing
 
@@ -277,10 +301,16 @@ or ask another owner to.
 
 Removing or banning is a last resort. A friendly word usually solves the problem.
 
-A ban stops someone posting on your community and replying to posts there. It does **not**
+A ban stops someone posting on your community and replying to posts there. It also withdraws
+their open OFFERs and WANTEDs that were posted on your community, and takes them out of any
+neighbouring community they had rippled to but which hadn't approved them yet; one still
+waiting for your approval is deleted. A post that rippled in from a neighbour is left to that
+neighbour. It does **not**
 stop them writing to your volunteers, by email or with the Contact button on your community
 page, and that is deliberate: it is how someone appeals a ban. Their message arrives in
-their chat with your volunteers, which every moderator on the community can see.
+their chat with your volunteers, which every moderator on the community can see. A Trash
+Nothing member you have banned is no longer a member, so you can read what they send but
+can't reply in that chat.
 
 The **spammer list** is the stronger measure. Someone on it is banned everywhere, and
 nothing they send reaches us at all: their email is dropped, the volunteers address

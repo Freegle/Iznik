@@ -114,15 +114,15 @@ const canned = (kind, over) => ({
 
 const openProblems = () =>
   canned('open', {
-    question: 'Did you have a problem the last time you used Freegle?',
+    question: 'What could be better about Freegle?',
     options: [
-      { key: 'nothing', label: 'I had no problems' },
+      { key: 'nothing', label: "I can't think of one" },
       { key: 'dont_understand', label: "I don't understand" },
     ],
     settings: {
       preset: 'problems',
       randomise: false,
-      placeholder: 'If yes, what happened?',
+      placeholder: 'What was hard, slow or confusing?',
     },
   })
 const openImprove = () =>
@@ -510,7 +510,7 @@ test.describe('The member question card on a phone', () => {
     const skip = t(page, 'skip-prompt')
     await expect(t(page, 'open-text')).toHaveAttribute(
       'placeholder',
-      'If yes, what happened?'
+      'What was hard, slow or confusing?'
     )
     await fitsAndUsable(page, 'open question, empty', {
       answer: send,

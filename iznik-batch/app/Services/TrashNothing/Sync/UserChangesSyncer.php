@@ -5,8 +5,10 @@ namespace App\Services\TrashNothing\Sync;
 use App\Models\Location;
 use App\Models\User;
 use App\Models\UserAboutMe;
+use App\Models\UserEmail;
 use App\Models\UserReplyTime;
 use App\Services\LokiService;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -14,6 +16,20 @@ use Illuminate\Support\Facades\Log;
 class UserChangesSyncer
 {
     private const PAGE_SIZE = 100;
+
+    // The fields of a change that are applied by comparing with what the member has now, so
+    // that applying an older change after a newer one would undo it. The date of the latest
+    // change applied for each is kept per member, and a change older than that is skipped.
+    private const FIELD_USERNAME = 'username';
+    private const FIELD_LOCATION = 'location';
+
+    // tn:sync reads a window more than once: it overlaps the one before, and it holds its stored
+    // date while a feed cannot be read. The kept dates have to last as long as that.
+    private const APPLIED_KEY_PREFIX = 'tn-sync:change-applied:';
+    private const APPLIED_TTL_HOURS = 24;
+
+    // Whether the last sync() stopped because TN's user changes feed could not be read.
+    private bool $fetchFailed = false;
 
     public function __construct(
         private readonly bool $dryRun,
@@ -28,6 +44,16 @@ class UserChangesSyncer
     ) {}
 
     /**
+     * Whether the last sync() stopped at a page it could not fetch. Some of the user changes after
+     * it were never seen, and the feed's order is TN's, so the page's position is not known:
+     * the caller must not store a sync date this run, or the next run starts after them.
+     */
+    public function fetchFailed(): bool
+    {
+        return $this->fetchFailed;
+    }
+
+    /**
      * @return array{int, string|null} [count, maxDate]
      */
     public function sync(string $from, string $to): array
@@ -36,9 +62,12 @@ class UserChangesSyncer
         $count   = 0;
         $maxDate = null;
 
+        $this->fetchFailed = false;
+
         do {
             $changes = $this->fetchPage($page, $from, $to);
             if ($changes === null) {
+                $this->fetchFailed = true;
                 break;
             }
 
@@ -109,36 +138,28 @@ class UserChangesSyncer
                     }
 
                     if (!empty($change['username'])) {
-                        $oldname = User::removeTNGroup($user->fullname ?? '');
-
-                        if ($oldname != $change['username']) {
-                            Log::info("Name change for {$change['fd_user_id']} {$oldname} => {$change['username']}");
-                            Log::info('TN-SYNC-TRACE [NAME-CHANGE] fd_user_id=' . $change['fd_user_id'] . ' old=' . $oldname . ' new=' . $change['username']);
-                            $user->fullname = $change['username'];
-
-                            foreach ($user->emails()->pluck('email') as $email) {
-                                if (str_contains($email, "{$oldname}-")) {
-                                    $newEmail = str_replace("{$oldname}-", "{$change['username']}-", $email);
-                                    $user->removeEmail($email, $this->dryRun);
-                                    Log::info("...{$email} => {$newEmail}");
-                                    $user->addEmail($newEmail, dryRun: $this->dryRun);
-                                    $this->loki->logEvent('tn-sync', 'user-email-rename', [
-                                        'user_id'   => $change['fd_user_id'],
-                                        'old_email' => $email,
-                                        'new_email' => $newEmail,
-                                    ]);
-                                }
-                            }
+                        if ($this->superseded(self::FIELD_USERNAME, $user->id, $change['date'])) {
+                            $this->traceSuperseded($user->id, self::FIELD_USERNAME);
+                        } else {
+                            $this->applyUsername($user, $change['username']);
+                            $this->markApplied(self::FIELD_USERNAME, $user->id, $change['date']);
                         }
                     }
 
                     $movedTo = NULL;
 
-                    if (!empty($change['location'])) {
+                    $applyLocation = !empty($change['location']);
+                    if ($applyLocation && $this->superseded(self::FIELD_LOCATION, $user->id, $change['date'])) {
+                        $this->traceSuperseded($user->id, self::FIELD_LOCATION);
+                        $applyLocation = false;
+                    }
+
+                    if ($applyLocation) {
                         $lat = $change['location']['latitude'] ?? null;
                         $lng = $change['location']['longitude'] ?? null;
 
                         if ($lat !== null && $lng !== null) {
+                            $this->markApplied(self::FIELD_LOCATION, $user->id, $change['date']);
                             $loc = Location::closestPostcode((float) $lat, (float) $lng);
 
                             if ($loc && $loc->id !== $user->lastlocation) {
@@ -194,6 +215,130 @@ class UserChangesSyncer
         } while ($changes && count($changes) === self::PAGE_SIZE);
 
         return [$count, $maxDate];
+    }
+
+    /**
+     * Whether a change to this field is older than one already applied for the member. Changes
+     * are not always seen in the order they were made, and a window is read more than once, so
+     * a member's two changes to the same field come round together: applying them in turn each
+     * time would write the first, then the second, over and over (a member log row for every
+     * location, an address created and deleted for every username) when only the later one
+     * stands. The same change coming round again is not older than itself, and is applied as
+     * before, when it finds nothing to change.
+     */
+    private function superseded(string $field, int $userId, string $date): bool
+    {
+        $time   = strtotime($date);
+        $latest = Cache::get(self::APPLIED_KEY_PREFIX . $field . ':' . $userId);
+
+        return $time !== false && is_int($latest) && $time < $latest;
+    }
+
+    /**
+     * Keep the date of the latest change applied to this field for the member. A dry run applies
+     * nothing, so it keeps nothing.
+     */
+    private function markApplied(string $field, int $userId, string $date): void
+    {
+        $time = strtotime($date);
+        if ($this->dryRun || $time === false) {
+            return;
+        }
+
+        $key    = self::APPLIED_KEY_PREFIX . $field . ':' . $userId;
+        $latest = Cache::get($key);
+
+        if (!is_int($latest) || $time > $latest) {
+            Cache::put($key, $time, now()->addHours(self::APPLIED_TTL_HOURS));
+        }
+    }
+
+    private function traceSuperseded(int $userId, string $field): void
+    {
+        Log::info('TN-SYNC-TRACE [USER-CHANGE] fd_user_id=' . $userId . ' action=superseded field=' . $field);
+    }
+
+    /**
+     * Apply the username from a change event. The old username is read from the
+     * member's preferred TN address, not from fullname: fullname is the display name
+     * ("Tricia Hayes", as a provisioned or partner-created member has it), so comparing
+     * it with the raw username made every event look like a rename.
+     *
+     * A rename moves every address of the old username, bare and per-group alias alike,
+     * to the new one, keeping each address's group suffix and its preferred flag. The
+     * caller saves $user.
+     */
+    private function applyUsername(User $user, string $newUsername): void
+    {
+        $oldUsername = User::tnUsernameFromEmail($user->email_preferred ?? '');
+
+        if ($oldUsername === null || $oldUsername === strtolower($newUsername)) {
+            return;
+        }
+
+        // Each old address keeps whatever follows the username ("-g123@user.trashnothing.com"
+        // or "@user.trashnothing.com").
+        $renames = [];
+        foreach ($user->emails()->get(['email', 'preferred']) as $row) {
+            if (User::tnUsernameFromEmail($row->email) === $oldUsername) {
+                $renames[] = [$row->email, $newUsername . substr(trim($row->email), strlen($oldUsername)), (int) $row->preferred];
+            }
+        }
+
+        // The username becomes part of an address, so it has to make a valid one, as the
+        // provisioner requires of the same username. Nothing is written otherwise.
+        foreach ($renames as [, $newEmail]) {
+            if (!filter_var($newEmail, FILTER_VALIDATE_EMAIL)) {
+                $this->renameBlocked($user, $oldUsername, $newUsername, 'invalid-address=' . $newEmail,
+                    "TN rename of user {$user->id} to {$newEmail} is not a valid address");
+
+                return;
+            }
+        }
+
+        // users_emails.email is UNIQUE, so an address another member holds cannot be
+        // added. Change nothing rather than throw: the exception would also stop this
+        // change row's location and reply time being applied.
+        foreach ($renames as [, $newEmail]) {
+            $holder = UserEmail::where('email', $newEmail)->where('userid', '!=', $user->id)->value('userid');
+            if ($holder) {
+                $this->renameBlocked($user, $oldUsername, $newUsername, 'email-clash=' . $newEmail . ' held_by=' . $holder,
+                    "TN rename of user {$user->id} to {$newEmail} clashes with user {$holder}");
+
+                return;
+            }
+        }
+
+        Log::info("Name change for {$user->id} {$oldUsername} => {$newUsername}");
+        Log::info('TN-SYNC-TRACE [NAME-CHANGE] fd_user_id=' . $user->id . ' old=' . $oldUsername . ' new=' . $newUsername);
+        $user->fullname = User::tnDisplayName($newUsername);
+
+        // Add before removing, so the member is never left without a preferred TN
+        // address: isTN() reads it, and this sync skips members without one.
+        foreach ($renames as [$oldEmail, $newEmail, $preferred]) {
+            $user->addEmail($newEmail, primary: $preferred, dryRun: $this->dryRun);
+            $user->removeEmail($oldEmail, $this->dryRun);
+            Log::info("...{$oldEmail} => {$newEmail}");
+            $this->loki->logEvent('tn-sync', 'user-email-rename', [
+                'user_id'   => $user->id,
+                'old_email' => $oldEmail,
+                'new_email' => $newEmail,
+            ]);
+        }
+    }
+
+    /**
+     * A rename that cannot be applied. Every change event for the member carries their
+     * username, so the same rename is met again on each later event: it is logged each
+     * time and reported to Sentry once per member per day.
+     */
+    private function renameBlocked(User $user, string $oldUsername, string $newUsername, string $why, string $report): void
+    {
+        Log::info('TN-SYNC-TRACE [NAME-CHANGE] fd_user_id=' . $user->id . ' old=' . $oldUsername . ' new=' . $newUsername . ' ' . $why);
+
+        if (Cache::add('tn-sync:rename-blocked:' . $user->id, true, now()->addDay()) && app()->bound('sentry')) {
+            app('sentry')->captureMessage($report);
+        }
     }
 
     /**

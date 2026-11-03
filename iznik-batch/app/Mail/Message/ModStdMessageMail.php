@@ -6,6 +6,8 @@ use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
+use App\Models\User;
+use App\Support\TrashNothingSignOff;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
@@ -49,11 +51,24 @@ class ModStdMessageMail extends MjmlMailable implements DescribesMemberContent
         $this->mjmlData = array_merge([
             'modName' => $this->modName,
             'groupName' => $this->groupName,
-            'body' => $this->stdBody,
+            'body' => $this->bodyFor($this->recipientUserId),
             'messageSubject' => $this->messageSubject,
             'userSite' => config('freegle.sites.user'),
             'email' => $this->recipientEmail,
         ], $this->getTrackingData());
+    }
+
+    /**
+     * The standard message, signed for a TrashNothing member: TrashNothing shows this mail as
+     * coming from a Freegle user, so the moderator's sender name is lost.
+     */
+    private function bodyFor(int $recipientUserId): string
+    {
+        $recipient = $recipientUserId > 0 ? User::find($recipientUserId) : null;
+
+        return $recipient?->isTrashNothingAccount()
+            ? TrashNothingSignOff::append($this->stdBody, $this->groupName)
+            : $this->stdBody;
     }
 
     public function envelope(): Envelope

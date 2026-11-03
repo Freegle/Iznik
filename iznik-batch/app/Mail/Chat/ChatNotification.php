@@ -15,6 +15,7 @@ use App\Models\Message;
 use App\Models\User;
 use App\Models\UserAddress;
 use App\Support\AmpEmailSupport;
+use App\Support\TrashNothingSignOff;
 use App\Support\EmojiUtils;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
@@ -91,6 +92,8 @@ class ChatNotification extends MjmlMailable implements RetryableMailable, Descri
      * The friendly group name for display (prefers namefull over nameshort).
      */
     protected string $groupDisplayName;
+
+    private ?bool $recipientIsTrashNothing = null;
 
     /**
      * Create a new message instance.
@@ -332,8 +335,9 @@ class ChatNotification extends MjmlMailable implements RetryableMailable, Descri
      */
     public function build(): static
     {
-        // Prepare the message with display-friendly data.
-        $preparedMessage = $this->prepareMessage($this->message);
+        // Prepare the message with display-friendly data. Only the new message is signed
+        // for a TrashNothing member; the earlier ones are quoted for context.
+        $preparedMessage = $this->prepareMessage($this->message, signOff: true);
         $preparedPreviousMessages = $this->prepareMessages($this->previousMessages);
 
         // Check if we should show outcome buttons (for OFFER items with Interested messages).
@@ -765,6 +769,14 @@ class ChatNotification extends MjmlMailable implements RetryableMailable, Descri
     }
 
     /**
+     * Whether the recipient is a TrashNothing member. Asked once: it can cost a query.
+     */
+    private function recipientIsTrashNothing(): bool
+    {
+        return $this->recipientIsTrashNothing ??= $this->recipient->isTrashNothingAccount();
+    }
+
+    /**
      * Prepare messages for display.
      */
     protected function prepareMessages(Collection $messages): Collection
@@ -780,8 +792,12 @@ class ChatNotification extends MjmlMailable implements RetryableMailable, Descri
      * For User2Mod chats, we follow the legacy V1 behaviour:
      * - When notifying a member, mod messages show "Volunteers" and group profile
      * - When notifying a mod, messages show actual user names/profiles
+     *
+     * $signOff is for the message the mail is about, not the earlier ones quoted with it:
+     * a moderator's message to a TrashNothing member gets the "From the volunteers who run
+     * ..." line, once.
      */
-    protected function prepareMessage(ChatMessage $message): array
+    protected function prepareMessage(ChatMessage $message, bool $signOff = false): array
     {
         $isFromRecipient = $message->userid === $this->recipient->id;
         $messageUser = $message->user;
@@ -799,6 +815,12 @@ class ChatNotification extends MjmlMailable implements RetryableMailable, Descri
         $shouldHideModIdentity = $this->chatType === ChatRoom::TYPE_USER2MOD
             && !$this->isModerator  // Recipient is a member
             && $isFromMod;          // Message is from a mod
+
+        // TrashNothing loses the "{Group} Volunteers" sender name, so its members are told
+        // in the message itself who it is from.
+        if ($signOff && $shouldHideModIdentity && $displayText !== '' && $this->recipientIsTrashNothing()) {
+            $displayText = TrashNothingSignOff::append($displayText, $this->groupDisplayName);
+        }
 
         // Get profile image URL.
         // For mod messages to members, use group profile instead of individual mod profile.
@@ -1250,7 +1272,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable, Descri
         );
 
         // Prepare the message with display-friendly data.
-        $preparedMessage = $this->prepareMessage($this->message);
+        $preparedMessage = $this->prepareMessage($this->message, signOff: true);
 
         // Render the AMP template.
         $this->renderAmpTemplate('emails.amp.chat.notification', [
