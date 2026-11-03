@@ -328,8 +328,7 @@ it back.
 
 The same applies to the person on the **members page**: they show a warning saying they are
 a Trash Nothing user who didn't choose the community, and the Chat, Mail and standard-message
-buttons are not offered. If they choose your community on Trash Nothing, this goes away by
-itself and they become an ordinary member. A Trash Nothing member who has left your community
+buttons are not offered. A Trash Nothing member who has left your community
 can't be written to either, so Blank Reply and the standard messages aren't offered on their
 posts any more. See [contacting Trash Nothing members](managing-members.md#contacting-trash-nothing-members).
 

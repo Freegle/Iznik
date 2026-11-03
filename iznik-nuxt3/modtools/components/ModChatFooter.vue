@@ -8,7 +8,7 @@
         data-test="chat-mods-closed"
       >
         This Trash Nothing member isn't in this community any more, so you can
-        read this chat but not reply.
+        read this chat but you can't reply.
       </notice-message>
       <notice-message v-if="otheruser?.deleted" variant="info" class="mb-2">
         This member has deleted their account, so you can't chat to them.
