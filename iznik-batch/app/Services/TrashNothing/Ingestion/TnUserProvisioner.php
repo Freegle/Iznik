@@ -28,6 +28,10 @@ use OpenAPI\Client\Configuration;
  * username@user.trashnothing.com is a deliverable address (TN confirmed both),
  * so a reply to the post can reach them.
  *
+ * Only a TN id says who someone is. A member we have not met gets an account of
+ * their own, whatever accounts hold their username, because TN does not promise a
+ * username is unique and an address can sit on the wrong account.
+ *
  * It writes user data only: the user, its address, and the about-me and reply
  * time TN reports. Group membership is not its business. GroupPostIngestionService
  * gives the poster the one membership their post needs, as it does for every
@@ -78,13 +82,6 @@ class TnUserProvisioner
      * the key at most once an hour.
      */
     public const REASON_LOOKUP_KEY_REJECTED = 'tn-user-lookup-key-rejected';
-
-    /**
-     * The username's address belongs to a Freegle user holding a DIFFERENT
-     * tnuserid. TN says usernames are not guaranteed unique, so this is two
-     * people, and neither account may be handed the other's posts.
-     */
-    public const REASON_USERNAME_CLASH = 'tn-username-clash';
 
     /**
      * The username's bare address is still held by a deleted Freegle account.
@@ -228,24 +225,16 @@ class TnUserProvisioner
         }
     }
 
+    /**
+     * TN has just said this id has this username, so the bare address is this member's, and
+     * users_emails.email is unique: it moves here from a live account. It is not ours to take
+     * back from a deleted one.
+     */
     private function provision(int $tnUserId, string $username, string $email, array $tnUser): ?User
     {
-        $existing = $this->findExistingAccount($username, $email);
+        $holder = UserEmail::where('email', $email)->value('userid');
 
-        if ($existing !== null && $existing->tnuserid !== null) {
-            Log::warning('TN user provisioning: username belongs to a different TN user', [
-                'tn_user_id'          => $tnUserId,
-                'username'            => $username,
-                'existing_user_id'    => $existing->id,
-                'existing_tn_user_id' => $existing->tnuserid,
-            ]);
-            $this->trace($tnUserId, 'username-clash user_id=' . $existing->id);
-            return $this->fail(self::REASON_USERNAME_CLASH);
-        }
-
-        // No live account to link, so a new user needs the bare address, and a row
-        // already holding it can only belong to a deleted account.
-        if ($existing === null && UserEmail::where('email', $email)->exists()) {
+        if ($holder !== null && !User::where('id', $holder)->whereNull('deleted')->exists()) {
             Log::warning('TN user provisioning: the address is held by a deleted user', [
                 'tn_user_id' => $tnUserId,
                 'username'   => $username,
@@ -254,15 +243,12 @@ class TnUserProvisioner
             return $this->fail(self::REASON_ADDRESS_HELD_BY_DELETED_USER);
         }
 
-        $user = $existing !== null
-            ? $this->linkExisting($existing, $tnUserId, $email)
-            : $this->create($tnUserId, $username, $email, $tnUser);
+        $user = $this->create($tnUserId, $username, $email, $tnUser, $holder === null ? null : (int) $holder);
 
-        $this->trace($tnUserId, ($existing !== null ? 'linked' : 'created') . ' user_id=' . ($user->id ?? 'dry-run'));
+        $this->trace($tnUserId, 'created user_id=' . ($user->id ?? 'dry-run'));
         $this->loki->logEvent('tn-sync', 'user-create-from-tn', [
-            'tn_user_id'      => $tnUserId,
-            'user_id'         => $user->id,
-            'linked_existing' => $existing !== null,
+            'tn_user_id' => $tnUserId,
+            'user_id'    => $user->id,
         ]);
 
         return $user;
@@ -524,88 +510,7 @@ class TnUserProvisioner
         }
     }
 
-    /**
-     * A live Freegle account already holding this username's address, found the
-     * way IncomingMailService::findUserByEmail finds one: the exact address
-     * first, then the canon, which also matches the per-group -gNNN aliases the
-     * email path created.
-     *
-     * A canon match must also carry exactly this username, compared lowercased.
-     * canonMail strips only a -g<digits> suffix now, but it used to strip
-     * everything after the LAST hyphen of a TN local part, and rows written then
-     * keep that canon until users:backfill-email-canon rewrites them. So a stale
-     * row for someone else's "mary-jane-x@" holds canon
-     * "mary-jane@usertrashnothingcom", the same as this member's "mary-jane@",
-     * and without the check would be taken for this member.
-     */
-    private function findExistingAccount(string $username, string $email): ?User
-    {
-        $exact = UserEmail::where('email', $email)->first();
-        if ($exact !== null) {
-            $user = User::where('id', $exact->userid)->whereNull('deleted')->first();
-            if ($user !== null) {
-                return $user;
-            }
-        }
-
-        $wanted = strtolower($username);
-
-        $candidates = UserEmail::query()
-            ->join('users', 'users.id', '=', 'users_emails.userid')
-            ->where('users_emails.canon', User::canonMail($email))
-            ->whereNull('users.deleted')
-            ->orderBy('users_emails.userid')
-            ->orderBy('users_emails.id')
-            ->get(['users_emails.userid', 'users_emails.email']);
-
-        foreach ($candidates as $row) {
-            if (User::tnUsernameFromEmail($row->email) === $wanted) {
-                return User::find($row->userid);
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Stamp the tnuserid on an account the email path created for this member,
-     * rather than minting a twin. Mirrors EnsurePartnerIdentifiers in
-     * iznik-server-go/user/partner.go. The bare address is attached as a
-     * non-preferred one, so later exact-match lookups hit and the member's
-     * current preferred address stays. changeprimary: false, because the
-     * address may be the one already held and preferred, and addEmail would
-     * otherwise demote it, leaving no preferred address (isTN() false).
-     *
-     * The address is left off when another account holds it, a deleted one: the
-     * stamp is the point, and users_emails.email is unique.
-     */
-    private function linkExisting(User $user, int $tnUserId, string $email): User
-    {
-        Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=tnuserid=' . $tnUserId);
-
-        $addressTaken = UserEmail::where('email', $email)->where('userid', '!=', $user->id)->exists();
-
-        if ($this->dryRun) {
-            if (!$addressTaken) {
-                $user->addEmail($email, primary: 0, changeprimary: false, dryRun: true);
-            }
-
-            return $user;
-        }
-
-        TransactionPolicy::atomic(function () use ($user, $tnUserId, $email, $addressTaken) {
-            $user->tnuserid = $tnUserId;
-            $user->save();
-
-            if (!$addressTaken) {
-                $user->addEmail($email, primary: 0, changeprimary: false);
-            }
-        }, 'TN user link: the tnuserid stamp and the bare address go together');
-
-        return $user;
-    }
-
-    private function create(int $tnUserId, string $username, string $email, array $tnUser): User
+    private function create(int $tnUserId, string $username, string $email, array $tnUser, ?int $takeAddressFrom): User
     {
         $attributes = [
             'fullname'     => User::tnDisplayName($username),
@@ -636,14 +541,18 @@ class TnUserProvisioner
             // Not addEmail(dryRun: true): it reads $this->id, which an unsaved
             // user does not have (assignUserToToDonation takes an int).
             $user = new User($attributes);
-            Log::info('TN-SYNC-TRACE [WRITE] table=users_emails op=insert where=userid=new set=email=' . $email . ',preferred=1');
+            Log::info('TN-SYNC-TRACE [WRITE] table=users_emails op=' . ($takeAddressFrom === null ? 'insert' : 'update') . ' where=userid=new set=email=' . $email . ',preferred=1');
             $this->traceAboutMeAndReplyTime($user, $aboutMe, $replyTime);
             return $user;
         }
 
-        return TransactionPolicy::atomic(function () use ($attributes, $email, $aboutMe, $replyTime) {
+        return TransactionPolicy::atomic(function () use ($attributes, $email, $takeAddressFrom, $aboutMe, $replyTime) {
             $user = User::create($attributes);
-            $user->addEmail($email);
+            if ($takeAddressFrom === null) {
+                $user->addEmail($email);
+            } else {
+                $user->takeTnAddress($email, $takeAddressFrom);
+            }
             $this->traceAboutMeAndReplyTime($user, $aboutMe, $replyTime);
 
             if ($aboutMe !== null) {

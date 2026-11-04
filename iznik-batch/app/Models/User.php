@@ -6,6 +6,7 @@ use App\Services\Ripple\RippleEngagementService;
 use App\Services\TrashNothing\Sync\TnUserIdMergeConflict;
 use App\Support\EloquentUtils;
 use App\Support\NameSanitiser;
+use App\Support\TransactionPolicy;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -456,6 +457,42 @@ class User extends Model implements Auditable
             ->unique()
             ->values()
             ->all();
+    }
+
+    /**
+     * Take a TN address from the account holding it, because TN's id says it is this member's.
+     * users_emails.email is unique, so it cannot be on both. Posts and chats already filed stay
+     * where they are. moveTNAlias in iznik-server-go/user/partner.go does the same.
+     */
+    public function takeTnAddress(string $email, int $fromUserId): void
+    {
+        $row = UserEmail::where('email', $email)->where('userid', $fromUserId)->first();
+        if ($row === NULL) {
+            return;
+        }
+
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=userid={$fromUserId} set=userid={$this->id}");
+
+        TransactionPolicy::atomic(function () use ($row, $fromUserId) {
+            $wasPreferred = (bool) $row->preferred;
+
+            $row->userid = $this->id;
+            $row->preferred = UserEmail::where('userid', $this->id)->where('preferred', 1)->exists() ? 0 : 1;
+            $row->save();
+
+            // isTN() reads the preferred address, so the account it left must keep one.
+            if ($wasPreferred) {
+                $next = UserEmail::where('userid', $fromUserId)->orderBy('id')->first();
+                if ($next !== NULL) {
+                    $next->preferred = 1;
+                    $next->save();
+                }
+            }
+        }, 'TN address move: the address and the preferred flag of the account it left go together');
+
+        if (app()->bound('sentry')) {
+            app('sentry')->captureMessage("TN address moved from user {$fromUserId} to user {$this->id}, the member Trash Nothing named");
+        }
     }
 
     /**

@@ -13,8 +13,8 @@ use Illuminate\Support\Facades\Cache;
  *
  *  - EXPECTED_REASONS are the skips nobody needs to look at: a poster banned from the group, and a
  *    post TN gave no user id for. The verifier counts such a post as "skipped on purpose", not a miss.
- *  - NEEDS_A_HUMAN_REASONS are skips that only a person can put right (two members with one TN
- *    username, an address or a TN user id still held by a deleted account). Each is still a miss, so
+ *  - NEEDS_A_HUMAN_REASONS are skips that only a person can put right (an address or a TN user id
+ *    still held by a deleted account). Each is still a miss, so
  *    that it is reported and can be backfilled once someone has fixed the cause, and the first one of
  *    the day for each reason is sent to Sentry (GroupPostIngestionService).
  *  - The rest (a poster TN does not know, a lookup TN refused) are misses too. TN's answer may have
@@ -49,7 +49,6 @@ class DeliberateSkips
      * Skips a person has to put right.
      */
     public const NEEDS_A_HUMAN_REASONS = [
-        GroupPostIngestionService::REASON_TN_USERNAME_CLASH,
         GroupPostIngestionService::REASON_TN_ADDRESS_HELD_BY_DELETED_USER,
         GroupPostIngestionService::REASON_TN_ACCOUNT_DELETED,
     ];

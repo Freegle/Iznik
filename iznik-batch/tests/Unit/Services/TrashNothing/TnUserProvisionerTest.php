@@ -137,7 +137,7 @@ class TnUserProvisionerTest extends TestCase
         $this->tnUsers[$tnId] = [200, $this->tnUser($username, ['firstname' => 'Tricia', 'lastname' => 'Hayes'])];
 
         $this->loki->shouldReceive('logEvent')->once()->with('tn-sync', 'user-create-from-tn', Mockery::on(
-            fn ($ctx) => $ctx['tn_user_id'] === $tnId && is_int($ctx['user_id']) && $ctx['linked_existing'] === false
+            fn ($ctx) => $ctx['tn_user_id'] === $tnId && is_int($ctx['user_id'])
         ));
 
         $provisioner = $this->provisioner();
@@ -221,47 +221,65 @@ class TnUserProvisionerTest extends TestCase
         $this->assertSame(0, DB::table('logs')->where('user', $user->id)->where('type', 'Group')->count());
     }
 
-    public function test_links_existing_alias_account_instead_of_duplicating(): void
+    /** Only a TN id says who someone is, so an account holding this username proves nothing. */
+    public function test_an_account_on_an_alias_of_the_username_is_not_linked(): void
     {
         $tnId     = $this->tnId();
-        $username = $this->uniqueUsername('linkme');
+        $username = $this->uniqueUsername('nolink');
         $alias    = "{$username}-g123@user.trashnothing.com";
-        $existing = $this->createTestUser(['email_preferred' => $alias, 'fullname' => 'Link Me']);
+        $existing = $this->createTestUser(['email_preferred' => $alias, 'fullname' => 'Not Linked']);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
-
-        $this->loki->shouldReceive('logEvent')->once()->with('tn-sync', 'user-create-from-tn', Mockery::on(
-            fn ($ctx) => $ctx['user_id'] === $existing->id && $ctx['linked_existing'] === true
-        ));
 
         $user = $this->provisioner()->resolveOrCreate($tnId);
 
-        $this->assertSame($existing->id, $user->id);
-        $this->assertSame($tnId, (int) $existing->fresh()->tnuserid);
-        $this->assertSame(1, User::where('tnuserid', $tnId)->count());
-        $this->assertSame('Link Me', $existing->fresh()->fullname, 'an existing name is not overwritten');
-
-        $emails = UserEmail::where('userid', $existing->id)->pluck('preferred', 'email');
-        $this->assertSame(1, (int) $emails[$alias], 'the current preferred address stays preferred');
-        $this->assertSame(0, (int) $emails["{$username}@user.trashnothing.com"]);
+        $this->assertNotSame($existing->id, $user->id);
+        $this->assertSame($tnId, (int) $user->fresh()->tnuserid);
+        $this->assertNull($existing->fresh()->tnuserid);
+        $this->assertSame("{$username}@user.trashnothing.com", $user->fresh()->email_preferred);
+        $this->assertSame(1, UserEmail::where('email', $alias)->where('userid', $existing->id)->count(), 'its alias stays');
     }
 
-    public function test_links_existing_bare_address_account(): void
+    /**
+     * TN has said this id has this username, so the bare address is this member's. It moves here
+     * whoever holds it, and the account it left keeps a preferred address if it has another.
+     */
+    public function test_the_bare_address_moves_to_the_member_from_an_account_with_no_tn_id(): void
     {
+        $sentry   = $this->recordSentry();
         $tnId     = $this->tnId();
         $username = $this->uniqueUsername('bare');
-        $existing = $this->createTestUser(['email_preferred' => "{$username}@user.trashnothing.com"]);
+        $bare     = "{$username}@user.trashnothing.com";
+        $existing = $this->createTestUser(['email_preferred' => $bare]);
+        $spare    = $this->uniqueUsername('spare') . '-g9@user.trashnothing.com';
+        UserEmail::create(['userid' => $existing->id, 'email' => $spare, 'preferred' => 0]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
 
         $user = $this->provisioner()->resolveOrCreate($tnId);
 
-        $this->assertSame($existing->id, $user->id);
-        $this->assertSame($tnId, (int) $existing->fresh()->tnuserid);
-        $this->assertSame(1, UserEmail::where('userid', $existing->id)->count());
-        // Attaching the address it already holds must not demote it: addEmail's
-        // primary: 0 would otherwise un-prefer it, leaving no preferred address,
-        // so isTN() turns false and the user-changes sync skips the member.
-        $this->assertSame(1, (int) UserEmail::where('userid', $existing->id)->value('preferred'));
-        $this->assertTrue($existing->fresh()->isTN());
+        $this->assertNotSame($existing->id, $user->id);
+        $this->assertNull($existing->fresh()->tnuserid);
+        $this->assertSame($user->id, (int) UserEmail::where('email', $bare)->value('userid'));
+        $this->assertSame($bare, $user->fresh()->email_preferred);
+        $this->assertSame($spare, $existing->fresh()->email_preferred, 'the account it left keeps a preferred address');
+
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString("user {$existing->id}", $sentry->calls[0][0]);
+        $this->assertStringNotContainsString($username, $sentry->calls[0][0], 'a report names ids, never an address');
+    }
+
+    public function test_the_bare_address_moves_from_an_account_holding_another_tn_id(): void
+    {
+        $tnId     = $this->tnId();
+        $username = $this->uniqueUsername('taken');
+        $bare     = "{$username}@user.trashnothing.com";
+        $holder   = $this->createTestUser(['email_preferred' => $bare, 'tnuserid' => $tnId + 1]);
+        $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
+
+        $user = $this->provisioner()->resolveOrCreate($tnId);
+
+        $this->assertSame($tnId, (int) $user->fresh()->tnuserid);
+        $this->assertSame($tnId + 1, (int) $holder->fresh()->tnuserid);
+        $this->assertSame($user->id, (int) UserEmail::where('email', $bare)->value('userid'));
     }
 
     /**
@@ -349,64 +367,42 @@ class TnUserProvisionerTest extends TestCase
         $this->assertSame(1, UserEmail::where('email', "{$username}@user.trashnothing.com")->count());
     }
 
-    /**
-     * A live account on an alias is still the member, even when a deleted account holds
-     * the bare address: the tnuserid is stamped, and the address that cannot be
-     * attached is left off rather than failing the whole link on the unique index.
-     */
-    public function test_links_the_live_alias_account_when_a_deleted_one_holds_the_bare_address(): void
+    /** A live account on an alias is not the member either, so that does not get round the deleted one. */
+    public function test_a_live_alias_account_is_not_linked_when_a_deleted_one_holds_the_bare_address(): void
     {
         $tnId     = $this->tnId();
         $username = $this->uniqueUsername('split');
-        $deleted  = $this->createTestUser(['email_preferred' => "{$username}@user.trashnothing.com", 'deleted' => now()]);
+        $this->createTestUser(['email_preferred' => "{$username}@user.trashnothing.com", 'deleted' => now()]);
         $live     = $this->createTestUser(['email_preferred' => "{$username}-g5@user.trashnothing.com"]);
+        $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
+
+        $provisioner = $this->provisioner();
+
+        $this->assertNull($provisioner->resolveOrCreate($tnId));
+        $this->assertSame(TnUserProvisioner::REASON_ADDRESS_HELD_BY_DELETED_USER, $provisioner->lastFailureReason());
+        $this->assertNull($live->fresh()->tnuserid);
+    }
+
+    /**
+     * Two members can share a username: TN does not promise one is unique. An alias of it on an
+     * account holding another TN id is that member's, and must not stop this one's post.
+     */
+    public function test_the_same_username_on_an_account_with_another_tn_id_is_another_member(): void
+    {
+        $tnId     = $this->tnId();
+        $username = $this->uniqueUsername('shared');
+        $alias    = "{$username}-g5@user.trashnothing.com";
+        $holder   = $this->createTestUser(['email_preferred' => $alias, 'tnuserid' => $tnId + 1]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
 
         $provisioner = $this->provisioner();
         $user        = $provisioner->resolveOrCreate($tnId);
 
         $this->assertNull($provisioner->lastFailureReason());
-        $this->assertSame($live->id, $user->id);
-        $this->assertSame($tnId, (int) $live->fresh()->tnuserid);
-        $this->assertNull($deleted->fresh()->tnuserid);
-        $this->assertSame(1, UserEmail::where('userid', $live->id)->count(), 'the held bare address is not attached');
-        $this->assertSame(1, UserEmail::where('userid', $deleted->id)->count());
-    }
-
-    /**
-     * TN usernames are mixed case, addresses are matched without regard to case,
-     * and "same member" compares lowercased usernames.
-     */
-    public function test_a_mixed_case_username_links_the_account_on_its_lowercase_alias(): void
-    {
-        $tnId     = $this->tnId();
-        $lower    = $this->uniqueUsername('mixedcase');
-        $existing = $this->createTestUser(['email_preferred' => "{$lower}-g5@user.trashnothing.com"]);
-        $this->tnUsers[$tnId] = [200, $this->tnUser(ucfirst($lower))];
-
-        $user = $this->provisioner()->resolveOrCreate($tnId);
-
-        $this->assertSame($existing->id, $user->id);
-        $this->assertSame($tnId, (int) $existing->fresh()->tnuserid);
-        $this->assertSame(1, UserEmail::where('userid', $existing->id)->whereRaw('preferred = 1')->count());
-    }
-
-    public function test_username_clash_with_a_different_tnuserid_returns_null(): void
-    {
-        $tnId     = $this->tnId();
-        $username = $this->uniqueUsername('clash');
-        $holder   = $this->createTestUser([
-            'email_preferred' => "{$username}-g5@user.trashnothing.com",
-            'tnuserid'        => $tnId + 1,
-        ]);
-        $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
-
-        $provisioner = $this->provisioner();
-
-        $this->assertNull($provisioner->resolveOrCreate($tnId));
-        $this->assertSame(TnUserProvisioner::REASON_USERNAME_CLASH, $provisioner->lastFailureReason());
-        $this->assertSame(0, User::where('tnuserid', $tnId)->count());
+        $this->assertNotSame($holder->id, $user->id);
+        $this->assertSame($tnId, (int) $user->fresh()->tnuserid);
         $this->assertSame($tnId + 1, (int) $holder->fresh()->tnuserid);
+        $this->assertSame($holder->id, (int) UserEmail::where('email', $alias)->value('userid'), 'its alias stays');
     }
 
     public function test_404_is_not_found(): void
@@ -1203,18 +1199,20 @@ class TnUserProvisionerTest extends TestCase
         );
     }
 
-    public function test_dry_run_link_writes_nothing(): void
+    public function test_dry_run_moving_the_bare_address_writes_nothing(): void
     {
+        $sentry   = $this->recordSentry();
         $tnId     = $this->tnId();
-        $username = $this->uniqueUsername('drylink');
-        $existing = $this->createTestUser(['email_preferred' => "{$username}-g7@user.trashnothing.com"]);
+        $username = $this->uniqueUsername('drymove');
+        $bare     = "{$username}@user.trashnothing.com";
+        $existing = $this->createTestUser(['email_preferred' => $bare]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
 
-        $user = $this->provisioner(dryRun: true)->resolveOrCreate($tnId);
+        $this->provisioner(dryRun: true)->resolveOrCreate($tnId);
 
-        $this->assertSame($existing->id, $user->id);
-        $this->assertNull($existing->fresh()->tnuserid);
-        $this->assertSame(1, UserEmail::where('userid', $existing->id)->count());
+        $this->assertSame(0, User::where('tnuserid', $tnId)->count());
+        $this->assertSame($existing->id, (int) UserEmail::where('email', $bare)->value('userid'));
+        $this->assertSame([], $sentry->calls);
     }
 
     /**
