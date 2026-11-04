@@ -6552,6 +6552,11 @@ func handleOutcomeIntended(c *fiber.Ctx, myid uint64, req PostMessageRequest) er
 // handleOutcome marks a message with an outcome (Taken, Received, Withdrawn).
 // Records the outcome in the DB and queues background processing for
 // notifications and chat messages.
+//
+// iznik-batch/app/Services/TrashNothing/Ingestion/ClosedPostOutcome.php repeats these rules
+// for a TrashNothing post that was closed on TN before Freegle received it (batch runs on
+// other machines, so it cannot call this). A change to what an outcome does here belongs
+// there too.
 func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 

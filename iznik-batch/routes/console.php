@@ -831,6 +831,22 @@ Schedule::command('tn:verify-email-coverage')
     ->appendOutputTo(cronLog('tn:verify-email-coverage'))
     ->runInBackground();
 
+// The same check every ten minutes over the last 70, ingesting what it finds missing.
+// TN holds some posts (a new member's, or one under moderation) until a Freegle community
+// approves them, and only then publishes them to /posts/all. The API path reads only that
+// feed, so it never sees them, and with the email path no longer routing TN posts nobody
+// could approve them: they would never reach Freegle. TN's email still arrives, so this
+// fetches each such post by id and ingests it, closed ones with their outcome. The last
+// five minutes are left to the sync, which takes a published post a minute or two to see.
+// The cap is raised for this run: it allows for the backlog after the nightly backup
+// window, which holds this job too.
+Schedule::command('tn:verify-email-coverage --recent=70 --auto-ingest --ingest-closed --max=100')
+    ->cron('3-53/10 * * * *')
+    ->withoutOverlapping(30)
+    ->when(fn () => (bool) config('freegle.trashnothing.ingest_posts_via_api', false))
+    ->appendOutputTo(cronLog('tn:verify-email-coverage-recent'))
+    ->runInBackground();
+
 // Give a recent TN API post's poster the membership ingestion failed to write. Each repair is
 // reported to Sentry, since it means a write failed. Only TN API posts are read, so it is gated
 // on the same switch as the API path.
