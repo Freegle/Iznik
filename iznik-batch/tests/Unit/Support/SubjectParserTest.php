@@ -57,6 +57,33 @@ class SubjectParserTest extends TestCase
         $this->assertSame([null, null, null], SubjectParser::parse(''));
     }
 
+    public function test_with_location_replaces_the_bracket(): void
+    {
+        $this->assertSame('OFFER: Double bed Mattress (Stoneygate LE2)', SubjectParser::withLocation('OFFER: Double bed Mattress (LE2 3HE)', 'Stoneygate LE2'));
+        // The item keeps its own brackets, balanced or not.
+        $this->assertSame('WANTED: Books (Rugby CV21)', SubjectParser::withLocation('WANTED: Books (London (Central))', 'Rugby CV21'));
+        $this->assertSame('OFFER: Small double (Queen sized divan bed (Derby DE1)', SubjectParser::withLocation('OFFER: Small double (Queen sized divan bed (Derby)', 'Derby DE1'));
+    }
+
+    public function test_with_location_adds_a_bracket_where_there_was_none(): void
+    {
+        $this->assertSame('OFFER: Sofa (Leith EH6)', SubjectParser::withLocation('OFFER: Sofa', 'Leith EH6'));
+        $this->assertSame('OFFER: Sofa (Leith EH6)', SubjectParser::withLocation('OFFER:   Sofa  ', 'Leith EH6'));
+    }
+
+    public function test_with_no_location_drops_the_bracket(): void
+    {
+        $this->assertSame('OFFER: Sofa', SubjectParser::withLocation('OFFER: Sofa (Hilmorton road 101 cv22 5aj)', null));
+        $this->assertSame('OFFER: Sofa', SubjectParser::withLocation('OFFER: Sofa', null));
+        $this->assertSame('OFFER: Sofa', SubjectParser::withLocation('OFFER: Sofa (SE23)', ''));
+    }
+
+    public function test_with_location_leaves_a_subject_without_a_type_alone(): void
+    {
+        $this->assertSame('Free sofa available', SubjectParser::withLocation('Free sofa available', 'Leith EH6'));
+        $this->assertSame('', SubjectParser::withLocation('', 'Leith EH6'));
+    }
+
     // =========================================================================
     // Table-driven: successful parse variants
     // =========================================================================
