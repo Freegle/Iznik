@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-03
+last_reviewed: 2026-11-04
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -58,11 +58,10 @@ Each TN user is linked to Freegle via:
 - `users.tnuserid` - The TrashNothing user ID (BIGINT)
 - Email address in `users_emails` table
 
-When processing TN messages, the system:
-1. Checks for TN user ID from message header (`x-trash-nothing-user-id`)
-2. Falls back to Freegle user ID header (`x-iznik-from-user`)
-3. Looks up user by email address
-4. Creates new user if not found
+When processing TN mail, the system looks the sender up by email address, the exact address first
+and then its canon, and a Subscribe creates a new user if neither matches. A reply to a `notify-`
+address takes the sender from that address and does not look them up at all. TN's mail carries
+the member's TN user id in `x-trash-nothing-user-id`, but nothing reads it yet: see issue #1987.
 
 ### Email Canonicalization
 
@@ -824,6 +823,10 @@ https://trashnothing.com/fd/api/ratings?key={TNKEY}&page={page}&per_page=100
 ```
 - Syncs ratings given to Freegle users by TN community members
 - Updates `ratings` table with `tn_rating_id`
+- Files each rating on the account holding `ratee_tn_user_id`. If no account holds it, the account
+  named by `ratee_fd_user_id` is used, unless that account holds a different TN user id: the rating
+  is then about another member sharing it, and is skipped (Loki `tn-sync`/`rating-skip`). See
+  `RatingsSyncer::resolveRatee`.
 
 #### User Changes API
 ```
@@ -845,11 +848,26 @@ Syncs:
 and, where TN knows it, ours (`fd_user_id`). TN learns our id only when it adds the member
 through the partner API, so a member the posts API provisioned has changes with no `fd_user_id`;
 those are matched on `users.tnuserid`, or the member's removal and renames would never reach us.
-When the account TN names holds a different TN user id, the change belongs to another TN member
-sharing that account, and is skipped (Loki `tn-sync`/`user-change-skip`, reason
-`tn-user-id-mismatch`) rather than forgetting or renaming the wrong person. An account with no TN
-user id is given the change's, unless another account already holds it, which is skipped as
-`tn-user-id-held-elsewhere` for a person to look at. See `UserChangesSyncer::resolveMember`.
+The same match is used when the `fd_user_id` is out of date: the account it names has been merged
+away, or holds a different TN user id because `tn:split-shared-account` moved the member out of it.
+When the account TN names holds a different TN user id and no account holds the change's, the
+change belongs to another TN member sharing that account, and is skipped (Loki
+`tn-sync`/`user-change-skip`, reason `tn-user-id-mismatch`) rather than forgetting or renaming the
+wrong person. An account with no TN user id is given the change's, unless another account already
+holds it, which is skipped as `tn-user-id-held-elsewhere` for a person to look at. See
+`UserChangesSyncer::resolveMember`. `TnMemberMatch` holds the rule this and the ratings feed share,
+which account TN's two ids mean, and each feed decides what to do with the answer.
+
+**An account holding two TN usernames.** That is two members sharing it, or one member who renamed,
+and the account alone cannot say which. So the sync does not forget it (reason `tn-two-usernames`),
+rename it (reported as a blocked rename) or give it a TN user id. A change's other fields are still
+applied. A legitimate rename whose new alias reached the account before the change is held back
+too, because it looks the same.
+
+**A skipped removal needs a person.** The sync date moves past a skipped change and it is not
+retried, so a member who has left TN keeps their data here until someone acts. Each skipped removal
+is reported to Sentry once a day, naming the TN user id and the account. Split the account if it
+holds two members, then forget the member who left.
 
 **A feed that cannot be read holds the stored date, for an hour.** `tn:sync` stores one date for
 ratings, user changes and posts: the latest any of them saw. When a page of the ratings or the

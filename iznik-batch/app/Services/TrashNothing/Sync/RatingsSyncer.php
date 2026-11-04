@@ -3,7 +3,6 @@
 namespace App\Services\TrashNothing\Sync;
 
 use App\Models\Rating;
-use App\Models\User;
 use App\Services\LokiService;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -70,12 +69,8 @@ class RatingsSyncer
                     $maxDate = $ratingDate;
                 }
 
-                if (!($rating['ratee_fd_user_id'] ?? null)) {
-                    continue;
-                }
-
-                $user = User::find($rating['ratee_fd_user_id']);
-                if (!$user) {
+                $rateeId = $this->resolveRatee($rating);
+                if ($rateeId === null) {
                     continue;
                 }
 
@@ -86,37 +81,37 @@ class RatingsSyncer
                         $ratingModel = Rating::firstOrNew(['tn_rating_id' => $rating['rating_id']]);
                         $isNew = !$ratingModel->exists;
                         if ($isNew) {
-                            $ratingModel->ratee   = $rating['ratee_fd_user_id'];
+                            $ratingModel->ratee   = $rateeId;
                             $ratingModel->visible = 1;
                         }
                         $ratingModel->rating    = $rating['rating'];
                         $ratingModel->timestamp = $ratingDate;
-                        Log::info('TN-SYNC-TRACE [WRITE] table=ratings op=upsert where=tn_rating_id=' . $rating['rating_id'] . ' set=ratee=' . $rating['ratee_fd_user_id'] . ',rating=' . $rating['rating'] . ',timestamp=' . ($ratingDate ?? 'null') . ',visible=1');
+                        Log::info('TN-SYNC-TRACE [WRITE] table=ratings op=upsert where=tn_rating_id=' . $rating['rating_id'] . ' set=ratee=' . $rateeId . ',rating=' . $rating['rating'] . ',timestamp=' . ($ratingDate ?? 'null') . ',visible=1');
                         if (!$this->dryRun) {
                             $ratingModel->save();
                         }
                         $this->loki->logEvent('tn-sync', 'rating-upsert', [
                             'action'       => $isNew ? 'insert' : 'update',
                             'tn_rating_id' => $rating['rating_id'],
-                            'user_id'      => $rating['ratee_fd_user_id'],
+                            'user_id'      => $rateeId,
                         ]);
                     } else {
-                        Log::info('TN-SYNC-TRACE [WRITE] table=ratings op=delete where=ratee=' . $rating['ratee_fd_user_id'] . ',tn_rating_id=' . $rating['rating_id']);
-                        $existing = Rating::where('ratee', $rating['ratee_fd_user_id'])
-                            ->where('tn_rating_id', $rating['rating_id'])
-                            ->first();
+                        // By TN's id alone, which is unique: a rating filed before a split stays
+                        // on the account it was filed on, which may not be the one resolved now.
+                        Log::info('TN-SYNC-TRACE [WRITE] table=ratings op=delete where=tn_rating_id=' . $rating['rating_id']);
+                        $existing = Rating::where('tn_rating_id', $rating['rating_id'])->first();
                         if ($existing) {
                             if (!$this->dryRun) {
                                 $existing->delete();
                             }
                             $this->loki->logEvent('tn-sync', 'rating-delete', [
                                 'tn_rating_id' => $rating['rating_id'],
-                                'user_id'      => $rating['ratee_fd_user_id'],
+                                'user_id'      => (int) $existing->ratee,
                             ]);
                         }
                     }
                 } catch (\Exception $e) {
-                    Log::info('TN-SYNC-TRACE [RATING] id=' . ($rating['rating_id'] ?? 'null') . ' ratee=' . ($rating['ratee_fd_user_id'] ?? 'null') . ' rating=' . ($rating['rating'] ?? 'null') . ' action=error');
+                    Log::info('TN-SYNC-TRACE [RATING] id=' . ($rating['rating_id'] ?? 'null') . ' ratee=' . $rateeId . ' rating=' . ($rating['rating'] ?? 'null') . ' action=error');
                     Log::error('TN sync: ratings sync failed', [
                         'error'  => $e->getMessage(),
                         'rating' => $rating,
@@ -129,6 +124,32 @@ class RatingsSyncer
         } while ($ratings && count($ratings) === self::PAGE_SIZE);
 
         return [$count, $maxDate];
+    }
+
+    /**
+     * The Freegle account a rating is about, or null to skip it: the one TnMemberMatch says TN
+     * means. A rating asks less of that answer than a user change does. Any account can be rated,
+     * not only a TN one, and filing a rating loses nothing, so an account with no TN id gives way
+     * to the one holding it without a person having to say. A rating is skipped only when the
+     * account TN names belongs to another member sharing it.
+     */
+    private function resolveRatee(array $rating): ?int
+    {
+        $tnId  = (int) ($rating['ratee_tn_user_id'] ?? 0);
+        $match = TnMemberMatch::find((int) ($rating['ratee_fd_user_id'] ?? 0), $tnId);
+        $ratee = $match->account();
+
+        if ($ratee === null && $match->named !== null) {
+            Log::info('TN-SYNC-TRACE [RATING] id=' . ($rating['rating_id'] ?? 'null') . ' ratee=' . $match->named->id . ' action=skip reason=tn-user-id-mismatch');
+            $this->loki->logEvent('tn-sync', 'rating-skip', [
+                'reason'     => 'tn-user-id-mismatch',
+                'user_id'    => $match->named->id,
+                'tn_user_id' => $tnId,
+                'other'      => (int) $match->named->tnuserid,
+            ]);
+        }
+
+        return $ratee?->id;
     }
 
     /**

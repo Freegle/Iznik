@@ -268,6 +268,141 @@ class TNSyncCommandTest extends TestCase
         );
     }
 
+    private function userWithTnId(int $tnUserId): User
+    {
+        $user = $this->createTestUser();
+        $user->tnuserid = $tnUserId;
+        $user->save();
+
+        return $user;
+    }
+
+    private function fakeRating(array $rating): void
+    {
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => [$rating + ['date' => self::DATE_SYNC]]], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+    }
+
+    /** A member the posts API provisioned was never added by TN, so TN does not know our id. */
+    public function test_sync_rating_without_fd_user_id_reaches_the_member_holding_its_tn_id(): void
+    {
+        $user = $this->userWithTnId(99140001);
+        $ratingId = random_int(100000, 999999);
+
+        $this->fakeRating([
+            'rating_id' => $ratingId,
+            'ratee_tn_user_id' => 99140001,
+            'ratee_fd_user_id' => null,
+            'rating' => 'Up',
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame($user->id, (int) DB::table('ratings')->where('tn_rating_id', $ratingId)->value('ratee'));
+    }
+
+    /** tn:split-shared-account does not tell TN, so TN goes on naming the old account. */
+    public function test_sync_rating_goes_to_the_member_holding_its_tn_id_not_the_account_named(): void
+    {
+        $old = $this->userWithTnId(99140002);
+        $split = $this->userWithTnId(99140003);
+        $ratingId = random_int(100000, 999999);
+
+        $this->fakeRating([
+            'rating_id' => $ratingId,
+            'ratee_tn_user_id' => 99140003,
+            'ratee_fd_user_id' => $old->id,
+            'rating' => 'Up',
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame($split->id, (int) DB::table('ratings')->where('tn_rating_id', $ratingId)->value('ratee'));
+    }
+
+    /** The account named holds another TN member, so the rating is not about them. */
+    public function test_sync_skips_rating_for_another_tn_member_on_the_account(): void
+    {
+        $user = $this->userWithTnId(99140004);
+        $ratingId = random_int(100000, 999999);
+
+        $this->fakeRating([
+            'rating_id' => $ratingId,
+            'ratee_tn_user_id' => 99140005,
+            'ratee_fd_user_id' => $user->id,
+            'rating' => 'Down',
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertFalse(DB::table('ratings')->where('tn_rating_id', $ratingId)->exists());
+    }
+
+    public function test_sync_rating_for_an_account_with_no_tn_id_is_filed_on_it(): void
+    {
+        $user = $this->createTestUser();
+        $ratingId = random_int(100000, 999999);
+
+        $this->fakeRating([
+            'rating_id' => $ratingId,
+            'ratee_tn_user_id' => 99140006,
+            'ratee_fd_user_id' => $user->id,
+            'rating' => 'Up',
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame($user->id, (int) DB::table('ratings')->where('tn_rating_id', $ratingId)->value('ratee'));
+    }
+
+    /** Unlike a user change, a rating needs no person to say which account is right. */
+    public function test_sync_rating_goes_to_the_holder_when_the_account_named_has_no_tn_id(): void
+    {
+        $named = $this->createTestUser();
+        $holder = $this->userWithTnId(99140009);
+        $ratingId = random_int(100000, 999999);
+
+        $this->fakeRating([
+            'rating_id' => $ratingId,
+            'ratee_tn_user_id' => 99140009,
+            'ratee_fd_user_id' => $named->id,
+            'rating' => 'Up',
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame($holder->id, (int) DB::table('ratings')->where('tn_rating_id', $ratingId)->value('ratee'));
+    }
+
+    /** A rating filed before a split stays where it was, and TN's deletion still has to find it. */
+    public function test_sync_deletes_rating_filed_on_another_account(): void
+    {
+        $old = $this->userWithTnId(99140007);
+        $this->userWithTnId(99140008);
+        $ratingId = random_int(100000, 999999);
+
+        DB::table('ratings')->insert([
+            'ratee' => $old->id,
+            'rating' => 'Up',
+            'timestamp' => now(),
+            'visible' => 1,
+            'tn_rating_id' => $ratingId,
+        ]);
+
+        $this->fakeRating([
+            'rating_id' => $ratingId,
+            'ratee_tn_user_id' => 99140008,
+            'ratee_fd_user_id' => $old->id,
+            'rating' => null,
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertFalse(DB::table('ratings')->where('tn_rating_id', $ratingId)->exists());
+    }
+
     // =========================================================================
     // User changes: account removal
     // =========================================================================

@@ -218,26 +218,41 @@ class UserChangesSyncerTest extends TestCase
         $this->assertTrue($user->isTN());
     }
 
-    public function test_rename_leaves_non_tn_and_other_usernames_addresses_alone(): void
+    public function test_rename_leaves_non_tn_addresses_alone(): void
     {
-        // "bibiana-gomes" starts with "bibiana-g" but is a different username.
         $old = $this->username('bibiana');
         $new = $this->username('bibi');
         $alias = "{$old}-g123" . self::TN_DOMAIN;
-        $longer = "{$old}-gomes-g4840" . self::TN_DOMAIN;
         $personal = "{$old}@example.com";
-        $user = $this->tnUser(User::tnDisplayName($old), [[$alias, 1], [$longer, 0], [$personal, 0]]);
+        $user = $this->tnUser(User::tnDisplayName($old), [[$alias, 1], [$personal, 0]]);
 
         $this->sync($user->id, $new);
 
         $expected = [
-            $longer => 0,
             $personal => 0,
             "{$new}-g123" . self::TN_DOMAIN => 1,
         ];
         ksort($expected);
         $this->assertSame($expected, $this->emailsOf($user));
         $this->assertSame([$alias], array_column($this->renameEvents(), 'old_email'));
+    }
+
+    /**
+     * "bibiana-gomes" starts with "bibiana-g" but is a different username, so this account holds
+     * two, and nothing on it says which of them renamed.
+     */
+    public function test_a_longer_username_with_the_same_start_is_a_second_username(): void
+    {
+        $old = $this->username('bibiana');
+        $alias = "{$old}-g123" . self::TN_DOMAIN;
+        $longer = "{$old}-gomes-g4840" . self::TN_DOMAIN;
+        $user = $this->tnUser(User::tnDisplayName($old), [[$alias, 1], [$longer, 0]]);
+        $before = $this->emailsOf($user);
+
+        $this->sync($user->id, $this->username('bibi'));
+
+        $this->assertSame($before, $this->emailsOf($user->fresh()));
+        $this->assertSame([], $this->renameEvents());
     }
 
     public function test_rename_onto_an_address_held_by_another_user_changes_nothing(): void
@@ -718,5 +733,252 @@ class UserChangesSyncerTest extends TestCase
         ]], dryRun: true);
 
         $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    /** A merge deletes the account, and TN goes on naming it until it next adds the member. */
+    public function test_a_change_naming_an_account_that_has_gone_reaches_the_member_holding_its_tn_id(): void
+    {
+        $user = $this->tnUserWithId(99130010);
+        $gone = (int) DB::table('users')->max('id') + 100000;
+
+        $this->syncChanges([[
+            'fd_user_id' => $gone,
+            'tn_user_id' => 99130010,
+            'reply_time' => 66,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame(66, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
+    }
+
+    /** tn:split-shared-account does not tell TN, so TN goes on naming the old account. */
+    public function test_a_change_naming_the_account_a_member_was_split_from_reaches_them(): void
+    {
+        $old = $this->tnUserWithId(99130011);
+        $split = $this->tnUserWithId(99130012);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $old->id,
+            'tn_user_id'      => 99130012,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Deleted User #' . $split->id, $split->fresh()->fullname);
+        $this->assertSame('Test Member', $old->fresh()->fullname);
+        $this->assertCount(0, $this->skipEvents('tn-user-id-mismatch'));
+    }
+
+    /**
+     * @return array{User, string, string} the account, the username of its preferred address,
+     *                                     and the other username
+     */
+    private function accountWithTwoUsernames(?int $tnUserId): array
+    {
+        $preferred = $this->username('pref');
+        $other = $this->username('other');
+        $user = $this->tnUser('Test Member', [
+            ["{$preferred}-g1" . self::TN_DOMAIN, 1],
+            ["{$other}-g2" . self::TN_DOMAIN, 0],
+        ]);
+
+        if ($tnUserId !== null) {
+            $user->tnuserid = $tnUserId;
+            $user->save();
+        }
+
+        return [$user->fresh(), $preferred, $other];
+    }
+
+    /**
+     * The account's TN id says who one of its members is. Forgetting the account would take the
+     * other member with it, and the two usernames may be one member who renamed: a person has
+     * to say, and the feed will not bring this change round again.
+     */
+    public function test_a_removal_on_an_account_with_two_usernames_is_skipped_and_reported(): void
+    {
+        $sentry = $this->recordSentry();
+        [$user] = $this->accountWithTwoUsernames(99130013);
+        $before = $this->emailsOf($user);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130013,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Test Member', $user->fresh()->fullname);
+        $this->assertSame($before, $this->emailsOf($user->fresh()));
+        $this->assertCount(1, $this->skipEvents('tn-two-usernames'));
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString("user {$user->id}", $sentry->calls[0]);
+    }
+
+    /** With no TN id on the account, the first removal seen would be taken for its owner's. */
+    public function test_a_removal_on_an_account_with_two_usernames_and_no_tn_id_is_skipped(): void
+    {
+        [$user] = $this->accountWithTwoUsernames(null);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130014,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Test Member', $user->fresh()->fullname);
+        $this->assertNull($user->fresh()->tnuserid);
+        $this->assertCount(1, $this->skipEvents('tn-two-usernames'));
+    }
+
+    /** The id could be either member's, so it is not stamped. The change's other fields still apply. */
+    public function test_an_account_with_two_usernames_is_not_given_a_tn_id(): void
+    {
+        [$user] = $this->accountWithTwoUsernames(null);
+
+        $this->syncChanges([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130015,
+            'reply_time' => 77,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertNull($user->fresh()->tnuserid);
+        $this->assertSame(77, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
+    }
+
+    /**
+     * The old username is read from the preferred address, which on this account may be the
+     * other member's, so a rename would land on their addresses and leave the renamer's as
+     * they were.
+     */
+    public function test_a_rename_on_an_account_with_two_usernames_changes_nothing_and_is_reported(): void
+    {
+        $sentry = $this->recordSentry();
+        [$user] = $this->accountWithTwoUsernames(99130016);
+        $before = $this->emailsOf($user);
+
+        $this->syncChanges([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130016,
+            'username'   => $this->username('new.name'),
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame($before, $this->emailsOf($user->fresh()));
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+    }
+
+    /**
+     * Every change repeats the member's username. On this account that is not a rename at all
+     * when it is the other username, and acting on it would rewrite the preferred address.
+     */
+    public function test_a_change_repeating_the_other_username_does_not_rewrite_the_preferred_addresses(): void
+    {
+        [$user, , $other] = $this->accountWithTwoUsernames(99130017);
+        $before = $this->emailsOf($user);
+
+        $this->syncChanges([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130017,
+            'username'   => $other,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame($before, $this->emailsOf($user->fresh()));
+    }
+
+    /** A window is read more than once, so a skipped removal comes round again. */
+    public function test_a_skipped_removal_is_reported_once_however_often_it_comes_round(): void
+    {
+        $sentry = $this->recordSentry();
+        $user = $this->tnUserWithId(99130018);
+        $change = [
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130019,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ];
+
+        $this->syncChanges([$change]);
+        $this->syncChanges([$change]);
+
+        $this->assertSame('Test Member', $user->fresh()->fullname);
+        $this->assertCount(2, $this->skipEvents('tn-user-id-mismatch'));
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString('99130019', $sentry->calls[0]);
+    }
+
+    public function test_a_removal_whose_tn_id_another_account_holds_is_reported(): void
+    {
+        $sentry = $this->recordSentry();
+        $named = $this->tnUserWithId(null);
+        $this->tnUserWithId(99130020);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130020,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertCount(1, $this->skipEvents('tn-user-id-held-elsewhere'));
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+    }
+
+    /** Only a removal is lost for good by being skipped, so only a removal needs a person. */
+    public function test_a_skipped_change_that_is_not_a_removal_is_not_sent_to_sentry(): void
+    {
+        $sentry = $this->recordSentry();
+        $user = $this->tnUserWithId(99130021);
+
+        $this->syncChanges([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130022,
+            'reply_time' => 88,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertCount(1, $this->skipEvents('tn-user-id-mismatch'));
+        $this->assertSame([], $sentry->calls);
+    }
+
+    /** A dry run applies nothing, so it must not use up the report the real run will need. */
+    public function test_a_dry_run_does_not_report_a_skipped_removal(): void
+    {
+        $sentry = $this->recordSentry();
+        $user = $this->tnUserWithId(99130023);
+        $change = [
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130024,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ];
+
+        $this->syncChanges([$change], dryRun: true);
+        $this->assertSame([], $sentry->calls);
+
+        $this->syncChanges([$change]);
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+    }
+
+    /** A change that fails before its member is known must not stop the ones after it. */
+    public function test_a_change_that_fails_while_finding_its_member_does_not_stop_the_sync(): void
+    {
+        $user = $this->tnUserWithId(99130025);
+        $reads = 0;
+        User::retrieved(function () use (&$reads) {
+            if (++$reads === 1) {
+                throw new \RuntimeException('read failed');
+            }
+        });
+
+        $this->syncChanges([
+            ['fd_user_id' => $user->id, 'tn_user_id' => 99130025, 'reply_time' => 11, 'date' => '2026-10-01T10:00:00'],
+            ['fd_user_id' => $user->id, 'tn_user_id' => 99130025, 'reply_time' => 22, 'date' => '2026-10-01T10:00:01'],
+        ]);
+
+        $this->assertSame(22, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
     }
 }

@@ -88,6 +88,11 @@ class UserChangesSyncer
                     }
 
                     if (!empty($change['account_removed'])) {
+                        if ($this->holdsTwoUsernames($user)) {
+                            $this->skipChange('tn-two-usernames', $change, $user->id, (int) $user->tnuserid);
+                            continue;
+                        }
+
                         Log::info("FD #{$user->id} TN account removed");
                         Log::info('TN-SYNC-TRACE [USER-CHANGE] fd_user_id=' . $user->id . ' action=account-removed');
                         $user->forget('TN account removed', $this->dryRun);
@@ -198,7 +203,8 @@ class UserChangesSyncer
                     Log::info('TN-SYNC-TRACE [USER-CHANGE] fd_user_id=' . $user->id . ' action=processed');
 
                 } catch (\Exception $e) {
-                    Log::info('TN-SYNC-TRACE [USER-CHANGE] fd_user_id=' . $user->id . ' action=error');
+                    // Not $user: finding the member is what may have failed.
+                    Log::info('TN-SYNC-TRACE [USER-CHANGE] fd_user_id=' . ($change['fd_user_id'] ?? 'null') . ' action=error');
                     Log::error('TN sync: user changes sync failed', [
                         'error'  => $e->getMessage(),
                         'change' => $change,
@@ -263,12 +269,24 @@ class UserChangesSyncer
      * A rename moves every address of the old username, bare and per-group alias alike,
      * to the new one, keeping each address's group suffix and its preferred flag. The
      * caller saves $user.
+     *
+     * An account holding two TN usernames is left alone. Its preferred address may be the other
+     * member's, and every change repeats the member's username, so even a change that renames
+     * nobody would rewrite those addresses. A member whose new alias arrived before the change
+     * looks the same, and is reported for a person to tidy up.
      */
     private function applyUsername(User $user, string $newUsername): void
     {
         $oldUsername = User::tnUsernameFromEmail($user->email_preferred ?? '');
 
         if ($oldUsername === null || $oldUsername === strtolower($newUsername)) {
+            return;
+        }
+
+        if ($this->holdsTwoUsernames($user)) {
+            $this->renameBlocked($user, $oldUsername, $newUsername, 'two-usernames',
+                "TN rename of user {$user->id} to {$newUsername} not applied: the account holds two TN usernames");
+
             return;
         }
 
@@ -338,50 +356,48 @@ class UserChangesSyncer
     }
 
     /**
-     * @return array|null  Change rows, or null on API error.
-     */
-    /**
      * The Freegle account a change from TN's user-changes feed is about, or null to skip it.
+     * TnMemberMatch says which account TN means, so that a member's removal and renames reach
+     * them when TN has no Freegle id for them, or an out of date one. The rest is for this feed.
      *
-     * TN names the account by our id (fd_user_id), which it learns when it adds the member
-     * through the partner API, and always by its own (tn_user_id). A member the posts API
-     * provisioned was never added by TN, so their changes come with no fd_user_id: they are
-     * found by tn_user_id, or their removal and renames would never reach us.
-     *
-     * When the account TN names holds a different TN user id, the change is about another TN
-     * member sharing that account, and applying it would forget or rename the wrong person, so
-     * it is skipped and reported. An account with no TN user id is given this one, since TN has
-     * just said which member it is, unless another account already holds it; then a person has
-     * to say which is right, and the change is skipped and reported.
+     * Only a TN account is changed. When TN names one holding a different TN user id and no account
+     * holds this one, the change is about another TN member sharing that account, and applying it
+     * would forget or rename the wrong person, so it is skipped and reported. An account with no
+     * TN user id is given this one, since TN has just said which member it is, unless another
+     * account already holds it; then a person has to say which is right, and the change is
+     * skipped and reported. Nor is it given one while it holds two TN usernames, as the id could
+     * be either member's.
      */
     private function resolveMember(array $change): ?User
     {
-        $fdId = (int) ($change['fd_user_id'] ?? 0);
-        $tnId = (int) ($change['tn_user_id'] ?? 0);
+        $tnId  = (int) ($change['tn_user_id'] ?? 0);
+        $match = TnMemberMatch::find((int) ($change['fd_user_id'] ?? 0), $tnId);
+        $named = $match->named;
 
-        if ($fdId === 0) {
-            $user = $tnId !== 0 ? User::where('tnuserid', $tnId)->first() : null;
-
-            return $user && $user->isTN() ? $user : null;
+        if ($named !== null && !$named->isTN()) {
+            return null;
         }
 
-        $user = User::find($fdId);
-        if (!$user || !$user->isTN() || $tnId === 0) {
-            return $user && $user->isTN() ? $user : null;
-        }
-
-        if ($user->tnuserid !== null && (int) $user->tnuserid !== $tnId) {
-            $this->skipChange('tn-user-id-mismatch', $user->id, $tnId, (int) $user->tnuserid);
+        if ($match->heldElsewhere()) {
+            $this->skipChange('tn-user-id-held-elsewhere', $change, $named->id, $match->holder->id);
 
             return null;
         }
 
-        if ($user->tnuserid === null) {
-            $holder = User::where('tnuserid', $tnId)->value('id');
-            if ($holder !== null) {
-                $this->skipChange('tn-user-id-held-elsewhere', $user->id, $tnId, (int) $holder);
+        $user = $match->account();
+        if ($user === null || !$user->isTN()) {
+            if ($named !== null) {
+                $this->skipChange('tn-user-id-mismatch', $change, $named->id, (int) $named->tnuserid);
+            }
 
-                return null;
+            return null;
+        }
+
+        if ($user->tnuserid === null && $tnId !== 0) {
+            if ($this->holdsTwoUsernames($user)) {
+                Log::info('TN-SYNC-TRACE [CHANGE-SKIP] reason=tn-two-usernames field=tnuserid fd_user_id=' . $user->id . ' tn_user_id=' . $tnId);
+
+                return $user;
             }
 
             Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=tnuserid=' . $tnId);
@@ -395,8 +411,28 @@ class UserChangesSyncer
         return $user;
     }
 
-    private function skipChange(string $reason, int $userId, int $tnId, int $other): void
+    /**
+     * Whether the account holds addresses for two TN usernames. That is two members sharing it, or
+     * one member who renamed, and the account alone cannot say which.
+     */
+    private function holdsTwoUsernames(User $user): bool
     {
+        return $user->emails()->pluck('email')
+            ->map(fn ($email) => User::tnUsernameFromEmail((string) $email))
+            ->filter()
+            ->unique()
+            ->count() > 1;
+    }
+
+    /**
+     * Leave a change unapplied and say so. The sync date moves past it regardless, so a removal
+     * skipped here is not retried: the member has left TN and their data stays until a person
+     * acts on the report. A window is read more than once, so it is reported once a day.
+     */
+    private function skipChange(string $reason, array $change, int $userId, int $other): void
+    {
+        $tnId = (int) ($change['tn_user_id'] ?? 0);
+
         Log::warning("TN sync: change for TN user {$tnId} not applied to FD #{$userId} ({$reason}, {$other})");
         Log::info("TN-SYNC-TRACE [CHANGE-SKIP] reason={$reason} fd_user_id={$userId} tn_user_id={$tnId} other={$other}");
         $this->loki->logEvent('tn-sync', 'user-change-skip', [
@@ -405,8 +441,15 @@ class UserChangesSyncer
             'tn_user_id' => $tnId,
             'other'      => $other,
         ]);
+
+        if (!$this->dryRun && !empty($change['account_removed']) && Cache::add("tn-sync:removal-skipped:{$userId}:{$tnId}", true, now()->addDay()) && app()->bound('sentry')) {
+            app('sentry')->captureMessage("TN member {$tnId} has left, but their removal was not applied to user {$userId} ({$reason}, {$other})");
+        }
     }
 
+    /**
+     * @return array|null  Change rows, or null on API error.
+     */
     private function fetchPage(int $page, string $from, string $to): ?array
     {
         if ($this->localTesting) {
