@@ -60,7 +60,7 @@ Freegle has two independent kinds of role. It helps to know which is which.
 **Your system-wide role** (across all of Freegle):
 
 - **User**, then **Moderator**, then **Support**, then **Admin**. Support and Admin unlock
-  the support and sysadmin tools (see
+  the support tools, and Admin alone the sysadmin tools (see
   [running your community](running-your-community.md)).
 
 On top of that, some features are gated by specific **permissions** (for example

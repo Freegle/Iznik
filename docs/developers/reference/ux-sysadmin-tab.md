@@ -36,7 +36,7 @@ covers:
 
 # The SysAdmin UX tab
 
-The **UX** sub-tab of ModTools SysAdmin (Behaviour, then UX) is where support staff read the
+The **UX** sub-tab of ModTools SysAdmin (Behaviour, then UX) is where Admins read the
 telemetry described in [UX telemetry](ux-telemetry.md): where members go back, stop, give up or
 never find a feature. That page is the contract for the events, the rollup tables and the read
 API. This page is about the tab: how it is laid out, what the address holds, what the filters do,
@@ -47,7 +47,7 @@ Behaviour shows it. `?tab=behaviour` and `?tab=ux` land on UX; `?tab=scrolling`,
 `recommendations` land on Scrolling; `?tab=reengagement` lands on Reengagement. The red number on
 the Behaviour tab (experiments with a verdict nobody has closed) is repeated on the UX sub-tab, and
 a line at the top of the sub-tab says in words what it is waiting for and links to the Experiments
-section. The number and the line are for Admin only, because what is waiting is developer work. The page is `iznik-nuxt3/modtools/pages/sysadmin/index.vue`.
+section. SysAdmin, and so this tab, is for Admin only. The page is `iznik-nuxt3/modtools/pages/sysadmin/index.vue`.
 
 ## What it shows
 

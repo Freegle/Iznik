@@ -1,16 +1,13 @@
 <template>
   <div>
-    <div v-if="supportOrAdmin">
+    <div v-if="admin">
       <b-tabs v-model="activeTab" content-class="mt-3" card>
         <!-- Housekeeping Tab -->
         <b-tab @click="onHousekeepingTab">
           <template #title>
             <h2 class="ms-2 me-2">
               Housekeeping
-              <b-badge
-                v-if="supportOrAdmin && work?.housekeeping"
-                variant="danger"
-              >
+              <b-badge v-if="work?.housekeeping" variant="danger">
                 {{ work.housekeeping }}
               </b-badge>
             </h2>
@@ -27,7 +24,7 @@
           <template #title>
             <h2 class="ms-2 me-2">
               Cron Jobs
-              <b-badge v-if="supportOrAdmin && work?.cronjobs" variant="danger">
+              <b-badge v-if="work?.cronjobs" variant="danger">
                 {{ work.cronjobs }}
               </b-badge>
             </h2>
@@ -44,14 +41,14 @@
             <h2 class="ms-2 me-2">
               Mail
               <b-badge
-                v-if="supportOrAdmin && work?.maildeferrals"
+                v-if="work?.maildeferrals"
                 variant="danger"
                 :title="work.maildeferrals + ' domain(s) we cannot deliver to'"
               >
                 {{ work.maildeferrals }}
               </b-badge>
               <b-badge
-                v-else-if="supportOrAdmin && (work?.emailout || work?.emailin)"
+                v-else-if="work?.emailout || work?.emailin"
                 variant="danger"
               >
                 !
@@ -63,12 +60,7 @@
               <template #title>
                 <span class="subtab-label">
                   Outgoing
-                  <b-badge
-                    v-if="supportOrAdmin && work?.emailout"
-                    variant="danger"
-                  >
-                    !
-                  </b-badge>
+                  <b-badge v-if="work?.emailout" variant="danger"> ! </b-badge>
                 </span>
               </template>
               <ModSupportEmailStats
@@ -80,12 +72,7 @@
               <template #title>
                 <span class="subtab-label">
                   Incoming
-                  <b-badge
-                    v-if="supportOrAdmin && work?.emailin"
-                    variant="danger"
-                  >
-                    !
-                  </b-badge>
+                  <b-badge v-if="work?.emailin" variant="danger"> ! </b-badge>
                 </span>
               </template>
               <ModSupportIncomingEmail
@@ -97,10 +84,7 @@
               <template #title>
                 <span class="subtab-label">
                   Delayed
-                  <b-badge
-                    v-if="supportOrAdmin && work?.maildeferrals"
-                    variant="danger"
-                  >
+                  <b-badge v-if="work?.maildeferrals" variant="danger">
                     {{ work.maildeferrals }}
                   </b-badge>
                 </span>
@@ -120,7 +104,7 @@
             <h2 class="ms-2 me-2">
               Behaviour
               <b-badge
-                v-if="admin && work?.uxexperiments"
+                v-if="work?.uxexperiments"
                 variant="danger"
                 :title="uxVerdictTitle"
               >
@@ -136,7 +120,7 @@
                 <span class="subtab-label">
                   UX
                   <b-badge
-                    v-if="admin && work?.uxexperiments"
+                    v-if="work?.uxexperiments"
                     variant="danger"
                     :title="uxVerdictTitle"
                   >
@@ -144,10 +128,7 @@
                   </b-badge>
                 </span>
               </template>
-              <p
-                v-if="admin && work?.uxexperiments"
-                class="ux-verdict-note ms-2"
-              >
+              <p v-if="work?.uxexperiments" class="ux-verdict-note ms-2">
                 {{ uxVerdictTitle }}.
                 <a href="?tab=ux&ux_section=experiments"
                   >Open Experiments to act on them.</a
@@ -224,7 +205,7 @@ import { useMe } from '~/composables/useMe'
 import { useAuthStore } from '@/stores/auth'
 import { verdictTitle } from '~/modtools/composables/useUxVerdict'
 
-const { supportOrAdmin, admin } = useMe()
+const { admin } = useMe()
 const authStore = useAuthStore()
 const work = computed(() => authStore.work)
 
