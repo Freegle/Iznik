@@ -12,23 +12,31 @@
 // Drawn in the tab's nav after the word Experiments. A red number says how many experiments have a
 // verdict that nobody has closed: adopted ones to confirm and take the switch out of, and ended ones
 // whose variant code is still in. That matters more than the blue count of running ones, which shows
-// only when nothing is waiting. It reads the same list as the section, so it adds no route. A missing
-// route or an error leaves it empty: the section says what is wrong, and the nav should stay quiet.
+// only when nothing is waiting. The red number is for Admin only: what is waiting is developer
+// work, so Support sees the running count alone. It reads the same list as the section, so it adds
+// no route. A missing route or an error leaves it empty: the section says what is wrong, and the nav
+// should stay quiet.
 import { computed, onMounted } from 'vue'
 import { useUxExperimentsStore } from '~/modtools/stores/uxExperiments'
+import { useMe } from '~/composables/useMe'
 import {
   verdictCounts,
   verdictTitle,
 } from '~/modtools/composables/useUxVerdict'
 
 const store = useUxExperimentsStore()
+const { admin } = useMe()
 
 // The section asks too. A list younger than 30 seconds is not asked for again.
 onMounted(() => {
   store.loadIfStale(30000)
 })
 
-const counts = computed(() => verdictCounts(store.experiments.data?.flows))
+const counts = computed(() =>
+  admin.value
+    ? verdictCounts(store.experiments.data?.flows)
+    : { confirm: 0, remove: 0, total: 0 }
+)
 const running = computed(
   () => Number(store.experiments.data?.running_count) || 0
 )

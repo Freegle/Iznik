@@ -120,7 +120,7 @@
             <h2 class="ms-2 me-2">
               Behaviour
               <b-badge
-                v-if="supportOrAdmin && work?.uxexperiments"
+                v-if="admin && work?.uxexperiments"
                 variant="danger"
                 :title="uxVerdictTitle"
               >
@@ -136,7 +136,7 @@
                 <span class="subtab-label">
                   UX
                   <b-badge
-                    v-if="supportOrAdmin && work?.uxexperiments"
+                    v-if="admin && work?.uxexperiments"
                     variant="danger"
                     :title="uxVerdictTitle"
                   >
@@ -145,7 +145,7 @@
                 </span>
               </template>
               <p
-                v-if="supportOrAdmin && work?.uxexperiments"
+                v-if="admin && work?.uxexperiments"
                 class="ux-verdict-note ms-2"
               >
                 {{ uxVerdictTitle }}.
@@ -224,7 +224,7 @@ import { useMe } from '~/composables/useMe'
 import { useAuthStore } from '@/stores/auth'
 import { verdictTitle } from '~/modtools/composables/useUxVerdict'
 
-const { supportOrAdmin } = useMe()
+const { supportOrAdmin, admin } = useMe()
 const authStore = useAuthStore()
 const work = computed(() => authStore.work)
 

@@ -47,7 +47,7 @@ Behaviour shows it. `?tab=behaviour` and `?tab=ux` land on UX; `?tab=scrolling`,
 `recommendations` land on Scrolling; `?tab=reengagement` lands on Reengagement. The red number on
 the Behaviour tab (experiments with a verdict nobody has closed) is repeated on the UX sub-tab, and
 a line at the top of the sub-tab says in words what it is waiting for and links to the Experiments
-section. The page is `iznik-nuxt3/modtools/pages/sysadmin/index.vue`.
+section. The number and the line are for Admin only, because what is waiting is developer work. The page is `iznik-nuxt3/modtools/pages/sysadmin/index.vue`.
 
 ## What it shows
 

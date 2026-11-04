@@ -67,6 +67,7 @@ describe('sysadmin page tab grouping', () => {
   })
 
   it('shows a red number on the Behaviour tab when experiments have a verdict', async () => {
+    mockAdmin.value = true
     mockWork.value = {
       emailout: 0,
       emailin: 0,
@@ -85,6 +86,7 @@ describe('sysadmin page tab grouping', () => {
 
   it('repeats the red number on the UX sub-tab and says in words what it is', async () => {
     mockRouteQuery.value = { tab: 'behaviour' }
+    mockAdmin.value = true
     mockWork.value = {
       emailout: 0,
       emailin: 0,
@@ -107,6 +109,24 @@ describe('sysadmin page tab grouping', () => {
     expect(note.find('a').attributes('href')).toBe(
       '?tab=ux&ux_section=experiments'
     )
+  })
+
+  it('shows Support no red number and no verdict line, as the work waiting is a developer one', async () => {
+    mockRouteQuery.value = { tab: 'behaviour' }
+    mockWork.value = {
+      emailout: 0,
+      emailin: 0,
+      uxexperiments: 2,
+      uxexperimentsconfirm: 1,
+      uxexperimentsremove: 1,
+    }
+    const wrapper = mountComponent()
+    await flushPromises()
+    const behaviour = wrapper
+      .findAll('.tab')
+      .find((t) => t.text().includes('Behaviour'))
+    expect(behaviour.findAll('.badge')).toHaveLength(0)
+    expect(wrapper.find('.ux-verdict-note').exists()).toBe(false)
   })
 
   it('draws no verdict line on the UX sub-tab when none is waiting', async () => {

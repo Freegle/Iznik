@@ -749,15 +749,17 @@ count: an adopted one not yet closed (confirm the result and remove the switch),
 inconclusive or stopped one with no `cleanup_pr_url` (remove the variant code). A closed one, or one with a
 cleanup pull request recorded, does not. An adopted one counts at once, where `cleanup_overdue` waits for
 the 7 days, because the nudge is for the moment a decision exists. The Go session serves the count as
-`work.uxexperiments` (with `uxexperimentsconfirm` and `uxexperimentsremove` for the two kinds) to Support and
-Admin, counted by `ux.VerdictCounts` in `iznik-server-go/ux/experiments.go`. It is a red number on the Behaviour
+`work.uxexperiments` (with `uxexperimentsconfirm` and `uxexperimentsremove` for the two kinds) to Admin
+only, counted by `ux.VerdictCounts` in `iznik-server-go/ux/experiments.go`. It is a red number on the Behaviour
 tab and on the SysAdmin item in the ModTools menu, and on the Experiments nav inside the UX tab, whose title
 says what is waiting ("2 experiments have a verdict: 1 to confirm, 1 to remove code"). The nav shows the
 blue count of running experiments only when nothing is waiting. The rule is written once in the browser, in
 `modtools/composables/useUxVerdict.js`, which the nav badge, the row and the open experiment share. Each
 row shows what to do next ("Confirm, remove the switch, then close it", or "Remove the variant code, then
 close it"), and the open experiment names the line for `ux_cleanups.php`, the Mark as cleaned up button and the
-`ux:experiment close` command.
+`ux:experiment close` command. All of this is for Admin only, because what is waiting is developer work. Support
+can open the UX tab and its experiments, and sees the blue running count, but no red number, no row prompt and no
+next step.
 
 **Closing keeps the outcome.** `close` on an adopted experiment sets `closed`. On a reverted,
 inconclusive or stopped one it leaves the status alone, because what was tried and how it ended is the

@@ -10,6 +10,12 @@ vi.mock('~/modtools/composables/useUxSections', () => ({
   hostedFor: (slot) => (slot === 'experiment' ? hosted.pieces : []),
 }))
 
+// Admin unless a test says otherwise: the nudge to clean up is developer work, so only Admin sees it.
+const me = vi.hoisted(() => ({ admin: true }))
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({ admin: { value: me.admin } }),
+}))
+
 const result = (over = {}, primary = {}) => ({
   arms: {
     control: { starts: 200, completes: 110 },
@@ -105,6 +111,7 @@ describe('ModSysAdminUxExperimentDetail', () => {
 
   beforeEach(() => {
     hosted.pieces = []
+    me.admin = true
     store = {
       experimentAction: vi.fn().mockResolvedValue({ queued: true }),
       load: vi.fn().mockResolvedValue(undefined),
@@ -897,6 +904,14 @@ describe('ModSysAdminUxExperimentDetail', () => {
     it('is plainly kept once the holdout is over', () => {
       expect(make(adopted).find('.holdout').exists()).toBe(false)
     })
+  })
+
+  it('does not tell Support what to do next, as removing the code is developer work', () => {
+    me.admin = false
+    for (const status of ['adopted', 'reverted', 'inconclusive', 'stopped']) {
+      const w = make({ ...adopted, status, cleanup_overdue: false })
+      expect(w.find('p.verdict').exists()).toBe(false)
+    }
   })
 
   it('says what to do next for a kept experiment, from the day it was kept', () => {
