@@ -267,7 +267,7 @@ a bare address and every alias of one username share a canon and hyphenated user
   domain dots, and so agrees with PHP for both. It lowercases, which `canonMail` does not, and it does
   not strip a `+` suffix, which `canonMail` does for any address. Nothing in the repository says whether
   a TN username can contain `+`; one that does gets a different canon in the two stacks. Any other
-  address falls to the general `CanonicalizeEmail`, which keeps the domain dots.
+  address falls to the general `CanonicalizeEmail`, which is `canonMail` (see above).
 
 ## See also
 

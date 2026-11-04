@@ -61,6 +61,13 @@ class TNSyncCommand extends Command
     // dropped by each syncer's idempotency checks.
     private const SYNC_OVERLAP_SECONDS = 10;
 
+    // The posts feed reads further back. A post reaches /posts/all some time after
+    // its own date, a minute or two in the slowest cases, and a window that starts
+    // after the date never fetches it. The stored date moves on to the latest date
+    // any feed saw, so ten seconds left those posts behind it for good. A post read
+    // again is skipped as already ingested.
+    private const POSTS_OVERLAP_SECONDS = 900;
+
     private bool $dryRun;
 
     /** Report duplicate candidates and merge nothing. Read-only; never moves the cursor. */
@@ -165,7 +172,9 @@ class TNSyncCommand extends Command
                         'apiBaseUrl' => $this->apiBaseUrl,
                         'loki' => $this->loki,
                     ]);
-                    [$postsProcessed, $postsMaxDate] = $postSyncer->sync($from, $to);
+                    $postsFrom = gmdate('Y-m-d\TH:i:s\Z', strtotime($from) - (self::POSTS_OVERLAP_SECONDS - self::SYNC_OVERLAP_SECONDS));
+                    Log::info("TN-SYNC-TRACE [POSTS-WINDOW] from={$postsFrom} to={$to}");
+                    [$postsProcessed, $postsMaxDate] = $postSyncer->sync($postsFrom, $to);
                     $postsStalledAt = $postSyncer->stalledAt();
                     if ($postsMaxDate && (!$maxChangeDate || $postsMaxDate > $maxChangeDate)) {
                         $maxChangeDate = $postsMaxDate;
