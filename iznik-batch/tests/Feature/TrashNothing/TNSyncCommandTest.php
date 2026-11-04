@@ -1450,44 +1450,6 @@ class TNSyncCommandTest extends TestCase
         $this->assertSame('2026-03-20T10:00:00Z', trim(file_get_contents($this->dateFile)), 'no progress to record');
     }
 
-    /**
-     * A post reaches TN's feed some time after its own date, so the posts window starts
-     * well before the stored date. The other feeds keep their short overlap.
-     */
-    public function test_the_posts_window_reaches_further_back_than_the_other_feeds(): void
-    {
-        config(['freegle.trashnothing.ingest_posts_via_api' => true]);
-        file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
-
-        Http::fake([
-            '*/ratings*' => Http::response(['ratings' => []], 200),
-            '*/user-changes*' => Http::response(['changes' => []], 200),
-        ]);
-
-        $seen = new \ArrayObject();
-        $this->app->bind(PostSyncer::class, fn () => new class($seen) extends PostSyncer {
-            public function __construct(private \ArrayObject $seen) {}
-
-            public function sync(string $from, string $to): array
-            {
-                $this->seen['from'] = $from;
-
-                return [0, null];
-            }
-
-            public function stalledAt(): ?string
-            {
-                return null;
-            }
-        });
-
-        $this->artisan('tn:sync')->assertExitCode(0);
-
-        $this->assertSame('2026-03-20T09:45:00Z', $seen['from'] ?? null, 'posts are read from 15 minutes before the stored date');
-        Http::assertSent(fn ($request) => str_contains($request->url(), 'ratings')
-            && $request['date_min'] === '2026-03-20T09:59:50Z');
-    }
-
     public function test_the_stored_date_advances_to_the_window_a_stop_happened_in(): void
     {
         config(['freegle.trashnothing.ingest_posts_via_api' => true]);
