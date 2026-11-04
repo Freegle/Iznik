@@ -668,7 +668,7 @@ func TestMergeRefusesTwoDifferentTrashNothingMembers(t *testing.T) {
 	assert.True(t, userExists(a))
 	assert.True(t, userExists(b))
 
-	// The shared merge refuses it too, so the TN divergence heal cannot do it either.
+	// The shared merge refuses it too, so no caller can do it.
 	assert.Error(t, user.MergeUsersTx(database.DBConn, a, b, b))
 	assert.True(t, userExists(a))
 
@@ -695,6 +695,46 @@ func TestMergeAllowsTrashNothingTwinWithoutStamp(t *testing.T) {
 	var tn uint64
 	db.Raw("SELECT COALESCE(tnuserid, 0) FROM users WHERE id = ?", stamped).Scan(&tn)
 	assert.Equal(t, uint64(991004), tn)
+}
+
+// TN does not promise usernames are unique, but two different ones with nothing to prove they are
+// one member may be two people, and a merge cannot be undone.
+func TestMergeRefusesTwoTrashNothingUsernames(t *testing.T) {
+	prefix := uniquePrefix("merge_tn_two")
+	db := database.DBConn
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	a := CreateTestUser(t, prefix+"_a", "User")
+	b := CreateTestUser(t, prefix+"_b", "User")
+	stampTN(a, 991006)
+	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid IN (?, ?)", a, b)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", a, "one"+prefix+"-g1@user.trashnothing.com")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", b, "two"+prefix+"-g2@user.trashnothing.com")
+
+	assert.Equal(t, 400, mergeUsers(t, adminToken, b, a))
+	assert.True(t, userExists(a))
+	assert.True(t, userExists(b))
+
+	// The shared merge refuses it too, so the email-verify merge cannot do it either.
+	assert.Error(t, user.MergeUsersTx(db, b, a, a))
+	assert.True(t, userExists(b))
+}
+
+// One username on both accounts is the twin a merge is there to repair.
+func TestMergeAllowsOneTrashNothingUsernameOnBoth(t *testing.T) {
+	prefix := uniquePrefix("merge_tn_one")
+	db := database.DBConn
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	a := CreateTestUser(t, prefix+"_a", "User")
+	b := CreateTestUser(t, prefix+"_b", "User")
+	stampTN(a, 991007)
+	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid IN (?, ?)", a, b)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", a, prefix+"-g1@user.trashnothing.com")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", b, prefix+"-g2@user.trashnothing.com")
+
+	assert.Equal(t, 200, mergeUsers(t, adminToken, b, a))
+	assert.False(t, userExists(b))
 }
 
 // A member's answers to the UX questions move with them on a merge. Where both accounts answered
