@@ -757,9 +757,7 @@ blue count of running experiments only when nothing is waiting. The rule is writ
 `modtools/composables/useUxVerdict.js`, which the nav badge, the row and the open experiment share. Each
 row shows what to do next ("Confirm, remove the switch, then close it", or "Remove the variant code, then
 close it"), and the open experiment names the line for `ux_cleanups.php`, the Mark as cleaned up button and the
-`ux:experiment close` command. All of this is for Admin only, because what is waiting is developer work. Support
-can open the UX tab and its experiments, and sees the blue running count, but no red number, no row prompt and no
-next step.
+`ux:experiment close` command. All of this is on SysAdmin, which is for Admin only, because what is waiting is developer work.
 
 **Closing keeps the outcome.** `close` on an adopted experiment sets `closed`. On a reverted,
 inconclusive or stopped one it leaves the status alone, because what was tried and how it ended is the

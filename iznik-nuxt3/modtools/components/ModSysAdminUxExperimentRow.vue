@@ -44,7 +44,6 @@ import {
   worryOf,
 } from '~/modtools/composables/useUxExperimentRead'
 import { verdictRowText } from '~/modtools/composables/useUxVerdict'
-import { useMe } from '~/composables/useMe'
 
 const props = defineProps({
   // One experiment of the experiments response.
@@ -73,12 +72,8 @@ const worry = computed(() =>
     : null
 )
 
-// What to do next when the experiment has a verdict that nobody has closed. That is developer work,
-// so only Admin is told.
-const { admin } = useMe()
-const verdictText = computed(() =>
-  admin.value ? verdictRowText(props.experiment) : ''
-)
+// What to do next when the experiment has a verdict that nobody has closed.
+const verdictText = computed(() => verdictRowText(props.experiment))
 
 const statusClass = computed(
   () =>

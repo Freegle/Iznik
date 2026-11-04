@@ -1,12 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ModSysAdminUxExperimentRow from '~/modtools/components/ModSysAdminUxExperimentRow.vue'
-
-// Admin unless a test says otherwise: the nudge to clean up is developer work, so only Admin sees it.
-const me = vi.hoisted(() => ({ admin: true }))
-vi.mock('~/composables/useMe', () => ({
-  useMe: () => ({ admin: { value: me.admin } }),
-}))
 
 const result = (over = {}, primary = {}) => ({
   arms: {
@@ -44,10 +38,6 @@ const make = (props = {}) =>
   })
 
 describe('ModSysAdminUxExperimentRow', () => {
-  beforeEach(() => {
-    me.admin = true
-  })
-
   it('is one button, with the status, the title, the funnel and the result line', () => {
     const w = make()
     expect(w.element.tagName).toBe('BUTTON')
@@ -258,14 +248,6 @@ describe('ModSysAdminUxExperimentRow', () => {
         )
       }
     )
-
-    it('tells Support nothing, as removing the code is developer work', () => {
-      me.admin = false
-      for (const status of ['adopted', 'reverted', 'inconclusive', 'stopped']) {
-        const w = make({ experiment: experiment({ status }) })
-        expect(w.find('.verdict').exists()).toBe(false)
-      }
-    })
 
     it('says nothing once the cleanup is recorded, or while it runs', () => {
       expect(

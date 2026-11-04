@@ -4,11 +4,14 @@ import Sysadmin from '~/modtools/pages/sysadmin/index.vue'
 
 // Controllable route query so deep-link (?tab=...) behaviour can be exercised.
 const mockRouteQuery = { value: {} }
-// Support by default.
-const mockAdmin = { value: false }
+// The signed-in system role. Admin by default: SysAdmin is for Admin only.
+const mockRole = { value: 'Admin' }
 
 vi.mock('~/composables/useMe', () => ({
-  useMe: () => ({ supportOrAdmin: true, admin: mockAdmin.value }),
+  useMe: () => ({
+    admin: mockRole.value === 'Admin',
+    supportOrAdmin: ['Support', 'Admin'].includes(mockRole.value),
+  }),
 }))
 
 const mockWork = { value: { emailout: 0, emailin: 0 } }
@@ -62,12 +65,11 @@ describe('sysadmin page tab grouping', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockRouteQuery.value = {}
-    mockAdmin.value = false
+    mockRole.value = 'Admin'
     mockWork.value = { emailout: 0, emailin: 0 }
   })
 
   it('shows a red number on the Behaviour tab when experiments have a verdict', async () => {
-    mockAdmin.value = true
     mockWork.value = {
       emailout: 0,
       emailin: 0,
@@ -86,7 +88,6 @@ describe('sysadmin page tab grouping', () => {
 
   it('repeats the red number on the UX sub-tab and says in words what it is', async () => {
     mockRouteQuery.value = { tab: 'behaviour' }
-    mockAdmin.value = true
     mockWork.value = {
       emailout: 0,
       emailin: 0,
@@ -109,24 +110,6 @@ describe('sysadmin page tab grouping', () => {
     expect(note.find('a').attributes('href')).toBe(
       '?tab=ux&ux_section=experiments'
     )
-  })
-
-  it('shows Support no red number and no verdict line, as the work waiting is a developer one', async () => {
-    mockRouteQuery.value = { tab: 'behaviour' }
-    mockWork.value = {
-      emailout: 0,
-      emailin: 0,
-      uxexperiments: 2,
-      uxexperimentsconfirm: 1,
-      uxexperimentsremove: 1,
-    }
-    const wrapper = mountComponent()
-    await flushPromises()
-    const behaviour = wrapper
-      .findAll('.tab')
-      .find((t) => t.text().includes('Behaviour'))
-    expect(behaviour.findAll('.badge')).toHaveLength(0)
-    expect(wrapper.find('.ux-verdict-note').exists()).toBe(false)
   })
 
   it('draws no verdict line on the UX sub-tab when none is waiting', async () => {
@@ -290,7 +273,6 @@ describe('sysadmin page tab grouping', () => {
   })
 
   it('has no tab of its own for the PAF update', async () => {
-    mockAdmin.value = true
     expect(mountComponent().text()).not.toContain('Addresses')
     expect(mountComponent().text()).not.toContain('PAF')
   })
@@ -298,7 +280,6 @@ describe('sysadmin page tab grouping', () => {
   it.each(['paf', 'addresses'])(
     'deep-links ?tab=%s to Housekeeping with the PAF update open',
     async (tab) => {
-      mockAdmin.value = true
       mockRouteQuery.value = { tab }
       const wrapper = mountComponent()
       await flushPromises()
@@ -317,10 +298,24 @@ describe('sysadmin page tab grouping', () => {
     )
   })
 
-  it('shows an access notice to non-admins', () => {
-    // supportOrAdmin is mocked true above; this asserts the guarded region renders
-    // rather than the notice, confirming the v-if wiring is intact.
+  it('shows the tabs to Admin, with no notice', () => {
     const wrapper = mountComponent()
     expect(wrapper.find('.tabs').exists()).toBe(true)
+    expect(wrapper.find('.notice').exists()).toBe(false)
   })
+
+  it.each(['Support', 'User'])(
+    'shows %s the notice and no tabs',
+    async (role) => {
+      mockRole.value = role
+      mockWork.value = { emailout: 1, emailin: 1, uxexperiments: 2 }
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.find('.tabs').exists()).toBe(false)
+      expect(wrapper.find('.badge').exists()).toBe(false)
+      expect(wrapper.find('.notice').text()).toContain(
+        "You don't have access to SysAdmin tools."
+      )
+    }
+  )
 })

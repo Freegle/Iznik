@@ -186,16 +186,19 @@ service. It is useful for understanding why a post turned up where it did.
   permission) - the queue for the AI concierge that manages replies to bulk clearance
   offers, plus a read-only explainer of how it works.
 
-## Support and sysadmin tools (Support and Admin only)
+## Support and sysadmin tools
 
 These pages are only available to volunteers with the Support or Admin system role:
 
-- **Sysadmin** (`/sysadmin`) - housekeeping, cron jobs, outgoing and incoming email,
-  scrolling and click-through analytics, and rippling analytics.
 - **Support** (`/support`) - look up a user, community or message, the AI Support Helper
   and spam keyword configuration.
 - **Images** (`/images`) - review and regenerate AI-generated item images that volunteers
   have flagged.
+
+This one is for the Admin system role only, and is not in the menu for anyone else:
+
+- **Sysadmin** (`/sysadmin`) - housekeeping, cron jobs, outgoing, incoming and delayed
+  email, member behaviour and experiments, rippling analytics and the AI Helper review.
 
 ## Partner platforms: TrashNothing and LoveJunk
 
