@@ -443,6 +443,22 @@ class User extends Model implements Auditable
     }
 
     /**
+     * The distinct TN usernames among this user's addresses. More than one is two members sharing
+     * the account or one member who renamed, and the account alone cannot say which.
+     *
+     * @return list<string>
+     */
+    public function tnUsernames(): array
+    {
+        return $this->emails()->pluck('email')
+            ->map(fn ($email) => self::tnUsernameFromEmail((string) $email))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
      * Check if user is a moderator of any group.
      */
     public function isModerator(): bool
@@ -1391,6 +1407,20 @@ class User extends Model implements Auditable
             }
 
             report(new TnUserIdMergeConflict("Forced merge of two Trash Nothing accounts, tnuserid {$u2->tnuserid} will be lost: {$detail}"));
+        }
+
+        // Two different usernames may be two members too, and nothing here can prove they are one
+        // who renamed. MergeUsersTx in iznik-server-go refuses the same.
+        if (count(array_unique([...$u1->tnUsernames(), ...$u2->tnUsernames()])) > 1) {
+            $detail = "user {$id2} into user {$id1}, reason: {$reason}";
+
+            if (!$forceMerge) {
+                report(new TnUserIdMergeConflict("Refused merge of two TN usernames: {$detail}"));
+
+                return FALSE;
+            }
+
+            report(new TnUserIdMergeConflict("Forced merge of two TN usernames: {$detail}"));
         }
 
         try {

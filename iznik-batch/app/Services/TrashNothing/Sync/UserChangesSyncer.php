@@ -411,17 +411,10 @@ class UserChangesSyncer
         return $user;
     }
 
-    /**
-     * Whether the account holds addresses for two TN usernames. That is two members sharing it, or
-     * one member who renamed, and the account alone cannot say which.
-     */
+    /** Whether the account holds addresses for two TN usernames: see User::tnUsernames(). */
     private function holdsTwoUsernames(User $user): bool
     {
-        return $user->emails()->pluck('email')
-            ->map(fn ($email) => User::tnUsernameFromEmail((string) $email))
-            ->filter()
-            ->unique()
-            ->count() > 1;
+        return count($user->tnUsernames()) > 1;
     }
 
     /**

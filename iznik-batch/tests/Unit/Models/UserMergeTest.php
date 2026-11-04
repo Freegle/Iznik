@@ -403,6 +403,54 @@ class UserMergeTest extends TestCase
             str_contains($e->getMessage(), 'tnuserid 99020204 will be lost'));
     }
 
+    private function giveTnAddress(User $user, string $localPart): void
+    {
+        DB::table('users_emails')->insert([
+            'userid'    => $user->id,
+            'email'     => $localPart . '-' . uniqid() . '-g1@user.trashnothing.com',
+            'preferred' => 0,
+        ]);
+    }
+
+    /** Two usernames may be two members, as two TN ids are, and a merge cannot be undone. */
+    public function test_merge_refuses_two_tn_usernames_and_reports_it(): void
+    {
+        Exceptions::fake();
+
+        $user1 = $this->createTestUser(['tnuserid' => 99020205]);
+        $user2 = $this->createTestUser();
+        $this->giveTnAddress($user1, 'one');
+        $this->giveTnAddress($user2, 'two');
+
+        $this->assertFalse(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $this->assertNotNull(User::find($user1->id));
+        $this->assertNotNull(User::find($user2->id));
+
+        Exceptions::assertReportedCount(1);
+        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) =>
+            str_contains($e->getMessage(), 'Refused merge')
+            && str_contains($e->getMessage(), 'two TN usernames'));
+    }
+
+    public function test_forced_merge_of_two_tn_usernames_proceeds_and_reports_it(): void
+    {
+        Exceptions::fake();
+
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $this->giveTnAddress($user1, 'one');
+        $this->giveTnAddress($user2, 'two');
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON, true));
+
+        $this->assertNull(User::find($user2->id));
+
+        Exceptions::assertReportedCount(1);
+        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) =>
+            str_contains($e->getMessage(), 'Forced merge'));
+    }
+
     public function test_merge_with_one_tn_user_id_is_not_reported(): void
     {
         Exceptions::fake();
