@@ -300,6 +300,41 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
         $this->assertSame(['tn-recent-old'], $recorder->ingested);
     }
 
+    /**
+     * Ingestion skips a post whose username belongs to another TN member's account, and
+     * notes why. The catch-up runs every ten minutes over overlapping windows, so it meets
+     * the post again: that is a person's job, reported each time, never a failed backfill.
+     */
+    public function test_a_post_ingestion_skipped_for_a_noted_reason_is_reported_not_a_repeat(): void
+    {
+        $this->archivePost('tn-clash-1', CarbonImmutable::now('UTC')->subHours(9)->toIso8601String());
+
+        $syncer = $this->getMockBuilder(PostSyncer::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['lookupPostById', 'ingestFetchedPost'])
+            ->getMock();
+        $syncer->method('lookupPostById')->willReturnCallback(fn (string $postId) => [
+            'status'   => 'found',
+            'date'     => CarbonImmutable::now('UTC')->subHours(9)->format('Y-m-d\TH:i:s\Z'),
+            'outcome'  => null,
+            'group_id' => null,
+            'lat'      => self::LAT,
+            'lng'      => self::LNG,
+            'post'     => ['post_id' => $postId],
+        ]);
+        $syncer->method('ingestFetchedPost')->willReturnCallback(function (mixed $post) {
+            DeliberateSkips::record($post['post_id'], GroupPostIngestionService::REASON_TN_USERNAME_CLASH);
+
+            return true;
+        });
+        $this->bindSyncerInstance($syncer);
+
+        $this->runForPostsArchived(9)->assertExitCode(0);
+        $this->runForPostsArchived(9)
+            ->expectsOutputToContain('needs a person')
+            ->assertExitCode(0);
+    }
+
     public function test_max_raises_the_cap_for_one_run(): void
     {
         config(['freegle.trashnothing.verify_coverage.auto_ingest_max' => 2]);

@@ -717,7 +717,9 @@ given its outcome by `ClosedPostOutcome`, so it still counts in the stats. That 
 repeats the rules of `handleOutcome` in `iznik-server-go/message/message.go`, because batch
 cannot call the Go API: Taken or Received is recorded and the post keeps its place, and a
 post withdrawn while still Pending is deleted. The hourly run stays report-only and still
-reports anything that was missed.
+reports anything that was missed. A post ingestion skips for a reason it notes and a person has to
+sort out, such as a TN username another member's account holds, is tried again on each run and
+reported as "skipped by ingestion, needs a person", never as a failed backfill.
 
 The out-of-boundary verdict comes from the **live** post's coordinates, which are
 the ones `PostSyncer::processPost()` would have placed it from. The archived
