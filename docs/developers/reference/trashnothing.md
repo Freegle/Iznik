@@ -698,6 +698,27 @@ posts outside every group boundary, deleted posts, resolved outcomes
 window, from genuine gaps. Distinguishing them needs a single-post
 `GET /posts/{id}` per absence — `PostSyncer::lookupPostById()`.
 
+**Posts TN holds until Freegle approves them never reach `/posts/all`.** TN emails a post
+to the Freegle community the poster chose, but for some posts (a new member's, or one
+under moderation) it does not publish it until a Freegle moderator has approved it. TN
+learns of the approval from `/api/changes` (`ApprovedOrReposted`), then publishes the post,
+dated at the moment Freegle approved it. `/posts/all` lists only published posts and has no
+parameter for the others, so the API path never sees these, and since the email path
+stopped routing TN posts nothing else brings them in: no approval, so no publication. They
+are the "genuine misses" the hourly check reports, roughly one addressed post in four or
+five. `GET /posts/{id}` returns them as normal.
+
+So the same command runs every ten minutes over the last 70, stopping five minutes short of
+now (`--recent=70 --auto-ingest --ingest-closed --max=100`, `routes/console.php`). It
+ingests each missing post by id, and Freegle's own moderation then takes over as it did
+when the post came by email. A post the poster had already closed on TN (`satisfied` or
+`withdrawn`, which the check otherwise counts as an expected absence) is ingested too and
+given its outcome by `ClosedPostOutcome`, so it still counts in the stats. That class
+repeats the rules of `handleOutcome` in `iznik-server-go/message/message.go`, because batch
+cannot call the Go API: Taken or Received is recorded and the post keeps its place, and a
+post withdrawn while still Pending is deleted. The hourly run stays report-only and still
+reports anything that was missed.
+
 The out-of-boundary verdict comes from the **live** post's coordinates, which are
 the ones `PostSyncer::processPost()` would have placed it from. The archived
 email's `X-Trash-Nothing-Post-Coordinates` header is only allowed to skip the

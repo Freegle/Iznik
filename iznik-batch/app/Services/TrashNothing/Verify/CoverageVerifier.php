@@ -66,6 +66,12 @@ class CoverageVerifier
 
     public const RESOLVED = 'resolved';
 
+    /** Resolved posts that can be ingested with their outcome: see ClosedPostOutcome. */
+    public const CLOSED = 'closed';
+
+    /** TN outcomes that ClosedPostOutcome can give a Freegle message. */
+    public const CLOSED_OUTCOMES = ['satisfied', 'withdrawn'];
+
     public const BUMPED = 'bumped';
 
     public const LOOKUP_ERROR = 'lookup_error';
@@ -108,6 +114,7 @@ class CoverageVerifier
             self::LOOKUP_ERROR => [],
         ];
         $genuine    = [];
+        $closed     = [];
         $deliberate = [];
         $apiLookups = 0;
 
@@ -151,6 +158,26 @@ class CoverageVerifier
 
             if ($bucket !== self::GENUINE) {
                 $buckets[$bucket][] = $postId;
+
+                // Closed on TN before Freegle had it - typically a post TN held until a
+                // Freegle community approved it, which never happened because only the
+                // API path ingests now. Kept so the command can ingest it with its
+                // outcome when asked to (--ingest-closed); still counted as resolved.
+                if ($bucket === self::RESOLVED
+                    && in_array($result['outcome'], self::CLOSED_OUTCOMES, true)
+                    && $this->isPlaceable($result['lat'], $result['lng'])) {
+                    $closed[$postId] = [
+                        'post_id'     => $postId,
+                        'subject'     => $entry['subject'],
+                        'timestamp'   => $entry['timestamp'],
+                        'date'        => $result['date'],
+                        'envelope_to' => $entry['envelope_to'],
+                        'post'        => $result['post'],
+                        'outcome'     => $result['outcome'],
+                        'skip_reason' => $skipReason,
+                    ];
+                }
+
                 continue;
             }
 
@@ -173,6 +200,7 @@ class CoverageVerifier
             'counts'              => $counts,
             self::DELIBERATE_SKIP => $deliberate,
             self::GENUINE         => $genuine,
+            self::CLOSED          => $closed,
             'api_lookups'         => $apiLookups,
         ]);
     }

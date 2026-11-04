@@ -5,6 +5,7 @@ namespace App\Console\Commands\TrashNothing;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\IncomingArchiveReader;
 use App\Services\Mail\Incoming\MailParserService;
+use App\Services\TrashNothing\Ingestion\ClosedPostOutcome;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use App\Services\TrashNothing\Verify\ArchiveInventoryService;
 use App\Services\TrashNothing\Verify\CoverageVerifier;
@@ -12,6 +13,7 @@ use App\Services\TrashNothing\Verify\TnEmailRoutingGate;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
@@ -39,10 +41,13 @@ class TNVerifyEmailCoverageCommand extends Command
     protected $signature = 'tn:verify-email-coverage
                             {--from= : Explicit window start (ISO-8601 UTC). Overrides --lag-hours/--window-hours}
                             {--to= : Explicit window end (ISO-8601 UTC)}
+                            {--recent= : Check the last this many minutes, up to five minutes ago. Overrides --lag-hours/--window-hours}
                             {--lag-hours= : How far behind real time to run (default: config)}
                             {--window-hours= : Window length (default: config)}
                             {--auto-ingest : Backfill genuine misses regardless of the config default}
                             {--report-only : Never backfill, whatever the config says}
+                            {--ingest-closed : Also backfill misses already closed on TN, with their outcome}
+                            {--max= : Most posts one run may backfill (default: config auto_ingest_max)}
                             {--archive-dir= : Read a different archive directory (testing)}
                             {--force : Run even though the email path is still routing TN posts}';
 
@@ -59,6 +64,9 @@ class TNVerifyEmailCoverageCommand extends Command
     private const BACKFILL_CACHE_PREFIX = 'tn-verify:backfilled:';
 
     private const BACKFILL_CACHE_TTL_DAYS = 7;
+
+    // How far short of now --recent stops.
+    private const RECENT_SETTLE_MINUTES = 5;
 
     public function handle(
         ArchiveInventoryService $inventoryService,
@@ -104,7 +112,7 @@ class TNVerifyEmailCoverageCommand extends Command
         $syncer = $this->buildSyncer($loki);
         $result = $verifier->verify($posts, $syncer, $from, $to);
 
-        $backfill = $this->backfill($result[CoverageVerifier::GENUINE], $syncer);
+        $backfill = $this->backfill($result[CoverageVerifier::GENUINE], $syncer, $result[CoverageVerifier::CLOSED] ?? []);
 
         $this->printReport($result, $backfill);
         $this->logRun($loki, $from, $to, $stats, $result, $backfill);
@@ -158,6 +166,14 @@ class TNVerifyEmailCoverageCommand extends Command
             return [$from, $from->addHours((int) ($this->option('window-hours') ?: $config['window_hours']))];
         }
 
+        // The recent window stops short of now: the sync takes a published post a minute
+        // or two to see, and a post it is about to ingest is not a miss.
+        if ($this->option('recent')) {
+            $to = CarbonImmutable::now('UTC')->subMinutes(self::RECENT_SETTLE_MINUTES);
+
+            return [$to->subMinutes((int) $this->option('recent')), $to];
+        }
+
         $lagHours    = (int) ($this->option('lag-hours') ?: $config['lag_hours']);
         $windowHours = (int) ($this->option('window-hours') ?: $config['window_hours']);
 
@@ -209,12 +225,18 @@ class TNVerifyEmailCoverageCommand extends Command
      * Apply the section S.5 rails and, if anything survives them, ingest.
      *
      * @param  array<string, array{post_id: string, subject: string|null, timestamp: string, date: string|null, envelope_to: string, post: mixed}>  $genuine
-     * @return array{enabled: bool, ingested: string[], failed: string[], deferred: string[], skipped_stale: string[], repeats: string[], capped: bool, cap: int}
+     * With --ingest-closed, posts already closed on TN are backfilled as well and given
+     * their outcome (ClosedPostOutcome). Those are posts TN held until a Freegle community
+     * approved them, closed before Freegle ever had them; ingesting them keeps them in the
+     * stats. They count towards the cap like any other.
+     *
+     * @param  array<string, array{post_id: string, subject: string|null, timestamp: string, date: string|null, envelope_to: string, post: mixed, outcome: string}>  $closed
+     * @return array{enabled: bool, ingested: string[], failed: string[], deferred: string[], skipped_stale: string[], repeats: string[], capped: bool, cap: int, closed: array<string, string>}
      */
-    private function backfill(array $genuine, PostSyncer $syncer): array
+    private function backfill(array $genuine, PostSyncer $syncer, array $closed = []): array
     {
         $config = config('freegle.trashnothing.verify_coverage');
-        $cap    = (int) $config['auto_ingest_max'];
+        $cap    = (int) ($this->option('max') ?: $config['auto_ingest_max']);
 
         $out = [
             'enabled'       => $this->autoIngestEnabled(),
@@ -225,6 +247,7 @@ class TNVerifyEmailCoverageCommand extends Command
             'repeats'       => [],
             'capped'        => false,
             'cap'           => $cap,
+            'closed'        => [],
         ];
 
         // Rail 6 first, and unconditionally — a post we already backfilled that
@@ -237,6 +260,16 @@ class TNVerifyEmailCoverageCommand extends Command
                 continue;
             }
             $candidates[$postId] = $entry;
+        }
+
+        // A closed post backfilled before is covered by its message next time, even one
+        // deleted as withdrawn, so one still listed here was skipped by ingestion: leave it.
+        if ($this->option('ingest-closed')) {
+            foreach ($closed as $postId => $entry) {
+                if (! Cache::has(self::BACKFILL_CACHE_PREFIX . $postId)) {
+                    $candidates[$postId] = $entry;
+                }
+            }
         }
 
         if (! $out['enabled'] || $candidates === []) {
@@ -277,6 +310,13 @@ class TNVerifyEmailCoverageCommand extends Command
 
                 Cache::put(self::BACKFILL_CACHE_PREFIX . $postId, true, now()->addDays(self::BACKFILL_CACHE_TTL_DAYS));
                 $out['ingested'][] = $postId;
+
+                if (isset($entry['outcome'])) {
+                    $msgId = (int) DB::table('messages')->where('tnpostid', $postId)->orderBy('id')->value('id');
+                    $out['closed'][$postId] = $msgId
+                        ? app(ClosedPostOutcome::class)->apply($msgId, $entry['outcome'])
+                        : 'not-ingested';
+                }
             } catch (\Throwable $e) {
                 $this->error("Backfill failed for post {$postId}: " . $e->getMessage());
                 $out['failed'][] = $postId;
@@ -348,6 +388,11 @@ class TNVerifyEmailCoverageCommand extends Command
         }
 
         $this->line(sprintf('  ingested            %d', count($backfill['ingested'])));
+        if ($backfill['closed'] !== []) {
+            $this->line(sprintf('  of which closed     %d (%s)', count($backfill['closed']), implode(', ', array_map(
+                fn ($id, $done) => "{$id}: {$done}", array_keys($backfill['closed']), $backfill['closed']
+            ))));
+        }
         $this->line(sprintf('  failed              %d', count($backfill['failed'])));
         $this->line(sprintf('  deferred (TN user lookup failed, tried again next run)  %d', count($backfill['deferred'])));
         $this->line(sprintf('  skipped (too old)   %d', count($backfill['skipped_stale'])));
@@ -450,6 +495,7 @@ class TNVerifyEmailCoverageCommand extends Command
             $context = array_merge($context, [
                 'backfill_enabled' => $backfill['enabled'],
                 'backfilled'       => count($backfill['ingested']),
+                'backfilled_closed' => count($backfill['closed'] ?? []),
                 'backfill_failed'  => count($backfill['failed']),
                 'backfill_deferred' => count($backfill['deferred']),
                 'backfill_stale'   => count($backfill['skipped_stale']),

@@ -99,7 +99,7 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
      *
      * @return object{ingested: string[]}
      */
-    private function bindSyncer(?string $date = null, bool $posterLookupFails = false): object
+    private function bindSyncer(?string $date = null, bool $posterLookupFails = false, ?string $outcome = null): object
     {
         $recorder = new class
         {
@@ -115,7 +115,7 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
         $syncer->method('lookupPostById')->willReturnCallback(fn (string $postId) => [
             'status'   => 'found',
             'date'     => $date ?? CarbonImmutable::now('UTC')->subHours(9)->format('Y-m-d\TH:i:s\Z'),
-            'outcome'  => null,
+            'outcome'  => $outcome,
             'group_id' => null,
             // The verifier places an absentee from the LIVE post, not from the
             // email header, so a source post has to carry coordinates here or
@@ -279,6 +279,57 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
         $this->runForPostsArchived(9)->assertExitCode(1);
 
         $this->assertSame([], $recorder->ingested);
+    }
+
+    /**
+     * The ten-minute catch-up checks the recent past but leaves the last few minutes to
+     * the sync, which ingests a published post a minute or two after its email.
+     */
+    public function test_recent_checks_the_last_minutes_but_not_the_newest(): void
+    {
+        $now = CarbonImmutable::now('UTC');
+        $this->archivePost('tn-recent-old', $now->subMinutes(30)->toIso8601String());
+        $this->archivePost('tn-recent-new', $now->subMinutes(2)->toIso8601String());
+        $recorder = $this->bindSyncer(date: $now->subMinutes(30)->format('Y-m-d\TH:i:s\Z'));
+
+        $this->artisan('tn:verify-email-coverage', [
+            '--archive-dir' => $this->archiveDir,
+            '--recent'      => 70,
+        ])->assertExitCode(0);
+
+        $this->assertSame(['tn-recent-old'], $recorder->ingested);
+    }
+
+    public function test_max_raises_the_cap_for_one_run(): void
+    {
+        config(['freegle.trashnothing.verify_coverage.auto_ingest_max' => 2]);
+
+        foreach (range(1, 3) as $i) {
+            $this->archivePost('tn-max-' . $i, CarbonImmutable::now('UTC')->subHours(9)->toIso8601String());
+        }
+
+        $recorder = $this->bindSyncer();
+
+        $this->runForPostsArchived(9, ['--max' => 5])->assertExitCode(0);
+
+        $this->assertCount(3, $recorder->ingested);
+    }
+
+    /**
+     * A post TN held until a Freegle community approved it may be closed on TN before
+     * Freegle ever has it. It is only backfilled when asked, so it can be counted with
+     * its outcome; otherwise it stays an expected absence.
+     */
+    public function test_a_post_closed_on_tn_is_backfilled_only_with_ingest_closed(): void
+    {
+        $this->archivePost('tn-closed-1', CarbonImmutable::now('UTC')->subHours(9)->toIso8601String());
+        $recorder = $this->bindSyncer(outcome: 'satisfied');
+
+        $this->runForPostsArchived(9)->assertExitCode(0);
+        $this->assertSame([], $recorder->ingested);
+
+        $this->runForPostsArchived(9, ['--ingest-closed' => true])->assertExitCode(0);
+        $this->assertSame(['tn-closed-1'], $recorder->ingested);
     }
 
     public function test_a_stale_post_is_not_backfilled(): void
