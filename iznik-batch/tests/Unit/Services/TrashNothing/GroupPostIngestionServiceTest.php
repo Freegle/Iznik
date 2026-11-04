@@ -683,6 +683,71 @@ class GroupPostIngestionServiceTest extends TestCase
     }
 
     /**
+     * TN's title ends in the member's own words for where they are, which can be the
+     * whole postcode or a street. The subject gets the bracket every Freegle post
+     * gets instead, built from the postcode the coordinates resolve to.
+     */
+    public function test_subject_bracket_is_rebuilt_from_the_resolved_postcode(): void
+    {
+        // Open sea, so no real postcode in the spatial index out-competes the sentinel.
+        $postPcId = 99000302;
+        $areaId   = 99000303;
+        $this->seedSpatialPoint('postcodes', $postPcId, 56.720, 3.120);
+        try {
+            DB::table('locations')->insert(['id' => $areaId, 'name' => 'Sentinel Bay', 'type' => 'Polygon']);
+            DB::table('locations')->insert([
+                'id' => $postPcId, 'name' => 'ZZ9 9ZX', 'type' => 'Postcode', 'lat' => 56.720, 'lng' => 3.120, 'areaid' => $areaId,
+            ]);
+            $user  = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+            $group = $this->createTestGroup();
+            $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+            $postId = 'tn-bracket-' . uniqid();
+            $post   = $this->makePost([
+                'post_id' => $postId, 'user_id' => $user->tnuserid, 'title' => 'Double bed Mattress (LE2 3HE)',
+                'latitude' => 56.720, 'longitude' => 3.120,
+            ]);
+            $this->makeService(dryRun: false)->ingest($post, $group);
+
+            $message = Message::where('tnpostid', $postId)->first();
+            $this->assertNotNull($message);
+            $this->assertEquals($postPcId, $message->locationid);
+            $this->assertSame('OFFER: Double bed Mattress (Sentinel Bay ZZ9)', $message->subject);
+            $this->assertSame($message->subject, $message->suggestedsubject);
+            $this->assertStringContainsString('Subject: OFFER: Double bed Mattress (Sentinel Bay ZZ9)', $message->message, 'The synthesized mail carries the rebuilt subject too');
+            $this->assertTrue(
+                DB::table('messages_items')->join('items', 'items.id', '=', 'messages_items.itemid')
+                    ->where('msgid', $message->id)->where('items.name', 'double bed mattress')->exists(),
+                'The item is recorded from the subject without the bracket',
+            );
+        } finally {
+            $this->removeSpatial('postcodes', [$postPcId]);
+        }
+    }
+
+    /**
+     * A post that resolves to no location loses TN's bracket rather than keeping
+     * it: the member's own location text is the one thing that must not go out.
+     */
+    public function test_subject_bracket_is_dropped_when_no_location_resolves(): void
+    {
+        $user  = $this->createTnUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $postId = 'tn-nobracket-' . uniqid();
+        $post   = $this->makePost([
+            'post_id' => $postId, 'user_id' => $user->tnuserid, 'title' => 'Shoes and bags (Hilmorton road 101 cv22 5aj)',
+        ]);
+        $this->makeService(dryRun: false)->ingest($post, $group);
+
+        $message = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($message);
+        $this->assertNull($message->locationid);
+        $this->assertSame('OFFER: Shoes and bags', $message->subject);
+    }
+
+    /**
      * TN is the master for a TN member's location and tn:sync keeps lastlocation in
      * step with it. The post's coordinates place the post, not the member.
      */
