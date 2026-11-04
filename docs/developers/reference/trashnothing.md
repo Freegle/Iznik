@@ -412,6 +412,9 @@ cursor for good. So `PostSyncer::sync()` stops at the first one (`stalledAt()`),
 holds the stored date back to the start of the window it stopped in, even when ratings or
 user changes saw later dates. That is the stored date less the 10 second overlap on a normal
 run, so the date it already had; it is a day boundary only when a backlog is being read.
+The posts feed is read from 15 minutes before the stored date, not 10 seconds: a post reaches
+`/posts/all` up to a few minutes after its own date, and the stored date follows the latest date
+any feed saw, so a short overlap left late-arriving posts behind it for good.
 Nothing is lost by re-reading: ingestion skips a post it already has, and ratings and changes
 are idempotent. The same goes for `tn:verify-email-coverage`: a
 backfill whose poster lookup failed is neither remembered as backfilled (it would come back as a
