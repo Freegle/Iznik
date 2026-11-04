@@ -235,6 +235,7 @@ import { computed, ref } from 'vue'
 import { hostedFor } from '~/modtools/composables/useUxSections'
 import { flowTitle } from '~/modtools/composables/useUxFlows'
 import { verdictNextStep } from '~/modtools/composables/useUxVerdict'
+import { useMe } from '~/composables/useMe'
 import { REQUESTED_LABEL } from '~/modtools/composables/useUxExperimentActions'
 import {
   durationWord,
@@ -305,7 +306,11 @@ const overdueText = computed(() =>
 )
 
 // What to do next, and the button or command that closes it, when the verdict has not been closed.
-const nextStep = computed(() => verdictNextStep(props.experiment))
+// That is developer work, so only Admin is told.
+const { admin } = useMe()
+const nextStep = computed(() =>
+  admin.value ? verdictNextStep(props.experiment) : ''
+)
 
 const pending = computed(() => props.actions.pending(props.experiment))
 const tooLong = computed(() => props.actions.pendingTooLong(props.experiment))

@@ -258,7 +258,7 @@
                   'maildeferrals',
                   'uxexperiments',
                 ]
-              : ['uxexperiments']
+              : []
           "
           @mobilehidemenu="mobilehidemenu"
         />
