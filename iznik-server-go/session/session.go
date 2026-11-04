@@ -1589,10 +1589,11 @@ func GetSession(c *fiber.Ctx) error {
 			}
 		}()
 
-		// --- UX experiments with a verdict that nobody has closed (admin/support) ---
-		// The SysAdmin UX tab is open to support as well as admin, so this is counted for both. The
-		// two parts say what is waiting: adopted ones to confirm, ended ones whose code is still in.
-		if userRow.Systemrole == utils.SYSTEMROLE_ADMIN || userRow.Systemrole == utils.SYSTEMROLE_SUPPORT {
+		// --- UX experiments with a verdict that nobody has closed (Admin only) ---
+		// What is waiting is developer work: adopted ones to confirm and take the switch out of,
+		// ended ones whose variant code is still in. Support can open the UX tab but has nothing
+		// to do here, so the count is not theirs.
+		if userRow.Systemrole == utils.SYSTEMROLE_ADMIN {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()

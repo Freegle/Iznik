@@ -4,6 +4,12 @@ import { setActivePinia, createPinia } from 'pinia'
 import ModSysAdminUxExperimentsBadge from '~/modtools/components/ModSysAdminUxExperimentsBadge.vue'
 import { useUxExperimentsStore } from '~/modtools/stores/uxExperiments'
 
+// Admin unless a test says otherwise: the nudge to clean up is developer work, so only Admin sees it.
+const me = vi.hoisted(() => ({ admin: true }))
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({ admin: { value: me.admin } }),
+}))
+
 const list = (runningCount, flows = []) => ({
   running_count: runningCount,
   max_running: 5,
@@ -15,6 +21,7 @@ describe('ModSysAdminUxExperimentsBadge', () => {
 
   beforeEach(() => {
     setActivePinia(createPinia())
+    me.admin = true
     store = useUxExperimentsStore()
     store.loadIfStale = vi.fn().mockResolvedValue(undefined)
   })
@@ -36,6 +43,21 @@ describe('ModSysAdminUxExperimentsBadge', () => {
   it('says nothing when none is running', () => {
     store.experiments.data = list(0)
     expect(make().text()).toBe('')
+  })
+
+  it('shows Support only the running count, as the work waiting is a developer one', () => {
+    me.admin = false
+    store.experiments.data = list(2, [
+      {
+        flow: 'give',
+        running: [{ id: 1, status: 'running' }],
+        history: [{ id: 2, status: 'adopted' }],
+      },
+    ])
+    const w = make()
+    expect(w.text()).toBe('2 running')
+    expect(w.find('.badge').classes()).not.toContain('bg-danger')
+    expect(w.find('.badge').attributes('title')).toBeUndefined()
   })
 
   it('shows a red number of experiments with a verdict, which wins over the running count', () => {
