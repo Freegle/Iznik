@@ -313,6 +313,16 @@ tick took its lock, left it held, and failed on its next lock in the same run in
 `mysql_write` (`config/cache.php`), which has the write host only. Anything else that writes a row and
 reads it straight back to decide what to do needs the write PDO too.
 
+## A promise that names nobody is mostly a Trash Nothing promise
+
+A promise with no promisee is stored against the poster (`messages_promises.userid = fromuser`, and
+`userid: 0` in the `message_promised` task). It reads as "promised to someone outside Freegle", and
+Freegle's "Someone else" choice does make it, but in the week after 29 October 2026 it was 1,495 Trash
+Nothing promises to 46 of those. Trash Nothing never says who it promised to, so the member it went to is
+usually one of the repliers. The "promised to someone else" notice assumed otherwise and told that member
+the item had gone, in the giver's name (Discourse 10305). Anything that tells repliers about a promise
+must decide what a Trash Nothing promise naming nobody means; `handleMessagePromised` sends nothing.
+
 ## See also
 
 - `.claude/rules/go-api-traps.md` - the same class of silent wrong answer on the Go side.
