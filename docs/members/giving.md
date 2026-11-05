@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-02
+last_reviewed: 2026-11-05
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
@@ -129,6 +129,8 @@ When a post becomes promised, everyone else who replied to it gets one message i
 with you: "This has been promised to someone else for now. If they do not collect it, I will let you know." followed by
 a line saying it is an automated message, as other automated chat messages carry. The person promised to is not sent it, nobody is sent it twice for the same post,
 and undoing the promise sends nothing. It is sent for Offers only, and only once every item is promised.
+It is not sent when a Trash Nothing member promises an item on Trash Nothing. Trash Nothing does not
+say who the item went to, so that person would be told it went to someone else.
 
 ## Reminders and auto-reposting
 
