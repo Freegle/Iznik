@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-03
+last_reviewed: 2026-11-04
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxPromptService.php
