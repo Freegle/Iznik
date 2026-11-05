@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-04
+last_reviewed: 2026-11-05
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -413,7 +413,7 @@ any poster. When no user can be had the post is skipped with a `routing_reason`:
 | `Post from unknown user` | TN has no such user (404), or no usable username for them. TN answered, so this is final, and the answer is remembered for an hour |
 | `tn-user-lookup-failed` | TN could not be asked (network error, timeout, 408, 429, 5xx, Cloudflare challenge). Transient: the sync stops here and the next run asks again, below. Written to Loki only if the post is finally skipped, as `tn-user-lookup-gave-up` |
 | `tn-user-lookup-refused` | TN answered with a client error other than 404 (400, 410, 422, 451 and the like). It is about this poster and a retry gets it again, so it is final like a 404, and remembered for an hour like one |
-| `tn-user-lookup-gave-up` | The lookup for this post failed 30 runs in a row. The post is skipped so that one poster cannot hold up every post behind it |
+| `tn-user-lookup-gave-up` | TN could not be asked about this post's poster for 30 minutes. The post is skipped so that one poster cannot hold up every post behind it |
 | `tn-user-lookup-key-rejected` | TN rejected the public API key (401 or 403 without a Cloudflare challenge). Every lookup fails until the key is fixed, so the sync does not stop: the post is skipped as a miss and the posters Freegle already knows keep coming in. Sentry hears about the key at most once an hour |
 | `tn-username-clash` | An account with a different `tnuserid` holds the address: usernames are not unique, so these are two people |
 | `tn-address-held-by-deleted-user` | A deleted account still holds the bare address, which is unique and not the provisioner's to take back |
@@ -447,15 +447,17 @@ behind. The post is skipped as `tn-user-lookup-key-rejected`, a miss that
 key works or the post is too old. In that backfill a rejected key is "try later", like a failed
 lookup.
 
-The wait is bounded, because `tn:sync` runs every minute and, with API ingestion on, the email
-path no longer routes TN posts, so one poster that always fails would otherwise stop every post
-behind it for ever. `TnUserProvisioner` counts the failed lookups of each TN post id in the cache
-(24 hours, from the first failure; a lost race with no winner counts too). At 5 Sentry hears of
-the post, so a wedge is seen early. At 30, about half an hour, the post is skipped as
-`tn-user-lookup-gave-up`, Sentry hears again, and the window moves on. An answer, whatever it is,
-is not a failure and does not count, so a 404 poster ahead of a failing one cannot hide it. A
-dry run counts nothing. A given-up post is still looked up if it is read again later, and
-ingested if TN answers by then. A rejected key is not counted.
+The wait is bounded, because with API ingestion on the email path no longer routes TN posts, so
+one poster that always fails would otherwise stop every post behind it for ever.
+`TnUserProvisioner` times the failed lookups of each TN post id from the first one, in the cache
+(kept 24 hours; a lost race with no winner counts too). After 5 minutes
+(`LOOKUP_WARN_AFTER_MINUTES`) Sentry hears of the post, so a wedge is seen early. After 30
+(`LOOKUP_GIVE_UP_AFTER_MINUTES`) the post is skipped as `tn-user-lookup-gave-up`, Sentry hears
+again, and the window moves on. The limits are minutes, not runs, so they do not change with how
+often `tn:sync` runs. An answer, whatever it is, is not a failure and does not start the clock,
+so a 404 poster ahead of a failing one cannot hide it. A dry run times nothing. A given-up post
+is still looked up if it is read again later, and ingested if TN answers by then. A rejected key
+is not timed.
 
 A post held for a retry writes no routed Loki entry. The stream carries one entry per post, so
 the entry is written when the post is ingested or skipped, whichever reason it ends with.
@@ -711,20 +713,22 @@ posts outside every group boundary, deleted posts, resolved outcomes
 window, from genuine gaps. Distinguishing them needs a single-post
 `GET /posts/{id}` per absence — `PostSyncer::lookupPostById()`.
 
-**Posts TN holds until Freegle approves them never reach `/posts/all`.** TN emails a post
-to the Freegle community the poster chose, but for some posts (a new member's, or one
-under moderation) it does not publish it until a Freegle moderator has approved it. TN
-learns of the approval from `/api/changes` (`ApprovedOrReposted`), then publishes the post,
-dated at the moment Freegle approved it. `/posts/all` lists only published posts and has no
-parameter for the others, so the API path never sees these, and since the email path
-stopped routing TN posts nothing else brings them in: no approval, so no publication. They
-are the "genuine misses" the hourly check reports, roughly one addressed post in four or
-five. `GET /posts/{id}` returns them as normal.
+**`/posts/all` lists the posts TN holds until Freegle approves them.** TN emails a post to
+the Freegle community the poster chose, but for some posts (a new member's, or one under
+moderation) it does not publish it until a Freegle moderator has approved it. TN learns of
+the approval from `/api/changes` (`ApprovedOrReposted`), then publishes the post. The feed
+lists a held post at the date it was posted, so `tn:sync` ingests it like any other and
+Freegle's own moderation takes over, as it did when the post came by email. Once the post is
+approved, TN publishes it with a new date, and the sync meets it again and skips it as a
+`duplicate`. Until 5 November 2026 the feed left held posts out, so coverage reports from
+before then count them as genuine misses, roughly one addressed post in four or five.
 
-So the same command runs every ten minutes over the last 70, stopping five minutes short of
-now (`--recent=70 --auto-ingest --ingest-closed --max=100`, `routes/console.php`). It
-ingests each missing post by id, and Freegle's own moderation then takes over as it did
-when the post came by email. A post the poster had already closed on TN (`satisfied` or
+The same command also runs every ten minutes over the last 70, stopping five minutes short
+of now (`--recent=70 --auto-ingest --ingest-closed --max=100`, `routes/console.php`). It is
+the second chance for a post the sync skipped as "try later" (TN could not be asked about
+the poster, or rejected the key) and for anything else the feed missed, so a normal run
+finds nothing. It ingests each missing post by id, and Freegle's own moderation then takes
+over as it did when the post came by email. A post the poster had already closed on TN (`satisfied` or
 `withdrawn`, which the check otherwise counts as an expected absence) is ingested too and
 given its outcome by `ClosedPostOutcome`, so it still counts in the stats. That class
 repeats the rules of `handleOutcome` in `iznik-server-go/message/message.go`, because batch
@@ -827,9 +831,13 @@ TN sends photo links as URLs like `https://trashnothing.com/pics/{id}`. Freegle:
 3. Stores photos in Freegle's image system
 4. Replaces TN URLs with local attachments
 
-### API Synchronization (Daily Cron)
+### API Synchronization (`tn:sync`, every ten seconds)
 
-The `tn_sync.php` cron job runs daily to synchronize:
+`tn:sync` runs every ten seconds (`routes/console.php`), one run at a time, so a post reaches
+Freegle seconds after it is posted on TN. A run takes three to five seconds, mostly its three
+requests, which `TrashNothingRateLimiter` spaces 750ms apart; that is about a sixth of the two
+requests a second TN allows a key. TN can also call the "kick" API for an immediate run. Each
+run synchronizes:
 
 #### Ratings API
 ```
@@ -876,10 +884,10 @@ is down each run re-reads the posts since the old date and logs the ones already
 stored.
 
 The hold is bounded, because a feed that never recovers would otherwise make every run read a
-longer window for ever, with nothing to say so. The runs held are counted in the cache
-(`FEED_HOLD_COUNT_KEY`, reset by a run that reads every feed). Sentry hears when the hold has
-lasted 15 runs (`FEED_HOLD_ALERT_RUNS`). After 60 runs, about an hour (`FEED_HOLD_MAX_RUNS`), the
-hold is given up: the date moves on to what the other feeds saw, or to the end of the window
+longer window for ever, with nothing to say so. The hold is timed from its first run, in the
+cache (`FEED_HOLD_SINCE_KEY`, cleared by a run that reads every feed). Sentry hears when it has
+lasted 15 minutes (`FEED_HOLD_ALERT_MINUTES`). After an hour (`FEED_HOLD_MAX_MINUTES`) the hold is
+given up: the date moves on to what the other feeds saw, or to the end of the window
 when they saw nothing, Sentry hears again, and what the failed feed held back in that time is
 lost. A post sync that has stalled still holds the date, as before.
 

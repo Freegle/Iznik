@@ -43,17 +43,19 @@ class TNSyncCommand extends Command
     private const FEED_RATINGS = 'ratings';
     private const FEED_USER_CHANGES = 'user changes';
 
-    // A feed that cannot be read holds the stored date, and tn:sync runs every minute, so
-    // these are minutes. Sentry hears when the hold has lasted FEED_HOLD_ALERT_RUNS runs, and
-    // the hold is given up after FEED_HOLD_MAX_RUNS: the date moves on and what the feed held
-    // back is lost, rather than every run reading a longer window for ever.
-    public const FEED_HOLD_ALERT_RUNS = 15;
-    public const FEED_HOLD_MAX_RUNS = 60;
+    // A feed that cannot be read holds the stored date. Sentry hears once the hold has lasted
+    // FEED_HOLD_ALERT_MINUTES, and the hold is given up after FEED_HOLD_MAX_MINUTES: the date
+    // moves on and what the feed held back is lost, rather than every run reading a longer
+    // window for ever. Timed from the first held run, not counted in runs, so the limits do not
+    // change with how often tn:sync runs.
+    public const FEED_HOLD_ALERT_MINUTES = 15;
+    public const FEED_HOLD_MAX_MINUTES = 60;
 
-    // How many runs in a row have been held. It lasts longer than the hold does, so a hold
-    // that is interrupted by a few good runs is not mistaken for a fresh one.
-    private const FEED_HOLD_COUNT_KEY = 'tn-sync:feed-hold-runs';
-    private const FEED_HOLD_COUNT_TTL_HOURS = 24;
+    // When the current hold began, and whether Sentry has been told of it. A run that reads
+    // every feed ends the hold and clears both.
+    private const FEED_HOLD_SINCE_KEY = 'tn-sync:feed-hold-since';
+    private const FEED_HOLD_ALERTED_KEY = 'tn-sync:feed-hold-alerted';
+    private const FEED_HOLD_TTL_HOURS = 24;
 
     // Backward overlap applied to the stored sync date when building `date_min`
     // for every TN API request. Handles data written to the current second when
@@ -187,7 +189,7 @@ class TNSyncCommand extends Command
                 // has changes this run never saw, and the other feeds' dates say nothing
                 // about where they are, so the stored date stays and the next run reads the
                 // window again. What this run did apply is idempotent. That is only for
-                // FEED_HOLD_MAX_RUNS runs: a feed that stays down is given up on, and the
+                // FEED_HOLD_MAX_MINUTES: a feed that stays down is given up on, and the
                 // date moves on to what the other feeds saw, or to the end of this window
                 // when they saw nothing (unless the post sync stalled, which holds it).
                 if ($failedFeeds !== [] && !$this->holdStoredDate($failedFeeds)) {
@@ -209,7 +211,7 @@ class TNSyncCommand extends Command
                 }
 
                 if ($failedFeeds === []) {
-                    Cache::forget(self::FEED_HOLD_COUNT_KEY);
+                    $this->endFeedHold();
                 }
 
                 if ($ratingsProcessed === 0 && $changesProcessed === 0 && $postsProcessed === 0) {
@@ -309,8 +311,8 @@ class TNSyncCommand extends Command
 
     /**
      * A feed could not be read, so the stored date is held for the next run to read the window
-     * again. The runs are counted in the cache: Sentry hears when the hold has lasted
-     * FEED_HOLD_ALERT_RUNS, and once more when it is given up after FEED_HOLD_MAX_RUNS.
+     * again. The hold is timed from its first run, in the cache: Sentry hears once it has lasted
+     * FEED_HOLD_ALERT_MINUTES, and once more when it is given up after FEED_HOLD_MAX_MINUTES.
      *
      * @param  string[]  $failedFeeds
      * @return bool  True to keep holding the date, false when the hold is given up and the date
@@ -318,13 +320,16 @@ class TNSyncCommand extends Command
      */
     private function holdStoredDate(array $failedFeeds): bool
     {
-        $runs  = (int) Cache::get(self::FEED_HOLD_COUNT_KEY, 0) + 1;
-        $feeds = implode(' and ', $failedFeeds);
+        $now = now()->getTimestamp();
+        $ttl = now()->addHours(self::FEED_HOLD_TTL_HOURS);
+        Cache::add(self::FEED_HOLD_SINCE_KEY, $now, $ttl);
+        $minutes = intdiv($now - (int) Cache::get(self::FEED_HOLD_SINCE_KEY, $now), 60);
+        $feeds   = implode(' and ', $failedFeeds);
 
-        if ($runs > self::FEED_HOLD_MAX_RUNS) {
-            Cache::forget(self::FEED_HOLD_COUNT_KEY);
+        if ($minutes >= self::FEED_HOLD_MAX_MINUTES) {
+            $this->endFeedHold();
             $this->report(
-                "TN sync gave up on the {$feeds} feed after " . self::FEED_HOLD_MAX_RUNS . ' runs in which TrashNothing would not serve it:'
+                "TN sync gave up on the {$feeds} feed after " . self::FEED_HOLD_MAX_MINUTES . ' minutes in which TrashNothing would not serve it:'
                 . ' the stored date moved on, and what the feed held back in that time is lost',
                 \Sentry\Severity::error()
             );
@@ -332,18 +337,22 @@ class TNSyncCommand extends Command
             return false;
         }
 
-        Cache::put(self::FEED_HOLD_COUNT_KEY, $runs, now()->addHours(self::FEED_HOLD_COUNT_TTL_HOURS));
-
-        if ($runs === self::FEED_HOLD_ALERT_RUNS) {
+        if ($minutes >= self::FEED_HOLD_ALERT_MINUTES && Cache::add(self::FEED_HOLD_ALERTED_KEY, true, $ttl)) {
             $this->report(
                 "TN sync cannot read the {$feeds} feed from TrashNothing: the stored date has been held for "
-                . self::FEED_HOLD_ALERT_RUNS . ' runs and each run reads a longer window. It moves on after '
-                . self::FEED_HOLD_MAX_RUNS . ' runs, and what the feed held back is then lost',
+                . self::FEED_HOLD_ALERT_MINUTES . ' minutes and each run reads a longer window. It moves on after '
+                . self::FEED_HOLD_MAX_MINUTES . ' minutes, and what the feed held back is then lost',
                 \Sentry\Severity::warning()
             );
         }
 
         return true;
+    }
+
+    private function endFeedHold(): void
+    {
+        Cache::forget(self::FEED_HOLD_SINCE_KEY);
+        Cache::forget(self::FEED_HOLD_ALERTED_KEY);
     }
 
     private function report(string $message, \Sentry\Severity $severity): void
@@ -507,7 +516,7 @@ class TNSyncCommand extends Command
      * rather than adding one, since that adds no new id for the per-tick check to see.
      * It happens on one ordinary tick rather than on a schedule of its own: a separate
      * scheduled entry would be a different command string, so it would not share the
-     * per-minute run's overlap mutex and the two could run at once.
+     * scheduled run's overlap mutex and the two could run at once.
      */
     private const DUP_FULL_SCAN_HOURS = 24;
 
@@ -531,10 +540,10 @@ class TNSyncCommand extends Command
      * users.tnuserid is unique, so no two accounts can hold the same one. Each group is
      * logged with why it was not merged, and `tn:sync --report-duplicates` lists them all.
      *
-     * The check ran on every tick, and a tick is every minute. Each run streamed all ~400,000
-     * Trash Nothing addresses out of users_emails and grouped them in PHP, about five
-     * seconds of database time and twenty gigabytes a day off the wire, to find a number
-     * of duplicates measured at roughly zero a day.
+     * The check runs on every tick, and a tick is every ten seconds. Streaming all ~400,000
+     * Trash Nothing addresses out of users_emails and grouping them in PHP costs about five
+     * seconds of database time each time, to find a number of duplicates measured at roughly
+     * zero a day, so a tick does not do that.
      *
      * A duplicate can only come into existence when a users_emails row is INSERTED, so
      * the per-tick check now looks only at rows added since the last one, and probes for
