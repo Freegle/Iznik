@@ -813,9 +813,15 @@ Schedule::command('chats:process-spam')
 // (TNSyncCommand::FEED_HOLD_*_MINUTES, TnUserProvisioner::LOOKUP_*_MINUTES), so they do not
 // change with this. TN can also call the "kick" API for an immediate run, for example after
 // sending a chat message.
+//
+// No withoutOverlapping() here. Under FlockEventMutex the scheduler's overlap lock is held by
+// the schedule:run process, which lives for the whole minute when a task repeats, and
+// schedule:finish runs in another process and cannot release it: the repeats would all be
+// skipped and tn:sync would run once a minute. The command's own lock (PreventsOverlapping, a
+// flock held by the tn:sync process) keeps runs one at a time instead: a run that starts while
+// another is going exits at once.
 Schedule::command('tn:sync')
     ->everyTenSeconds()
-    ->withoutOverlapping(15)
     ->runInBackground();
 
 // Check that TN posts which arrived by email were also ingested via the API,

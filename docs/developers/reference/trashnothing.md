@@ -833,8 +833,11 @@ TN sends photo links as URLs like `https://trashnothing.com/pics/{id}`. Freegle:
 
 ### API Synchronization (`tn:sync`, every ten seconds)
 
-`tn:sync` runs every ten seconds (`routes/console.php`), one run at a time, so a post reaches
-Freegle seconds after it is posted on TN. A run takes three to five seconds, mostly its three
+`tn:sync` runs every ten seconds (`routes/console.php`), so a post reaches Freegle seconds after
+it is posted on TN. The command's own lock (`PreventsOverlapping`) keeps runs one at a time: a run
+that starts while another is going exits at once. The scheduler's `withoutOverlapping()` is not
+used for it, because under `FlockEventMutex` its lock is held by `schedule:run` for the whole
+minute and would skip every repeat. A run takes three to five seconds, mostly its three
 requests, which `TrashNothingRateLimiter` spaces 750ms apart; that is about a sixth of the two
 requests a second TN allows a key. TN can also call the "kick" API for an immediate run. Each
 run synchronizes:

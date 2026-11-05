@@ -23,7 +23,8 @@ class TNSyncCommand extends Command
     use GracefulShutdown;
     use LogsBatchJob;
 
-    // TODO Finnbarr: remove this after testing is complete. The Laravel scheduler's withoutOverlapping will handle locking.
+    // The only thing keeping runs one at a time: tn:sync repeats every ten seconds, and the
+    // scheduler's withoutOverlapping() cannot be used for that (see routes/console.php).
     use PreventsOverlapping;
 
     protected $signature = 'tn:sync

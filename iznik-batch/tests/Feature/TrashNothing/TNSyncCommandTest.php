@@ -3,6 +3,7 @@
 namespace Tests\Feature\TrashNothing;
 
 use App\Console\Commands\TrashNothing\TNSyncCommand;
+use App\Console\Concerns\PreventsOverlapping;
 use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\LokiService;
@@ -1736,6 +1737,9 @@ class TNSyncCommandTest extends TestCase
     /**
      * Every ten seconds, so a post reaches Freegle seconds after it is posted on TN, and never
      * two at once: a run takes three to five seconds.
+     *
+     * The scheduler's overlap guard would hold its flock in schedule:run for the whole minute and
+     * skip every repeat, so it must not be there. The command's own lock does that job.
      */
     public function test_it_is_scheduled_every_ten_seconds_one_at_a_time(): void
     {
@@ -1745,8 +1749,9 @@ class TNSyncCommandTest extends TestCase
         $this->assertNotNull($event);
         $this->assertTrue($event->isRepeatable(), 'more often than once a minute');
         $this->assertSame(10, $event->repeatSeconds);
-        $this->assertTrue($event->withoutOverlapping);
         $this->assertTrue($event->runInBackground);
+        $this->assertFalse($event->withoutOverlapping, 'the scheduler guard would stop the repeats');
+        $this->assertContains(PreventsOverlapping::class, class_uses(TNSyncCommand::class), 'the command keeps runs one at a time');
     }
 
     public function test_reads_stored_date(): void
