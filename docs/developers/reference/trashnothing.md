@@ -1120,6 +1120,11 @@ messages.sourceheader  VARCHAR(80)  -- e.g., "TN-Facebook", "TN-Web"
 messages.tnpostid      VARCHAR(80)  -- TN post identifier
 ```
 
+`messages` holds no TN user id, on purpose. For an API post, the record of who TN said wrote it is
+`tn_user_id` on the post's routed Loki entry (`{source="tn_api"}`), kept for Loki's default 31 days.
+`users.tnuserid` only says who holds an id now. A post that came by email has it only in the raw mail, which
+`PurgeService::purgeMessageSource` empties after 30 days.
+
 ## Cross-posts and reposts
 
 TN lets a member send one item to several Freegle groups. That arrives as **one inbound

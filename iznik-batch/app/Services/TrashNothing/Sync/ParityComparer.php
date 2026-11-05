@@ -619,9 +619,10 @@ class ParityComparer
      * Message keys excluded from the KEY-SET comparison, because one path
      * legitimately has them and the other does not:
      *  - tn_post_id: API-only; the email path cannot carry it (section I.5a).
+     *  - tn_user_id: API-only, for the same reason.
      *  - dry_run: only present when the API path runs with --dry-run.
      */
-    private const LOKI_IGNORED_KEYS = ['tn_post_id', 'dry_run'];
+    private const LOKI_IGNORED_KEYS = ['tn_post_id', 'tn_user_id', 'dry_run'];
 
     /**
      * Message fields whose VALUES must match when the two paths agree on the
