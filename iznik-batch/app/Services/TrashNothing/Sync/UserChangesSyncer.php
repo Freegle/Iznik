@@ -400,15 +400,91 @@ class UserChangesSyncer
                 return $user;
             }
 
-            Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=tnuserid=' . $tnId);
-            if (!$this->dryRun) {
-                DB::table('users')->where('id', $user->id)->whereNull('tnuserid')->update(['tnuserid' => $tnId]);
-                $user->tnuserid = $tnId;
-                $user->syncOriginalAttribute('tnuserid');
-            }
+            $this->stampTnId($user, $tnId);
         }
 
         return $user;
+    }
+
+    private function stampTnId(User $user, int $tnId): void
+    {
+        Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=tnuserid=' . $tnId);
+        if (!$this->dryRun) {
+            DB::table('users')->where('id', $user->id)->whereNull('tnuserid')->update(['tnuserid' => $tnId]);
+            $user->tnuserid = $tnId;
+            $user->syncOriginalAttribute('tnuserid');
+        }
+    }
+
+    /**
+     * Give accounts their TN user id from the feed, and do nothing else with it. A change names an
+     * account by both ids, which is TN saying which member it is with no address or username
+     * involved, so this settles accounts with no TN id before anything has to split them from
+     * their member. It reads old changes, so it applies none: a removal would be months late.
+     *
+     * @return array<string, int> how many accounts came to each outcome
+     */
+    public function backfillTnUserIds(string $from, string $to): array
+    {
+        $counts = [
+            'stamped'           => 0,
+            'already-has-an-id' => 0,
+            'held-elsewhere'    => 0,
+            'two-usernames'     => 0,
+            'no-tn-address'     => 0,
+        ];
+        $seen = [];
+        $page = 1;
+
+        $this->fetchFailed = false;
+
+        do {
+            $changes = $this->fetchPage($page, $from, $to);
+            if ($changes === null) {
+                $this->fetchFailed = true;
+                break;
+            }
+
+            $page++;
+
+            foreach ($changes as $change) {
+                $fdId = (int) ($change['fd_user_id'] ?? 0);
+                $tnId = (int) ($change['tn_user_id'] ?? 0);
+
+                if ($fdId === 0 || $tnId === 0 || isset($seen[$fdId])) {
+                    continue;
+                }
+                $seen[$fdId] = true;
+
+                $match = TnMemberMatch::find($fdId, $tnId);
+                if ($match->named !== null) {
+                    $counts[$this->backfillOne($match->named, $match, $tnId)]++;
+                }
+            }
+        } while ($changes && count($changes) === self::PAGE_SIZE);
+
+        return $counts;
+    }
+
+    /** @return string the outcome, as a key of backfillTnUserIds()'s counts */
+    private function backfillOne(User $user, TnMemberMatch $match, int $tnId): string
+    {
+        if ($user->tnuserid !== null) {
+            return 'already-has-an-id';
+        }
+
+        if ($match->heldElsewhere()) {
+            return 'held-elsewhere';
+        }
+
+        $usernames = count($user->tnUsernames());
+        if ($usernames !== 1) {
+            return $usernames === 0 ? 'no-tn-address' : 'two-usernames';
+        }
+
+        $this->stampTnId($user, $tnId);
+
+        return 'stamped';
     }
 
     /** Whether the account holds addresses for two TN usernames: see User::tnUsernames(). */

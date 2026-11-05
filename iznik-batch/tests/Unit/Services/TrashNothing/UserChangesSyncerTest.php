@@ -981,4 +981,125 @@ class UserChangesSyncerTest extends TestCase
 
         $this->assertSame(22, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
     }
+
+    /** @return array<string, int> */
+    private function backfill(array $changes, bool $dryRun = false): array
+    {
+        $this->changes = $changes;
+
+        return (new UserChangesSyncer($dryRun, false, 'test-key', self::API_BASE, $this->loki, new TrashNothingRateLimiter(0)))
+            ->backfillTnUserIds('2026-01-01T00:00:00Z', '2026-10-01T11:00:00Z');
+    }
+
+    /** It reads old changes, so it must apply none of them: a removal here would be months late. */
+    public function test_the_backfill_stamps_an_account_and_applies_nothing_else_from_the_change(): void
+    {
+        $user = $this->tnUserWithId(null);
+        $before = $this->emailsOf($user);
+
+        $counts = $this->backfill([[
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130026,
+            'account_removed' => true,
+            'username'        => $this->username('renamed'),
+            'reply_time'      => 99,
+            'date'            => '2026-02-01T10:00:00',
+        ]]);
+
+        $this->assertSame(1, $counts['stamped']);
+        $this->assertSame(99130026, (int) $user->fresh()->tnuserid);
+        $this->assertSame('Test Member', $user->fresh()->fullname, 'the removal is not applied');
+        $this->assertSame($before, $this->emailsOf($user->fresh()), 'the rename is not applied');
+        $this->assertNull(UserReplyTime::where('userid', $user->id)->value('replytime'));
+    }
+
+    public function test_the_backfill_counts_an_account_once_however_many_changes_name_it(): void
+    {
+        $user = $this->tnUserWithId(null);
+        $change = ['fd_user_id' => $user->id, 'tn_user_id' => 99130027, 'date' => '2026-02-01T10:00:00'];
+
+        $counts = $this->backfill([$change, $change], dryRun: true);
+
+        $this->assertSame(1, $counts['stamped']);
+    }
+
+    public function test_the_backfill_leaves_an_account_with_two_usernames_alone(): void
+    {
+        [$user] = $this->accountWithTwoUsernames(null);
+
+        $counts = $this->backfill([['fd_user_id' => $user->id, 'tn_user_id' => 99130028, 'date' => '2026-02-01T10:00:00']]);
+
+        $this->assertSame(1, $counts['two-usernames']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    /** TN named the account, but with no TN address on it nothing shows TN added this one. */
+    public function test_the_backfill_leaves_an_account_with_no_tn_address_alone(): void
+    {
+        $user = $this->tnUser('Test Member', [[$this->username('plain') . '@example.com', 1]]);
+
+        $counts = $this->backfill([['fd_user_id' => $user->id, 'tn_user_id' => 99130029, 'date' => '2026-02-01T10:00:00']]);
+
+        $this->assertSame(1, $counts['no-tn-address']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    public function test_the_backfill_leaves_an_id_another_account_holds(): void
+    {
+        $named = $this->tnUserWithId(null);
+        $this->tnUserWithId(99130030);
+
+        $counts = $this->backfill([['fd_user_id' => $named->id, 'tn_user_id' => 99130030, 'date' => '2026-02-01T10:00:00']]);
+
+        $this->assertSame(1, $counts['held-elsewhere']);
+        $this->assertNull($named->fresh()->tnuserid);
+    }
+
+    public function test_the_backfill_leaves_an_account_that_already_holds_an_id(): void
+    {
+        $same = $this->tnUserWithId(99130031);
+        $other = $this->tnUserWithId(99130032);
+
+        $counts = $this->backfill([
+            ['fd_user_id' => $same->id, 'tn_user_id' => 99130031, 'date' => '2026-02-01T10:00:00'],
+            ['fd_user_id' => $other->id, 'tn_user_id' => 99130033, 'date' => '2026-02-01T10:00:00'],
+        ]);
+
+        $this->assertSame(2, $counts['already-has-an-id']);
+        $this->assertSame(99130032, (int) $other->fresh()->tnuserid);
+    }
+
+    /** Both ids are needed: one alone does not link anything to anything. */
+    public function test_the_backfill_ignores_a_change_with_only_one_id(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $counts = $this->backfill([
+            ['tn_user_id' => 99130034, 'date' => '2026-02-01T10:00:00'],
+            ['fd_user_id' => $user->id, 'date' => '2026-02-01T10:00:00'],
+        ]);
+
+        $this->assertSame(0, $counts['stamped']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    public function test_a_dry_run_backfill_counts_what_it_would_stamp_and_writes_nothing(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $counts = $this->backfill([['fd_user_id' => $user->id, 'tn_user_id' => 99130035, 'date' => '2026-02-01T10:00:00']], dryRun: true);
+
+        $this->assertSame(1, $counts['stamped']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    public function test_the_backfill_stops_at_a_page_it_cannot_read(): void
+    {
+        $this->failFromPage = 1;
+        $syncer = new UserChangesSyncer(false, false, 'test-key', self::API_BASE, $this->loki, new TrashNothingRateLimiter(0));
+
+        $syncer->backfillTnUserIds('2026-01-01T00:00:00Z', '2026-10-01T11:00:00Z');
+
+        $this->assertTrue($syncer->fetchFailed());
+    }
 }

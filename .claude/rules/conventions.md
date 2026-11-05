@@ -87,6 +87,21 @@ is a partner's member, not a volunteer. It must not hold Owner or Moderator on a
 When a volunteer has both a Freegle account and a TrashNothing account, do not merge them.
 They stay separate; remove the role from the TrashNothing one instead.
 
+## Only a TN user id says who a TrashNothing member is
+
+`users.tnuserid` is the only source of truth. A username or an address never decides who someone
+is, who owns a post, or which account to merge or link. TN does not promise a username is unique,
+a released one can be taken by someone else, and an address can sit on the wrong account. An
+account with no TN id proves nothing either way, whatever it holds.
+
+A username may only refuse something, as `MergeUsersTx` and `User::merge` refuse two different
+ones. Do not add a rule that treats a matching username or address as the same member.
+
+The email integration breaks this, deliberately. Posts and chat by email both match on the address,
+and `IncomingMailService` is left alone because it is production's source of truth and is being
+replaced: do not change it for this rule. Its replacement goes by TN user id. If anything reads the
+`x-trash-nothing-user-id` header, it needs TN's secret as well, because anyone can write it.
+
 ## A TrashNothing member is dealt with through their membership
 
 Every TrashNothing member Freegle deals with has a membership of the community concerned, and
