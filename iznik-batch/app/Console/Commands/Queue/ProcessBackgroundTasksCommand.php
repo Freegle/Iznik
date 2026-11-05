@@ -1130,8 +1130,8 @@ class ProcessBackgroundTasksCommand extends Command
      *
      * Mirrors the Taken notice in handleMessageOutcome: one message in each replier's chat with the giver, written
      * by the giver and inserted already processed. A member is told once per post, however often it is promised
-     * again. Nothing is sent when the promise no longer exists, when items are still unpromised, or when the post
-     * has gone.
+     * again. Nothing is sent when the promise no longer exists, when items are still unpromised, when the post
+     * has gone, or for a promise made on Trash Nothing, which names nobody.
      */
     protected function handleMessagePromised(array $data): void
     {
@@ -1154,6 +1154,15 @@ class ProcessBackgroundTasksCommand extends Command
         }
 
         $fromUser = (int) $message->fromuser;
+
+        // A Trash Nothing promise does not say who it went to, so that member would be told it
+        // went to someone else. Tell nobody.
+        if ($promisee === 0 && User::find($fromUser)?->isTrashNothingAccount()) {
+            Log::info('Promise notice skipped: Trash Nothing promise names nobody', ['msgid' => $msgId]);
+
+            return;
+        }
+
         $told = 0;
 
         foreach ($this->interestedChatsQuery($msgId)->get() as $chat) {
