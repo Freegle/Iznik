@@ -406,7 +406,6 @@ class CoverageVerifierTest extends TestCase
         return [
             'unknown user'            => [GroupPostIngestionService::REASON_UNKNOWN_USER],
             'lookup refused'          => [GroupPostIngestionService::REASON_TN_USER_LOOKUP_REFUSED],
-            'address held by deleted' => [GroupPostIngestionService::REASON_TN_ADDRESS_HELD_BY_DELETED_USER],
             'account deleted'         => [GroupPostIngestionService::REASON_TN_ACCOUNT_DELETED],
         ];
     }

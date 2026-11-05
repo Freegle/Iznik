@@ -84,13 +84,6 @@ class TnUserProvisioner
     public const REASON_LOOKUP_KEY_REJECTED = 'tn-user-lookup-key-rejected';
 
     /**
-     * The username's bare address is still held by a deleted Freegle account.
-     * users_emails.email is unique, so the address cannot go to a new user, and
-     * taking it back from a deleted account is not this class's decision.
-     */
-    public const REASON_ADDRESS_HELD_BY_DELETED_USER = 'tn-address-held-by-deleted-user';
-
-    /**
      * A deleted Freegle account still holds this tnuserid. users.tnuserid is unique, so no
      * live account can be given it, and a post must not go to a deleted one. Deleting is a
      * decision (the member leaving, or a merge), and it is not this class's to undo by
@@ -227,21 +220,12 @@ class TnUserProvisioner
 
     /**
      * TN has just said this id has this username, so the bare address is this member's, and
-     * users_emails.email is unique: it moves here from a live account. It is not ours to take
-     * back from a deleted one.
+     * users_emails.email is unique: it moves here from whichever account holds it. A deleted one
+     * proves no more than a live one, and only keeps an address until it is forgotten.
      */
     private function provision(int $tnUserId, string $username, string $email, array $tnUser): ?User
     {
         $holder = UserEmail::where('email', $email)->value('userid');
-
-        if ($holder !== null && !User::where('id', $holder)->whereNull('deleted')->exists()) {
-            Log::warning('TN user provisioning: the address is held by a deleted user', [
-                'tn_user_id' => $tnUserId,
-                'username'   => $username,
-            ]);
-            $this->trace($tnUserId, 'address-held-by-deleted-user');
-            return $this->fail(self::REASON_ADDRESS_HELD_BY_DELETED_USER);
-        }
 
         $user = $this->create($tnUserId, $username, $email, $tnUser, $holder === null ? null : (int) $holder);
 

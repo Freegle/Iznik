@@ -57,7 +57,7 @@ class GroupPostIngestionService
      * The poster could not be resolved because TN could not be asked who they are (5xx,
      * 429, timeout, challenge), because TN refused the lookup (a client error other than
      * 404), because the lookup failed so many runs running that the post was given up,
-     * or because a deleted account still holds the address or the tnuserid. See
+     * or because a deleted account still holds the tnuserid. See
      * TnUserProvisioner.
      *
      * Only the first is transient: the post sync stops at it and asks again next run, so it
@@ -77,8 +77,6 @@ class GroupPostIngestionService
     public const REASON_TN_USER_LOOKUP_GAVE_UP = TnUserProvisioner::REASON_LOOKUP_GAVE_UP;
 
     public const REASON_TN_USER_LOOKUP_KEY_REJECTED = TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED;
-
-    public const REASON_TN_ADDRESS_HELD_BY_DELETED_USER = TnUserProvisioner::REASON_ADDRESS_HELD_BY_DELETED_USER;
 
     public const REASON_TN_ACCOUNT_DELETED = TnUserProvisioner::REASON_ACCOUNT_DELETED;
 
@@ -117,7 +115,6 @@ class GroupPostIngestionService
         self::REASON_UNKNOWN_USER,
         self::REASON_NO_USER_ID,
         self::REASON_TN_USER_LOOKUP_REFUSED,
-        self::REASON_TN_ADDRESS_HELD_BY_DELETED_USER,
         self::REASON_TN_ACCOUNT_DELETED,
     ];
 
@@ -961,7 +958,6 @@ class GroupPostIngestionService
             TnUserProvisioner::REASON_LOOKUP_REFUSED => self::REASON_TN_USER_LOOKUP_REFUSED,
             TnUserProvisioner::REASON_LOOKUP_GAVE_UP => self::REASON_TN_USER_LOOKUP_GAVE_UP,
             TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED => self::REASON_TN_USER_LOOKUP_KEY_REJECTED,
-            TnUserProvisioner::REASON_ADDRESS_HELD_BY_DELETED_USER => self::REASON_TN_ADDRESS_HELD_BY_DELETED_USER,
             TnUserProvisioner::REASON_ACCOUNT_DELETED => self::REASON_TN_ACCOUNT_DELETED,
             default => self::REASON_UNKNOWN_USER,
         };

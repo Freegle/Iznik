@@ -360,7 +360,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertSame($poster->id, (int) Message::where('tnpostid', $postId)->value('fromuser'));
     }
 
-    public function test_skips_with_its_own_reason_when_a_deleted_account_holds_the_address(): void
+    public function test_a_deleted_account_holding_the_address_does_not_stop_the_post(): void
     {
         [$tnId, $username] = $this->tnKnowsPoster();
         $this->createTestUser(['email_preferred' => "{$username}@user.trashnothing.com", 'deleted' => now()]);
@@ -369,14 +369,11 @@ class GroupPostIngestionServiceTest extends TestCase
 
         $service = $this->makeService(dryRun: false);
 
-        $this->assertSame('skipped', $service->ingest($this->makePost(['post_id' => $postId, 'user_id' => $tnId]), $group));
-        $this->assertSame(
-            ['routing_reason' => GroupPostIngestionService::REASON_TN_ADDRESS_HELD_BY_DELETED_USER],
-            $service->getLastRoutingContext(),
-        );
-        $this->assertSame('tn-address-held-by-deleted-user', GroupPostIngestionService::REASON_TN_ADDRESS_HELD_BY_DELETED_USER);
-        $this->assertFalse(User::where('tnuserid', $tnId)->exists());
-        $this->assertSame(0, Message::where('tnpostid', $postId)->count());
+        $this->assertNotSame('skipped', $service->ingest($this->makePost(['post_id' => $postId, 'user_id' => $tnId]), $group));
+
+        $poster = User::where('tnuserid', $tnId)->first();
+        $this->assertNotNull($poster);
+        $this->assertSame($poster->id, (int) Message::where('tnpostid', $postId)->value('fromuser'));
     }
 
     public function test_skips_with_its_own_reason_when_a_deleted_account_holds_the_tnuserid(): void
@@ -2004,16 +2001,12 @@ class GroupPostIngestionServiceTest extends TestCase
         $refused = random_int(900000000, 999999999);
         $this->tnUsers[$refused] = [410, 'Gone'];
 
-        [$heldId, $heldName] = $this->tnKnowsPoster();
-        $this->createTestUser(['email_preferred' => "{$heldName}@user.trashnothing.com", 'deleted' => now()]);
-
         $deletedId = random_int(900000000, 999999999);
         $this->createTestUser(['tnuserid' => $deletedId, 'deleted' => now()]);
 
         $cases = [
-            GroupPostIngestionService::REASON_TN_USER_LOOKUP_REFUSED            => $refused,
-            GroupPostIngestionService::REASON_TN_ADDRESS_HELD_BY_DELETED_USER   => $heldId,
-            GroupPostIngestionService::REASON_TN_ACCOUNT_DELETED                => $deletedId,
+            GroupPostIngestionService::REASON_TN_USER_LOOKUP_REFUSED => $refused,
+            GroupPostIngestionService::REASON_TN_ACCOUNT_DELETED     => $deletedId,
         ];
 
         foreach ($cases as $reason => $tnId) {
@@ -2101,19 +2094,13 @@ class GroupPostIngestionServiceTest extends TestCase
         return $sentry;
     }
 
-    /**
-     * @return array{int, int} TN user ids that come to an address held by a deleted account, and a
-     *                         deleted account holding the id
-     */
-    private function posterIdsThatNeedAPerson(): array
+    /** @return int a TN user id held by a deleted account, the one skip only a person can put right */
+    private function posterIdThatNeedsAPerson(): int
     {
-        [$heldId, $heldName] = $this->tnKnowsPoster();
-        $this->createTestUser(['email_preferred' => "{$heldName}@user.trashnothing.com", 'deleted' => now()]);
-
         $deletedId = random_int(900000000, 999999999);
         $this->createTestUser(['tnuserid' => $deletedId, 'deleted' => now()]);
 
-        return [$heldId, $deletedId];
+        return $deletedId;
     }
 
     /**
@@ -2124,26 +2111,22 @@ class GroupPostIngestionServiceTest extends TestCase
     {
         $sentry = $this->recordSentry();
         $group  = $this->createTestGroup();
-        [$heldId, $deletedId] = $this->posterIdsThatNeedAPerson();
+        $tnId   = $this->posterIdThatNeedsAPerson();
 
-        foreach ([$heldId, $deletedId] as $tnId) {
-            foreach (['first', 'second'] as $which) {
-                $this->makeService(dryRun: false)
-                    ->ingest($this->makePost(['post_id' => "tn-human-{$tnId}-{$which}", 'user_id' => $tnId]), $group);
-            }
+        foreach (['first', 'second'] as $which) {
+            $this->makeService(dryRun: false)
+                ->ingest($this->makePost(['post_id' => "tn-human-{$tnId}-{$which}", 'user_id' => $tnId]), $group);
         }
 
-        $this->assertCount(2, $sentry->calls, json_encode($sentry->calls));
-        foreach (DeliberateSkips::NEEDS_A_HUMAN_REASONS as $i => $reason) {
-            $this->assertStringContainsString($reason, $sentry->calls[$i]);
-        }
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString(GroupPostIngestionService::REASON_TN_ACCOUNT_DELETED, $sentry->calls[0]);
 
         $this->travel(25)->hours();
         $this->makeService(dryRun: false)
-            ->ingest($this->makePost(['post_id' => 'tn-human-next-day', 'user_id' => $heldId]), $group);
+            ->ingest($this->makePost(['post_id' => 'tn-human-next-day', 'user_id' => $tnId]), $group);
         $this->travelBack();
 
-        $this->assertCount(3, $sentry->calls, 'reported again the next day');
+        $this->assertCount(2, $sentry->calls, 'reported again the next day');
     }
 
     public function test_a_skip_nobody_needs_to_look_at_is_not_reported(): void
@@ -2165,18 +2148,17 @@ class GroupPostIngestionServiceTest extends TestCase
     {
         $sentry = $this->recordSentry();
         $group  = $this->createTestGroup();
-        [$heldId] = $this->posterIdsThatNeedAPerson();
+        $tnId   = $this->posterIdThatNeedsAPerson();
 
-        $this->makeService(dryRun: true)->ingest($this->makePost(['post_id' => 'tn-human-dry', 'user_id' => $heldId]), $group);
-        $this->makeService(dryRun: false, localTesting: true)->ingest($this->makePost(['post_id' => 'tn-human-local', 'user_id' => $heldId]), $group);
+        $this->makeService(dryRun: true)->ingest($this->makePost(['post_id' => 'tn-human-dry', 'user_id' => $tnId]), $group);
+        $this->makeService(dryRun: false, localTesting: true)->ingest($this->makePost(['post_id' => 'tn-human-local', 'user_id' => $tnId]), $group);
 
         $this->assertSame([], $sentry->calls);
     }
 
-    public function test_the_reasons_that_need_a_person_are_the_two_skips_no_retry_can_change(): void
+    public function test_the_reason_that_needs_a_person_is_the_skip_no_retry_can_change(): void
     {
         $this->assertSame([
-            GroupPostIngestionService::REASON_TN_ADDRESS_HELD_BY_DELETED_USER,
             GroupPostIngestionService::REASON_TN_ACCOUNT_DELETED,
         ], DeliberateSkips::NEEDS_A_HUMAN_REASONS);
         $this->assertFalse(DeliberateSkips::needsAHuman(GroupPostIngestionService::REASON_UNKNOWN_USER));

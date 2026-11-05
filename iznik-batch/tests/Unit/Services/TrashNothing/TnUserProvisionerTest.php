@@ -347,27 +347,28 @@ class TnUserProvisionerTest extends TestCase
     }
 
     /**
-     * users_emails.email is unique, so a deleted account still holding the bare
-     * address cannot be given to a new user, and its address is not ours to take
-     * back. That is its own answer, not a failed lookup: TN was asked and replied.
+     * A deleted account proves no more than a live one, and only keeps an address until it is
+     * forgotten, so the address moves here as it would from a live account.
      */
-    public function test_deleted_account_holding_the_bare_address_has_its_own_reason(): void
+    public function test_the_bare_address_moves_from_a_deleted_account(): void
     {
         $tnId     = $this->tnId();
         $username = $this->uniqueUsername('goneb');
-        $deleted  = $this->createTestUser(['email_preferred' => "{$username}@user.trashnothing.com", 'deleted' => now()]);
+        $bare     = "{$username}@user.trashnothing.com";
+        $deleted  = $this->createTestUser(['email_preferred' => $bare, 'deleted' => now()]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
 
         $provisioner = $this->provisioner();
+        $user        = $provisioner->resolveOrCreate($tnId);
 
-        $this->assertNull($provisioner->resolveOrCreate($tnId));
-        $this->assertSame(TnUserProvisioner::REASON_ADDRESS_HELD_BY_DELETED_USER, $provisioner->lastFailureReason());
-        $this->assertSame(0, User::where('tnuserid', $tnId)->count());
+        $this->assertNull($provisioner->lastFailureReason());
+        $this->assertNotSame($deleted->id, $user->id);
+        $this->assertSame($tnId, (int) $user->fresh()->tnuserid);
+        $this->assertSame($user->id, (int) UserEmail::where('email', $bare)->value('userid'));
         $this->assertNull($deleted->fresh()->tnuserid);
-        $this->assertSame(1, UserEmail::where('email', "{$username}@user.trashnothing.com")->count());
     }
 
-    /** A live account on an alias is not the member either, so that does not get round the deleted one. */
+    /** A live account on an alias is not the member either, whoever holds the bare address. */
     public function test_a_live_alias_account_is_not_linked_when_a_deleted_one_holds_the_bare_address(): void
     {
         $tnId     = $this->tnId();
@@ -376,10 +377,9 @@ class TnUserProvisionerTest extends TestCase
         $live     = $this->createTestUser(['email_preferred' => "{$username}-g5@user.trashnothing.com"]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
 
-        $provisioner = $this->provisioner();
+        $user = $this->provisioner()->resolveOrCreate($tnId);
 
-        $this->assertNull($provisioner->resolveOrCreate($tnId));
-        $this->assertSame(TnUserProvisioner::REASON_ADDRESS_HELD_BY_DELETED_USER, $provisioner->lastFailureReason());
+        $this->assertNotSame($live->id, $user->id);
         $this->assertNull($live->fresh()->tnuserid);
     }
 

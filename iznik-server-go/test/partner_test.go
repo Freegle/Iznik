@@ -717,3 +717,45 @@ func TestPartnerKeyAloneActsOnATNPostWithNoAddress(t *testing.T) {
 	db.Table("messages_promises").Where("msgid = ? AND userid = ?", msgID, owner).Count(&count)
 	assert.Equal(t, int64(1), count)
 }
+
+// A deleted account proves no more than a live one, and only keeps an address until it is
+// forgotten, so the address goes to the member TN named. It used to be silently dropped.
+func TestPartnerJoinTakesAnAddressFromADeletedAccount(t *testing.T) {
+	prefix := uniquePrefix("partner_deleted")
+	key := insertTestPartnerKey(t, prefix, "test.com")
+	reports := recordTNAliasReports(t)
+
+	member := CreateTestUser(t, prefix+"_m", "User")
+	stampTN(member, 66721)
+	deleted := CreateDeletedTestUser(t, prefix+"_d")
+	alias := prefix + "-g7@test.com"
+	giveTNAddress(deleted, alias)
+	groupID := CreateTestGroup(t, prefix)
+
+	assert.Equal(t, 200, partnerJoin(t, key, 66721, alias, groupID))
+
+	assert.Equal(t, member, addressOwner(alias))
+	assert.Len(t, *reports, 1)
+}
+
+// A member we have not met used to get an account with no address at all: the insert failed on the
+// unique index with nothing to say so.
+func TestPartnerJoinGivesANewMemberAnAddressHeldByADeletedAccount(t *testing.T) {
+	prefix := uniquePrefix("partner_deleted_new")
+	db := database.DBConn
+	key := insertTestPartnerKey(t, prefix, "test.com")
+	recordTNAliasReports(t)
+
+	deleted := CreateDeletedTestUser(t, prefix+"_d")
+	alias := prefix + "-g7@test.com"
+	giveTNAddress(deleted, alias)
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66722)
+	groupID := CreateTestGroup(t, prefix)
+
+	assert.Equal(t, 200, partnerJoin(t, key, 66722, alias, groupID))
+
+	var created uint64
+	db.Raw("SELECT COALESCE(id, 0) FROM users WHERE tnuserid = ?", 66722).Scan(&created)
+	require.NotZero(t, created)
+	assert.Equal(t, created, addressOwner(alias))
+}

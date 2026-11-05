@@ -417,8 +417,8 @@ into a Freegle user:
 4. A user is created: display name from the username, TN's first and last names, `about_me` and
    `reply_time` when given, the bare address as preferred, and no `lastlocation`, so the first
    post goes Pending as an unmapped user. An account holding that username is never linked,
-   however closely it matches, because only a TN id says who someone is. If a live account holds
-   the bare address it moves here, since TN has just said this id has this username, and the move
+   however closely it matches, because only a TN id says who someone is. If an account holds
+   the bare address it moves here, deleted or not, since TN has just said this id has this username, and the move
    is reported to Sentry.
 
 It writes user data only. The one membership the post needs is written by ingestion, as for
@@ -431,7 +431,6 @@ any poster. When no user can be had the post is skipped with a `routing_reason`:
 | `tn-user-lookup-refused` | TN answered with a client error other than 404 (400, 410, 422, 451 and the like). It is about this poster and a retry gets it again, so it is final like a 404, and remembered for an hour like one |
 | `tn-user-lookup-gave-up` | The lookup for this post failed 30 runs in a row. The post is skipped so that one poster cannot hold up every post behind it |
 | `tn-user-lookup-key-rejected` | TN rejected the public API key (401 or 403 without a Cloudflare challenge). Every lookup fails until the key is fixed, so the sync does not stop: the post is skipped as a miss and the posters Freegle already knows keep coming in. Sentry hears about the key at most once an hour |
-| `tn-address-held-by-deleted-user` | A deleted account still holds the bare address, which is unique and not the provisioner's to take back |
 | `tn-account-deleted` | A deleted account still holds the `tnuserid`. It is unique, so no live account can be given it, and a post is not handed to a deleted account. Deleting is a decision (the member leaving, or a merge) and the provisioner does not take the id back. Forgetting the account clears it (`User::forget()` and `UserManagementService::forgetUser()` both do), after which the poster's next post finds or makes a live account. Checked before TN is asked |
 
 **A failed lookup stops the sync, for a while; an answered one does not.** A post whose poster
@@ -481,7 +480,7 @@ and a refusal are each cached for an hour per TN user id (`ANSWER_TTL_MINUTES`),
 reason kept (`TnUserProvisioner::failFinal()`). It is an hour because the answer can be wrong, as
 with a bad base URL, a 404 from an edge, or a member too new to be on TN's replica yet: until it
 expires every post by the poster is skipped, and putting the cause right does not bring them back. Nothing else is: a failure to get an answer is asked again,
-as above, and a deleted account holding the address is decided from
+as above, and a deleted account holding the `tnuserid` is decided from
 Freegle's data each time, so one that has been put right takes effect at once. An account that
 gets the `tnuserid` meanwhile (the user-changes sync can stamp it) wins over a remembered answer,
 because the account lookup comes first. A dry run reads the remembered answers and writes none,
@@ -778,7 +777,7 @@ backfill can retry them, and where a repeat fails the run:
 
 - `Post from unknown user` and `tn-user-lookup-refused`: TN's answer may have been wrong, or may
   change.
-- `tn-address-held-by-deleted-user` and `tn-account-deleted`
+- `tn-account-deleted`
   (`DeliberateSkips::NEEDS_A_HUMAN_REASONS`): only a person can put these right. The first one of
   the day for each reason is sent to Sentry from ingestion. For `tn-account-deleted` the member
   deleted their Freegle account but still posts on TN, and the id is released only when the

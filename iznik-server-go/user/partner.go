@@ -180,13 +180,11 @@ func NeedsTNId(domain string, tnuserid uint64, email string) bool {
 	return strings.EqualFold(domain, tnPartnerDomain) && tnuserid == 0 && email != ""
 }
 
-// liveHolderOf returns the live account holding an address, or 0.
-func liveHolderOf(db *gorm.DB, email string) uint64 {
+// holderOf returns the account holding an address, or 0. A deleted account counts: it proves no
+// more than a live one, and only keeps an address until it is forgotten.
+func holderOf(db *gorm.DB, email string) uint64 {
 	var holder uint64
-	db.Table("users_emails").Select("users_emails.userid").
-		Joins("INNER JOIN users ON users.id = users_emails.userid").
-		Where("users_emails.email = ? AND users.deleted IS NULL", email).
-		Scan(&holder)
+	db.Table("users_emails").Select("userid").Where("email = ?", email).Scan(&holder)
 
 	return holder
 }
@@ -197,7 +195,7 @@ func liveHolderOf(db *gorm.DB, email string) uint64 {
 func ResolvePartnerActor(db *gorm.DB, tnuserid uint64, email string) ([]uint64, error) {
 	candidates := FindTNCandidates(db, tnuserid, email)
 
-	if len(candidates) == 0 && tnuserid > 0 && email != "" && liveHolderOf(db, email) != 0 {
+	if len(candidates) == 0 && tnuserid > 0 && email != "" && holderOf(db, email) != 0 {
 		userid, err := CreatePartnerUser(db, tnuserid, email)
 		if err != nil {
 			return nil, err
@@ -310,7 +308,7 @@ func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, erro
 		return 0, err
 	}
 
-	if holder := liveHolderOf(db, email); holder != 0 && tnuserid > 0 {
+	if holder := holderOf(db, email); holder != 0 && tnuserid > 0 {
 		if err := moveTNAlias(db, email, holder, userid); err != nil {
 			return 0, err
 		}
@@ -397,17 +395,22 @@ func createPartnerAccount(db *gorm.DB, tnuserid uint64, email string) (uint64, e
 // sync presents the member's NEW per-group email alias alongside the same tnuserid;
 // attaching the alias here means the next inbound mail routes to this account
 // instead of the mail ingest minting a twin. HealTNDivergence has already moved an
-// alias held by another account, so the insert below finds it free. An account is
-// never given a tnuserid for holding an address: only a TN id says who someone is.
+// alias held by a live account, and one held by a deleted account moves here. An
+// account is never given a tnuserid for holding an address: only a TN id says who
+// someone is.
 func EnsurePartnerIdentifiers(db *gorm.DB, userid uint64, email string) {
 	if userid == 0 {
 		return
 	}
 
 	if email != "" {
-		var count int64
-		db.Table("users_emails").Where("userid = ? AND email = ?", userid, email).Count(&count)
-		if count == 0 {
+		holder := holderOf(db, email)
+		if holder != 0 && holder != userid {
+			if err := moveTNAlias(db, email, holder, userid); err != nil {
+				log.Printf("Moving an alias from %d to %d failed: %v", holder, userid, err)
+			}
+		}
+		if holder == 0 {
 			// See CreatePartnerUser: backwards is REVERSE(canon).
 			db.Clauses(clause.Insert{Modifier: "IGNORE"}).Table("users_emails").Create(map[string]interface{}{
 				"userid":    userid,

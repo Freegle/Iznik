@@ -323,7 +323,7 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
             'post'     => ['post_id' => $postId],
         ]);
         $syncer->method('ingestFetchedPost')->willReturnCallback(function (mixed $post) {
-            DeliberateSkips::record($post['post_id'], GroupPostIngestionService::REASON_TN_ADDRESS_HELD_BY_DELETED_USER);
+            DeliberateSkips::record($post['post_id'], GroupPostIngestionService::REASON_TN_USER_LOOKUP_REFUSED);
 
             return true;
         });
@@ -446,15 +446,15 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
         foreach (['tn-clash-1', 'tn-clash-2', 'tn-deleted-1'] as $postId) {
             $this->archivePost($postId, CarbonImmutable::now('UTC')->subHours(9)->toIso8601String());
         }
-        DeliberateSkips::record('tn-clash-1', GroupPostIngestionService::REASON_TN_ADDRESS_HELD_BY_DELETED_USER);
-        DeliberateSkips::record('tn-clash-2', GroupPostIngestionService::REASON_TN_ADDRESS_HELD_BY_DELETED_USER);
+        DeliberateSkips::record('tn-clash-1', GroupPostIngestionService::REASON_TN_USER_LOOKUP_REFUSED);
+        DeliberateSkips::record('tn-clash-2', GroupPostIngestionService::REASON_TN_USER_LOOKUP_REFUSED);
         DeliberateSkips::record('tn-deleted-1', GroupPostIngestionService::REASON_TN_ACCOUNT_DELETED);
         $recorder = $this->bindSyncer();
 
         $this->runForPostsArchived(9)
             ->expectsOutputToContain('skipped on purpose  0')
-            ->expectsOutputToContain('GENUINE MISSES      3  (ingestion skipped 3: tn-account-deleted: 1, tn-address-held-by-deleted-user: 2)')
-            ->expectsOutputToContain('skipped=tn-address-held-by-deleted-user')
+            ->expectsOutputToContain('GENUINE MISSES      3  (ingestion skipped 3: tn-account-deleted: 1, tn-user-lookup-refused: 2)')
+            ->expectsOutputToContain('skipped=tn-user-lookup-refused')
             ->assertExitCode(0);
 
         $this->assertEqualsCanonicalizing(['tn-clash-1', 'tn-clash-2', 'tn-deleted-1'], $recorder->ingested);
