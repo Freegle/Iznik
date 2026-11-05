@@ -318,6 +318,19 @@ when reading any coverage report:
   content difference, and `ParityComparer` canonicalizes it before comparing
   subjects — otherwise every such post fails parity twice (same-group content
   and Loki entry) and buries the real mismatches.
+- **The subject's location bracket is rebuilt.** TN's `title` ends in the member's
+  own words for where they are, in no fixed shape: a town, a street, or the whole
+  postcode ("(LE2 3HE)", "(Hilmorton road 101 cv22 5aj)"). The email path never saw
+  that, because TN rewrote the subject per group before sending ("(Stoneygate LE2)").
+  `GroupPostIngestionService::createMessage()` replaces the bracket with the one the
+  Go API gives every Freegle post, `Location::subjectArea()` on the post's resolved
+  postcode: the area name and the outward half, "(Stoneygate LE2)". A post that
+  resolves to no location loses the bracket rather than keeping the member's text.
+  `SubjectParser::withLocation()` does the replacement, and `ParityComparer`
+  compares subjects without their bracket for the same reason. `tn:rewrite-subjects`
+  (dry run unless `--apply`; `--since=<date>` to bound it) is the backfill for posts
+  ingested before this: it rebuilds `subject`, and `suggestedsubject` when the two
+  still agree, and leaves a subject that already has the right bracket alone.
 - **One TN post is one message.** The API path's idempotency guard
   (`GroupPostIngestionService::existingMessage()`) matches the TN post id on any
   group. A post on the line between two groups can resolve to either on different

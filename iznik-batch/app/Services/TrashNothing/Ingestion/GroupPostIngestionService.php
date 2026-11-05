@@ -3,6 +3,7 @@
 namespace App\Services\TrashNothing\Ingestion;
 
 use App\Models\Group;
+use App\Models\Location;
 use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageAttachment;
@@ -15,6 +16,7 @@ use App\Services\Ripple\ReachMemberQueueService;
 use App\Services\Ripple\RippleEngagementService;
 use App\Services\SpatialQueryService;
 use App\Services\TusService;
+use App\Support\SubjectParser;
 use App\Support\TransactionPolicy;
 use App\Support\TrashNothingPicLinks;
 use Illuminate\Support\Facades\Cache;
@@ -766,6 +768,17 @@ class GroupPostIngestionService
                     . ' which is not in locations; ingesting without a location');
                 $locationId = null;
             }
+
+            // The bracket on TN's title is the member's own words for where they are:
+            // a town, a street, or the whole postcode, in no fixed shape. The email
+            // path never saw that, because TN rewrote the subject per group before
+            // sending. Give the post the bracket every Freegle post gets, built from
+            // the resolved postcode, and drop the bracket when nothing resolved, so
+            // nothing a member typed reaches the subject.
+            $subject = SubjectParser::withLocation(
+                $subject,
+                $locationId !== null ? Location::subjectArea($locationId) : null,
+            );
 
             // TN is the master for a TN member's location (tn:sync keeps lastlocation in
             // step with it), so a post only fills it in when it is empty; the post's own

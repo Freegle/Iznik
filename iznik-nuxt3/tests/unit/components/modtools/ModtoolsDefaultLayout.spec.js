@@ -10,27 +10,31 @@ vi.stubGlobal('useHead', vi.fn())
 vi.stubGlobal('useRuntimeConfig', vi.fn().mockReturnValue({ public: {} }))
 
 // Use vi.hoisted so these refs are available inside vi.mock factories (which are hoisted)
-const { mockAuthStore, mockCheckWork, mockResetCheckWork } = vi.hoisted(() => {
-  const { reactive } = require('vue')
-  const mockAuthStore = reactive({
-    user: null,
-    auth: { jwt: null, persistent: null },
-    loginStateKnown: false,
-    forceLogin: false,
-    discourse: null,
-    work: null,
-    fetchUser: () => Promise.resolve(null),
-    logout: () => Promise.resolve(undefined),
-    // The layout adopts a session transferred from a previous device before it
-    // looks at jwt/persistent.
-    adoptRestoredSession: () => Promise.resolve(false),
-  })
-  return {
-    mockAuthStore,
-    mockCheckWork: vi.fn(),
-    mockResetCheckWork: vi.fn(),
+const { mockAuthStore, mockCheckWork, mockResetCheckWork, mockMe } = vi.hoisted(
+  () => {
+    const { reactive } = require('vue')
+    const mockAuthStore = reactive({
+      user: null,
+      auth: { jwt: null, persistent: null },
+      loginStateKnown: false,
+      forceLogin: false,
+      discourse: null,
+      work: null,
+      fetchUser: () => Promise.resolve(null),
+      logout: () => Promise.resolve(undefined),
+      // The layout adopts a session transferred from a previous device before it
+      // looks at jwt/persistent.
+      adoptRestoredSession: () => Promise.resolve(false),
+    })
+    return {
+      mockAuthStore,
+      mockCheckWork: vi.fn(),
+      mockResetCheckWork: vi.fn(),
+      // The signed-in system role, read by the useMe mock when the layout mounts.
+      mockMe: { role: 'User' },
+    }
   }
-})
+)
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => mockAuthStore,
@@ -83,7 +87,8 @@ vi.mock('@/stores/mobile', () => ({
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
-    supportOrAdmin: computed(() => false),
+    supportOrAdmin: computed(() => ['Support', 'Admin'].includes(mockMe.role)),
+    admin: computed(() => mockMe.role === 'Admin'),
   }),
 }))
 
@@ -329,6 +334,42 @@ describe('modtools default layout — pending badge includes spam', () => {
     expect(item, 'Volunteering menu item must be rendered').toBeDefined()
     expect(item.count).toEqual(['pendingvolunteering'])
     expect(item.othercount).toEqual(['pendingvolunteeringother'])
+  })
+
+  describe('SysAdmin is for Admin only', () => {
+    afterEach(() => {
+      mockMe.role = 'User'
+    })
+
+    it.each(['User', 'Support'])(
+      'has no SysAdmin item for %s',
+      async (role) => {
+        mockMe.role = role
+        const links = (await captureMenu()).map((i) => i.link)
+        expect(links).not.toContain('/sysadmin')
+      }
+    )
+
+    it('leaves Support with Support and Images', async () => {
+      mockMe.role = 'Support'
+      const links = (await captureMenu()).map((i) => i.link)
+      expect(links).toContain('/support')
+      expect(links).toContain('/images')
+    })
+
+    it('gives Admin the SysAdmin item with every SysAdmin count', async () => {
+      mockMe.role = 'Admin'
+      const item = (await captureMenu()).find((i) => i.link === '/sysadmin')
+      expect(item, 'SysAdmin menu item must be rendered').toBeDefined()
+      expect(item.count).toEqual([
+        'housekeeping',
+        'cronjobs',
+        'emailin',
+        'emailout',
+        'maildeferrals',
+        'uxexperiments',
+      ])
+    })
   })
 })
 

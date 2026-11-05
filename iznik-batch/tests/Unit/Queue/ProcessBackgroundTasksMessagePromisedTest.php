@@ -188,6 +188,39 @@ class ProcessBackgroundTasksMessagePromisedTest extends TestCase
         $this->assertSame(1, $this->notices($two['room']));
     }
 
+    public function test_a_trash_nothing_promise_to_nobody_named_tells_nobody(): void
+    {
+        // Trash Nothing passes on that a post is promised, not who to, so the member it went to
+        // cannot be told apart from the others.
+        $this->makeGiverTrashNothing();
+        $one = $this->replier();
+        $two = $this->replier();
+        $this->promiseTo(null);
+
+        $this->runTask(null);
+
+        $this->assertSame(0, $this->notices($one['room']));
+        $this->assertSame(0, $this->notices($two['room']));
+    }
+
+    public function test_a_trash_nothing_member_who_names_the_promisee_still_tells_the_others(): void
+    {
+        $this->makeGiverTrashNothing();
+        $promisee = $this->replier();
+        $other = $this->replier();
+        $this->promiseTo($promisee['user']);
+
+        $this->runTask($promisee['user']);
+
+        $this->assertSame(1, $this->notices($other['room']));
+        $this->assertSame(0, $this->notices($promisee['room']));
+    }
+
+    private function makeGiverTrashNothing(): void
+    {
+        DB::table('users')->where('id', $this->giver->id)->update(['tnuserid' => 900000000 + $this->giver->id]);
+    }
+
     public function test_a_wanted_post_is_not_announced(): void
     {
         DB::table('messages')->where('id', $this->offer->id)->update(['type' => Message::TYPE_WANTED]);

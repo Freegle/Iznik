@@ -350,7 +350,7 @@ own; runs in one investigation share the Claude `sessionid`.
   thumbs up/down under the answer, then asks what was wrong (or anything worth noting). Clicking
   the chosen thumb again clears it. Any Support or Admin volunteer can rate any run
   (`PATCH /api/supportai/runs`), so a run can also be judged when it is reviewed later.
-- **Review.** ModTools **SysAdmin -> AI Helper** (`ModSysAdminSupportAI.vue`,
+- **Review.** ModTools **SysAdmin -> AI Helper**, which only Admins see (`ModSysAdminSupportAI.vue`,
   `/sysadmin?tab=aihelper`) lists runs most recent first, filterable to thumbs down, thumbs up or
   not rated. Opening one fetches its transcript (`GET /api/supportai/runs/:id`); the list leaves
   transcripts out because they can be large.

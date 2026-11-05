@@ -1589,10 +1589,11 @@ func GetSession(c *fiber.Ctx) error {
 			}
 		}()
 
-		// --- UX experiments with a verdict that nobody has closed (admin/support) ---
-		// The SysAdmin UX tab is open to support as well as admin, so this is counted for both. The
-		// two parts say what is waiting: adopted ones to confirm, ended ones whose code is still in.
-		if userRow.Systemrole == utils.SYSTEMROLE_ADMIN || userRow.Systemrole == utils.SYSTEMROLE_SUPPORT {
+		// --- UX experiments with a verdict that nobody has closed (Admin only) ---
+		// What is waiting is developer work: adopted ones to confirm and take the switch out of,
+		// ended ones whose variant code is still in. Like every SysAdmin count, it is Admin only,
+		// because ModTools shows the SysAdmin page to Admin only.
+		if userRow.Systemrole == utils.SYSTEMROLE_ADMIN {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
@@ -1620,7 +1621,7 @@ func GetSession(c *fiber.Ctx) error {
 				cronjobs = housekeeper.CountCronJobsNeedingAttention()
 			}()
 
-			// --- Email health: incoming and outgoing alerts (admin/support) ---
+			// --- Email health: incoming and outgoing alerts (Admin only) ---
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
@@ -1631,10 +1632,8 @@ func GetSession(c *fiber.Ctx) error {
 			// ADMIN only, like every other badge on that page - the whole
 			// block is SYSTEMROLE_ADMIN, so a support user gets no
 			// maildeferrals key and therefore no badge, exactly as they get
-			// none for housekeeping or cronjobs. Deliberate, not an oversight:
-			// support can open the Delayed tab (the endpoint is
-			// IsAdminOrSupport) but is not badged towards it. The neighbouring
-			// comments saying "admin/support" are wrong about the gate.
+			// none for housekeeping or cronjobs. ModTools shows the SysAdmin
+			// page, and so the Delayed tab, to Admin only.
 			// Counted by DOMAIN, and per-mailbox reasons excluded, so the badge
 			// matches what the Delayed table shows. A full inbox is not an
 			// outage and must not light this up.

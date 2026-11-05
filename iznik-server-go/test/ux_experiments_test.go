@@ -870,9 +870,9 @@ func TestUxExperimentsBoundary(t *testing.T) {
 	assert.Equal(t, 2, read, "both files were read")
 }
 
-// The SysAdmin nudge counts experiments with a verdict that nobody has closed: adopted ones to
-// confirm, and reverted, inconclusive or stopped ones whose code is still in. Closed ones, ones with a
-// cleanup pull request, and ones still running or not started are not counted.
+// The SysAdmin nudge counts, for Admin, experiments with a verdict that nobody has closed: adopted
+// ones to confirm, and reverted, inconclusive or stopped ones whose code is still in. Closed ones, ones
+// with a cleanup pull request, and ones still running or not started are not counted.
 func TestUxExperimentsVerdictCountsInSessionWork(t *testing.T) {
 	prefix := uniquePrefix("uxverdict")
 	uxExpClean(t, prefix)
@@ -911,16 +911,19 @@ func TestUxExperimentsVerdictCountsInSessionWork(t *testing.T) {
 	assert.Equal(t, baseConfirm+1, confirm)
 	assert.Equal(t, baseRemove+3, remove)
 
-	for name, token := range map[string]string{"admin": adminToken, "support": supportToken} {
-		work := getSessionWork(t, token)
-		assert.Equal(t, float64(confirm+remove), work["uxexperiments"], name)
-		assert.Equal(t, float64(confirm), work["uxexperimentsconfirm"], name)
-		assert.Equal(t, float64(remove), work["uxexperimentsremove"], name)
-	}
+	work := getSessionWork(t, adminToken)
+	assert.Equal(t, float64(confirm+remove), work["uxexperiments"])
+	assert.Equal(t, float64(confirm), work["uxexperimentsconfirm"])
+	assert.Equal(t, float64(remove), work["uxexperimentsremove"])
 
-	// An ordinary moderator gets the work counts for their groups, but not this one.
-	modWork := getSessionWork(t, modToken)
-	assert.Equal(t, float64(0), modWork["uxexperiments"])
+	// The work waiting is a developer's. Support and an ordinary moderator get their other work
+	// counts, but not this one.
+	for name, token := range map[string]string{"support": supportToken, "mod": modToken} {
+		other := getSessionWork(t, token)
+		assert.Equal(t, float64(0), other["uxexperiments"], name)
+		assert.Equal(t, float64(0), other["uxexperimentsconfirm"], name)
+		assert.Equal(t, float64(0), other["uxexperimentsremove"], name)
+	}
 
 	// The Go API agrees with the experiments list on which ended ones are waiting.
 	var all ux.ExperimentsResponse

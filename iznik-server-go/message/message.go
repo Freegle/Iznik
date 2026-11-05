@@ -6436,7 +6436,8 @@ func handlePromise(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Tell the other members who replied that it is promised to someone else. Queued rather than
 	// done here, like the Taken notice: the batch finds the repliers, skips the promisee and
 	// anyone already told, and checks the promise still stands when it runs. A promise to
-	// nobody in particular (userid 0) tells every replier.
+	// nobody in particular (userid 0) tells every replier, except from a Trash Nothing member:
+	// Trash Nothing promises arrive that way and do not say who to, so the batch tells nobody.
 	notifiedPromisee := uint64(0)
 	if promisedTo != myid {
 		notifiedPromisee = promisedTo
