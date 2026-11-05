@@ -167,8 +167,9 @@ class TNVerifyEmailCoverageCommand extends Command
             return [$from, $from->addHours((int) ($this->option('window-hours') ?: $config['window_hours']))];
         }
 
-        // The recent window stops short of now: the sync takes a published post a minute
-        // or two to see, and a post it is about to ingest is not a miss.
+        // The recent window stops short of now: the sync sees a post within seconds, but
+        // longer while TN is slow or a poster's lookup is holding it, and a post it is about
+        // to ingest is not a miss.
         if ($this->option('recent')) {
             $to = CarbonImmutable::now('UTC')->subMinutes(self::RECENT_SETTLE_MINUTES);
 

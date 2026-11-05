@@ -119,7 +119,7 @@ class ScheduledOutcomeRegistry
                 ->enabledWhen(fn () => trim((string) config('freegle.digest.daily_allowlist', '')) !== '')
                 ->activeBetween(13, 24, $tz),
 
-            // tn:sync (every minute) ingests TrashNothing posts into `messages`,
+            // tn:sync (every ten seconds) ingests TrashNothing posts into `messages`,
             // stamping messages.tnpostid. TN is a high-volume feed, so a window
             // with NO post at all means either TN is down/returning nothing or
             // our ingestion is failing every cycle — the two cases this alert

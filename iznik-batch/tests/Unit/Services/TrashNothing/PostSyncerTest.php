@@ -633,14 +633,15 @@ class PostSyncerTest extends TestCase
         $this->tnStatuses = [$gone => 404, $down => 500, $other => 404];
         $dir = $this->feedWithPosters([$gone, $down, $other]);
 
-        for ($run = 1; $run <= TnUserProvisioner::LOOKUP_WARN_AT; $run++) {
+        for ($minute = 0; $minute <= TnUserProvisioner::LOOKUP_WARN_AFTER_MINUTES; $minute++) {
             $syncer = $this->syncerForRun($dir);
             [$count, $maxDate] = $syncer->sync(self::WINDOW_START, self::WINDOW_END);
 
-            $this->assertSame(2, $count, "run {$run} stops at p2 and does not reach p3");
+            $this->assertSame(2, $count, "minute {$minute} stops at p2 and does not reach p3");
             $this->assertSame(self::WINDOW_START, $syncer->stalledAt());
             $this->assertSame(self::WINDOW_START, $maxDate);
-            $this->assertCount($run < TnUserProvisioner::LOOKUP_WARN_AT ? 0 : 1, $sentry->calls, json_encode($sentry->calls));
+            $this->assertCount($minute < TnUserProvisioner::LOOKUP_WARN_AFTER_MINUTES ? 0 : 1, $sentry->calls, json_encode($sentry->calls));
+            $this->travel(1)->minutes();
         }
 
         $this->assertStringContainsString('p2', $sentry->calls[0][0]);
@@ -654,9 +655,10 @@ class PostSyncerTest extends TestCase
         $this->tnStatuses = [$gone => 404, $down => 503, $other => 404];
         $dir = $this->feedWithPosters([$gone, $down, $other]);
 
-        for ($run = 1; $run < TnUserProvisioner::LOOKUP_GIVE_UP_AT; $run++) {
+        for ($minute = 0; $minute < TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES; $minute++) {
             $this->syncerForRun($dir)->sync(self::WINDOW_START, self::WINDOW_END);
-            $this->assertSame([], $this->routedFor('p2'), "run {$run} held p2 without saying it was routed");
+            $this->assertSame([], $this->routedFor('p2'), "minute {$minute} held p2 without saying it was routed");
+            $this->travel(1)->minutes();
         }
 
         $syncer = $this->syncerForRun($dir);
@@ -680,13 +682,14 @@ class PostSyncerTest extends TestCase
         $dir = $this->feedWithPosters([$down, $gone, $other]);
 
         // p1 is the failing one, so until it is given up nothing behind it is reached.
-        for ($run = 1; $run < TnUserProvisioner::LOOKUP_GIVE_UP_AT; $run++) {
+        for ($minute = 0; $minute < TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES; $minute++) {
             $syncer = $this->syncerForRun($dir);
             [$count] = $syncer->sync(self::WINDOW_START, self::WINDOW_END);
-            $this->assertSame(1, $count, "run {$run}");
+            $this->assertSame(1, $count, "minute {$minute}");
             $this->assertNotNull($syncer->stalledAt());
+            $this->travel(1)->minutes();
         }
-        $this->assertCount(1, $sentry->calls, 'the warning count was reached on the way');
+        $this->assertCount(1, $sentry->calls, 'the warning was sent on the way');
 
         $syncer = $this->syncerForRun($dir);
         [$count, $maxDate] = $syncer->sync(self::WINDOW_START, self::WINDOW_END);
