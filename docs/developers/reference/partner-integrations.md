@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-02
+last_reviewed: 2026-11-05
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Console/Commands/Integrations
@@ -52,6 +52,9 @@ Because it is large and long-standing it has its own page:
 posting, replying or member email, because a change that works for a Freegle member can
 easily break for a TrashNothing one - their posts and replies arrive by **email**, not
 through our website.
+
+A promise made on TrashNothing reaches us naming nobody, so the "promised to someone else"
+notice to other repliers is not sent for it (`handleMessagePromised`).
 
 Config: `freegle.trashnothing_domain`, `freegle.trashnothing.api_base_url`.
 
