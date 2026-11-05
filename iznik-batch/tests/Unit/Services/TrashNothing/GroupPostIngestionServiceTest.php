@@ -319,15 +319,16 @@ class GroupPostIngestionServiceTest extends TestCase
         $postId = 'tn-lookup-gave-up-' . uniqid();
         $post   = $this->makePost(['post_id' => $postId, 'user_id' => $tnId]);
 
-        // Each run is its own service and provisioner; the count lives in the cache.
-        for ($run = 1; $run < TnUserProvisioner::LOOKUP_GIVE_UP_AT; $run++) {
+        // Each run is its own service and provisioner, a minute apart; the clock lives in the cache.
+        for ($minute = 0; $minute < TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES; $minute++) {
             $service = $this->makeService(dryRun: false);
             $service->ingest($post, $group);
             $this->assertSame(
                 GroupPostIngestionService::REASON_TN_USER_LOOKUP_FAILED,
                 $service->getLastRoutingContext()['routing_reason'],
-                "run {$run}",
+                "minute {$minute}",
             );
+            $this->travel(1)->minutes();
         }
 
         $service = $this->makeService(dryRun: false);
@@ -2119,11 +2120,12 @@ class GroupPostIngestionServiceTest extends TestCase
         $postId = 'tn-not-deliberate-' . uniqid();
         $post   = $this->makePost(['post_id' => $postId, 'user_id' => $tnId]);
 
-        for ($run = 1; $run <= TnUserProvisioner::LOOKUP_GIVE_UP_AT; $run++) {
+        for ($minute = 0; $minute <= TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES; $minute++) {
             $service = $this->makeService(dryRun: false);
             $service->ingest($post, $group);
 
-            $this->assertNull(DeliberateSkips::reasonFor($postId), "run {$run}");
+            $this->assertNull(DeliberateSkips::reasonFor($postId), "minute {$minute}");
+            $this->travel(1)->minutes();
         }
 
         $this->assertSame(
