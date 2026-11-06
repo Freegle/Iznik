@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands\TrashNothing;
 
+use App\Models\User;
+use App\Models\UserEmail;
 use App\Services\LokiService;
 use App\Services\TrashNothing\Sync\TrashNothingRateLimiter;
 use App\Services\TrashNothing\Sync\UserChangesSyncer;
@@ -54,15 +56,29 @@ class TNBackfillUserIdsCommand extends Command
         }
 
         if ($syncer->fetchFailed()) {
-            $this->error('A page of the feed could not be read, so this stopped early. Run it again.');
+            $this->error('A page of the feed could not be read, so nothing was written. Run it again.');
 
             return Command::FAILURE;
         }
+
+        $this->line('accounts with a TN address and no TN id: ' . $this->accountsWithNoTnId());
 
         if (!$this->option('commit')) {
             $this->info('Dry run: nothing written. Add --commit to stamp.');
         }
 
         return Command::SUCCESS;
+    }
+
+    /** What the feed has not settled, by the address: `backwards` cannot find them all. */
+    private function accountsWithNoTnId(): int
+    {
+        return UserEmail::query()
+            ->join('users', 'users.id', '=', 'users_emails.userid')
+            ->where('users_emails.email', 'like', '%' . User::TN_EMAIL_SUFFIX)
+            ->whereNull('users.tnuserid')
+            ->whereNull('users.deleted')
+            ->distinct()
+            ->count('users_emails.userid');
     }
 }

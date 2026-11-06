@@ -1085,15 +1085,12 @@ class UserChangesSyncerTest extends TestCase
     {
         $user = $this->tnUserWithId(null);
         $before = $this->emailsOf($user);
+        $change = ['fd_user_id' => $user->id, 'tn_user_id' => 99130026, 'date' => '2026-02-01T10:00:00'];
 
-        $counts = $this->backfill([[
-            'fd_user_id'      => $user->id,
-            'tn_user_id'      => 99130026,
-            'account_removed' => true,
-            'username'        => $this->username('renamed'),
-            'reply_time'      => 99,
-            'date'            => '2026-02-01T10:00:00',
-        ]]);
+        $counts = $this->backfill([
+            $change + ['username' => $user->tnUsernames()[0]],
+            $change + ['account_removed' => true, 'username' => $this->username('renamed'), 'reply_time' => 99],
+        ]);
 
         $this->assertSame(1, $counts['stamped']);
         $this->assertSame(99130026, (int) $user->fresh()->tnuserid);
@@ -1190,5 +1187,122 @@ class UserChangesSyncerTest extends TestCase
         $syncer->backfillTnUserIds('2026-01-01T00:00:00Z', '2026-10-01T11:00:00Z');
 
         $this->assertTrue($syncer->fetchFailed());
+    }
+
+    /** A page it never read could name the account again with another id, so it stamps nothing. */
+    public function test_the_backfill_writes_nothing_when_a_later_page_cannot_be_read(): void
+    {
+        $user = $this->tnUserWithId(null);
+        $this->failFromPage = 2;
+        $this->changes = array_fill(0, 100, ['fd_user_id' => $user->id, 'tn_user_id' => 99130045, 'date' => '2026-02-01T10:00:00']);
+        $syncer = new UserChangesSyncer(false, false, 'test-key', self::API_BASE, $this->loki, new TrashNothingRateLimiter(0));
+
+        $counts = $syncer->backfillTnUserIds('2026-01-01T00:00:00Z', '2026-10-01T11:00:00Z');
+
+        $this->assertTrue($syncer->fetchFailed());
+        $this->assertSame(0, $counts['stamped']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    /** Two members named on one account is the clearest sign in the feed that it is shared. */
+    public function test_the_backfill_leaves_an_account_two_tn_ids_name(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $counts = $this->backfill([
+            ['fd_user_id' => $user->id, 'tn_user_id' => 99130046, 'date' => '2026-02-01T10:00:00'],
+            ['fd_user_id' => $user->id, 'tn_user_id' => 99130047, 'date' => '2026-02-02T10:00:00'],
+        ]);
+
+        $this->assertSame(1, $counts['two-tn-ids']);
+        $this->assertSame(0, $counts['stamped']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    /** Stamping either would be a guess, and the dry run would count both as stamped. */
+    public function test_the_backfill_leaves_a_tn_id_named_on_two_accounts(): void
+    {
+        $first = $this->tnUserWithId(null);
+        $second = $this->tnUserWithId(null);
+
+        $counts = $this->backfill([
+            ['fd_user_id' => $first->id, 'tn_user_id' => 99130048, 'date' => '2026-02-01T10:00:00'],
+            ['fd_user_id' => $second->id, 'tn_user_id' => 99130048, 'date' => '2026-02-02T10:00:00'],
+        ]);
+
+        $this->assertSame(2, $counts['two-accounts']);
+        $this->assertNull($first->fresh()->tnuserid);
+        $this->assertNull($second->fresh()->tnuserid);
+    }
+
+    /** A merge removes the account, and TN goes on naming it in old changes. */
+    public function test_the_backfill_ignores_an_account_that_has_gone_when_counting_accounts(): void
+    {
+        $user = $this->tnUserWithId(null);
+        $gone = (int) DB::table('users')->max('id') + 100000;
+
+        $counts = $this->backfill([
+            ['fd_user_id' => $gone, 'tn_user_id' => 99130049, 'date' => '2026-02-01T10:00:00'],
+            ['fd_user_id' => $user->id, 'tn_user_id' => 99130049, 'date' => '2026-02-02T10:00:00'],
+        ]);
+
+        $this->assertSame(1, $counts['stamped']);
+        $this->assertSame(99130049, (int) $user->fresh()->tnuserid);
+    }
+
+    /** A username may only refuse something, and this is a refusal. */
+    public function test_the_backfill_leaves_an_account_whose_username_the_feed_never_gave(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $counts = $this->backfill([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130050,
+            'username'   => $this->username('someoneelse'),
+            'date'       => '2026-02-01T10:00:00',
+        ]]);
+
+        $this->assertSame(1, $counts['username-differs']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    public function test_the_backfill_matches_a_username_whatever_its_case(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $counts = $this->backfill([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130051,
+            'username'   => strtoupper($user->tnUsernames()[0]),
+            'date'       => '2026-02-01T10:00:00',
+        ]]);
+
+        $this->assertSame(1, $counts['stamped']);
+    }
+
+    /** users.tnuserid is unique, so this would hold the id away from the member until forgotten. */
+    public function test_the_backfill_leaves_a_deleted_account(): void
+    {
+        $user = $this->tnUserWithId(null);
+        DB::table('users')->where('id', $user->id)->update(['deleted' => now()]);
+
+        $counts = $this->backfill([['fd_user_id' => $user->id, 'tn_user_id' => 99130052, 'date' => '2026-02-01T10:00:00']]);
+
+        $this->assertSame(1, $counts['deleted']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    /** A TN id makes an account a TN account, and a TN account cannot be a moderator. */
+    public function test_the_backfill_leaves_a_freegle_account_with_one_tn_alias(): void
+    {
+        $user = $this->tnUser('Volunteer', [
+            [$this->username('vol') . '@example.org', 1],
+            [$this->username('tn') . '-g1' . self::TN_DOMAIN, 0],
+        ]);
+
+        $counts = $this->backfill([['fd_user_id' => $user->id, 'tn_user_id' => 99130053, 'date' => '2026-02-01T10:00:00']]);
+
+        $this->assertSame(1, $counts['not-a-tn-account']);
+        $this->assertNull($user->fresh()->tnuserid);
     }
 }

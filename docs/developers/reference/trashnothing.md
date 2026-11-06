@@ -60,7 +60,8 @@ Each TN user is linked to Freegle via:
 
 **Only a TN user id says who someone is.** A username or an address never does: TN does not promise
 usernames are unique, and an address can sit on the wrong account. A username is used only to refuse
-something (`MergeUsersTx`, `User::merge`, the two-username guard in the user-changes sync).
+something (`MergeUsersTx`, `User::merge`, the two-username guard in the user-changes sync,
+`tn:backfill-user-ids`).
 
 **Inbound mail does not follow this, deliberately.** The email integration, posts and chat alike, is
 being replaced, so `IncomingMailService` is left as it is rather than risk breaking it. It looks the
@@ -90,9 +91,16 @@ API skips the post for the same reason (`tn-account-deleted`).
 That splits a member from an old account that never got their TN id: its history, memberships and
 bans stay behind, and its chats stop sending notifications if it loses its only address.
 `tn:backfill-user-ids --from=<date>` settles those accounts first, from the user-changes feed, which
-names an account by both ids. It stamps an account holding exactly one TN username, applies nothing
-else from the feed, and writes nothing without `--commit`. How far back the feed goes decides how
-many it can reach.
+names an account by both ids. It reads the whole window first, stamps an account holding exactly one
+TN username, and applies nothing else from the feed. It writes nothing without `--commit`, or if a
+page cannot be read.
+
+An id is hard to take back, so anything that casts doubt on one leaves the account for a person: the
+feed names it with two TN ids (`two-tn-ids`, the clearest sign it is shared), names the id on two
+accounts (`two-accounts`), or gives usernames and none is the account's (`username-differs`); or the
+account is deleted (`deleted`), or has a Freegle address as its preferred one (`not-a-tn-account`),
+which a TN id would make a TN account. It ends by printing how many accounts still have a TN address
+and no TN id. How far back the feed goes decides how many it can reach.
 
 TN can act on a post the member's account does not own only by ids (`actAsOwnerCandidate`): the post
 has a `tnpostid`, the call names a `tnuserid`, the caller's account holds exactly that id, and the

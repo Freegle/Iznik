@@ -430,6 +430,10 @@ class UserChangesSyncer
      * involved, so this settles accounts with no TN id before anything has to split them from
      * their member. It reads old changes, so it applies none: a removal would be months late.
      *
+     * An id is unique and hard to take back, so anything that casts doubt on one leaves the account
+     * for a person. It reads the whole window before writing, because a later page can do that, and
+     * writes nothing if it cannot read every page.
+     *
      * @return array<string, int> how many accounts came to each outcome
      */
     public function backfillTnUserIds(string $from, string $to): array
@@ -437,12 +441,46 @@ class UserChangesSyncer
         $counts = [
             'stamped'           => 0,
             'already-has-an-id' => 0,
+            'deleted'           => 0,
+            'two-tn-ids'        => 0,
+            'two-accounts'      => 0,
             'held-elsewhere'    => 0,
             'two-usernames'     => 0,
             'no-tn-address'     => 0,
+            'not-a-tn-account'  => 0,
+            'username-differs'  => 0,
         ];
-        $seen = [];
-        $page = 1;
+
+        $named = $this->tnIdsNamedPerAccount($from, $to);
+        if ($named === null) {
+            return $counts;
+        }
+
+        $accountsById = [];
+        foreach ($named as $fdId => $tnIds) {
+            foreach (array_keys($tnIds) as $tnId) {
+                $accountsById[$tnId][] = $fdId;
+            }
+        }
+
+        foreach ($named as $fdId => $tnIds) {
+            $user = User::find($fdId);
+            if ($user !== null) {
+                $counts[$this->backfillOne($user, $tnIds, $accountsById)]++;
+            }
+        }
+
+        return $counts;
+    }
+
+    /**
+     * @return array<int, array<int, array<string, true>>>|null account => TN id => the usernames the
+     *                                                         feed gave, or null if a page failed
+     */
+    private function tnIdsNamedPerAccount(string $from, string $to): ?array
+    {
+        $named = [];
+        $page  = 1;
 
         $this->fetchFailed = false;
 
@@ -450,7 +488,8 @@ class UserChangesSyncer
             $changes = $this->fetchPage($page, $from, $to);
             if ($changes === null) {
                 $this->fetchFailed = true;
-                break;
+
+                return null;
             }
 
             $page++;
@@ -459,35 +498,61 @@ class UserChangesSyncer
                 $fdId = (int) ($change['fd_user_id'] ?? 0);
                 $tnId = (int) ($change['tn_user_id'] ?? 0);
 
-                if ($fdId === 0 || $tnId === 0 || isset($seen[$fdId])) {
+                if ($fdId === 0 || $tnId === 0) {
                     continue;
                 }
-                $seen[$fdId] = true;
 
-                $match = TnMemberMatch::find($fdId, $tnId);
-                if ($match->named !== null) {
-                    $counts[$this->backfillOne($match->named, $match, $tnId)]++;
+                $named[$fdId][$tnId] ??= [];
+                if (!empty($change['username'])) {
+                    $named[$fdId][$tnId][strtolower((string) $change['username'])] = true;
                 }
             }
         } while ($changes && count($changes) === self::PAGE_SIZE);
 
-        return $counts;
+        return $named;
     }
 
-    /** @return string the outcome, as a key of backfillTnUserIds()'s counts */
-    private function backfillOne(User $user, TnMemberMatch $match, int $tnId): string
+    /**
+     * @param  array<int, array<string, true>>  $tnIds  the TN ids the feed named on this account
+     * @param  array<int, list<int>>  $accountsById  the accounts the feed named each TN id on
+     * @return string the outcome, as a key of backfillTnUserIds()'s counts
+     */
+    private function backfillOne(User $user, array $tnIds, array $accountsById): string
     {
         if ($user->tnuserid !== null) {
             return 'already-has-an-id';
         }
 
-        if ($match->heldElsewhere()) {
+        if ($user->deleted !== null) {
+            return 'deleted';
+        }
+
+        if (count($tnIds) > 1) {
+            return 'two-tn-ids';
+        }
+
+        $tnId = array_key_first($tnIds);
+
+        if (User::whereIn('id', $accountsById[$tnId])->count() > 1) {
+            return 'two-accounts';
+        }
+
+        if (TnMemberMatch::find($user->id, $tnId)->heldElsewhere()) {
             return 'held-elsewhere';
         }
 
-        $usernames = count($user->tnUsernames());
-        if ($usernames !== 1) {
-            return $usernames === 0 ? 'no-tn-address' : 'two-usernames';
+        $usernames = $user->tnUsernames();
+        if (count($usernames) !== 1) {
+            return $usernames === [] ? 'no-tn-address' : 'two-usernames';
+        }
+
+        if (!$user->isTN()) {
+            return 'not-a-tn-account';
+        }
+
+        // A username may only refuse: a feed row with none is no evidence either way.
+        if ($tnIds[$tnId] !== [] && !isset($tnIds[$tnId][$usernames[0]])) {
+            return 'username-differs';
         }
 
         $this->stampTnId($user, $tnId);

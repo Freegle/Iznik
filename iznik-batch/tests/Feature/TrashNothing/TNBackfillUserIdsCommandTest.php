@@ -4,6 +4,7 @@ namespace Tests\Feature\TrashNothing;
 
 use App\Models\User;
 use App\Models\UserEmail;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -59,6 +60,25 @@ class TNBackfillUserIdsCommandTest extends TestCase
             ->assertExitCode(0);
 
         $this->assertSame(self::TN_ID, (int) $this->user->fresh()->tnuserid);
+    }
+
+    /** How much the feed left is what decides whether it is safe to go on. */
+    public function test_it_says_how_many_accounts_are_left_with_no_tn_id(): void
+    {
+        $this->fakeFeed();
+
+        $left = function (array $options): int {
+            Artisan::call('tn:backfill-user-ids', ['--from' => '2026-01-01'] + $options);
+            preg_match('/accounts with a TN address and no TN id: (\d+)/', Artisan::output(), $found);
+
+            return (int) $found[1];
+        };
+
+        $before = $left([]);
+        $after = $left(['--commit' => true]);
+
+        $this->assertGreaterThan(0, $before);
+        $this->assertSame($before - 1, $after);
     }
 
     public function test_it_needs_a_start_date(): void
