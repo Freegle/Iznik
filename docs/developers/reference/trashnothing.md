@@ -214,7 +214,7 @@ else - only a person can tell which), and moves no cursor.
 
 When one Freegle account turns out to hold two Trash Nothing members (two usernames, and TN's
 API gives the second one a different TN user id), `tn:split-shared-account` moves the second
-member out onto a new account with their TN user id:
+member out onto a new account with their TN user id, or the account they already have:
 
 ```bash
 php artisan tn:split-shared-account <freegle-user-id> <tn-username> <tn-user-id>          # report only
@@ -245,8 +245,20 @@ what evidence, plus the chats it cannot attribute and why. It prints ids and cou
 owner, so a row that has changed since the report aborts the whole split. Before committing it
 writes the SQL that undoes it (under `storage/app/tn-splits/`, or `--rollback-file=`) and logs
 `User`/`Split` on both accounts. A second run finds nothing to move. It refuses an account that
-does not hold the username, a TN user id another account holds, the account's own TN user id,
-and an account whose only TN username it is.
+does not hold the username, unless the member's own account does; a TN user id held by a deleted
+account, or by an account without that username; the account's own TN user id; and an account
+whose only TN username it is.
+
+**A member who already has an account.** The posts API makes one at their first post, and a partner
+call at their next join, so the second member may hold their TN id before anyone splits them out.
+Everything then moves onto that account, which keeps its preferred address. A partner call moves
+only the address, so a run can find no addresses left and still move posts and memberships, and the
+aliases already moved still count as evidence.
+
+A row that account already has the twin of cannot move, because of the table's unique key, so it
+stays and the report lists it (`Already on the account they have`): a membership, a chat with the
+same person, a rating, an arrangement, a promise or a collection. A chat left this way cannot be
+named in `--move-chats=`, because a person has to read the two.
 
 ## Integration Mechanisms
 
