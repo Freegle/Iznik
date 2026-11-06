@@ -4323,12 +4323,12 @@ type patchMessageRequest struct {
 // resolvePartnerAuth reads a ?partner= query param and resolves the acting user
 // ID plus every candidate identity the partner's identifiers map to (a TN
 // member can own two Freegle accounts - see user.FindTNCandidates). Returns
-// (primary id, all candidates, error).
-func resolvePartnerAuth(c *fiber.Ctx) (uint64, []uint64, error) {
+// (primary id, all candidates, the TN id the call named, error).
+func resolvePartnerAuth(c *fiber.Ctx) (uint64, []uint64, uint64, error) {
 	db := database.DBConn
 	_, _, domain, err := user.ValidatePartnerKey(db, c.Query("partner"))
 	if err != nil {
-		return 0, nil, fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
+		return 0, nil, 0, fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
 	}
 
 	email := c.Query("email")
@@ -4343,39 +4343,54 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, []uint64, error) {
 	if email != "" {
 		parts := strings.SplitN(email, "@", 2)
 		if len(parts) != 2 || parts[1] != domain {
-			return 0, nil, fiber.NewError(fiber.StatusForbidden, "Email domain does not match partner domain")
+			return 0, nil, 0, fiber.NewError(fiber.StatusForbidden, "Email domain does not match partner domain")
 		}
 	}
 
-	candidates := user.FindTNCandidates(db, tnuserid, email)
-	if len(candidates) == 0 {
-		return 0, nil, fiber.NewError(fiber.StatusForbidden, "User not found for partner")
+	if user.NeedsTNId(domain, tnuserid, email) {
+		return 0, nil, 0, fiber.NewError(fiber.StatusBadRequest, "tnuserid is required")
 	}
-	// Two candidates = the member's identity has diverged across two accounts.
-	// The sync's job is to STOP divergence, not tolerate it: merge the twins
-	// (falls back to the split candidates if the merge fails).
-	candidates = user.HealTNDivergence(db, candidates)
-	// The member may hold further accounts carrying a DIFFERENT per-group alias
-	// (see user.FindTNSiblings). Added after the heal, so they widen owner
-	// arbitration without being merged.
-	return candidates[0], user.WithTNSiblings(db, candidates, email), nil
+
+	candidates, err := user.ResolvePartnerActor(db, tnuserid, email)
+	if err != nil {
+		return 0, nil, 0, fiber.NewError(fiber.StatusInternalServerError, "Failed to create user")
+	}
+	if len(candidates) == 0 {
+		return 0, nil, 0, fiber.NewError(fiber.StatusForbidden, "User not found for partner")
+	}
+
+	return candidates[0], candidates, tnuserid, nil
 }
 
-// actAsOwnerCandidate returns the message owner's id when the owner is one of
-// the partner-resolved candidate identities, else the primary id. The
-// partner's action on a message is legitimately the member's under whichever
-// of their identities owns it.
-func actAsOwnerCandidate(db *gorm.DB, primary uint64, candidates []uint64, msgID uint64) uint64 {
-	if len(candidates) < 2 {
+// actAsOwnerCandidate returns the id to act on a message as, which is the primary id
+// unless the owner is one of the partner-resolved candidates.
+//
+// TN can also act on its own post filed on an account with no TN id. The post's address
+// or username says nothing about whose it is, so that is decided by ids alone: the call
+// names a TN id, the caller's account holds exactly that id, and the post's account holds
+// none, so nothing says it is another member's. A post on an account holding a different
+// TN id is that member's until tn:split-shared-account moves it.
+func actAsOwnerCandidate(db *gorm.DB, primary uint64, candidates []uint64, tnuserid uint64, msgID uint64) uint64 {
+	if len(candidates) == 0 {
 		return primary
 	}
-	var fromuser uint64
-	db.Table("messages").Select("fromuser").Where("id = ?", msgID).Scan(&fromuser)
+
+	var msg struct {
+		Fromuser uint64
+		Tnpostid *string
+	}
+	db.Table("messages").Select("fromuser, tnpostid").Where("id = ?", msgID).Scan(&msg)
 	for _, cand := range candidates {
-		if cand == fromuser {
-			return fromuser
+		if cand == msg.Fromuser {
+			return msg.Fromuser
 		}
 	}
+
+	isTNPost := msg.Tnpostid != nil && *msg.Tnpostid != ""
+	if isTNPost && tnuserid != 0 && user.TNIdOf(db, primary) == tnuserid && user.TNIdOf(db, msg.Fromuser) == 0 {
+		return msg.Fromuser
+	}
+
 	return primary
 }
 
@@ -5112,9 +5127,10 @@ func PatchMessage(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
 	var partnerCandidates []uint64
+	var partnerTNId uint64
 	if c.Query("partner") != "" {
 		var err error
-		myid, partnerCandidates, err = resolvePartnerAuth(c)
+		myid, partnerCandidates, partnerTNId, err = resolvePartnerAuth(c)
 		if err != nil {
 			return err
 		}
@@ -5140,7 +5156,7 @@ func PatchMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "id is required")
 	}
 
-	myid = actAsOwnerCandidate(database.DBConn, myid, partnerCandidates, req.ID)
+	myid = actAsOwnerCandidate(database.DBConn, myid, partnerCandidates, partnerTNId, req.ID)
 
 	return applyPatchMessage(c, myid, req)
 }
@@ -5150,9 +5166,10 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
 	var partnerCandidates []uint64
+	var partnerTNId uint64
 	if c.Query("partner") != "" {
 		var err error
-		myid, partnerCandidates, err = resolvePartnerAuth(c)
+		myid, partnerCandidates, partnerTNId, err = resolvePartnerAuth(c)
 		if err != nil {
 			return err
 		}
@@ -5217,7 +5234,7 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 		// A crossposted TN post's copies all belong to the same TN member, but
 		// that member may own two Freegle accounts - act as whichever owns
 		// this copy.
-		actingid := actAsOwnerCandidate(db, myid, partnerCandidates, msgID)
+		actingid := actAsOwnerCandidate(db, myid, partnerCandidates, partnerTNId, msgID)
 
 		// Attachments must reach their final state BEFORE the edit's change signal is
 		// written.  applyPatchMessageCore writes the messages_edits row that /api/changes
@@ -6009,6 +6026,7 @@ func PostMessage(c *fiber.Ctx) error {
 	partnerKey := c.Query("partner")
 	var partnerDomain string
 	var partnerCandidates []uint64
+	var partnerTNId uint64
 	partnerOwnerMode := false
 	if partnerKey != "" {
 		db := database.DBConn
@@ -6033,27 +6051,29 @@ func PostMessage(c *fiber.Ctx) error {
 			}
 		}
 
+		if user.NeedsTNId(domain, tnuserid, email) {
+			return fiber.NewError(fiber.StatusBadRequest, "tnuserid is required")
+		}
+
 		if email == "" && tnuseridStr == "" {
 			// Partner-key-only auth (e.g. Trash Nothing): the partner acts as the
-			// message's owner, provided the message fromaddr is in the partner
-			// domain. Resolved per message id below. This mirrors V1
-			// getRolesForMessages, where a partner with a valid key acquires owner
-			// rights on a message from its domain and then acts as its fromuser.
+			// message's owner, provided the message is TN's own post or its
+			// fromaddr is in the partner domain. Resolved per message id below.
+			// This mirrors V1 getRolesForMessages, where a partner with a valid
+			// key acquires owner rights on a message from its domain and then
+			// acts as its fromuser.
 			partnerDomain = domain
 			partnerOwnerMode = true
 		} else {
-			partnerCandidates = user.FindTNCandidates(db, tnuserid, email)
+			partnerCandidates, err = user.ResolvePartnerActor(db, tnuserid, email)
+			if err != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, "Failed to create user")
+			}
 			if len(partnerCandidates) == 0 {
 				return fiber.NewError(fiber.StatusForbidden, "User not found for partner")
 			}
-			// Two candidates = diverged twin accounts; the sync's job is to
-			// STOP divergence - merge them (falls back to the split
-			// candidates for per-message arbitration if the merge fails).
-			partnerCandidates = user.HealTNDivergence(db, partnerCandidates)
 			myid = partnerCandidates[0]
-			// Same as resolvePartnerAuth: the member's other accounts join the
-			// candidate set for owner arbitration only, never for merging.
-			partnerCandidates = user.WithTNSiblings(db, partnerCandidates, email)
+			partnerTNId = tnuserid
 		}
 	}
 
@@ -6090,7 +6110,7 @@ func PostMessage(c *fiber.Ctx) error {
 			} else {
 				// The member may own two Freegle accounts (see
 				// user.FindTNCandidates) - act as whichever owns this copy.
-				actingid = actAsOwnerCandidate(db, myid, partnerCandidates, msgID)
+				actingid = actAsOwnerCandidate(db, myid, partnerCandidates, partnerTNId, msgID)
 			}
 			if err := dispatchPostMessageAction(c, actingid, req); err != nil {
 				if i == 0 {
@@ -6113,8 +6133,8 @@ func PostMessage(c *fiber.Ctx) error {
 		if myid == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Message not in partner domain")
 		}
-	} else if len(partnerCandidates) > 1 {
-		myid = actAsOwnerCandidate(database.DBConn, myid, partnerCandidates, req.ID)
+	} else {
+		myid = actAsOwnerCandidate(database.DBConn, myid, partnerCandidates, partnerTNId, req.ID)
 	}
 
 	return dispatchPostMessageAction(c, myid, req)

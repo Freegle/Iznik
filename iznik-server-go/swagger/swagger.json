@@ -8367,6 +8367,53 @@
     ]
    }
   },
+  "/user/hostingad": {
+   "get": {
+    "description": "Decides once, for the logged-in member, whether the Krystal hosting ad modal is shown: their email\ndomain must host a WordPress site not on Krystal, and the server experiment krystal-hosting-ad\ngives the arm. Both arms are recorded as an exposure.",
+    "tags": [
+     "user"
+    ],
+    "summary": "Whether to show the Krystal hosting ad",
+    "operationId": "getHostingAd",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   },
+   "post": {
+    "description": "Writes the time of the member's first click through to Krystal (\"click\") or first dismissal\n(\"dismiss\") on their krystal-hosting-ad exposure row.",
+    "tags": [
+     "user"
+    ],
+    "summary": "Record what the member did with the hosting ad",
+    "operationId": "postHostingAd",
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   }
+  },
   "/user/relevantoff": {
    "get": {
     "description": "Targeted opt-out from matched-posts suggestion emails (sets\nrelevantallowed=0), key-authenticated so it works as a one-click\nList-Unsubscribe.",

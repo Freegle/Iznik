@@ -33,6 +33,12 @@ class UserChangesSyncerTest extends TestCase
     /** The first page TN fails to serve, or 0 when it serves them all. */
     private int $failFromPage = 0;
 
+    /** @var array<string, array<int, array>> the changes of each day (Y-m-d), for a test where they differ by day */
+    private array $changesByDay = [];
+
+    /** The day (Y-m-d) TN fails to serve, if any. */
+    private ?string $failOnDay = null;
+
     /** @var array<int, array{string, array}> */
     private array $lokiEvents = [];
 
@@ -60,8 +66,25 @@ class UserChangesSyncerTest extends TestCase
                 return Http::response(['results' => []], 200);
             }
 
+            // TN's own rule, on every test here, so nothing can pass by asking for more than it allows.
+            if (strtotime($request['date_max']) - strtotime($request['date_min']) > 86400) {
+                return Http::response('Invalid parameters date_min and date_max - date_min and date_max must be at most one day apart.', 400);
+            }
+
+            $day = substr($request['date_min'], 0, 10);
+
+            if ($day === $this->failOnDay) {
+                return Http::response('Internal Server Error', 500);
+            }
+
             if ($this->failFromPage > 0 && (int) $request['page'] >= $this->failFromPage) {
                 return Http::response('Internal Server Error', 500);
+            }
+
+            if ($this->changesByDay !== []) {
+                return Http::response([
+                    'changes' => array_slice($this->changesByDay[$day] ?? [], ((int) $request['page'] - 1) * 100, 100),
+                ], 200);
             }
 
             return Http::response(['changes' => $this->changes], 200);
@@ -218,26 +241,41 @@ class UserChangesSyncerTest extends TestCase
         $this->assertTrue($user->isTN());
     }
 
-    public function test_rename_leaves_non_tn_and_other_usernames_addresses_alone(): void
+    public function test_rename_leaves_non_tn_addresses_alone(): void
     {
-        // "bibiana-gomes" starts with "bibiana-g" but is a different username.
         $old = $this->username('bibiana');
         $new = $this->username('bibi');
         $alias = "{$old}-g123" . self::TN_DOMAIN;
-        $longer = "{$old}-gomes-g4840" . self::TN_DOMAIN;
         $personal = "{$old}@example.com";
-        $user = $this->tnUser(User::tnDisplayName($old), [[$alias, 1], [$longer, 0], [$personal, 0]]);
+        $user = $this->tnUser(User::tnDisplayName($old), [[$alias, 1], [$personal, 0]]);
 
         $this->sync($user->id, $new);
 
         $expected = [
-            $longer => 0,
             $personal => 0,
             "{$new}-g123" . self::TN_DOMAIN => 1,
         ];
         ksort($expected);
         $this->assertSame($expected, $this->emailsOf($user));
         $this->assertSame([$alias], array_column($this->renameEvents(), 'old_email'));
+    }
+
+    /**
+     * "bibiana-gomes" starts with "bibiana-g" but is a different username, so this account holds
+     * two, and nothing on it says which of them renamed.
+     */
+    public function test_a_longer_username_with_the_same_start_is_a_second_username(): void
+    {
+        $old = $this->username('bibiana');
+        $alias = "{$old}-g123" . self::TN_DOMAIN;
+        $longer = "{$old}-gomes-g4840" . self::TN_DOMAIN;
+        $user = $this->tnUser(User::tnDisplayName($old), [[$alias, 1], [$longer, 0]]);
+        $before = $this->emailsOf($user);
+
+        $this->sync($user->id, $this->username('bibi'));
+
+        $this->assertSame($before, $this->emailsOf($user->fresh()));
+        $this->assertSame([], $this->renameEvents());
     }
 
     public function test_rename_onto_an_address_held_by_another_user_changes_nothing(): void
@@ -688,8 +726,12 @@ class UserChangesSyncerTest extends TestCase
         $this->assertSame(55, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
     }
 
-    /** The TN id already belongs to another account: which is right is for a person to say. */
-    public function test_a_change_whose_tn_id_another_account_holds_is_skipped(): void
+    /**
+     * Only TN's id says who someone is, so the account holding it is the member, whatever account
+     * TN names. A partner call that moves an address off an account with no id leaves things this
+     * way. The account named is left alone and reported: it may be the same member's old account.
+     */
+    public function test_a_change_whose_tn_id_another_account_holds_reaches_that_account(): void
     {
         $named = $this->tnUserWithId(null);
         $holder = $this->tnUserWithId(99130008);
@@ -702,9 +744,94 @@ class UserChangesSyncerTest extends TestCase
         ]]);
 
         $this->assertSame('Test Member', $named->fresh()->fullname);
-        $this->assertSame('Test Member', $holder->fresh()->fullname);
+        $this->assertSame('Deleted User #' . $holder->id, $holder->fresh()->fullname);
         $this->assertNull($named->fresh()->tnuserid);
         $this->assertCount(1, $this->skipEvents('tn-user-id-held-elsewhere'));
+    }
+
+    public function test_a_rename_whose_tn_id_another_account_holds_reaches_that_account(): void
+    {
+        $named = $this->tnUserWithId(null);
+        $holder = $this->tnUserWithId(99130040);
+        $namedBefore = $this->emailsOf($named);
+        $new = $this->username('renamed');
+
+        $this->syncChanges([[
+            'fd_user_id' => $named->id,
+            'tn_user_id' => 99130040,
+            'username'   => $new,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame([$new], $holder->fresh()->tnUsernames());
+        $this->assertSame($namedBefore, $this->emailsOf($named->fresh()));
+    }
+
+    /** A partner call took the only address the account had, so it no longer looks like TN's. */
+    public function test_a_removal_naming_an_account_that_lost_its_only_address_reaches_the_member(): void
+    {
+        $sentry = $this->recordSentry();
+        $old = User::create(['fullname' => 'Old Account', 'added' => now()]);
+        $member = $this->tnUserWithId(99130041);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $old->id,
+            'tn_user_id'      => 99130041,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Deleted User #' . $member->id, $member->fresh()->fullname);
+        $this->assertSame('Old Account', $old->fresh()->fullname);
+        $this->assertCount(1, $this->skipEvents('tn-user-id-held-elsewhere'), 'the old account is reported, not dropped in silence');
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+    }
+
+    /** Another member took the bare address this account had. Its TN id still says who it is. */
+    public function test_a_removal_reaches_the_account_holding_the_id_when_it_has_no_address_left(): void
+    {
+        $member = User::create(['fullname' => 'Test Member', 'added' => now(), 'tnuserid' => 99130042]);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $member->id,
+            'tn_user_id'      => 99130042,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Deleted User #' . $member->id, $member->fresh()->fullname);
+    }
+
+    /** Leaving TN says nothing about their Freegle account, so a volunteer's is not forgotten. */
+    public function test_a_removal_leaves_a_freegle_account_holding_the_id_alone(): void
+    {
+        $user = $this->tnUser('Test Member', [[$this->username('vol') . '@example.org', 1]]);
+        $user->tnuserid = 99130043;
+        $user->save();
+
+        $this->syncChanges([[
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130043,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Test Member', $user->fresh()->fullname);
+    }
+
+    /** users.tnuserid is unique, so a deleted account given it would keep the member from any other. */
+    public function test_a_deleted_account_is_not_given_a_tn_id(): void
+    {
+        $user = $this->tnUserWithId(null);
+        DB::table('users')->where('id', $user->id)->update(['deleted' => now()]);
+
+        $this->syncChanges([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130044,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertNull($user->fresh()->tnuserid);
     }
 
     public function test_a_dry_run_does_not_give_an_account_a_tn_id(): void
@@ -717,6 +844,744 @@ class UserChangesSyncerTest extends TestCase
             'date'       => '2026-10-01T10:00:00',
         ]], dryRun: true);
 
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    /** A merge deletes the account, and TN goes on naming it until it next adds the member. */
+    public function test_a_change_naming_an_account_that_has_gone_reaches_the_member_holding_its_tn_id(): void
+    {
+        $user = $this->tnUserWithId(99130010);
+        $gone = (int) DB::table('users')->max('id') + 100000;
+
+        $this->syncChanges([[
+            'fd_user_id' => $gone,
+            'tn_user_id' => 99130010,
+            'reply_time' => 66,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame(66, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
+    }
+
+    /** tn:split-shared-account does not tell TN, so TN goes on naming the old account. */
+    public function test_a_change_naming_the_account_a_member_was_split_from_reaches_them(): void
+    {
+        $old = $this->tnUserWithId(99130011);
+        $split = $this->tnUserWithId(99130012);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $old->id,
+            'tn_user_id'      => 99130012,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Deleted User #' . $split->id, $split->fresh()->fullname);
+        $this->assertSame('Test Member', $old->fresh()->fullname);
+        $this->assertCount(0, $this->skipEvents('tn-user-id-mismatch'));
+    }
+
+    /**
+     * @return array{User, string, string} the account, the username of its preferred address,
+     *                                     and the other username
+     */
+    private function accountWithTwoUsernames(?int $tnUserId): array
+    {
+        $preferred = $this->username('pref');
+        $other = $this->username('other');
+        $user = $this->tnUser('Test Member', [
+            ["{$preferred}-g1" . self::TN_DOMAIN, 1],
+            ["{$other}-g2" . self::TN_DOMAIN, 0],
+        ]);
+
+        if ($tnUserId !== null) {
+            $user->tnuserid = $tnUserId;
+            $user->save();
+        }
+
+        return [$user->fresh(), $preferred, $other];
+    }
+
+    /**
+     * The account's TN id says who one of its members is. Forgetting the account would take the
+     * other member with it, and the two usernames may be one member who renamed: a person has
+     * to say, and the feed will not bring this change round again.
+     */
+    public function test_a_removal_on_an_account_with_two_usernames_is_skipped_and_reported(): void
+    {
+        $sentry = $this->recordSentry();
+        [$user] = $this->accountWithTwoUsernames(99130013);
+        $before = $this->emailsOf($user);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130013,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Test Member', $user->fresh()->fullname);
+        $this->assertSame($before, $this->emailsOf($user->fresh()));
+        $this->assertCount(1, $this->skipEvents('tn-two-usernames'));
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString("user {$user->id}", $sentry->calls[0]);
+    }
+
+    /** With no TN id on the account, the first removal seen would be taken for its owner's. */
+    public function test_a_removal_on_an_account_with_two_usernames_and_no_tn_id_is_skipped(): void
+    {
+        [$user] = $this->accountWithTwoUsernames(null);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130014,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Test Member', $user->fresh()->fullname);
+        $this->assertNull($user->fresh()->tnuserid);
+        $this->assertCount(1, $this->skipEvents('tn-two-usernames'));
+    }
+
+    /** The id could be either member's, so it is not stamped. The change's other fields still apply. */
+    public function test_an_account_with_two_usernames_is_not_given_a_tn_id(): void
+    {
+        [$user] = $this->accountWithTwoUsernames(null);
+
+        $this->syncChanges([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130015,
+            'reply_time' => 77,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertNull($user->fresh()->tnuserid);
+        $this->assertSame(77, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
+    }
+
+    /**
+     * The old username is read from the preferred address, which on this account may be the
+     * other member's, so a rename would land on their addresses and leave the renamer's as
+     * they were.
+     */
+    public function test_a_rename_on_an_account_with_two_usernames_changes_nothing_and_is_reported(): void
+    {
+        $sentry = $this->recordSentry();
+        [$user] = $this->accountWithTwoUsernames(99130016);
+        $before = $this->emailsOf($user);
+
+        $this->syncChanges([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130016,
+            'username'   => $this->username('new.name'),
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame($before, $this->emailsOf($user->fresh()));
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+    }
+
+    /**
+     * Every change repeats the member's username. On this account that is not a rename at all
+     * when it is the other username, and acting on it would rewrite the preferred address.
+     */
+    public function test_a_change_repeating_the_other_username_does_not_rewrite_the_preferred_addresses(): void
+    {
+        [$user, , $other] = $this->accountWithTwoUsernames(99130017);
+        $before = $this->emailsOf($user);
+
+        $this->syncChanges([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130017,
+            'username'   => $other,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame($before, $this->emailsOf($user->fresh()));
+    }
+
+    /** A window is read more than once, so a skipped removal comes round again. */
+    public function test_a_skipped_removal_is_reported_once_however_often_it_comes_round(): void
+    {
+        $sentry = $this->recordSentry();
+        $user = $this->tnUserWithId(99130018);
+        $change = [
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130019,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ];
+
+        $this->syncChanges([$change]);
+        $this->syncChanges([$change]);
+
+        $this->assertSame('Test Member', $user->fresh()->fullname);
+        $this->assertCount(2, $this->skipEvents('tn-user-id-mismatch'));
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString('99130019', $sentry->calls[0]);
+    }
+
+    public function test_a_removal_whose_tn_id_another_account_holds_is_reported(): void
+    {
+        $sentry = $this->recordSentry();
+        $named = $this->tnUserWithId(null);
+        $this->tnUserWithId(99130020);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130020,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertCount(1, $this->skipEvents('tn-user-id-held-elsewhere'));
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+    }
+
+    /** Only a removal is lost for good by being skipped, so only a removal needs a person. */
+    public function test_a_skipped_change_that_is_not_a_removal_is_not_sent_to_sentry(): void
+    {
+        $sentry = $this->recordSentry();
+        $user = $this->tnUserWithId(99130021);
+
+        $this->syncChanges([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130022,
+            'reply_time' => 88,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertCount(1, $this->skipEvents('tn-user-id-mismatch'));
+        $this->assertSame([], $sentry->calls);
+    }
+
+    /** A dry run applies nothing, so it must not use up the report the real run will need. */
+    public function test_a_dry_run_does_not_report_a_skipped_removal(): void
+    {
+        $sentry = $this->recordSentry();
+        $user = $this->tnUserWithId(99130023);
+        $change = [
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130024,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ];
+
+        $this->syncChanges([$change], dryRun: true);
+        $this->assertSame([], $sentry->calls);
+
+        $this->syncChanges([$change]);
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+    }
+
+    /** A change that fails before its member is known must not stop the ones after it. */
+    public function test_a_change_that_fails_while_finding_its_member_does_not_stop_the_sync(): void
+    {
+        $user = $this->tnUserWithId(99130025);
+        $reads = 0;
+        User::retrieved(function () use (&$reads) {
+            if (++$reads === 1) {
+                throw new \RuntimeException('read failed');
+            }
+        });
+
+        $this->syncChanges([
+            ['fd_user_id' => $user->id, 'tn_user_id' => 99130025, 'reply_time' => 11, 'date' => '2026-10-01T10:00:00'],
+            ['fd_user_id' => $user->id, 'tn_user_id' => 99130025, 'reply_time' => 22, 'date' => '2026-10-01T10:00:01'],
+        ]);
+
+        $this->assertSame(22, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
+    }
+
+    /** @return array<string, int> */
+    private function backfill(array $changes, bool $dryRun = false): array
+    {
+        $this->changes = $changes;
+
+        return (new UserChangesSyncer($dryRun, false, 'test-key', self::API_BASE, $this->loki, new TrashNothingRateLimiter(0)))
+            ->backfillTnUserIds('2026-01-01T00:00:00Z', '2026-10-01T11:00:00Z');
+    }
+
+    /** It reads old changes, so it must apply none of them: a removal here would be months late. */
+    public function test_the_backfill_stamps_an_account_and_applies_nothing_else_from_the_change(): void
+    {
+        $user = $this->tnUserWithId(null);
+        $before = $this->emailsOf($user);
+        $change = ['fd_user_id' => $user->id, 'tn_user_id' => 99130026, 'date' => '2026-02-01T10:00:00'];
+
+        $counts = $this->backfill([
+            $change + ['username' => $user->tnUsernames()[0]],
+            $change + ['account_removed' => true, 'username' => $this->username('renamed'), 'reply_time' => 99],
+        ]);
+
+        $this->assertSame(1, $counts['stamped']);
+        $this->assertSame(99130026, (int) $user->fresh()->tnuserid);
+        $this->assertSame('Test Member', $user->fresh()->fullname, 'the removal is not applied');
+        $this->assertSame($before, $this->emailsOf($user->fresh()), 'the rename is not applied');
+        $this->assertNull(UserReplyTime::where('userid', $user->id)->value('replytime'));
+    }
+
+    public function test_the_backfill_counts_an_account_once_however_many_changes_name_it(): void
+    {
+        $user = $this->tnUserWithId(null);
+        $change = ['fd_user_id' => $user->id, 'tn_user_id' => 99130027, 'date' => '2026-02-01T10:00:00'];
+
+        $counts = $this->backfill([$change, $change], dryRun: true);
+
+        $this->assertSame(1, $counts['stamped']);
+    }
+
+    public function test_the_backfill_leaves_an_account_with_two_usernames_alone(): void
+    {
+        [$user] = $this->accountWithTwoUsernames(null);
+
+        $counts = $this->backfill([['fd_user_id' => $user->id, 'tn_user_id' => 99130028, 'date' => '2026-02-01T10:00:00']]);
+
+        $this->assertSame(1, $counts['two-usernames']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    /** TN named the account, but with no TN address on it nothing shows TN added this one. */
+    public function test_the_backfill_leaves_an_account_with_no_tn_address_alone(): void
+    {
+        $user = $this->tnUser('Test Member', [[$this->username('plain') . '@example.com', 1]]);
+
+        $counts = $this->backfill([['fd_user_id' => $user->id, 'tn_user_id' => 99130029, 'date' => '2026-02-01T10:00:00']]);
+
+        $this->assertSame(1, $counts['no-tn-address']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    public function test_the_backfill_leaves_an_id_another_account_holds(): void
+    {
+        $named = $this->tnUserWithId(null);
+        $this->tnUserWithId(99130030);
+
+        $counts = $this->backfill([['fd_user_id' => $named->id, 'tn_user_id' => 99130030, 'date' => '2026-02-01T10:00:00']]);
+
+        $this->assertSame(1, $counts['held-elsewhere']);
+        $this->assertNull($named->fresh()->tnuserid);
+    }
+
+    public function test_the_backfill_leaves_an_account_that_already_holds_an_id(): void
+    {
+        $same = $this->tnUserWithId(99130031);
+        $other = $this->tnUserWithId(99130032);
+
+        $counts = $this->backfill([
+            ['fd_user_id' => $same->id, 'tn_user_id' => 99130031, 'date' => '2026-02-01T10:00:00'],
+            ['fd_user_id' => $other->id, 'tn_user_id' => 99130033, 'date' => '2026-02-01T10:00:00'],
+        ]);
+
+        $this->assertSame(2, $counts['already-has-an-id']);
+        $this->assertSame(99130032, (int) $other->fresh()->tnuserid);
+    }
+
+    /** Both ids are needed: one alone does not link anything to anything. */
+    public function test_the_backfill_ignores_a_change_with_only_one_id(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $counts = $this->backfill([
+            ['tn_user_id' => 99130034, 'date' => '2026-02-01T10:00:00'],
+            ['fd_user_id' => $user->id, 'date' => '2026-02-01T10:00:00'],
+        ]);
+
+        $this->assertSame(0, $counts['stamped']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    public function test_a_dry_run_backfill_counts_what_it_would_stamp_and_writes_nothing(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $counts = $this->backfill([['fd_user_id' => $user->id, 'tn_user_id' => 99130035, 'date' => '2026-02-01T10:00:00']], dryRun: true);
+
+        $this->assertSame(1, $counts['stamped']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    public function test_the_backfill_stops_at_a_page_it_cannot_read(): void
+    {
+        $this->failFromPage = 1;
+        $syncer = new UserChangesSyncer(false, false, 'test-key', self::API_BASE, $this->loki, new TrashNothingRateLimiter(0));
+
+        $syncer->backfillTnUserIds('2026-01-01T00:00:00Z', '2026-10-01T11:00:00Z');
+
+        $this->assertTrue($syncer->fetchFailed());
+    }
+
+    /** A page it never read could name the account again with another id, so it stamps nothing. */
+    public function test_the_backfill_writes_nothing_when_a_later_page_cannot_be_read(): void
+    {
+        $user = $this->tnUserWithId(null);
+        $this->failFromPage = 2;
+        $this->changes = array_fill(0, 100, ['fd_user_id' => $user->id, 'tn_user_id' => 99130045, 'date' => '2026-02-01T10:00:00']);
+        $syncer = new UserChangesSyncer(false, false, 'test-key', self::API_BASE, $this->loki, new TrashNothingRateLimiter(0));
+
+        $counts = $syncer->backfillTnUserIds('2026-01-01T00:00:00Z', '2026-10-01T11:00:00Z');
+
+        $this->assertTrue($syncer->fetchFailed());
+        $this->assertSame(0, $counts['stamped']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    /** Two members named on one account is the clearest sign in the feed that it is shared. */
+    public function test_the_backfill_leaves_an_account_two_tn_ids_name(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $counts = $this->backfill([
+            ['fd_user_id' => $user->id, 'tn_user_id' => 99130046, 'date' => '2026-02-01T10:00:00'],
+            ['fd_user_id' => $user->id, 'tn_user_id' => 99130047, 'date' => '2026-02-02T10:00:00'],
+        ]);
+
+        $this->assertSame(1, $counts['two-tn-ids']);
+        $this->assertSame(0, $counts['stamped']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    /** Stamping either would be a guess, and the dry run would count both as stamped. */
+    public function test_the_backfill_leaves_a_tn_id_named_on_two_accounts(): void
+    {
+        $first = $this->tnUserWithId(null);
+        $second = $this->tnUserWithId(null);
+
+        $counts = $this->backfill([
+            ['fd_user_id' => $first->id, 'tn_user_id' => 99130048, 'date' => '2026-02-01T10:00:00'],
+            ['fd_user_id' => $second->id, 'tn_user_id' => 99130048, 'date' => '2026-02-02T10:00:00'],
+        ]);
+
+        $this->assertSame(2, $counts['two-accounts']);
+        $this->assertNull($first->fresh()->tnuserid);
+        $this->assertNull($second->fresh()->tnuserid);
+    }
+
+    /** A merge removes the account, and TN goes on naming it in old changes. */
+    public function test_the_backfill_ignores_an_account_that_has_gone_when_counting_accounts(): void
+    {
+        $user = $this->tnUserWithId(null);
+        $gone = (int) DB::table('users')->max('id') + 100000;
+
+        $counts = $this->backfill([
+            ['fd_user_id' => $gone, 'tn_user_id' => 99130049, 'date' => '2026-02-01T10:00:00'],
+            ['fd_user_id' => $user->id, 'tn_user_id' => 99130049, 'date' => '2026-02-02T10:00:00'],
+        ]);
+
+        $this->assertSame(1, $counts['stamped']);
+        $this->assertSame(99130049, (int) $user->fresh()->tnuserid);
+    }
+
+    /** A username may only refuse something, and this is a refusal. */
+    public function test_the_backfill_leaves_an_account_whose_username_the_feed_never_gave(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $counts = $this->backfill([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130050,
+            'username'   => $this->username('someoneelse'),
+            'date'       => '2026-02-01T10:00:00',
+        ]]);
+
+        $this->assertSame(1, $counts['username-differs']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    public function test_the_backfill_matches_a_username_whatever_its_case(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $counts = $this->backfill([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130051,
+            'username'   => strtoupper($user->tnUsernames()[0]),
+            'date'       => '2026-02-01T10:00:00',
+        ]]);
+
+        $this->assertSame(1, $counts['stamped']);
+    }
+
+    /** users.tnuserid is unique, so this would hold the id away from the member until forgotten. */
+    public function test_the_backfill_leaves_a_deleted_account(): void
+    {
+        $user = $this->tnUserWithId(null);
+        DB::table('users')->where('id', $user->id)->update(['deleted' => now()]);
+
+        $counts = $this->backfill([['fd_user_id' => $user->id, 'tn_user_id' => 99130052, 'date' => '2026-02-01T10:00:00']]);
+
+        $this->assertSame(1, $counts['deleted']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    /** A TN id makes an account a TN account, and a TN account cannot be a moderator. */
+    public function test_the_backfill_leaves_a_freegle_account_with_one_tn_alias(): void
+    {
+        $user = $this->tnUser('Volunteer', [
+            [$this->username('vol') . '@example.org', 1],
+            [$this->username('tn') . '-g1' . self::TN_DOMAIN, 0],
+        ]);
+
+        $counts = $this->backfill([['fd_user_id' => $user->id, 'tn_user_id' => 99130053, 'date' => '2026-02-01T10:00:00']]);
+
+        $this->assertSame(1, $counts['not-a-tn-account']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    /** @return list<string> the lines saying which accounts the backfill left for a person */
+    private function leftForAPerson(): array
+    {
+        return array_values(array_filter($this->logged, fn ($line) => str_contains($line, '[BACKFILL-LEFT]')));
+    }
+
+    /** A count cannot be acted on: a person has to be able to find the account it left for them. */
+    public function test_the_backfill_logs_the_ids_of_an_account_it_leaves(): void
+    {
+        $named = $this->tnUserWithId(null);
+        $this->tnUserWithId(99130054);
+
+        $this->backfill([['fd_user_id' => $named->id, 'tn_user_id' => 99130054, 'date' => '2026-02-01T10:00:00']]);
+
+        $this->assertSame(
+            ["TN-SYNC-TRACE [BACKFILL-LEFT] reason=held-elsewhere fd_user_id={$named->id} tn_user_ids=99130054"],
+            $this->leftForAPerson(),
+        );
+    }
+
+    public function test_the_backfill_logs_every_tn_id_named_on_an_account_it_leaves(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $this->backfill([
+            ['fd_user_id' => $user->id, 'tn_user_id' => 99130055, 'date' => '2026-02-01T10:00:00'],
+            ['fd_user_id' => $user->id, 'tn_user_id' => 99130056, 'date' => '2026-02-02T10:00:00'],
+        ]);
+
+        $this->assertSame(
+            ["TN-SYNC-TRACE [BACKFILL-LEFT] reason=two-tn-ids fd_user_id={$user->id} tn_user_ids=99130055,99130056"],
+            $this->leftForAPerson(),
+        );
+    }
+
+    /** The run needs reading by a person, so it must not bury them in the accounts that are fine. */
+    public function test_the_backfill_logs_nothing_for_an_account_it_stamps_or_that_has_an_id(): void
+    {
+        $stamped = $this->tnUserWithId(null);
+        $hasOne = $this->tnUserWithId(99130057);
+
+        $this->backfill([
+            ['fd_user_id' => $stamped->id, 'tn_user_id' => 99130058, 'date' => '2026-02-01T10:00:00'],
+            ['fd_user_id' => $hasOne->id, 'tn_user_id' => 99130057, 'date' => '2026-02-01T10:00:00'],
+        ]);
+
+        $this->assertSame([], $this->leftForAPerson());
+    }
+
+    /** The dry run is where a person finds out what a real run would leave for them. */
+    public function test_a_dry_run_backfill_logs_the_accounts_it_would_leave(): void
+    {
+        $named = $this->tnUserWithId(null);
+        $this->tnUserWithId(99130059);
+
+        $this->backfill([['fd_user_id' => $named->id, 'tn_user_id' => 99130059, 'date' => '2026-02-01T10:00:00']], dryRun: true);
+
+        $this->assertCount(1, $this->leftForAPerson());
+    }
+
+    /** Ids only: the command promises never to give a name, username or address. */
+    public function test_the_backfill_never_logs_a_username_for_an_account_it_leaves(): void
+    {
+        $user = $this->tnUserWithId(null);
+        $username = $this->username('someoneelse');
+
+        $this->backfill([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130060,
+            'username'   => $username,
+            'date'       => '2026-02-01T10:00:00',
+        ]]);
+
+        $this->assertSame(
+            ["TN-SYNC-TRACE [BACKFILL-LEFT] reason=username-differs fd_user_id={$user->id} tn_user_ids=99130060"],
+            $this->leftForAPerson(),
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // TN refuses dates more than a day apart, so a longer window goes a day at a time.
+    // -------------------------------------------------------------------------
+
+    /** @return list<array{string, string, int}> the date_min, date_max and page of each request, in order */
+    private function requests(): array
+    {
+        return Http::recorded()
+            ->map(fn ($sent) => [$sent[0]['date_min'], $sent[0]['date_max'], (int) $sent[0]['page']])
+            ->values()
+            ->all();
+    }
+
+    public function test_a_window_longer_than_a_day_is_read_a_day_at_a_time(): void
+    {
+        $syncer = $this->syncer();
+
+        $syncer->sync('2026-10-01T09:00:00Z', '2026-10-03T21:00:00Z');
+
+        $this->assertFalse($syncer->fetchFailed());
+        $this->assertSame([
+            ['2026-10-01T09:00:00Z', '2026-10-02T09:00:00Z', 1],
+            ['2026-10-02T09:00:00Z', '2026-10-03T09:00:00Z', 1],
+            ['2026-10-03T09:00:00Z', '2026-10-03T21:00:00Z', 1],
+        ], $this->requests());
+    }
+
+    public function test_a_window_of_exactly_a_day_is_one_request(): void
+    {
+        $this->syncer()->sync('2026-10-01T09:00:00Z', '2026-10-02T09:00:00Z');
+
+        $this->assertSame([['2026-10-01T09:00:00Z', '2026-10-02T09:00:00Z', 1]], $this->requests());
+    }
+
+    /** tn:sync's --from and --to take any date, and one that fits goes to TN untouched. */
+    public function test_a_short_window_goes_to_tn_as_it_was_given(): void
+    {
+        $this->syncer()->sync('2026-10-01T09:00:00+00:00', '2026-10-01 11:00:00');
+
+        $this->assertSame([['2026-10-01T09:00:00+00:00', '2026-10-01 11:00:00', 1]], $this->requests());
+    }
+
+    public function test_days_are_counted_in_utc_whatever_offset_the_start_has(): void
+    {
+        $this->syncer()->sync('2026-10-01T10:00:00+01:00', '2026-10-03T09:00:00Z');
+
+        $this->assertSame([
+            ['2026-10-01T10:00:00+01:00', '2026-10-02T09:00:00Z', 1],
+            ['2026-10-02T09:00:00Z', '2026-10-03T09:00:00Z', 1],
+        ], $this->requests());
+    }
+
+    public function test_every_day_of_a_window_is_applied_and_counted(): void
+    {
+        $first = $this->tnUser('Pat', [[$this->username('pat') . self::TN_DOMAIN, 1]]);
+        $last = $this->tnUser('Sam', [[$this->username('sam') . self::TN_DOMAIN, 1]]);
+        $this->changesByDay = [
+            '2026-10-01' => [['fd_user_id' => $first->id, 'reply_time' => 60, 'date' => '2026-10-01T10:00:00']],
+            '2026-10-03' => [['fd_user_id' => $last->id, 'reply_time' => 120, 'date' => '2026-10-03T10:00:00']],
+        ];
+
+        [$count, $maxDate] = $this->syncer()->sync('2026-10-01T09:00:00Z', '2026-10-03T21:00:00Z');
+
+        $this->assertSame(2, $count);
+        $this->assertSame('2026-10-03T10:00:00', $maxDate);
+        $this->assertSame(60, (int) UserReplyTime::where('userid', $first->id)->value('replytime'));
+        $this->assertSame(120, (int) UserReplyTime::where('userid', $last->id)->value('replytime'));
+    }
+
+    public function test_each_day_is_read_to_its_last_page_before_the_next(): void
+    {
+        $this->changesByDay = ['2026-10-01' => array_fill(0, 150, ['fd_user_id' => null, 'date' => '2026-10-01T10:00:00'])];
+
+        [$count] = $this->syncer()->sync('2026-10-01T09:00:00Z', '2026-10-02T21:00:00Z');
+
+        $this->assertSame(150, $count);
+        $this->assertSame([
+            ['2026-10-01T09:00:00Z', '2026-10-02T09:00:00Z', 1],
+            ['2026-10-01T09:00:00Z', '2026-10-02T09:00:00Z', 2],
+            ['2026-10-02T09:00:00Z', '2026-10-02T21:00:00Z', 1],
+        ], $this->requests());
+    }
+
+    public function test_a_day_that_cannot_be_fetched_stops_the_run_after_the_days_it_got(): void
+    {
+        $user = $this->tnUser('Pat', [[$this->username('pat') . self::TN_DOMAIN, 1]]);
+        $this->changesByDay = [
+            '2026-10-01' => [['fd_user_id' => $user->id, 'reply_time' => 60, 'date' => '2026-10-01T10:00:00']],
+        ];
+        $this->failOnDay = '2026-10-02';
+        $syncer = $this->syncer();
+
+        [$count] = $syncer->sync('2026-10-01T09:00:00Z', '2026-10-04T09:00:00Z');
+
+        $this->assertTrue($syncer->fetchFailed(), 'the caller is told the feed is incomplete');
+        $this->assertSame(1, $count);
+        $this->assertSame(60, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
+        Http::assertSentCount(2);
+    }
+
+    /** Fixtures take no notice of dates, so a day at a time would read the same ones every day. */
+    public function test_fixtures_are_read_once_however_long_the_window(): void
+    {
+        $fixture = json_decode(file_get_contents(base_path('tests/fixtures/tn_sync/user_changes_page_1.json')), true);
+        $syncer = new UserChangesSyncer(true, true, 'test-key', self::API_BASE, $this->loki, new TrashNothingRateLimiter(0));
+
+        [$count] = $syncer->sync('2026-10-01T09:00:00Z', '2026-10-04T09:00:00Z');
+
+        $this->assertSame(count($fixture['changes']), $count);
+    }
+
+    /** @return array<string, int> */
+    private function backfillDays(array $changesByDay): array
+    {
+        $this->changesByDay = $changesByDay;
+
+        return $this->syncer()->backfillTnUserIds('2026-02-01T00:00:00Z', '2026-02-04T00:00:00Z');
+    }
+
+    /** Days are only how TN is asked: what casts doubt on an id counts across the whole window. */
+    public function test_the_backfill_sees_two_tn_ids_named_on_different_days(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $counts = $this->backfillDays([
+            '2026-02-01' => [['fd_user_id' => $user->id, 'tn_user_id' => 99130060, 'date' => '2026-02-01T10:00:00']],
+            '2026-02-03' => [['fd_user_id' => $user->id, 'tn_user_id' => 99130061, 'date' => '2026-02-03T10:00:00']],
+        ]);
+
+        $this->assertSame(1, $counts['two-tn-ids']);
+        $this->assertSame(0, $counts['stamped']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    public function test_the_backfill_sees_a_tn_id_named_on_two_accounts_on_different_days(): void
+    {
+        $first = $this->tnUserWithId(null);
+        $second = $this->tnUserWithId(null);
+
+        $counts = $this->backfillDays([
+            '2026-02-01' => [['fd_user_id' => $first->id, 'tn_user_id' => 99130062, 'date' => '2026-02-01T10:00:00']],
+            '2026-02-03' => [['fd_user_id' => $second->id, 'tn_user_id' => 99130062, 'date' => '2026-02-03T10:00:00']],
+        ]);
+
+        $this->assertSame(2, $counts['two-accounts']);
+        $this->assertNull($first->fresh()->tnuserid);
+        $this->assertNull($second->fresh()->tnuserid);
+    }
+
+    public function test_the_backfill_counts_an_account_named_on_several_days_once(): void
+    {
+        $user = $this->tnUserWithId(null);
+        $change = ['fd_user_id' => $user->id, 'tn_user_id' => 99130063, 'date' => '2026-02-01T10:00:00'];
+
+        $counts = $this->backfillDays(['2026-02-01' => [$change], '2026-02-02' => [$change], '2026-02-03' => [$change]]);
+
+        $this->assertSame(1, $counts['stamped']);
+        $this->assertSame(99130063, (int) $user->fresh()->tnuserid);
+    }
+
+    /** A day it never read could name the account again with another id, so it stamps nothing. */
+    public function test_the_backfill_writes_nothing_when_a_later_day_cannot_be_read(): void
+    {
+        $user = $this->tnUserWithId(null);
+        $this->changesByDay = [
+            '2026-02-01' => [['fd_user_id' => $user->id, 'tn_user_id' => 99130064, 'date' => '2026-02-01T10:00:00']],
+        ];
+        $this->failOnDay = '2026-02-02';
+        $syncer = $this->syncer();
+
+        $counts = $syncer->backfillTnUserIds('2026-02-01T00:00:00Z', '2026-02-04T00:00:00Z');
+
+        $this->assertTrue($syncer->fetchFailed());
+        $this->assertSame(0, $counts['stamped']);
         $this->assertNull($user->fresh()->tnuserid);
     }
 }

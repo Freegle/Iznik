@@ -3252,24 +3252,33 @@ func userOptedOutOfMerge(db *gorm.DB, id uint64) bool {
 // then id1's users row is hard-deleted after commit. byuser is recorded in
 // the merge log entries.
 //
-// This is the only account merge. The moderator merge (handleMerge), the
+// This is the only account merge. The moderator merge (handleMerge) and the
 // email-verify merge (session.PatchSession, when a member confirms an address
-// that belongs to another of their accounts) and the TN divergence heal
-// (HealTNDivergence) all come through here, so they move the same tables and
-// leave the same log rows. Do not add a cut-down copy for a new caller: the
-// email-verify path had one until October 2026, and it stranded chat rooms
-// and wrote no log row. docs/developers/reference/account-merge.md says what
-// a merge does in plain words.
+// that belongs to another of their accounts) both come through here, so they
+// move the same tables and leave the same log rows. Do not add a cut-down copy
+// for a new caller: the email-verify path had one until October 2026, and it
+// stranded chat rooms and wrote no log row.
+// docs/developers/reference/account-merge.md says what a merge does in plain words.
 func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	// Two different TrashNothing ids are two different TrashNothing members. Merging them keeps one
 	// id and drops the other, which loses that member for good (Discourse: pchide251 and
-	// brianandi170). Every merge path comes through here: the moderator merge and the TN
-	// divergence heal, whose own case - one twin stamped, the other not - is still allowed.
+	// brianandi170). Every merge path comes through here.
 	var tn1, tn2 *uint64
 	db.Table("users").Select("tnuserid").Where("id = ?", id1).Scan(&tn1)
 	db.Table("users").Select("tnuserid").Where("id = ?", id2).Scan(&tn2)
 	if tn1 != nil && tn2 != nil && *tn1 != *tn2 {
 		return fiber.NewError(fiber.StatusBadRequest, "These accounts belong to two different TrashNothing members and can't be merged.")
+	}
+
+	// Two different usernames may be two members too, and a merge cannot be undone.
+	usernames := map[string]bool{}
+	for _, id := range []uint64{id1, id2} {
+		for _, username := range tnUsernames(db, id, tnPartnerDomain) {
+			usernames[username] = true
+		}
+	}
+	if len(usernames) > 1 {
+		return fiber.NewError(fiber.StatusBadRequest, "These accounts hold two different TrashNothing usernames, so they may be two members, and can't be merged.")
 	}
 
 	// A member can set canmerge to false in their settings to stop their account being merged.

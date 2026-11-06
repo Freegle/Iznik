@@ -2,6 +2,7 @@ package membership
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	stdlog "log"
 	"strconv"
@@ -1513,6 +1514,10 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 		}
 	}
 
+	if user.NeedsTNId(domain, tnuserid, email) {
+		return fiber.NewError(fiber.StatusBadRequest, "tnuserid is required")
+	}
+
 	// Check the group exists.
 	var groupExists int64
 	db.Table("groups").Where("id = ?", groupid).Count(&groupExists)
@@ -1521,23 +1526,27 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	}
 
 	// Find or create the user. This is TN's routine sync call, so it is the
-	// place divergence gets stopped: twin accounts (tnuserid stamp on one,
-	// email on another) are merged, and whichever identifier the surviving
-	// account lacks is back-filled - after a TN username rename, attaching
-	// the new alias here stops the mail ingest minting a twin for it.
+	// place divergence gets stopped: an address on an account other than the
+	// one holding the tnuserid moves to the member, and after a TN username
+	// rename, attaching the new alias here stops the mail ingest minting a twin
+	// for it. A member we have not met gets their own account, whoever holds
+	// the address: joining that account would put the wrong person on the community.
 	candidates := user.FindTNCandidates(db, tnuserid, email)
-	candidates = user.HealTNDivergence(db, candidates)
+	candidates = user.HealTNDivergence(db, candidates, email)
 	var userid uint64
 	if len(candidates) > 0 {
 		userid = candidates[0]
 	}
 	if userid == 0 {
 		userid, err = user.CreatePartnerUser(db, tnuserid, email)
+		if errors.Is(err, user.ErrTNIdHeld) {
+			return fiber.NewError(fiber.StatusForbidden, "Failed - account deleted")
+		}
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create user")
 		}
 	} else {
-		user.EnsurePartnerIdentifiers(db, userid, tnuserid, email)
+		user.EnsurePartnerIdentifiers(db, userid, email)
 	}
 
 	// Check if banned. V1 parity: User::addMembership returns FALSE for
@@ -1845,10 +1854,15 @@ func deleteMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) erro
 		}
 	}
 
-	// Find the user - healing any twin-account divergence first, same as the
-	// add path, so the removal lands on the single surviving account.
+	if user.NeedsTNId(domain, tnuserid, email) {
+		return fiber.NewError(fiber.StatusBadRequest, "tnuserid is required")
+	}
+
+	// Find the user - dealing with any divergence first, same as the add path,
+	// so the removal lands on the account holding the tnuserid. A TN id we have
+	// not met has no candidates: whoever holds the address is not the one leaving.
 	candidates := user.FindTNCandidates(db, tnuserid, email)
-	candidates = user.HealTNDivergence(db, candidates)
+	candidates = user.HealTNDivergence(db, candidates, email)
 	if len(candidates) == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "User not found")
 	}

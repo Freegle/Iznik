@@ -15,6 +15,8 @@ use Illuminate\Support\Facades\Log;
 
 class UserChangesSyncer
 {
+    use ReadsTnFeedByDay;
+
     private const PAGE_SIZE = 100;
 
     // The fields of a change that are applied by comparing with what the member has now, so
@@ -41,6 +43,9 @@ class UserChangesSyncer
         // tn:sync run calls three endpoints with the same key, so a throttle
         // that only paces this class's own requests protects nothing.
         private readonly ?TrashNothingRateLimiter $rateLimiter = null,
+        // Log each response whole, to see what TN is answering. Off unless asked for: a body names
+        // members, and tn:sync reads this feed on a schedule.
+        private readonly bool $logResponses = false,
     ) {}
 
     /**
@@ -58,21 +63,11 @@ class UserChangesSyncer
      */
     public function sync(string $from, string $to): array
     {
-        $page    = 1;
         $count   = 0;
         $maxDate = null;
 
-        $this->fetchFailed = false;
-
-        do {
-            $changes = $this->fetchPage($page, $from, $to);
-            if ($changes === null) {
-                $this->fetchFailed = true;
-                break;
-            }
-
-            $page++;
-            Log::info('TN-SYNC-TRACE [CHANGES-PAGE] page=' . ($page - 1) . ' count=' . count($changes));
+        foreach ($this->pages($from, $to) as $page => $changes) {
+            Log::info('TN-SYNC-TRACE [CHANGES-PAGE] page=' . $page . ' count=' . count($changes));
 
             foreach ($changes as $change) {
                 $count++;
@@ -88,6 +83,11 @@ class UserChangesSyncer
                     }
 
                     if (!empty($change['account_removed'])) {
+                        if ($this->holdsTwoUsernames($user)) {
+                            $this->skipChange('tn-two-usernames', $change, $user->id, (int) $user->tnuserid);
+                            continue;
+                        }
+
                         Log::info("FD #{$user->id} TN account removed");
                         Log::info('TN-SYNC-TRACE [USER-CHANGE] fd_user_id=' . $user->id . ' action=account-removed');
                         $user->forget('TN account removed', $this->dryRun);
@@ -198,7 +198,8 @@ class UserChangesSyncer
                     Log::info('TN-SYNC-TRACE [USER-CHANGE] fd_user_id=' . $user->id . ' action=processed');
 
                 } catch (\Exception $e) {
-                    Log::info('TN-SYNC-TRACE [USER-CHANGE] fd_user_id=' . $user->id . ' action=error');
+                    // Not $user: finding the member is what may have failed.
+                    Log::info('TN-SYNC-TRACE [USER-CHANGE] fd_user_id=' . ($change['fd_user_id'] ?? 'null') . ' action=error');
                     Log::error('TN sync: user changes sync failed', [
                         'error'  => $e->getMessage(),
                         'change' => $change,
@@ -208,7 +209,7 @@ class UserChangesSyncer
                     }
                 }
             }
-        } while ($changes && count($changes) === self::PAGE_SIZE);
+        }
 
         return [$count, $maxDate];
     }
@@ -263,12 +264,24 @@ class UserChangesSyncer
      * A rename moves every address of the old username, bare and per-group alias alike,
      * to the new one, keeping each address's group suffix and its preferred flag. The
      * caller saves $user.
+     *
+     * An account holding two TN usernames is left alone. Its preferred address may be the other
+     * member's, and every change repeats the member's username, so even a change that renames
+     * nobody would rewrite those addresses. A member whose new alias arrived before the change
+     * looks the same, and is reported for a person to tidy up.
      */
     private function applyUsername(User $user, string $newUsername): void
     {
         $oldUsername = User::tnUsernameFromEmail($user->email_preferred ?? '');
 
         if ($oldUsername === null || $oldUsername === strtolower($newUsername)) {
+            return;
+        }
+
+        if ($this->holdsTwoUsernames($user)) {
+            $this->renameBlocked($user, $oldUsername, $newUsername, 'two-usernames',
+                "TN rename of user {$user->id} to {$newUsername} not applied: the account holds two TN usernames");
+
             return;
         }
 
@@ -338,65 +351,218 @@ class UserChangesSyncer
     }
 
     /**
-     * @return array|null  Change rows, or null on API error.
-     */
-    /**
      * The Freegle account a change from TN's user-changes feed is about, or null to skip it.
+     * TnMemberMatch says which account TN means, so that a member's removal and renames reach
+     * them when TN has no Freegle id for them, or an out of date one. The rest is for this feed.
      *
-     * TN names the account by our id (fd_user_id), which it learns when it adds the member
-     * through the partner API, and always by its own (tn_user_id). A member the posts API
-     * provisioned was never added by TN, so their changes come with no fd_user_id: they are
-     * found by tn_user_id, or their removal and renames would never reach us.
+     * The account holding TN's id is the member, whatever account TN names. A partner call that
+     * moves an address off an account with no id leaves things this way, until TN learns the new
+     * account. The account named is not changed, and is reported: it may be the member's old one,
+     * and a removal does not reach it.
      *
-     * When the account TN names holds a different TN user id, the change is about another TN
-     * member sharing that account, and applying it would forget or rename the wrong person, so
-     * it is skipped and reported. An account with no TN user id is given this one, since TN has
-     * just said which member it is, unless another account already holds it; then a person has
-     * to say which is right, and the change is skipped and reported.
+     * Only a TN account is changed. When TN names one holding a different TN user id and no account
+     * holds this one, the change is about another TN member sharing that account, and applying it
+     * would forget or rename the wrong person, so it is skipped and reported. An account with no
+     * TN user id is given this one, since TN has just said which member it is. Not while it holds
+     * two TN usernames, as the id could be either member's, and not a deleted one, which would
+     * keep the unique id from any other account until it is forgotten.
      */
     private function resolveMember(array $change): ?User
     {
-        $fdId = (int) ($change['fd_user_id'] ?? 0);
-        $tnId = (int) ($change['tn_user_id'] ?? 0);
+        $tnId  = (int) ($change['tn_user_id'] ?? 0);
+        $match = TnMemberMatch::find((int) ($change['fd_user_id'] ?? 0), $tnId);
+        $named = $match->named;
 
-        if ($fdId === 0) {
-            $user = $tnId !== 0 ? User::where('tnuserid', $tnId)->first() : null;
-
-            return $user && $user->isTN() ? $user : null;
+        if ($match->heldElsewhere()) {
+            $this->skipChange('tn-user-id-held-elsewhere', $change, $named->id, $match->holder->id);
         }
 
-        $user = User::find($fdId);
-        if (!$user || !$user->isTN() || $tnId === 0) {
-            return $user && $user->isTN() ? $user : null;
-        }
-
-        if ($user->tnuserid !== null && (int) $user->tnuserid !== $tnId) {
-            $this->skipChange('tn-user-id-mismatch', $user->id, $tnId, (int) $user->tnuserid);
+        $user = $match->account();
+        if ($user === null || !$this->isTnAccount($user)) {
+            if ($named !== null && !$match->heldElsewhere() && $this->isTnAccount($named)) {
+                $this->skipChange('tn-user-id-mismatch', $change, $named->id, (int) $named->tnuserid);
+            }
 
             return null;
         }
 
-        if ($user->tnuserid === null) {
-            $holder = User::where('tnuserid', $tnId)->value('id');
-            if ($holder !== null) {
-                $this->skipChange('tn-user-id-held-elsewhere', $user->id, $tnId, (int) $holder);
+        if ($user->tnuserid === null && $tnId !== 0 && $user->deleted === null) {
+            if ($this->holdsTwoUsernames($user)) {
+                Log::info('TN-SYNC-TRACE [CHANGE-SKIP] reason=tn-two-usernames field=tnuserid fd_user_id=' . $user->id . ' tn_user_id=' . $tnId);
 
-                return null;
+                return $user;
             }
 
-            Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=tnuserid=' . $tnId);
-            if (!$this->dryRun) {
-                DB::table('users')->where('id', $user->id)->whereNull('tnuserid')->update(['tnuserid' => $tnId]);
-                $user->tnuserid = $tnId;
-                $user->syncOriginalAttribute('tnuserid');
-            }
+            $this->stampTnId($user, $tnId);
         }
 
         return $user;
     }
 
-    private function skipChange(string $reason, int $userId, int $tnId, int $other): void
+    /**
+     * An account with a TN address, or one holding a TN id with no address left, because another
+     * member can take an address and the id still says whose account it is. Not one with a Freegle
+     * address: leaving TN says nothing about that.
+     */
+    private function isTnAccount(User $user): bool
     {
+        return $user->isTN() || ($user->tnuserid !== null && $user->email_preferred === null);
+    }
+
+    private function stampTnId(User $user, int $tnId): void
+    {
+        Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=tnuserid=' . $tnId);
+        if (!$this->dryRun) {
+            DB::table('users')->where('id', $user->id)->whereNull('tnuserid')->update(['tnuserid' => $tnId]);
+            $user->tnuserid = $tnId;
+            $user->syncOriginalAttribute('tnuserid');
+        }
+    }
+
+    /**
+     * Give accounts their TN user id from the feed, and do nothing else with it. A change names an
+     * account by both ids, which is TN saying which member it is with no address or username
+     * involved, so this settles accounts with no TN id before anything has to split them from
+     * their member. It reads old changes, so it applies none: a removal would be months late.
+     *
+     * An id is unique and hard to take back, so anything that casts doubt on one leaves the account
+     * for a person, and logs its ids so they can find it. It reads the whole window before writing,
+     * because a later page can do that, and writes nothing if it cannot read every page.
+     *
+     * @return array<string, int> how many accounts came to each outcome
+     */
+    public function backfillTnUserIds(string $from, string $to): array
+    {
+        $counts = [
+            'stamped'           => 0,
+            'already-has-an-id' => 0,
+            'deleted'           => 0,
+            'two-tn-ids'        => 0,
+            'two-accounts'      => 0,
+            'held-elsewhere'    => 0,
+            'two-usernames'     => 0,
+            'no-tn-address'     => 0,
+            'not-a-tn-account'  => 0,
+            'username-differs'  => 0,
+        ];
+
+        $named = $this->tnIdsNamedPerAccount($from, $to);
+        if ($named === null) {
+            return $counts;
+        }
+
+        $accountsById = [];
+        foreach ($named as $fdId => $tnIds) {
+            foreach (array_keys($tnIds) as $tnId) {
+                $accountsById[$tnId][] = $fdId;
+            }
+        }
+
+        foreach ($named as $fdId => $tnIds) {
+            $user = User::find($fdId);
+            if ($user !== null) {
+                $outcome = $this->backfillOne($user, $tnIds, $accountsById);
+                $counts[$outcome]++;
+
+                if (!in_array($outcome, ['stamped', 'already-has-an-id'], true)) {
+                    Log::info("TN-SYNC-TRACE [BACKFILL-LEFT] reason={$outcome} fd_user_id={$fdId} tn_user_ids=" . implode(',', array_keys($tnIds)));
+                }
+            }
+        }
+
+        return $counts;
+    }
+
+    /**
+     * @return array<int, array<int, array<string, true>>>|null account => TN id => the usernames the
+     *                                                         feed gave, or null if a page failed
+     */
+    private function tnIdsNamedPerAccount(string $from, string $to): ?array
+    {
+        $named = [];
+
+        foreach ($this->pages($from, $to) as $changes) {
+            foreach ($changes as $change) {
+                $fdId = (int) ($change['fd_user_id'] ?? 0);
+                $tnId = (int) ($change['tn_user_id'] ?? 0);
+
+                if ($fdId === 0 || $tnId === 0) {
+                    continue;
+                }
+
+                $named[$fdId][$tnId] ??= [];
+                if (!empty($change['username'])) {
+                    $named[$fdId][$tnId][strtolower((string) $change['username'])] = true;
+                }
+            }
+        }
+
+        return $this->fetchFailed ? null : $named;
+    }
+
+    /**
+     * @param  array<int, array<string, true>>  $tnIds  the TN ids the feed named on this account
+     * @param  array<int, list<int>>  $accountsById  the accounts the feed named each TN id on
+     * @return string the outcome, as a key of backfillTnUserIds()'s counts
+     */
+    private function backfillOne(User $user, array $tnIds, array $accountsById): string
+    {
+        if ($user->tnuserid !== null) {
+            return 'already-has-an-id';
+        }
+
+        if ($user->deleted !== null) {
+            return 'deleted';
+        }
+
+        if (count($tnIds) > 1) {
+            return 'two-tn-ids';
+        }
+
+        $tnId = array_key_first($tnIds);
+
+        if (User::whereIn('id', $accountsById[$tnId])->count() > 1) {
+            return 'two-accounts';
+        }
+
+        if (TnMemberMatch::find($user->id, $tnId)->heldElsewhere()) {
+            return 'held-elsewhere';
+        }
+
+        $usernames = $user->tnUsernames();
+        if (count($usernames) !== 1) {
+            return $usernames === [] ? 'no-tn-address' : 'two-usernames';
+        }
+
+        if (!$user->isTN()) {
+            return 'not-a-tn-account';
+        }
+
+        // A username may only refuse: a feed row with none is no evidence either way.
+        if ($tnIds[$tnId] !== [] && !isset($tnIds[$tnId][$usernames[0]])) {
+            return 'username-differs';
+        }
+
+        $this->stampTnId($user, $tnId);
+
+        return 'stamped';
+    }
+
+    /** Whether the account holds addresses for two TN usernames: see User::tnUsernames(). */
+    private function holdsTwoUsernames(User $user): bool
+    {
+        return count($user->tnUsernames()) > 1;
+    }
+
+    /**
+     * Leave a change unapplied and say so. The sync date moves past it regardless, so a removal
+     * skipped here is not retried: the member has left TN and their data stays until a person
+     * acts on the report. A window is read more than once, so it is reported once a day.
+     */
+    private function skipChange(string $reason, array $change, int $userId, int $other): void
+    {
+        $tnId = (int) ($change['tn_user_id'] ?? 0);
+
         Log::warning("TN sync: change for TN user {$tnId} not applied to FD #{$userId} ({$reason}, {$other})");
         Log::info("TN-SYNC-TRACE [CHANGE-SKIP] reason={$reason} fd_user_id={$userId} tn_user_id={$tnId} other={$other}");
         $this->loki->logEvent('tn-sync', 'user-change-skip', [
@@ -405,8 +571,15 @@ class UserChangesSyncer
             'tn_user_id' => $tnId,
             'other'      => $other,
         ]);
+
+        if (!$this->dryRun && !empty($change['account_removed']) && Cache::add("tn-sync:removal-skipped:{$userId}:{$tnId}", true, now()->addDay()) && app()->bound('sentry')) {
+            app('sentry')->captureMessage("TN member {$tnId} has left, but their removal was not applied to user {$userId} ({$reason}, {$other})");
+        }
     }
 
+    /**
+     * @return array|null  Change rows, or null on API error.
+     */
     private function fetchPage(int $page, string $from, string $to): ?array
     {
         if ($this->localTesting) {
@@ -429,8 +602,24 @@ class UserChangesSyncer
             'date_max' => $to,
         ]);
 
+        // The response only: the request's URL holds the API key.
+        if ($this->logResponses) {
+            Log::info('TN sync: user-changes API response on page ' . $page, [
+                'status'  => $response->status(),
+                'headers' => $response->headers(),
+                'body'    => $response->body(),
+            ]);
+        }
+
         if (!$response->successful()) {
-            Log::error('TN sync: user-changes API failed on page ' . $page, ['status' => $response->status()]);
+            Log::error('TN sync: user-changes API failed on page ' . $page, [
+                'status'   => $response->status(),
+                'date_min' => $from,
+                'date_max' => $to,
+                // TN's reason. An error is not a page of members, so unlike logResponses this is
+                // always on, but the request held the key and TN could quote it.
+                'body'     => substr(str_replace($this->apiKey, '[key]', $response->body()), 0, 500),
+            ]);
             return null;
         }
 

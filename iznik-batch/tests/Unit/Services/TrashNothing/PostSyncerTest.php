@@ -130,6 +130,7 @@ class PostSyncerTest extends TestCase
         $this->callProcessPost($syncer, $this->makePost([
             'post_id'   => $postId,
             'group_id'  => (string) $group->id,
+            'user_id'   => '4242',
             'latitude'  => null,
             'longitude' => null,
         ]));
@@ -141,9 +142,41 @@ class PostSyncerTest extends TestCase
         $this->assertSame(RoutingResult::DROPPED->value, $entry['labels']['subtype']);
         $this->assertSame('no-coordinates', $entry['message']['routing_reason']);
         $this->assertSame($postId, $entry['message']['tn_post_id']);
+        // TN's model types this as a string; the log always holds the number.
+        $this->assertSame(4242, $entry['message']['tn_user_id']);
         // No group was resolved, so no group context — matching the shape of the
         // email path's own unknown-group drop.
         $this->assertArrayNotHasKey('group_id', $entry['message']);
+    }
+
+    public function test_a_post_that_fails_ingestion_still_logs_its_tn_user_id(): void
+    {
+        $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
+
+        $syncer = $this->makeSyncer();
+        $this->injectIngestionSpy($syncer)->method('ingest')->willThrowException(new \RuntimeException('ingest failed'));
+
+        $this->callProcessPost($syncer, $this->makePost([
+            'user_id'   => 4242,
+            'latitude'  => 10.0,
+            'longitude' => 10.0,
+        ]));
+
+        $entry = $this->onlyRoutedEntry();
+        $this->assertSame(RoutingResult::FAILURE->value, $entry['labels']['subtype']);
+        $this->assertSame(4242, $entry['message']['tn_user_id']);
+    }
+
+    public function test_a_post_tn_sent_with_no_user_id_logs_a_null_tn_user_id(): void
+    {
+        $syncer = $this->makeSyncer();
+        $this->injectIngestionSpy($syncer)->expects($this->never())->method('ingest');
+
+        $this->callProcessPost($syncer, $this->makePost());
+
+        $entry = $this->onlyRoutedEntry();
+        $this->assertArrayHasKey('tn_user_id', $entry['message']);
+        $this->assertNull($entry['message']['tn_user_id']);
     }
 
     public function test_skips_post_whose_coordinates_are_outside_any_group_bounds(): void

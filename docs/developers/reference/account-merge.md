@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-01
+last_reviewed: 2026-11-04
 owner: Freegle dev team
 covers:
   - iznik-server-go/user/merge.go
@@ -12,15 +12,14 @@ covers:
 # Merging two accounts
 
 One member, two accounts. A merge moves everything from the account being discarded to the
-account being kept, then deletes the discarded one. It happens in three ways:
+account being kept, then deletes the discarded one. It happens in two ways:
 
 | Who starts it | Where | Who is recorded as doing it |
 |---|---|---|
 | A moderator or Support, in ModTools | `handleMerge` in `iznik-server-go/user/user.go` (`POST /api/user`, action `Merge`) | the moderator |
 | The member, by confirming an email address that belongs to their other account | the `key` branch of `PatchSession` in `iznik-server-go/session/session.go` | the member |
-| The TrashNothing sync, when it finds a member's twin accounts | `HealTNDivergence` in `iznik-server-go/user/partner.go` | the kept account |
 
-All three call the same function, `MergeUsersTx` in `iznik-server-go/user/user.go`. Its first
+Both call the same function, `MergeUsersTx` in `iznik-server-go/user/user.go`. Its first
 argument is the account to discard and its second the account to keep. V1 had a single
 `User::merge()`, and `MergeUsersTx` is its port. **Do not write a second merge path.** The Go
 API had a cut-down one for the email-verify case until October 2026, and it is how chats went
@@ -77,6 +76,11 @@ A TrashNothing account is never merged with a Freegle account, and two accounts 
 different TrashNothing ids are two different people. `handleMerge` and `MergeUsersTx` refuse
 both. See `.claude/rules/conventions.md`.
 
+Two accounts holding two different TrashNothing usernames may be two people as well, and a merge
+cannot be undone, so `MergeUsersTx` refuses that too. Nothing merges automatically on a partner
+call: only a TrashNothing id says who someone is, so `HealTNDivergence` moves the one address
+instead (see "Database Linking" in `trashnothing.md`).
+
 A member can set `canmerge` to false in their settings. If either account has, the merge is
 refused.
 
@@ -85,9 +89,10 @@ moves to the member's current account and the other account is left as it was.
 
 ## The PHP copy
 
-`iznik-batch/app/Models/User.php` has `merge()`, a second port of the V1 function in PHP. It
-is used only by the TrashNothing sync command. Nothing checks it against `MergeUsersTx`, so
-when you add a table to one, add it to the other. Compared on 2026-10-15, column by column:
+`iznik-batch/app/Models/User.php` has `merge()`, a second port of the V1 function in PHP.
+Nothing in `app/` calls it now that `tn:sync` no longer merges. Nothing checks it against
+`MergeUsersTx`, so when you add a table to one, add it to the other. Compared on 2026-10-15,
+column by column:
 
 - **Tables.** The same, except that the PHP merge never moves `volunteering` or
   `communityevents`. `volunteering` has no foreign key, so after a PHP merge its rows point at
@@ -103,8 +108,9 @@ when you add a table to one, add it to the other. Compared on 2026-10-15, column
 - **Chat rooms.** PHP has the logic Go had before October 2026: a room between the two accounts
   is left as a chat with oneself, messages that refer to a folded room are not updated, and the
   other person's roster row is lost when rooms are folded.
-- **Refusals.** Go refuses a TrashNothing and Freegle mix and two different TrashNothing ids.
-  PHP has neither check. Both refuse when either account's settings say `canmerge` is false.
+- **Refusals.** Both refuse two different TrashNothing ids, two different TrashNothing usernames
+  and either account's settings saying `canmerge` is false. PHP reports the first two, and goes
+  ahead when forced. Go alone refuses a TrashNothing and Freegle mix, in `handleMerge`.
 - **Log text.** PHP appends the reason in brackets.
 
 Everything else is the same: one transaction, deletion of the discarded account after commit,

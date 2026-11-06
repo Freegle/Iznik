@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-05
+last_reviewed: 2026-11-06
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -58,11 +58,74 @@ Each TN user is linked to Freegle via:
 - `users.tnuserid` - The TrashNothing user ID (BIGINT)
 - Email address in `users_emails` table
 
-When processing TN messages, the system:
-1. Checks for TN user ID from message header (`x-trash-nothing-user-id`)
-2. Falls back to Freegle user ID header (`x-iznik-from-user`)
-3. Looks up user by email address
-4. Creates new user if not found
+**Only a TN user id says who someone is.** A username or an address never does: TN does not promise
+usernames are unique, and an address can sit on the wrong account. A username is used only to refuse
+something (`MergeUsersTx`, `User::merge`, the two-username guard in the user-changes sync,
+`tn:backfill-user-ids`).
+
+**Inbound mail does not follow this, deliberately.** The email integration, posts and chat alike, is
+being replaced, so `IncomingMailService` is left as it is rather than risk breaking it. It looks the
+sender up by email address, the exact address first and then its canon, and a Subscribe creates a new
+user if neither matches. A reply to a `notify-` address takes the sender from that address and does
+not look them up at all.
+
+TN's mail carries the member's TN user id in `x-trash-nothing-user-id`, and one thing reads it: a
+Subscribe that creates a user gives the new account that id (`stampTnUserId`). Partner calls and API
+posts find a member only by the id, so the account would otherwise be split from them at the next
+one. It needs TN's secret, because anyone can write the header, so with
+`FREEGLE_TRASHNOTHING_SECRET` unset nothing is stamped. Nobody is matched by the id, so routing is
+unchanged, and if another account holds it the new account goes without. Whether TN sends the header
+on Subscribe mail needs checking on production: it was measured on posts only.
+
+**Partner calls** (`PUT` and `DELETE /memberships`, the message actions) on TN's domain must name a
+`tnuserid`, and a TN address alone answers 400. A call naming one resolves only to the account
+holding it (`FindTNCandidates`). If an address it gave is on another account, `HealTNDivergence`
+moves that one address to the member and reports the move to Sentry. The other account is never
+merged and never given the id, because nothing proves it is this member's, whatever it holds.
+Posts and chats already filed stay where they are. The accounts stay separate: `handleMerge` refuses
+a TrashNothing account and one left with no TrashNothing address, so a moderator often cannot join
+them either.
+
+When we have not met the `tnuserid`, a join or a message action on a known address gives the member
+their own account and moves the address to it, and a leave answers 404.
+
+While a deleted account holds the `tnuserid`, no new account can have it, because it is unique. A
+join answers 403 `Failed - account deleted`, a message action answers 403
+`User not found for partner`, and nothing is written. Forgetting the account clears the id. The posts
+API skips the post for the same reason (`tn-account-deleted`).
+
+That splits a member from an old account that never got their TN id: its history, memberships and
+bans stay behind, and its chats stop sending notifications if it loses its only address.
+`tn:backfill-user-ids --from=<date>` settles those accounts first, from the user-changes feed, which
+names an account by both ids. It reads the whole window first, stamps an account holding exactly one
+TN username, and applies nothing else from the feed. It writes nothing without `--commit`, or if a
+page cannot be read. To see what TN is answering, `--log-responses` logs the status, headers and body
+of every response; the bodies name members, so it is off by default and `tn:sync` never does it.
+
+TN serves a day per request (see [API Synchronization](#api-synchronization-daily-cron)), so a long
+window takes a request for each page of each day, at TN's rate limit, and can run for a long time.
+Give it the whole window in one run all the same, and do not loop over days with `--commit`: the
+checks below only see what that run read, so a day per run cannot see an id cast into doubt on
+another day.
+
+An id is hard to take back, so anything that casts doubt on one leaves the account for a person: the
+feed names it with two TN ids (`two-tn-ids`, the clearest sign it is shared), names the id on two
+accounts (`two-accounts`), or gives usernames and none is the account's (`username-differs`); or the
+account is deleted (`deleted`), or has a Freegle address as its preferred one (`not-a-tn-account`),
+which a TN id would make a TN account. It also leaves an id another account already holds
+(`held-elsewhere`), and an account holding two TN usernames (`two-usernames`) or none
+(`no-tn-address`).
+
+Each account left this way gets a `TN-SYNC-TRACE [BACKFILL-LEFT]` log line with its reason, its
+Freegle id and the TN ids the feed named on it, dry run or not, so a person can find it from the
+counts. The line holds ids only. It ends by printing how many accounts still have a TN address and
+no TN id. How far back the feed goes decides how many it can reach.
+
+TN can act on a post the member's account does not own only by ids (`actAsOwnerCandidate`): the post
+has a `tnpostid`, the call names a `tnuserid`, the caller's account holds exactly that id, and the
+post's account holds none. A post on an account holding a different TN user id answers
+"Not your message" until `tn:split-shared-account` moves it, because no id says it is this member's.
+A call with the partner key alone acts as the owner of TN's own post, found by its `tnpostid`.
 
 ### Email Canonicalization
 
@@ -170,7 +233,7 @@ else - only a person can tell which), and moves no cursor.
 
 When one Freegle account turns out to hold two Trash Nothing members (two usernames, and TN's
 API gives the second one a different TN user id), `tn:split-shared-account` moves the second
-member out onto a new account with their TN user id:
+member out onto a new account with their TN user id, or the account they already have:
 
 ```bash
 php artisan tn:split-shared-account <freegle-user-id> <tn-username> <tn-user-id>          # report only
@@ -201,8 +264,20 @@ what evidence, plus the chats it cannot attribute and why. It prints ids and cou
 owner, so a row that has changed since the report aborts the whole split. Before committing it
 writes the SQL that undoes it (under `storage/app/tn-splits/`, or `--rollback-file=`) and logs
 `User`/`Split` on both accounts. A second run finds nothing to move. It refuses an account that
-does not hold the username, a TN user id another account holds, the account's own TN user id,
-and an account whose only TN username it is.
+does not hold the username, unless the member's own account does; a TN user id held by a deleted
+account, or by an account without that username; the account's own TN user id; and an account
+whose only TN username it is.
+
+**A member who already has an account.** The posts API makes one at their first post, and a partner
+call at their next join, so the second member may hold their TN id before anyone splits them out.
+Everything then moves onto that account, which keeps its preferred address. A partner call moves
+only the address, so a run can find no addresses left and still move posts and memberships, and the
+aliases already moved still count as evidence.
+
+A row that account already has the twin of cannot move, because of the table's unique key, so it
+stays and the report lists it (`Already on the account they have`): a membership, a chat with the
+same person, a rating, an arrangement, a promise or a collection. A chat left this way cannot be
+named in `--move-chats=`, because a person has to read the two.
 
 ## Integration Mechanisms
 
@@ -396,14 +471,12 @@ into a Freegle user:
    unique index.
 3. The username gives `username@user.trashnothing.com`, which TN confirm is deliverable, so a
    reply to the post reaches the member.
-4. A live account already holding that address, or a per-group alias of the same username,
-   is linked rather than twinned: it gets the `tnuserid`, the bare address is attached as a
-   non-preferred one, and its preferred address stays. The username must match exactly,
-   compared lowercased. A canon match alone is not enough, because rows written under the old
-   canon rule can share a canon with a different member.
-5. Otherwise a user is created: display name from the username, TN's first and last names,
-   `about_me` and `reply_time` when given, the bare address as preferred, and no
-   `lastlocation`, so the first post goes Pending as an unmapped user.
+4. A user is created: display name from the username, TN's first and last names, `about_me` and
+   `reply_time` when given, the bare address as preferred, and no `lastlocation`, so the first
+   post goes Pending as an unmapped user. An account holding that username is never linked,
+   however closely it matches, because only a TN id says who someone is. If an account holds
+   the bare address it moves here, deleted or not, since TN has just said this id has this username, and the move
+   is reported to Sentry.
 
 It writes user data only. The one membership the post needs is written by ingestion, as for
 any poster. When no user can be had the post is skipped with a `routing_reason`:
@@ -415,8 +488,6 @@ any poster. When no user can be had the post is skipped with a `routing_reason`:
 | `tn-user-lookup-refused` | TN answered with a client error other than 404 (400, 410, 422, 451 and the like). It is about this poster and a retry gets it again, so it is final like a 404, and remembered for an hour like one |
 | `tn-user-lookup-gave-up` | TN could not be asked about this post's poster for 30 minutes. The post is skipped so that one poster cannot hold up every post behind it |
 | `tn-user-lookup-key-rejected` | TN rejected the public API key (401 or 403 without a Cloudflare challenge). Every lookup fails until the key is fixed, so the sync does not stop: the post is skipped as a miss and the posters Freegle already knows keep coming in. Sentry hears about the key at most once an hour |
-| `tn-username-clash` | An account with a different `tnuserid` holds the address: usernames are not unique, so these are two people |
-| `tn-address-held-by-deleted-user` | A deleted account still holds the bare address, which is unique and not the provisioner's to take back |
 | `tn-account-deleted` | A deleted account still holds the `tnuserid`. It is unique, so no live account can be given it, and a post is not handed to a deleted account. Deleting is a decision (the member leaving, or a merge) and the provisioner does not take the id back. Forgetting the account clears it (`User::forget()` and `UserManagementService::forgetUser()` both do), after which the poster's next post finds or makes a live account. Checked before TN is asked |
 
 **A failed lookup stops the sync, for a while; an answered one does not.** A post whose poster
@@ -468,9 +539,9 @@ and a refusal are each cached for an hour per TN user id (`ANSWER_TTL_MINUTES`),
 reason kept (`TnUserProvisioner::failFinal()`). It is an hour because the answer can be wrong, as
 with a bad base URL, a 404 from an edge, or a member too new to be on TN's replica yet: until it
 expires every post by the poster is skipped, and putting the cause right does not bring them back. Nothing else is: a failure to get an answer is asked again,
-as above, and a username clash or a deleted account holding the address is decided from
+as above, and a deleted account holding the `tnuserid` is decided from
 Freegle's data each time, so one that has been put right takes effect at once. An account that
-gets the `tnuserid` meanwhile (the partner flow stamps it) wins over a remembered answer,
+gets the `tnuserid` meanwhile (the user-changes sync can stamp it) wins over a remembered answer,
 because the account lookup comes first. A dry run reads the remembered answers and writes none,
 and `--local-testing` does neither. A member who is given a username within the hour is created
 on the first post after the answer expires.
@@ -767,7 +838,7 @@ backfill can retry them, and where a repeat fails the run:
 
 - `Post from unknown user` and `tn-user-lookup-refused`: TN's answer may have been wrong, or may
   change.
-- `tn-username-clash`, `tn-address-held-by-deleted-user` and `tn-account-deleted`
+- `tn-account-deleted`
   (`DeliberateSkips::NEEDS_A_HUMAN_REASONS`): only a person can put these right. The first one of
   the day for each reason is sent to Sentry from ingestion. For `tn-account-deleted` the member
   deleted their Freegle account but still posts on TN, and the id is released only when the
@@ -842,12 +913,21 @@ requests, which `TrashNothingRateLimiter` spaces 750ms apart; that is about a si
 requests a second TN allows a key. TN can also call the "kick" API for an immediate run. Each
 run synchronizes:
 
+**A request covers one day at most.** `/ratings`, `/user-changes` and `/posts/all` answer 400 to a
+`date_min` and `date_max` more than a day apart, however recent the dates are. A sync that has fallen
+behind, and a backfill, therefore read a day at a time (`ReadsTnFeedByDay`; `PostSyncer` has its own
+walk), and stop at the first page TN will not serve. A window that fits goes to TN as it was given.
+
 #### Ratings API
 ```
 https://trashnothing.com/fd/api/ratings?key={TNKEY}&page={page}&per_page=100
 ```
 - Syncs ratings given to Freegle users by TN community members
 - Updates `ratings` table with `tn_rating_id`
+- Files each rating on the account holding `ratee_tn_user_id`. If no account holds it, the account
+  named by `ratee_fd_user_id` is used, unless that account holds a different TN user id: the rating
+  is then about another member sharing it, and is skipped (Loki `tn-sync`/`rating-skip`). See
+  `RatingsSyncer::resolveRatee`.
 
 #### User Changes API
 ```
@@ -869,11 +949,35 @@ Syncs:
 and, where TN knows it, ours (`fd_user_id`). TN learns our id only when it adds the member
 through the partner API, so a member the posts API provisioned has changes with no `fd_user_id`;
 those are matched on `users.tnuserid`, or the member's removal and renames would never reach us.
-When the account TN names holds a different TN user id, the change belongs to another TN member
-sharing that account, and is skipped (Loki `tn-sync`/`user-change-skip`, reason
+The same match is used when the `fd_user_id` is out of date: the account it names has been merged
+away, holds a different TN user id because `tn:split-shared-account` moved the member out of it, or
+holds none because a partner call moved the member's address off it. The account holding the
+change's TN user id is the member, whatever account TN names. In that last case the account named
+is left alone and reported (Loki `tn-sync`/`user-change-skip`, reason `tn-user-id-held-elsewhere`):
+it may be the member's old account, and a removal does not reach it.
+
+When the account TN names holds a different TN user id and no account holds the change's, the
+change belongs to another TN member sharing that account, and is skipped (reason
 `tn-user-id-mismatch`) rather than forgetting or renaming the wrong person. An account with no TN
-user id is given the change's, unless another account already holds it, which is skipped as
-`tn-user-id-held-elsewhere` for a person to look at. See `UserChangesSyncer::resolveMember`.
+user id is given the change's, unless it is deleted, which would keep the unique id from any other
+account until it is forgotten.
+
+Only a TN account is changed: one with a TN address, or one holding the id with no address left,
+because another member can take an address. An account with a Freegle address is left alone, as
+leaving TN says nothing about it. See `UserChangesSyncer::resolveMember`. `TnMemberMatch` holds the
+rule this and the ratings feed share, which account TN's two ids mean, and each feed decides what
+to do with the answer.
+
+**An account holding two TN usernames.** That is two members sharing it, or one member who renamed,
+and the account alone cannot say which. So the sync does not forget it (reason `tn-two-usernames`),
+rename it (reported as a blocked rename) or give it a TN user id. A change's other fields are still
+applied. A legitimate rename whose new alias reached the account before the change is held back
+too, because it looks the same.
+
+**A skipped removal needs a person.** The sync date moves past a skipped change and it is not
+retried, so a member who has left TN keeps their data here until someone acts. Each skipped removal
+is reported to Sentry once a day, naming the TN user id and the account. Split the account if it
+holds two members, then forget the member who left.
 
 **A feed that cannot be read holds the stored date, for an hour.** `tn:sync` stores one date for
 ratings, user changes and posts: the latest any of them saw. When a page of the ratings or the
@@ -1084,6 +1188,11 @@ users.ljuserid  BIGINT UNSIGNED  -- LoveJunk user ID
 messages.sourceheader  VARCHAR(80)  -- e.g., "TN-Facebook", "TN-Web"
 messages.tnpostid      VARCHAR(80)  -- TN post identifier
 ```
+
+`messages` holds no TN user id, on purpose. For an API post, the record of who TN said wrote it is
+`tn_user_id` on the post's routed Loki entry (`{source="tn_api"}`), kept for Loki's default 31 days.
+`users.tnuserid` only says who holds an id now. A post that came by email has it only in the raw mail, which
+`PurgeService::purgeMessageSource` empties after 30 days.
 
 ## Cross-posts and reposts
 

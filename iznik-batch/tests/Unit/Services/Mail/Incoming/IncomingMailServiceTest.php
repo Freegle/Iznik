@@ -413,6 +413,133 @@ class IncomingMailServiceTest extends TestCase
         );
     }
 
+
+    /**
+     * Mail from a TN member's Subscribe, carrying what TN's own mail carries.
+     *
+     * @param array<string, string> $headers
+     */
+    private function tnSubscribe(Group $group, string $alias, array $headers): RoutingResult
+    {
+        $to = $group->nameshort.'-subscribe@groups.ilovefreegle.org';
+
+        return $this->service->route($this->parser->parse(
+            $this->createMinimalEmail(['From' => $alias, 'To' => $to, 'Subject' => 'Subscribe'] + $headers),
+            $alias,
+            $to
+        ));
+    }
+
+    private function accountHolding(string $email): ?User
+    {
+        return User::find(UserEmail::where('email', $email)->value('userid'));
+    }
+
+    /**
+     * A partner call or an API post finds a member only by TN's id, so an account made here without
+     * it would be split from them at the next one. The same mail carries the id.
+     */
+    public function test_a_tn_subscribe_that_makes_an_account_gives_it_the_tn_user_id(): void
+    {
+        config(['freegle.mail.trashnothing_secret' => 'test-secret']);
+        $alias = 'tnid'.str_replace('.', '', uniqid('', true)).'-g1@user.trashnothing.com';
+
+        $result = $this->tnSubscribe($this->createTestGroup(), $alias, [
+            'X-Trash-Nothing-User-ID' => '99140001',
+            'X-Trash-Nothing-Secret' => 'test-secret',
+        ]);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        $this->assertSame(99140001, (int) $this->accountHolding($alias)->tnuserid);
+    }
+
+    /** Anyone can write the header, so without TN's secret it says nothing. */
+    public function test_a_tn_subscribe_with_the_wrong_secret_gives_no_tn_user_id(): void
+    {
+        config(['freegle.mail.trashnothing_secret' => 'test-secret']);
+        $alias = 'tnid'.str_replace('.', '', uniqid('', true)).'-g1@user.trashnothing.com';
+
+        $this->tnSubscribe($this->createTestGroup(), $alias, [
+            'X-Trash-Nothing-User-ID' => '99140002',
+            'X-Trash-Nothing-Secret' => 'not-the-secret',
+        ]);
+
+        $this->assertNull($this->accountHolding($alias)->tnuserid);
+    }
+
+    public function test_a_tn_subscribe_with_no_secret_gives_no_tn_user_id(): void
+    {
+        config(['freegle.mail.trashnothing_secret' => 'test-secret']);
+        $alias = 'tnid'.str_replace('.', '', uniqid('', true)).'-g1@user.trashnothing.com';
+
+        $this->tnSubscribe($this->createTestGroup(), $alias, ['X-Trash-Nothing-User-ID' => '99140003']);
+
+        $this->assertNull($this->accountHolding($alias)->tnuserid);
+    }
+
+    /** The spam check accepts any secret when none is configured. An identity must not. */
+    public function test_a_tn_subscribe_gives_no_tn_user_id_when_no_secret_is_configured(): void
+    {
+        config(['freegle.mail.trashnothing_secret' => '']);
+        $alias = 'tnid'.str_replace('.', '', uniqid('', true)).'-g1@user.trashnothing.com';
+
+        $this->tnSubscribe($this->createTestGroup(), $alias, [
+            'X-Trash-Nothing-User-ID' => '99140004',
+            'X-Trash-Nothing-Secret' => '',
+        ]);
+
+        $this->assertNull($this->accountHolding($alias)->tnuserid);
+    }
+
+    public function test_a_tn_subscribe_with_a_header_that_is_not_an_id_gives_no_tn_user_id(): void
+    {
+        config(['freegle.mail.trashnothing_secret' => 'test-secret']);
+        $alias = 'tnid'.str_replace('.', '', uniqid('', true)).'-g1@user.trashnothing.com';
+
+        $this->tnSubscribe($this->createTestGroup(), $alias, [
+            'X-Trash-Nothing-User-ID' => 'not-an-id',
+            'X-Trash-Nothing-Secret' => 'test-secret',
+        ]);
+
+        $this->assertNull($this->accountHolding($alias)->tnuserid);
+    }
+
+    /** It must not stop the member joining: routing is as it always was, and the id stays where it is. */
+    public function test_a_tn_subscribe_for_an_id_another_account_holds_still_joins(): void
+    {
+        config(['freegle.mail.trashnothing_secret' => 'test-secret']);
+        $group = $this->createTestGroup();
+        $holder = $this->createTestUser(['tnuserid' => 99140005]);
+        $alias = 'tnid'.str_replace('.', '', uniqid('', true)).'-g1@user.trashnothing.com';
+
+        $result = $this->tnSubscribe($group, $alias, [
+            'X-Trash-Nothing-User-ID' => '99140005',
+            'X-Trash-Nothing-Secret' => 'test-secret',
+        ]);
+
+        $account = $this->accountHolding($alias);
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        $this->assertNull($account->tnuserid);
+        $this->assertSame(99140005, (int) $holder->fresh()->tnuserid);
+        $this->assertTrue(Membership::where('userid', $account->id)->where('groupid', $group->id)->exists());
+    }
+
+    /** Only an account this mail makes: an address on an existing account proves nothing about it. */
+    public function test_a_tn_subscribe_gives_an_existing_account_no_tn_user_id(): void
+    {
+        config(['freegle.mail.trashnothing_secret' => 'test-secret']);
+        $alias = 'tnid'.str_replace('.', '', uniqid('', true)).'-g1@user.trashnothing.com';
+        $existing = $this->createTestUser();
+        UserEmail::create(['userid' => $existing->id, 'email' => $alias, 'preferred' => 0]);
+
+        $this->tnSubscribe($this->createTestGroup(), $alias, [
+            'X-Trash-Nothing-User-ID' => '99140006',
+            'X-Trash-Nothing-Secret' => 'test-secret',
+        ]);
+
+        $this->assertNull($existing->fresh()->tnuserid);
+    }
+
     public function test_subscribe_from_banned_member_is_dropped(): void
     {
         $group = $this->createTestGroup();

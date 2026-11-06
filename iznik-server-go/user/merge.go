@@ -8,7 +8,7 @@ import (
 // mergeChatRooms hands the loser's chat rooms to the survivor without tripping
 // the unique key on (user1, user2, chattype). It is the chat-room step of
 // MergeUsersTx, the one account merge, and so runs for a moderator merge, an
-// email-verify merge and the TrashNothing twin heal alike. A blind UPDATE
+// email-verify merge alike. A blind UPDATE
 // fails with a duplicate-key error when both users already have a room with
 // the same counterparty, aborting the whole statement and stranding those
 // rooms (and their history) on the about-to-be-deleted loser. Instead:

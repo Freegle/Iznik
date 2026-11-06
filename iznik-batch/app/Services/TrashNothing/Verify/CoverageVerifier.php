@@ -41,8 +41,8 @@ use Carbon\CarbonImmutable;
  *    Ingestion leaves a note of it (DeliberateSkips) and the verifier reads that, before asking
  *    TN anything, so such a post is counted and shown but is not a miss.
  *
- * A post ingestion skipped for any other reason (a poster TN does not know, a lookup TN refused, a
- * username clash, a deleted account) is not expected. The note is still read, but only to name the
+ * A post ingestion skipped for any other reason (a poster TN does not know, a lookup TN refused, or
+ * a deleted account) is not expected. The note is still read, but only to name the
  * reason beside the miss: the post is classified like any other, and when nothing explains its
  * absence it is a genuine miss, so it is reported, repeats when it is still missing after a
  * backfill, and can be ingested once the cause is fixed. A failure to look the poster up leaves no
