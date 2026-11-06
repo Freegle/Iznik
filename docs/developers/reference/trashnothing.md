@@ -895,14 +895,23 @@ and, where TN knows it, ours (`fd_user_id`). TN learns our id only when it adds 
 through the partner API, so a member the posts API provisioned has changes with no `fd_user_id`;
 those are matched on `users.tnuserid`, or the member's removal and renames would never reach us.
 The same match is used when the `fd_user_id` is out of date: the account it names has been merged
-away, or holds a different TN user id because `tn:split-shared-account` moved the member out of it.
+away, holds a different TN user id because `tn:split-shared-account` moved the member out of it, or
+holds none because a partner call moved the member's address off it. The account holding the
+change's TN user id is the member, whatever account TN names. In that last case the account named
+is left alone and reported (Loki `tn-sync`/`user-change-skip`, reason `tn-user-id-held-elsewhere`):
+it may be the member's old account, and a removal does not reach it.
+
 When the account TN names holds a different TN user id and no account holds the change's, the
-change belongs to another TN member sharing that account, and is skipped (Loki
-`tn-sync`/`user-change-skip`, reason `tn-user-id-mismatch`) rather than forgetting or renaming the
-wrong person. An account with no TN user id is given the change's, unless another account already
-holds it, which is skipped as `tn-user-id-held-elsewhere` for a person to look at. See
-`UserChangesSyncer::resolveMember`. `TnMemberMatch` holds the rule this and the ratings feed share,
-which account TN's two ids mean, and each feed decides what to do with the answer.
+change belongs to another TN member sharing that account, and is skipped (reason
+`tn-user-id-mismatch`) rather than forgetting or renaming the wrong person. An account with no TN
+user id is given the change's, unless it is deleted, which would keep the unique id from any other
+account until it is forgotten.
+
+Only a TN account is changed: one with a TN address, or one holding the id with no address left,
+because another member can take an address. An account with a Freegle address is left alone, as
+leaving TN says nothing about it. See `UserChangesSyncer::resolveMember`. `TnMemberMatch` holds the
+rule this and the ratings feed share, which account TN's two ids mean, and each feed decides what
+to do with the answer.
 
 **An account holding two TN usernames.** That is two members sharing it, or one member who renamed,
 and the account alone cannot say which. So the sync does not forget it (reason `tn-two-usernames`),

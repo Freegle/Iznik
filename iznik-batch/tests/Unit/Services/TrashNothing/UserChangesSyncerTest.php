@@ -703,8 +703,12 @@ class UserChangesSyncerTest extends TestCase
         $this->assertSame(55, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
     }
 
-    /** The TN id already belongs to another account: which is right is for a person to say. */
-    public function test_a_change_whose_tn_id_another_account_holds_is_skipped(): void
+    /**
+     * Only TN's id says who someone is, so the account holding it is the member, whatever account
+     * TN names. A partner call that moves an address off an account with no id leaves things this
+     * way. The account named is left alone and reported: it may be the same member's old account.
+     */
+    public function test_a_change_whose_tn_id_another_account_holds_reaches_that_account(): void
     {
         $named = $this->tnUserWithId(null);
         $holder = $this->tnUserWithId(99130008);
@@ -717,9 +721,94 @@ class UserChangesSyncerTest extends TestCase
         ]]);
 
         $this->assertSame('Test Member', $named->fresh()->fullname);
-        $this->assertSame('Test Member', $holder->fresh()->fullname);
+        $this->assertSame('Deleted User #' . $holder->id, $holder->fresh()->fullname);
         $this->assertNull($named->fresh()->tnuserid);
         $this->assertCount(1, $this->skipEvents('tn-user-id-held-elsewhere'));
+    }
+
+    public function test_a_rename_whose_tn_id_another_account_holds_reaches_that_account(): void
+    {
+        $named = $this->tnUserWithId(null);
+        $holder = $this->tnUserWithId(99130040);
+        $namedBefore = $this->emailsOf($named);
+        $new = $this->username('renamed');
+
+        $this->syncChanges([[
+            'fd_user_id' => $named->id,
+            'tn_user_id' => 99130040,
+            'username'   => $new,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame([$new], $holder->fresh()->tnUsernames());
+        $this->assertSame($namedBefore, $this->emailsOf($named->fresh()));
+    }
+
+    /** A partner call took the only address the account had, so it no longer looks like TN's. */
+    public function test_a_removal_naming_an_account_that_lost_its_only_address_reaches_the_member(): void
+    {
+        $sentry = $this->recordSentry();
+        $old = User::create(['fullname' => 'Old Account', 'added' => now()]);
+        $member = $this->tnUserWithId(99130041);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $old->id,
+            'tn_user_id'      => 99130041,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Deleted User #' . $member->id, $member->fresh()->fullname);
+        $this->assertSame('Old Account', $old->fresh()->fullname);
+        $this->assertCount(1, $this->skipEvents('tn-user-id-held-elsewhere'), 'the old account is reported, not dropped in silence');
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+    }
+
+    /** Another member took the bare address this account had. Its TN id still says who it is. */
+    public function test_a_removal_reaches_the_account_holding_the_id_when_it_has_no_address_left(): void
+    {
+        $member = User::create(['fullname' => 'Test Member', 'added' => now(), 'tnuserid' => 99130042]);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $member->id,
+            'tn_user_id'      => 99130042,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Deleted User #' . $member->id, $member->fresh()->fullname);
+    }
+
+    /** Leaving TN says nothing about their Freegle account, so a volunteer's is not forgotten. */
+    public function test_a_removal_leaves_a_freegle_account_holding_the_id_alone(): void
+    {
+        $user = $this->tnUser('Test Member', [[$this->username('vol') . '@example.org', 1]]);
+        $user->tnuserid = 99130043;
+        $user->save();
+
+        $this->syncChanges([[
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130043,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Test Member', $user->fresh()->fullname);
+    }
+
+    /** users.tnuserid is unique, so a deleted account given it would keep the member from any other. */
+    public function test_a_deleted_account_is_not_given_a_tn_id(): void
+    {
+        $user = $this->tnUserWithId(null);
+        DB::table('users')->where('id', $user->id)->update(['deleted' => now()]);
+
+        $this->syncChanges([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130044,
+            'date'       => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertNull($user->fresh()->tnuserid);
     }
 
     public function test_a_dry_run_does_not_give_an_account_a_tn_id(): void

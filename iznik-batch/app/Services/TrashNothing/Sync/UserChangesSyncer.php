@@ -360,13 +360,17 @@ class UserChangesSyncer
      * TnMemberMatch says which account TN means, so that a member's removal and renames reach
      * them when TN has no Freegle id for them, or an out of date one. The rest is for this feed.
      *
+     * The account holding TN's id is the member, whatever account TN names. A partner call that
+     * moves an address off an account with no id leaves things this way, until TN learns the new
+     * account. The account named is not changed, and is reported: it may be the member's old one,
+     * and a removal does not reach it.
+     *
      * Only a TN account is changed. When TN names one holding a different TN user id and no account
      * holds this one, the change is about another TN member sharing that account, and applying it
      * would forget or rename the wrong person, so it is skipped and reported. An account with no
-     * TN user id is given this one, since TN has just said which member it is, unless another
-     * account already holds it; then a person has to say which is right, and the change is
-     * skipped and reported. Nor is it given one while it holds two TN usernames, as the id could
-     * be either member's.
+     * TN user id is given this one, since TN has just said which member it is. Not while it holds
+     * two TN usernames, as the id could be either member's, and not a deleted one, which would
+     * keep the unique id from any other account until it is forgotten.
      */
     private function resolveMember(array $change): ?User
     {
@@ -374,26 +378,20 @@ class UserChangesSyncer
         $match = TnMemberMatch::find((int) ($change['fd_user_id'] ?? 0), $tnId);
         $named = $match->named;
 
-        if ($named !== null && !$named->isTN()) {
-            return null;
-        }
-
         if ($match->heldElsewhere()) {
             $this->skipChange('tn-user-id-held-elsewhere', $change, $named->id, $match->holder->id);
-
-            return null;
         }
 
         $user = $match->account();
-        if ($user === null || !$user->isTN()) {
-            if ($named !== null) {
+        if ($user === null || !$this->isTnAccount($user)) {
+            if ($named !== null && !$match->heldElsewhere() && $this->isTnAccount($named)) {
                 $this->skipChange('tn-user-id-mismatch', $change, $named->id, (int) $named->tnuserid);
             }
 
             return null;
         }
 
-        if ($user->tnuserid === null && $tnId !== 0) {
+        if ($user->tnuserid === null && $tnId !== 0 && $user->deleted === null) {
             if ($this->holdsTwoUsernames($user)) {
                 Log::info('TN-SYNC-TRACE [CHANGE-SKIP] reason=tn-two-usernames field=tnuserid fd_user_id=' . $user->id . ' tn_user_id=' . $tnId);
 
@@ -404,6 +402,16 @@ class UserChangesSyncer
         }
 
         return $user;
+    }
+
+    /**
+     * An account with a TN address, or one holding a TN id with no address left, because another
+     * member can take an address and the id still says whose account it is. Not one with a Freegle
+     * address: leaving TN says nothing about that.
+     */
+    private function isTnAccount(User $user): bool
+    {
+        return $user->isTN() || ($user->tnuserid !== null && $user->email_preferred === null);
     }
 
     private function stampTnId(User $user, int $tnId): void

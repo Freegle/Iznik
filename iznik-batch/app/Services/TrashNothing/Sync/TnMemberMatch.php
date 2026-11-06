@@ -46,8 +46,8 @@ final class TnMemberMatch
     }
 
     /**
-     * The account named has no TN id, and a different account holds this one. They may be twin
-     * accounts of one member, which the ids alone cannot say.
+     * The account named has no TN id, and a different account holds this one. The holder is the
+     * member. The account named may be their old one, which the ids alone cannot say.
      */
     public function heldElsewhere(): bool
     {
