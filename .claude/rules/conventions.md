@@ -99,8 +99,10 @@ ones. Do not add a rule that treats a matching username or address as the same m
 
 The email integration breaks this, deliberately. Posts and chat by email both match on the address,
 and `IncomingMailService` is left alone because it is production's source of truth and is being
-replaced: do not change it for this rule. Its replacement goes by TN user id. If anything reads the
-`x-trash-nothing-user-id` header, it needs TN's secret as well, because anyone can write it.
+replaced: do not change it for this rule. Its replacement goes by TN user id. The one exception is
+`handleSubscribe`, which gives an account it creates the id from the `x-trash-nothing-user-id`
+header, because partner calls and API posts would otherwise split the member from it. It matches
+nobody by the id. Anything reading that header needs TN's secret as well, because anyone can write it.
 
 ## A TrashNothing member is dealt with through their membership
 
