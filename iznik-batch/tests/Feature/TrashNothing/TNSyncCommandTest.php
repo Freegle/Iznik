@@ -3,10 +3,12 @@
 namespace Tests\Feature\TrashNothing;
 
 use App\Console\Commands\TrashNothing\TNSyncCommand;
+use App\Console\Concerns\PreventsOverlapping;
 use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\LokiService;
 use App\Services\TrashNothing\Sync\PostSyncer;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -1804,8 +1806,9 @@ class TNSyncCommandTest extends TestCase
 
     /**
      * A feed that fails for good must not hold the date, and so grow the window each run reads,
-     * for ever. The date is held for FEED_HOLD_MAX_RUNS runs, Sentry hears once the hold has
-     * lasted FEED_HOLD_ALERT_RUNS, and the next run gives up and moves on, with a report.
+     * for ever. The date is held for FEED_HOLD_MAX_MINUTES, Sentry hears once the hold has
+     * lasted FEED_HOLD_ALERT_MINUTES, and the first run after that gives up and moves on, with
+     * a report. One run a minute here.
      */
     public function test_a_feed_that_keeps_failing_is_held_then_alerted_then_given_up_on(): void
     {
@@ -1814,25 +1817,68 @@ class TNSyncCommandTest extends TestCase
         $this->ratingsFeedDown = true;
         $this->feedHoldFake();
 
-        for ($run = 1; $run <= TNSyncCommand::FEED_HOLD_MAX_RUNS; $run++) {
+        for ($minute = 0; $minute < TNSyncCommand::FEED_HOLD_MAX_MINUTES; $minute++) {
             $this->artisan('tn:sync')->assertExitCode(0);
 
-            $this->assertSame(self::FEED_HOLD_STORED, trim(file_get_contents($this->dateFile)), "run {$run} holds the date");
+            $this->assertSame(self::FEED_HOLD_STORED, trim(file_get_contents($this->dateFile)), "minute {$minute} holds the date");
             $this->assertCount(
-                $run >= TNSyncCommand::FEED_HOLD_ALERT_RUNS ? 1 : 0,
+                $minute >= TNSyncCommand::FEED_HOLD_ALERT_MINUTES ? 1 : 0,
                 $sentry->calls,
-                "run {$run}: Sentry hears once, when the hold has lasted"
+                "minute {$minute}: Sentry hears once, when the hold has lasted"
             );
+            $this->travel(1)->minutes();
         }
 
         $this->assertStringContainsString('ratings feed', $sentry->calls[0]);
-        $this->assertStringContainsString('moves on after ' . TNSyncCommand::FEED_HOLD_MAX_RUNS, $sentry->calls[0]);
+        $this->assertStringContainsString('moves on after ' . TNSyncCommand::FEED_HOLD_MAX_MINUTES . ' minutes', $sentry->calls[0]);
 
         $this->artisan('tn:sync')->assertExitCode(0);
 
         $this->assertSame(self::FEED_HOLD_LATER, trim(file_get_contents($this->dateFile)), 'the date moves on to what the other feed saw');
         $this->assertCount(2, $sentry->calls, 'and Sentry hears of the give-up');
         $this->assertStringContainsString('gave up on the ratings feed', $sentry->calls[1]);
+    }
+
+    /**
+     * The limits are minutes, not runs: tn:sync runs every few seconds, and many runs close
+     * together are a short hold, not a long one.
+     */
+    public function test_many_runs_close_together_are_a_short_hold(): void
+    {
+        $sentry = $this->recordSentry();
+        file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
+        $this->ratingsFeedDown = true;
+        $this->feedHoldFake();
+
+        // 70 runs ten seconds apart: more runs than either limit, in under twelve minutes.
+        for ($run = 1; $run <= 70; $run++) {
+            $this->artisan('tn:sync')->assertExitCode(0);
+            $this->assertSame(self::FEED_HOLD_STORED, trim(file_get_contents($this->dateFile)), "run {$run} holds the date");
+            $this->travel(10)->seconds();
+        }
+
+        $this->assertSame([], $sentry->calls, 'not yet held for long enough to tell anyone');
+    }
+
+    /**
+     * And a few runs far apart are a long hold: two runs an hour apart give up.
+     */
+    public function test_two_runs_an_hour_apart_give_up(): void
+    {
+        $sentry = $this->recordSentry();
+        file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
+        $this->ratingsFeedDown = true;
+        $this->feedHoldFake();
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->assertSame(self::FEED_HOLD_STORED, trim(file_get_contents($this->dateFile)));
+
+        $this->travel(TNSyncCommand::FEED_HOLD_MAX_MINUTES)->minutes();
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame(self::FEED_HOLD_LATER, trim(file_get_contents($this->dateFile)), 'the date moves on');
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString('gave up on the ratings feed', $sentry->calls[0]);
     }
 
     /**
@@ -1849,39 +1895,59 @@ class TNSyncCommandTest extends TestCase
         ]);
 
         $before = time();
-        for ($run = 0; $run <= TNSyncCommand::FEED_HOLD_MAX_RUNS; $run++) {
-            $this->artisan('tn:sync')->assertExitCode(0);
-        }
+        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->travel(TNSyncCommand::FEED_HOLD_MAX_MINUTES)->minutes();
+        $this->artisan('tn:sync')->assertExitCode(0);
 
         $stored = strtotime(trim(file_get_contents($this->dateFile)));
         $this->assertGreaterThanOrEqual($before, $stored);
     }
 
     /**
-     * The count is of runs in a row. A run that reads every feed starts it again, so a feed
-     * that fails now and then is never given up on.
+     * The hold is of runs in a row. A run that reads every feed ends it, so a feed that fails
+     * now and then is never given up on.
      */
-    public function test_a_run_that_reads_every_feed_restarts_the_count(): void
+    public function test_a_run_that_reads_every_feed_ends_the_hold(): void
     {
         $sentry = $this->recordSentry();
         file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
         $this->feedHoldFake();
 
-        $failRuns = TNSyncCommand::FEED_HOLD_ALERT_RUNS - 1;
         for ($round = 1; $round <= 2; $round++) {
             $this->ratingsFeedDown = true;
-            for ($run = 1; $run <= $failRuns; $run++) {
+            for ($minute = 0; $minute < TNSyncCommand::FEED_HOLD_ALERT_MINUTES; $minute++) {
                 $this->artisan('tn:sync')->assertExitCode(0);
+                $this->travel(1)->minutes();
             }
 
-            // Reads everything, so the date moves and the count starts again.
+            // Reads everything, so the date moves and the hold ends.
             $this->ratingsFeedDown = false;
             $this->artisan('tn:sync')->assertExitCode(0);
             $this->assertSame(self::FEED_HOLD_LATER, trim(file_get_contents($this->dateFile)));
             file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
         }
 
-        $this->assertSame([], $sentry->calls, 'two short failures are not one long one');
+        $this->assertSame([], $sentry->calls, 'two short holds are not one long one');
+    }
+
+    /**
+     * Every ten seconds, so a post reaches Freegle seconds after it is posted on TN, and never
+     * two at once: a run takes three to five seconds.
+     *
+     * The scheduler's overlap guard would hold its flock in schedule:run for the whole minute and
+     * skip every repeat, so it must not be there. The command's own lock does that job.
+     */
+    public function test_it_is_scheduled_every_ten_seconds_one_at_a_time(): void
+    {
+        $event = collect(app(Schedule::class)->events())
+            ->first(fn ($e) => preg_match("/artisan'?\s+tn:sync$/", (string) $e->command) === 1);
+
+        $this->assertNotNull($event);
+        $this->assertTrue($event->isRepeatable(), 'more often than once a minute');
+        $this->assertSame(10, $event->repeatSeconds);
+        $this->assertTrue($event->runInBackground);
+        $this->assertFalse($event->withoutOverlapping, 'the scheduler guard would stop the repeats');
+        $this->assertContains(PreventsOverlapping::class, class_uses(TNSyncCommand::class), 'the command keeps runs one at a time');
     }
 
     public function test_reads_stored_date(): void

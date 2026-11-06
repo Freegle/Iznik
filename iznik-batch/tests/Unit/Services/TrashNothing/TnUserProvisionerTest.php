@@ -820,10 +820,11 @@ class TnUserProvisionerTest extends TestCase
 
         // ...and counted as nothing: a refusal is not a failure to ask.
         $this->assertSame(1, $this->lookupsFor($tnId));
-        for ($run = 0; $run < TnUserProvisioner::LOOKUP_GIVE_UP_AT; $run++) {
+        for ($minute = 0; $minute <= TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES; $minute++) {
             $again = $this->provisioner();
             $again->resolveOrCreate($tnId, 'refused-post-' . $status);
             $this->assertSame(TnUserProvisioner::REASON_LOOKUP_REFUSED, $again->lastFailureReason());
+            $this->travel(1)->minutes();
         }
     }
 
@@ -906,10 +907,11 @@ class TnUserProvisionerTest extends TestCase
         $tnId   = $this->tnId();
         $this->tnUsers[$tnId] = [$status, 'Unauthorized'];
 
-        for ($run = 1; $run <= TnUserProvisioner::LOOKUP_GIVE_UP_AT + 1; $run++) {
+        for ($minute = 0; $minute <= TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES + 1; $minute++) {
             $provisioner = $this->provisioner();
             $this->assertNull($provisioner->resolveOrCreate($tnId, 'keyed-post-' . $status));
-            $this->assertSame(TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED, $provisioner->lastFailureReason(), "run {$run}");
+            $this->assertSame(TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED, $provisioner->lastFailureReason(), "minute {$minute}");
+            $this->travel(1)->minutes();
         }
         $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
         $this->assertStringContainsString('rejected', $sentry->calls[0][0]);
@@ -922,19 +924,20 @@ class TnUserProvisionerTest extends TestCase
         $this->assertCount(1, $sentry->calls, 'nothing about the post');
     }
 
-    public function test_a_failing_lookup_is_reported_when_its_post_reaches_the_warning_count(): void
+    public function test_a_failing_lookup_is_reported_once_its_post_has_waited_long_enough(): void
     {
         $sentry = $this->recordSentry();
         $tnId   = $this->tnId();
         $this->tnUsers[$tnId] = [500, 'Internal Server Error'];
 
-        // One failed lookup of the post in each run: a run stops at its first failure.
-        for ($run = 1; $run < TnUserProvisioner::LOOKUP_WARN_AT; $run++) {
+        // One failed lookup of the post in each run, a minute apart: a run stops at its first failure.
+        for ($minute = 0; $minute < TnUserProvisioner::LOOKUP_WARN_AFTER_MINUTES; $minute++) {
             $provisioner = $this->provisioner();
             $this->assertNull($provisioner->resolveOrCreate($tnId, 'wedged-post'));
             $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason());
+            $this->travel(1)->minutes();
         }
-        $this->assertSame([], $sentry->calls, 'a few failures are a blip');
+        $this->assertSame([], $sentry->calls, 'a few minutes is a blip');
 
         $this->assertNull($this->provisioner()->resolveOrCreate($tnId, 'wedged-post'));
         $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
@@ -945,7 +948,29 @@ class TnUserProvisionerTest extends TestCase
         $provisioner = $this->provisioner();
         $this->assertNull($provisioner->resolveOrCreate($tnId, 'wedged-post'));
         $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason());
-        $this->assertCount(1, $sentry->calls, 'one report at the warning count, not one for every run after it');
+        $this->assertCount(1, $sentry->calls, 'one report once it has waited, not one for every run after it');
+    }
+
+    /**
+     * The limits are minutes, not runs: tn:sync runs every few seconds, and a poster that fails
+     * on many runs close together has not been waited on for long.
+     */
+    public function test_many_failures_close_together_are_a_short_wait(): void
+    {
+        $sentry = $this->recordSentry();
+        $tnId   = $this->tnId();
+        $this->tnUsers[$tnId] = [503, 'Service Unavailable'];
+
+        // 40 runs ten seconds apart: more failures than there are minutes before giving up.
+        for ($run = 1; $run <= 40; $run++) {
+            $provisioner = $this->provisioner();
+            $this->assertNull($provisioner->resolveOrCreate($tnId, 'patient-post'));
+            $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason(), "run {$run}");
+            $this->travel(10)->seconds();
+        }
+
+        $this->assertCount(1, $sentry->calls, 'warned once it had waited five minutes, and not given up');
+        $this->assertStringContainsString(TnUserProvisioner::LOOKUP_WARN_AFTER_MINUTES . ' minutes', $sentry->calls[0][0]);
     }
 
     public function test_a_post_whose_lookups_keep_failing_is_given_up_and_reported_once(): void
@@ -954,10 +979,11 @@ class TnUserProvisionerTest extends TestCase
         $tnId   = $this->tnId();
         $this->tnUsers[$tnId] = [503, 'Service Unavailable'];
 
-        for ($run = 1; $run < TnUserProvisioner::LOOKUP_GIVE_UP_AT; $run++) {
+        for ($minute = 0; $minute < TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES; $minute++) {
             $provisioner = $this->provisioner();
             $this->assertNull($provisioner->resolveOrCreate($tnId, 'doomed-post'));
-            $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason(), "run {$run}");
+            $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason(), "minute {$minute}");
+            $this->travel(1)->minutes();
         }
         $reportsBeforeTheLimit = count($sentry->calls);
         $this->assertSame(1, $reportsBeforeTheLimit, 'the warning, and nothing else');
@@ -987,8 +1013,9 @@ class TnUserProvisionerTest extends TestCase
         $username = $this->uniqueUsername('recovered');
         $this->tnUsers[$tnId] = [503, 'Service Unavailable'];
 
-        for ($run = 1; $run <= TnUserProvisioner::LOOKUP_GIVE_UP_AT; $run++) {
+        for ($minute = 0; $minute <= TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES; $minute++) {
             $this->provisioner()->resolveOrCreate($tnId, 'recovering-post');
+            $this->travel(1)->minutes();
         }
         $this->assertSame(TnUserProvisioner::REASON_LOOKUP_GAVE_UP, $this->lastReasonFor($tnId, 'recovering-post'));
 
@@ -1007,20 +1034,24 @@ class TnUserProvisionerTest extends TestCase
         return $provisioner->lastFailureReason();
     }
 
-    public function test_failures_are_counted_for_each_post_separately(): void
+    public function test_each_post_is_timed_from_its_own_first_failure(): void
     {
         $sentry = $this->recordSentry();
         $tnId   = $this->tnId();
         $this->tnUsers[$tnId] = [500, 'Internal Server Error'];
 
-        // The same poster behind many posts: each post has its own budget.
-        for ($post = 1; $post <= 3; $post++) {
-            for ($run = 1; $run < TnUserProvisioner::LOOKUP_WARN_AT; $run++) {
-                $this->provisioner()->resolveOrCreate($tnId, "separate-post-{$post}");
-            }
-        }
+        // The same poster behind two posts, the second first failing four minutes after the first.
+        $this->provisioner()->resolveOrCreate($tnId, 'separate-post-1');
+        $this->travel(TnUserProvisioner::LOOKUP_WARN_AFTER_MINUTES - 1)->minutes();
+        $this->provisioner()->resolveOrCreate($tnId, 'separate-post-2');
+        $this->travel(TnUserProvisioner::LOOKUP_WARN_AFTER_MINUTES - 1)->minutes();
 
-        $this->assertSame([], $sentry->calls);
+        $this->provisioner()->resolveOrCreate($tnId, 'separate-post-2');
+        $this->assertSame([], $sentry->calls, 'the second post has waited four minutes');
+
+        $this->provisioner()->resolveOrCreate($tnId, 'separate-post-1');
+        $this->assertCount(1, $sentry->calls, 'the first has waited eight');
+        $this->assertStringContainsString('separate-post-1', $sentry->calls[0][0]);
     }
 
     public function test_a_failure_with_no_post_is_not_counted(): void
@@ -1029,10 +1060,11 @@ class TnUserProvisionerTest extends TestCase
         $tnId   = $this->tnId();
         $this->tnUsers[$tnId] = [500, 'Internal Server Error'];
 
-        for ($run = 1; $run <= TnUserProvisioner::LOOKUP_GIVE_UP_AT + 2; $run++) {
+        for ($minute = 0; $minute <= TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES + 1; $minute++) {
             $provisioner = $this->provisioner();
             $provisioner->resolveOrCreate($tnId);
             $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason());
+            $this->travel(1)->minutes();
         }
 
         $this->assertSame([], $sentry->calls);
@@ -1044,10 +1076,11 @@ class TnUserProvisionerTest extends TestCase
         $tnId   = $this->tnId();
         $this->tnUsers[$tnId] = [500, 'Internal Server Error'];
 
-        for ($run = 1; $run <= TnUserProvisioner::LOOKUP_GIVE_UP_AT + 2; $run++) {
+        for ($minute = 0; $minute <= TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES + 1; $minute++) {
             $provisioner = $this->provisioner(dryRun: true);
             $provisioner->resolveOrCreate($tnId, 'dry-run-post');
             $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason());
+            $this->travel(1)->minutes();
         }
         $this->assertSame([], $sentry->calls, 'a dry run changes nothing the next real run reads');
 
@@ -1066,10 +1099,11 @@ class TnUserProvisionerTest extends TestCase
         $gone   = $this->tnId();
         $this->tnUsers[$gone] = [404, 'User does not exist.'];
 
-        for ($run = 1; $run <= TnUserProvisioner::LOOKUP_GIVE_UP_AT + 2; $run++) {
+        for ($minute = 0; $minute <= TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES + 1; $minute++) {
             $provisioner = $this->provisioner();
             $provisioner->resolveOrCreate($gone, 'answered-post');
             $this->assertSame(TnUserProvisioner::REASON_NOT_FOUND, $provisioner->lastFailureReason());
+            $this->travel(1)->minutes();
         }
 
         $this->assertSame([], $sentry->calls);
@@ -1078,7 +1112,7 @@ class TnUserProvisionerTest extends TestCase
     /**
      * Another process wins the tnuserid index while this one is writing, but its row cannot be
      * found: no user was provisioned and nothing was answered, so it is a failure to resolve
-     * like any other and goes through the same count.
+     * like any other and goes through the same clock.
      */
     public function test_a_lost_race_with_no_winner_is_counted_like_any_failed_lookup(): void
     {
@@ -1103,14 +1137,15 @@ class TnUserProvisionerTest extends TestCase
             }
         });
 
-        for ($run = 1; $run < TnUserProvisioner::LOOKUP_GIVE_UP_AT; $run++) {
+        for ($minute = 0; $minute < TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES; $minute++) {
             $provisioner = $this->provisioner();
             $this->assertNull($provisioner->resolveOrCreate($tnId, 'raced-post'));
-            $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason(), "run {$run}");
+            $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason(), "minute {$minute}");
             // The conflicting row was the other user's all along; put the test back as it was.
             DB::table('users_emails')->where('email', $email)->delete();
+            $this->travel(1)->minutes();
         }
-        $this->assertCount(1, $sentry->calls, 'reached the warning count');
+        $this->assertCount(1, $sentry->calls, 'waited long enough to be warned of');
 
         $provisioner = $this->provisioner();
         $this->assertNull($provisioner->resolveOrCreate($tnId, 'raced-post'));

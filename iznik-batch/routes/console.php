@@ -803,12 +803,25 @@ Schedule::command('chats:process-spam')
     ->appendOutputTo(cronLog('chats:process-spam'))
     ->runInBackground();
 
-// Sync data from TrashNothing.
-// This command can be called more frequently if the "kick" API is called by TN,
-// e.g. to reduce latency by requesting an immediate sync after sending a chat message.
+// Sync data from TrashNothing (ratings, user changes and posts) every ten seconds, so a post
+// reaches Freegle seconds after it is posted on TN. /posts/all lists every post TN has,
+// including the ones it holds until a Freegle community approves them.
+//
+// A run takes three to five seconds, mostly the three requests TrashNothingRateLimiter spaces
+// 750ms apart, so ten seconds leaves a gap between runs and uses about a sixth of the two
+// requests a second TN allows a key. The command's own limits are in minutes, not runs
+// (TNSyncCommand::FEED_HOLD_*_MINUTES, TnUserProvisioner::LOOKUP_*_MINUTES), so they do not
+// change with this. TN can also call the "kick" API for an immediate run, for example after
+// sending a chat message.
+//
+// No withoutOverlapping() here. Under FlockEventMutex the scheduler's overlap lock is held by
+// the schedule:run process, which lives for the whole minute when a task repeats, and
+// schedule:finish runs in another process and cannot release it: the repeats would all be
+// skipped and tn:sync would run once a minute. The command's own lock (PreventsOverlapping, a
+// flock held by the tn:sync process) keeps runs one at a time instead: a run that starts while
+// another is going exits at once.
 Schedule::command('tn:sync')
-    ->everyMinute()
-    ->withoutOverlapping(15)
+    ->everyTenSeconds()
     ->runInBackground();
 
 // Check that TN posts which arrived by email were also ingested via the API,
@@ -831,15 +844,14 @@ Schedule::command('tn:verify-email-coverage')
     ->appendOutputTo(cronLog('tn:verify-email-coverage'))
     ->runInBackground();
 
-// The same check every ten minutes over the last 70, ingesting what it finds missing.
-// TN holds some posts (a new member's, or one under moderation) until a Freegle community
-// approves them, and only then publishes them to /posts/all. The API path reads only that
-// feed, so it never sees them, and with the email path no longer routing TN posts nobody
-// could approve them: they would never reach Freegle. TN's email still arrives, so this
-// fetches each such post by id and ingests it, closed ones with their outcome. The last
-// five minutes are left to the sync, which takes a published post a minute or two to see.
-// The cap is raised for this run: it allows for the backlog after the nightly backup
-// window, which holds this job too.
+// The same check every ten minutes over the last 70, ingesting what it finds missing. It is
+// the second chance for a post the sync skipped as "try later" (TN could not be asked about
+// its poster, or rejected the key) and for anything else the feed missed. The posts TN holds
+// until a Freegle community approves them are listed by /posts/all, so the sync takes those
+// in and a normal run here finds nothing. TN's email still arrives, so this fetches each
+// missing post by id and ingests it, closed ones with their outcome. The last five minutes
+// are left to the sync. The cap is raised for this run: it allows for the backlog after the
+// nightly backup window, which holds this job too.
 Schedule::command('tn:verify-email-coverage --recent=70 --auto-ingest --ingest-closed --max=100')
     ->cron('3-53/10 * * * *')
     ->withoutOverlapping(30)

@@ -5,8 +5,9 @@
 # on the Yesterday server. It overrides settings from the base docker-compose.yml.
 #
 # USAGE:
-# 1. Yesterday restore script (yesterday/scripts/restore-backup.sh) copies this file
-#    to the repository root as docker-compose.override.yml
+# 1. yesterday/scripts/update-scripts.sh (cron, 05:45 daily) brings this file from master and
+#    copies it to the repository root as docker-compose.override.yml, keeping the previous
+#    copy if compose rejects the new one. restore-backup.sh copies it too.
 # 2. Docker Compose automatically merges this with docker-compose.yml when running
 # 3. CircleCI explicitly uses '-f docker-compose.yml' to skip this override
 #

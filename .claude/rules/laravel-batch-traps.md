@@ -323,6 +323,17 @@ usually one of the repliers. The "promised to someone else" notice assumed other
 the item had gone, in the giver's name (Discourse 10305). Anything that tells repliers about a promise
 must decide what a Trash Nothing promise naming nobody means; `handleMessagePromised` sends nothing.
 
+## A sub-minute task with `withoutOverlapping()` runs once a minute
+
+`everyTenSeconds()` plus `withoutOverlapping()` lists as `10s` in `schedule:list` and runs once a minute.
+The scheduler's overlap lock is `FlockEventMutex` (the default `LOCK_STORE`, and what production uses): a
+flock taken by the `schedule:run` process. With a repeating task in the schedule, `schedule:run` stays up
+until the end of the minute, and `schedule:finish`, which runs in a different process when a background
+task ends, cannot release a flock it does not hold. So every repeat finds the lock taken and is skipped
+in silence. `tn:sync` was built that way and never repeated, on 5 November 2026. A sub-minute task keeps
+itself one at a time with its own lock instead, as `tn:sync` does with `PreventsOverlapping`. Check a
+change of cadence by running `schedule:run` for a minute and counting the starts.
+
 ## See also
 
 - `.claude/rules/go-api-traps.md` - the same class of silent wrong answer on the Go side.

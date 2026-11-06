@@ -54,8 +54,8 @@ class TnUserProvisioner
     /**
      * TN could not be asked (network error, timeout, 408, 429, 5xx, a challenge), so
      * nothing is known about the poster. This is transient: the post sync stops
-     * at the post and the next run asks again (PostSyncer::sync()), until
-     * LOOKUP_GIVE_UP_AT runs have failed and the reason becomes REASON_LOOKUP_GAVE_UP.
+     * at the post and the next run asks again (PostSyncer::sync()), until the poster has gone
+     * unanswered for LOOKUP_GIVE_UP_AFTER_MINUTES and the reason becomes REASON_LOOKUP_GAVE_UP.
      */
     public const REASON_LOOKUP_FAILED = 'tn-user-lookup-failed';
 
@@ -68,7 +68,7 @@ class TnUserProvisioner
     public const REASON_LOOKUP_REFUSED = 'tn-user-lookup-refused';
 
     /**
-     * The lookups for this post's poster failed LOOKUP_GIVE_UP_AT times, run after run.
+     * The lookups for this post's poster kept failing for LOOKUP_GIVE_UP_AFTER_MINUTES.
      * Final: the post is skipped so that one poster cannot hold up every post behind it.
      */
     public const REASON_LOOKUP_GAVE_UP = 'tn-user-lookup-gave-up';
@@ -78,7 +78,7 @@ class TnUserProvisioner
      * every lookup until the key is fixed and says nothing about the poster, so holding the
      * window would only hold up the posts behind. The sync skips the post as a miss, which the
      * coverage check's backfill asks about again once the key works; the backfill itself
-     * treats it as "try later". Never counted towards LOOKUP_GIVE_UP_AT. Sentry hears about
+     * treats it as "try later". Never counted towards LOOKUP_GIVE_UP_AFTER_MINUTES. Sentry hears about
      * the key at most once an hour.
      */
     public const REASON_LOOKUP_KEY_REJECTED = 'tn-user-lookup-key-rejected';
@@ -103,23 +103,29 @@ class TnUserProvisioner
     private const LOOKUP_CONNECT_TIMEOUT_SECONDS = 5;
 
     /**
-     * Failed lookups of one post's poster, counted across runs, at which Sentry first hears
-     * of it. A run stops at the first post it cannot look up, so this is runs: a blip or
-     * two is not worth a report.
+     * How long one post's poster can go unanswered, from the first failed lookup, before
+     * Sentry hears of it. A run stops at the first post it cannot look up, so every post
+     * behind it waits: a blip of a minute or two is not worth a report.
+     *
+     * In minutes, not runs, so it does not change with how often tn:sync runs.
      */
-    public const LOOKUP_WARN_AT = 5;
+    public const LOOKUP_WARN_AFTER_MINUTES = 5;
 
     /**
-     * Failed lookups of one post's poster after which the post is skipped for good
-     * (REASON_LOOKUP_GAVE_UP). tn:sync runs every minute, so this is about half an hour.
+     * How long one post's poster can go unanswered, from the first failed lookup, before the
+     * post is skipped for good (REASON_LOOKUP_GAVE_UP). In minutes, not runs, like the warning.
      */
-    public const LOOKUP_GIVE_UP_AT = 30;
+    public const LOOKUP_GIVE_UP_AFTER_MINUTES = 30;
 
-    private const ATTEMPTS_KEY_PREFIX = 'tn-user-lookup:failed-attempts:';
+    private const FIRST_FAILED_KEY_PREFIX = 'tn-user-lookup:first-failed-at:';
 
-    // The count outlives the half hour it takes to reach the limit, so a post read again
-    // after it gave up is not given a fresh thirty runs straight away.
-    private const ATTEMPTS_TTL_HOURS = 24;
+    private const WARNED_KEY_PREFIX = 'tn-user-lookup:warned:';
+
+    private const GAVE_UP_REPORTED_KEY_PREFIX = 'tn-user-lookup:gave-up-reported:';
+
+    // The first failure is remembered well past the half hour it takes to give up, so a post
+    // read again after it gave up is not given a fresh half hour straight away.
+    private const FAILED_TTL_HOURS = 24;
 
     private const ANSWER_KEY_PREFIX = 'tn-user-lookup:final-answer:';
 
@@ -169,7 +175,7 @@ class TnUserProvisioner
     /**
      * @param  string|null  $tnPostId  The TN post this poster is wanted for. A failed lookup is
      *                                 counted against it, across runs, so that a poster TN keeps
-     *                                 failing for stops holding up the sync (LOOKUP_GIVE_UP_AT).
+     *                                 failing for stops holding up the sync (LOOKUP_GIVE_UP_AFTER_MINUTES).
      */
     public function resolveOrCreate(int $tnUserId, ?string $tnPostId = null): ?User
     {
@@ -421,59 +427,71 @@ class TnUserProvisioner
     }
 
     /**
-     * TN could not be asked about this poster. Counted against the post across runs, because
-     * the post sync stops at it and asks again next run, and a poster that always fails
-     * would otherwise hold up every post behind it for ever.
+     * TN could not be asked about this poster. Timed against the post from its first failed
+     * lookup, because the post sync stops at it and asks again next run, and a poster that
+     * always fails would otherwise hold up every post behind it for ever.
      *
-     * Sentry hears of it when the count reaches LOOKUP_WARN_AT, so a wedge is seen while it
-     * is still short. At LOOKUP_GIVE_UP_AT the post is given up (REASON_LOOKUP_GAVE_UP):
-     * skipped, and Sentry hears of that too. After that every further failure is a give-up
-     * with no new report, and a lookup that works still ingests the post.
+     * Sentry hears of it once the post has waited LOOKUP_WARN_AFTER_MINUTES, so a wedge is
+     * seen while it is still short. After LOOKUP_GIVE_UP_AFTER_MINUTES the post is given up
+     * (REASON_LOOKUP_GAVE_UP): skipped, and Sentry hears of that too. After that every further
+     * failure is a give-up with no new report, and a lookup that works still ingests the post.
      *
-     * Nothing is counted without a post, or in a dry run, which must not change the next
-     * real run's count.
+     * Nothing is timed without a post, or in a dry run, which must not change what the next
+     * real run sees.
      */
     private function lookupFailed(int $tnUserId): null
     {
-        $attempts = $this->countFailedLookup();
+        $minutes = $this->minutesSinceFirstFailedLookup();
 
-        if ($attempts >= self::LOOKUP_GIVE_UP_AT) {
-            if ($attempts === self::LOOKUP_GIVE_UP_AT) {
+        if ($minutes !== null && $minutes >= self::LOOKUP_GIVE_UP_AFTER_MINUTES) {
+            if ($this->firstTimeFor(self::GAVE_UP_REPORTED_KEY_PREFIX)) {
                 $this->report("TrashNothing post {$this->tnPostId} was skipped after its poster (TN user {$tnUserId})"
-                    . ' could not be looked up in ' . self::LOOKUP_GIVE_UP_AT . ' runs: the sync moves on without it');
+                    . ' could not be looked up for ' . self::LOOKUP_GIVE_UP_AFTER_MINUTES . ' minutes: the sync moves on without it');
             }
 
             return $this->fail(self::REASON_LOOKUP_GAVE_UP);
         }
 
-        if ($attempts === self::LOOKUP_WARN_AT) {
-            $this->report("TrashNothing post {$this->tnPostId} has been held up for " . self::LOOKUP_WARN_AT
-                . " runs because its poster (TN user {$tnUserId}) cannot be looked up: the post sync stops at the"
-                . ' post, so later posts are waiting. It is skipped after ' . self::LOOKUP_GIVE_UP_AT . ' runs');
+        if ($minutes !== null && $minutes >= self::LOOKUP_WARN_AFTER_MINUTES
+            && $this->firstTimeFor(self::WARNED_KEY_PREFIX)) {
+            $this->report("TrashNothing post {$this->tnPostId} has been held up for " . self::LOOKUP_WARN_AFTER_MINUTES
+                . " minutes because its poster (TN user {$tnUserId}) cannot be looked up: the post sync stops at the"
+                . ' post, so later posts are waiting. It is skipped after ' . self::LOOKUP_GIVE_UP_AFTER_MINUTES . ' minutes');
         }
 
         return $this->fail(self::REASON_LOOKUP_FAILED);
     }
 
     /**
-     * This failure added to the post's count, or 0 when nothing is counted.
+     * Whole minutes since this post's poster first failed a lookup. A first failure starts the
+     * clock and answers 0. Null when nothing is timed: no post, or a dry run.
      */
-    private function countFailedLookup(): int
+    private function minutesSinceFirstFailedLookup(): ?int
     {
         if ($this->tnPostId === null || $this->dryRun) {
-            return 0;
+            return null;
         }
 
-        $key = self::ATTEMPTS_KEY_PREFIX . $this->tnPostId;
-        Cache::add($key, 0, now()->addHours(self::ATTEMPTS_TTL_HOURS));
-        $attempts = Cache::increment($key);
+        $key = self::FIRST_FAILED_KEY_PREFIX . $this->tnPostId;
+        $now = now()->getTimestamp();
+        Cache::add($key, $now, now()->addHours(self::FAILED_TTL_HOURS));
+        $since = Cache::get($key);
 
-        // False when the entry expired between the add and the increment.
-        return is_int($attempts) ? $attempts : 1;
+        // Missing when the entry expired between the add and the read.
+        return is_numeric($since) ? intdiv($now - (int) $since, 60) : 0;
     }
 
     /**
-     * At most once an hour: the sync runs every minute and a rejected key fails every run.
+     * True the first time it is asked for this post and this prefix, so each report is sent
+     * once however many runs come after it.
+     */
+    private function firstTimeFor(string $prefix): bool
+    {
+        return Cache::add($prefix . $this->tnPostId, true, now()->addHours(self::FAILED_TTL_HOURS));
+    }
+
+    /**
+     * At most once an hour: the sync runs every few seconds and a rejected key fails every run.
      */
     private function reportRejectedKey(int $status): void
     {
