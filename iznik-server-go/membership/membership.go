@@ -2,6 +2,7 @@ package membership
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	stdlog "log"
 	"strconv"
@@ -1538,6 +1539,9 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	}
 	if userid == 0 {
 		userid, err = user.CreatePartnerUser(db, tnuserid, email)
+		if errors.Is(err, user.ErrTNIdHeld) {
+			return fiber.NewError(fiber.StatusForbidden, "Failed - account deleted")
+		}
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create user")
 		}

@@ -20,6 +20,10 @@ var (
 	tnAliasReporter = reportTNAliasToSentry
 )
 
+// ErrTNIdHeld says a deleted account still holds the tnuserid. users.tnuserid is unique, so no new
+// account can have it until that one is forgotten. TnUserProvisioner skips a post for the same reason.
+var ErrTNIdHeld = errors.New("a deleted account holds this tnuserid")
+
 func reportTNAliasToSentry(msg string) {
 	log.Println(msg)
 	sentry.WithScope(func(scope *sentry.Scope) {
@@ -191,12 +195,16 @@ func holderOf(db *gorm.DB, email string) uint64 {
 
 // ResolvePartnerActor resolves a member acting on a post through the partner API. A member TN names
 // who we have not met, on an address we know, gets an account of their own and takes the address,
-// so that TN can act for them. With neither known there is nobody to act as.
+// so that TN can act for them. With neither known there is nobody to act as, and nor is there while
+// a deleted account holds the id.
 func ResolvePartnerActor(db *gorm.DB, tnuserid uint64, email string) ([]uint64, error) {
 	candidates := FindTNCandidates(db, tnuserid, email)
 
 	if len(candidates) == 0 && tnuserid > 0 && email != "" && holderOf(db, email) != 0 {
 		userid, err := CreatePartnerUser(db, tnuserid, email)
+		if errors.Is(err, ErrTNIdHeld) {
+			return nil, nil
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -302,7 +310,21 @@ func FindPartnerOwnerForMessage(db *gorm.DB, domain string, msgID uint64) uint64
 //
 // The address may already be on another account. Holding it does not make that account this
 // member's, so TN's word stands and the address moves here.
+//
+// Callers come here when no live account holds the tnuserid, so an account that does is a deleted
+// one: ErrTNIdHeld, and nothing is written. An account made anyway could not have the id, so the
+// next call would not find it and would make another.
 func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, error) {
+	if tnuserid > 0 {
+		var held int64
+		db.Table("users").Where("tnuserid = ?", tnuserid).Count(&held)
+		if held > 0 {
+			log.Printf("TN user %d not added: a deleted account holds the id", tnuserid)
+
+			return 0, ErrTNIdHeld
+		}
+	}
+
 	userid, err := createPartnerAccount(db, tnuserid, email)
 	if err != nil {
 		return 0, err
@@ -371,6 +393,10 @@ func createPartnerAccount(db *gorm.DB, tnuserid uint64, email string) (uint64, e
 		"fullname": name,
 		"added":    gorm.Expr("NOW()"),
 	}
+	// In the insert, so that losing a race for the unique id leaves no account behind without it.
+	if tnuserid > 0 {
+		row["tnuserid"] = tnuserid
+	}
 	if err := db.Table("users").Create(row).Error; err != nil {
 		return 0, err
 	}
@@ -378,16 +404,8 @@ func createPartnerAccount(db *gorm.DB, tnuserid uint64, email string) (uint64, e
 	if lastIDInt == 0 {
 		return 0, errors.New("failed to create user")
 	}
-	userid := uint64(lastIDInt)
 
-	// Set tnuserid.
-	// Plain single-table UPDATE, no id
-	// readback involved.
-	if tnuserid > 0 {
-		db.Table("users").Where("id = ?", userid).Update("tnuserid", tnuserid)
-	}
-
-	return userid, nil
+	return uint64(lastIDInt), nil
 }
 
 // EnsurePartnerIdentifiers attaches the partner's address to the resolved account -

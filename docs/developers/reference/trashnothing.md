@@ -82,6 +82,11 @@ them either.
 When we have not met the `tnuserid`, a join or a message action on a known address gives the member
 their own account and moves the address to it, and a leave answers 404.
 
+While a deleted account holds the `tnuserid`, no new account can have it, because it is unique. A
+join answers 403 `Failed - account deleted`, a message action answers 403
+`User not found for partner`, and nothing is written. Forgetting the account clears the id. The posts
+API skips the post for the same reason (`tn-account-deleted`).
+
 That splits a member from an old account that never got their TN id: its history, memberships and
 bans stay behind, and its chats stop sending notifications if it loses its only address.
 `tn:backfill-user-ids --from=<date>` settles those accounts first, from the user-changes feed, which

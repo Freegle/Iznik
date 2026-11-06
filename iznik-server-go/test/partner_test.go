@@ -759,3 +759,77 @@ func TestPartnerJoinGivesANewMemberAnAddressHeldByADeletedAccount(t *testing.T) 
 	require.NotZero(t, created)
 	assert.Equal(t, created, addressOwner(alias))
 }
+
+// partnerCreatedAccounts counts the accounts CreatePartnerUser named from this address.
+func partnerCreatedAccounts(localpart string) int64 {
+	var n int64
+	database.DBConn.Table("users").Where("fullname = ?", strings.Title(localpart)).Count(&n) //nolint:staticcheck
+
+	return n
+}
+
+// users.tnuserid is unique, so while a deleted account holds the id no new account can have it. Each
+// call used to make another account with no id and move the address to it, one more for every call.
+func TestPartnerJoinIsRefusedWhileADeletedAccountHoldsTheTNId(t *testing.T) {
+	prefix := uniquePrefix("partner_held")
+	db := database.DBConn
+	key := insertTestPartnerKey(t, prefix, "test.com")
+	reports := recordTNAliasReports(t)
+
+	deleted := CreateDeletedTestUser(t, prefix+"_d")
+	stampTN(deleted, 66723)
+	localpart := fmt.Sprintf("heldjoin%d", deleted)
+	alias := localpart + "-g7@test.com"
+	groupID := CreateTestGroup(t, prefix)
+
+	for i := 0; i < 3; i++ {
+		assert.Equal(t, 403, partnerJoin(t, key, 66723, alias, groupID))
+	}
+
+	assert.Zero(t, partnerCreatedAccounts(localpart), "no account is made for the member")
+	assert.Zero(t, addressOwner(alias), "the address goes nowhere")
+	assert.Empty(t, *reports)
+
+	var members int64
+	db.Table("memberships").Where("groupid = ?", groupID).Count(&members)
+	assert.Zero(t, members)
+}
+
+// The deleted account usually still holds the member's address too, and it stays there.
+func TestPartnerJoinLeavesAnAddressOnTheDeletedAccountHoldingTheTNId(t *testing.T) {
+	prefix := uniquePrefix("partner_held_addr")
+	key := insertTestPartnerKey(t, prefix, "test.com")
+	reports := recordTNAliasReports(t)
+
+	deleted := CreateDeletedTestUser(t, prefix+"_d")
+	stampTN(deleted, 66724)
+	localpart := fmt.Sprintf("heldaddr%d", deleted)
+	alias := localpart + "-g7@test.com"
+	giveTNAddress(deleted, alias)
+	groupID := CreateTestGroup(t, prefix)
+
+	assert.Equal(t, 403, partnerJoin(t, key, 66724, alias, groupID))
+
+	assert.Zero(t, partnerCreatedAccounts(localpart))
+	assert.Equal(t, deleted, addressOwner(alias))
+	assert.Empty(t, *reports)
+}
+
+func TestPartnerActionIsRefusedWhileADeletedAccountHoldsTheTNId(t *testing.T) {
+	prefix := uniquePrefix("partner_held_act")
+	key := insertTestPartnerKey(t, prefix, "test.com")
+	reports := recordTNAliasReports(t)
+
+	deleted := CreateDeletedTestUser(t, prefix+"_d")
+	stampTN(deleted, 66725)
+	holder := CreateTestUser(t, prefix+"_h", "User")
+	localpart := fmt.Sprintf("heldact%d", deleted)
+	alias := localpart + "-g7@test.com"
+	giveTNAddress(holder, alias)
+
+	assert.Equal(t, 403, partnerPromise(t, key, 66725, alias, 535354))
+
+	assert.Zero(t, partnerCreatedAccounts(localpart))
+	assert.Equal(t, holder, addressOwner(alias))
+	assert.Empty(t, *reports)
+}
