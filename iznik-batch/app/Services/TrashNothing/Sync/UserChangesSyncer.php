@@ -15,6 +15,8 @@ use Illuminate\Support\Facades\Log;
 
 class UserChangesSyncer
 {
+    use ReadsTnFeedByDay;
+
     private const PAGE_SIZE = 100;
 
     // The fields of a change that are applied by comparing with what the member has now, so
@@ -41,6 +43,9 @@ class UserChangesSyncer
         // tn:sync run calls three endpoints with the same key, so a throttle
         // that only paces this class's own requests protects nothing.
         private readonly ?TrashNothingRateLimiter $rateLimiter = null,
+        // Log each response whole, to see what TN is answering. Off unless asked for: a body names
+        // members, and tn:sync reads this feed on a schedule.
+        private readonly bool $logResponses = false,
     ) {}
 
     /**
@@ -58,21 +63,11 @@ class UserChangesSyncer
      */
     public function sync(string $from, string $to): array
     {
-        $page    = 1;
         $count   = 0;
         $maxDate = null;
 
-        $this->fetchFailed = false;
-
-        do {
-            $changes = $this->fetchPage($page, $from, $to);
-            if ($changes === null) {
-                $this->fetchFailed = true;
-                break;
-            }
-
-            $page++;
-            Log::info('TN-SYNC-TRACE [CHANGES-PAGE] page=' . ($page - 1) . ' count=' . count($changes));
+        foreach ($this->pages($from, $to) as $page => $changes) {
+            Log::info('TN-SYNC-TRACE [CHANGES-PAGE] page=' . $page . ' count=' . count($changes));
 
             foreach ($changes as $change) {
                 $count++;
@@ -214,7 +209,7 @@ class UserChangesSyncer
                     }
                 }
             }
-        } while ($changes && count($changes) === self::PAGE_SIZE);
+        }
 
         return [$count, $maxDate];
     }
@@ -431,8 +426,8 @@ class UserChangesSyncer
      * their member. It reads old changes, so it applies none: a removal would be months late.
      *
      * An id is unique and hard to take back, so anything that casts doubt on one leaves the account
-     * for a person. It reads the whole window before writing, because a later page can do that, and
-     * writes nothing if it cannot read every page.
+     * for a person, and logs its ids so they can find it. It reads the whole window before writing,
+     * because a later page can do that, and writes nothing if it cannot read every page.
      *
      * @return array<string, int> how many accounts came to each outcome
      */
@@ -466,7 +461,12 @@ class UserChangesSyncer
         foreach ($named as $fdId => $tnIds) {
             $user = User::find($fdId);
             if ($user !== null) {
-                $counts[$this->backfillOne($user, $tnIds, $accountsById)]++;
+                $outcome = $this->backfillOne($user, $tnIds, $accountsById);
+                $counts[$outcome]++;
+
+                if (!in_array($outcome, ['stamped', 'already-has-an-id'], true)) {
+                    Log::info("TN-SYNC-TRACE [BACKFILL-LEFT] reason={$outcome} fd_user_id={$fdId} tn_user_ids=" . implode(',', array_keys($tnIds)));
+                }
             }
         }
 
@@ -480,20 +480,8 @@ class UserChangesSyncer
     private function tnIdsNamedPerAccount(string $from, string $to): ?array
     {
         $named = [];
-        $page  = 1;
 
-        $this->fetchFailed = false;
-
-        do {
-            $changes = $this->fetchPage($page, $from, $to);
-            if ($changes === null) {
-                $this->fetchFailed = true;
-
-                return null;
-            }
-
-            $page++;
-
+        foreach ($this->pages($from, $to) as $changes) {
             foreach ($changes as $change) {
                 $fdId = (int) ($change['fd_user_id'] ?? 0);
                 $tnId = (int) ($change['tn_user_id'] ?? 0);
@@ -507,9 +495,9 @@ class UserChangesSyncer
                     $named[$fdId][$tnId][strtolower((string) $change['username'])] = true;
                 }
             }
-        } while ($changes && count($changes) === self::PAGE_SIZE);
+        }
 
-        return $named;
+        return $this->fetchFailed ? null : $named;
     }
 
     /**
@@ -614,8 +602,24 @@ class UserChangesSyncer
             'date_max' => $to,
         ]);
 
+        // The response only: the request's URL holds the API key.
+        if ($this->logResponses) {
+            Log::info('TN sync: user-changes API response on page ' . $page, [
+                'status'  => $response->status(),
+                'headers' => $response->headers(),
+                'body'    => $response->body(),
+            ]);
+        }
+
         if (!$response->successful()) {
-            Log::error('TN sync: user-changes API failed on page ' . $page, ['status' => $response->status()]);
+            Log::error('TN sync: user-changes API failed on page ' . $page, [
+                'status'   => $response->status(),
+                'date_min' => $from,
+                'date_max' => $to,
+                // TN's reason. An error is not a page of members, so unlike logResponses this is
+                // always on, but the request held the key and TN could quote it.
+                'body'     => substr(str_replace($this->apiKey, '[key]', $response->body()), 0, 500),
+            ]);
             return null;
         }
 

@@ -17,7 +17,13 @@ use Symfony\Component\Console\Attribute\AsCommand;
  * has none gets a new account, and is split from their history, on their next API post or partner
  * call. Reports only, unless --commit. See UserChangesSyncer::backfillTnUserIds().
  *
- * Prints counts only: never a name, username or address.
+ * TN serves a day at a time, so a long window takes a request per page of every day in it, at the
+ * rate limit. Give it the whole window in one run, not a day per run: only a run that reads them
+ * all can see an id cast into doubt on another day.
+ *
+ * Prints counts, and logs the ids of each account it leaves for a person ([BACKFILL-LEFT]): never a
+ * name, username or address. --log-responses is the exception: it logs what TN sent back, which
+ * names members, so it is for looking into a problem and not for a real run.
  */
 #[AsCommand(name: 'tn:backfill-user-ids')]
 class TNBackfillUserIdsCommand extends Command
@@ -25,7 +31,8 @@ class TNBackfillUserIdsCommand extends Command
     protected $signature = 'tn:backfill-user-ids
                             {--from= : Read the feed from this date}
                             {--to= : Read the feed up to this date (default: now)}
-                            {--commit : Write. Without it, report what would be stamped and write nothing}';
+                            {--commit : Write. Without it, report what would be stamped and write nothing}
+                            {--log-responses : Log the status, headers and body of every feed response. The bodies name members}';
 
     protected $description = 'Give accounts with no TN user id the one TN\'s user-changes feed names for them';
 
@@ -44,6 +51,7 @@ class TNBackfillUserIdsCommand extends Command
             (string) config('freegle.trashnothing.api_base_url'),
             $loki,
             $rateLimiter,
+            (bool) $this->option('log-responses'),
         );
 
         $counts = $syncer->backfillTnUserIds(
@@ -56,7 +64,7 @@ class TNBackfillUserIdsCommand extends Command
         }
 
         if ($syncer->fetchFailed()) {
-            $this->error('A page of the feed could not be read, so nothing was written. Run it again.');
+            $this->error('A page of the feed could not be read, so nothing was written. TN\'s answer is in the log.');
 
             return Command::FAILURE;
         }

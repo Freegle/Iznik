@@ -33,6 +33,12 @@ class UserChangesSyncerTest extends TestCase
     /** The first page TN fails to serve, or 0 when it serves them all. */
     private int $failFromPage = 0;
 
+    /** @var array<string, array<int, array>> the changes of each day (Y-m-d), for a test where they differ by day */
+    private array $changesByDay = [];
+
+    /** The day (Y-m-d) TN fails to serve, if any. */
+    private ?string $failOnDay = null;
+
     /** @var array<int, array{string, array}> */
     private array $lokiEvents = [];
 
@@ -60,8 +66,25 @@ class UserChangesSyncerTest extends TestCase
                 return Http::response(['results' => []], 200);
             }
 
+            // TN's own rule, on every test here, so nothing can pass by asking for more than it allows.
+            if (strtotime($request['date_max']) - strtotime($request['date_min']) > 86400) {
+                return Http::response('Invalid parameters date_min and date_max - date_min and date_max must be at most one day apart.', 400);
+            }
+
+            $day = substr($request['date_min'], 0, 10);
+
+            if ($day === $this->failOnDay) {
+                return Http::response('Internal Server Error', 500);
+            }
+
             if ($this->failFromPage > 0 && (int) $request['page'] >= $this->failFromPage) {
                 return Http::response('Internal Server Error', 500);
+            }
+
+            if ($this->changesByDay !== []) {
+                return Http::response([
+                    'changes' => array_slice($this->changesByDay[$day] ?? [], ((int) $request['page'] - 1) * 100, 100),
+                ], 200);
             }
 
             return Http::response(['changes' => $this->changes], 200);
@@ -1303,6 +1326,262 @@ class UserChangesSyncerTest extends TestCase
         $counts = $this->backfill([['fd_user_id' => $user->id, 'tn_user_id' => 99130053, 'date' => '2026-02-01T10:00:00']]);
 
         $this->assertSame(1, $counts['not-a-tn-account']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    /** @return list<string> the lines saying which accounts the backfill left for a person */
+    private function leftForAPerson(): array
+    {
+        return array_values(array_filter($this->logged, fn ($line) => str_contains($line, '[BACKFILL-LEFT]')));
+    }
+
+    /** A count cannot be acted on: a person has to be able to find the account it left for them. */
+    public function test_the_backfill_logs_the_ids_of_an_account_it_leaves(): void
+    {
+        $named = $this->tnUserWithId(null);
+        $this->tnUserWithId(99130054);
+
+        $this->backfill([['fd_user_id' => $named->id, 'tn_user_id' => 99130054, 'date' => '2026-02-01T10:00:00']]);
+
+        $this->assertSame(
+            ["TN-SYNC-TRACE [BACKFILL-LEFT] reason=held-elsewhere fd_user_id={$named->id} tn_user_ids=99130054"],
+            $this->leftForAPerson(),
+        );
+    }
+
+    public function test_the_backfill_logs_every_tn_id_named_on_an_account_it_leaves(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $this->backfill([
+            ['fd_user_id' => $user->id, 'tn_user_id' => 99130055, 'date' => '2026-02-01T10:00:00'],
+            ['fd_user_id' => $user->id, 'tn_user_id' => 99130056, 'date' => '2026-02-02T10:00:00'],
+        ]);
+
+        $this->assertSame(
+            ["TN-SYNC-TRACE [BACKFILL-LEFT] reason=two-tn-ids fd_user_id={$user->id} tn_user_ids=99130055,99130056"],
+            $this->leftForAPerson(),
+        );
+    }
+
+    /** The run needs reading by a person, so it must not bury them in the accounts that are fine. */
+    public function test_the_backfill_logs_nothing_for_an_account_it_stamps_or_that_has_an_id(): void
+    {
+        $stamped = $this->tnUserWithId(null);
+        $hasOne = $this->tnUserWithId(99130057);
+
+        $this->backfill([
+            ['fd_user_id' => $stamped->id, 'tn_user_id' => 99130058, 'date' => '2026-02-01T10:00:00'],
+            ['fd_user_id' => $hasOne->id, 'tn_user_id' => 99130057, 'date' => '2026-02-01T10:00:00'],
+        ]);
+
+        $this->assertSame([], $this->leftForAPerson());
+    }
+
+    /** The dry run is where a person finds out what a real run would leave for them. */
+    public function test_a_dry_run_backfill_logs_the_accounts_it_would_leave(): void
+    {
+        $named = $this->tnUserWithId(null);
+        $this->tnUserWithId(99130059);
+
+        $this->backfill([['fd_user_id' => $named->id, 'tn_user_id' => 99130059, 'date' => '2026-02-01T10:00:00']], dryRun: true);
+
+        $this->assertCount(1, $this->leftForAPerson());
+    }
+
+    /** Ids only: the command promises never to give a name, username or address. */
+    public function test_the_backfill_never_logs_a_username_for_an_account_it_leaves(): void
+    {
+        $user = $this->tnUserWithId(null);
+        $username = $this->username('someoneelse');
+
+        $this->backfill([[
+            'fd_user_id' => $user->id,
+            'tn_user_id' => 99130060,
+            'username'   => $username,
+            'date'       => '2026-02-01T10:00:00',
+        ]]);
+
+        $this->assertSame(
+            ["TN-SYNC-TRACE [BACKFILL-LEFT] reason=username-differs fd_user_id={$user->id} tn_user_ids=99130060"],
+            $this->leftForAPerson(),
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // TN refuses dates more than a day apart, so a longer window goes a day at a time.
+    // -------------------------------------------------------------------------
+
+    /** @return list<array{string, string, int}> the date_min, date_max and page of each request, in order */
+    private function requests(): array
+    {
+        return Http::recorded()
+            ->map(fn ($sent) => [$sent[0]['date_min'], $sent[0]['date_max'], (int) $sent[0]['page']])
+            ->values()
+            ->all();
+    }
+
+    public function test_a_window_longer_than_a_day_is_read_a_day_at_a_time(): void
+    {
+        $syncer = $this->syncer();
+
+        $syncer->sync('2026-10-01T09:00:00Z', '2026-10-03T21:00:00Z');
+
+        $this->assertFalse($syncer->fetchFailed());
+        $this->assertSame([
+            ['2026-10-01T09:00:00Z', '2026-10-02T09:00:00Z', 1],
+            ['2026-10-02T09:00:00Z', '2026-10-03T09:00:00Z', 1],
+            ['2026-10-03T09:00:00Z', '2026-10-03T21:00:00Z', 1],
+        ], $this->requests());
+    }
+
+    public function test_a_window_of_exactly_a_day_is_one_request(): void
+    {
+        $this->syncer()->sync('2026-10-01T09:00:00Z', '2026-10-02T09:00:00Z');
+
+        $this->assertSame([['2026-10-01T09:00:00Z', '2026-10-02T09:00:00Z', 1]], $this->requests());
+    }
+
+    /** tn:sync's --from and --to take any date, and one that fits goes to TN untouched. */
+    public function test_a_short_window_goes_to_tn_as_it_was_given(): void
+    {
+        $this->syncer()->sync('2026-10-01T09:00:00+00:00', '2026-10-01 11:00:00');
+
+        $this->assertSame([['2026-10-01T09:00:00+00:00', '2026-10-01 11:00:00', 1]], $this->requests());
+    }
+
+    public function test_days_are_counted_in_utc_whatever_offset_the_start_has(): void
+    {
+        $this->syncer()->sync('2026-10-01T10:00:00+01:00', '2026-10-03T09:00:00Z');
+
+        $this->assertSame([
+            ['2026-10-01T10:00:00+01:00', '2026-10-02T09:00:00Z', 1],
+            ['2026-10-02T09:00:00Z', '2026-10-03T09:00:00Z', 1],
+        ], $this->requests());
+    }
+
+    public function test_every_day_of_a_window_is_applied_and_counted(): void
+    {
+        $first = $this->tnUser('Pat', [[$this->username('pat') . self::TN_DOMAIN, 1]]);
+        $last = $this->tnUser('Sam', [[$this->username('sam') . self::TN_DOMAIN, 1]]);
+        $this->changesByDay = [
+            '2026-10-01' => [['fd_user_id' => $first->id, 'reply_time' => 60, 'date' => '2026-10-01T10:00:00']],
+            '2026-10-03' => [['fd_user_id' => $last->id, 'reply_time' => 120, 'date' => '2026-10-03T10:00:00']],
+        ];
+
+        [$count, $maxDate] = $this->syncer()->sync('2026-10-01T09:00:00Z', '2026-10-03T21:00:00Z');
+
+        $this->assertSame(2, $count);
+        $this->assertSame('2026-10-03T10:00:00', $maxDate);
+        $this->assertSame(60, (int) UserReplyTime::where('userid', $first->id)->value('replytime'));
+        $this->assertSame(120, (int) UserReplyTime::where('userid', $last->id)->value('replytime'));
+    }
+
+    public function test_each_day_is_read_to_its_last_page_before_the_next(): void
+    {
+        $this->changesByDay = ['2026-10-01' => array_fill(0, 150, ['fd_user_id' => null, 'date' => '2026-10-01T10:00:00'])];
+
+        [$count] = $this->syncer()->sync('2026-10-01T09:00:00Z', '2026-10-02T21:00:00Z');
+
+        $this->assertSame(150, $count);
+        $this->assertSame([
+            ['2026-10-01T09:00:00Z', '2026-10-02T09:00:00Z', 1],
+            ['2026-10-01T09:00:00Z', '2026-10-02T09:00:00Z', 2],
+            ['2026-10-02T09:00:00Z', '2026-10-02T21:00:00Z', 1],
+        ], $this->requests());
+    }
+
+    public function test_a_day_that_cannot_be_fetched_stops_the_run_after_the_days_it_got(): void
+    {
+        $user = $this->tnUser('Pat', [[$this->username('pat') . self::TN_DOMAIN, 1]]);
+        $this->changesByDay = [
+            '2026-10-01' => [['fd_user_id' => $user->id, 'reply_time' => 60, 'date' => '2026-10-01T10:00:00']],
+        ];
+        $this->failOnDay = '2026-10-02';
+        $syncer = $this->syncer();
+
+        [$count] = $syncer->sync('2026-10-01T09:00:00Z', '2026-10-04T09:00:00Z');
+
+        $this->assertTrue($syncer->fetchFailed(), 'the caller is told the feed is incomplete');
+        $this->assertSame(1, $count);
+        $this->assertSame(60, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
+        Http::assertSentCount(2);
+    }
+
+    /** Fixtures take no notice of dates, so a day at a time would read the same ones every day. */
+    public function test_fixtures_are_read_once_however_long_the_window(): void
+    {
+        $fixture = json_decode(file_get_contents(base_path('tests/fixtures/tn_sync/user_changes_page_1.json')), true);
+        $syncer = new UserChangesSyncer(true, true, 'test-key', self::API_BASE, $this->loki, new TrashNothingRateLimiter(0));
+
+        [$count] = $syncer->sync('2026-10-01T09:00:00Z', '2026-10-04T09:00:00Z');
+
+        $this->assertSame(count($fixture['changes']), $count);
+    }
+
+    /** @return array<string, int> */
+    private function backfillDays(array $changesByDay): array
+    {
+        $this->changesByDay = $changesByDay;
+
+        return $this->syncer()->backfillTnUserIds('2026-02-01T00:00:00Z', '2026-02-04T00:00:00Z');
+    }
+
+    /** Days are only how TN is asked: what casts doubt on an id counts across the whole window. */
+    public function test_the_backfill_sees_two_tn_ids_named_on_different_days(): void
+    {
+        $user = $this->tnUserWithId(null);
+
+        $counts = $this->backfillDays([
+            '2026-02-01' => [['fd_user_id' => $user->id, 'tn_user_id' => 99130060, 'date' => '2026-02-01T10:00:00']],
+            '2026-02-03' => [['fd_user_id' => $user->id, 'tn_user_id' => 99130061, 'date' => '2026-02-03T10:00:00']],
+        ]);
+
+        $this->assertSame(1, $counts['two-tn-ids']);
+        $this->assertSame(0, $counts['stamped']);
+        $this->assertNull($user->fresh()->tnuserid);
+    }
+
+    public function test_the_backfill_sees_a_tn_id_named_on_two_accounts_on_different_days(): void
+    {
+        $first = $this->tnUserWithId(null);
+        $second = $this->tnUserWithId(null);
+
+        $counts = $this->backfillDays([
+            '2026-02-01' => [['fd_user_id' => $first->id, 'tn_user_id' => 99130062, 'date' => '2026-02-01T10:00:00']],
+            '2026-02-03' => [['fd_user_id' => $second->id, 'tn_user_id' => 99130062, 'date' => '2026-02-03T10:00:00']],
+        ]);
+
+        $this->assertSame(2, $counts['two-accounts']);
+        $this->assertNull($first->fresh()->tnuserid);
+        $this->assertNull($second->fresh()->tnuserid);
+    }
+
+    public function test_the_backfill_counts_an_account_named_on_several_days_once(): void
+    {
+        $user = $this->tnUserWithId(null);
+        $change = ['fd_user_id' => $user->id, 'tn_user_id' => 99130063, 'date' => '2026-02-01T10:00:00'];
+
+        $counts = $this->backfillDays(['2026-02-01' => [$change], '2026-02-02' => [$change], '2026-02-03' => [$change]]);
+
+        $this->assertSame(1, $counts['stamped']);
+        $this->assertSame(99130063, (int) $user->fresh()->tnuserid);
+    }
+
+    /** A day it never read could name the account again with another id, so it stamps nothing. */
+    public function test_the_backfill_writes_nothing_when_a_later_day_cannot_be_read(): void
+    {
+        $user = $this->tnUserWithId(null);
+        $this->changesByDay = [
+            '2026-02-01' => [['fd_user_id' => $user->id, 'tn_user_id' => 99130064, 'date' => '2026-02-01T10:00:00']],
+        ];
+        $this->failOnDay = '2026-02-02';
+        $syncer = $this->syncer();
+
+        $counts = $syncer->backfillTnUserIds('2026-02-01T00:00:00Z', '2026-02-04T00:00:00Z');
+
+        $this->assertTrue($syncer->fetchFailed());
+        $this->assertSame(0, $counts['stamped']);
         $this->assertNull($user->fresh()->tnuserid);
     }
 }

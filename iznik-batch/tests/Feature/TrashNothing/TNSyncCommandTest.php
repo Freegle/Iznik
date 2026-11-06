@@ -44,6 +44,10 @@ class TNSyncCommandTest extends TestCase
     private const FEED_HOLD_STORED = '2026-03-20T10:00:00Z';
     private const FEED_HOLD_LATER = '2026-03-20T15:00:00Z';
 
+    // For a test that counts what a feed's rows do. A longer window is read a day at a time, and a
+    // fake that ignores the dates gives every one of those days the same rows.
+    private const ONE_DAY_WINDOW = ['--from' => '2026-03-20T09:00:00Z', '--to' => '2026-03-20T13:00:00Z'];
+
 
     private string $dateFile;
     private string $apiBaseUrl;
@@ -1696,11 +1700,68 @@ class TNSyncCommandTest extends TestCase
                 ->push(['changes' => [['fd_user_id' => null, 'date' => '2026-03-20T15:00:00Z']]], 200),
         ]);
 
-        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->artisan('tn:sync', ['--to' => '2026-03-20T16:00:00Z'])->assertExitCode(0);
         $this->assertSame('2026-03-20T10:00:00Z', trim(file_get_contents($this->dateFile)));
 
-        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->artisan('tn:sync', ['--to' => '2026-03-20T16:00:00Z'])->assertExitCode(0);
         $this->assertSame('2026-03-20T15:00:00Z', trim(file_get_contents($this->dateFile)));
+    }
+
+    /**
+     * TN's rule for both feeds, with a rating and a change on the day that starts 2026-03-22. One
+     * fake, because fakes merge and the first registered stub wins.
+     */
+    private function dayLimitFake(int $rateeId, string $ratingId, ?string $ratingsDownOn = null): void
+    {
+        Http::fake(function (Request $request) use ($rateeId, $ratingId, $ratingsDownOn) {
+            if (strtotime($request['date_max']) - strtotime($request['date_min']) > 86400) {
+                return Http::response('Invalid parameters date_min and date_max - date_min and date_max must be at most one day apart.', 400);
+            }
+
+            $hasRows = str_starts_with($request['date_min'], '2026-03-22');
+
+            if (!str_contains($request->url(), '/ratings')) {
+                return Http::response([
+                    'changes' => $hasRows ? [['fd_user_id' => null, 'date' => '2026-03-22T15:00:00Z']] : [],
+                ], 200);
+            }
+
+            if ($ratingsDownOn !== null && str_starts_with($request['date_min'], $ratingsDownOn)) {
+                return Http::response(null, 500);
+            }
+
+            return Http::response(['ratings' => !$hasRows ? [] : [[
+                'rating_id' => $ratingId,
+                'ratee_fd_user_id' => $rateeId,
+                'rating' => 'Up',
+                'date' => '2026-03-22T14:00:00Z',
+            ]]], 200);
+        });
+    }
+
+    /** An outage of more than a day must not leave both feeds refused until the hold gives up. */
+    public function test_a_stored_date_more_than_a_day_behind_reads_both_feeds_to_the_end(): void
+    {
+        file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
+        $ratingId = 'tn_r_daylimit_' . uniqid();
+        $this->dayLimitFake($this->createTestUser()->id, $ratingId);
+
+        $this->artisan('tn:sync', ['--to' => '2026-03-23T09:00:00Z'])->assertExitCode(0);
+
+        $this->assertTrue(DB::table('ratings')->where('tn_rating_id', $ratingId)->exists());
+        $this->assertSame('2026-03-22T15:00:00Z', trim(file_get_contents($this->dateFile)));
+    }
+
+    public function test_a_day_of_ratings_that_cannot_be_read_stops_them_and_holds_the_stored_date(): void
+    {
+        file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
+        $ratingId = 'tn_r_daylimit_' . uniqid();
+        $this->dayLimitFake($this->createTestUser()->id, $ratingId, ratingsDownOn: '2026-03-21');
+
+        $this->artisan('tn:sync', ['--to' => '2026-03-23T09:00:00Z'])->assertExitCode(0);
+
+        $this->assertFalse(DB::table('ratings')->where('tn_rating_id', $ratingId)->exists(), 'it stopped at the day it could not read');
+        $this->assertSame('2026-03-20T10:00:00Z', trim(file_get_contents($this->dateFile)));
     }
 
     /** True while TN will not serve the ratings feed. See feedHoldFake(). */
@@ -2012,7 +2073,7 @@ class TNSyncCommandTest extends TestCase
             '*/user-changes*' => Http::response(['changes' => []], 200),
         ]);
 
-        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->artisan('tn:sync', self::ONE_DAY_WINDOW)->assertExitCode(0);
     }
 
     public function test_loki_logs_rating_delete(): void
@@ -2103,7 +2164,7 @@ class TNSyncCommandTest extends TestCase
             ], 200),
         ]);
 
-        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->artisan('tn:sync', self::ONE_DAY_WINDOW)->assertExitCode(0);
     }
 
     public function test_loki_logs_user_about_me_insert(): void
@@ -2132,7 +2193,7 @@ class TNSyncCommandTest extends TestCase
             ], 200),
         ]);
 
-        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->artisan('tn:sync', self::ONE_DAY_WINDOW)->assertExitCode(0);
     }
 
     public function test_loki_logs_user_email_rename(): void
@@ -2165,7 +2226,7 @@ class TNSyncCommandTest extends TestCase
             ], 200),
         ]);
 
-        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->artisan('tn:sync', self::ONE_DAY_WINDOW)->assertExitCode(0);
     }
 
     public function test_loki_logs_user_update(): void
@@ -2190,7 +2251,7 @@ class TNSyncCommandTest extends TestCase
             ], 200),
         ]);
 
-        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->artisan('tn:sync', self::ONE_DAY_WINDOW)->assertExitCode(0);
     }
 
     public function test_loki_logs_a_flagged_group_and_no_merge(): void

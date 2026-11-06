@@ -4,8 +4,11 @@ namespace Tests\Feature\TrashNothing;
 
 use App\Models\User;
 use App\Models\UserEmail;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Mockery;
 use Tests\TestCase;
 
 class TNBackfillUserIdsCommandTest extends TestCase
@@ -91,5 +94,81 @@ class TNBackfillUserIdsCommandTest extends TestCase
         Http::fake(['*/user-changes*' => Http::response('Internal Server Error', 500)]);
 
         $this->artisan('tn:backfill-user-ids', ['--from' => '2026-01-01'])->assertExitCode(1);
+    }
+
+    /** TN refuses dates more than a day apart, and --from can be weeks back. */
+    public function test_it_reads_a_window_tn_would_refuse_in_one_request(): void
+    {
+        Http::fake(function (Request $request) {
+            if (strtotime($request['date_max']) - strtotime($request['date_min']) > 86400) {
+                return Http::response('Invalid parameters date_min and date_max - date_min and date_max must be at most one day apart.', 400);
+            }
+
+            return Http::response(['changes' => !str_starts_with($request['date_min'], '2026-10-03') ? [] : [[
+                'fd_user_id' => $this->user->id,
+                'tn_user_id' => self::TN_ID,
+                'date' => '2026-10-03T16:00:00',
+            ]]], 200);
+        });
+
+        $this->artisan('tn:backfill-user-ids', [
+            '--from' => '2026-10-01T14:49:12Z',
+            '--to' => '2026-10-04T14:49:12Z',
+            '--commit' => true,
+        ])->assertExitCode(0);
+
+        $this->assertSame(self::TN_ID, (int) $this->user->fresh()->tnuserid);
+    }
+
+    /** Status alone hid why TN refused, and "run it again" could never help with that. */
+    public function test_it_logs_why_tn_refused_a_page_and_never_the_key(): void
+    {
+        Http::fake(['*/user-changes*' => Http::response('Bad request for test-key', 400)]);
+        Log::spy();
+
+        $this->artisan('tn:backfill-user-ids', ['--from' => '2026-01-01T00:00:00Z', '--to' => '2026-01-01T12:00:00Z'])
+            ->expectsOutputToContain('so nothing was written')
+            ->doesntExpectOutputToContain('Run it again')
+            ->assertExitCode(1);
+
+        Log::shouldHaveReceived('error')
+            ->withArgs(fn ($message, $context = []) =>
+                str_contains((string) $message, 'user-changes API failed on page 1')
+                && $context['status'] === 400
+                && $context['body'] === 'Bad request for [key]'
+                && $context['date_min'] === '2026-01-01T00:00:00Z'
+                && $context['date_max'] === '2026-01-01T12:00:00Z'
+            );
+    }
+
+    public function test_it_logs_what_tn_sent_back_when_asked_and_never_the_key(): void
+    {
+        Http::fake(['*/user-changes*' => Http::response('{"error":"forbidden"}', 403, ['X-Reason' => 'blocked'])]);
+        Log::spy();
+
+        $this->artisan('tn:backfill-user-ids', ['--from' => '2026-01-01', '--log-responses' => true])
+            ->assertExitCode(1);
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(fn ($message, $context = []) =>
+                str_contains((string) $message, 'user-changes API response on page 1')
+                && $context['status'] === 403
+                && $context['headers']['X-Reason'] === ['blocked']
+                && $context['body'] === '{"error":"forbidden"}'
+                && !str_contains((string) json_encode([$message, $context]), 'test-key')
+            );
+    }
+
+    public function test_it_does_not_log_what_tn_sent_back_unless_asked(): void
+    {
+        $this->fakeFeed();
+        Log::spy();
+
+        $this->artisan('tn:backfill-user-ids', ['--from' => '2026-01-01'])->assertExitCode(0);
+
+        Log::shouldNotHaveReceived('info', [
+            Mockery::on(fn ($message) => str_contains((string) $message, 'user-changes API response')),
+            Mockery::any(),
+        ]);
     }
 }

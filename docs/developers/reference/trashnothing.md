@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-04
+last_reviewed: 2026-11-06
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -99,14 +99,27 @@ bans stay behind, and its chats stop sending notifications if it loses its only 
 `tn:backfill-user-ids --from=<date>` settles those accounts first, from the user-changes feed, which
 names an account by both ids. It reads the whole window first, stamps an account holding exactly one
 TN username, and applies nothing else from the feed. It writes nothing without `--commit`, or if a
-page cannot be read.
+page cannot be read. To see what TN is answering, `--log-responses` logs the status, headers and body
+of every response; the bodies name members, so it is off by default and `tn:sync` never does it.
+
+TN serves a day per request (see [API Synchronization](#api-synchronization-daily-cron)), so a long
+window takes a request for each page of each day, at TN's rate limit, and can run for a long time.
+Give it the whole window in one run all the same, and do not loop over days with `--commit`: the
+checks below only see what that run read, so a day per run cannot see an id cast into doubt on
+another day.
 
 An id is hard to take back, so anything that casts doubt on one leaves the account for a person: the
 feed names it with two TN ids (`two-tn-ids`, the clearest sign it is shared), names the id on two
 accounts (`two-accounts`), or gives usernames and none is the account's (`username-differs`); or the
 account is deleted (`deleted`), or has a Freegle address as its preferred one (`not-a-tn-account`),
-which a TN id would make a TN account. It ends by printing how many accounts still have a TN address
-and no TN id. How far back the feed goes decides how many it can reach.
+which a TN id would make a TN account. It also leaves an id another account already holds
+(`held-elsewhere`), and an account holding two TN usernames (`two-usernames`) or none
+(`no-tn-address`).
+
+Each account left this way gets a `TN-SYNC-TRACE [BACKFILL-LEFT]` log line with its reason, its
+Freegle id and the TN ids the feed named on it, dry run or not, so a person can find it from the
+counts. The line holds ids only. It ends by printing how many accounts still have a TN address and
+no TN id. How far back the feed goes decides how many it can reach.
 
 TN can act on a post the member's account does not own only by ids (`actAsOwnerCandidate`): the post
 has a `tnpostid`, the call names a `tnuserid`, the caller's account holds exactly that id, and the
@@ -888,6 +901,11 @@ TN sends photo links as URLs like `https://trashnothing.com/pics/{id}`. Freegle:
 ### API Synchronization (Daily Cron)
 
 The `tn_sync.php` cron job runs daily to synchronize:
+
+**A request covers one day at most.** `/ratings`, `/user-changes` and `/posts/all` answer 400 to a
+`date_min` and `date_max` more than a day apart, however recent the dates are. A sync that has fallen
+behind, and a backfill, therefore read a day at a time (`ReadsTnFeedByDay`; `PostSyncer` has its own
+walk), and stop at the first page TN will not serve. A window that fits goes to TN as it was given.
 
 #### Ratings API
 ```

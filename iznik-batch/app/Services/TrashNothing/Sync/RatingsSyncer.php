@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Log;
 
 class RatingsSyncer
 {
+    use ReadsTnFeedByDay;
+
     private const PAGE_SIZE = 100;
 
     // Whether the last sync() stopped because TN's ratings feed could not be read.
@@ -41,21 +43,11 @@ class RatingsSyncer
      */
     public function sync(string $from, string $to): array
     {
-        $page    = 1;
         $count   = 0;
         $maxDate = null;
 
-        $this->fetchFailed = false;
-
-        do {
-            $ratings = $this->fetchPage($page, $from, $to);
-            if ($ratings === null) {
-                $this->fetchFailed = true;
-                break;
-            }
-
-            $page++;
-            Log::info('TN-SYNC-TRACE [RATINGS-PAGE] page=' . ($page - 1) . ' count=' . count($ratings));
+        foreach ($this->pages($from, $to) as $page => $ratings) {
+            Log::info('TN-SYNC-TRACE [RATINGS-PAGE] page=' . $page . ' count=' . count($ratings));
 
             foreach ($ratings as $rating) {
                 $count++;
@@ -121,7 +113,7 @@ class RatingsSyncer
                     }
                 }
             }
-        } while ($ratings && count($ratings) === self::PAGE_SIZE);
+        }
 
         return [$count, $maxDate];
     }
