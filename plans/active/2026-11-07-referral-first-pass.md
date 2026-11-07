@@ -260,3 +260,46 @@ worktree): `support_cases`, `support_case_messages`, `support_ai_runs.kind`. Rea
   the same user. That agent already reads the same member data through its own read-only tools and the
   database credentials, and has no tool that can send anything out, so the key adds no new reach.
   Separating it would mean a second container or user for the first pass.
+
+## Redesign after Edward's review of a real brief (2026-11-07): a bounded investigation
+
+Edward: the six-section brief "reads like an info dump of what shows on support tools rather than something
+helpful, targeted at the actual problem in the referred conversation". Real referrals on live (17 chats)
+confirmed it: each needed one targeted check (the browser behind a failed upload, the mail queue, a post's
+status, a postcode's area, a known incident), not a member profile. Edward chose (2026-11-07): run the
+support helper's own investigation headless, bounded, instead of facts by code plus one call.
+
+- **The first pass is the helper's agent with its read-only tools** (dump in key mode, live read-only DB,
+  Loki, Sentry, Discourse, code), the interactive playbook, a first-pass method (find the one question,
+  check recent cases first, investigate only that, stop by about twelve tool calls) and a forced answer
+  shape. `FIRST_PASS_MAX_TURNS` (30) and `FIRST_PASS_DEADLINE_MS` (480000) bound it; the batch waits 30s
+  longer (`SUPPORT_FIRST_PASS_TIMEOUT` 510).
+- **Measured on real referrals** (local, read only against live): about 2 minutes and 6-14k output tokens
+  a pass, most input from the prompt cache. It answered the question asked in each case.
+- **No facts by code.** `first-pass-facts.js` is gone; the six fixed sections, "unusual" and "could not
+  find" are gone from the brief.
+
+### Brief JSON, version 2
+
+```
+{
+  "version": 2,
+  "question": "the one question, one sentence",
+  "answer": "for a support volunteer: the conclusion in one plain sentence, then at most five bullets",
+  "classification": "Bug" | "Usage" | "Suggestion" | "Incident" | "Other",
+  "confidence": { "level": "High" | "Medium" | "Low", "reason": "one line" },
+  "checks": ["what was looked at, one line each"],
+  "open_questions": ["at most three, usually none"],
+  "related_cases": [ids of recent cases that are the same problem],
+  "draft": { "to": "referrer", "text": "...", "link_warnings": ["..."] },
+  "images": { "sent": n, "skipped": n },
+  "pool": { "fiveHour", "sevenDay" } | null      // added by the batch
+}
+```
+
+### Request additions
+
+- `source.referredAt`: the case's created_at (UTC), so logs are searched around then.
+- `recentCases`: up to 20 cases from the last 14 days, not this one, each `{id, created, classification,
+  question, supportReply}` (`question` from the brief, `supportReply` the latest Support message on that
+  case, at most 600 characters). This is how one incident behind many referrals is answered once.

@@ -376,7 +376,8 @@ if (_dumpSweep.unref) _dumpSweep.unref()
 // member they picked. The user dump is cached across requests (see dumpCache).
 // ---------------------------------------------------------------------------
 function buildTools(ctx) {
-  // ctx: { jwt, userId (selected member or 0), progress }
+  // ctx: { jwt, userId (selected member or 0), progress }, plus for the first pass, which has no login:
+  // { dumpKey, caseId, signal } so the dump is fetched with the key and stops at its deadline.
   const state = { dumpFile: null }
   const p = ctx.progress || (() => {})
   const text = (obj) => ({ content: [{ type: 'text', text: typeof obj === 'string' ? obj : JSON.stringify(obj) }] })
@@ -473,7 +474,8 @@ function buildTools(ctx) {
               etaMs: pr.eta_ms > 1000 ? pr.eta_ms : null,
             })
           }
-          const file = await fetchUserDump({ userId: id, jwt: ctx.jwt, since, onProgress })
+          // A volunteer's run fetches with their login; the first pass, which has none, with its key.
+          const file = await fetchUserDump({ userId: id, jwt: ctx.jwt, key: ctx.jwt ? undefined : ctx.dumpKey, caseId: ctx.caseId, signal: ctx.signal, since, onProgress })
           p('progress', { tool: 'get_user_dump', percent: 100, section: 'complete', done: true })
           if (cached && cached.file !== file) {
             try {

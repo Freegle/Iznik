@@ -1,28 +1,33 @@
 'use strict'
 
 /**
- * The support first pass: one bounded run per referral. Facts come from the member's user dump,
- * built by code (first-pass-facts.js); judgement comes from ONE tool-less model call. Nothing here
- * sends anything to anyone: the result is a brief the batch stores and mails to support.
+ * The support first pass: the support helper's own investigation, run on a referral with nobody
+ * watching. It reads the moderator's reason and the chat, works out the one question that needs
+ * answering, checks only what answers it with the helper's read-only tools (the member's dump, the
+ * live database, the logs, the error tracker, the volunteer forum, the code), and stops. Its answer
+ * is a brief the batch stores and mails to support: the question, what was found, a draft reply to
+ * the moderator, and what was checked. Nothing here sends anything to anyone.
  *
- * Every outside dependency is injectable (the dump fetch, the SQLite opener, the model's query(), the
- * quota fetch, the clock), and only Node built-ins are required at load, so CI's bare `node --test`
- * can run first-pass.test.js. The SDK and better-sqlite3 are required lazily, when a real run needs them.
+ * The run is bounded twice: by a turn limit (FIRST_PASS_MAX_TURNS) and by one deadline over the whole
+ * pass (FIRST_PASS_DEADLINE_MS).
+ *
+ * Every outside dependency is injectable (the SDK's query(), the tools, the quota fetch, the clock),
+ * and only Node built-ins and require-free modules load at the top, so CI's bare `node --test` can run
+ * first-pass.test.js. The SDK and the tools are required lazily, when a real run needs them.
  *
  * Request and response shapes: plans/active/2026-11-07-referral-first-pass.md.
  */
 
 const crypto = require('node:crypto')
 const fs = require('node:fs')
-const os = require('node:os')
 const path = require('node:path')
 const { validateImages, promptContent, MAX_REFERRAL_IMAGES, MAX_TOTAL_BYTES } = require('./images')
 const { driverMode, billableCostUsd } = require('./auth')
-const { subscriptionToken, fetchQuota, serialiseTranscript } = require('./run-record')
+const { subscriptionToken, fetchQuota, transcriptEntries, serialiseTranscript } = require('./run-record')
 const { parseModelJson } = require('./ux-internal')
 const { unknownSiteLinks } = require('./links')
-const { buildFacts, noDumpFacts, FACT_TITLES } = require('./first-pass-facts')
-const { CLASSIFICATIONS, CONFIDENCE_LEVELS, FACT_KEYS, ANSWER_SCHEMA, systemPrompt, buildUserPrompt } = require('./first-pass-prompt')
+const { agentEnv, agentOptions } = require('./agent-options')
+const { CLASSIFICATIONS, CONFIDENCE_LEVELS, ANSWER_SCHEMA, systemPrompt, buildUserPrompt } = require('./first-pass-prompt')
 
 const CHAT_TYPES = ['User2Mod', 'User2User', 'Mod2Mod', 'Group']
 const SOURCE_KINDS = ['referral', 'mail']
@@ -31,17 +36,12 @@ const MAX_MESSAGES = 50
 const MAX_TEXT = 2000
 const MAX_REASON = 2000
 const MAX_MAIL_ENTRIES = 20
+const MAX_RECENT_CASES = 20
 const TRANSCRIPT_CAP = 200000
-const DEFAULT_DEADLINE_MS = 300000
-const DUMP_SINCE = '30d'
-// Each dump attempt gets its own budget inside the overall deadline, so a slow dump cannot leave the
-// model without time: the full dump, then the database alone, then the chat alone.
-const FULL_DUMP_BUDGET_MS = 120000
-const DB_DUMP_BUDGET_MS = 60000
-// The Go API refuses every download with 409 while the export is held (lockdown.RefuseDownload).
-const LOCKDOWN_STATUSES = [409]
-// A missing or wrong USERDUMP_INTERNAL_KEY: the dump endpoint answers 401 (no valid key) or 403.
-const AUTH_STATUSES = [401, 403]
+// An investigation takes longer than one model call: a dump, a few queries, a log search.
+const DEFAULT_DEADLINE_MS = 480000
+// The prompt asks it to stop after about twelve tool calls; this is the hard limit behind that.
+const DEFAULT_MAX_TURNS = 30
 
 class FirstPassError extends Error {
   constructor(code, message) {
@@ -54,9 +54,7 @@ const REASONS = {
   DEADLINE: 'the first pass took too long',
   CREDIT: 'the AI helper is out of credit',
   MODEL: 'the AI helper failed',
-  DUMP_LOCKDOWN: 'the member data could not be read during a lockdown',
   DUMP_AUTH: 'the AI helper is not allowed to read member data on this server',
-  DUMP: 'the member data could not be read',
   BAD_OUTPUT: 'the AI helper gave an answer that could not be used',
 }
 const fail = (code) => new FirstPassError(code, REASONS[code])
@@ -91,6 +89,8 @@ function cleanFirstPassRequest(body) {
     chatid: posInt(s.chatid),
     referrerid: posInt(s.referrerid),
     reason: typeof s.reason === 'string' && s.reason.trim() ? s.reason.trim().slice(0, MAX_REASON) : null,
+    // When the moderator referred it, so logs can be searched around then.
+    referredAt: str(s.referredAt, 40),
   }
 
   const c = b.chat
@@ -157,26 +157,24 @@ function cleanFirstPassRequest(body) {
   // image messages beyond those sent are taken to be the skipped ones.
   const imagesSkipped = Number.isInteger(b.imagesSkipped) && b.imagesSkipped >= 0 ? Math.min(b.imagesSkipped, 1000) + imagesDropped : null
 
-  return { caseid, memberid, source, chat: { id: chatid, type: c.type, group, messages }, images, imagesSkipped, imagesDropped, mailHistory }
-}
+  // Recent support cases, so a referral that is one of many about the same thing is answered from
+  // what support already found rather than investigated again.
+  const recentCases = Array.isArray(b.recentCases)
+    ? b.recentCases
+        .slice(0, MAX_RECENT_CASES)
+        .map((r) => (r && typeof r === 'object' ? r : {}))
+        .filter((r) => posInt(r.id) && posInt(r.id) !== caseid)
+        .map((r) => ({
+          id: r.id,
+          created: str(r.created, 40),
+          classification: str(r.classification, 20),
+          question: str(r.question, 400),
+          summary: str(r.summary, 400),
+          supportReply: str(r.supportReply, 600),
+        }))
+    : []
 
-// ---------------------------------------------------------------------------
-// The environment the interactive agent runs in
-// ---------------------------------------------------------------------------
-
-const SECRET_ENV = ['USERDUMP_INTERNAL_KEY', 'USERDUMP_API_KEY']
-
-/**
- * A copy of the environment without the dump keys. The interactive support agent starts a CLI
- * process that inherits process.env by default; passing this as the SDK's `env` option keeps the
- * first pass's dump key out of reach of anything the agent can run or be talked into revealing.
- */
-function agentEnv(env = process.env) {
-  const out = {}
-  for (const [k, v] of Object.entries(env)) {
-    if (!SECRET_ENV.includes(k) && v !== undefined) out[k] = v
-  }
-  return out
+  return { caseid, memberid, source, chat: { id: chatid, type: c.type, group, messages }, images, imagesSkipped, imagesDropped, mailHistory, recentCases }
 }
 
 // ---------------------------------------------------------------------------
@@ -251,10 +249,6 @@ function checkDraftLinks(text, pagesDir) {
   return warnings
 }
 
-// ---------------------------------------------------------------------------
-// The model's answer
-// ---------------------------------------------------------------------------
-
 // A model told not to use em dashes sometimes does anyway; the brief never carries one.
 const DASHES = new RegExp('\\s*[' + String.fromCharCode(0x2014, 0x2013) + ']\\s*', 'g')
 const plain = (v, max) =>
@@ -265,68 +259,102 @@ const plain = (v, max) =>
 
 const list = (v, max, itemMax) => (Array.isArray(v) ? v.map((x) => plain(x, itemMax)).filter(Boolean).slice(0, max) : [])
 
+
 /**
- * Check the model's answer and turn it into the brief's judgement fields. Fact keys that are not one
- * of the six are dropped. Anything unusable is BAD_OUTPUT.
+ * Check the model's answer and turn it into the brief's fields. A related case that is not one of the
+ * recent cases it was given is dropped. Anything unusable is BAD_OUTPUT.
+ *
+ * @param {object} answer
+ * @param {number[]} recentIds - the ids of the recent cases in the request.
  */
-function validateAnswer(answer) {
+function validateAnswer(answer, recentIds = []) {
   if (!answer || typeof answer !== 'object') throw fail('BAD_OUTPUT')
-  const summary = plain(answer.summary, 1200)
+  const question = plain(answer.question, 400)
+  const found = plain(answer.answer, 4000)
   const draftText = plain(answer.draft && answer.draft.text, 4000)
   const confidence = answer.confidence || {}
-  if (!summary || !draftText) throw fail('BAD_OUTPUT')
+  if (!question || !found || !draftText) throw fail('BAD_OUTPUT')
   if (!CLASSIFICATIONS.includes(answer.classification)) throw fail('BAD_OUTPUT')
   if (!CONFIDENCE_LEVELS.includes(confidence.level)) throw fail('BAD_OUTPUT')
 
-  const used = Array.isArray(answer.draft.facts_used) ? answer.draft.facts_used : []
+  const related = Array.isArray(answer.related_cases) ? answer.related_cases.filter((id) => recentIds.includes(id)) : []
   return {
-    summary,
+    question,
+    answer: found,
     classification: answer.classification,
     confidence: { level: confidence.level, reason: plain(confidence.reason, 300) },
-    unusual: list(answer.unusual, 10, 300),
-    could_not_find: list(answer.could_not_find, 10, 300),
-    draft: { text: draftText, facts_used: FACT_KEYS.filter((k) => used.includes(k)) },
+    checks: list(answer.checks, 12, 200),
+    open_questions: list(answer.open_questions, 3, 300),
+    related_cases: [...new Set(related)].slice(0, 10),
+    draft: draftText,
   }
 }
 
 const CREDIT_PATTERN = /credit|quota|usage limit|limit reached|billing|insufficient|rate.?limit|overloaded|out of (?:usage|extra)/i
 
-/**
- * One tool-less model call, forced into ANSWER_SCHEMA, with the screenshots attached. Throws a
- * FirstPassError: DEADLINE when the signal aborted, CREDIT or MODEL otherwise.
- */
-async function callModel({ prompt, images, model, signal, queryImpl, abort }) {
-  const query = queryImpl || require('@anthropic-ai/claude-agent-sdk').query
-  const options = {
-    model,
-    systemPrompt: systemPrompt(),
-    tools: [],
-    allowedTools: [],
-    disallowedTools: ['Read', 'Grep', 'Glob', 'Write', 'Edit', 'Bash', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task'],
-    permissionMode: 'default',
-    cwd: os.tmpdir(),
-    maxTurns: 4,
-    persistSession: false,
-    abortController: abort,
-    // The keys have no business in a process that reads member text.
-    env: agentEnv(),
-    outputFormat: { type: 'json_schema', schema: ANSWER_SCHEMA },
+function usageOf(message) {
+  const u = message.usage || {}
+  return {
+    inputTokens: u.input_tokens || 0,
+    outputTokens: u.output_tokens || 0,
+    cacheCreation: u.cache_creation_input_tokens || 0,
+    cacheRead: u.cache_read_input_tokens || 0,
+    durationMs: message.duration_ms || 0,
   }
-  const content = promptContent(prompt, images)
-  const input = images.length
+}
+
+/**
+ * The investigation: the support agent with its read-only tools, a turn limit and the answer forced
+ * into ANSWER_SCHEMA. Throws a FirstPassError: DEADLINE when the signal aborted, CREDIT or MODEL
+ * otherwise.
+ *
+ * @returns {Promise<{answer, raw, usage, cost, model, entries}>}
+ */
+async function investigate({ request, prompt, model, maxTurns, codebase, key, signal, abort, deps }) {
+  const sdk = deps.queryImpl ? null : require('@anthropic-ai/claude-agent-sdk')
+  const query = deps.queryImpl || sdk.query
+  const createServer = deps.createMcpServer || ((o) => (sdk || require('@anthropic-ai/claude-agent-sdk')).createSdkMcpServer(o))
+  const makeTools = deps.buildTools || ((ctx) => require('./tools').buildTools(ctx))
+
+  const { tools, names, cleanup } = makeTools({
+    jwt: null,
+    dumpKey: key,
+    caseId: request.caseid,
+    signal,
+    userId: request.memberid || 0,
+    modId: 'first-pass',
+    progress: () => {},
+  })
+  const options = agentOptions({
+    model,
+    systemPrompt: systemPrompt(request.memberid, codebase),
+    toolNames: names,
+    mcpServer: createServer({ name: 'freegle', version: '2.0.0', tools }),
+    codebase,
+    maxTurns,
+    alsoDisallow: ['WebFetch', 'WebSearch', 'Task'],
+    extra: {
+      persistSession: false,
+      abortController: abort,
+      outputFormat: { type: 'json_schema', schema: ANSWER_SCHEMA },
+    },
+  })
+  const input = request.images.length
     ? (async function* () {
-        yield { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, session_id: '' }
+        yield { type: 'user', message: { role: 'user', content: promptContent(prompt, request.images) }, parent_tool_use_id: null, session_id: '' }
       })()
     : prompt
 
+  const entries = []
   let structured = null
   let text = ''
-  let usage = { inputTokens: 0, outputTokens: 0, cacheCreation: 0, cacheRead: 0, durationMs: 0 }
+  let usage = usageOf({})
   let cost = 0
   let model2 = model
   let failure = ''
   try {
     for await (const message of query({ prompt: input, options })) {
+      entries.push(...transcriptEntries(message))
       if (message.type === 'system' && message.subtype === 'init' && message.model) model2 = message.model
       if (message.type !== 'result') continue
       if (message.subtype === 'success' && message.is_error) {
@@ -336,15 +364,14 @@ async function callModel({ prompt, images, model, signal, queryImpl, abort }) {
       } else if (message.subtype === 'success') {
         text = message.result || ''
         structured = message.structured_output && typeof message.structured_output === 'object' ? message.structured_output : null
-        usage = {
-          inputTokens: (message.usage && message.usage.input_tokens) || 0,
-          outputTokens: (message.usage && message.usage.output_tokens) || 0,
-          cacheCreation: (message.usage && message.usage.cache_creation_input_tokens) || 0,
-          cacheRead: (message.usage && message.usage.cache_read_input_tokens) || 0,
-          durationMs: message.duration_ms || 0,
-        }
+        usage = usageOf(message)
         cost = message.total_cost_usd || 0
       } else {
+        // error_max_turns and the like: the run ended without an answer.
+        usage = usageOf(message)
+        // The SDK's own end-of-run type (error_max_turns and so on) and the turn count say why, and
+        // carry no member text.
+        ;(deps.log || console.log)(`[SupportFirstPass] run ended without an answer: ${String(message.subtype || 'unknown').replace(/[^a-z_]/gi, '')} after ${Number(message.num_turns) || 0} turns`)
         failure = (message.errors || []).map((e) => (e && e.message) || String(e)).join('; ') || String(message.subtype || '')
       }
     }
@@ -352,70 +379,21 @@ async function callModel({ prompt, images, model, signal, queryImpl, abort }) {
     if (signal.aborted) throw fail('DEADLINE')
     // The upstream text is only used to tell credit from other failures; it is never stored or returned.
     throw fail(CREDIT_PATTERN.test((e && e.message) || '') ? 'CREDIT' : 'MODEL')
+  } finally {
+    try {
+      cleanup()
+    } catch (_) {}
   }
   if (signal.aborted) throw fail('DEADLINE')
   if (failure) throw fail(CREDIT_PATTERN.test(failure) ? 'CREDIT' : 'MODEL')
+  if (!structured) (deps.log || console.log)(`[SupportFirstPass] no structured answer; ${text ? 'parsing the text' : 'the run returned no text'}`)
 
-  return { answer: structured || parseModelJson(text), raw: structured ? JSON.stringify(structured) : text, usage, cost, model: model2 }
+  return { answer: structured || parseModelJson(text), raw: structured ? JSON.stringify(structured) : text, usage, cost, model: model2, entries }
 }
 
 // ---------------------------------------------------------------------------
 // The whole pass
 // ---------------------------------------------------------------------------
-
-function defaultOpenDb(file) {
-  const Database = require('better-sqlite3')
-  return new Database(file, { readonly: true })
-}
-
-// A signal that aborts when any of the given ones does (AbortSignal.any needs Node 20.3).
-function anySignal(signals) {
-  if (typeof AbortSignal.any === 'function') return AbortSignal.any(signals)
-  const c = new AbortController()
-  for (const s of signals) {
-    if (s.aborted) c.abort(s.reason)
-    else s.addEventListener('abort', () => c.abort(s.reason), { once: true })
-  }
-  return c.signal
-}
-
-/**
- * Get the dump for the member: everything first (at most 120s), then the database alone (at most
- * 60s) if that fails, and no dump at all if that fails too; a note says when an attempt ran out of time. A held export (lockdown) stops the pass instead: a chat-only brief
- * would read as a complete one. A deadline stops it too.
- *
- * @returns {Promise<{file:string|null, notes:string[]}>}
- */
-async function getDump({ request, key, signal, fetchDump, budgets = [FULL_DUMP_BUDGET_MS, DB_DUMP_BUDGET_MS] }) {
-  if (!request.memberid) return { file: null, notes: ['No single member to look up, so only the chat and the reason were available.'] }
-  // A member to look up but no key is a server set up wrongly, not a reason to pass on a thinner brief.
-  if (!key) throw fail('DUMP_AUTH')
-
-  const attempts = [
-    { include: 'db,loki,sentry', budget: budgets[0], slow: 'Logs and the error tracker took too long to collect, so only the database was read.', failed: 'Logs and the error tracker could not be collected, so only the database was read.' },
-    { include: 'db', budget: budgets[1] },
-  ]
-  let timedOut = false
-  for (let i = 0; i < attempts.length; i++) {
-    const a = attempts[i]
-    const attemptSignal = anySignal([signal, AbortSignal.timeout(a.budget)])
-    try {
-      const file = await fetchDump({ userId: request.memberid, since: DUMP_SINCE, include: a.include, key, caseId: request.caseid, signal: attemptSignal })
-      return { file, notes: i === 0 ? [] : [timedOut ? attempts[0].slow : attempts[0].failed] }
-    } catch (e) {
-      if (signal.aborted) throw fail('DEADLINE')
-      if (e && LOCKDOWN_STATUSES.includes(e.status)) throw fail('DUMP_LOCKDOWN')
-      if (e && AUTH_STATUSES.includes(e.status)) throw fail('DUMP_AUTH')
-      // Only this attempt's own budget ran out: the next attempt, and the model, still have time.
-      if (attemptSignal.aborted) timedOut = true
-    }
-  }
-  if (!request.chat.messages.length) throw fail('DUMP')
-  return {
-    file: null,
-    notes: [timedOut ? 'The member data took too long to read, so only the chat and the reason were available.' : 'The member data could not be read, so only the chat and the reason were available.'],
-  }
-}
 
 /**
  * Run one first pass.
@@ -423,21 +401,24 @@ async function getDump({ request, key, signal, fetchDump, budgets = [FULL_DUMP_B
  * @param {object} request - cleaned by cleanFirstPassRequest.
  * @param {object} [o]
  * @param {AbortSignal} [o.signal] - the caller going away.
- * @param {object} [o.deps] - fetchDump, openDb, queryImpl, fetchQuotaImpl, audit, unlink, now, env, pagesDir, nonce.
+ * @param {object} [o.deps] - queryImpl, buildTools, createMcpServer, fetchQuotaImpl, audit, now, env, pagesDir, nonce, driver.
  */
 async function runFirstPass(request, { signal: callerSignal, deps = {} } = {}) {
   const env = deps.env || process.env
   const now = deps.now || Date.now
   const started = now()
   const deadlineMs = Number(env.FIRST_PASS_DEADLINE_MS) > 0 ? Number(env.FIRST_PASS_DEADLINE_MS) : DEFAULT_DEADLINE_MS
+  const maxTurns = Number(env.FIRST_PASS_MAX_TURNS) > 0 ? Number(env.FIRST_PASS_MAX_TURNS) : DEFAULT_MAX_TURNS
   const model = env.FIRST_PASS_MODEL || env.SUPPORT_AI_MODEL || 'opus'
-  const unlink = deps.unlink || ((f) => fs.unlinkSync(f))
+  const codebase = env.CODEBASE_DIR || '/app/codebase'
   const auditFn = deps.audit || (() => {})
-  const pagesDir = deps.pagesDir !== undefined ? deps.pagesDir : path.join(env.CODEBASE_DIR || '/app/codebase', 'iznik-nuxt3', 'pages')
+  const pagesDir = deps.pagesDir !== undefined ? deps.pagesDir : path.join(codebase, 'iznik-nuxt3', 'pages')
+
+  // A member to look up but no key is a server set up wrongly, not a reason to pass on a thinner brief.
+  if (request.memberid && !env.USERDUMP_INTERNAL_KEY) throw fail('DUMP_AUTH')
 
   auditFn({ tool: 'first_pass', caseid: request.caseid, target: request.memberid || 0, images: request.images.length })
 
-  // One deadline covers the dump and the model together.
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), deadlineMs)
   const onCallerGone = () => abort.abort()
@@ -447,54 +428,28 @@ async function runFirstPass(request, { signal: callerSignal, deps = {} } = {}) {
   }
   const signal = abort.signal
 
-  let file = null
-  let db = null
   try {
     const mode = deps.driver || driverMode()
     const token = subscriptionToken(mode, { env })
     const quotaFn = deps.fetchQuotaImpl || fetchQuota
     const quotaBeforeP = quotaFn(token)
 
-    const fetchDump = deps.fetchDump || ((a) => require('./tools').fetchUserDump(a))
-    const budgetOf = (name, dflt) => (Number(env[name]) > 0 ? Number(env[name]) : dflt)
-    const dump = await getDump({ request, key: env.USERDUMP_INTERNAL_KEY, signal, fetchDump, budgets: [budgetOf('FIRST_PASS_FULL_DUMP_MS', FULL_DUMP_BUDGET_MS), budgetOf('FIRST_PASS_DB_DUMP_MS', DB_DUMP_BUDGET_MS)] })
-    file = dump.file
-    const notes = [...dump.notes]
-
-    let facts
-    if (file) {
-      try {
-        db = (deps.openDb || defaultOpenDb)(file)
-        facts = buildFacts({ db, memberid: request.memberid, mailHistory: request.mailHistory, nowMs: now() })
-      } catch (_) {
-        facts = noDumpFacts('the member data could not be opened', request.mailHistory)
-        notes.push('The member data was fetched but could not be read.')
-      }
-    } else {
-      facts = noDumpFacts(notes[0] ? notes[0].replace(/\.$/, '').toLowerCase() : 'not available', request.mailHistory)
-      if (!request.memberid) facts[0] = { key: 'member', title: FACT_TITLES[0][1], lines: [], note: 'No single member to look up' }
-    }
-    if (!request.mailHistory.available) notes.push(`Past mail with support and info: not available (${request.mailHistory.reason || 'not set up'}).`)
-
     const nonce = deps.nonce || crypto.randomBytes(8).toString('hex')
-    const prompt = buildUserPrompt({ request, facts, notes, nonce })
-    const call = await callModel({ prompt, images: request.images, model, signal, queryImpl: deps.queryImpl, abort })
-    const judged = validateAnswer(call.answer)
-
-    const couldNotFind = [...judged.could_not_find]
-    if (!request.memberid) couldNotFind.unshift('No single member to look up')
-    else if (!file) couldNotFind.unshift('The member data could not be read, so the facts are missing')
+    const prompt = buildUserPrompt({ request, nonce })
+    const run = await investigate({ request, prompt, model, maxTurns, codebase, key: env.USERDUMP_INTERNAL_KEY, signal, abort, deps })
+    const judged = validateAnswer(run.answer, request.recentCases.map((c) => c.id))
 
     const chatImages = request.chat.messages.filter((m) => m.type === 'Image').length
     const brief = {
-      version: 1,
-      summary: judged.summary,
+      version: 2,
+      question: judged.question,
+      answer: judged.answer,
       classification: judged.classification,
       confidence: judged.confidence,
-      facts,
-      unusual: judged.unusual,
-      could_not_find: couldNotFind.slice(0, 12),
-      draft: { to: 'referrer', ...judged.draft, link_warnings: checkDraftLinks(judged.draft.text, pagesDir) },
+      checks: judged.checks,
+      open_questions: judged.open_questions,
+      related_cases: judged.related_cases,
+      draft: { to: 'referrer', text: judged.draft, link_warnings: checkDraftLinks(judged.draft, pagesDir) },
       images: {
         sent: request.images.length,
         skipped: request.imagesSkipped ?? Math.max(request.imagesDropped || 0, chatImages - request.images.length),
@@ -505,13 +460,13 @@ async function runFirstPass(request, { signal: callerSignal, deps = {} } = {}) {
     const entries = [
       { type: 'prompt', text: prompt.length > TRANSCRIPT_CAP / 2 ? `${prompt.slice(0, TRANSCRIPT_CAP / 2)}... [prompt cut to fit]` : prompt },
       { type: 'images', count: request.images.length, names: request.images.map((i) => i.name) },
-      { type: 'text', text: call.raw },
+      ...run.entries,
     ]
     return {
       brief,
-      usage: { ...call.usage, durationMs: call.usage.durationMs || now() - started },
-      costUsd: billableCostUsd(mode, call.cost),
-      model: call.model,
+      usage: { ...run.usage, durationMs: run.usage.durationMs || now() - started },
+      costUsd: billableCostUsd(mode, run.cost),
+      model: run.model,
       driver: mode,
       quota,
       quotaBefore: await quotaBeforeP,
@@ -524,14 +479,6 @@ async function runFirstPass(request, { signal: callerSignal, deps = {} } = {}) {
   } finally {
     clearTimeout(timer)
     if (callerSignal) callerSignal.removeEventListener('abort', onCallerGone)
-    try {
-      if (db) db.close()
-    } catch (_) {}
-    if (file) {
-      try {
-        unlink(file)
-      } catch (_) {}
-    }
   }
 }
 
@@ -542,7 +489,6 @@ module.exports = {
   agentEnv,
   checkDraftLinks,
   validateAnswer,
-  callModel,
-  getDump,
+  investigate,
   runFirstPass,
 }
