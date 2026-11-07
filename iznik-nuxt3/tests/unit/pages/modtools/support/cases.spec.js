@@ -181,6 +181,15 @@ describe('support/cases/[[id]].vue', () => {
       mockFetchCase.mockResolvedValue(supportCase())
     })
 
+    it('links back to the Cases tab of Support Tools', async () => {
+      const wrapper = mountPage()
+      await flushPromises()
+      const back = wrapper.find('[data-testid="case-back-to-list"]')
+      expect(back.exists()).toBe(true)
+      expect(back.attributes('href')).toBe('/support?tab=cases')
+      expect(back.text()).toContain('Support cases')
+    })
+
     it('shows the header, the question, the answer and the supporting parts', async () => {
       const wrapper = mountPage()
       await flushPromises()
@@ -599,6 +608,16 @@ describe('support/cases/[[id]].vue', () => {
   })
 
   describe('Referrer view', () => {
+    it('has no link to the Support case list, which the referrer cannot see', async () => {
+      meState.supportOrAdmin.value = false
+      mockFetchCase.mockResolvedValue(referrerCase())
+      const wrapper = mountPage()
+      await flushPromises()
+      expect(wrapper.find('[data-testid="case-back-to-list"]').exists()).toBe(
+        false
+      )
+    })
+
     it('shows status, their reason and the thread, and nothing from the first pass', async () => {
       meState.supportOrAdmin.value = false
       mockFetchCase.mockResolvedValue(

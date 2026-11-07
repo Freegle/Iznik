@@ -33,6 +33,13 @@
         v-else-if="item && item.viewer === 'Support'"
         data-testid="case-support"
       >
+        <!-- A case is its own page; this takes Support back to the Cases tab of Support Tools. -->
+        <nuxt-link
+          to="/support?tab=cases"
+          class="small d-inline-block mb-1"
+          data-testid="case-back-to-list"
+          >&lsaquo; Support cases</nuxt-link
+        >
         <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
           <h2 class="mb-0">Case {{ item.id }}</h2>
           <b-badge
