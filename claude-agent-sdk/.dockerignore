@@ -1,0 +1,4 @@
+# The image installs its own packages for its own Node. A node_modules installed on the host (for
+# running the tests there) was built for the host's Node, and copying it in over the image's breaks
+# better-sqlite3, so get_user_dump fails and the agent quietly falls back to live queries.
+node_modules
