@@ -289,6 +289,16 @@ crop and the items lose their photos, while the save reports success. `keepCrops
 adds the crops of kept photos to the list. Anything else that rewrites a post's photos has to do
 the same, and a crop has to go when the photo it was cut from goes.
 
+## The delivery service crops after it turns the photo, whatever its source suggests
+
+An auto-split crop is stored in pixels of the photo **as the poster turned it** (`externalmods`
+`rotate` plus `cx`, `cy`, `cw`, `ch`), because our delivery service applies `ro` first and the
+crop second. Reading weserv's 5.x source points the other way, and an agent that read it reported
+every rotated crop as wrong. Measured on the live and the local services on 2026-11-07: a 300x200
+crop with `ro=90` comes back 300x200, not 200x300, and cropping a lamp's place in the unturned
+photo with `ro=90` shows bare wall, because turning has moved the lamp. Before changing
+`misc.Mods.Rotated` or the splitter's crop maths, measure it on the service again.
+
 ## See also
 
 - `.claude/rules/laravel-batch-traps.md` - JSON null casting, in-place foreign keys.
