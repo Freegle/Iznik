@@ -33,9 +33,16 @@ final class ClearanceSql
             && ! DB::table('messages_autosplit')->where('msgid', $msgid)->where('state', 'Split')->exists();
     }
 
-    /** Narrow a query to posts that are not clearances, where $msgid is the post's id column. */
+    /**
+     * Narrow a query to posts that are not clearances, where $msgid is the post's id column:
+     * no items, or items the auto-splitter made.
+     */
     public static function whereNotClearance(Builder $query, string $msgid): Builder
     {
-        return $query->whereRaw('NOT '.self::condition($msgid));
+        return $query->where(fn ($q) => $q
+            ->whereNotExists(fn ($s) => $s->from('messages_bulk_items as cbi')->whereColumn('cbi.msgid', $msgid))
+            ->orWhereExists(fn ($s) => $s->from('messages_autosplit as cas')
+                ->whereColumn('cas.msgid', $msgid)
+                ->where('cas.state', 'Split')));
     }
 }

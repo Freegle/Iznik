@@ -67,7 +67,7 @@ class LoveJunkService
             ->where('messages_groups.collection', 'Approved')
             ->where('groups.onlovejunk', 1)
             // Not clearances; an automatically split post is an ordinary Offer.
-            ->whereRaw('NOT '.ClearanceSql::condition('messages.id'))
+            ->where(fn ($q) => ClearanceSql::whereNotClearance($q, 'messages.id'))
             ->orderBy('messages.arrival')
             ->get()
             ->all();
