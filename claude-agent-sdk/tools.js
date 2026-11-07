@@ -371,6 +371,85 @@ function sweepDumpCache(now = Date.now()) {
 const _dumpSweep = setInterval(sweepDumpCache, 60 * 1000)
 if (_dumpSweep.unref) _dumpSweep.unref()
 
+// Downloads under way, one per member and window, so a dump started when the member was picked
+// (prefetchDump) is joined rather than fetched a second time. key -> { promise, listeners }
+const dumpDownloads = new Map()
+
+function dumpDownloading(userId, since = '90d') {
+  return dumpDownloads.has(`${userId}:${since}`)
+}
+
+// The cached dump for this member and window while it is still fresh, else null.
+function freshDump(userId, since = '90d') {
+  const cached = dumpCache.get(`${userId}:${since}`)
+  return cached && fs.existsSync(cached.file) && Date.now() - cached.at < DUMP_TTL_MS ? cached : null
+}
+
+/**
+ * The member's dump for a volunteer: the cached one while it is fresh, else the download already under way
+ * for that member, else a new one. onProgress gets the framed progress of whichever download is used.
+ *
+ * @returns {Promise<{file: string, at: number, reused: boolean}>} reused is true for a cached dump.
+ */
+async function sharedDump({ userId, jwt, since = '90d', onProgress, fetchDump = fetchUserDump }) {
+  const key = `${userId}:${since}`
+  const cached = freshDump(userId, since)
+  if (cached) return { file: cached.file, at: cached.at, reused: true }
+  let download = dumpDownloads.get(key)
+  if (!download) {
+    const listeners = new Set()
+    const tellAll = (pr) => {
+      for (const listener of listeners) {
+        try {
+          listener(pr)
+        } catch (_) {
+          // One caller's progress display must not stop the download for the others.
+        }
+      }
+    }
+    const promise = fetchDump({ userId, jwt, since, onProgress: tellAll })
+      .then((file) => {
+        const old = dumpCache.get(key)
+        if (old && old.file !== file) {
+          try {
+            fs.unlinkSync(old.file)
+          } catch {}
+        }
+        const at = Date.now()
+        dumpCache.set(key, { file, at })
+        return { file, at }
+      })
+      .finally(() => dumpDownloads.delete(key))
+    download = { promise, listeners }
+    dumpDownloads.set(key, download)
+  }
+  if (onProgress) download.listeners.add(onProgress)
+  try {
+    const { file, at } = await download.promise
+    return { file, at, reused: false }
+  } finally {
+    if (onProgress) download.listeners.delete(onProgress)
+  }
+}
+
+/**
+ * Start downloading the member's dump as soon as a volunteer picks them, so it is ready, or nearly, when the
+ * question arrives: the first thing nearly every investigation does is fetch it, and a big member's takes
+ * minutes. Best effort: a failure is logged and the investigation fetches it as before. Never throws.
+ *
+ * @returns {Promise<boolean>} whether the dump is now cached.
+ */
+async function prefetchDump({ userId, jwt, since = '90d', fetchDump } = {}) {
+  if (!userId) return false
+  try {
+    await sharedDump({ userId, jwt, since, fetchDump })
+    return true
+  } catch (e) {
+    console.error(`[Prefetch] dump for user ${userId} failed: ${e.message}`)
+    return false
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tool factory. Each request builds tools bound to that caller's JWT + the
 // member they picked. The user dump is cached across requests (see dumpCache).
@@ -469,17 +548,11 @@ function buildTools(ctx) {
           state.dumpFile = file
           state.dumpCached = false
         }
-        const key = `${id}:${since}`
-        const cached = keyMode ? null : dumpCache.get(key)
-        if (keyMode) {
-          // Downloaded above.
-        } else if (cached && fs.existsSync(cached.file) && Date.now() - cached.at < DUMP_TTL_MS) {
-          state.dumpFile = cached.file
-          state.dumpCached = true
-          const ageS = Math.round((Date.now() - cached.at) / 1000)
-          p('tool', `Reusing snapshot for user ${id} (built ${ageS}s ago)…`)
-        } else {
-          p('tool', `Downloading full snapshot for user ${id}…`)
+        if (!keyMode) {
+          const cached = freshDump(id, since)
+          if (cached) p('tool', `Reusing snapshot for user ${id} (built ${Math.round((Date.now() - cached.at) / 1000)}s ago)…`)
+          else if (dumpDownloading(id, since)) p('tool', `Snapshot for user ${id} is already downloading…`)
+          else p('tool', `Downloading full snapshot for user ${id}…`)
           // Structured progress for the UI's progress bar: forward the framed
           // per-section updates (throttled to ~1/s), and let heartbeats
           // refresh elapsed time so a slow section still visibly ticks. A big
@@ -501,15 +574,9 @@ function buildTools(ctx) {
               etaMs: pr.eta_ms > 1000 ? pr.eta_ms : null,
             })
           }
-          const file = await fetchUserDump({ userId: id, jwt: ctx.jwt, since, onProgress })
-          p('progress', { tool: 'get_user_dump', percent: 100, section: 'complete', done: true })
-          if (cached && cached.file !== file) {
-            try {
-              fs.unlinkSync(cached.file)
-            } catch {}
-          }
-          dumpCache.set(key, { file, at: Date.now() })
-          state.dumpFile = file
+          const got = await sharedDump({ userId: id, jwt: ctx.jwt, since, onProgress })
+          if (!got.reused) p('progress', { tool: 'get_user_dump', percent: 100, section: 'complete', done: true })
+          state.dumpFile = got.file
           state.dumpCached = true
         }
         const db = new Database(state.dumpFile, { readonly: true })
@@ -809,4 +876,4 @@ function buildTools(ctx) {
   }
 }
 
-module.exports = { buildTools, getPool, lokiQuery, dbSelect, guardSelect, audit, fetchUserDump }
+module.exports = { buildTools, getPool, lokiQuery, dbSelect, guardSelect, audit, fetchUserDump, sharedDump, prefetchDump, dumpDownloading }

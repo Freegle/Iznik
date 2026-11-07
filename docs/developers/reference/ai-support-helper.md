@@ -32,6 +32,9 @@ covers:
   - claude-agent-sdk/agent-options.js
   - claude-agent-sdk/agent-options.test.js
   - claude-agent-sdk/tools-dump.test.js
+  - claude-agent-sdk/tools-prefetch.test.js
+  - claude-agent-sdk/sessions.js
+  - claude-agent-sdk/sessions.test.js
   - claude-agent-sdk/images.js
   - iznik-nuxt3/modtools/components/ModSupportScreenshotStrip.vue
   - iznik-nuxt3/modtools/composables/useSupportScreenshots.js
@@ -196,6 +199,45 @@ logs" (the `TOOL_ACTIVITY` map in the component; a tool it does not know shows a
 `thinking` event clears it, and it yields to the snapshot progress bar while that is
 showing. The raw tool call still goes to the Debug panel, so which SQL ran or which file
 was read is one switch away when something has gone wrong.
+
+## How long an investigation takes
+
+Nearly all of an investigation's time is the model's own thinking, not the tools: run time follows
+the number of output tokens closely, and most of those are thinking that is never shown. So these
+settings matter more than how fast any one tool is.
+
+- **Model and effort.** `SUPPORT_AI_MODEL` (default `opus`, which agent SDK 0.3 maps to Opus 5.5)
+  and `SUPPORT_AI_EFFORT` (`low`, `medium`, `high`, `xhigh` or `max`; default `medium`, which an
+  unknown value also falls back to). `agent-options.js` sets both for every run, so the first pass on
+  a referral uses them too. The run log's `model` column records the model a run used. Effort is not
+  recorded, so compare runs by date when it changes.
+- **Retries.** The CLI's own default retries a failed call for about three minutes. The broker
+  answers 503 when no account is free, so that was a three-minute wait for an error. `agentEnv()`
+  sets `CLAUDE_CODE_MAX_RETRIES=2` unless the environment already sets it, and the error comes back
+  in seconds.
+- **The member's dump starts when they are picked.** `ModSupportAIAssistant.vue` calls
+  `POST /api/prefetch-dump` beside the device summary. It is Support/Admin only and audited as
+  `prefetch_user_dump`, and it answers without waiting for the download. `get_user_dump` then reuses
+  the finished dump, or joins the download if it is still running: `sharedDump()` in `tools.js` runs
+  one download per member and window and passes its progress to whoever is waiting. A failed
+  prefetch is logged and the investigation fetches the dump as before. A dump is kept for ten minutes
+  after it is built, so a member picked and left longer than that is fetched again.
+- **Independent checks in one turn.** Each turn is a round trip. The system prompt asks the agent to
+  make lookups that do not depend on each other in the same turn.
+
+## Follow-up questions
+
+A follow-up carries on the same Claude session, which the CLI saves under `~/.claude/projects` in
+the container. That folder is the `ai-support-sessions` volume, so a follow-up still works after the
+container is recreated. `sessions.js` deletes sessions more than a day old, on start and every hour,
+because they hold what the tools returned about a member. The page keeps a session's id only while it
+stays open, so a day is ample. A follow-up whose session is gone gets `410 SESSION_EXPIRED` before
+any work starts, and the page drops the old session and asks for the question again.
+
+The image ignores the host's `node_modules` (`claude-agent-sdk/.dockerignore`). One installed on
+the host, to run the tests there, is built for the host's Node. Copied over the image's own, it
+breaks `better-sqlite3`, so `get_user_dump` fails and the agent quietly works from live queries
+instead.
 
 ## Suggested replies
 
@@ -386,7 +428,7 @@ member is deleted with that member's account (`userid` cascades).
 - **Narrowed credential mount (`docker-compose.yml`)** — session mode exposes only the
   Claude OAuth credential file, not the whole `~/.claude`.
 - **Audit trail (`tools.js` `audit()`)** — every session and every `db_query` /
-  `get_user_dump` / `query_dump` logs who (mod id/email) investigated whom (target user)
+  `get_user_dump` / `query_dump`, and each dump started early (`prefetch_user_dump`), logs who (mod id/email) investigated whom (target user)
   with what, to stdout (`SUPPORT_AUDIT …`, shippable to Loki) and, durably, to
   `AUDIT_LOG_PATH` on the `ai-support-audit` volume.
 
@@ -506,7 +548,7 @@ See [deployment-switches.md](deployment-switches.md).
   dependency-free so it is unit-tested in CI), `prompt.js` (system prompt + playbook,
   dependency-free so it is unit-tested in CI), `tools.js`
   (direct-access tools + guards + audit), `auth.js` (Support/Admin verification),
-  `Dockerfile` / `entrypoint.sh`.
+  `sessions.js` (saved sessions: found, and pruned after a day), `Dockerfile` / `entrypoint.sh`.
 - **Frontend**: `iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue`,
   `ModSupportAIRating.vue` (thumbs), `ModSysAdminSupportAI.vue` (SysAdmin review).
 - **Go API**: `iznik-server-go/supportai/` (record, list, get, rate runs).
