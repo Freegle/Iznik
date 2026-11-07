@@ -253,8 +253,17 @@ function checkDraftLinks(text, pagesDir) {
 
 // A model told not to use em dashes sometimes does anyway; the brief never carries one.
 const DASHES = new RegExp('\\s*[' + String.fromCharCode(0x2014, 0x2013) + ']\\s*', 'g')
+// Markdown images and raw img tags would make the brief load a remote picture the model was steered to
+// name; the alt text stays.
+const IMG_MD = /!\[([^\]]*)\]\([^)]*\)/g
+const IMG_TAG = /<img\b[^>]*>/gi
+const stripImages = (t) =>
+  t.replace(IMG_MD, '$1').replace(IMG_TAG, (m) => {
+    const alt = /\balt\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(m)
+    return alt ? alt[1] || alt[2] || '' : ''
+  })
 const plain = (v, max) =>
-  String(v == null ? '' : v)
+  stripImages(String(v == null ? '' : v))
     .replace(DASHES, ', ')
     .trim()
     .slice(0, max)

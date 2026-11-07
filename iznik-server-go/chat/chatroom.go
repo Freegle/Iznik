@@ -1918,7 +1918,15 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64,
 		}
 		if err := db.Transaction(func(tx *gorm.DB) error {
 			_, err := casestore.AddMessage(tx, existing, myid, "Referrer", body, "No")
-			return err
+			if err != nil {
+				return err
+			}
+			// While the first pass has not run it reads support_cases.reason, so a new reason
+			// replaces the old one there. After it has run the brief stands and the message carries it.
+			if reason != "" {
+				return tx.Exec("UPDATE support_cases SET reason = ? WHERE id = ? AND firstpass_status = 'Pending'", reason, existing).Error
+			}
+			return nil
 		}); err != nil {
 			stdlog.Printf("[ReferToSupport] repeat referral write failed for chat %d by %d: %v", chatid, myid, err)
 			return fiber.NewError(fiber.StatusInternalServerError, "Couldn't refer this chat, please try again")

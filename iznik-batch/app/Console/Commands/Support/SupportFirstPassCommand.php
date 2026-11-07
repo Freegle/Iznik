@@ -149,7 +149,7 @@ class SupportFirstPassCommand extends Command
         }
     }
 
-    /** @return bool true when the helper said it was busy */
+    /** @return bool true when the helper said it was busy or could not be reached */
     private function runCase(int $id, FirstPassService $service): bool
     {
         $case = DB::table('support_cases')->where('id', $id)->first();
@@ -188,6 +188,14 @@ class SupportFirstPassCommand extends Command
             if ($f->failureCode === 'BUSY') {
                 // Back to Pending without counting an attempt.
                 DB::table('support_cases')->where('id', $id)->where('firstpass_status', 'Running')->update(['firstpass_status' => 'Pending']);
+
+                return true;
+            }
+            if ($f->failureCode === 'UNREACHABLE') {
+                // No model ran: back to Pending without counting an attempt. The reason stays so the
+                // max-age sweep keeps it, and asking again straight away would fail the same way.
+                DB::table('support_cases')->where('id', $id)->where('firstpass_status', 'Running')
+                    ->update(['firstpass_status' => 'Pending', 'firstpass_error' => $f->reason]);
 
                 return true;
             }

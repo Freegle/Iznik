@@ -36,6 +36,8 @@ class FirstPassService
 
     public const REASON_INTERRUPTED = 'The first pass was interrupted';
 
+    public const REASON_UNREACHABLE = 'The AI helper could not be reached';
+
     public const REASON_FAILED = 'The AI helper failed';
 
     public const REASON_NO_CHAT = 'The chat is no longer there';
@@ -307,8 +309,15 @@ class FirstPassService
             $response = Http::withHeaders(['X-Freegle-Internal' => '1', 'X-Freegle-Internal-Secret' => $secret])
                 ->timeout($timeout)->acceptJson()->asJson()->post($url, $request);
         } catch (ConnectionException $e) {
-            $timedOut = str_contains($e->getMessage(), 'timed out') || str_contains($e->getMessage(), 'cURL error 28');
-            throw new FirstPassFailure('CONNECTION', $timedOut ? self::REASON_TOO_LONG : self::REASON_FAILED);
+            $msg = $e->getMessage();
+            $timedOut = str_contains($msg, 'timed out') || str_contains($msg, 'cURL error 28');
+            // Only a read timeout means the model may have run. A refused connection, a failed lookup
+            // or a connect timeout means the request never reached the helper.
+            $neverReached = ! $timedOut || str_contains($msg, 'Connection timed out') || str_contains($msg, 'Resolving timed out');
+            if ($neverReached) {
+                throw new FirstPassFailure('UNREACHABLE', self::REASON_UNREACHABLE);
+            }
+            throw new FirstPassFailure('CONNECTION', self::REASON_TOO_LONG);
         }
 
         $status = $response->status();
@@ -317,6 +326,10 @@ class FirstPassService
         }
         if ($status === 403) {
             throw new FirstPassFailure('REFUSED', self::REASON_NOT_SET_UP, false, true);
+        }
+        if ($status >= 400 && $status < 500) {
+            // The helper refused the request itself, so no model ran and a retry would be refused again.
+            throw new FirstPassFailure('REJECTED', self::REASON_FAILED, false, true);
         }
         if (! $response->successful()) {
             $code = $status === 502 ? (string) ($response->json('code') ?? '') : '';

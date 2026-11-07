@@ -475,6 +475,15 @@ class UserManagementService
         UxPromptService::forgetAnswers(DB::table('ux_prompt_responses')->where('userid', $userId)->pluck('id')->all());
         DB::table('ux_prompt_responses')->where('userid', $userId)->delete();
 
+        // Support cases about this member: the brief and what the referrer said hold facts about them,
+        // and so do the case thread and the first pass and helper runs written for them.
+        $caseIds = DB::table('support_cases')->where('userid', $userId)->pluck('id')->all();
+        foreach (array_chunk($caseIds, 500) as $chunk) {
+            DB::table('support_case_messages')->whereIn('caseid', $chunk)->update(['body' => '']);
+        }
+        DB::table('support_cases')->where('userid', $userId)->update(['brief' => NULL, 'reason' => NULL]);
+        DB::table('support_ai_runs')->where('userid', $userId)->update(['analysis' => NULL, 'transcript' => NULL]);
+
         // Mark as forgotten and clear TN user ID.
         DB::table('users')->where('id', $userId)->update([
             'forgotten' => now(),

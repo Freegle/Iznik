@@ -266,6 +266,74 @@ describe('support/cases/[[id]].vue', () => {
       expect(draft.element.tagName).toBe('DIV')
     })
 
+    it('forbids images and other loaders and makes links safe', async () => {
+      mockFetchCase.mockResolvedValue(
+        supportCase({
+          brief: {
+            ...supportCase().brief,
+            answer:
+              '<img src="https://evil.invalid/?d=secret"><picture><source srcset="https://evil.invalid/a"></picture><video src="https://evil.invalid/v"></video><audio src="https://evil.invalid/a"></audio><iframe src="https://evil.invalid/f"></iframe><style>p{background:url(https://evil.invalid/s)}</style><p style="background:url(https://evil.invalid/b)">Text <a href="https://example.org/x">link</a></p>',
+          },
+        })
+      )
+      const wrapper = mountPage()
+      await flushPromises()
+      const answer = wrapper.find('[data-testid="case-answer"]')
+      for (const tag of [
+        'img',
+        'picture',
+        'source',
+        'video',
+        'audio',
+        'iframe',
+        'style',
+      ]) {
+        expect(answer.element.querySelector(tag)).toBeNull()
+      }
+      expect(answer.html()).not.toContain('evil.invalid')
+      expect(answer.html()).not.toContain('style=')
+      const a = answer.element.querySelector('a')
+      expect(a.getAttribute('href')).toBe('https://example.org/x')
+      expect(a.getAttribute('rel')).toBe('noopener noreferrer')
+    })
+
+    it('hides View chat when the case has no chat', async () => {
+      mockFetchCase.mockResolvedValue(supportCase({ chatid: null }))
+      const wrapper = mountPage()
+      await flushPromises()
+      expect(wrapper.find('[data-testid="case-view-chat"]').exists()).toBe(
+        false
+      )
+    })
+
+    it('says so when fetching the chat throws', async () => {
+      mockChatStore.fetchChat.mockRejectedValueOnce(new Error('500'))
+      const wrapper = mountPage()
+      await flushPromises()
+      await wrapper.find('[data-testid="case-view-chat"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.chat-modal').exists()).toBe(false)
+      expect(wrapper.text()).toContain('Could not open the chat')
+      expect(wrapper.find('[data-testid="case-brief"]').exists()).toBe(true)
+    })
+
+    it.each([
+      [429, 'sent a lot of replies'],
+      [409, 'Another case for this chat is already open'],
+      [500, 'Please try again'],
+    ])('explains a failed reply with status %s', async (status, text) => {
+      mockSendMessage.mockRejectedValue({ response: { status } })
+      const wrapper = mountPage()
+      await flushPromises()
+      await wrapper.find('[data-testid="case-reply"]').setValue('Hello')
+      await wrapper.find('[data-testid="case-send"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain(text)
+      if (status !== 500) {
+        expect(wrapper.text()).not.toContain('that reply was not sent')
+      }
+    })
+
     it('renders no version 1 sections', async () => {
       const wrapper = mountPage()
       await flushPromises()
@@ -617,7 +685,8 @@ describe('support/cases/[[id]].vue', () => {
       const wrapper = mountPage()
       await flushPromises()
       expect(wrapper.find('.case-list-stub').exists()).toBe(false)
-      expect(wrapper.text()).toContain('linked from the chat')
+      expect(wrapper.text()).toContain("email that Support's reply sends")
+      expect(wrapper.text()).toContain('notice you see right after')
     })
   })
 })

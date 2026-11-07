@@ -8,7 +8,8 @@
     <div v-else-if="!caseId">
       <div v-if="!supportOrAdmin">
         <NoticeMessage variant="info">
-          Cases you refer to Support are linked from the chat you referred.
+          The link to a case is in the email that Support's reply sends. The
+          case also opens from the notice you see right after you refer it.
         </NoticeMessage>
       </div>
       <ModSupportCaseList v-else />
@@ -69,6 +70,7 @@
         </NoticeMessage>
         <div class="d-flex flex-wrap gap-2 mb-3">
           <b-button
+            v-if="item.chatid"
             variant="outline-secondary"
             data-testid="case-view-chat"
             @click="viewChat"
@@ -395,8 +397,36 @@ function statusVariant(status) {
 }
 
 // The first pass can quote member text, so sanitise it as the helper page does.
+// Nothing in it may load a third-party URL when the page opens, and every link opens safely.
+const FORBID_TAGS = [
+  'img',
+  'picture',
+  'source',
+  'video',
+  'audio',
+  'iframe',
+  'style',
+]
+const FORBID_ATTR = ['style', 'srcset']
+
+function addLinkRel(node) {
+  if (node.tagName === 'A') {
+    node.setAttribute('rel', 'noopener noreferrer')
+    node.setAttribute('target', '_blank')
+  }
+}
+
 function renderMarkdown(text) {
-  return DOMPurify.sanitize(marked(text || ''))
+  DOMPurify.addHook('afterSanitizeAttributes', addLinkRel)
+  try {
+    return DOMPurify.sanitize(marked(text || ''), { FORBID_TAGS, FORBID_ATTR })
+  } finally {
+    DOMPurify.removeHook('afterSanitizeAttributes')
+  }
+}
+
+function errorStatus(e) {
+  return e?.response?.status || e?.status || e?.statusCode || 0
 }
 
 async function loadCase() {
@@ -446,7 +476,15 @@ async function send() {
     draftText.value = null
     await loadCase()
   } catch (e) {
-    sendError.value = 'Sorry, that reply was not sent. Please try again.'
+    const status = errorStatus(e)
+    if (status === 429) {
+      sendError.value =
+        'You have sent a lot of replies. Please wait a little, then try again.'
+    } else if (status === 409) {
+      sendError.value = 'Another case for this chat is already open.'
+    } else {
+      sendError.value = 'Sorry, that reply was not sent. Please try again.'
+    }
   } finally {
     sending.value = false
   }
@@ -483,13 +521,19 @@ async function viewChat() {
   chatReady.value = false
   actionError.value = ''
   showChat.value = true
-  await chatStore.fetchChat(item.value.chatid)
-  const chat = chatStore.byChatId(item.value.chatid)
-  if (chat) {
-    pov.value = typeof chat.user1 === 'object' ? chat.user1.id : chat.user1
-    chatReady.value = true
-  } else {
+  try {
+    await chatStore.fetchChat(item.value.chatid)
+    const chat = chatStore.byChatId(item.value.chatid)
+    if (chat) {
+      pov.value = typeof chat.user1 === 'object' ? chat.user1.id : chat.user1
+      chatReady.value = true
+    } else {
+      showChat.value = false
+      actionError.value = 'Could not open the chat.'
+    }
+  } catch (e) {
     showChat.value = false
+    chatReady.value = false
     actionError.value = 'Could not open the chat.'
   }
 }

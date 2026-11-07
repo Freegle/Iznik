@@ -489,30 +489,76 @@ class SupportFirstPassTest extends TestCase
         $this->assertStringContainsString("First pass skipped: {$reason}", $this->bodyOf($this->sentMail($c['case'])));
     }
 
-    public function test_an_unreachable_or_timed_out_helper_fails_with_a_plain_reason_and_an_error_run_row(): void
+    public function test_a_timed_out_helper_fails_with_a_plain_reason_and_an_error_run_row(): void
     {
         Mail::fake();
-        $a = $this->makeCase();
-        $this->helper['throw'] = 'cURL error 7: Failed to connect to ai-support-helper secret-detail';
-        $this->runPass();
-        $this->assertSame(FirstPassService::REASON_FAILED, $this->case($a['case'])->firstpass_error);
-        $this->assertStringNotContainsString('secret-detail', (string) $this->case($a['case'])->firstpass_error);
-
         $b = $this->makeCase();
-        $this->helper['throw'] = 'cURL error 28: Operation timed out after 330001 milliseconds';
+        $this->helper['throw'] = 'cURL error 28: Operation timed out after 330001 milliseconds secret-detail';
         $this->runPass();
         $this->assertSame(FirstPassService::REASON_TOO_LONG, $this->case($b['case'])->firstpass_error);
 
         // The request may have spent tokens, so each attempt is recorded with no tokens and counts against the cap.
-        $runs = DB::table('support_ai_runs')->whereIn('modid', [$a['referrer']->id, $b['referrer']->id])->get();
-        $this->assertCount(3, $runs, 'a is tried in both runs and b in the second');
-        foreach ($runs as $run) {
-            $this->assertSame('FirstPass', $run->kind);
-            $this->assertSame('Error', $run->status);
-            $this->assertSame(0, (int) $run->input_tokens + (int) $run->output_tokens);
-            $this->assertStringNotContainsString('secret-detail', (string) $run->error);
-        }
-        $this->assertSame(FirstPassService::REASON_TOO_LONG, DB::table('support_ai_runs')->where('modid', $b['referrer']->id)->value('error'));
+        $runs = DB::table('support_ai_runs')->where('modid', $b['referrer']->id)->get();
+        $this->assertCount(1, $runs);
+        $this->assertSame('FirstPass', $runs[0]->kind);
+        $this->assertSame('Error', $runs[0]->status);
+        $this->assertSame(0, (int) $runs[0]->input_tokens + (int) $runs[0]->output_tokens);
+        $this->assertSame(FirstPassService::REASON_TOO_LONG, $runs[0]->error);
+        $this->assertStringNotContainsString('secret-detail', (string) $runs[0]->error);
+    }
+
+    public static function unreachable(): array
+    {
+        return [
+            'refused' => ['cURL error 7: Failed to connect to ai-support-helper secret-detail'],
+            'dns' => ['cURL error 6: Could not resolve host: ai-support-helper secret-detail'],
+            'connect timeout' => ['cURL error 28: Connection timed out after 10001 milliseconds secret-detail'],
+        ];
+    }
+
+    #[DataProvider('unreachable')]
+    public function test_an_unreachable_helper_leaves_the_case_pending_with_no_attempt_run_row_or_cap_use(string $message): void
+    {
+        Mail::fake();
+        $c = $this->makeCase();
+        $this->helper['throw'] = $message;
+
+        $this->runPass();
+        $this->runPass();
+
+        $case = $this->case($c['case']);
+        $this->assertSame('Pending', $case->firstpass_status);
+        $this->assertSame(0, (int) $case->firstpass_attempts);
+        $this->assertSame(FirstPassService::REASON_UNREACHABLE, $case->firstpass_error);
+        $this->assertSame(0, DB::table('support_ai_runs')->where('modid', $c['referrer']->id)->count());
+        $this->assertSame(0, $this->mailsFor($c['case']));
+        $this->assertCount(2, $this->helperRequests, 'asked again on each run');
+
+        // Past the max age the sweep keeps the plain reason rather than saying busy, and the mail goes.
+        DB::table('support_cases')->where('id', $c['case'])->update(['created_at' => now()->subMinutes(90)]);
+        $this->runPass();
+        $case = $this->case($c['case']);
+        $this->assertSame('Failed', $case->firstpass_status);
+        $this->assertSame(FirstPassService::REASON_UNREACHABLE, $case->firstpass_error);
+        $this->assertSame(1, $this->mailsFor($c['case']));
+        $this->assertStringContainsString('First pass skipped: The AI helper could not be reached', $this->bodyOf($this->sentMail($c['case'])));
+    }
+
+    public function test_a_helper_request_error_other_than_busy_or_refused_fails_at_once_with_no_run_row(): void
+    {
+        Mail::fake();
+        $c = $this->makeCase();
+        $this->helper = ['status' => 400, 'body' => ['error' => 'invalid request'], 'throw' => null];
+
+        $this->runPass();
+        $this->runPass();
+
+        $case = $this->case($c['case']);
+        $this->assertSame('Failed', $case->firstpass_status);
+        $this->assertSame(FirstPassService::REASON_FAILED, $case->firstpass_error);
+        $this->assertCount(1, $this->helperRequests, 'never retried');
+        $this->assertSame(0, DB::table('support_ai_runs')->where('modid', $c['referrer']->id)->count(), 'the model never ran');
+        $this->assertSame(1, $this->mailsFor($c['case']));
     }
 
     public function test_a_server_with_no_helper_secret_fails_at_once_with_the_not_set_up_reason(): void
@@ -698,12 +744,12 @@ class SupportFirstPassTest extends TestCase
         $this->assertCount(3, $this->helperRequests);
     }
 
-    public function test_connection_failures_count_against_the_daily_cap(): void
+    public function test_read_timeouts_count_against_the_daily_cap(): void
     {
         Mail::fake();
         config()->set('freegle.support.first_pass.per_referrer_per_day', 2);
         $referrer = $this->createTestUser();
-        $this->helper['throw'] = 'cURL error 7: Failed to connect';
+        $this->helper['throw'] = 'cURL error 28: Operation timed out after 330001 milliseconds';
         $a = $this->makeCase(['referrer' => $referrer]);
         $this->runPass();
         $this->runPass();
@@ -1086,6 +1132,9 @@ class SupportFirstPassTest extends TestCase
         $this->assertSame(0, DB::table('support_case_messages')->where('caseid', $oldHandled['case'])->count(), 'its thread goes with it');
         $this->assertNotNull($this->case($recentHandled['case']), 'handled recently is kept');
         $this->assertNull($this->case($recentHandled['case'])->brief, 'but its brief is over a year old');
+        $this->assertSame('Skipped', $this->case($recentHandled['case'])->firstpass_status, 'so the page does not show an empty first pass');
+        $this->assertSame('The first pass was cleared after a year', $this->case($recentHandled['case'])->firstpass_error);
+        $this->assertSame('Done', $this->case($fresh['case'])->firstpass_status);
         $this->assertNotNull($this->case($oldOpen['case']), 'an open case is never deleted');
         $this->assertNull($this->case($oldOpen['case'])->brief);
         $this->assertNotNull($this->case($fresh['case'])->brief);

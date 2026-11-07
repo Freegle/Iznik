@@ -25,9 +25,12 @@ test('agentOptions keeps reads inside the codebase and allows only the tools it 
 })
 
 test('agentOptions refuses Write, Edit, Bash and NotebookEdit, plus anything asked for', () => {
-  assert.deepStrictEqual(agentOptions(base()).disallowedTools, ['Write', 'Edit', 'Bash', 'NotebookEdit'])
-  const o = agentOptions({ ...base(), alsoDisallow: ['WebFetch', 'Task'] })
-  assert.deepStrictEqual(o.disallowedTools, ['Write', 'Edit', 'Bash', 'NotebookEdit', 'WebFetch', 'Task'])
+  const never = agentOptions(base()).disallowedTools
+  for (const t of ['Write', 'Edit', 'Bash', 'NotebookEdit', 'Agent', 'Task', 'Skill', 'ReadMcpResource', 'ListMcpResources', 'BashOutput', 'KillShell', 'TodoWrite', 'WebFetch', 'WebSearch']) {
+    assert.ok(never.includes(t), t)
+  }
+  const o = agentOptions({ ...base(), alsoDisallow: ['Other'] })
+  assert.ok(o.disallowedTools.includes('Other'))
   for (const t of o.disallowedTools) assert.ok(!o.allowedTools.includes(t))
 })
 
@@ -179,4 +182,32 @@ test('agentOptions always carries the confinement hook, even if extra passes hoo
   const hook = withHook(o)
   const res = await hook({ tool_name: 'Read', tool_input: { file_path: '/proc/self/environ' } })
   assert.strictEqual(res.hookSpecificOutput.permissionDecision, 'deny')
+})
+
+test('only Read, Grep and Glob exist as built-in tools', () => {
+  assert.deepStrictEqual(agentOptions(base()).tools, ['Read', 'Grep', 'Glob'])
+  assert.deepStrictEqual(agentOptions({ ...base(), extra: { outputFormat: { type: 'json_schema', schema: {} } } }).tools, ['Read', 'Grep', 'Glob'])
+})
+
+test('outsideCodebase refuses paths the CLI would expand: tilde and variables', () => {
+  const { base, code } = checkout()
+  try {
+    const refused = (tool, input) => assert.match(outsideCodebase(tool, input, code) || '', /limited to the code checkout/, JSON.stringify(input))
+    refused('Read', { file_path: '~/.claude/.credentials.json' })
+    refused('Read', { file_path: '~' })
+    refused('Read', { file_path: '~root/.ssh/id_rsa' })
+    refused('Grep', { pattern: 'x', path: '~/.claude' })
+    refused('Glob', { pattern: '*', path: '~/.claude' })
+    refused('Glob', { pattern: '~/.claude/*' })
+    refused('Read', { file_path: '$HOME/.claude/.credentials.json' })
+    refused('Read', { file_path: '${HOME}/.claude/.credentials.json' })
+    refused('Grep', { pattern: 'x', path: '$HOME' })
+    refused('Read', { file_path: '%USERPROFILE%/x' })
+    refused('Glob', { pattern: '$HOME/*' })
+    // A plain relative path is still fine, and a Grep pattern may hold a dollar sign.
+    assert.strictEqual(outsideCodebase('Read', { file_path: 'src/a.js' }, code), null)
+    assert.strictEqual(outsideCodebase('Grep', { pattern: 'foo$' }, code), null)
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true })
+  }
 })

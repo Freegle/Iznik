@@ -139,6 +139,23 @@ describe('ModSupportCaseList', () => {
     expect(wrapper.findAll('[data-testid="case-row"]')).toHaveLength(1)
   })
 
+  it('drops a response that arrives after the filter changed', async () => {
+    let releaseOpen
+    mockFetchCases.mockImplementationOnce(
+      () => new Promise((resolve) => (releaseOpen = resolve))
+    )
+    mockFetchCases.mockResolvedValueOnce([row(8, { status: 'Handled' })])
+    const wrapper = mountList()
+    await flushPromises()
+    await wrapper.find('[data-value="Handled"]').trigger('click')
+    await flushPromises()
+    releaseOpen([row(1), row(2)])
+    await flushPromises()
+    const rows = wrapper.findAll('[data-testid="case-row"]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].attributes('href')).toBe('/support/cases/8')
+  })
+
   it('says so when there are none, and when loading fails', async () => {
     mockFetchCases.mockResolvedValue([])
     let wrapper = mountList()

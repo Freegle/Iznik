@@ -5,6 +5,8 @@ table in `.claude-session.md` of the main checkout. Revised after an architectur
 
 ## Decisions that shape the code (settled by Edward, 2026-11-07 unless noted)
 
+> Superseded by the redesign section below: the first pass is now the helper's bounded agent, not facts by code plus one tool-less call. Read this for history only.
+
 - One bounded first pass per referral: facts gathered by CODE from the member's user dump, judgement
   from ONE tool-less model call. No tool loop, no review turn.
 - The first pass never sends anything to anyone. It writes a brief; the referral mail to support carries it.
@@ -32,6 +34,8 @@ table in `.claude-session.md` of the main checkout. Revised after an architectur
 - No member details, keys or secrets in commits, PR text, tests, logs or docs. Every new table has `id`.
 
 ## Decisions from the architecture review (reasons inline)
+
+> Superseded by the redesign section below: the first pass is now the helper's bounded agent, not facts by code plus one tool-less call. Decisions about facts by code or one tool-less call no longer apply; the rest stand.
 
 - **One case per (chat, referrer) while Open.** `support_cases.open_key = "<chatid>-<referrerid>"` while
   Open, NULL once Handled, with a unique index; set by code (MySQL refuses a stored generated column over
@@ -86,6 +90,8 @@ table in `.claude-session.md` of the main checkout. Revised after an architectur
 
 ## Brief JSON (contract between helper, batch, Go and ModTools; version 1)
 
+> Superseded by "Brief JSON, version 2" in the redesign section below. Version 1 is no longer produced.
+
 ```
 {
   "version": 1,
@@ -112,6 +118,8 @@ A section with nothing to say has `lines: []` and a `note` ("not collected", "no
 days", "not available"), never an empty silence.
 
 ## Helper request and response (`POST /internal/support-first-pass`)
+
+> Version 1 request. Superseded by the redesign section below, which adds `source.referredAt` and `recentCases` and drops the code-gathered facts.
 
 Request (from the batch):
 ```
@@ -256,10 +264,9 @@ worktree): `support_cases`, `support_case_messages`, `support_ai_runs.kind`. Rea
 - **Retention covers the run rows too**: FirstPass run rows lose their analysis and transcript after a
   year and go with their case; Open cases idle for two years are deleted.
 - **Replays are recorded as runs** (kind FirstPass, no asker), so their spend is visible.
-- **Not changed: the dump key is readable through /proc by the interactive helper agent**, which runs as
-  the same user. That agent already reads the same member data through its own read-only tools and the
-  database credentials, and has no tool that can send anything out, so the key adds no new reach.
-  Separating it would mean a second container or user for the first pass.
+- **The dump key is not readable by the interactive helper agent.** Reads (Read, Grep, Glob) are confined to the
+  code checkout by a PreToolUse hook that resolves symlinks and refuses `/proc`, `~`, `$` and `%` paths, and
+  the agent CLI gets an allowlisted environment without the dump keys.
 
 ## Redesign after Edward's review of a real brief (2026-11-07): a bounded investigation
 

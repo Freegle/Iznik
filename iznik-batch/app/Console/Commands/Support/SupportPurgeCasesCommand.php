@@ -53,7 +53,7 @@ class SupportPurgeCasesCommand extends Command
         do {
             $n = DB::table('support_cases')->whereNotNull('brief')
                 ->where('created_at', '<', now()->subYears(self::CLEAR_BRIEF_AFTER_YEARS))
-                ->limit(self::CHUNK)->update(['brief' => null, 'updated_at' => DB::raw('updated_at')]);
+                ->limit(self::CHUNK)->update(['brief' => null, 'firstpass_status' => 'Skipped', 'firstpass_error' => 'The first pass was cleared after a year', 'updated_at' => DB::raw('updated_at')]);
             $cleared += $n;
         } while ($n === self::CHUNK);
 

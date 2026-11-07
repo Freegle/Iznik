@@ -71,7 +71,7 @@ const quiet = () => {
 
 test('key mode sends the key and case in headers, never in the URL, and the dump is reused within the run', async () => {
   const restore = quiet()
-  const built = buildTools({ jwt: null, dumpKey: 'secret-key-value', caseId: 9, userId: 0, modId: 'first-pass', progress: () => {} })
+  const built = buildTools({ jwt: null, dumpKey: 'secret-key-value', caseId: 9, userId: 42, modId: 'first-pass', progress: () => {} })
   try {
     const calls = await withFetch(ok, async () => {
       const first = await handlerOf(built)({ userid: 42 })
@@ -92,7 +92,7 @@ test('key mode sends the key and case in headers, never in the URL, and the dump
 
 test('the key mode dump is not shared: another run with a login for the same member fetches its own', async () => {
   const restore = quiet()
-  const keyed = buildTools({ jwt: null, dumpKey: 'k', caseId: 1, userId: 0, progress: () => {} })
+  const keyed = buildTools({ jwt: null, dumpKey: 'k', caseId: 1, userId: 4242, progress: () => {} })
   const loggedIn = buildTools({ jwt: 'tok', userId: 0, progress: () => {} })
   try {
     const calls = await withFetch(ok, async () => {
@@ -104,7 +104,7 @@ test('the key mode dump is not shared: another run with a login for the same mem
     assert.ok(!('X-Dump-Key' in calls[1].init.headers))
 
     // And the other way round: a key run does not pick up a dump a login run cached.
-    const keyed2 = buildTools({ jwt: null, dumpKey: 'k', caseId: 1, userId: 0, progress: () => {} })
+    const keyed2 = buildTools({ jwt: null, dumpKey: 'k', caseId: 1, userId: 4242, progress: () => {} })
     const calls2 = await withFetch(ok, async () => {
       await handlerOf(keyed2)({ userid: 4242 })
     })
@@ -119,7 +119,7 @@ test('the key mode dump is not shared: another run with a login for the same mem
 
 test('cleanup deletes the private dump file', async () => {
   const restore = quiet()
-  const built = buildTools({ jwt: null, dumpKey: 'k', caseId: 1, userId: 0, progress: () => {} })
+  const built = buildTools({ jwt: null, dumpKey: 'k', caseId: 1, userId: 77, progress: () => {} })
   try {
     let file
     await withFetch(ok, async () => {
@@ -142,7 +142,7 @@ for (const status of [409, 403, 401]) {
   test(`a ${status} from the dump calls onDumpRefused with the status and the tool reports the error`, async () => {
     const restore = quiet()
     const seen = []
-    const built = buildTools({ jwt: null, dumpKey: 'k', caseId: 1, userId: 0, progress: () => {}, onDumpRefused: (s) => seen.push(s) })
+    const built = buildTools({ jwt: null, dumpKey: 'k', caseId: 1, userId: 5, progress: () => {}, onDumpRefused: (s) => seen.push(s) })
     try {
       await withFetch(
         () => ({ ok: false, status, text: async () => 'refused' }),
@@ -163,7 +163,7 @@ for (const status of [409, 403, 401]) {
 test('other failures (a 500) do not call onDumpRefused', async () => {
   const restore = quiet()
   const seen = []
-  const built = buildTools({ jwt: null, dumpKey: 'k', caseId: 1, userId: 0, progress: () => {}, onDumpRefused: (s) => seen.push(s) })
+  const built = buildTools({ jwt: null, dumpKey: 'k', caseId: 1, userId: 5, progress: () => {}, onDumpRefused: (s) => seen.push(s) })
   try {
     await withFetch(
       () => ({ ok: false, status: 500, text: async () => 'boom' }),
@@ -173,6 +173,39 @@ test('other failures (a 500) do not call onDumpRefused', async () => {
       }
     )
     assert.deepStrictEqual(seen, [])
+  } finally {
+    built.cleanup()
+    restore()
+  }
+})
+
+test('key mode refuses a member other than the one in the case, and fetches nothing', async () => {
+  const restore = quiet()
+  const built = buildTools({ jwt: null, dumpKey: 'k', caseId: 1, userId: 5, progress: () => {} })
+  try {
+    const calls = await withFetch(ok, async () => {
+      const other = await handlerOf(built)({ userid: 6 })
+      assert.ok(other.isError)
+      assert.match(other.content[0].text, /only look at the member in the case/)
+      const own = await handlerOf(built)({})
+      assert.ok(!own.isError, JSON.stringify(own))
+    })
+    assert.strictEqual(calls.length, 1)
+    assert.match(calls[0].url, /\/user\/5\/dump\?/)
+  } finally {
+    built.cleanup()
+    restore()
+  }
+})
+
+test('a login run may still look at any member', async () => {
+  const restore = quiet()
+  const built = buildTools({ jwt: 'tok', userId: 5, progress: () => {} })
+  try {
+    await withFetch(ok, async () => {
+      const res = await handlerOf(built)({ userid: 9 })
+      assert.ok(!res.isError, JSON.stringify(res))
+    })
   } finally {
     built.cleanup()
     restore()

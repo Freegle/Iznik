@@ -473,23 +473,25 @@ and what each person sees, is in [support-cases.md](support-cases.md). This sect
   domains (a name ending in a common top-level domain, with no scheme) and email addresses that are not
   Freegle's. A credit or usage-limit error that the SDK returns as an error result is read as `CREDIT`.
 - **Error codes.** A failure is a 502 whose body carries a `code`: `DEADLINE`, `CREDIT`, `MODEL`,
-  `TOO_MANY_STEPS`, `DUMP_LOCKDOWN`, `DUMP_AUTH` (the dump key is missing or refused), `DUMP` or `BAD_OUTPUT`. A refused key or a
+  `TOO_MANY_STEPS`, `DUMP_LOCKDOWN`, `DUMP_AUTH` (the dump key is missing or refused) or `BAD_OUTPUT`. A refused key or a
   lockdown stops the run at once; the agent does not work round it with other tools. `ux-internal.js`
   adds the code only when the route attached one, and the message is always the route's own fixed text,
   never upstream text. The batch turns each code into a plain reason.
 - **Dump key mode.** `fetchUserDump` in `tools.js` takes a `key`, sent as `X-Dump-Key` with the case id in
   `X-Freegle-Case`, never in the URL. The Go API accepts `USERDUMP_INTERNAL_KEY` by header only
   (`validDumpKey` in `iznik-server-go/userdump/userdump.go`) and puts the case in its log line. A lockdown
-  refuses it like any other download. The dump is private to the run: not put in or taken from the shared cache, reused if asked for twice, and deleted when the pass ends.
+  refuses it like any other download. The dump is private to the run: not put in or taken from the shared cache, reused if asked for twice, and deleted when the pass ends. The first pass may dump only the member in the case.
 - **The key is not in the agent's environment.** `agentEnv()` passes the agent's CLI an allowlist, not the
   helper's whole environment, and the dump keys are never in it. File reads (Read, Grep, Glob) go through a
   PreToolUse hook in `agent-options.js` for the interactive helper and the first pass alike. It resolves
   symlinks and refuses anything outside the code checkout, `/proc` included, so the key is no longer
-  readable that way. Hooks run whatever the permission mode, and the hook is set after any caller's options.
+  readable that way. Hooks run whatever the permission mode, and the hook is set after any caller's options. It also refuses paths starting with `~`, `$` or `%`, and
+  Read, Grep and Glob are the only built-in tools the agent has.
 - **The first pass has its own trust boundary.** The interactive prompt lets a volunteer's question direct
   the agent. A first pass has no volunteer and reads member text, so its prompt says only the system prompt
   directs it, everything else is data, a request for another member's details is itself the finding, and no
-  email, phone or postal address goes in the answer.
+  email, phone or postal address goes in the answer. Markdown images are stripped from the answer, and the
+  case page forbids images.
 - **It never sends anything.** The pass returns data. It has no mail tool, and the batch alone decides what
   is mailed. It is recorded in the audit trail as `first_pass`, with the case id.
 

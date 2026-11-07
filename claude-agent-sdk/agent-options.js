@@ -25,7 +25,11 @@ function agentEnv(env = process.env) {
 }
 
 const READ_ONLY_BUILTINS = ['Read', 'Grep', 'Glob']
-const NEVER = ['Write', 'Edit', 'Bash', 'NotebookEdit']
+// Refused by name as well as left out of the tools option, so a change to either alone does not open one.
+const NEVER = [
+  'Write', 'Edit', 'Bash', 'NotebookEdit', 'Agent', 'Task', 'Skill', 'ReadMcpResource', 'ListMcpResources',
+  'BashOutput', 'KillShell', 'TodoWrite', 'WebFetch', 'WebSearch',
+]
 
 // The real path of p (symlinks resolved), or of its nearest existing parent with the rest appended,
 // so a path that does not exist yet cannot be used to step outside through a link.
@@ -58,6 +62,12 @@ function outsideCodebase(toolName, input, codebase) {
     return r === root || r.startsWith(root + path.sep)
   }
   const i = input && typeof input === 'object' ? input : {}
+  // The CLI expands "~" to HOME and shell-style variables before it reads, so a path that starts with "~"
+  // or holds "$" or "%" can name a file this check cannot see. Refused outright, before the relative test.
+  const expands = (p) => typeof p === 'string' && (p.startsWith('~') || /[$%]/.test(p))
+  const candidates = [i.file_path, i.path]
+  if (toolName === 'Glob') candidates.push(i.pattern)
+  if (candidates.some(expands)) return `${toolName} is limited to the code checkout`
   const paths = []
   if (toolName === 'Read') paths.push(i.file_path || '')
   if ((toolName === 'Grep' || toolName === 'Glob') && i.path) paths.push(i.path)
@@ -98,6 +108,8 @@ function agentOptions({ model, systemPrompt, toolNames, mcpServer, codebase, max
     model,
     systemPrompt,
     mcpServers: { freegle: mcpServer },
+    // Only Read, Grep and Glob exist as built-in tools; everything else is absent, not just refused.
+    tools: [...READ_ONLY_BUILTINS],
     allowedTools: [...toolNames.map((n) => `mcp__freegle__${n}`), ...READ_ONLY_BUILTINS],
     // Read-only investigation; never let it try to edit or run anything.
     disallowedTools: [...NEVER, ...alsoDisallow],

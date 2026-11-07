@@ -27,6 +27,6 @@ class FirstPassFailure extends \RuntimeException
      */
     public function mayHaveSpent(): bool
     {
-        return ! in_array($this->failureCode, ['BUSY', 'NOT_SET_UP', 'REFUSED'], true);
+        return ! in_array($this->failureCode, ['BUSY', 'UNREACHABLE', 'REJECTED', 'NOT_SET_UP', 'REFUSED'], true);
     }
 }

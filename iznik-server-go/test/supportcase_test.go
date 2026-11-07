@@ -349,6 +349,11 @@ func TestSupportCaseReferrerViewLacksFirstPass(t *testing.T) {
 	assert.Equal(t, "Support", msg["role"])
 	assert.Equal(t, "Support says hello", msg["body"])
 	assert.Equal(t, "No", msg["draftused"], "whether a draft was used is first pass information")
+	for _, banned := range []string{"handledby", "brief", "classification", "firstpass_status"} {
+		_, present := msg[banned]
+		assert.False(t, present, "message must not carry "+banned)
+	}
+	assert.NotContains(t, string(raw), "handledby", "the referrer view names no handler")
 }
 
 func TestSupportCaseNonReferrerModeratorGets404(t *testing.T) {
@@ -698,4 +703,30 @@ func TestSupportAIRunsCarryKind(t *testing.T) {
 
 	_, raw = scCall(t, "GET", fmt.Sprintf("/api/supportai/runs/%d", id), token, nil)
 	assert.Equal(t, "FirstPass", scMap(t, raw)["kind"])
+}
+
+func TestSupportCaseRepeatReferralReasonReachesPendingFirstPass(t *testing.T) {
+	w := scSetup(t, "screpend")
+	caseid := scReferOK(t, w.modToken, w.chat, "first reason")
+	database.DBConn.Exec("UPDATE support_cases SET created_at = NOW() - INTERVAL 3 MINUTE WHERE id = ?", caseid)
+
+	// Pending: the first pass reads support_cases.reason, so it must now be the new reason.
+	assert.Equal(t, caseid, scReferOK(t, w.modToken, w.chat, "second reason"))
+	var reason string
+	database.DBConn.Raw("SELECT reason FROM support_cases WHERE id = ?", caseid).Row().Scan(&reason)
+	assert.Equal(t, "second reason", reason)
+
+	// A bare nudge keeps the reason.
+	scReferOK(t, w.modToken, w.chat, "")
+	database.DBConn.Raw("SELECT reason FROM support_cases WHERE id = ?", caseid).Row().Scan(&reason)
+	assert.Equal(t, "second reason", reason)
+
+	// Done: the brief stands, the reason is unchanged and the message carries the new one.
+	database.DBConn.Exec("UPDATE support_cases SET firstpass_status = 'Done' WHERE id = ?", caseid)
+	scReferOK(t, w.modToken, w.chat, "third reason")
+	database.DBConn.Raw("SELECT reason FROM support_cases WHERE id = ?", caseid).Row().Scan(&reason)
+	assert.Equal(t, "second reason", reason)
+	var msgs int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM support_case_messages WHERE caseid = ? AND body = 'Referred again: third reason'", caseid).Scan(&msgs)
+	assert.Equal(t, int64(1), msgs)
 }

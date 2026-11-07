@@ -73,7 +73,7 @@ for a case).
 The command runs every minute, `withoutOverlapping(25)` (`routes/console.php`). Each run:
 
 - **Sweeps first.** First pass off: every Pending case becomes Skipped, "The first pass is turned off",
-  and gets the plain mail. Pending for more than `max_age_minutes` (60): Failed, "The AI helper was busy".
+  and gets the plain mail. Pending for more than `max_age_minutes` (60): Failed, "The AI helper was busy", unless an earlier failure already left a reason, which is kept.
   Running for longer than the helper wait plus a grace period: Failed, "The first pass was interrupted".
   It never runs the model on a case older than the limit.
 - **Claims one case, runs it, then claims the next,** until none are Pending or `run_minutes` (10) has
@@ -97,6 +97,9 @@ The command runs every minute, `withoutOverlapping(25)` (`routes/console.php`). 
   `mailed_at` is claimed, and the claim is put back if spooling fails.
 - **A case whose chat is gone** (deleted, so `chatid` is NULL) is Skipped, "The chat is no longer there",
   and still mailed, with the reason and the case link but no chat link.
+- **Forgetting a member** clears their support briefs, case reasons, case thread bodies and AI run analysis
+  and transcripts.
+- **A backlog check** watches the referral mail, so a mail that is built but not sent is noticed.
 - **Never throws.** A case that cannot be run gets a plain reason and the plain mail.
 
 ## The fixed plain reasons
@@ -104,8 +107,9 @@ The command runs every minute, `withoutOverlapping(25)` (`routes/console.php`). 
 A case's `firstpass_error`, and the mail, carry one of the constants in `FirstPassService.php` and nothing
 else. Upstream error text is never stored. The helper's 502 codes map to them
 ([ai-support-helper.md](ai-support-helper.md)). The reasons: turned off, helper busy, out of credit, took
-too long, ran out of steps, data could not be read during a lockdown, member data not allowed on this server (missing or refused dump key), helper not set up on this server, daily limit reached,
-interrupted, helper failed, chat no longer there. A pass that could not run also records the pool state on the case, so credit
+too long, ran out of steps, data could not be read during a lockdown, helper not set up on this server (a missing or refused dump key shows as this), daily limit reached,
+interrupted, helper failed, chat no longer there, helper could not be reached (a helper that cannot be reached
+goes back to Pending without counting an attempt), and "The first pass was cleared after a year" (retention). A pass that could not run also records the pool state on the case, so credit
 never runs out silently.
 
 ## Who sees what

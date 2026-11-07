@@ -90,26 +90,34 @@ function statusVariant(status) {
   return status === 'Open' ? 'warning' : 'success'
 }
 
+// Bumped on every reload, so a response that arrives after the filter changed is dropped.
+let token = 0
+
 async function loadList() {
+  const mine = token
+  const status = filter.value
   loading.value = true
   error.value = ''
   try {
-    const params = { status: filter.value, limit: PAGE }
+    const params = { status, limit: PAGE }
     if (cases.value.length) {
       params.before = cases.value[cases.value.length - 1].id
     }
     const page = (await apiInstance.supportcases.fetchCases(params)) || []
+    if (mine !== token || status !== filter.value) return
     cases.value.push(...page)
     more.value = page.length === PAGE
   } catch (e) {
-    error.value = 'Could not load the cases.'
+    if (mine === token) error.value = 'Could not load the cases.'
   } finally {
-    loading.value = false
+    if (mine === token) loading.value = false
   }
 }
 
 function reloadList() {
+  token++
   cases.value = []
+  more.value = false
   loadList()
 }
 

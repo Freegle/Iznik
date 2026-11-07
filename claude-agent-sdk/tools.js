@@ -442,6 +442,9 @@ function buildTools(ctx) {
       try {
         const id = a.userid || ctx.userId
         if (!id) return err('No member selected/provided')
+        // The first pass (key, no login) may read only the member in its case: the key would otherwise
+        // open any member's dump.
+        if (!ctx.jwt && ctx.dumpKey && id !== ctx.userId) return err('In this run get_user_dump may only look at the member in the case')
         const since = a.since || '90d'
         // Audit every access, even a cache hit — the trail must stay complete.
         audit({ mod: ctx.modId, modEmail: ctx.modEmail, target: id, tool: 'get_user_dump', since })

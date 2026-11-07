@@ -3,8 +3,10 @@
 // moderator, and the thread of replies between them. Nothing here goes to the member.
 //
 // The two views are separate structs with explicit column lists on purpose. The referring moderator
-// must never receive the first pass (brief), the member, or who handled the case, so those fields are
-// not on the struct the moderator is served, rather than being blanked on a shared one.
+// must never receive the first pass (brief), the member, or the handledby field, so those fields are
+// not on the struct the moderator is served, rather than being blanked on a shared one. Messages
+// still carry their author, so a Support volunteer's reply shows that volunteer's name and id, as it
+// would between volunteers; only the case-level handledby is left out.
 package supportcase
 
 import (
