@@ -477,10 +477,11 @@ class UserManagementService
 
         // Support cases about this member: the brief and what the referrer said hold facts about them,
         // and so do the case thread and the first pass and helper runs written for them.
-        $caseIds = DB::table('support_cases')->where('userid', $userId)->pluck('id')->all();
-        foreach (array_chunk($caseIds, 500) as $chunk) {
-            DB::table('support_case_messages')->whereIn('caseid', $chunk)->update(['body' => '']);
-        }
+        // One UPDATE with a subquery, so it runs on the write node: a read node that is behind could miss
+        // a case created moments ago, and an erasure must not.
+        DB::table('support_case_messages')
+            ->whereIn('caseid', fn ($q) => $q->select('id')->from('support_cases')->where('userid', $userId))
+            ->update(['body' => '']);
         DB::table('support_cases')->where('userid', $userId)->update(['brief' => NULL, 'reason' => NULL]);
         DB::table('support_ai_runs')->where('userid', $userId)->update(['analysis' => NULL, 'transcript' => NULL]);
 
