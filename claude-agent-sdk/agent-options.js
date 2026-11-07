@@ -16,12 +16,27 @@ const ENV_ALLOW = /^(PATH|HOME|USER|LOGNAME|SHELL|LANG|LANGUAGE|TZ|TMPDIR|TERM|X
 // Named so a test can prove they never get through, whatever the pattern above says.
 const SECRET_ENV = ['USERDUMP_INTERNAL_KEY', 'USERDUMP_API_KEY']
 
+// The CLI retries a failed call for about three minutes by default. The broker answers 503 when no
+// account is free, so a volunteer waited that long for an error; two retries ride out a blip.
+const DEFAULT_MAX_RETRIES = '2'
+
 function agentEnv(env = process.env) {
   const out = {}
   for (const [k, v] of Object.entries(env)) {
     if (v !== undefined && ENV_ALLOW.test(k) && !SECRET_ENV.includes(k)) out[k] = v
   }
+  if (!out.CLAUDE_CODE_MAX_RETRIES) out.CLAUDE_CODE_MAX_RETRIES = DEFAULT_MAX_RETRIES
   return out
+}
+
+// How hard the model thinks. Nearly all of an investigation's time is the model's own thinking, so this
+// is the main lever on how long a volunteer waits. Medium is the default level for the current Opus.
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
+const DEFAULT_EFFORT = 'medium'
+
+function agentEffort(env = process.env) {
+  const level = String(env.SUPPORT_AI_EFFORT || '').trim().toLowerCase()
+  return EFFORT_LEVELS.includes(level) ? level : DEFAULT_EFFORT
 }
 
 const READ_ONLY_BUILTINS = ['Read', 'Grep', 'Glob']
@@ -118,10 +133,11 @@ function agentOptions({ model, systemPrompt, toolNames, mcpServer, codebase, max
     maxTurns,
     cwd: codebase,
     env: agentEnv(),
+    effort: agentEffort(),
     ...extra,
     // After extra, so nothing a caller passes can take the confinement away.
     hooks: { PreToolUse: [{ matcher: 'Read|Grep|Glob', hooks: [confineReadsHook(codebase)] }] },
   }
 }
 
-module.exports = { agentEnv, agentOptions, outsideCodebase, confineReadsHook, SECRET_ENV }
+module.exports = { agentEnv, agentEffort, agentOptions, outsideCodebase, confineReadsHook, SECRET_ENV }
