@@ -669,7 +669,7 @@ class SupportFirstPassTest extends TestCase
         $history = app(MailboxHistory::class);
 
         $this->assertInstanceOf(UnconfiguredMailboxHistory::class, $history);
-        $this->assertSame(['available' => false, 'reason' => 'not available: mailbox access is not set up yet', 'entries' => []], $history->forMember(5));
+        $this->assertSame(['available' => false, 'reason' => 'mailbox access is not set up yet', 'entries' => []], $history->forMember(5));
         $this->assertFalse($history->forMember(null)['available']);
     }
 

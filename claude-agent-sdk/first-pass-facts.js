@@ -10,6 +10,17 @@
  * no node_modules. device-summary.js is require-free too.
  */
 
+// Plain names for the dump tables a note can mention, so a volunteer never reads a table name.
+const TABLE_LABELS = {
+  users: 'the member record',
+  messages: 'posts',
+  chat_rooms: 'chats',
+  chat_messages: 'chat messages',
+  users_banned: 'bans',
+  merges: 'merges',
+  spam_users: 'the spam list',
+}
+
 const { parseSessionStart, dedupeSessions, buildDeviceSummary } = require('./device-summary')
 
 const FACT_TITLES = [
@@ -96,13 +107,14 @@ function buildFacts({ db, memberid, mailHistory, nowMs = Date.now() }) {
   const missing = (name) => {
     const s = states.get(name)
     if (s && s.status === 'done') return null
-    if (s && s.note) return `${name} not collected: ${clip(s.note, 100)}`
-    return `${name} not collected`
+    const label = TABLE_LABELS[name] || name
+    if (s && s.note) return `${label} not collected: ${clip(s.note, 100)}`
+    return `${label} not collected`
   }
 
   return [
     memberFact(db, memberid, missing),
-    postsAndChatsFact(db, missing, nowMs),
+    postsAndChatsFact(db, missing, nowMs, states),
     bansAndMergesFact(db, missing),
     deviceFact(db, states, nowMs),
     errorsFact(db, states),
@@ -135,7 +147,7 @@ function memberFact(db, memberid, missing) {
   return section('member', lines)
 }
 
-function postsAndChatsFact(db, missing, nowMs) {
+function postsAndChatsFact(db, missing, nowMs, states) {
   const lines = []
   const notes = []
   const cutoff = new Date(nowMs - 30 * 86400000).toISOString().slice(0, 19).replace('T', ' ')
@@ -165,11 +177,13 @@ function postsAndChatsFact(db, missing, nowMs) {
   }
 
   const gapChats = missing('chat_rooms')
+  let activeRooms = null
   if (gapChats) {
     notes.push(gapChats)
   } else {
     const byType = rows(db, 'SELECT chattype, COUNT(*) AS c FROM chat_rooms GROUP BY chattype')
     const active = rows(db, 'SELECT COUNT(*) AS c FROM chat_rooms WHERE datetime(latestmessage) >= datetime(?)', cutoff)
+    activeRooms = active && active[0] ? Number(active[0].c) : null
     if (byType) {
       lines.push(
         `Chats: ${byType.map((r) => `${r.c} ${r.chattype}`).join(', ') || 'none'}` +
@@ -180,8 +194,14 @@ function postsAndChatsFact(db, missing, nowMs) {
     }
   }
 
-  const gapMsg = missing('chat_messages')
-  if (gapMsg) {
+  // The dump only collects chat messages from rooms active in its window, and leaves the section
+  // out altogether when there are none, so a missing section after a good chat_rooms read means
+  // "none in the last 30 days", not "not collected".
+  const noActiveRooms = !states.has('chat_messages') && !gapChats && activeRooms === 0
+  const gapMsg = noActiveRooms ? null : missing('chat_messages')
+  if (noActiveRooms) {
+    notes.push('no chat messages in the last 30 days')
+  } else if (gapMsg) {
     notes.push(gapMsg)
   } else {
     const held = rows(

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-28
+last_reviewed: 2026-11-07
 owner: Freegle dev team
 covers:
   - docker-compose.yml
@@ -12,6 +12,8 @@ docker host they do not hold a subscription token themselves. They go through
 claude-sub-broker (a private repository of Edward's), which holds the Freegle
 accounts (Councils, Geeks, CTO, Chair, Anna) and spreads the work across whichever of them has
 quota left.
+
+The helper's automatic first pass on a referral to Support (see [../../developers/reference/support-cases.md](../../developers/reference/support-cases.md)) goes through the same gateway and spends the same pool as a volunteer's question. It adds no broker setting, and each pass records the pool state on its case.
 
 ## How it is wired
 

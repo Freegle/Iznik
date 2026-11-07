@@ -207,8 +207,11 @@ function checkDraftLinks(text, pagesDir) {
 
 // A model told not to use em dashes sometimes does anyway; the brief never carries one.
 const DASHES = new RegExp('\\s*[' + String.fromCharCode(0x2014, 0x2013) + ']\\s*', 'g')
+// Models writing JSON sometimes escape a line break twice, so the text arrives holding a
+// backslash followed by n; those become real line breaks.
 const plain = (v, max) =>
   String(v == null ? '' : v)
+    .replace(/\\r\\n|\\n/g, '\n')
     .replace(DASHES, ', ')
     .trim()
     .slice(0, max)
@@ -323,7 +326,8 @@ function defaultOpenDb(file) {
  */
 async function getDump({ request, key, signal, fetchDump }) {
   if (!request.memberid) return { file: null, notes: ['No single member to look up, so only the chat and the reason were available.'] }
-  if (!key) return { file: null, notes: ['The member data could not be read: no dump key is configured.'] }
+  // A member to look up but no key is a server set up wrongly, not a reason to pass on a thinner brief.
+  if (!key) throw fail('DUMP_AUTH')
 
   const attempts = [
     { include: 'db,loki,sentry', note: null },

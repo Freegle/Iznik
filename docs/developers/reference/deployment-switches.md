@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-05
+last_reviewed: 2026-11-07
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Support/EnvSetting.php
@@ -113,6 +113,11 @@ variables like every other Freegle setting.
 | `ux.prompts.helper_url` | `UX_HELPER_URL` | `http://ai-support-helper:3000` | Where `ux:prompt analyse` and `regroup` reach the helper. See [ux-member-surveys.md](ux-member-surveys.md). |
 | `ux.prompts.themes_timeout` | `UX_THEMES_TIMEOUT` | `660` | Seconds the batch waits for the coder. It must be longer than the helper's own limit of 10 minutes (`UX_THEMES_TIMEOUT_MS`), or the batch hangs up first, the helper stops at the disconnect and every retry fails the same way. |
 | `ux.prompts.internal_secret` | `UX_INTERNAL_SECRET` | empty | The shared secret the helper's internal routes ask for. Empty, `ux:prompt analyse` and `regroup` stop with "UX_INTERNAL_SECRET is not set" and the helper refuses every call. The same value must be in the helper's environment: see [ai-support-helper.md](ai-support-helper.md). |
+| `support.first_pass.enabled` | `SUPPORT_FIRST_PASS_ENABLED` | off | On, `support:first-pass` runs the AI first pass for each chat a moderator refers to Support and puts the brief in the referral mail. Off, the referral mail goes out at once without a brief and the case says "The first pass is turned off". Turning it on needs `UX_INTERNAL_SECRET` set on both the batch and the helper (as above), and `USERDUMP_INTERNAL_KEY` set to the same value on the helper and the Go API (`apiv2` and `apiv2-live`). Without the key the helper cannot read the member's data, so the pass uses the chat alone; with a wrong key the case fails with a plain reason. See [support-cases.md](support-cases.md). |
+| `support.first_pass.timeout` | `SUPPORT_FIRST_PASS_TIMEOUT` | `330` | Seconds the batch waits for the helper. The helper's own deadline (`FIRST_PASS_DEADLINE_MS`, 300000) must stay shorter. |
+| `support.first_pass.per_referrer_per_day` | `SUPPORT_FIRST_PASS_PER_REFERRER_PER_DAY` | `10` | Model passes one moderator can use a day. Beyond it the case gets the plain mail. |
+| `support.first_pass.max_age_minutes` | `SUPPORT_FIRST_PASS_MAX_AGE_MINUTES` | `60` | A case still waiting this long is never run late. It gets the plain mail. |
+| `support.first_pass.run_minutes` | `SUPPORT_FIRST_PASS_RUN_MINUTES` | `10` | One `support:first-pass` run stops claiming new cases after this long. |
 | `ux.prompts.privacy_cleared` | `UX_PRIVACY_CLEARED` | off | Only `1` or `true` opens it. Closed, `ux:prompt analyse` and `regroup` refuse to run, because members' written answers go to an AI service for coding. A person sets it, after checking that the public privacy wording covers that. See [ux-member-surveys.md](ux-member-surveys.md). |
 | `backup.database.alert_email` | `BACKUP_DB_ALERT_EMAIL` | `geek-alerts@ilovefreegle.org` | Where a failure is mailed. Plain text, no template, because this has to work when the database is unhappy. |
 

@@ -657,11 +657,11 @@ test('a null member runs chat-only without asking for a dump, and says "No singl
   assert.deepStrictEqual(t.audits[0].target, 0)
 })
 
-test('without a dump key the pass is chat-only and never calls the dump', async () => {
+test('without a dump key a pass about a member fails as DUMP_AUTH, never calling the dump or the model', async () => {
   const t = deps({ deps: { env: { FIRST_PASS_DEADLINE_MS: '5000', CODEBASE_DIR: '/nonexistent' } } })
-  const out = await runFirstPass(clean(), { deps: t.deps })
+  await assert.rejects(runFirstPass(clean(), { deps: t.deps }), (e) => e.code === 'DUMP_AUTH')
   assert.strictEqual(t.dump.calls.length, 0)
-  assert.match(out.brief.facts[0].note, /no dump key is configured/)
+  assert.strictEqual(t.calls.length, 0)
 })
 
 test('a dump that downloads but cannot be opened gives chat-only facts and is still unlinked', async () => {
@@ -741,4 +741,12 @@ test('the Express handler maps a first pass failure to 502 with its code, and su
     if (saved === undefined) delete process.env.UX_INTERNAL_SECRET
     else process.env.UX_INTERNAL_SECRET = saved
   }
+})
+
+test('a line break the model escaped twice arrives as a real line break, in the draft and the summary', async () => {
+  const doubled = { ...GOOD_ANSWER, summary: 'One.\\nTwo.', draft: { text: 'Hi,\\n\\nThanks.\\r\\nBye', facts_used: ['member'] } }
+  const out = await runFirstPass(clean(), { deps: deps({ turn: { structured: doubled } }).deps })
+  assert.strictEqual(out.brief.summary, 'One.\nTwo.')
+  assert.strictEqual(out.brief.draft.text, 'Hi,\n\nThanks.\nBye')
+  assert.ok(!out.brief.draft.text.includes('\\'), 'no backslash left in the draft')
 })

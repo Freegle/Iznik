@@ -122,9 +122,9 @@ test('a section the dump did not collect says so with its reason, and is not rep
   const facts = buildFacts({ db, memberid: 7, mailHistory: noMail, nowMs: NOW })
   const [member, posts, bans, device, errors] = facts
   assert.match(member.lines[0], /display name Sam E/)
-  assert.match(posts.note, /messages not collected/)
-  assert.match(posts.note, /chat_rooms not collected/)
-  assert.match(bans.note, /users_banned not collected/)
+  assert.match(posts.note, /posts not collected/)
+  assert.match(posts.note, /chats not collected/)
+  assert.match(bans.note, /bans not collected/)
   assert.match(device.note, /^not collected: logs loki timed out/)
   assert.match(errors.note, /error tracker not collected: no SENTRY_AUTH_TOKEN/)
   assert.match(errors.note, /logs not collected: loki timed out/)
@@ -170,4 +170,26 @@ test('lines are bounded: long text is clipped and a section is capped at twelve 
   const errors = buildFacts({ db, memberid: 7, mailHistory: noMail, nowMs: NOW })[4]
   assert.ok(errors.lines.length <= 12)
   assert.ok(errors.lines.every((l) => l.length <= 240))
+})
+
+test('with no chat active in the window the dump leaves chat messages out, and that reads as none, not as not collected', () => {
+  const sections = doneSections(['users', 'messages', 'chat_rooms', 'users_banned', 'merges', 'spam_users', 'loki_logs', 'sentry_issues'])
+  const rules = (activeCount) => fakeDb([
+    [/FROM _sections/, sections],
+    [/GROUP BY chattype/, [{ chattype: 'User2Mod', c: 1 }]],
+    [/FROM chat_rooms WHERE datetime/, [{ c: activeCount }]],
+  ])
+  const quiet = buildFacts({ db: rules(0), memberid: 7, mailHistory: noMail, nowMs: NOW })[1]
+  assert.match(quiet.note, /no chat messages in the last 30 days/)
+  assert.doesNotMatch(quiet.note, /not collected/)
+
+  // A room was active, so a missing chat messages section really was not collected.
+  const busy = buildFacts({ db: rules(2), memberid: 7, mailHistory: noMail, nowMs: NOW })[1]
+  assert.match(busy.note, /chat messages not collected/)
+})
+
+test('a note never shows a raw table name', () => {
+  const facts = buildFacts({ db: fakeDb([[/FROM _sections/, []]]), memberid: 7, mailHistory: noMail, nowMs: NOW })
+  const notes = facts.map((f) => f.note || '').join(' ')
+  assert.doesNotMatch(notes, /chat_rooms|chat_messages|users_banned|spam_users/)
 })

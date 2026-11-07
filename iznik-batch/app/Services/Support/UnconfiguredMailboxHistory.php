@@ -7,7 +7,7 @@ namespace App\Services\Support;
  */
 class UnconfiguredMailboxHistory implements MailboxHistory
 {
-    public const REASON = 'not available: mailbox access is not set up yet';
+    public const REASON = 'mailbox access is not set up yet';
 
     public function forMember(?int $memberId): array
     {
