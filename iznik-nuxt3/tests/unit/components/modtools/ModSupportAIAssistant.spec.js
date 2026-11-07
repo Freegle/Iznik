@@ -407,6 +407,38 @@ describe('ModSupportAIAssistant', () => {
     })
   })
 
+  describe('fetching the member snapshot early', () => {
+    it('asks the helper to start the snapshot as soon as a member is picked', async () => {
+      const wrapper = mountComponent()
+
+      wrapper.vm.selectUser({ id: 4242, displayname: 'Test User' })
+      await flushPromises()
+
+      const call = mockFetch.mock.calls.find(([url]) =>
+        String(url).endsWith('/api/prefetch-dump')
+      )
+      expect(call).toBeTruthy()
+      expect(call[1].method).toBe('POST')
+      expect(call[1].headers.Authorization).toBe('Bearer test-jwt-123')
+      expect(JSON.parse(call[1].body)).toEqual({ userId: 4242 })
+    })
+
+    it('carries on as normal when the early fetch fails', async () => {
+      mockFetch.mockImplementation((url) =>
+        String(url).endsWith('/api/prefetch-dump')
+          ? Promise.reject(new Error('offline'))
+          : Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
+      )
+      const wrapper = mountComponent()
+
+      wrapper.vm.selectUser({ id: 4242 })
+      await flushPromises()
+
+      expect(wrapper.vm.selectedUser.id).toBe(4242)
+      expect(wrapper.vm.deviceError).toBe('')
+    })
+  })
+
   describe('query input', () => {
     it('shows query textarea after user is selected', async () => {
       const wrapper = mountComponent()

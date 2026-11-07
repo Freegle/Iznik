@@ -281,7 +281,7 @@ app.post('/api/log-analysis', express.json({ limit: '20mb' }), async (req, res) 
 // full-text scans that time out against prod. No Anthropic cost; Support/Admin-
 // gated and audited.
 // ---------------------------------------------------------------------------
-const { lokiQuery, audit, fetchUserDump } = require('./tools')
+const { lokiQuery, audit, fetchUserDump, prefetchDump } = require('./tools')
 const { parseSessionStart, dedupeSessions, buildDeviceSummary } = require('./device-summary')
 
 // The deployed web/app version to compare a member's loaded version against, so
@@ -296,6 +296,24 @@ function currentMobileVersion() {
     return null
   }
 }
+
+// Start fetching the member's dump as soon as the volunteer picks them, so it is ready, or nearly, when
+// they ask (see prefetchDump). The answer does not wait for the download.
+app.post('/api/prefetch-dump', express.json({ limit: '1kb' }), async (req, res) => {
+  const mod = await verifyModerator(req)
+  if (!mod) {
+    return res.status(403).json({ error: 'FORBIDDEN', message: 'Support or Admin authentication required.' })
+  }
+  const userId = parseInt(req.body && req.body.userId, 10)
+  if (!userId || userId < 1) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'userId is required' })
+  }
+  // Header only, never the URL, as for /api/log-analysis.
+  const jwt = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim()
+  audit({ mod: mod.id, modEmail: mod.email, target: userId, tool: 'prefetch_user_dump', since: '90d' })
+  prefetchDump({ userId, jwt })
+  res.status(202).json({ started: true })
+})
 
 app.get('/api/device-summary', async (req, res) => {
   const mod = await verifyModerator(req)

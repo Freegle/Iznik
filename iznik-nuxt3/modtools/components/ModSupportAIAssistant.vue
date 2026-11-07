@@ -724,6 +724,7 @@ function selectUser(user) {
   userSearch.value = ''
   // Fetch the device summary up front so support sees what the member is on.
   loadDeviceSummary(user.id)
+  prefetchDump(user.id)
   // Focus the query input after Vue updates the DOM
   nextTick(() => {
     const textarea = document.querySelector('.log-analysis-container textarea')
@@ -753,6 +754,23 @@ function changeUser() {
   referralRefs.value = []
   takeScreenshots()
   showReferralModal.value = false
+}
+
+// Ask the helper to start fetching the member's snapshot now. Nearly every
+// investigation starts with it and a big member's takes minutes, so it can
+// download while the question is typed. Best effort: if this fails, the
+// helper fetches it during the investigation as before.
+function prefetchDump(userId) {
+  if (!userId || !aiHelperReachable()) return
+  const jwt = useAuthStore().auth?.jwt
+  fetch(`${AI_SUPPORT_URL}/api/prefetch-dump`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+    },
+    body: JSON.stringify({ userId }),
+  }).catch(() => {})
 }
 
 // Fetch the recent-device summary for a member from the AI support helper.
