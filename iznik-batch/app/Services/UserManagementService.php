@@ -477,8 +477,8 @@ class UserManagementService
 
         // Support cases about this member: the brief and what the referrer said hold facts about them,
         // and so do the case thread and the first pass and helper runs written for them.
-        // One UPDATE with a subquery, so it runs on the write node: a read node that is behind could miss
-        // a case created moments ago, and an erasure must not.
+        // One UPDATE with a subquery, so the erasure reads nothing through the read connection and depends
+        // only on the node it writes to.
         DB::table('support_case_messages')
             ->whereIn('caseid', fn ($q) => $q->select('id')->from('support_cases')->where('userid', $userId))
             ->update(['body' => '']);

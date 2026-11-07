@@ -1924,7 +1924,7 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64,
 			// While the first pass has not run it reads support_cases.reason, so a new reason
 			// replaces the old one there. After it has run the brief stands and the message carries it.
 			if reason != "" {
-				return tx.Exec("UPDATE support_cases SET reason = ? WHERE id = ? AND firstpass_status = 'Pending'", reason, existing).Error
+				return tx.Table("support_cases").Where("id = ? AND firstpass_status = ?", existing, "Pending").Update("reason", reason).Error
 			}
 			return nil
 		}); err != nil {
