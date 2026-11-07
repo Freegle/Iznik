@@ -1858,9 +1858,21 @@ func TestReferToSupport(t *testing.T) {
 	assert.Equal(t, float64(0), result["ret"])
 	assert.Equal(t, "Success", result["status"])
 
+	// A new referral is a case row, not a background task: the case is the queue for the first pass.
+	caseid := uint64(result["caseid"].(float64))
+	assert.Greater(t, caseid, uint64(0))
+	t.Cleanup(func() { cleanupSupportCase(caseid) })
 	var taskCount int64
 	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'refer_to_support' AND JSON_EXTRACT(data, '$.chatid') = ?", chatid).Scan(&taskCount)
-	assert.Greater(t, taskCount, int64(0))
+	assert.Equal(t, int64(0), taskCount)
+
+	var status, fp string
+	var referrer, member uint64
+	db.Raw("SELECT status, firstpass_status, referrerid, userid FROM support_cases WHERE id = ?", caseid).Row().Scan(&status, &fp, &referrer, &member)
+	assert.Equal(t, "Open", status)
+	assert.Equal(t, "Pending", fp)
+	assert.Equal(t, user1ID, referrer)
+	assert.Equal(t, user2ID, member, "a member-to-member chat is about the other participant")
 }
 
 func TestReferToSupportNotMember(t *testing.T) {
@@ -1901,9 +1913,15 @@ func TestReferToSupportByGroupModerator(t *testing.T) {
 	resp, _ := getApp().Test(request)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
-	var taskCount int64
-	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'refer_to_support' AND JSON_EXTRACT(data, '$.chatid') = ? AND JSON_EXTRACT(data, '$.userid') = ?", chatid, modID).Scan(&taskCount)
-	assert.Equal(t, int64(1), taskCount, "the referral must be queued under the moderator who asked")
+	var out map[string]interface{}
+	json2.NewDecoder(resp.Body).Decode(&out)
+	caseid := uint64(out["caseid"].(float64))
+	t.Cleanup(func() { cleanupSupportCase(caseid) })
+
+	var referrer, member uint64
+	db.Raw("SELECT referrerid, userid FROM support_cases WHERE id = ?", caseid).Row().Scan(&referrer, &member)
+	assert.Equal(t, modID, referrer, "the referral must be recorded under the moderator who asked")
+	assert.Equal(t, memberID, member)
 }
 
 // A moderator of some other community, whose members are not in this chat, still may not.

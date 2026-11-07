@@ -23,6 +23,7 @@ const cors = require('cors')
 const { v4: uuidv4 } = require('uuid')
 const { execSync } = require('child_process')
 const fs = require('fs')
+const path = require('path')
 const { preferSubscriptionToken } = require('./auth')
 const { syncCodebase } = require('./codebase')
 
@@ -260,7 +261,7 @@ app.post('/api/log-analysis', express.json({ limit: '20mb' }), async (req, res) 
 // full-text scans that time out against prod. No Anthropic cost; Support/Admin-
 // gated and audited.
 // ---------------------------------------------------------------------------
-const { lokiQuery, audit } = require('./tools')
+const { lokiQuery, audit, fetchUserDump } = require('./tools')
 const { parseSessionStart, dedupeSessions, buildDeviceSummary } = require('./device-summary')
 
 // The deployed web/app version to compare a member's loaded version against, so
@@ -490,6 +491,24 @@ app.post(
     clean: cleanGroupsRequest,
     run: (request, { signal }) => generateGroups({ ...request, signal }),
     summary: (result, request) => `problems=${request.problems.length} assigned=${result.assignments.length}`,
+  })
+)
+
+// The support first pass: one bounded run per referral, asked by the batch (support:first-pass). The
+// dump is fetched with USERDUMP_INTERNAL_KEY, which stays out of the interactive agent's environment.
+// See first-pass.js and docs/developers/reference/ai-support-helper.md.
+const { cleanFirstPassRequest, runFirstPass } = require('./first-pass')
+
+app.post(
+  '/internal/support-first-pass',
+  internalGate,
+  express.json({ limit: '20mb' }),
+  internalHandler({
+    tag: 'SupportFirstPass',
+    clean: cleanFirstPassRequest,
+    run: (request, { signal }) => runFirstPass(request, { signal, deps: { audit, fetchDump: fetchUserDump, pagesDir: path.join(CODEBASE_DIR, 'iznik-nuxt3', 'pages') } }),
+    summary: (result, request) =>
+      `case=${request.caseid} classification=${result.brief.classification} confidence=${result.brief.confidence.level} images=${result.brief.images.sent}`,
   })
 )
 

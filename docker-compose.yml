@@ -691,6 +691,12 @@ services:
       # Shared secret the /internal routes require, which the batch presents too. Unset, the
       # helper refuses every internal call.
       - UX_INTERNAL_SECRET=${UX_INTERNAL_SECRET:-}
+      # The support first pass: a dedicated key for fetching a member's dump (never the partner's
+      # USERDUMP_API_KEY), the model it uses (falls back to SUPPORT_AI_MODEL), and the one deadline
+      # in milliseconds that covers the dump and the model together.
+      - USERDUMP_INTERNAL_KEY=${USERDUMP_INTERNAL_KEY:-}
+      - FIRST_PASS_MODEL=${FIRST_PASS_MODEL:-}
+      - FIRST_PASS_DEADLINE_MS=${FIRST_PASS_DEADLINE_MS:-300000}
     volumes:
       # Session mode (testing) ONLY: mount JUST the Claude OAuth credential read-only,
       # NOT the whole ~/.claude (which holds memory/transcripts/project notes). This
@@ -850,6 +856,8 @@ services:
       - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
       # Third-party API key allowing data-dump access without a Support/Admin login (blank = disabled)
       - USERDUMP_API_KEY=${USERDUMP_API_KEY:-}
+      # Dedicated key for the support first pass, accepted in the X-Dump-Key header only (blank = disabled)
+      - USERDUMP_INTERNAL_KEY=${USERDUMP_INTERNAL_KEY:-}
       # Allowed domains for email tracking redirects
       - USER_SITE=www.ilovefreegle.org
       - IMAGE_DOMAIN=images.ilovefreegle.org
@@ -1058,6 +1066,8 @@ services:
       - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
       # Third-party API key allowing data-dump access without a Support/Admin login (blank = disabled)
       - USERDUMP_API_KEY=${USERDUMP_API_KEY:-}
+      # Dedicated key for the support first pass, accepted in the X-Dump-Key header only (blank = disabled)
+      - USERDUMP_INTERNAL_KEY=${USERDUMP_INTERNAL_KEY:-}
       - USER_SITE=www.ilovefreegle.org
       - IMAGE_DOMAIN=images.ilovefreegle.org
       - GROUP_DOMAIN=groups.ilovefreegle.org

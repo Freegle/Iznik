@@ -222,7 +222,9 @@ function internalHandler({ tag, clean, run, summary }) {
         return res.status(429).json({ error: 'BUSY', message: error.message })
       }
       console.error(`[${tag}] FAILED:`, error.message)
-      res.status(502).json({ error: error.message })
+      // A route may attach a short code (error.code) the batch maps to a fixed reason; the message of
+      // such an error is always one of the route's own fixed texts, never upstream text.
+      res.status(502).json(error && error.code ? { error: error.message, code: error.code } : { error: error.message })
     }
   }
 }

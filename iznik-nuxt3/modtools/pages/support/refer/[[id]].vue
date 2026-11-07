@@ -7,6 +7,16 @@
       <NoticeMessage v-if="notfound" variant="warning">
         Chat {{ id }} not found
       </NoticeMessage>
+      <NoticeMessage
+        v-if="latestCase"
+        variant="info"
+        data-test="refer-case-link"
+      >
+        This chat has been referred to Support.
+        <nuxt-link :to="'/support/cases/' + latestCase.id">
+          See case {{ latestCase.id }}
+        </nuxt-link>
+      </NoticeMessage>
       <ModChatModal v-if="chat" :id="id" ref="modChatModal" :pov="pov" />
     </div>
     <NoticeMessage v-else variant="warning">
@@ -21,6 +31,7 @@ import { useRoute } from '#imports'
 import { useChatStore } from '~/stores/chat'
 import { useMessageStore } from '~/stores/message'
 import { useMe } from '~/composables/useMe'
+import api from '~/api'
 
 // Stores
 const chatStore = useChatStore()
@@ -38,6 +49,7 @@ const modChatModal = ref(null)
 // Local state (formerly data())
 const id = ref('id' in route.params ? parseInt(route.params.id) : 0)
 const notfound = ref(false)
+const latestCase = ref(null)
 const chat = ref(null)
 const pov = ref(null)
 
@@ -48,6 +60,16 @@ onMounted(async () => {
 
   if (!id.value) {
     return
+  }
+
+  // The newest case for this chat, if there is one. Not finding it never blocks the chat.
+  try {
+    const cases = await api(useRuntimeConfig()).supportcases.fetchCases({
+      chatid: id.value,
+    })
+    latestCase.value = Array.isArray(cases) && cases.length ? cases[0] : null
+  } catch (e) {
+    latestCase.value = null
   }
 
   await chatStore.fetchChat(id.value)

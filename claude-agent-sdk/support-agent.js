@@ -15,6 +15,7 @@ const path = require('path')
 const { systemPrompt, reviewPrompt, hasSuggestedReply } = require('./prompt')
 const { buildPrompt } = require('./images')
 const { withLinkWarning } = require('./links')
+const { agentEnv } = require('./first-pass')
 const { subscriptionToken, fetchQuota, quotaFields, transcriptEntries, serialiseTranscript, recordRun } = require('./run-record')
 // Where runs are recorded: the same Go API that verifies the caller.
 const API_URL = process.env.API_URL || FREEGLE_API_URL
@@ -66,6 +67,8 @@ async function runSupportQuery({ query: userQuery, userId, jwt, agentSessionId, 
     // give it real headroom. Tunable via SUPPORT_AI_MAX_TURNS.
     maxTurns: Number(process.env.SUPPORT_AI_MAX_TURNS || 80),
     cwd: CODEBASE,
+    // The first pass's dump key lives in this process's environment; the agent's CLI must not inherit it.
+    env: agentEnv(),
   }
   if (agentSessionId) options.resume = agentSessionId
 

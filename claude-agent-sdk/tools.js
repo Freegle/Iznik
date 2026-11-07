@@ -251,10 +251,19 @@ const API_URL = process.env.API_URL || 'http://apiv2.localhost:8192'
 // raw format goes silent for the whole build, which is exactly how big dumps
 // died: HAProxy cut them at 50s, the model retried, and the retries piled
 // more concurrent builds onto the server.
-async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,sentry', onProgress }) {
-  const url = `${API_URL}/api/modtools/user/${userId}/dump?format=framed&include=${encodeURIComponent(
-    include
-  )}&since=${encodeURIComponent(since)}&jwt=${encodeURIComponent(jwt || '')}`
+//
+// Key mode (the support first pass, which has no moderator session): pass `key` and the dump is
+// requested with the key in the X-Dump-Key header and the case id in X-Freegle-Case, never in the URL,
+// so it cannot reach an access log. `signal` stops the fetch when the caller's deadline passes. A refused
+// dump throws an error carrying `status`.
+async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,sentry', onProgress, key, caseId, signal }) {
+  const base = `${API_URL}/api/modtools/user/${userId}/dump?format=framed&include=${encodeURIComponent(include)}&since=${encodeURIComponent(since)}`
+  const url = key ? base : `${base}&jwt=${encodeURIComponent(jwt || '')}`
+  const headers = { 'accept-encoding': 'identity' }
+  if (key) {
+    headers['X-Dump-Key'] = key
+    if (caseId) headers['X-Freegle-Case'] = String(caseId)
+  }
 
   // Inactivity-based abort, not a fixed overall deadline: a healthy framed
   // dump is never silent for long, while total build time legitimately varies
@@ -266,6 +275,11 @@ async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,se
     idleTimer = setTimeout(() => ctrl.abort(new Error('dump stalled: no frame for 90s')), 90000)
   }
   armIdle()
+  const onCallerAbort = () => ctrl.abort(signal.reason || new Error('dump aborted'))
+  if (signal) {
+    if (signal.aborted) onCallerAbort()
+    else signal.addEventListener('abort', onCallerAbort, { once: true })
+  }
 
   try {
     // identity: undici advertises gzip by default, and any compression layer
@@ -273,8 +287,12 @@ async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,se
     // until the build completes - exactly the LB-timeout failure the framed
     // protocol exists to prevent. The SQLite payload is worth compressing one
     // day, but only via a layer proven to flush per frame.
-    const res = await fetch(url, { signal: ctrl.signal, headers: { 'accept-encoding': 'identity' } })
-    if (!res.ok) throw new Error(`dump ${res.status}: ${(await res.text()).slice(0, 200)}`)
+    const res = await fetch(url, { signal: ctrl.signal, headers })
+    if (!res.ok) {
+      const refused = new Error(`dump ${res.status}: ${(await res.text()).slice(0, 200)}`)
+      refused.status = res.status
+      throw refused
+    }
 
     const crypto = require('crypto')
     const hash = crypto.createHash('sha256')
@@ -321,11 +339,14 @@ async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,se
       throw new Error('dump checksum mismatch')
     }
 
-    const file = path.join(os.tmpdir(), `dump-${userId}-${process.pid}-${data.length}.sqlite`)
+    // Key-mode files get their own name so a first pass never overwrites, or unlinks, the file an
+    // interactive session has cached for the same member.
+    const file = path.join(os.tmpdir(), `${key ? `fp-${crypto.randomBytes(4).toString('hex')}-` : ''}dump-${userId}-${process.pid}-${data.length}.sqlite`)
     fs.writeFileSync(file, data, { mode: 0o600 }) // member PII snapshot — owner-only
     return file
   } finally {
     clearTimeout(idleTimer)
+    if (signal) signal.removeEventListener('abort', onCallerAbort)
   }
 }
 

@@ -178,7 +178,7 @@ The batch maps outcomes to these plain reasons (and nothing else) for `firstpass
      level, summary (first 200 chars), firstpass_status, message count, last activity.
    - `GET /supportcases/:id` Support/Admin: full (brief, run id, firstpass status and error, messages,
      member, referrer). Referrer (who can still see the chat): `{id, status, created, chatid, reason,
-     messages}` (no firstpass fields at all)` from an explicit struct and
+     messages}`, with no firstpass fields at all, from an explicit struct and
      column list. Anyone else: 404.
    - `GET /supportcases?chatid=N` (Support/Admin): newest case for a chat, for the old refer page.
    - `POST /supportcases/:id/messages {body, draftused?}` body 1..10000; role per the rule above; queues

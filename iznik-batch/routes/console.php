@@ -694,6 +694,23 @@ Schedule::command('purge:chats')
     ->appendOutputTo(cronLog('purge:chats'))
     ->runInBackground();
 
+// Support case first pass: runs the AI first pass for referred chats and mails Support. Every
+// minute, because the case row is the queue and a referral should reach Support promptly. One
+// run lasts up to ten minutes, so withoutOverlapping is longer than that.
+Schedule::command('support:first-pass')
+    ->everyMinute()
+    ->withoutOverlapping(15)
+    ->appendOutputTo(cronLog('support:first-pass'))
+    ->runInBackground();
+
+// Retention for support cases (2 years for handled cases, 1 year for briefs). 02:40 is clear of
+// the backup drain window.
+Schedule::command('support:purge-cases')
+    ->dailyAt('02:40')
+    ->withoutOverlapping(60)
+    ->appendOutputTo(cronLog('support:purge-cases'))
+    ->runInBackground();
+
 // Daily log/bounce/likes purge.
 // V1: cron/purge_logs.php
 Schedule::command('purge:logs')
