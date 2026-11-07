@@ -237,3 +237,26 @@ worktree): `support_cases`, `support_case_messages`, `support_ai_runs.kind`. Rea
   separate case.
 - Never edit files outside your area; never run setup-test-database.sh; never touch the main checkout or
   main stack; never `docker cp` into the batch container; do not commit (the parent commits).
+
+## Decisions from the adversarial review (2026-11-07)
+
+- **Only a moderator may refer a chat, and not a Group chat** (Moderator, Support or Admin systemrole, and able to see the
+  chat). Reason: a referral now opens a case and spends a model pass, and a case lets its referrer mail
+  Support; the button has only ever been in ModTools, so no member path is lost. Case messages are capped
+  at 10 per author per case per hour.
+- **A failure where the helper answered is final.** Only a helper that never answered is retried (up to
+  3 times). Reason: a deadline, a bad answer or an out-of-credit error happens again a minute later and
+  re-spends the model and the member's dump each time.
+- **The dump has its own budget inside the deadline** (full 120s, database only 60s, then chat only),
+  so a slow dump gives a thinner brief rather than a failed pass.
+- **A brief is reused only when the new referral asks nothing new**: no reason or the same reason, and no
+  newer visible chat message. Reason: a brief written for another question or an older chat misleads.
+- **The referral mail is built before mailed_at is claimed, and finished cases are mailed after each
+  case**, not at the end of the run. A case whose chat is gone is Skipped and still mailed.
+- **Retention covers the run rows too**: FirstPass run rows lose their analysis and transcript after a
+  year and go with their case; Open cases idle for two years are deleted.
+- **Replays are recorded as runs** (kind FirstPass, no asker), so their spend is visible.
+- **Not changed: the dump key is readable through /proc by the interactive helper agent**, which runs as
+  the same user. That agent already reads the same member data through its own read-only tools and the
+  database credentials, and has no tool that can send anything out, so the key adds no new reach.
+  Separating it would mean a second container or user for the first pass.

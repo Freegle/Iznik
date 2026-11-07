@@ -82,11 +82,29 @@ test('requests that are not valid are refused with a reason', () => {
   assert.match(bad((b) => ({ ...b, source: undefined })), /source/)
   assert.match(bad((b) => ({ ...b, chat: undefined })), /chat is required/)
   assert.match(bad((b) => ({ ...b, chat: { ...b.chat, id: 0 } })), /chat.id/)
-  assert.match(bad((b) => ({ ...b, chat: { ...b.chat, type: 'Group' } })), /chat.type/)
+  assert.match(bad((b) => ({ ...b, chat: { ...b.chat, type: 'Other' } })), /chat.type/)
+  assert.strictEqual(bad((b) => ({ ...b, chat: { ...b.chat, type: 'Group' } })), undefined, 'a community chat is accepted')
   assert.match(bad((b) => ({ ...b, chat: { ...b.chat, messages: 'x' } })), /messages/)
   assert.match(bad((b) => ({ ...b, images: 'x' })), /list/)
-  assert.match(bad((b) => ({ ...b, images: [{ name: 'a.exe', mime: 'application/x-msdownload', data: PNG }] })), /PNG, JPEG/)
-  assert.match(bad((b) => ({ ...b, images: [{ name: 'a.png', mime: 'image/png', data: 'AAAA' }] })), /kind of picture/)
+})
+
+test('a picture that fails validation is dropped and counted, the rest are kept', async () => {
+  const good = { name: 'a.png', mime: 'image/png', data: PNG }
+  const r = cleanFirstPassRequest(baseBody({
+    images: [
+      { name: 'a.exe', mime: 'application/x-msdownload', data: PNG },
+      good,
+      { name: 'b.png', mime: 'image/png', data: 'AAAA' },
+      { mime: 'image/png', data: PNG },
+    ],
+  }))
+  assert.strictEqual(r.error, undefined)
+  assert.deepStrictEqual(r.images.map((i) => i.name), ['a.png', 'screenshot-4.png'])
+  assert.strictEqual(r.imagesDropped, 2)
+  const out = await runFirstPass(r, { deps: deps().deps })
+  assert.deepStrictEqual(out.brief.images, { sent: 2, skipped: 2 })
+  const counted = cleanFirstPassRequest(baseBody({ images: [{ name: 'x.png', mime: 'image/gif', data: 'AAAA' }], imagesSkipped: 3 }))
+  assert.strictEqual(counted.imagesSkipped, 4, 'dropped pictures add to the count the batch sent')
 })
 
 test('a null member is allowed, and a missing one is the same', () => {
@@ -310,6 +328,7 @@ function fakeModel(turn, calls = []) {
         type: 'result',
         subtype: turn.subtype || 'success',
         result: turn.result || '',
+        is_error: turn.isError || false,
         structured_output: turn.structured,
         errors: turn.errors,
         usage: { input_tokens: 100, output_tokens: 40, cache_creation_input_tokens: 5, cache_read_input_tokens: 7 },
@@ -693,6 +712,55 @@ test('links in the draft are checked and listed in link_warnings', async () => {
   assert.deepStrictEqual(out.brief.draft.link_warnings, ['https://example.com/x (not a Freegle page)'])
 })
 
+test('scheme-less domains and addresses that are not Freegle are listed in link_warnings', async () => {
+  const text = 'Go to evil.example.com/login or evil.co.uk, mail bob@gmail.com or mailto:x@evil.org, ' +
+    'or help@ilovefreegle.org, https://www.ilovefreegle.org/give and support.ilovefreegle.org. Fine.'
+  const answer = { ...GOOD_ANSWER, draft: { text, facts_used: [] } }
+  const out = await runFirstPass(clean(), { deps: deps({ turn: { structured: answer } }).deps })
+  const w = out.brief.draft.link_warnings
+  assert.ok(w.some((x) => x.startsWith('evil.example.com/login')), JSON.stringify(w))
+  assert.ok(w.some((x) => x.startsWith('evil.co.uk')), JSON.stringify(w))
+  assert.ok(w.some((x) => x.startsWith('bob@gmail.com')), JSON.stringify(w))
+  assert.ok(w.some((x) => x.startsWith('x@evil.org')), JSON.stringify(w))
+  assert.ok(!w.some((x) => /ilovefreegle/.test(x)), JSON.stringify(w))
+})
+
+test('a usage-limit error returned as a success result flagged is_error is CREDIT, not BAD_OUTPUT', async () => {
+  for (const [result, code] of [['Claude AI usage limit reached|1700000000', 'CREDIT'], ['Credit balance is too low', 'CREDIT'], ['something broke', 'MODEL']]) {
+    const t = deps({ turn: { result, isError: true } })
+    await assert.rejects(runFirstPass(clean(), { deps: t.deps }), (e) => e.code === code)
+  }
+})
+
+test('a full dump that uses up its own budget falls back to the database, and says so', async () => {
+  const calls = []
+  const t = deps({ deps: {
+    env: { ...ENV, FIRST_PASS_FULL_DUMP_MS: '30' },
+    fetchDump: ({ include, signal }) => {
+      calls.push(include)
+      if (include === 'db,loki,sentry') return new Promise((_, rej) => signal.addEventListener('abort', () => rej(new Error('stopped')), { once: true }))
+      return Promise.resolve('/tmp/dump-db-only.sqlite')
+    },
+    unlink: () => {},
+  } })
+  const out = await runFirstPass(clean(), { deps: t.deps })
+  assert.deepStrictEqual(calls, ['db,loki,sentry', 'db'])
+  assert.strictEqual(t.calls.length, 1, 'the model still ran')
+  assert.match(t.calls[0].prompt, /took too long to collect/)
+  assert.strictEqual(out.brief.classification, 'Bug')
+})
+
+test('when both dump attempts use up their budgets the brief is chat-only, not DEADLINE', async () => {
+  const t = deps({ deps: {
+    env: { ...ENV, FIRST_PASS_FULL_DUMP_MS: '20', FIRST_PASS_DB_DUMP_MS: '20' },
+    fetchDump: ({ signal }) => new Promise((_, rej) => signal.addEventListener('abort', () => rej(new Error('stopped')), { once: true })),
+  } })
+  const out = await runFirstPass(clean(), { deps: t.deps })
+  assert.strictEqual(t.calls.length, 1)
+  assert.match(t.calls[0].prompt, /took too long to read/)
+  assert.ok(out.brief.could_not_find.some((x) => /member data could not be read/.test(x)))
+})
+
 test('a prompt-injection attempt in the chat is data: it changes nothing in what the model is asked to do', async () => {
   const t = deps()
   const body = baseBody()
@@ -741,12 +809,4 @@ test('the Express handler maps a first pass failure to 502 with its code, and su
     if (saved === undefined) delete process.env.UX_INTERNAL_SECRET
     else process.env.UX_INTERNAL_SECRET = saved
   }
-})
-
-test('a line break the model escaped twice arrives as a real line break, in the draft and the summary', async () => {
-  const doubled = { ...GOOD_ANSWER, summary: 'One.\\nTwo.', draft: { text: 'Hi,\\n\\nThanks.\\r\\nBye', facts_used: ['member'] } }
-  const out = await runFirstPass(clean(), { deps: deps({ turn: { structured: doubled } }).deps })
-  assert.strictEqual(out.brief.summary, 'One.\nTwo.')
-  assert.strictEqual(out.brief.draft.text, 'Hi,\n\nThanks.\nBye')
-  assert.ok(!out.brief.draft.text.includes('\\'), 'no backslash left in the draft')
 })

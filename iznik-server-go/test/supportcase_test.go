@@ -61,7 +61,7 @@ func scSetup(t *testing.T, name string) scWorld {
 	prefix := uniquePrefix(name)
 	w := scWorld{}
 	w.member = CreateTestUser(t, prefix+"_m", "User")
-	w.mod = CreateTestUser(t, prefix+"_mod", "User")
+	w.mod = CreateTestUser(t, prefix+"_mod", "Moderator")
 	w.group = CreateTestGroup(t, prefix)
 	CreateTestMembership(t, w.member, w.group, "Member")
 	CreateTestMembership(t, w.mod, w.group, "Moderator")
@@ -160,11 +160,123 @@ func TestSupportCaseDoubleReferralReturnsSameCase(t *testing.T) {
 	database.DBConn.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'support_case_message' AND JSON_EXTRACT(data, '$.caseid') = ? AND JSON_EXTRACT(data, '$.messageid') = ?", first, msgid).Scan(&tasks)
 	assert.Equal(t, int64(1), tasks)
 
-	// Referring again with no reason still leaves a mark.
+	// Referring again with no reason within moments is a double-click: no new message or task.
 	scReferOK(t, w.modToken, w.chat, "")
 	var bare int64
 	database.DBConn.Raw("SELECT COUNT(*) FROM support_case_messages WHERE caseid = ? AND body = 'Referred again'", first).Scan(&bare)
+	assert.Equal(t, int64(0), bare)
+
+	// Once the case is older than the window the same bare referral is a deliberate nudge.
+	database.DBConn.Exec("UPDATE support_cases SET created_at = NOW() - INTERVAL 3 MINUTE WHERE id = ?", first)
+	scReferOK(t, w.modToken, w.chat, "")
+	database.DBConn.Raw("SELECT COUNT(*) FROM support_case_messages WHERE caseid = ? AND body = 'Referred again'", first).Scan(&bare)
 	assert.Equal(t, int64(1), bare)
+}
+
+func TestSupportCaseDoubleClickWithSameReasonAddsNothing(t *testing.T) {
+	w := scSetup(t, "scdbl2")
+	first := scReferOK(t, w.modToken, w.chat, "same words")
+	assert.Equal(t, first, scReferOK(t, w.modToken, w.chat, "same words"))
+	var msgs, tasks int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM support_case_messages WHERE caseid = ?", first).Scan(&msgs)
+	database.DBConn.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'support_case_message' AND JSON_EXTRACT(data, '$.caseid') = ?", first).Scan(&tasks)
+	assert.Equal(t, int64(0), msgs)
+	assert.Equal(t, int64(0), tasks)
+
+	// Past the window the same reason is added.
+	database.DBConn.Exec("UPDATE support_cases SET created_at = NOW() - INTERVAL 3 MINUTE WHERE id = ?", first)
+	scReferOK(t, w.modToken, w.chat, "same words")
+	database.DBConn.Raw("SELECT COUNT(*) FROM support_case_messages WHERE caseid = ?", first).Scan(&msgs)
+	assert.Equal(t, int64(1), msgs)
+}
+
+func TestSupportCaseMessagesAreRateLimited(t *testing.T) {
+	w := scSetup(t, "scrate")
+	caseid := scReferOK(t, w.modToken, w.chat, "")
+	path := fmt.Sprintf("/api/supportcases/%d/messages", caseid)
+	for i := 0; i < 10; i++ {
+		status, _ := scCall(t, "POST", path, w.modToken, map[string]interface{}{"body": fmt.Sprintf("m%d", i)})
+		assert.Equal(t, 200, status)
+	}
+	status, raw := scCall(t, "POST", path, w.modToken, map[string]interface{}{"body": "one too many"})
+	assert.Equal(t, 429, status)
+	assert.Contains(t, string(raw), "Too many replies, please wait a little")
+	var msgs int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM support_case_messages WHERE caseid = ?", caseid).Scan(&msgs)
+	assert.Equal(t, int64(10), msgs)
+
+	// Another author is not held up by it, and the hour rolls on.
+	_, sToken := scSupport(t, "scrate_s")
+	status, _ = scCall(t, "POST", path, sToken, map[string]interface{}{"body": "support reply"})
+	assert.Equal(t, 200, status)
+	database.DBConn.Exec("UPDATE support_case_messages SET created_at = NOW() - INTERVAL 2 HOUR WHERE caseid = ?", caseid)
+	status, _ = scCall(t, "POST", path, w.modToken, map[string]interface{}{"body": "later"})
+	assert.Equal(t, 200, status)
+}
+
+func TestSupportCaseGroupChatIsRefused(t *testing.T) {
+	w := scSetup(t, "scgroupchat")
+	res := database.DBConn.Exec("INSERT INTO chat_rooms (chattype, groupid, latestmessage) VALUES ('Group', ?, NOW())", w.group)
+	assert.NoError(t, res.Error)
+	var gchat uint64
+	database.DBConn.Raw("SELECT id FROM chat_rooms WHERE chattype = 'Group' AND groupid = ? ORDER BY id DESC LIMIT 1", w.group).Scan(&gchat)
+	t.Cleanup(func() { database.DBConn.Exec("DELETE FROM chat_rooms WHERE id = ?", gchat) })
+	status, _ := scRefer(t, w.modToken, gchat, "")
+	assert.Equal(t, 400, status)
+	var cases int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM support_cases WHERE chatid = ?", gchat).Scan(&cases)
+	assert.Equal(t, int64(0), cases)
+}
+
+func TestSupportCaseListPagingLimitStatusAndOrder(t *testing.T) {
+	_, sToken := scSupport(t, "scpage_s")
+	var ids []uint64
+	for i := 0; i < 3; i++ {
+		w := scSetup(t, fmt.Sprintf("scpage%d", i))
+		ids = append(ids, scReferOK(t, w.modToken, w.chat, ""))
+	}
+	idsOf := func(path string) []float64 {
+		status, raw := scCall(t, "GET", path, sToken, nil)
+		assert.Equal(t, 200, status)
+		var rows []map[string]interface{}
+		assert.NoError(t, json.Unmarshal(raw, &rows), string(raw))
+		out := []float64{}
+		for _, r := range rows {
+			out = append(out, r["id"].(float64))
+		}
+		return out
+	}
+
+	// Newest two, newest first.
+	assert.Equal(t, []float64{float64(ids[2]), float64(ids[1])}, idsOf("/api/supportcases?limit=2"))
+	// Strictly older than the middle one.
+	older := idsOf(fmt.Sprintf("/api/supportcases?before=%d&limit=1", ids[1]))
+	assert.Equal(t, []float64{float64(ids[0])}, older)
+
+	// The default shows Open only: a Handled case drops out of it but stays in Handled and All.
+	database.DBConn.Exec("UPDATE support_cases SET status = 'Handled', open_key = NULL WHERE id = ?", ids[2])
+	assert.Equal(t, []float64{float64(ids[1]), float64(ids[0])}, idsOf("/api/supportcases?limit=2"))
+	assert.Contains(t, idsOf("/api/supportcases?status=Handled&limit=100"), float64(ids[2]))
+	assert.Contains(t, idsOf("/api/supportcases?status=All&limit=100"), float64(ids[2]))
+	assert.NotContains(t, idsOf("/api/supportcases?status=Open&limit=100"), float64(ids[2]))
+
+	// An oversized limit is capped, not obeyed: pad with more than 100 Handled cases.
+	marker := uniquePrefix("scpagepad")
+	t.Cleanup(func() { database.DBConn.Exec("DELETE FROM support_cases WHERE reason = ?", marker) })
+	for i := 0; i < 105; i++ {
+		assert.NoError(t, database.DBConn.Exec("INSERT INTO support_cases (source, status, firstpass_status, reason) VALUES ('Referral', 'Handled', 'Done', ?)", marker).Error)
+	}
+	assert.LessOrEqual(t, len(idsOf("/api/supportcases?status=All&limit=1000")), 100)
+}
+
+func TestSupportCaseReferrerWhoIsNotSupportCannotPatch(t *testing.T) {
+	w := scSetup(t, "scpatchref")
+	caseid := scReferOK(t, w.modToken, w.chat, "")
+	status, _ := scCall(t, "PATCH", "/api/supportcases", w.modToken, map[string]interface{}{"id": caseid, "status": "Handled"})
+	assert.Equal(t, 404, status)
+	var st string
+	database.DBConn.Raw("SELECT status FROM support_cases WHERE id = ?", caseid).Scan(&st)
+	assert.Equal(t, "Open", st)
 }
 
 func TestSupportCaseReferAgainAfterHandledIsNewCase(t *testing.T) {
@@ -179,7 +291,7 @@ func TestSupportCaseReferAgainAfterHandledIsNewCase(t *testing.T) {
 
 func TestSupportCaseSecondReferrerGetsOwnCaseAndCannotSeeFirst(t *testing.T) {
 	w := scSetup(t, "scsecond")
-	mod2 := CreateTestUser(t, uniquePrefix("scsecond_mod2"), "User")
+	mod2 := CreateTestUser(t, uniquePrefix("scsecond_mod2"), "Moderator")
 	CreateTestMembership(t, mod2, w.group, "Moderator")
 	_, token2 := CreateTestSession(t, mod2)
 
@@ -517,8 +629,8 @@ func TestSupportCaseReopenConflictIs409(t *testing.T) {
 func TestSupportCaseMemberChoice(t *testing.T) {
 	// User2User: the participant who is not the referrer, in either position.
 	prefix := uniquePrefix("scmember")
-	a := CreateTestUser(t, prefix+"_a", "User")
-	b := CreateTestUser(t, prefix+"_b", "User")
+	a := CreateTestUser(t, prefix+"_a", "Moderator")
+	b := CreateTestUser(t, prefix+"_b", "Moderator")
 	chat := CreateTestChatRoom(t, a, &b, nil, "User2User")
 	_, tokenA := CreateTestSession(t, a)
 	_, tokenB := CreateTestSession(t, b)

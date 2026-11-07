@@ -12,7 +12,8 @@ use Symfony\Component\Console\Attribute\AsCommand;
  * Evaluation only: runs the first pass again over recent finished cases and reports what it cost
  * and concluded.
  *
- * It writes nothing to cases, runs or mail. It refuses to start while any case is Pending or
+ * It writes nothing to cases or mail. Each pass writes a support_ai_runs row (no moderator, so it
+ * never counts against a referrer) so the tokens it spends are visible. It refuses to start while any case is Pending or
  * Running, and stops if one appears, so it never competes with real referrals for the helper.
  * The model sees today's data, not the data at referral time. The report holds ids only.
  */
@@ -51,11 +52,16 @@ class SupportFirstPassReplayCommand extends Command
             try {
                 $response = $service->ask($service->buildRequest($case));
             } catch (FirstPassFailure $f) {
+                if ($f->mayHaveSpent()) {
+                    $service->storeRun(null, $case->userid, "Replay of support case {$id}", null, $f->reason);
+                }
                 $passes[] = ['caseid' => (int) $id, 'error' => $f->reason];
 
                 continue;
             }
             $brief = $response['brief'];
+            // The tokens and model are kept; the member's facts and the transcript are not.
+            $service->storeRun(null, $case->userid, "Replay of support case {$id}", array_diff_key($response, ['transcript' => 1, 'brief' => 1]), null);
             $usage = is_array($response['usage'] ?? null) ? $response['usage'] : [];
             $passes[] = [
                 'caseid' => (int) $id,

@@ -7,7 +7,6 @@ use App\Models\User;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
 /**
  * The batch side of the support case first pass: builds the helper request from a case row, calls
@@ -37,6 +36,8 @@ class FirstPassService
 
     public const REASON_FAILED = 'The AI helper failed';
 
+    public const REASON_NO_CHAT = 'The chat is no longer there';
+
     /** Helper error codes (502 body) to the plain reason. */
     private const CODE_REASONS = [
         'DEADLINE' => self::REASON_TOO_LONG,
@@ -44,9 +45,6 @@ class FirstPassService
         'DUMP_LOCKDOWN' => self::REASON_LOCKDOWN,
         'DUMP_AUTH' => self::REASON_NOT_SET_UP,
     ];
-
-    /** Helper error codes where trying again in a minute cannot help, so the case fails at once. */
-    private const TERMINAL_CODES = ['DUMP_LOCKDOWN', 'DUMP_AUTH'];
 
     public const MESSAGE_LIMIT = 50;
 
@@ -112,6 +110,12 @@ class FirstPassService
             ->where('cm.reviewrejected', 0)
             ->where('cm.deleted', 0)
             ->whereNull('h.id');
+    }
+
+    /** Whether the chat has a visible message newer than the given time. */
+    public function hasVisibleMessageAfter(int $chatId, string $since): bool
+    {
+        return $this->visibleMessages($chatId)->where('cm.date', '>', $since)->exists();
     }
 
     /** @return array<int, array<string, mixed>> */
@@ -201,10 +205,9 @@ class FirstPassService
             try {
                 $response = Http::timeout(self::IMAGE_FETCH_TIMEOUT)->get($this->chatImageUrl($img));
                 $bytes = $response->successful() ? (string) $response->body() : '';
-                $mime = strtolower(trim(explode(';', (string) $response->header('Content-Type'))[0]));
-                if ($mime === '' || $mime === 'application/octet-stream') {
-                    $mime = strtolower((string) ($img->contenttype ?? 'image/jpeg'));
-                }
+                // The type comes from the bytes: a mislabelled image would make the helper refuse the request.
+                $info = $bytes === '' ? false : @getimagesizefromstring($bytes);
+                $mime = $info ? strtolower((string) ($info['mime'] ?? '')) : '';
                 if ($bytes === '' || strlen($bytes) > self::IMAGE_MAX_BYTES || $total + strlen($bytes) > self::IMAGE_TOTAL_BYTES || ! in_array($mime, self::IMAGE_MIMES, true)) {
                     $skipped++;
 
@@ -259,13 +262,14 @@ class FirstPassService
                 $code !== '' ? $code : 'HTTP_'.$status,
                 self::CODE_REASONS[$code] ?? self::REASON_FAILED,
                 $status === 502,
-                in_array($code, self::TERMINAL_CODES, true),
+                // The helper answered, so trying again would only spend the model and the dump again.
+                $status === 502,
             );
         }
 
         $json = $response->json();
         if (! is_array($json) || ! is_array($json['brief'] ?? null) || ! is_string($json['brief']['summary'] ?? null)) {
-            throw new FirstPassFailure('BAD_OUTPUT', self::REASON_FAILED, true);
+            throw new FirstPassFailure('BAD_OUTPUT', self::REASON_FAILED, true, true);
         }
 
         return $json;
@@ -276,22 +280,17 @@ class FirstPassService
      *
      * @param  array<string, mixed>|null  $brief
      */
-    public function referralMail(object $case, ?array $brief, ?string $skipReason): ?ReferToSupportMail
+    public function referralMail(object $case, ?array $brief, ?string $skipReason): ReferToSupportMail
     {
         $chat = $case->chatid ? DB::table('chat_rooms')->where('id', $case->chatid)->first() : null;
-        if (! $chat) {
-            Log::warning('Chat not found for support case', ['case_id' => $case->id]);
-
-            return null;
-        }
 
         $referrer = $case->referrerid ? User::find($case->referrerid) : null;
-        $otherId = $case->userid ?: ($chat->user1 == $case->referrerid ? $chat->user2 : $chat->user1);
+        $otherId = $case->userid ?: ($chat ? ($chat->user1 == $case->referrerid ? $chat->user2 : $chat->user1) : null);
         $other = $otherId ? User::find($otherId) : null;
 
         $replyToAddress = config('freegle.mail.noreply_addr');
         $replyToName = config('freegle.branding.name');
-        if ($chat->groupid) {
+        if ($chat && $chat->groupid) {
             $group = DB::table('groups')->where('id', $chat->groupid)->first();
             if ($group) {
                 $short = $group->nameshort ?? '';
@@ -303,7 +302,7 @@ class FirstPassService
         return new ReferToSupportMail(
             userName: $referrer ? ($referrer->fullname ?: 'Unknown') : 'Unknown',
             userId: (int) ($case->referrerid ?? 0),
-            chatId: (int) $chat->id,
+            chatId: $chat ? (int) $chat->id : null,
             otherUserName: $other ? ($other->fullname ?: 'Unknown') : 'Unknown',
             otherUserId: (int) ($otherId ?? 0),
             replyToAddress: $replyToAddress,
@@ -313,5 +312,43 @@ class FirstPassService
             skipReason: $skipReason,
             reason: $case->reason !== null && $case->reason !== '' ? (string) $case->reason : null,
         );
+    }
+
+    /**
+     * Write a support_ai_runs row for a pass. Only fixed reasons are stored as the error; the
+     * helper's own text is never kept.
+     *
+     * @param  array<string, mixed>|null  $response
+     * @param  array<string, mixed>|null  $brief
+     */
+    public function storeRun(?int $modid, ?int $userid, string $query, ?array $response, ?string $error, ?array $brief = null): int
+    {
+        $usage = is_array($response['usage'] ?? null) ? $response['usage'] : [];
+        $quota = is_array($response['quota'] ?? null) ? $response['quota'] : [];
+        $before = is_array($response['quotaBefore'] ?? null) ? $response['quotaBefore'] : [];
+        $pct = fn ($v) => is_numeric($v) ? max(0, min(100, round((float) $v, 2))) : null;
+
+        return (int) DB::table('support_ai_runs')->insertGetId([
+            'modid' => $modid,
+            'kind' => 'FirstPass',
+            'userid' => $userid,
+            'query' => $query,
+            'analysis' => $brief !== null ? BriefFormatter::markdown($brief) : null,
+            'transcript' => isset($response['transcript']) && is_string($response['transcript']) ? mb_substr($response['transcript'], 0, 1_000_000) : null,
+            'status' => $error === null ? 'Success' : 'Error',
+            'error' => $error,
+            'driver' => isset($response['driver']) ? mb_substr((string) $response['driver'], 0, 16) : null,
+            'model' => isset($response['model']) ? mb_substr((string) $response['model'], 0, 64) : null,
+            'input_tokens' => max(0, (int) ($usage['inputTokens'] ?? 0)),
+            'output_tokens' => max(0, (int) ($usage['outputTokens'] ?? 0)),
+            'cache_creation_tokens' => max(0, (int) ($usage['cacheCreation'] ?? 0)),
+            'cache_read_tokens' => max(0, (int) ($usage['cacheRead'] ?? 0)),
+            'duration_ms' => max(0, (int) ($usage['durationMs'] ?? 0)),
+            'cost_usd' => is_numeric($response['costUsd'] ?? null) ? max(0, min(999999, (float) $response['costUsd'])) : 0,
+            'quota_5h_before' => $pct($before['fiveHour'] ?? null),
+            'quota_5h_after' => $pct($quota['fiveHour'] ?? null),
+            'quota_7d_before' => $pct($before['sevenDay'] ?? null),
+            'quota_7d_after' => $pct($quota['sevenDay'] ?? null),
+        ]);
     }
 }

@@ -16,7 +16,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { validateImages, promptContent, MAX_REFERRAL_IMAGES } = require('./images')
+const { validateImages, promptContent, MAX_REFERRAL_IMAGES, MAX_TOTAL_BYTES } = require('./images')
 const { driverMode, billableCostUsd } = require('./auth')
 const { subscriptionToken, fetchQuota, serialiseTranscript } = require('./run-record')
 const { parseModelJson } = require('./ux-internal')
@@ -24,7 +24,7 @@ const { unknownSiteLinks } = require('./links')
 const { buildFacts, noDumpFacts, FACT_TITLES } = require('./first-pass-facts')
 const { CLASSIFICATIONS, CONFIDENCE_LEVELS, FACT_KEYS, ANSWER_SCHEMA, systemPrompt, buildUserPrompt } = require('./first-pass-prompt')
 
-const CHAT_TYPES = ['User2Mod', 'User2User', 'Mod2Mod']
+const CHAT_TYPES = ['User2Mod', 'User2User', 'Mod2Mod', 'Group']
 const SOURCE_KINDS = ['referral', 'mail']
 const FROM_KINDS = ['member', 'moderator', 'other', 'system']
 const MAX_MESSAGES = 50
@@ -34,6 +34,10 @@ const MAX_MAIL_ENTRIES = 20
 const TRANSCRIPT_CAP = 200000
 const DEFAULT_DEADLINE_MS = 300000
 const DUMP_SINCE = '30d'
+// Each dump attempt gets its own budget inside the overall deadline, so a slow dump cannot leave the
+// model without time: the full dump, then the database alone, then the chat alone.
+const FULL_DUMP_BUDGET_MS = 120000
+const DB_DUMP_BUDGET_MS = 60000
 // The Go API refuses every download with 409 while the export is held (lockdown.RefuseDownload).
 const LOCKDOWN_STATUSES = [409]
 // A missing or wrong USERDUMP_INTERNAL_KEY: the dump endpoint answers 401 (no valid key) or 403.
@@ -93,7 +97,7 @@ function cleanFirstPassRequest(body) {
   if (!c || typeof c !== 'object') return { error: 'chat is required' }
   const chatid = posInt(c.id)
   if (!chatid) return { error: 'chat.id must be a positive integer' }
-  if (!CHAT_TYPES.includes(c.type)) return { error: 'chat.type must be User2Mod, User2User or Mod2Mod' }
+  if (!CHAT_TYPES.includes(c.type)) return { error: 'chat.type must be User2Mod, User2User, Mod2Mod or Group' }
   if (!Array.isArray(c.messages)) return { error: 'chat.messages must be a list' }
   let group = null
   if (c.group && typeof c.group === 'object') {
@@ -110,8 +114,26 @@ function cleanFirstPassRequest(body) {
     }
   })
 
-  const { images, error: imageError } = validateImages(b.images, MAX_REFERRAL_IMAGES)
-  if (imageError) return { error: imageError }
+  // One bad picture (wrong type, wrong bytes, too big) is dropped and counted, not a reason to refuse
+  // the whole request: the brief is still useful without it.
+  if (b.images !== undefined && b.images !== null && !Array.isArray(b.images)) return { error: 'Screenshots must be a list.' }
+  const rawImages = b.images || []
+  if (rawImages.length > MAX_REFERRAL_IMAGES) return { error: `Please attach at most ${MAX_REFERRAL_IMAGES} screenshots.` }
+  const images = []
+  let imagesDropped = 0
+  let imageBytes = 0
+  rawImages.forEach((item, i) => {
+    const one = validateImages([item], MAX_REFERRAL_IMAGES)
+    if (one.error || imageBytes + one.images[0].bytes > MAX_TOTAL_BYTES) {
+      imagesDropped++
+      return
+    }
+    const img = one.images[0]
+    imageBytes += img.bytes
+    // validateImages numbers an unnamed picture from its place in a list of one.
+    if (!(item && item.name)) img.name = img.name.replace(/^screenshot-1\./, `screenshot-${i + 1}.`)
+    images.push(img)
+  })
 
   const mh = b.mailHistory && typeof b.mailHistory === 'object' ? b.mailHistory : {}
   const mailHistory = {
@@ -133,9 +155,9 @@ function cleanFirstPassRequest(body) {
 
   // The batch counts the chat images it could not fetch or that were too big. Without that count,
   // image messages beyond those sent are taken to be the skipped ones.
-  const imagesSkipped = Number.isInteger(b.imagesSkipped) && b.imagesSkipped >= 0 ? Math.min(b.imagesSkipped, 1000) : null
+  const imagesSkipped = Number.isInteger(b.imagesSkipped) && b.imagesSkipped >= 0 ? Math.min(b.imagesSkipped, 1000) + imagesDropped : null
 
-  return { caseid, memberid, source, chat: { id: chatid, type: c.type, group, messages }, images, imagesSkipped, mailHistory }
+  return { caseid, memberid, source, chat: { id: chatid, type: c.type, group, messages }, images, imagesSkipped, imagesDropped, mailHistory }
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +184,10 @@ function agentEnv(env = process.env) {
 // ---------------------------------------------------------------------------
 
 const URL_PATTERN = /(?:https?:\/\/|www\.)[^\s)\]>"'`]+|\bilovefreegle\.org(?:\/[^\s)\]>"'`]*)?/gi
+const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}/gi
+const MAILTO_PATTERN = /mailto:[^\s)\]>"'`]+/gi
+const COMMON_TLDS = 'com|org|net|uk|co|io|info|biz|edu|gov|app|dev|xyz|online|site|shop|club|top|ru|cn|de|fr|ie|eu|tk|ml|ga|cf|gq|ly|cc|me|tv|us'
+const BARE_DOMAIN_PATTERN = new RegExp(`\\b(?:[a-z0-9-]+\\.)+(?:${COMMON_TLDS})\\b(?:\\/[^\\s)\\]>"'\`]*)?`, 'gi')
 // Pages that exist on the member site. Used only when there is no codebase checkout to look in.
 const KNOWN_TOP_PAGES = ['', 'give', 'find', 'browse', 'myposts', 'chats', 'settings', 'donate', 'help', 'communityevents', 'volunteerings', 'stories', 'about', 'terms', 'privacy']
 
@@ -198,6 +224,30 @@ function checkDraftLinks(text, pagesDir) {
       warnings.push(`${link} (could not be checked against the site's pages)`)
     }
   }
+
+  // Addresses: only @ilovefreegle.org is ours.
+  const body = String(text || '')
+  const addresses = new Set()
+  for (const m of body.match(EMAIL_PATTERN) || []) addresses.add(m.toLowerCase())
+  for (const m of body.match(MAILTO_PATTERN) || []) {
+    const addr = m.replace(/^mailto:/i, '').split('?')[0].toLowerCase()
+    if (addr) addresses.add(addr)
+  }
+  for (const addr of addresses) {
+    if (!/@ilovefreegle\.org$/.test(addr)) warnings.push(`${addr} (not a Freegle address)`)
+  }
+
+  // Domains written with no scheme, such as evil.example/login: checked on what is left once the
+  // links and addresses above are taken out.
+  const rest = body.replace(EMAIL_PATTERN, ' ').replace(MAILTO_PATTERN, ' ').replace(URL_PATTERN, ' ')
+  for (const raw of rest.match(BARE_DOMAIN_PATTERN) || []) {
+    const link = raw.replace(/[.,;:!?]+$/, '')
+    if (seen.has(link)) continue
+    seen.add(link)
+    const host = link.split('/')[0].toLowerCase()
+    if (host === 'ilovefreegle.org' || host.endsWith('.ilovefreegle.org')) continue
+    warnings.push(`${link} (not a Freegle page)`)
+  }
   return warnings
 }
 
@@ -207,11 +257,8 @@ function checkDraftLinks(text, pagesDir) {
 
 // A model told not to use em dashes sometimes does anyway; the brief never carries one.
 const DASHES = new RegExp('\\s*[' + String.fromCharCode(0x2014, 0x2013) + ']\\s*', 'g')
-// Models writing JSON sometimes escape a line break twice, so the text arrives holding a
-// backslash followed by n; those become real line breaks.
 const plain = (v, max) =>
   String(v == null ? '' : v)
-    .replace(/\\r\\n|\\n/g, '\n')
     .replace(DASHES, ', ')
     .trim()
     .slice(0, max)
@@ -282,7 +329,11 @@ async function callModel({ prompt, images, model, signal, queryImpl, abort }) {
     for await (const message of query({ prompt: input, options })) {
       if (message.type === 'system' && message.subtype === 'init' && message.model) model2 = message.model
       if (message.type !== 'result') continue
-      if (message.subtype === 'success') {
+      if (message.subtype === 'success' && message.is_error) {
+        // A usage-limit or credit error can arrive as a success result flagged is_error, with the
+        // error in the result text.
+        failure = String(message.result || '') || 'error'
+      } else if (message.subtype === 'success') {
         text = message.result || ''
         structured = message.structured_output && typeof message.structured_output === 'object' ? message.structured_output : null
         usage = {
@@ -317,34 +368,53 @@ function defaultOpenDb(file) {
   return new Database(file, { readonly: true })
 }
 
+// A signal that aborts when any of the given ones does (AbortSignal.any needs Node 20.3).
+function anySignal(signals) {
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any(signals)
+  const c = new AbortController()
+  for (const s of signals) {
+    if (s.aborted) c.abort(s.reason)
+    else s.addEventListener('abort', () => c.abort(s.reason), { once: true })
+  }
+  return c.signal
+}
+
 /**
- * Get the dump for the member: everything first, then the database alone if that fails, and no
- * dump at all if that fails too. A held export (lockdown) stops the pass instead: a chat-only brief
+ * Get the dump for the member: everything first (at most 120s), then the database alone (at most
+ * 60s) if that fails, and no dump at all if that fails too; a note says when an attempt ran out of time. A held export (lockdown) stops the pass instead: a chat-only brief
  * would read as a complete one. A deadline stops it too.
  *
  * @returns {Promise<{file:string|null, notes:string[]}>}
  */
-async function getDump({ request, key, signal, fetchDump }) {
+async function getDump({ request, key, signal, fetchDump, budgets = [FULL_DUMP_BUDGET_MS, DB_DUMP_BUDGET_MS] }) {
   if (!request.memberid) return { file: null, notes: ['No single member to look up, so only the chat and the reason were available.'] }
   // A member to look up but no key is a server set up wrongly, not a reason to pass on a thinner brief.
   if (!key) throw fail('DUMP_AUTH')
 
   const attempts = [
-    { include: 'db,loki,sentry', note: null },
-    { include: 'db', note: 'Logs and the error tracker could not be collected, so only the database was read.' },
+    { include: 'db,loki,sentry', budget: budgets[0], slow: 'Logs and the error tracker took too long to collect, so only the database was read.', failed: 'Logs and the error tracker could not be collected, so only the database was read.' },
+    { include: 'db', budget: budgets[1] },
   ]
-  for (const a of attempts) {
+  let timedOut = false
+  for (let i = 0; i < attempts.length; i++) {
+    const a = attempts[i]
+    const attemptSignal = anySignal([signal, AbortSignal.timeout(a.budget)])
     try {
-      const file = await fetchDump({ userId: request.memberid, since: DUMP_SINCE, include: a.include, key, caseId: request.caseid, signal })
-      return { file, notes: a.note ? [a.note] : [] }
+      const file = await fetchDump({ userId: request.memberid, since: DUMP_SINCE, include: a.include, key, caseId: request.caseid, signal: attemptSignal })
+      return { file, notes: i === 0 ? [] : [timedOut ? attempts[0].slow : attempts[0].failed] }
     } catch (e) {
       if (signal.aborted) throw fail('DEADLINE')
       if (e && LOCKDOWN_STATUSES.includes(e.status)) throw fail('DUMP_LOCKDOWN')
       if (e && AUTH_STATUSES.includes(e.status)) throw fail('DUMP_AUTH')
+      // Only this attempt's own budget ran out: the next attempt, and the model, still have time.
+      if (attemptSignal.aborted) timedOut = true
     }
   }
   if (!request.chat.messages.length) throw fail('DUMP')
-  return { file: null, notes: ['The member data could not be read, so only the chat and the reason were available.'] }
+  return {
+    file: null,
+    notes: [timedOut ? 'The member data took too long to read, so only the chat and the reason were available.' : 'The member data could not be read, so only the chat and the reason were available.'],
+  }
 }
 
 /**
@@ -386,7 +456,8 @@ async function runFirstPass(request, { signal: callerSignal, deps = {} } = {}) {
     const quotaBeforeP = quotaFn(token)
 
     const fetchDump = deps.fetchDump || ((a) => require('./tools').fetchUserDump(a))
-    const dump = await getDump({ request, key: env.USERDUMP_INTERNAL_KEY, signal, fetchDump })
+    const budgetOf = (name, dflt) => (Number(env[name]) > 0 ? Number(env[name]) : dflt)
+    const dump = await getDump({ request, key: env.USERDUMP_INTERNAL_KEY, signal, fetchDump, budgets: [budgetOf('FIRST_PASS_FULL_DUMP_MS', FULL_DUMP_BUDGET_MS), budgetOf('FIRST_PASS_DB_DUMP_MS', DB_DUMP_BUDGET_MS)] })
     file = dump.file
     const notes = [...dump.notes]
 
@@ -426,7 +497,7 @@ async function runFirstPass(request, { signal: callerSignal, deps = {} } = {}) {
       draft: { to: 'referrer', ...judged.draft, link_warnings: checkDraftLinks(judged.draft.text, pagesDir) },
       images: {
         sent: request.images.length,
-        skipped: request.imagesSkipped ?? Math.max(0, chatImages - request.images.length),
+        skipped: request.imagesSkipped ?? Math.max(request.imagesDropped || 0, chatImages - request.images.length),
       },
     }
 

@@ -64,12 +64,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import api from '~/api'
 import { timeago } from '~/composables/useTimeFormat'
+import { useMe } from '~/composables/useMe'
 
 const PAGE = 50
 
+const { myid } = useMe()
 const runtimeConfig = useRuntimeConfig()
 const apiInstance = api(runtimeConfig)
 
@@ -110,6 +112,13 @@ function reloadList() {
   cases.value = []
   loadList()
 }
+
+// Logging in after the page opened loads the list.
+watch(myid, (newVal, oldVal) => {
+  if (!oldVal && newVal && !cases.value.length && !loading.value) {
+    reloadList()
+  }
+})
 
 onMounted(loadList)
 </script>

@@ -4,7 +4,6 @@ namespace App\Console\Commands\Support;
 
 use App\Console\Concerns\PreventsOverlapping;
 use App\Services\EmailSpoolerService;
-use App\Services\Support\BriefFormatter;
 use App\Services\Support\FirstPassFailure;
 use App\Services\Support\FirstPassService;
 use Illuminate\Console\Command;
@@ -49,8 +48,13 @@ class SupportFirstPassCommand extends Command
 
         try {
             $this->sweep();
-            $this->work($service);
-            $this->mailUnsent($service, $spooler);
+            $this->mailSafely($service, $spooler);
+            try {
+                $this->work($service, fn () => $this->mailSafely($service, $spooler));
+            } catch (\Throwable $e) {
+                Log::error('support:first-pass work failed', ['error' => get_class($e).': '.$e->getMessage()]);
+            }
+            $this->mailSafely($service, $spooler);
         } catch (\Throwable $e) {
             Log::error('support:first-pass failed', ['error' => get_class($e).': '.$e->getMessage()]);
         } finally {
@@ -101,7 +105,8 @@ class SupportFirstPassCommand extends Command
             ->update(['firstpass_status' => 'Failed', 'firstpass_error' => FirstPassService::REASON_INTERRUPTED]);
     }
 
-    private function work(FirstPassService $service): void
+    /** @param  \Closure  $afterCase  Called after each case, so a finished case is mailed at once. */
+    private function work(FirstPassService $service, \Closure $afterCase): void
     {
         if (! $this->enabled()) {
             return;
@@ -135,6 +140,8 @@ class SupportFirstPassCommand extends Command
                 $busy = false;
             }
 
+            $afterCase();
+
             if ($busy) {
                 // The helper is full; asking again straight away would only be refused again.
                 return;
@@ -150,6 +157,19 @@ class SupportFirstPassCommand extends Command
             return false;
         }
 
+        $chat = $case->chatid ? DB::table('chat_rooms')->where('id', $case->chatid)->first(['id']) : null;
+        if (! $chat) {
+            // Nothing to read, so the helper is not asked; Support still gets the plain mail.
+            $this->finish($id, 'Running', 'Skipped', FirstPassService::REASON_NO_CHAT);
+
+            return false;
+        }
+
+        // Reuse costs nothing, so it comes before the cap.
+        if ($this->reuseBrief($case, $service)) {
+            return false;
+        }
+
         $cap = (int) $this->cfg('per_referrer_per_day', 10);
         if ($case->referrerid) {
             $used = DB::table('support_ai_runs')->where('kind', 'FirstPass')->where('modid', $case->referrerid)
@@ -159,21 +179,6 @@ class SupportFirstPassCommand extends Command
 
                 return false;
             }
-        }
-
-        // The facts have not changed if the same member's chat was done in the last day: reuse.
-        $recent = DB::table('support_cases')->where('chatid', $case->chatid)->where('id', '!=', $id)
-            ->where('firstpass_status', 'Done')->whereNotNull('brief')
-            ->whereRaw('userid <=> ?', [$case->userid])
-            ->whereRaw('created_at >= NOW() - INTERVAL 1 DAY')
-            ->orderByDesc('id')->first(['brief', 'firstpass_runid']);
-        if ($case->chatid && $recent) {
-            DB::table('support_cases')->where('id', $id)->where('firstpass_status', 'Running')->update([
-                'firstpass_status' => 'Done', 'firstpass_error' => null,
-                'brief' => $recent->brief, 'firstpass_runid' => $recent->firstpass_runid,
-            ]);
-
-            return false;
         }
 
         try {
@@ -186,8 +191,8 @@ class SupportFirstPassCommand extends Command
 
                 return true;
             }
-            if ($f->helperRan) {
-                $this->storeRun($case, null, $f->reason);
+            if ($f->mayHaveSpent()) {
+                $service->storeRun($case->referrerid, $case->userid, "First pass for support case {$case->id}", null, $f->reason);
             }
             $this->recordFailure($id, $f->reason, $f->terminal);
 
@@ -201,7 +206,7 @@ class SupportFirstPassCommand extends Command
             'sevenDay' => is_numeric($quota['sevenDay'] ?? null) ? (float) $quota['sevenDay'] : null,
         ];
 
-        $runId = $this->storeRun($case, $response, null, $brief);
+        $runId = $service->storeRun($case->referrerid, $case->userid, "First pass for support case {$case->id}", $response, null, $brief);
         DB::table('support_cases')->where('id', $id)->where('firstpass_status', 'Running')->update([
             'firstpass_status' => 'Done', 'firstpass_error' => null,
             'brief' => json_encode($brief, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
@@ -209,6 +214,40 @@ class SupportFirstPassCommand extends Command
         ]);
 
         return false;
+    }
+
+    /**
+     * The facts have not changed if the same member's chat was done in the last day, the new
+     * referrer asked the same thing (or nothing), and nothing visible was said in the chat since.
+     *
+     * @return bool true when the earlier brief was copied onto this case
+     */
+    private function reuseBrief(object $case, FirstPassService $service): bool
+    {
+        $recent = DB::table('support_cases as c')
+            ->leftJoin('support_ai_runs as r', 'r.id', '=', 'c.firstpass_runid')
+            ->where('c.chatid', $case->chatid)->where('c.id', '!=', $case->id)
+            ->where('c.firstpass_status', 'Done')->whereNotNull('c.brief')
+            ->whereRaw('c.userid <=> ?', [$case->userid])
+            ->whereRaw('c.created_at >= NOW() - INTERVAL 1 DAY')
+            ->orderByDesc('c.id')
+            ->first(['c.brief', 'c.firstpass_runid', 'c.reason', DB::raw('COALESCE(r.created_at, c.created_at) as ran_at')]);
+        if (! $recent) {
+            return false;
+        }
+
+        $asked = (string) ($case->reason ?? '');
+        if ($asked !== '' && $asked !== (string) ($recent->reason ?? '')) {
+            return false;
+        }
+        if ($service->hasVisibleMessageAfter((int) $case->chatid, (string) $recent->ran_at)) {
+            return false;
+        }
+
+        return DB::table('support_cases')->where('id', $case->id)->where('firstpass_status', 'Running')->update([
+            'firstpass_status' => 'Done', 'firstpass_error' => null,
+            'brief' => $recent->brief, 'firstpass_runid' => $recent->firstpass_runid,
+        ]) === 1;
     }
 
     /** Count the failure; try again later unless it cannot help or this was the last attempt. */
@@ -225,47 +264,20 @@ class SupportFirstPassCommand extends Command
         ]);
     }
 
-    /**
-     * The support_ai_runs row for a pass the helper answered. Only fixed reasons are stored as the
-     * error; the helper's own text is never kept.
-     *
-     * @param  array<string, mixed>|null  $response
-     * @param  array<string, mixed>|null  $brief
-     */
-    private function storeRun(object $case, ?array $response, ?string $error, ?array $brief = null): int
+    /** Mail what is unsent; a failure here must never stop the rest of the run. */
+    private function mailSafely(FirstPassService $service, EmailSpoolerService $spooler): void
     {
-        $usage = is_array($response['usage'] ?? null) ? $response['usage'] : [];
-        $quota = is_array($response['quota'] ?? null) ? $response['quota'] : [];
-        $before = is_array($response['quotaBefore'] ?? null) ? $response['quotaBefore'] : [];
-        $pct = fn ($v) => is_numeric($v) ? max(0, min(100, round((float) $v, 2))) : null;
-
-        return (int) DB::table('support_ai_runs')->insertGetId([
-            'modid' => $case->referrerid,
-            'kind' => 'FirstPass',
-            'userid' => $case->userid,
-            'query' => "First pass for support case {$case->id}",
-            'analysis' => $brief !== null ? BriefFormatter::markdown($brief) : null,
-            'transcript' => isset($response['transcript']) && is_string($response['transcript']) ? mb_substr($response['transcript'], 0, 1_000_000) : null,
-            'status' => $error === null ? 'Success' : 'Error',
-            'error' => $error,
-            'driver' => isset($response['driver']) ? mb_substr((string) $response['driver'], 0, 16) : null,
-            'model' => isset($response['model']) ? mb_substr((string) $response['model'], 0, 64) : null,
-            'input_tokens' => max(0, (int) ($usage['inputTokens'] ?? 0)),
-            'output_tokens' => max(0, (int) ($usage['outputTokens'] ?? 0)),
-            'cache_creation_tokens' => max(0, (int) ($usage['cacheCreation'] ?? 0)),
-            'cache_read_tokens' => max(0, (int) ($usage['cacheRead'] ?? 0)),
-            'duration_ms' => max(0, (int) ($usage['durationMs'] ?? 0)),
-            'cost_usd' => is_numeric($response['costUsd'] ?? null) ? max(0, min(999999, (float) $response['costUsd'])) : 0,
-            'quota_5h_before' => $pct($before['fiveHour'] ?? null),
-            'quota_5h_after' => $pct($quota['fiveHour'] ?? null),
-            'quota_7d_before' => $pct($before['sevenDay'] ?? null),
-            'quota_7d_after' => $pct($quota['sevenDay'] ?? null),
-        ]);
+        try {
+            $this->mailUnsent($service, $spooler);
+        } catch (\Throwable $e) {
+            Log::error('support:first-pass mail failed', ['error' => get_class($e).': '.$e->getMessage()]);
+        }
     }
 
     /**
-     * Mail every case that has reached a final state and not yet been mailed. The mailed_at update
-     * is what decides, so it goes once however often this runs.
+     * Mail every case that has reached a final state and not yet been mailed. The mail is built
+     * first, then mailed_at is claimed, then it is spooled; the claim is what decides, so it goes
+     * once however often this runs, and any failure after the claim puts it back for the next run.
      */
     private function mailUnsent(FirstPassService $service, EmailSpoolerService $spooler): void
     {
@@ -278,11 +290,8 @@ class SupportFirstPassCommand extends Command
         $recipients = array_values(array_filter(array_map('trim', explode(',', (string) config('freegle.mail.support_addr', 'support@ilovefreegle.org')))));
 
         foreach ($cases as $case) {
+            $claimed = false;
             try {
-                $won = DB::table('support_cases')->where('id', $case->id)->whereNull('mailed_at')->update(['mailed_at' => DB::raw('NOW()')]);
-                if ($won !== 1) {
-                    continue;
-                }
                 $brief = null;
                 if ($case->firstpass_status === 'Done' && $case->brief) {
                     $decoded = json_decode((string) $case->brief, true);
@@ -290,17 +299,18 @@ class SupportFirstPassCommand extends Command
                 }
                 $reason = $brief === null ? ($case->firstpass_error ?: FirstPassService::REASON_FAILED) : null;
                 $mail = $service->referralMail($case, $brief, $reason);
-                if ($mail === null) {
+
+                $won = DB::table('support_cases')->where('id', $case->id)->whereNull('mailed_at')->update(['mailed_at' => DB::raw('NOW()')]);
+                if ($won !== 1) {
                     continue;
                 }
-                try {
-                    $spooler->spool($mail, $recipients);
-                } catch (\Throwable $e) {
+                $claimed = true;
+                $spooler->spool($mail, $recipients);
+            } catch (\Throwable $e) {
+                if ($claimed) {
                     // Nothing went out, so let the next run try again.
                     DB::table('support_cases')->where('id', $case->id)->update(['mailed_at' => null]);
-                    throw $e;
                 }
-            } catch (\Throwable $e) {
                 Log::error('support:first-pass mail failed', ['case_id' => $case->id, 'error' => get_class($e).': '.$e->getMessage()]);
             }
         }

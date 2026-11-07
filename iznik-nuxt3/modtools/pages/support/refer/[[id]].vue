@@ -63,14 +63,14 @@ onMounted(async () => {
   }
 
   // The newest case for this chat, if there is one. Not finding it never blocks the chat.
-  try {
-    const cases = await api(useRuntimeConfig()).supportcases.fetchCases({
-      chatid: id.value,
+  api(useRuntimeConfig())
+    .supportcases.fetchCases({ chatid: id.value })
+    .then((cases) => {
+      latestCase.value = Array.isArray(cases) && cases.length ? cases[0] : null
     })
-    latestCase.value = Array.isArray(cases) && cases.length ? cases[0] : null
-  } catch (e) {
-    latestCase.value = null
-  }
+    .catch(() => {
+      latestCase.value = null
+    })
 
   await chatStore.fetchChat(id.value)
 

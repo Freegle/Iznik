@@ -1796,6 +1796,10 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 // so a long paste still refers the chat.
 const maxReferReasonRunes = 2000
 
+// repeatReferWindowSeconds is how long after a case opens an identical second referral counts as a
+// double-click rather than a deliberate nudge.
+const repeatReferWindowSeconds = 120
+
 // referMember chooses the member a referral is about. A chat with a member-to-mods side has one
 // (user1); a member-to-member chat has the participant who is not the referrer; a chat between
 // moderators, or one the referrer is not part of, has none.
@@ -1828,17 +1832,27 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64,
 		User2    uint64 `gorm:"column:user2"`
 		Groupid  uint64 `gorm:"column:groupid"`
 	}
-	db.Table("chat_rooms").Select("id, chattype, COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", chatid).Scan(&room)
+	if res := db.Table("chat_rooms").Select("id, chattype, COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", chatid).Scan(&room); res.Error != nil {
+		stdlog.Printf("[ReferToSupport] chat lookup failed for chat %d by %d: %v", chatid, myid, res.Error)
+		return fiber.NewError(fiber.StatusInternalServerError, "Couldn't refer this chat, please try again")
+	}
 	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
 	}
 
-	// Anyone who may see the chat may refer it: its participants, the moderators of its
-	// community, and moderators reviewing a chat between their members. The button lives
-	// in ModTools on a member-to-mods chat, where the moderator is never a participant -
-	// a participants-only check refused every moderator with a 403 (Discourse 10199).
+	// Only a moderator who may see the chat can refer it: a moderator of its community, or one
+	// reviewing a chat between their members, or a participant who is a moderator. The button
+	// lives in ModTools on a member-to-mods chat, where the moderator is never a participant -
+	// a participants-only check refused every moderator with a 403 (Discourse 10199). Each
+	// referral spends a model pass, so a plain member may not open one.
 	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
 		return fiber.NewError(fiber.StatusForbidden, "You can't see this chat")
+	}
+	if !auth.IsSystemMod(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Only moderators can refer a chat to Support")
+	}
+	if room.Chattype == utils.CHAT_TYPE_GROUP {
+		return fiber.NewError(fiber.StatusBadRequest, "A group chat can't be referred to Support")
 	}
 
 	reason = strings.TrimSpace(reason)
@@ -1882,10 +1896,20 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64,
 		}
 
 		var existing uint64
-		if err := db.Clauses(dbresolver.Write).Table("support_cases").Select("id").
-			Where("open_key = ?", openKey).Row().Scan(&existing); err != nil || existing == 0 {
+		var existingReason *string
+		var ageSeconds int64
+		if err := db.Clauses(dbresolver.Write).Table("support_cases").Select("id, reason, TIMESTAMPDIFF(SECOND, created_at, NOW())").
+			Where("open_key = ?", openKey).Row().Scan(&existing, &existingReason, &ageSeconds); err != nil || existing == 0 {
 			// Handled between our insert and our look: go round and create a fresh case.
 			continue
+		}
+
+		// A double-click lands here within moments with the same reason: it is the same referral, so
+		// it adds no message and mails Support nothing.
+		if ageSeconds < repeatReferWindowSeconds && (reason == "" || (existingReason != nil && *existingReason == reason)) {
+			caseid = existing
+			lastErr = nil
+			break
 		}
 
 		body := "Referred again"

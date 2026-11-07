@@ -53,10 +53,11 @@
           <template v-if="item.referrer"
             >by {{ item.referrer.displayname }}</template
           >
-          <template v-if="item.member">
-            about {{ item.member.displayname }} (#{{ item.member.id }})
-          </template>
-          <template v-if="item.source">, from a {{ item.source }}</template
+          <template v-if="item.member"
+            >about {{ item.member.displayname }} (#{{
+              item.member.id
+            }})</template
+          ><template v-if="item.source">, from a {{ item.source }}</template
           >.
           <template v-if="item.handledby">
             Handled by {{ item.handledby.displayname }}
@@ -68,6 +69,13 @@
         <p v-if="item.reason" class="case-reason" data-testid="case-reason">
           <strong>Their question:</strong> {{ item.reason }}
         </p>
+        <NoticeMessage
+          v-if="actionError"
+          variant="danger"
+          data-testid="case-action-error"
+        >
+          {{ actionError }}
+        </NoticeMessage>
         <div class="d-flex flex-wrap gap-2 mb-3">
           <b-button
             variant="outline-secondary"
@@ -185,10 +193,12 @@
             <p class="small text-muted">
               Not sent. Check it before you use it.
               <template v-if="brief.draft.facts_used?.length">
-                Based on: {{ brief.draft.facts_used.join(', ') }}.
+                Based on: {{ factsUsedText }}.
               </template>
             </p>
-            <pre class="draft__text">{{ brief.draft.text }}</pre>
+            <div class="draft__text" data-testid="draft-text">
+              {{ brief.draft.text }}
+            </div>
             <div
               v-if="brief.draft.link_warnings?.length"
               data-testid="case-linkwarnings"
@@ -310,7 +320,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'isomorphic-dompurify'
 import { useRoute } from '#imports'
@@ -323,7 +333,7 @@ const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
 const apiInstance = api(runtimeConfig)
 const chatStore = useChatStore()
-const { supportOrAdmin, mod } = useMe()
+const { supportOrAdmin, mod, myid } = useMe()
 
 const caseId = ref(
   route.params && route.params.id ? parseInt(route.params.id) || 0 : 0
@@ -332,6 +342,7 @@ const allowed = computed(() => !!(supportOrAdmin.value || mod.value))
 
 const loading = ref(false)
 const error = ref('')
+const actionError = ref('')
 const notfound = ref(false)
 
 // One case.
@@ -348,6 +359,16 @@ const chatReady = ref(false)
 const pov = ref(0)
 
 const brief = computed(() => (item.value ? item.value.brief : null) || null)
+
+const factsUsedText = computed(() => {
+  const titles = {}
+  for (const section of brief.value?.facts || []) {
+    titles[section.key] = section.title
+  }
+  return (brief.value?.draft?.facts_used || [])
+    .map((k) => titles[k] || k)
+    .join(', ')
+})
 
 const poolText = computed(() => {
   const pool = brief.value?.pool
@@ -436,12 +457,12 @@ async function send() {
 
 async function setStatus(status) {
   busy.value = true
-  error.value = ''
+  actionError.value = ''
   try {
     await apiInstance.supportcases.setStatus(caseId.value, status)
     await loadCase()
   } catch (e) {
-    error.value = 'Could not change the status.'
+    actionError.value = 'Could not change the status.'
   } finally {
     busy.value = false
   }
@@ -463,6 +484,7 @@ async function copyDraft() {
 
 async function viewChat() {
   chatReady.value = false
+  actionError.value = ''
   showChat.value = true
   await chatStore.fetchChat(item.value.chatid)
   const chat = chatStore.byChatId(item.value.chatid)
@@ -471,9 +493,16 @@ async function viewChat() {
     chatReady.value = true
   } else {
     showChat.value = false
-    error.value = 'Could not open the chat.'
+    actionError.value = 'Could not open the chat.'
   }
 }
+
+// Opening a case link while logged out and then logging in must load the case.
+watch(myid, (newVal, oldVal) => {
+  if (!oldVal && newVal && allowed.value && caseId.value && !item.value) {
+    loadCase()
+  }
+})
 
 onMounted(() => {
   if (!allowed.value) return
@@ -503,6 +532,22 @@ onMounted(() => {
 .draft__text {
   background: #f1f3f5;
   padding: 0.5rem;
+  max-width: 100%;
+  font-family: inherit;
+}
+
+.support-case {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.reply {
+  max-width: 100%;
+}
+
+#case-reply {
+  max-width: 100%;
+  width: 100%;
 }
 
 .reply {

@@ -13,6 +13,7 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
@@ -34,6 +35,12 @@ class SupportFirstPassTest extends TestCase
 
     /** [body, content type] every image fetch answers with, when set. */
     private ?array $imageOverride = null;
+
+    /** A real 1x1 JPEG; images are typed from their bytes, not from what the server says. */
+    private const JPEG_B64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+
+    /** A real 1x1 PNG. */
+    private const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
     /** Runs once, on the first helper call, when set. */
     private ?\Closure $onHelperCall = null;
@@ -59,8 +66,9 @@ class SupportFirstPassTest extends TestCase
             if (str_contains($request->url(), '/internal/support-first-pass')) {
                 $this->helperRequests[] = $request;
                 if ($this->onHelperCall) {
-                    ($this->onHelperCall)();
+                    $hook = $this->onHelperCall;
                     $this->onHelperCall = null;
+                    $hook();
                 }
                 if ($this->helper['throw']) {
                     throw new ConnectionException($this->helper['throw']);
@@ -76,7 +84,7 @@ class SupportFirstPassTest extends TestCase
                 return Http::response('no', 404);
             }
 
-            return Http::response('fake-jpeg-bytes', 200, ['Content-Type' => 'image/jpeg']);
+            return Http::response(base64_decode(self::JPEG_B64), 200, ['Content-Type' => 'image/jpeg']);
         });
     }
 
@@ -263,7 +271,7 @@ class SupportFirstPassTest extends TestCase
         $this->assertCount(2, $body['images'], 'the unfetchable image is skipped and the held one is never asked for');
         $this->assertSame(1, $body['imagesSkipped']);
         $this->assertSame('image/jpeg', $body['images'][0]['mime']);
-        $this->assertSame(base64_encode('fake-jpeg-bytes'), $body['images'][0]['data']);
+        $this->assertSame(self::JPEG_B64, $body['images'][0]['data']);
         $urls = array_map(fn ($r) => $r->url(), $this->imageRequests);
         $this->assertContains('https://delivery.test?url=https://uploads.test/good1&ro=90', $urls);
         $this->assertContains('https://delivery.test?url=https://uploads.test/good2', $urls);
@@ -304,32 +312,87 @@ class SupportFirstPassTest extends TestCase
         $this->assertSame(5, $req['imagesSkipped']);
     }
 
-    /** @return array<string, array{int, mixed, string, bool}> */
+    public function test_an_image_is_typed_from_its_bytes_and_one_that_is_not_a_known_image_is_skipped_and_counted(): void
+    {
+        Mail::fake();
+        $c = $this->makeCase();
+        $m = DB::table('chat_messages')->insertGetId([
+            'chatid' => $c['chat'], 'userid' => $c['member']->id, 'message' => 'p', 'type' => 'Default', 'date' => now(),
+            'reviewrequired' => 0, 'reviewrejected' => 0, 'processingrequired' => 0, 'processingsuccessful' => 1,
+            'mailedtoall' => 0, 'seenbyall' => 0, 'platform' => 1,
+        ]);
+        DB::table('chat_images')->insert(['chatmsgid' => $m, 'externaluid' => null, 'archived' => 0]);
+        $svc = app(FirstPassService::class);
+
+        // A PNG that the server calls a JPEG goes as a PNG.
+        $this->imageOverride = [base64_decode(self::PNG_B64), 'image/jpeg'];
+        $req = $svc->buildRequest($this->case($c['case']));
+        $this->assertSame('image/png', $req['images'][0]['mime']);
+        $this->assertSame(0, $req['imagesSkipped']);
+
+        // Something that is not an image but is called one is dropped, as is an image type the helper refuses.
+        foreach (["<html>not an image</html>", "BM".str_repeat("\0", 60)] as $bytes) {
+            $this->imageOverride = [$bytes, 'image/jpeg'];
+            $req = $svc->buildRequest($this->case($c['case']));
+            $this->assertSame([], $req['images']);
+            $this->assertSame(1, $req['imagesSkipped']);
+        }
+    }
+
+    /** @return array<string, array{int, mixed, string}> */
     public static function failures(): array
     {
         return [
-            'deadline' => [502, ['error' => 'x', 'code' => 'DEADLINE'], FirstPassService::REASON_TOO_LONG, true],
-            'credit' => [502, ['error' => 'x', 'code' => 'CREDIT'], FirstPassService::REASON_CREDIT, true],
-            'dump' => [502, ['error' => 'x', 'code' => 'DUMP'], FirstPassService::REASON_FAILED, true],
-            'model' => [502, ['error' => 'x', 'code' => 'MODEL'], FirstPassService::REASON_FAILED, true],
-            'bad output code' => [502, ['error' => 'x', 'code' => 'BAD_OUTPUT'], FirstPassService::REASON_FAILED, true],
-            'server error' => [500, ['error' => 'x'], FirstPassService::REASON_FAILED, false],
-            'ok but no brief' => [200, ['brief' => 'text'], FirstPassService::REASON_FAILED, true],
+            'deadline' => [502, ['error' => 'x', 'code' => 'DEADLINE'], FirstPassService::REASON_TOO_LONG],
+            'credit' => [502, ['error' => 'x', 'code' => 'CREDIT'], FirstPassService::REASON_CREDIT],
+            'dump' => [502, ['error' => 'x', 'code' => 'DUMP'], FirstPassService::REASON_FAILED],
+            'model' => [502, ['error' => 'x', 'code' => 'MODEL'], FirstPassService::REASON_FAILED],
+            'bad output code' => [502, ['error' => 'x', 'code' => 'BAD_OUTPUT'], FirstPassService::REASON_FAILED],
+            'ok but no brief' => [200, ['brief' => 'text'], FirstPassService::REASON_FAILED],
         ];
     }
 
     #[DataProvider('failures')]
-    public function test_each_failure_maps_to_its_plain_reason_after_three_attempts(int $status, mixed $body, string $reason, bool $helperRan): void
+    public function test_a_failure_where_the_helper_answered_fails_at_once_and_is_never_retried(int $status, mixed $body, string $reason): void
     {
         Mail::fake();
         $c = $this->makeCase();
         $this->helper = ['status' => $status, 'body' => $body, 'throw' => null];
 
         $this->runPass();
+        $this->runPass();
+        $this->runPass();
+
+        $case = $this->case($c['case']);
+        $this->assertSame('Failed', $case->firstpass_status);
+        $this->assertSame(1, (int) $case->firstpass_attempts);
+        $this->assertSame($reason, $case->firstpass_error);
+        $this->assertCount(1, $this->helperRequests, 'the model and the dump are not spent again');
+
+        $this->assertSame(1, $this->mailsFor($c['case']));
+        $text = $this->bodyOf($this->sentMail($c['case']));
+        $this->assertStringContainsString("First pass skipped: {$reason}", $text);
+        $this->assertStringContainsString('/support/cases/'.$c['case'], $text);
+        $this->assertStringContainsString('/support/refer/'.$c['chat'], $text);
+
+        // The helper answered, so the attempt left an Error run with the plain reason and nothing else.
+        $runs = DB::table('support_ai_runs')->where('kind', 'FirstPass')->where('modid', $c['referrer']->id)->get();
+        $this->assertCount(1, $runs);
+        $this->assertSame('Error', $runs[0]->status);
+        $this->assertSame($reason, $runs[0]->error);
+        $this->assertNull($case->brief);
+    }
+
+    public function test_a_server_error_that_is_not_a_helper_answer_is_retried_three_times_and_each_attempt_is_recorded(): void
+    {
+        Mail::fake();
+        $c = $this->makeCase();
+        $this->helper = ['status' => 500, 'body' => ['error' => 'x'], 'throw' => null];
+
+        $this->runPass();
         $case = $this->case($c['case']);
         $this->assertSame('Pending', $case->firstpass_status, 'retried later, not at once');
         $this->assertSame(1, (int) $case->firstpass_attempts);
-        $this->assertSame($reason, $case->firstpass_error);
         $this->assertSame(0, $this->mailsFor($c['case']));
 
         $this->runPass();
@@ -338,23 +401,10 @@ class SupportFirstPassTest extends TestCase
         $case = $this->case($c['case']);
         $this->assertSame('Failed', $case->firstpass_status);
         $this->assertSame(3, (int) $case->firstpass_attempts);
-        $this->assertSame($reason, $case->firstpass_error);
+        $this->assertSame(FirstPassService::REASON_FAILED, $case->firstpass_error);
         $this->assertCount(3, $this->helperRequests);
-
         $this->assertSame(1, $this->mailsFor($c['case']));
-        $text = $this->bodyOf($this->sentMail($c['case']));
-        $this->assertStringContainsString("First pass skipped: {$reason}", $text);
-        $this->assertStringContainsString('/support/cases/'.$c['case'], $text);
-        $this->assertStringContainsString('/support/refer/'.$c['chat'], $text);
-
-        // The helper answered, so each attempt left an Error run with the plain reason and nothing else.
-        $runs = DB::table('support_ai_runs')->where('kind', 'FirstPass')->where('modid', $c['referrer']->id)->get();
-        $this->assertCount($helperRan ? 3 : 0, $runs);
-        if ($helperRan) {
-            $this->assertSame('Error', $runs[0]->status);
-            $this->assertSame($reason, $runs[0]->error);
-        }
-        $this->assertNull($case->brief);
+        $this->assertSame(3, DB::table('support_ai_runs')->where('kind', 'FirstPass')->where('modid', $c['referrer']->id)->where('status', 'Error')->count());
     }
 
     /** @return array<string, array{string, string}> */
@@ -385,7 +435,7 @@ class SupportFirstPassTest extends TestCase
         $this->assertStringContainsString("First pass skipped: {$reason}", $this->bodyOf($this->sentMail($c['case'])));
     }
 
-    public function test_an_unreachable_or_timed_out_helper_fails_with_a_plain_reason_and_no_run_row(): void
+    public function test_an_unreachable_or_timed_out_helper_fails_with_a_plain_reason_and_an_error_run_row(): void
     {
         Mail::fake();
         $a = $this->makeCase();
@@ -399,7 +449,16 @@ class SupportFirstPassTest extends TestCase
         $this->runPass();
         $this->assertSame(FirstPassService::REASON_TOO_LONG, $this->case($b['case'])->firstpass_error);
 
-        $this->assertSame(0, DB::table('support_ai_runs')->whereIn('modid', [$a['referrer']->id, $b['referrer']->id])->count());
+        // The request may have spent tokens, so each attempt is recorded with no tokens and counts against the cap.
+        $runs = DB::table('support_ai_runs')->whereIn('modid', [$a['referrer']->id, $b['referrer']->id])->get();
+        $this->assertCount(3, $runs, 'a is tried in both runs and b in the second');
+        foreach ($runs as $run) {
+            $this->assertSame('FirstPass', $run->kind);
+            $this->assertSame('Error', $run->status);
+            $this->assertSame(0, (int) $run->input_tokens + (int) $run->output_tokens);
+            $this->assertStringNotContainsString('secret-detail', (string) $run->error);
+        }
+        $this->assertSame(FirstPassService::REASON_TOO_LONG, DB::table('support_ai_runs')->where('modid', $b['referrer']->id)->value('error'));
     }
 
     public function test_a_server_with_no_helper_secret_fails_at_once_with_the_not_set_up_reason(): void
@@ -415,6 +474,7 @@ class SupportFirstPassTest extends TestCase
         $this->assertSame(FirstPassService::REASON_NOT_SET_UP, $case->firstpass_error);
         $this->assertCount(0, $this->helperRequests);
         $this->assertSame(1, $this->mailsFor($c['case']));
+        $this->assertSame(0, DB::table('support_ai_runs')->where('modid', $c['referrer']->id)->count(), 'nothing was asked, so nothing is counted');
     }
 
     public function test_a_guard_refusal_is_the_not_set_up_reason_and_is_not_retried(): void
@@ -584,6 +644,84 @@ class SupportFirstPassTest extends TestCase
         $this->assertCount(3, $this->helperRequests);
     }
 
+    public function test_connection_failures_count_against_the_daily_cap(): void
+    {
+        Mail::fake();
+        config()->set('freegle.support.first_pass.per_referrer_per_day', 2);
+        $referrer = $this->createTestUser();
+        $this->helper['throw'] = 'cURL error 7: Failed to connect';
+        $a = $this->makeCase(['referrer' => $referrer]);
+        $this->runPass();
+        $this->runPass();
+        $this->assertSame(2, DB::table('support_ai_runs')->where('modid', $referrer->id)->count());
+
+        $this->helper['throw'] = null;
+        $this->runPass();
+        $this->assertSame('Skipped', $this->case($a['case'])->firstpass_status);
+        $this->assertSame(FirstPassService::REASON_LIMIT, $this->case($a['case'])->firstpass_error);
+    }
+
+    public function test_a_reused_brief_spends_nothing_so_it_is_given_even_to_a_referrer_at_the_cap(): void
+    {
+        Mail::fake();
+        config()->set('freegle.support.first_pass.per_referrer_per_day', 1);
+        $first = $this->makeCase();
+        $this->runPass();
+
+        $mod2 = $this->createTestUser();
+        DB::table('support_ai_runs')->insert(['modid' => $mod2->id, 'kind' => 'FirstPass', 'query' => 'x', 'status' => 'Success']);
+        $second = $this->makeCase(['referrer' => $mod2, 'member' => $first['member'], 'chat' => $first['chat'], 'group' => $first['group']]);
+        $this->runPass();
+
+        $this->assertSame('Done', $this->case($second['case'])->firstpass_status);
+        $this->assertCount(1, $this->helperRequests);
+    }
+
+    public function test_a_brief_is_not_reused_for_a_different_reason_but_is_for_the_same_or_none(): void
+    {
+        Mail::fake();
+        $first = $this->makeCase(['reason' => 'Help with the item']);
+        $this->runPass();
+        $this->assertCount(1, $this->helperRequests);
+
+        $other = $this->makeCase(['referrer' => $this->createTestUser(), 'member' => $first['member'], 'chat' => $first['chat'], 'group' => $first['group'], 'reason' => 'Something else entirely']);
+        $this->runPass();
+        $this->assertCount(2, $this->helperRequests, 'a different reason runs the model');
+        $this->assertSame('Done', $this->case($other['case'])->firstpass_status);
+
+        $same = $this->makeCase(['referrer' => $this->createTestUser(), 'member' => $first['member'], 'chat' => $first['chat'], 'group' => $first['group'], 'reason' => 'Something else entirely']);
+        $none = $this->makeCase(['referrer' => $this->createTestUser(), 'member' => $first['member'], 'chat' => $first['chat'], 'group' => $first['group']]);
+        $this->runPass();
+        $this->assertCount(2, $this->helperRequests, 'the same reason, or none, reuses');
+        $this->assertSame('Done', $this->case($same['case'])->firstpass_status);
+        $this->assertSame('Done', $this->case($none['case'])->firstpass_status);
+    }
+
+    public function test_a_brief_is_not_reused_when_a_visible_message_is_newer_than_it_but_a_hidden_one_does_not_stop_reuse(): void
+    {
+        Mail::fake();
+        $first = $this->makeCase();
+        $this->runPass();
+        $this->assertCount(1, $this->helperRequests);
+
+        $msg = fn (array $o) => DB::table('chat_messages')->insertGetId(array_merge([
+            'chatid' => $first['chat'], 'userid' => $first['member']->id, 'message' => 'later', 'type' => 'Default',
+            'date' => DB::raw('NOW() + INTERVAL 1 HOUR'), 'reviewrequired' => 0, 'reviewrejected' => 0, 'processingrequired' => 0,
+            'processingsuccessful' => 1, 'mailedtoall' => 0, 'seenbyall' => 0, 'platform' => 1,
+        ], $o));
+        $msg(['reviewrequired' => 1]);
+        $msg(['deleted' => 1]);
+        $reused = $this->makeCase(['referrer' => $this->createTestUser(), 'member' => $first['member'], 'chat' => $first['chat'], 'group' => $first['group']]);
+        $this->runPass();
+        $this->assertCount(1, $this->helperRequests, 'only hidden messages are newer, so reuse');
+
+        $msg([]);
+        $fresh = $this->makeCase(['referrer' => $this->createTestUser(), 'member' => $first['member'], 'chat' => $first['chat'], 'group' => $first['group']]);
+        $this->runPass();
+        $this->assertCount(2, $this->helperRequests, 'a visible newer message runs the model');
+        $this->assertSame('Done', $this->case($fresh['case'])->firstpass_status);
+    }
+
     public function test_a_second_referrer_for_the_same_chat_reuses_a_recent_brief_without_a_model_call(): void
     {
         Mail::fake();
@@ -639,17 +777,100 @@ class SupportFirstPassTest extends TestCase
         $this->assertSame(1, $this->mailsFor($c['case']));
     }
 
-    public function test_a_case_whose_chat_is_gone_is_still_run_but_has_no_mail_to_send(): void
+    public function test_a_case_whose_chat_is_gone_is_skipped_with_a_reason_and_still_mailed_without_a_chat_link(): void
     {
         Mail::fake();
-        $c = $this->makeCase(['chatid' => null, 'open_key' => null]);
+        $c = $this->makeCase(['chatid' => null, 'open_key' => null, 'reason' => 'Please look at this']);
 
         $this->runPass();
 
-        $req = $this->helperRequests[0]->data();
-        $this->assertNull($req['chat']['id']);
-        $this->assertSame([], $req['chat']['messages']);
-        $this->assertSame(0, $this->mailsFor($c['case']));
+        $this->assertCount(0, $this->helperRequests, 'there is nothing to ask the helper about');
+        $case = $this->case($c['case']);
+        $this->assertSame('Skipped', $case->firstpass_status);
+        $this->assertSame('The chat is no longer there', $case->firstpass_error);
+        $this->assertSame(0, (int) $case->firstpass_attempts);
+        $this->assertSame(1, $this->mailsFor($c['case']));
+        $text = $this->bodyOf($this->sentMail($c['case']));
+        $this->assertStringContainsString("Support case #{$c['case']}", $text);
+        $this->assertStringContainsString('The moderator asked: Please look at this', $text);
+        $this->assertStringContainsString('First pass skipped: The chat is no longer there', $text);
+        $this->assertStringContainsString('/support/cases/'.$c['case'], $text);
+        $this->assertStringNotContainsString('/support/refer/', $text);
+
+        // A chat row that has been deleted behaves the same.
+        $d = $this->makeCase();
+        Schema::disableForeignKeyConstraints();
+        DB::table('chat_rooms')->where('id', $d['chat'])->delete();
+        Schema::enableForeignKeyConstraints();
+        $this->runPass();
+        $this->assertSame('Skipped', $this->case($d['case'])->firstpass_status);
+        $this->assertSame(1, $this->mailsFor($d['case']));
+        $this->assertCount(0, $this->helperRequests);
+    }
+
+    public function test_a_group_chat_goes_to_the_helper_as_type_group(): void
+    {
+        Mail::fake();
+        $member = $this->createTestUser();
+        $referrer = $this->createTestUser();
+        $chat = DB::table('chat_rooms')->insertGetId(['chattype' => 'Group', 'user1' => $member->id, 'user2' => $referrer->id, 'created' => now()]);
+        $this->makeCase(['member' => $member, 'referrer' => $referrer, 'chat' => $chat]);
+
+        $this->runPass();
+
+        $this->assertSame('Group', $this->helperRequests[0]->data()['chat']['type']);
+    }
+
+    public function test_the_mail_is_built_before_it_is_claimed_so_a_failure_building_it_leaves_it_to_the_next_run(): void
+    {
+        Mail::fake();
+        $c = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['version' => 1, 'summary' => 'S'])]);
+        $broken = new class(app(MailboxHistory::class)) extends FirstPassService {
+            public function referralMail(object $case, ?array $brief, ?string $skipReason): ReferToSupportMail
+            {
+                throw new \RuntimeException('cannot build');
+            }
+        };
+        $this->app->instance(FirstPassService::class, $broken);
+
+        $this->artisan('support:first-pass')->assertSuccessful();
+        $this->assertNull($this->case($c['case'])->mailed_at, 'nothing was claimed, so the next run sends it');
+
+        $this->app->forgetInstance(FirstPassService::class);
+        $this->runPass();
+        $this->assertSame(1, $this->mailsFor($c['case']));
+    }
+
+    public function test_a_failure_spooling_puts_the_claim_back(): void
+    {
+        Mail::fake();
+        $c = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['version' => 1, 'summary' => 'S'])]);
+        $spooler = \Mockery::mock(\App\Services\EmailSpoolerService::class);
+        $spooler->shouldReceive('spool')->andThrow(new \RuntimeException('spool down'));
+        $this->app->instance(\App\Services\EmailSpoolerService::class, $spooler);
+
+        $this->artisan('support:first-pass')->assertSuccessful();
+
+        $this->assertNull($this->case($c['case'])->mailed_at);
+    }
+
+    public function test_a_finished_case_is_mailed_before_the_next_one_is_run(): void
+    {
+        Mail::fake();
+        $a = $this->makeCase();
+        $b = $this->makeCase();
+        $seen = [];
+        $this->onHelperCall = function () use (&$seen, $a) {
+            $this->onHelperCall = function () use (&$seen, $a) {
+                $seen[] = $this->case($a['case'])->mailed_at;
+            };
+        };
+
+        $this->runPass();
+
+        $this->assertCount(2, $this->helperRequests);
+        $this->assertNotNull($seen[0] ?? null, 'the first case was already mailed when the second was asked');
+        $this->assertSame(1, $this->mailsFor($b['case']));
     }
 
     public function test_a_malformed_brief_is_formatted_without_throwing(): void
@@ -813,6 +1034,51 @@ class SupportFirstPassTest extends TestCase
         $this->assertNotNull($this->case($fresh['case'])->brief);
     }
 
+    public function test_the_purge_clears_old_run_analysis_and_transcript_deletes_a_deleted_cases_runs_and_old_idle_open_cases(): void
+    {
+        $run = fn (string $query, string $age, string $kind = 'FirstPass') => DB::table('support_ai_runs')->insertGetId([
+            'kind' => $kind, 'query' => $query, 'analysis' => 'facts', 'transcript' => 'talk', 'status' => 'Success',
+            'created_at' => DB::raw("NOW() - INTERVAL {$age}"),
+        ]);
+
+        $oldRun = $run('First pass for support case 1', '13 month');
+        $newRun = $run('First pass for support case 2', '2 month');
+        $interactive = $run('typed by a volunteer', '13 month', 'Interactive');
+
+        $handled = $this->makeCase(['status' => 'Handled', 'open_key' => null, 'firstpass_status' => 'Done', 'created_at' => DB::raw('NOW() - INTERVAL 3 YEAR'), 'handled_at' => DB::raw('NOW() - INTERVAL 30 month')]);
+        $ownRun = $run("First pass for support case {$handled['case']}", '1 day');
+        $failedAttempt = $run("First pass for support case {$handled['case']}", '1 day');
+        $replay = $run("Replay of support case {$handled['case']}", '1 day');
+        $other = $run('First pass for support case 999999', '1 day');
+
+        $idle = $this->makeCase(['created_at' => DB::raw('NOW() - INTERVAL 3 YEAR'), 'updated_at' => DB::raw('NOW() - INTERVAL 30 month')]);
+        $talked = $this->makeCase(['created_at' => DB::raw('NOW() - INTERVAL 3 YEAR'), 'updated_at' => DB::raw('NOW() - INTERVAL 30 month')]);
+        DB::table('support_case_messages')->insert(['caseid' => $talked['case'], 'userid' => $talked['referrer']->id, 'role' => 'Referrer', 'body' => 'still here']);
+
+        $briefed = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"summary":"x"}', 'created_at' => DB::raw('NOW() - INTERVAL 14 month'), 'updated_at' => DB::raw('NOW() - INTERVAL 40 day')]);
+        $before = DB::table('support_cases')->where('id', $briefed['case'])->value('updated_at');
+
+        $this->artisan('support:purge-cases')->assertSuccessful();
+
+        $get = fn (int $id) => DB::table('support_ai_runs')->find($id);
+        $this->assertNull($get($oldRun)->analysis);
+        $this->assertNull($get($oldRun)->transcript);
+        $this->assertSame('facts', $get($newRun)->analysis, 'a recent run keeps its analysis');
+        $this->assertSame('facts', $get($interactive)->analysis, 'only first pass runs are cleared here');
+
+        $this->assertNull($this->case($handled['case']));
+        foreach ([$ownRun, $failedAttempt, $replay] as $gone) {
+            $this->assertNull($get($gone), 'the deleted case\'s runs go with it');
+        }
+        $this->assertNotNull($get($other));
+
+        $this->assertNull($this->case($idle['case']), 'open for two years with no activity is deleted');
+        $this->assertNotNull($this->case($talked['case']), 'a recent message is activity');
+
+        $this->assertNull($this->case($briefed['case'])->brief);
+        $this->assertSame($before, $this->case($briefed['case'])->updated_at, 'clearing a brief is not activity');
+    }
+
     public function test_replay_refuses_while_a_case_is_pending_or_running_and_writes_nothing(): void
     {
         Mail::fake();
@@ -850,7 +1116,17 @@ class SupportFirstPassTest extends TestCase
         $this->assertSame(1200.0, (float) $report['averages']['inputTokens']);
         $this->assertStringContainsString("today's data", $report['note']);
         $this->assertStringNotContainsString('The member could not find', json_encode($report));
-        $this->assertSame($runsBefore, DB::table('support_ai_runs')->count());
+        $runs = DB::table('support_ai_runs')->orderBy('id')->get()->slice($runsBefore)->values();
+        $this->assertCount(2, $runs, 'each replayed pass leaves a run row so the tokens are visible');
+        $this->assertSame("Replay of support case {$b['case']}", $runs[0]->query);
+        $this->assertSame('FirstPass', $runs[0]->kind);
+        $this->assertNull($runs[0]->modid, 'never counts against a referrer');
+        $this->assertSame('Success', $runs[0]->status);
+        $this->assertSame(1200, (int) $runs[0]->input_tokens);
+        $this->assertSame(300, (int) $runs[0]->output_tokens);
+        $this->assertSame('test-model', $runs[0]->model);
+        $this->assertNull($runs[0]->analysis);
+        $this->assertNull($runs[0]->transcript);
         $this->assertSame($casesBefore, DB::table('support_cases')->orderBy('id')->get()->map(fn ($r) => (array) $r)->all());
         $this->assertCount(0, Mail::sent(ReferToSupportMail::class));
     }
@@ -869,6 +1145,10 @@ class SupportFirstPassTest extends TestCase
         $this->assertCount(1, $this->helperRequests);
         $this->assertSame('A support case appeared, so the replay stopped.', $report['stopped']);
         $this->assertSame(FirstPassService::REASON_CREDIT, $report['passes'][0]['error']);
+        $run = DB::table('support_ai_runs')->where('query', 'like', 'Replay of support case%')->first();
+        $this->assertSame('Error', $run->status);
+        $this->assertSame(FirstPassService::REASON_CREDIT, $run->error);
+        $this->assertNull($run->modid);
     }
 
     public function test_replay_limit_is_capped_at_twenty(): void

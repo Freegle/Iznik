@@ -3,10 +3,13 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import CasePage from '~/modtools/pages/support/cases/[[id]].vue'
 
-const mockSanitize = vi.hoisted(() =>
-  vi.fn((html) => html.replace(/<script[\s\S]*?<\/script>/g, ''))
+// The real isomorphic-dompurify. The global alias stubs it as an identity function, so
+// it is loaded here by file path, which the alias does not match.
+vi.mock('isomorphic-dompurify', async () =>
+  vi.importActual(
+    '../../../../../node_modules/isomorphic-dompurify/dist/index.js'
+  )
 )
-vi.mock('isomorphic-dompurify', () => ({ default: { sanitize: mockSanitize } }))
 
 vi.mock('marked', () => ({
   marked: vi.fn((text) => `<p>${text}</p>`),
@@ -34,7 +37,11 @@ const mockChatStore = {
 }
 vi.mock('~/stores/chat', () => ({ useChatStore: () => mockChatStore }))
 
-const meState = { supportOrAdmin: ref(true), mod: ref(true) }
+const meState = {
+  supportOrAdmin: ref(true),
+  mod: ref(true),
+  myid: ref(1),
+}
 vi.mock('~/composables/useMe', () => ({ useMe: () => meState }))
 
 vi.mock('~/composables/useTimeFormat', () => ({
@@ -167,6 +174,7 @@ describe('support/cases/[[id]].vue', () => {
     mockRouteParams.value = { id: '7' }
     meState.supportOrAdmin.value = true
     meState.mod.value = true
+    meState.myid.value = 1
     mockFetchRun.mockResolvedValue({
       id: 55,
       input_tokens: 3000,
@@ -237,11 +245,60 @@ describe('support/cases/[[id]].vue', () => {
       const wrapper = mountPage()
       await flushPromises()
       const html = wrapper.find('[data-testid="case-summary"]').html()
-      expect(mockSanitize).toHaveBeenCalledWith(
-        expect.stringContaining('<script>')
-      )
       expect(html).toContain('Safe')
       expect(html).not.toContain('<script')
+      expect(html).not.toContain('onerror')
+    })
+
+    it('sanitises the summary with the real sanitiser and the draft is plain text', async () => {
+      mockFetchCase.mockResolvedValue(
+        supportCase({
+          brief: {
+            ...supportCase().brief,
+            draft: {
+              ...supportCase().brief.draft,
+              text: 'Hi <script>alert(1)</script> there',
+            },
+          },
+        })
+      )
+      const wrapper = mountPage()
+      await flushPromises()
+      const draft = wrapper.find('[data-testid="draft-text"]')
+      expect(draft.element.querySelector('script')).toBeNull()
+      expect(draft.text()).toContain('Hi <script>')
+      expect(draft.element.tagName).toBe('DIV')
+    })
+
+    it('names the facts the draft used by their section titles', async () => {
+      const wrapper = mountPage()
+      await flushPromises()
+      const text = wrapper.find('[data-testid="case-draft"]').text()
+      expect(text).toContain('Based on: Title member.')
+      expect(text).not.toContain('Based on: member')
+    })
+
+    it('has no stray space before the comma in the header', async () => {
+      const wrapper = mountPage()
+      await flushPromises()
+      const p = wrapper.find('.small.text-muted').text()
+      expect(p).toContain('(#2), from a referral.')
+      expect(p).not.toContain(' ,')
+    })
+
+    it('loads the case when the member logs in after the page opened', async () => {
+      meState.supportOrAdmin.value = false
+      meState.mod.value = false
+      meState.myid.value = undefined
+      const wrapper = mountPage()
+      await flushPromises()
+      expect(mockFetchCase).not.toHaveBeenCalled()
+      meState.supportOrAdmin.value = true
+      meState.mod.value = true
+      meState.myid.value = 3
+      await flushPromises()
+      expect(mockFetchCase).toHaveBeenCalledWith(7)
+      expect(wrapper.find('[data-testid="case-support"]').exists()).toBe(true)
     })
 
     it('records Unchanged when the draft is sent as it was', async () => {
@@ -343,6 +400,11 @@ describe('support/cases/[[id]].vue', () => {
       await wrapper.find('[data-testid="case-handle"]').trigger('click')
       await flushPromises()
       expect(wrapper.text()).toContain('Could not change the status')
+      expect(wrapper.find('[data-testid="case-action-error"]').exists()).toBe(
+        true
+      )
+      // The case stays on screen.
+      expect(wrapper.find('[data-testid="case-brief"]').exists()).toBe(true)
     })
 
     it('copies the draft to the clipboard', async () => {
@@ -390,6 +452,8 @@ describe('support/cases/[[id]].vue', () => {
       await flushPromises()
       expect(wrapper.find('.chat-modal').exists()).toBe(false)
       expect(wrapper.text()).toContain('Could not open the chat')
+      expect(wrapper.find('[data-testid="case-brief"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="case-handle"]').exists()).toBe(true)
     })
 
     it.each(['Pending', 'Running'])(

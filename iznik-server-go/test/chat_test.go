@@ -10,6 +10,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
+	"io"
 	"net/http/httptest"
 	url2 "net/url"
 	"os"
@@ -1840,7 +1841,7 @@ func TestAllSeenFDDoesNotTouchModChats(t *testing.T) {
 func TestReferToSupport(t *testing.T) {
 	prefix := uniquePrefix("refersupport")
 	db := database.DBConn
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", "Moderator")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	CreateTestChatMessage(t, chatid, user1ID, "Hello")
@@ -1873,6 +1874,28 @@ func TestReferToSupport(t *testing.T) {
 	assert.Equal(t, "Pending", fp)
 	assert.Equal(t, user1ID, referrer)
 	assert.Equal(t, user2ID, member, "a member-to-member chat is about the other participant")
+}
+
+// A plain member who is a participant may not open a case: each one spends a model pass.
+func TestReferToSupportPlainMemberParticipantRefused(t *testing.T) {
+	prefix := uniquePrefix("refersupport_plain")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	payload := map[string]interface{}{"id": chatid, "action": "ReferToSupport"}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+	body, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(body), "Only moderators can refer a chat to Support")
+
+	var cases int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM support_cases WHERE chatid = ?", chatid).Scan(&cases)
+	assert.Equal(t, int64(0), cases)
 }
 
 func TestReferToSupportNotMember(t *testing.T) {

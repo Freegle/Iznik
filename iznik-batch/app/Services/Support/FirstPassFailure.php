@@ -20,4 +20,13 @@ class FirstPassFailure extends \RuntimeException
     ) {
         parent::__construct($reason);
     }
+
+    /**
+     * Whether the model may have been spent on this attempt, so it is recorded and counted. A busy
+     * helper, a server with no helper secret and a refusal by the helper's guard never ran it.
+     */
+    public function mayHaveSpent(): bool
+    {
+        return ! in_array($this->failureCode, ['BUSY', 'NOT_SET_UP', 'REFUSED'], true);
+    }
 }

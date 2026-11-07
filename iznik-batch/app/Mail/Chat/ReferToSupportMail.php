@@ -27,7 +27,7 @@ class ReferToSupportMail extends Mailable
     public function __construct(
         public readonly string $userName,
         public readonly int $userId,
-        public readonly int $chatId,
+        public readonly ?int $chatId,
         public readonly string $otherUserName,
         public readonly int $otherUserId,
         public readonly string $replyToAddress,
@@ -47,7 +47,9 @@ class ReferToSupportMail extends Mailable
                 config('freegle.branding.name')
             ),
             replyTo: [new Address($this->replyToAddress, $this->replyToName)],
-            subject: "{$this->userName} (#{$this->userId}) asked for help with chat #{$this->chatId} with {$this->otherUserName} (#{$this->otherUserId})",
+            subject: $this->chatId === null
+                ? "{$this->userName} (#{$this->userId}) asked for help with a chat that is no longer there"
+                : "{$this->userName} (#{$this->userId}) asked for help with chat #{$this->chatId} with {$this->otherUserName} (#{$this->otherUserId})",
         );
     }
 
@@ -70,7 +72,9 @@ class ReferToSupportMail extends Mailable
             $parts[] = 'First pass skipped: '.($this->skipReason ?? 'no reason was recorded');
         }
         $parts[] = "Case: {$modSite}/support/cases/{$this->caseId}";
-        $parts[] = $chatText;
+        if ($this->chatId !== null) {
+            $parts[] = $chatText;
+        }
 
         // Plain text, so the body is not HTML-escaped.
         return $this->text('emails.plain.support-case-referral', ['body' => implode("\n\n", $parts)]);

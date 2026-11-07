@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { ref } from 'vue'
 import ModSupportCaseList from '~/modtools/components/ModSupportCaseList.vue'
 
 const mockFetchCases = vi.fn()
+const meState = { myid: ref(1) }
+vi.mock('~/composables/useMe', () => ({ useMe: () => meState }))
 vi.mock('~/api', () => ({
   default: () => ({ supportcases: { fetchCases: mockFetchCases } }),
 }))
@@ -54,7 +57,21 @@ const stubs = {
 const mountList = () => mount(ModSupportCaseList, { global: { stubs } })
 
 describe('ModSupportCaseList', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    meState.myid.value = 1
+  })
+
+  it('loads the list when the member logs in after it opened', async () => {
+    meState.myid.value = undefined
+    mockFetchCases.mockResolvedValueOnce([]).mockResolvedValueOnce([row(1)])
+    const wrapper = mountList()
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="case-row"]')).toHaveLength(0)
+    meState.myid.value = 5
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="case-row"]')).toHaveLength(1)
+  })
 
   it('lists open cases first with a link to each', async () => {
     mockFetchCases.mockResolvedValue([

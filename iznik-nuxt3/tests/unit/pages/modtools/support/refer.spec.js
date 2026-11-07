@@ -129,6 +129,14 @@ describe('support/refer/[[id]].vue page', () => {
       expect(wrapper.find('[data-test="refer-case-link"]').exists()).toBe(false)
     })
 
+    it('fetches the chat without waiting for a slow case lookup', async () => {
+      mockFetchCases.mockReturnValue(new Promise(() => {}))
+      mockRouteParams.value = { id: '123' }
+      mountComponent()
+      await flushPromises()
+      expect(mockChatStore.fetchChat).toHaveBeenCalledWith(123)
+    })
+
     it('still opens the chat when the case lookup fails', async () => {
       mockFetchCases.mockRejectedValue(new Error('500'))
       mockChatStore.byChatId.mockReturnValue({ id: 123, user1: { id: 456 } })

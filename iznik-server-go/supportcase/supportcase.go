@@ -392,6 +392,10 @@ func Get(c *fiber.Ctx) error {
 	})
 }
 
+// maxMessagesPerHour caps how many messages one author can add to one case in an hour; each mails the
+// other side.
+const maxMessagesPerHour = 10
+
 // PostMessage adds to the thread. The author is a Referrer when they referred the case, even if they
 // are also Support; otherwise Support. A referrer posting to a Handled case reopens it.
 //
@@ -438,6 +442,16 @@ func PostMessage(c *fiber.Ctx) error {
 		}
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "draftused must be No, Unchanged or Edited")
+	}
+
+	var recent int64
+	if err := database.DBConn.Clauses(dbresolver.Write).Table("support_case_messages").
+		Where("caseid = ? AND userid = ? AND created_at > NOW() - INTERVAL 1 HOUR", cr.ID, myid).
+		Count(&recent).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to post message")
+	}
+	if recent >= maxMessagesPerHour {
+		return fiber.NewError(fiber.StatusTooManyRequests, "Too many replies, please wait a little")
 	}
 
 	var msgid uint64
