@@ -446,10 +446,14 @@ and what each person sees, is in [support-cases.md](support-cases.md). This sect
 
 - **The route.** `POST /internal/support-first-pass` in `server.js`, behind the same guard, queue and
   429 as the survey routes above. The body limit is 20 MB, because up to five chat images travel in it.
-  `cleanFirstPassRequest` in `first-pass.js` validates and trims the request.
+  `cleanFirstPassRequest` in `first-pass.js` validates and trims the request. A picture that fails the
+  checks in `images.js` is dropped and counted as skipped rather than refusing the pass. A Group chat is
+  accepted, though the Go API does not open cases for one.
 - **One deadline.** `FIRST_PASS_DEADLINE_MS` (default 300000) covers the dump fetch and the model call
-  together. One `AbortSignal` reaches both, so a slow dump leaves less time for the model. The batch waits
-  30 seconds longer (`SUPPORT_FIRST_PASS_TIMEOUT`).
+  together, and the batch waits 30 seconds longer (`SUPPORT_FIRST_PASS_TIMEOUT`). Inside it each dump attempt
+  has its own budget: the full dump at most 120 seconds, then the database alone at most 60, then none.
+  A slow dump therefore gives a thinner brief that says what was missing, not a failed pass, and the model
+  always has time.
 - **Facts by code.** `first-pass-facts.js` builds the six fact sections (member, recent posts and chats,
   bans and merges, device, recent errors, mail history) from the member's dump. It reads the dump's
   section list, so a section that was not collected says "not collected", never "none". The model does not
@@ -458,7 +462,9 @@ and what each person sees, is in [support-cases.md](support-cases.md). This sect
   the answer (`first-pass-prompt.js`) and the chat images. There is no tool loop and no review turn. It
   returns a brief: summary, classification, confidence, the facts, anything unusual, what could not be
   found, and a draft written to the referring moderator. Every link in the draft is checked, and any that
-  is not a known Freegle page is listed under "Check before sending".
+  is not a known Freegle page is listed under "Check before sending", as are bare domains (a name ending
+  in a common top-level domain, with no scheme) and email addresses that are not Freegle's.
+  A credit or usage-limit error that the SDK returns as an error result is read as `CREDIT`.
 - **Error codes.** A failure is a 502 whose body carries a `code`: `DEADLINE`, `CREDIT`, `MODEL`,
   `DUMP_LOCKDOWN`, `DUMP_AUTH` (the dump key is missing or wrong), `DUMP` or `BAD_OUTPUT`. `ux-internal.js`
   adds the code only when the route attached one, and the message is always the route's own fixed text,
@@ -467,8 +473,11 @@ and what each person sees, is in [support-cases.md](support-cases.md). This sect
   `X-Freegle-Case`, never in the URL. The Go API accepts `USERDUMP_INTERNAL_KEY` by header only
   (`validDumpKey` in `iznik-server-go/userdump/userdump.go`) and puts the case in its log line. A lockdown
   refuses it like any other download. The temporary dump file has its own name and is removed after the pass.
-- **The agent never sees the key.** The key is in the helper's environment, so `agentEnv()` removes the dump
-  keys, and `support-agent.js` passes that environment to the interactive agent's CLI.
+- **The key is not in the interactive agent's environment.** `agentEnv()` removes the dump keys, and
+  `support-agent.js` passes that environment to the interactive agent's CLI. The agent runs as the same user
+  as the helper, so it could still read the key through `/proc`. That was looked at and left: the agent
+  already reaches the same member data through its own read-only tools and the database credentials, and
+  it has no tool that sends anything out. Separating them would need a second container or user.
 - **It never sends anything.** The pass returns data. It has no mail tool, and the batch alone decides what
   is mailed. It is recorded in the audit trail as `first_pass`, with the case id.
 

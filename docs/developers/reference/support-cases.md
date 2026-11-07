@@ -33,7 +33,9 @@ The decisions behind it, and the contracts between the pieces, are in
 1. **Refer.** In ModTools, `ModChatFooter.vue` has Refer to Support, with an optional "What do you need
    help with?" box. It calls `POST /api/chatrooms` with `action: ReferToSupport` and the reason.
 2. **Open a case.** `handleReferToSupport` in `iznik-server-go/chat/chatroom.go` writes the case in one
-   transaction and answers with its id. It queues no background task: the case row is the queue. The
+   transaction and answers with its id. Only a moderator (Moderator, Support or Admin) who can see the chat
+   may refer it, and a Group chat cannot be referred: a referral spends a model pass and opens a thread
+   that mails Support, so it is not open to members. It queues no background task: the case row is the queue. The
    reason is capped at 2000 characters. The case starts `Open`, with first pass `Pending`.
 3. **First pass.** `support:first-pass` (`iznik-batch/app/Console/Commands/Support/`) picks the case up,
    builds the request (`FirstPassService`), calls the helper and stores the brief.
@@ -49,7 +51,8 @@ unique index. It is set by code, not generated, because MySQL refuses a generate
 key with SET NULL. So:
 
 - The same moderator referring the same chat again gets their existing open case back, and a "Referred
-  again" message carrying the new reason.
+  again" message carrying the new reason. Within two minutes, with no new reason, it is treated as a
+  double-click: the same case comes back and nothing is mailed.
 - A second moderator referring that chat gets their **own** case and never learns another exists.
 - A Handled case reopens when its referrer posts. If another open case for the same pair exists, that
   post is refused with 409.
@@ -75,13 +78,25 @@ The command runs every minute, `withoutOverlapping(15)` (`routes/console.php`). 
   It never runs the model on a case older than the limit.
 - **Claims one case, runs it, then claims the next,** until none are Pending or `run_minutes` (10) has
   passed. The helper does one pass at a time, so claiming several up front would make them look stuck.
-- **Retries.** A busy helper (429) puts the case back to Pending and does not count an attempt. Any other
-  failure counts, and the third fails the case (`MAX_ATTEMPTS`). Missing key and lockdown refusals fail at
-  once, because trying again cannot help.
-- **Reuses a recent brief.** If a Done case for the same chat is under 24 hours old, its brief is copied
-  and the case is Done with no model call. The facts have not changed and the tokens are saved.
-- **Caps each referrer.** At most `per_referrer_per_day` (10) model passes per moderator a day. Beyond that
-  the case is Skipped, "The first pass limit for today was reached", with the plain mail.
+- **Retries.** A busy helper (429) puts the case back to Pending and does not count an attempt. A failure
+  where the helper answered (any of its 502 codes, or an answer with no brief) is final at once: a
+  deadline, a bad answer or an empty credit pool would happen again a minute later and spend the model and
+  the member's dump again. Only a call the helper never answered (no connection, a timeout, another 5xx)
+  is retried, and the third such failure fails the case (`MAX_ATTEMPTS`).
+- **Reuses a recent brief, when the referral asks nothing new.** If a Done case for the same chat is under
+  24 hours old, the new case has no reason or the same reason, and no visible chat message is newer than
+  that brief, its brief is copied and the case is Done with no model call. Otherwise the model runs: a
+  brief written for another question, or an older chat, would mislead. A reuse spends nothing, so it is
+  checked before the cap.
+- **Caps each referrer.** At most `per_referrer_per_day` (10) model passes per moderator a day, counted
+  from run rows. Every attempt that may have spent tokens writes one, a failed one as an Error row with
+  no tokens. Beyond the cap the case is Skipped, "The first pass limit for today was reached", with the
+  plain mail.
+- **Mails as it goes.** Finished cases are mailed once at the start of a run and after each case, each in
+  its own try, so a case finished early is not held until the run ends. The mail is built before
+  `mailed_at` is claimed, and the claim is put back if spooling fails.
+- **A case whose chat is gone** (deleted, so `chatid` is NULL) is Skipped, "The chat is no longer there",
+  and still mailed, with the reason and the case link but no chat link.
 - **Never throws.** A case that cannot be run gets a plain reason and the plain mail.
 
 ## The fixed plain reasons
@@ -90,7 +105,7 @@ A case's `firstpass_error`, and the mail, carry one of the constants in `FirstPa
 else. Upstream error text is never stored. The helper's 502 codes map to them
 ([ai-support-helper.md](ai-support-helper.md)). The reasons: turned off, helper busy, out of credit, took
 too long, data could not be read during a lockdown, helper not set up on this server, daily limit reached,
-interrupted, helper failed. A pass that could not run also records the pool state on the case, so credit
+interrupted, helper failed, chat no longer there. A pass that could not run also records the pool state on the case, so credit
 never runs out silently.
 
 ## Who sees what
@@ -109,6 +124,8 @@ never runs out silently.
 - **Nothing goes to the member from a case.** Support replies to the referring moderator through the case,
   and the moderator deals with the member. The draft is written to the moderator, and may suggest what to
   tell the member.
+- **Thread limits.** Each author may post at most 10 messages per case per hour; beyond that the API
+  answers 429.
 - **Thread mail.** A Support message mails the referrer, and a referrer message mails the support
   address. The author is never mailed their own message. These mails (`SupportCaseMessageMail`) carry the
   message and the case link, with Reply-To the no-reply address, and nothing from the first pass. Replies
@@ -132,14 +149,18 @@ conclusions. Its limits are deliberate:
 
 - Five cases by default, at most 20, one at a time.
 - It refuses to start while any case is Pending or Running, and stops if one appears.
-- It writes nothing to cases, runs or mail.
+- It writes nothing to cases or mail. Each pass is recorded as a run (kind FirstPass, no asker, query
+  "Replay of support case N", tokens but no transcript), so its spend is visible and counts against
+  nobody's daily cap.
 - Its report lists ids only, and says the model saw today's data, not the data at referral time. A
   difference from the original brief may be the data, not the model.
 
 ## Retention
 
-`support:purge-cases` runs daily. It deletes Handled cases more than two years old and clears the brief on
-any case more than one year old. A case is also deleted with its member, as the helper's run records are.
+`support:purge-cases` runs daily. It deletes Handled cases more than two years old, and Open cases with no
+activity for two years. It clears the brief on any case more than one year old without counting that as
+activity, and clears the analysis and transcript on first pass runs over a year old. A deleted case takes
+its first pass runs with it. A case is also deleted with its member, as the helper's run records are.
 The stored transcript has image bytes removed and is capped. No request or response body is logged.
 
 ## Settings
